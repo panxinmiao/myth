@@ -1,0 +1,161 @@
+use std::collections::{HashMap, BTreeMap};
+use wgpu::VertexFormat;
+use crate::core::geometry::Geometry;
+
+/// 【生产级】持有所有权的 VertexBufferLayout
+/// 可以在 Resource Manager 中安全缓存
+#[derive(Debug, Clone)]
+pub struct OwnedVertexBufferLayout {
+    pub array_stride: u64,
+    pub step_mode: wgpu::VertexStepMode,
+    pub attributes: Vec<wgpu::VertexAttribute>,
+}
+
+impl OwnedVertexBufferLayout {
+    /// 转换为 WGPU 需要的临时引用格式 (用于 create_pipeline)
+    pub fn as_wgpu(&self) -> wgpu::VertexBufferLayout<'_> {
+        wgpu::VertexBufferLayout {
+            array_stride: self.array_stride,
+            step_mode: self.step_mode,
+            attributes: &self.attributes,
+        }
+    }
+}
+
+/// 生成结果
+#[derive(Debug, Clone)]
+pub struct GeneratedLayout {
+    /// Pipeline 需要的 Layout 列表
+    pub buffers: Vec<OwnedVertexBufferLayout>,
+    
+    /// 注入 Shader 的 WGSL 代码 (struct VertexInput)
+    pub shader_code: String,
+    
+    /// 属性名 -> Shader Location 映射 (供调试或绑定检查)
+    pub attribute_locations: HashMap<String, u32>,
+}
+
+pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedLayout {
+    // 1. 分组：按 Buffer ID 分组，使用 BTreeMap 保证确定性顺序
+    let mut buffer_groups: BTreeMap<uuid::Uuid, Vec<(&String, &crate::core::geometry::Attribute)>> = BTreeMap::new();
+
+    for (name, attr) in &geometry.attributes {
+        let buffer_id = attr.buffer.read().unwrap().id;
+        buffer_groups.entry(buffer_id).or_default().push((name, attr));
+    }
+
+    let mut owned_layouts = Vec::new();
+    let mut wgsl_struct_fields = Vec::new();
+    let mut location_map = HashMap::new();
+    
+    let mut current_location = 0;
+
+    // 2. 遍历每个 Buffer 组
+    for (buffer_id, mut attrs) in buffer_groups {
+        // 排序：保证 Interleaved Buffer 属性顺序正确 (Offset -> Name)
+        attrs.sort_by(|a, b| {
+            a.1.offset.cmp(&b.1.offset).then(a.0.cmp(b.0))
+        });
+
+        // 获取第一个属性的信息作为 Buffer 基准
+        let first_attr = attrs[0].1;
+        let stride = first_attr.buffer.read().unwrap().stride;
+        let step_mode = first_attr.step_mode;
+
+        // 【检查】同一 Buffer 内所有属性 step_mode 必须一致
+        if attrs.iter().any(|(_, a)| a.step_mode != step_mode) {
+            log::warn!("Mixed step_mode detected in buffer {:?}. wgpu requires consistent step_mode per buffer. Using {:?}", buffer_id, step_mode);
+        }
+
+        let mut wgpu_attributes = Vec::new();
+
+        // 3. 构建 Layout 和 WGSL
+        for (name, attr) in attrs {
+            let location = current_location;
+            current_location += 1;
+
+            // WGPU Attribute
+            wgpu_attributes.push(wgpu::VertexAttribute {
+                format: attr.format,
+                offset: attr.offset,
+                shader_location: location,
+            });
+
+            // WGSL Code
+            let wgsl_type = format_to_wgsl_type(attr.format);
+            wgsl_struct_fields.push(format!("    @location({}) {}: {},", location, name, wgsl_type));
+            
+            location_map.insert(name.clone(), location);
+        }
+
+        // 4. 保存为 OwnedLayout
+        owned_layouts.push(OwnedVertexBufferLayout {
+            array_stride: stride,
+            step_mode,
+            attributes: wgpu_attributes,
+        });
+    }
+
+    // 生成最终 WGSL 代码
+    let shader_code = format!(
+        "struct VertexInput {{\n{}\n}};", 
+        wgsl_struct_fields.join("\n")
+    );
+
+    GeneratedLayout {
+        buffers: owned_layouts,
+        shader_code,
+        attribute_locations: location_map,
+    }
+}
+
+// 完整的类型映射表
+fn format_to_wgsl_type(format: VertexFormat) -> &'static str {
+    match format {
+        // Float
+        VertexFormat::Float32 => "f32",
+        VertexFormat::Float32x2 => "vec2<f32>",
+        VertexFormat::Float32x3 => "vec3<f32>",
+        VertexFormat::Float32x4 => "vec4<f32>",
+        VertexFormat::Float64 => "f32", // 注意：WGSL暂不支持 f64，通常作为 f32 处理
+        VertexFormat::Float64x2 => "vec2<f32>",
+        VertexFormat::Float64x3 => "vec3<f32>",
+        VertexFormat::Float64x4 => "vec4<f32>",
+        
+        // Uint
+        VertexFormat::Uint32 => "u32",
+        VertexFormat::Uint32x2 => "vec2<u32>",
+        VertexFormat::Uint32x3 => "vec3<u32>",
+        VertexFormat::Uint32x4 => "vec4<u32>",
+        
+        // Sint
+        VertexFormat::Sint32 => "i32",
+        VertexFormat::Sint32x2 => "vec2<i32>",
+        VertexFormat::Sint32x3 => "vec3<i32>",
+        VertexFormat::Sint32x4 => "vec4<i32>",
+        
+        // Normalized (在 Shader 中自动转为 float)
+        VertexFormat::Unorm8x2 => "vec2<f32>",
+        VertexFormat::Unorm8x4 => "vec4<f32>",
+        VertexFormat::Snorm8x2 => "vec2<f32>",
+        VertexFormat::Snorm8x4 => "vec4<f32>",
+        VertexFormat::Unorm16x2 => "vec2<f32>",
+        VertexFormat::Unorm16x4 => "vec4<f32>",
+        VertexFormat::Snorm16x2 => "vec2<f32>",
+        VertexFormat::Snorm16x4 => "vec4<f32>",
+
+        // 整数类型 (通常用于索引或特殊用途)
+        VertexFormat::Uint8x2 => "vec2<u32>",
+        VertexFormat::Uint8x4 => "vec4<u32>",
+        VertexFormat::Sint8x2 => "vec2<i32>",
+        VertexFormat::Sint8x4 => "vec4<i32>",
+        VertexFormat::Uint16x2 => "vec2<u32>",
+        VertexFormat::Uint16x4 => "vec4<u32>",
+        VertexFormat::Sint16x2 => "vec2<i32>",
+        VertexFormat::Sint16x4 => "vec4<i32>",
+
+        // 其他格式
+        _ => "f32", // 默认回退为 f32，实际使用中应该避免
+
+    }
+}

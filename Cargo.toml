@@ -1,0 +1,36 @@
+[package]
+name = "three"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# 窗口管理
+winit = "0.30"
+wgpu = "28.0.0"
+
+bytemuck = { version = "1.24", features = ["derive"]}
+glam = { version = "0.30" , features = ["bytemuck"] }
+thunderdome = "0.6"
+
+pollster = "0.4" 
+# 日志处理
+env_logger = "0.11"
+log = "0.4"
+anyhow = "1.0"
+uuid = { version = "1.19.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
+
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+console_error_panic_hook = "0.1.6"
+console_log = "1.0"
+wgpu = { version = "28.0", features = ["webgl"]}
+wasm-bindgen = "0.2"
+wasm-bindgen-futures = "0.4.56"
+web-sys = { version = "0.3.83", features = [
+    "Document",
+    "Window",
+    "Element",
+]}
