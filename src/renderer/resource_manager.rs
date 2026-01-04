@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 use wgpu::util::DeviceExt;
@@ -184,11 +184,22 @@ impl ResourceManager {
 
     /// 检查几何体引用的所有 Buffer 是否需要上传新数据
     fn check_geometry_buffers_updates(&mut self, geometry: &Geometry) {
+        let mut checked_ids = HashSet::new();
+
         for attr in geometry.attributes.values() {
-            self.upload_buffer_if_needed(&attr.buffer);
+            // 快速读取 ID，用于去重判断
+            let id = attr.buffer.read().unwrap().id;
+
+            // insert 返回 true 表示该 ID 之前未存在，需要检查更新
+            if checked_ids.insert(id) {
+                self.upload_buffer_if_needed(&attr.buffer);
+            }
         }
         if let Some(indices) = &geometry.index_attribute {
-            self.upload_buffer_if_needed(&indices.buffer);
+            let id = indices.buffer.read().unwrap().id;
+            if checked_ids.insert(id) {
+                self.upload_buffer_if_needed(&indices.buffer);
+            }
         }
     }
 
@@ -203,11 +214,35 @@ impl ResourceManager {
         usage: wgpu::BufferUsages
     ) -> wgpu::Buffer {
         let cpu_buf = buffer_arc.read().unwrap();
+        let buf_id = cpu_buf.id;
         
         // 1. 检查缓存
         if let Some(gpu_buf) = self.buffers.get_mut(&cpu_buf.id) {
+            // 检查 Usage 是否包含请求的 usage
+            let current_usage = gpu_buf.buffer.usage();
+            if !current_usage.contains(usage) {
+                // 如果旧 Buffer 缺少必要的 usage（比如原本是 VERTEX，现在需要 INDEX）
+                // 我们必须销毁重建一个拥有合并 usage 的新 Buffer
+                let new_usage = current_usage | usage;
+                log::info!("Upgrading buffer usage for {:?} from {:?} to {:?}", buf_id, current_usage, new_usage);
+                drop(cpu_buf); // 释放锁
+                self.create_new_buffer(buffer_arc, new_usage);
+                return self.buffers.get(&buf_id).unwrap().buffer.clone();
+            }
             // 如果版本旧了，更新
             if cpu_buf.version > gpu_buf.version { 
+                // 如果数据变大，write_buffer 会崩溃，必须重建
+                if (cpu_buf.data.len() as u64) > gpu_buf.size {
+                    log::warn!("Buffer {:?} resized ({} -> {}), recreating...", buf_id, gpu_buf.size, cpu_buf.data.len());
+                    
+                    let reuse_usage = current_usage; // 保持原有 usage
+                    drop(cpu_buf);
+
+                    self.create_new_buffer(buffer_arc, reuse_usage);
+                    return self.buffers.get(&buf_id).unwrap().buffer.clone();
+                }
+
+                // 正常更新
                 self.queue.write_buffer(&gpu_buf.buffer, 0, &cpu_buf.data);
                 // 更新版本号
                 gpu_buf.version = cpu_buf.version;
@@ -215,20 +250,12 @@ impl ResourceManager {
             return gpu_buf.buffer.clone();
         }
 
-        // 2. 创建新 Buffer
-        let wgpu_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some(&format!("Buffer {:?}", cpu_buf.id)),
-            contents: &cpu_buf.data, // 假设 GeometryBuffer 有 data: Vec<u8>
-            usage: usage,
-        });
+        // 2. 如果不存在，创建新 Buffer
+        drop(cpu_buf); // 释放锁
+        self.create_new_buffer(buffer_arc, usage);
 
-        self.buffers.insert(cpu_buf.id, GPUBuffer {
-            buffer: wgpu_buffer.clone(),
-            size: cpu_buf.data.len() as u64,
-            version: cpu_buf.version,
-        });
+        self.buffers.get(&buf_id).unwrap().buffer.clone()
 
-        wgpu_buffer
     }
 
 

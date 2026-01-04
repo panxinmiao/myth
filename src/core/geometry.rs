@@ -19,6 +19,11 @@ pub struct GeometryBuffer {
 impl GeometryBuffer {
     /// 创建一个新的 Buffer
     pub fn new<T: bytemuck::Pod>(data: &[T], stride: u64) -> Self {
+
+        if stride % 4 != 0 {
+            log::warn!("GeometryBuffer created with stride {} (not a multiple of 4). This may cause WGPU validation errors.", stride);
+        }
+
         Self {
             id: Uuid::new_v4(),
             data: bytemuck::cast_slice(data).to_vec(),
