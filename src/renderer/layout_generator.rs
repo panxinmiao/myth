@@ -9,6 +9,7 @@ pub struct OwnedVertexBufferLayout {
     pub array_stride: u64,
     pub step_mode: wgpu::VertexStepMode,
     pub attributes: Vec<wgpu::VertexAttribute>,
+    pub buffer: std::sync::Arc<std::sync::RwLock<crate::core::geometry::GeometryBuffer>>, // 持有底层 Buffer 的引用
 }
 
 impl OwnedVertexBufferLayout {
@@ -93,6 +94,7 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedLayout {
             array_stride: stride,
             step_mode,
             attributes: wgpu_attributes,
+            buffer: first_attr.buffer.clone(),
         });
     }
 

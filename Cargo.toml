@@ -11,7 +11,8 @@ crate-type = ["cdylib", "rlib"]
 winit = "0.30"
 wgpu = "28.0.0"
 
-bytemuck = { version = "1.24", features = ["derive"]}
+bytemuck = { version = "1.24", features = ["derive", "min_const_generics"]}
+bitflags = "2.4"
 glam = { version = "0.30" , features = ["bytemuck"] }
 thunderdome = "0.6"
 

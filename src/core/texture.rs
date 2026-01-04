@@ -11,7 +11,7 @@ pub struct TextureSource {
     /// 原始二进制数据
     /// 为了兼容性，这里假设数据是紧凑排列的：
     /// Layer0[Mip0, Mip1...] -> Layer1[Mip0, Mip1...]
-    pub data: Vec<u8>,
+    pub data: Option<Vec<u8>>,
 
     pub width: u32,
     pub height: u32,
@@ -138,7 +138,7 @@ pub struct Texture {
 
 impl Texture {
 /// 创建标准 2D 纹理
-    pub fn new_2d(name: &str, width: u32, height: u32, data: Vec<u8>, format: TextureFormat) -> Self {
+    pub fn new_2d(name: &str, width: u32, height: u32, data: Option<Vec<u8>>, format: TextureFormat) -> Self {
         Self {
             id: Uuid::new_v4(),
             name: name.to_string(),
@@ -159,7 +159,7 @@ impl Texture {
 
     /// 创建 Cube Map (天空盒/环境贴图)
     /// 假设 data 包含了 6 个面的数据，顺序通常是: +X, -X, +Y, -Y, +Z, -Z
-    pub fn new_cube(name: &str, size: u32, data: Vec<u8>, format: TextureFormat) -> Self {
+    pub fn new_cube(name: &str, size: u32, data: Option<Vec<u8>>, format: TextureFormat) -> Self {
         Self {
             id: Uuid::new_v4(),
             name: name.to_string(),
@@ -185,6 +185,10 @@ impl Texture {
 
     /// 辅助：创建纯色纹理 (1x1)
     pub fn create_solid_color(name: &str, color: [u8; 4]) -> Self {
-        Self::new_2d(name, 1, 1, color.to_vec(), wgpu::TextureFormat::Rgba8UnormSrgb)
+        Self::new_2d(name, 1, 1, Some(color.to_vec()), wgpu::TextureFormat::Rgba8UnormSrgb)
+    }
+
+    pub fn needs_update(&mut self) {
+        self.version = self.version.wrapping_add(1);
     }
 }

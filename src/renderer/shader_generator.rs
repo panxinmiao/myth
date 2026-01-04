@@ -1,183 +1,88 @@
-use std::collections::HashMap;
-use wgpu::ShaderStages;
-use crate::core::material::{Material, MaterialValue};
-use super::uniforms::{MeshBasicUniforms, MeshStandardUniforms};
+use crate::core::material::{Material, MaterialFeatures};
 
-#[derive(Debug, Clone)]
-pub struct MaterialShaderInfo {
-    pub source_template: String, // e.g. "pbr.wgsl"
-    pub shader_hash: String,     // e.g. "MeshStandard_USE_MAP"
-    pub layout_entries: Vec<wgpu::BindGroupLayoutEntry>,
-    pub wgsl_code: String,       // Struct definitions & Binding declarations
-    pub defines: Vec<String>,    // Macros
-    pub texture_bindings: HashMap<String, u32>,
-    pub sampler_bindings: HashMap<String, u32>,
+// 定义纹理的元数据结构
+struct TextureDef {
+    feature: MaterialFeatures, // 对应的特性开关
+    name: &'static str,        // Shader 中的变量后缀 (如 "map" -> t_map, s_map)
 }
 
-pub fn generate_material_layout(material: &Material) -> MaterialShaderInfo {
-    match material.type_name.as_str() {
-        "MeshStandard" => generate_standard(material),
-        _ => generate_basic(material),
-    }
-}
+// === 核心配置表 ===
+// 这里的顺序非常重要！它决定了 BindGroup 中的绑定顺序。
+// 任何通过 features 开启的纹理，都会按照这个顺序依次分配 binding slot。
+const TEXTURE_DEFINITIONS: &[TextureDef] = &[
+    TextureDef { feature: MaterialFeatures::USE_MAP,           name: "map" },
+    TextureDef { feature: MaterialFeatures::USE_NORMAL_MAP,    name: "normal" },
+    TextureDef { feature: MaterialFeatures::USE_ROUGHNESS_MAP, name: "roughness" },
+    TextureDef { feature: MaterialFeatures::USE_EMISSIVE_MAP,  name: "emissive" },
+    // 未来添加新贴图只需在这里加一行，例如:
+    // TextureDef { feature: MaterialFeatures::USE_AO_MAP, name: "ao" },
+];
 
-// === Generator Logic ===
+pub struct ShaderGenerator;
 
-fn generate_standard(material: &Material) -> MaterialShaderInfo {
-    let mut ctx = GeneratorContext::new("pbr.wgsl", "MeshStandard");
-    
-    // 1. Uniforms (Auto-generated code from Rust struct)
-    let uniform_code = MeshStandardUniforms::wgsl_struct_code("MaterialUniforms");
-    ctx.add_uniform_binding(&uniform_code);
+impl ShaderGenerator {
+    pub fn generate_shader(material: &Material, base_shader_source: &str) -> String {
+        let mut final_code = String::new();
 
-    // 2. Textures
-    // 辅助闭包：检查属性并添加
-    let mut check_add = |key: &str, define: &str| {
-        if let Some(MaterialValue::Texture(tex_ref)) = material.properties.get(key) {
-            let texture = tex_ref.read().unwrap();
-            // 将 Texture 传给 add_texture
-            ctx.add_texture(key, define, &texture); 
-        }
-    };
+        // 1. 注入常量定义 (模拟 #ifdef)
+        // WGPU 编译器会自动优化掉 if(false) 的代码块
+        let features = material.features();
+        final_code.push_str(&Self::generate_feature_flags(features));
 
-    check_add("map", "USE_MAP");
-    check_add("normalMap", "USE_NORMAL_MAP");
-    check_add("roughnessMap", "USE_ROUGHNESS_MAP");
-    check_add("metalnessMap", "USE_METALNESS_MAP");
-    check_add("emissiveMap", "USE_EMISSIVE_MAP");
-    check_add("occlusionMap", "USE_AOMAP");
-    
-    // 如果有 envMap (环境贴图)，这会自动识别为 Cube Texture！
-    check_add("envMap", "USE_ENV_MAP"); 
+        // 2. 注入 Uniform 结构体定义 (来自 Material 的单一事实来源)
+        final_code.push_str(material.wgsl_struct_def());
+        final_code.push('\n');
 
-    ctx.build()
-}
+        // 3. 注入 BindGroup 定义
+        // Group 1 Binding 0 是固定的 Material Uniform
+        final_code.push_str(r#"
+            @group(1) @binding(0) var<uniform> material: MaterialUniforms;
+        "#);
 
-fn generate_basic(material: &Material) -> MaterialShaderInfo {
-    let mut ctx = GeneratorContext::new("basic.wgsl", material.type_name.as_str());
-    
-    let uniform_code = MeshBasicUniforms::wgsl_struct_code("MaterialUniforms");
-    ctx.add_uniform_binding(&uniform_code);
-
-    // 辅助闭包：检查属性并添加
-    let mut check_add = |key: &str, define: &str| {
-        if let Some(MaterialValue::Texture(tex_ref)) = material.properties.get(key) {
-            let texture = tex_ref.read().unwrap();
-            // 将 Texture 传给 add_texture
-            ctx.add_texture(key, define, &texture); 
-        }
-    };
-
-    check_add("map", "USE_MAP");
-
-    ctx.build()
-}
-
-// 根据 view_dimension 获取 WGSL 类型
-fn get_wgsl_texture_type(dim: wgpu::TextureViewDimension) -> &'static str {
-    match dim {
-        wgpu::TextureViewDimension::D1 => "texture_1d<f32>",
-        wgpu::TextureViewDimension::D2 => "texture_2d<f32>",
-        wgpu::TextureViewDimension::D2Array => "texture_2d_array<f32>",
-        wgpu::TextureViewDimension::Cube => "texture_cube<f32>",
-        wgpu::TextureViewDimension::CubeArray => "texture_cube_array<f32>",
-        wgpu::TextureViewDimension::D3 => "texture_3d<f32>",
-    }
-}
-
-// === Helper Context ===
-
-struct GeneratorContext {
-    template: String,
-    hash_base: String,
-    entries: Vec<wgpu::BindGroupLayoutEntry>,
-    wgsl_lines: Vec<String>,
-    defines: Vec<String>,
-    tex_bindings: HashMap<String, u32>,
-    samp_bindings: HashMap<String, u32>,
-    current_binding: u32,
-}
-
-impl GeneratorContext {
-    fn new(template: &str, hash_base: &str) -> Self {
-        Self {
-            template: template.into(),
-            hash_base: hash_base.into(),
-            entries: Vec::new(),
-            wgsl_lines: Vec::new(),
-            defines: Vec::new(),
-            tex_bindings: HashMap::new(),
-            samp_bindings: HashMap::new(),
-            current_binding: 0,
-        }
-    }
-
-    fn add_uniform_binding(&mut self, struct_code: &str) {
-        self.entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 0,
-            visibility: ShaderStages::VERTEX | ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
-
-        self.wgsl_lines.push(struct_code.to_string());
-        self.wgsl_lines.push("@group(1) @binding(0) var<uniform> material: MaterialUniforms;".to_string());
-        self.current_binding = 1;
-    }
-
-    fn add_texture(&mut self, name: &str, define: &str, texture: &crate::core::texture::Texture) {
-        let tex_bind = self.current_binding;
-        let samp_bind = self.current_binding + 1;
-        self.current_binding += 2;
-
-        self.defines.push(define.into());
+        // 4. 注入纹理 Bindings
+        // 注意：这里的 binding 索引必须与 ResourceManager 创建 BindGroup 的顺序一致
+        let mut binding_idx = 1;
         
-        // Texture Entry
-        self.entries.push(wgpu::BindGroupLayoutEntry {
-            binding: tex_bind,
-            visibility: ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                multisampled: false,
-                view_dimension: texture.view_dimension,
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            },
-            count: None,
-        });
+        for def in TEXTURE_DEFINITIONS {
+            if features.contains(def.feature) {
+                // 自动生成 t_xxx 和 s_xxx
+                final_code.push_str(&format!(
+                    r#"
+                    @group(1) @binding({}) var t_{}: texture_2d<f32>;
+                    @group(1) @binding({}) var s_{}: sampler;
+                    "#,
+                    binding_idx,     def.name, // e.g. binding(1) t_map
+                    binding_idx + 1, def.name  // e.g. binding(2) s_map
+                ));
+                
+                // 每次消耗 2 个槽位 (Texture + Sampler)
+                binding_idx += 2;
+            }
+        }
 
-        // Sampler Entry
-        self.entries.push(wgpu::BindGroupLayoutEntry {
-            binding: samp_bind,
-            visibility: ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            count: None,
-        });
+        // 5. 拼接基础 Shader 模板
+        final_code.push_str(base_shader_source);
 
-        // WGSL
-        let wgsl_type = get_wgsl_texture_type(texture.view_dimension);
-        self.wgsl_lines.push(format!("@group(1) @binding({}) var t_{}: {};", tex_bind, name, wgsl_type));
-        self.wgsl_lines.push(format!("@group(1) @binding({}) var s_{}: sampler;", samp_bind, name));
-        // Maps
-        self.tex_bindings.insert(name.into(), tex_bind);
-        self.samp_bindings.insert(name.into(), samp_bind);
+        final_code
     }
 
-    fn build(self) -> MaterialShaderInfo {
-        let mut defines = self.defines;
-        defines.sort();
-        let hash = format!("{}_{}", self.hash_base, defines.join("|"));
+    fn generate_feature_flags(features: MaterialFeatures) -> String {
+        let mut s = String::new();
+        // 同样遍历定义表，自动生成 const USE_XXX = true/false;
+        // 注意：这里我们需要把 bitflags 的名字转为字符串，或者手动映射
         
-        MaterialShaderInfo {
-            source_template: self.template,
-            shader_hash: hash,
-            layout_entries: self.entries,
-            wgsl_code: self.wgsl_lines.join("\n"),
-            defines,
-            texture_bindings: self.tex_bindings,
-            sampler_bindings: self.samp_bindings,
-        }
+        // 由于 Rust 无法简单地从 feature 变量反射出 "USE_MAP" 字符串，
+        // 这里我们可以稍微硬编码，或者给 TextureDef 加一个 macro_name 字段。
+        // 为了简单，我们这里手动写几个主要的，或者扩展 TextureDef。
+        
+        // 改进：为了彻底自动化，建议给 TextureDef 加一个 macro_name 字段。
+        // 但目前为了不改动太大，我们还是用显式判断，或者用简单的字符串转换规则。
+        
+        s.push_str(&format!("const USE_MAP: bool = {};\n", features.contains(MaterialFeatures::USE_MAP)));
+        s.push_str(&format!("const USE_NORMAL_MAP: bool = {};\n", features.contains(MaterialFeatures::USE_NORMAL_MAP)));
+        s.push_str(&format!("const USE_ROUGHNESS_MAP: bool = {};\n", features.contains(MaterialFeatures::USE_ROUGHNESS_MAP)));
+        s.push_str(&format!("const USE_EMISSIVE_MAP: bool = {};\n", features.contains(MaterialFeatures::USE_EMISSIVE_MAP)));
+        
+        s
     }
 }
