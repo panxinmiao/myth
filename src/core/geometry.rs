@@ -3,6 +3,7 @@ use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode};
 use glam::Vec3;
+use core::ops::Range;
 
 // ============================================================================
 // 1. 底层数据存储：GeometryBuffer
@@ -134,7 +135,7 @@ pub struct Geometry {
 
     // 渲染配置
     pub topology: PrimitiveTopology,
-    pub draw_range: (u32, u32), // start, count
+    pub draw_range: Range<u32>,
 
     // 空间数据 (用于剔除)
     pub bounding_box: Option<BoundingBox>,
@@ -151,7 +152,7 @@ impl Geometry {
             morph_attributes: HashMap::new(),
             morph_target_names: Vec::new(),
             topology: PrimitiveTopology::TriangleList,
-            draw_range: (0, u32::MAX),
+            draw_range: 0..u32::MAX,
             bounding_box: None,
             bounding_sphere: None,
         }

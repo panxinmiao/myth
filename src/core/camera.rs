@@ -64,14 +64,15 @@ impl Camera {
 
     /// 获取视图矩阵 (V)
     /// View Matrix 本质上是相机 World Matrix 的逆矩阵
-    pub fn get_view_matrix(&self, scene: &Scene) -> Mat4 {
+    pub fn get_view_matrix(&self, scene: Option<&Scene>) -> Mat4 {
         let world_matrix = if let Some(id) = self.node_id {
+
             // A. Attached Mode: 从 Scene Graph 获取矩阵
-            if let Some(node) = scene.get_node(id) {
+            if let Some(node) = scene.and_then(|s| s.get_node(id)) {
                 *node.world_matrix()
             } else {
-                // 如果 ID 无效 (例如节点被删了)，回退到 Identity 或内部 Transform
-                Affine3A::IDENTITY 
+                // 如果 ID 无效 (例如节点被删了)，回退到内部 Transform
+                self.transform
             }
         } else {
             // B. Detached Mode: 使用自身管理的矩阵
@@ -83,8 +84,12 @@ impl Camera {
     }
 
     /// 获取 View-Projection 矩阵 (VP)
-    pub fn get_view_projection_matrix(&self, scene: &Scene) -> Mat4 {
+    pub fn get_view_projection_matrix(&self, scene: Option<&Scene>) -> Mat4 {
         self.get_projection_matrix() * self.get_view_matrix(scene)
+    }
+
+    pub fn get_view_projection_matrix_inverse(&self, scene: Option<&Scene>) -> Mat4 {
+        self.get_view_projection_matrix(scene).inverse()
     }
 
 

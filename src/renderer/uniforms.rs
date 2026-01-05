@@ -30,6 +30,16 @@ impl Mat3A {
             ],
         }
     }
+
+    pub fn from_mat4(m: Mat4) -> Self {
+        Self {
+            cols: [
+                Vec4::new(m.x_axis.x, m.x_axis.y, m.x_axis.z, 0.0),
+                Vec4::new(m.y_axis.x, m.y_axis.y, m.y_axis.z, 0.0),
+                Vec4::new(m.z_axis.x, m.z_axis.y, m.z_axis.z, 0.0),
+            ],
+        }
+    }
 }
 
 // ============================================================================
@@ -60,91 +70,113 @@ impl WgslType for Padf32 { fn wgsl_type_name() -> &'static str { "f32" } }
 pub struct PadVec3(pub Vec3);
 impl WgslType for PadVec3 { fn wgsl_type_name() -> &'static str { "vec3<f32>" } }
 
+
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
+pub struct GlobalUniforms {
+    pub view_projection: Mat4,
+    pub view_projection_inverse: Mat4,
+    pub view_matrix: Mat4,
+}
+
+
+#[repr(C, align(256))] // 强制每个实例占用 256 字节
+#[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
+pub struct DynamicModelUniforms {
+    pub model_matrix: Mat4,       //64
+    pub model_matrix_inverse: Mat4,  //64
+    pub normal_matrix: Mat3A,   //48
+
+    pub _padding: [f32; 20], // 填充至 256 bytes
+}
+
+
 // ============================================================================
 // 2. 宏定义 (Single Source of Truth)
 // ============================================================================
 
-/// 定义 Uniform 结构体，并自动生成 Rust Struct 和 WGSL 代码生成器
-macro_rules! define_uniform_struct {
-    (
-        $(#[$meta:meta])* struct $name:ident {
-            $(
-                $field_name:ident : $field_type:ty
-            ),* $(,)?
-        }
-    ) => {
-        // 1. 生成 Rust 结构体
-        #[repr(C)]
-        #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-        $(#[$meta])*
-        pub struct $name {
-            $(
-                pub $field_name : $field_type,
-            )*
-        }
 
-        // 2. 生成获取 WGSL 代码的方法
-        impl $name {
-            pub fn wgsl_struct_code(struct_name: &str) -> String {
-                let mut code = format!("struct {} {{\n", struct_name);
-                $(
-                    code.push_str(&format!(
-                        "    {}: {},\n", 
-                        stringify!($field_name), 
-                        <$field_type as WgslType>::wgsl_type_name()
-                    ));
-                )*
-                code.push_str("};");
-                code
-            }
-        }
-    };
-}
+// macro_rules! define_uniform_struct {
+//     (
+//         $(#[$meta:meta])* struct $name:ident {
+//             $(
+//                 $field_name:ident : $field_type:ty
+//             ),* $(,)?
+//         }
+//     ) => {
+//         // 1. 生成 Rust 结构体
+//         #[repr(C)]
+//         #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
+//         $(#[$meta])*
+//         pub struct $name {
+//             $(
+//                 pub $field_name : $field_type,
+//             )*
+//         }
 
-// ============================================================================
-// 3. 材质 Uniform 定义 (在此处修改，两端自动同步)
-// ============================================================================
+//         // 2. 生成获取 WGSL 代码的方法
+//         impl $name {
+//             pub fn wgsl_struct_code(struct_name: &str) -> String {
+//                 let mut code = format!("struct {} {{\n", struct_name);
+//                 $(
+//                     code.push_str(&format!(
+//                         "    {}: {},\n", 
+//                         stringify!($field_name), 
+//                         <$field_type as WgslType>::wgsl_type_name()
+//                     ));
+//                 )*
+//                 code.push_str("};");
+//                 code
+//             }
+//         }
+//     };
+// }
 
-// Standard PBR Material
-// 必须严格遵守 std140 对齐规则
-define_uniform_struct!(
-    struct MeshStandardUniforms {
-        color: Vec4,           // 16
-        emissive: Vec3,        // 12
-        occlusion_strength: f32, // 4 (12+4=16)
-        normal_scale: Vec2,    // 8
-        roughness: f32,        // 4  
-        metalness: f32,        // 4
+// // ============================================================================
+// // 3. 材质 Uniform 定义 (在此处修改，两端自动同步)
+// // ============================================================================
 
-        // 使用优化后的 Mat3A (48 bytes)
-        map_transform: Mat3A,         
-        normal_map_transform: Mat3A,   
-        roughness_map_transform: Mat3A,
-        metalness_map_transform: Mat3A,
-        emissive_map_transform: Mat3A, 
-        occlusion_map_transform: Mat3A,
-    }
-);
+// // Standard PBR Material
+// // 必须严格遵守 std140 对齐规则
+// define_uniform_struct!(
+//     struct MeshStandardUniforms {
+//         color: Vec4,           // 16
+//         emissive: Vec3,        // 12
+//         occlusion_strength: f32, // 4 (12+4=16)
+//         normal_scale: Vec2,    // 8
+//         roughness: f32,        // 4  
+//         metalness: f32,        // 4
 
-// Basic Material
-define_uniform_struct!(
-    struct MeshBasicUniforms {
-        color: Vec4,           // 16
-        opacity: f32,          // 4
-        _padding: PadVec3,      // 12 (4+12=16)
+//         // 使用优化后的 Mat3A (48 bytes)
+//         map_transform: Mat3A,         
+//         normal_map_transform: Mat3A,   
+//         roughness_map_transform: Mat3A,
+//         metalness_map_transform: Mat3A,
+//         emissive_map_transform: Mat3A, 
+//         occlusion_map_transform: Mat3A,
+//     }
+// );
 
-        map_transform: Mat3A,
-    }
-);
+// // Basic Material
+// define_uniform_struct!(
+//     struct MeshBasicUniforms {
+//         color: Vec4,           // 16
+//         opacity: f32,          // 4
+//         _padding: PadVec3,      // 12 (4+12=16)
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::mem;
+//         map_transform: Mat3A,
+//     }
+// );
 
-    #[test]
-    fn test_alignment() {
-        assert_eq!(mem::size_of::<MeshStandardUniforms>() % 16, 0, "Standard Uniforms not aligned to 16 bytes");
-        assert_eq!(mem::size_of::<MeshBasicUniforms>() % 16, 0, "Basic Uniforms not aligned to 16 bytes");
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use std::mem;
+
+//     #[test]
+//     fn test_alignment() {
+//         assert_eq!(mem::size_of::<MeshStandardUniforms>() % 16, 0, "Standard Uniforms not aligned to 16 bytes");
+//         assert_eq!(mem::size_of::<MeshBasicUniforms>() % 16, 0, "Basic Uniforms not aligned to 16 bytes");
+//     }
+// }

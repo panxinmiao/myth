@@ -11,8 +11,8 @@ pub struct Mesh {
     pub name: String,
     
     // === 场景图节点 ===
-    // 这是一个弱引用 (Index)，具体的 Node 数据在 Scene.arena 里
-    pub node_id: Index,
+    // 这是一个弱引用 (Index)，具体的 Node 数据在 Scene.nodes 里
+    pub node_id: Option<Index>,
     
     // === 资源引用 (共享所有权) ===
     // 使用 RwLock 允许我们在 Mesh 存在时修改 Geometry (比如做变形动画)
@@ -30,7 +30,7 @@ pub struct Mesh {
 
 impl Mesh {
     pub fn new(
-        node_id: Index, 
+        node_id: Option<Index>, 
         geometry: Arc<RwLock<Geometry>>, 
         material: Arc<RwLock<Material>>
     ) -> Self {

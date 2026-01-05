@@ -2,11 +2,21 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 use wgpu::util::DeviceExt;
+use wgpu::PrimitiveTopology;
+use core::ops::Range;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::geometry::{Geometry, GeometryBuffer};
 use super::layout_generator::{self, GeneratedLayout};
 use crate::core::material::{Material, MaterialFeatures};
 use crate::core::texture::Texture;
+
+// 全局资源 ID 生成器
+static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
+
+pub fn generate_resource_id() -> u64 {
+    NEXT_RESOURCE_ID.fetch_add(1, Ordering::Relaxed)
+}
 
 // ============================================================================
 // GPU 资源包装器 (包含状态追踪)
@@ -24,15 +34,18 @@ pub struct GPUGeometry {
     
     /// 实际的 Vertex Buffer 引用列表 (按 Slot 顺序)
     pub vertex_buffers: Vec<wgpu::Buffer>,
+    pub vertex_buffer_ids: Vec<u64>, //对应每个 Buffer 的物理 ID
     
     /// Index Buffer (Buffer, Format, Count)
-    pub index_buffer: Option<(wgpu::Buffer, wgpu::IndexFormat, u32)>,
+    pub index_buffer: Option<(wgpu::Buffer, wgpu::IndexFormat, u32, u64)>,
+
+    pub topology: PrimitiveTopology, // 几何体的拓扑结构
     
     // 绘图参数
-    pub vertex_count: u32,
-    pub instance_count: u32, 
+    pub draw_range: Range<u32>,
+    pub instance_range: Range<u32>, 
 
-    pub version: u64,
+    pub version: u64,     // 上次同步的 Geometry version
 }
 
 pub struct GPUTexture {
@@ -44,10 +57,11 @@ pub struct GPUTexture {
 pub struct GPUMaterial {
     pub uniform_buffer: wgpu::Buffer,
     pub bind_group: wgpu::BindGroup,
+    pub bind_group_id: u64, //物理资源 ID (用于去重)
     pub layout: Arc<wgpu::BindGroupLayout>,
 
     // --- 状态追踪 ---
-    pub last_sync_version: u64,           // 上次同步的 Material version
+    pub version: u64,           // 上次同步的 Material version
     pub active_features: MaterialFeatures,// 当前 BindGroup 对应的特性
     pub active_texture_ids: Vec<Option<Uuid>>, // 当前 BindGroup 绑定的纹理 ID 列表
 }
@@ -60,7 +74,7 @@ pub struct ResourceManager {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
 
-    buffers: HashMap<Uuid, GPUBuffer>,
+    buffers: HashMap<Uuid, (GPUBuffer, u64)>, // 包含物理资源 ID
     geometries: HashMap<Uuid, GPUGeometry>,
 
     // 资源缓存
@@ -91,11 +105,12 @@ impl ResourceManager {
     }
 
 
-    pub fn get_or_update_geometry(&mut self, geometry: &Geometry) -> &GPUGeometry {
-        // 1. 检查是否需要重新构建 GPUGeometry 结构
-        // 如果 Geometry 本身 version 变了 (比如加减了属性)，需要重建布局
-        // 如果 Geometry 不存在，也需要创建
-        let needs_rebuild = if let Some(gpu_geo) = self.geometries.get(&geometry.id) {
+    // === 1. Geometry ===
+    // 准备阶段：只负责更新，不返回引用
+    pub fn prepare_geometry(&mut self, geometry: &Geometry) {
+        let geometry_id = geometry.id; // Copy ID
+        
+        let needs_rebuild = if let Some(gpu_geo) = self.geometries.get(&geometry_id) {
             geometry.version > gpu_geo.version
         } else {
             true
@@ -107,15 +122,20 @@ impl ResourceManager {
         } else {
             // 2. 即使 Geometry 结构没变，Buffer 的内容可能变了 (数据热更)
             // 我们需要快速遍历当前 GPUGeometry 持有的 Buffers 进行检查
-            // 但为了简化逻辑且保证健壮性，我们可以复用 create_gpu_geometry 中的
-            // update_buffer_data 逻辑。
-            // 
-            // 优化点：如果想极致性能，可以在这里只遍历 geometry.attributes
-            // 调用 self.upload_buffer_if_needed(...)
             self.check_geometry_buffers_updates(geometry);
         }
 
-        self.geometries.get(&geometry.id).unwrap()
+        let gpu_geo = self.geometries.get_mut(&geometry.id).unwrap();
+
+        // 更新 Draw Range 和 Topology (待优化：理论上不应该频繁变更)
+        gpu_geo.draw_range = geometry.draw_range.clone();
+        gpu_geo.topology = geometry.topology;
+    }
+
+
+    // 渲染阶段：只读获取
+    pub fn get_geometry(&self, geometry_id: uuid::Uuid) -> Option<&GPUGeometry> {
+        self.geometries.get(&geometry_id)
     }
 
     fn create_gpu_geometry(&mut self, geometry: &Geometry) {
@@ -125,17 +145,19 @@ impl ResourceManager {
 
         // 2. 第二步：根据 Layout 收集 Buffers
         let mut vertex_buffers = Vec::new();
+        let mut vertex_buffer_ids = Vec::new(); 
         
         // layout_info.buffers 是排好序的 Slot 描述列表
         for layout_desc in &layout_info.buffers {
             let buffer_arc = &layout_desc.buffer;
-            let wgpu_buf = self.get_or_create_buffer(buffer_arc, wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST);
+            let (wgpu_buf, id) = self.get_or_create_buffer(buffer_arc, wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST);
             vertex_buffers.push(wgpu_buf);
+            vertex_buffer_ids.push(id);
         }
 
         // 3. 处理 Index Buffer (同前)
         let index_buffer = if let Some(indices) = &geometry.index_attribute {
-             let buffer = self.get_or_create_buffer(&indices.buffer, wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST);
+             let (buffer, id) = self.get_or_create_buffer(&indices.buffer, wgpu::BufferUsages::INDEX | wgpu::BufferUsages::COPY_DST);
              let format = match indices.format {
                 wgpu::VertexFormat::Uint16 => wgpu::IndexFormat::Uint16,
                 wgpu::VertexFormat::Uint32 => wgpu::IndexFormat::Uint32,
@@ -145,36 +167,40 @@ impl ResourceManager {
                 }
             };
             // 假设 format 是 Uint32
-            Some((buffer, format, indices.count))
+            Some((buffer, format, indices.count, id))
         } else {
             None
         };
 
+
         // 4. 计算 Vertex Count
         // 逻辑：如果没有 Index Buffer，DrawCount 取所有 Vertex StepMode 属性中最小的 count
         // 忽略 Instance StepMode 的属性
-        let vertex_count = if geometry.index_attribute.is_some() {
-            0 // 使用 DrawIndexed，vertex_count 实际上不决定绘制次数
-        } else {
-             // 找到所有 Per-Vertex 的属性
-            let min_count = geometry.attributes.values()
-                .filter(|a| a.step_mode == wgpu::VertexStepMode::Vertex)
-                .map(|a| a.count)
-                .min()
-                .unwrap_or(0);
+        // let vertex_count = if geometry.index_attribute.is_some() {
+        //     0 // 使用 DrawIndexed，vertex_count 实际上不决定绘制次数
+        // } else {
+        //      // 找到所有 Per-Vertex 的属性
+        //     let min_count = geometry.attributes.values()
+        //         .filter(|a| a.step_mode == wgpu::VertexStepMode::Vertex)
+        //         .map(|a| a.count)
+        //         .min()
+        //         .unwrap_or(0);
             
-            // 应用 draw_range
-            let range_count = geometry.draw_range.1;
-            min_count.min(range_count)
-        };
+        //     // 应用 draw_range
+        //     let range_count = geometry.draw_range.1;
+        //     min_count.min(range_count)
+        // };
+
 
         // 4. 组装 GPUGeometry
         let gpu_geo = GPUGeometry {
             layout_info,
             vertex_buffers, // 这里已经是按 Slot 排好序的了！
+            vertex_buffer_ids,
             index_buffer,
-            vertex_count,
-            instance_count: 1, // 初始默认为 1
+            topology: geometry.topology,
+            draw_range: geometry.draw_range.clone(),
+            instance_range: 0..1, // 默认单实例
             version: geometry.version,
         };
 
@@ -212,12 +238,12 @@ impl ResourceManager {
         &mut self, 
         buffer_arc: &Arc<RwLock<GeometryBuffer>>,
         usage: wgpu::BufferUsages
-    ) -> wgpu::Buffer {
+    ) -> (wgpu::Buffer, u64) {
         let cpu_buf = buffer_arc.read().unwrap();
         let buf_id = cpu_buf.id;
         
         // 1. 检查缓存
-        if let Some(gpu_buf) = self.buffers.get_mut(&cpu_buf.id) {
+        if let Some((gpu_buf, id)) = self.buffers.get_mut(&buf_id) {
             // 检查 Usage 是否包含请求的 usage
             let current_usage = gpu_buf.buffer.usage();
             if !current_usage.contains(usage) {
@@ -226,8 +252,10 @@ impl ResourceManager {
                 let new_usage = current_usage | usage;
                 log::info!("Upgrading buffer usage for {:?} from {:?} to {:?}", buf_id, current_usage, new_usage);
                 drop(cpu_buf); // 释放锁
+
                 self.create_new_buffer(buffer_arc, new_usage);
-                return self.buffers.get(&buf_id).unwrap().buffer.clone();
+                let buf = self.buffers.get(&buf_id).unwrap();
+                return (buf.0.buffer.clone(), buf.1);
             }
             // 如果版本旧了，更新
             if cpu_buf.version > gpu_buf.version { 
@@ -239,7 +267,8 @@ impl ResourceManager {
                     drop(cpu_buf);
 
                     self.create_new_buffer(buffer_arc, reuse_usage);
-                    return self.buffers.get(&buf_id).unwrap().buffer.clone();
+                    let buf = self.buffers.get(&buf_id).unwrap();
+                    return (buf.0.buffer.clone(), buf.1);
                 }
 
                 // 正常更新
@@ -247,14 +276,15 @@ impl ResourceManager {
                 // 更新版本号
                 gpu_buf.version = cpu_buf.version;
              }
-            return gpu_buf.buffer.clone();
+            return (gpu_buf.buffer.clone(), *id);
         }
 
         // 2. 如果不存在，创建新 Buffer
         drop(cpu_buf); // 释放锁
         self.create_new_buffer(buffer_arc, usage);
-
-        self.buffers.get(&buf_id).unwrap().buffer.clone()
+        let buf = self.buffers.get(&buf_id).unwrap();
+         (buf.0.buffer.clone(), buf.1)
+        // self.buffers.get(&buf_id).unwrap().buffer.clone()
 
     }
 
@@ -272,12 +302,11 @@ impl ResourceManager {
         }
 
         // 情况 B: Buffer 存在 -> 检查版本
-        let gpu_buf = self.buffers.get_mut(&cpu_buf.id).unwrap();
+        let (gpu_buf, _) = self.buffers.get_mut(&cpu_buf.id).unwrap();
         
         if cpu_buf.version > gpu_buf.version {
             // 数据变了，上传！
-            // 注意：如果数据大小变大了，write_buffer 可能会崩溃
-            // 生产环境应该检查 size，如果变大则销毁重建
+            // 如果变大则销毁重建
             if (cpu_buf.data.len() as u64) > gpu_buf.size {
                 // 推荐实现：self.create_new_buffer(...) 覆盖旧的
                 drop(cpu_buf);
@@ -290,7 +319,7 @@ impl ResourceManager {
         }
     }
 
-    fn create_new_buffer(&mut self, buffer_ref: &Arc<RwLock<GeometryBuffer>>, usage: wgpu::BufferUsages) {
+    fn create_new_buffer(&mut self, buffer_ref: &Arc<RwLock<GeometryBuffer>>, usage: wgpu::BufferUsages){
         let cpu_buf = buffer_ref.read().unwrap();
         
         let wgpu_buffer = self.device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
@@ -299,34 +328,40 @@ impl ResourceManager {
             usage,
         });
 
-        self.buffers.insert(cpu_buf.id, GPUBuffer {
+        let id = generate_resource_id();
+        
+        self.buffers.insert(cpu_buf.id, (GPUBuffer {
             buffer: wgpu_buffer,
             size: cpu_buf.data.len() as u64,
             version: cpu_buf.version,
-        });
+        }, id));
     }
 
     // ========================================================================
-    // Material 处理 (生产级逻辑)
+    // Material 处理
     // ========================================================================
 
-    pub fn get_or_update_material(&mut self, material: &Material) -> &GPUMaterial {
+    // 准备阶段
+    pub fn prepare_material(&mut self, material: &Material) {
+        let id = material.id;
+
         // 1. 检查是否存在
-        if !self.materials.contains_key(&material.id) {
+        if !self.materials.contains_key(&id) {
+            // 不存在则创建并返回
             self.create_gpu_material(material);
+            return;
         }
 
-        let (last_sync_version, active_features, active_texture_ids) = {
+        // 2. 存在则检查是否需要更新 BindGroup 或 Buffer
+        let (gpu_mat_version, active_features, active_texture_ids) = {
             let gpu_mat = self.materials.get(&material.id).unwrap();
             (
-                gpu_mat.last_sync_version,
+                gpu_mat.version,
                 gpu_mat.active_features,
                 gpu_mat.active_texture_ids.clone(), 
             )
         };
 
-        // // 2. 获取可变引用进行检查
-        // let gpu_mat = self.materials.get_mut(&material.id).unwrap();
 
         // 3. 检查结构性变化 (Structural Change)
         // 结构变化包括：Feature 改变 (如开启/关闭贴图) OR 纹理引用 ID 改变 (如更换贴图)
@@ -345,11 +380,12 @@ impl ResourceManager {
         if needs_bind_group_rebuild {
             // 重建 BindGroup (耗时操作，仅在必要时执行)
             let layout = self.get_or_create_material_layout(current_features);
-            let bind_group = self.create_material_bind_group(material, &layout);
+            let (bind_group, bind_group_id) = self.create_material_bind_group(material, &layout);
             
             // 获取可变借用写入新状态 (需要 &mut self)
             let gpu_mat = self.materials.get_mut(&material.id).unwrap();
             gpu_mat.bind_group = bind_group;
+            gpu_mat.bind_group_id = bind_group_id;
             gpu_mat.layout = layout;
             gpu_mat.active_features = current_features;
             gpu_mat.active_texture_ids = current_texture_ids;
@@ -361,13 +397,16 @@ impl ResourceManager {
         // 只有当 Material 的版本号比 GPU 缓存的版本新时，才上传数据
         let gpu_mat = self.materials.get_mut(&material.id).unwrap();
 
-        if material.version > last_sync_version {
+        if material.version > gpu_mat_version {
             self.queue.write_buffer(&gpu_mat.uniform_buffer, 0, material.as_bytes());
-            gpu_mat.last_sync_version = material.version;
+            gpu_mat.version = material.version;
         }
+    }
 
-        // 返回引用
-        self.materials.get(&material.id).unwrap()
+
+    // 渲染阶段
+    pub fn get_material(&self, material_id: uuid::Uuid) -> Option<&GPUMaterial> {
+        self.materials.get(&material_id)
     }
 
     // ========================================================================
@@ -386,13 +425,14 @@ impl ResourceManager {
         });
 
         // 创建 BindGroup
-        let bind_group = self.create_material_bind_group(material, &layout);
+        let (bind_group, bind_group_id) = self.create_material_bind_group(material, &layout);
 
         let gpu_mat = GPUMaterial {
             uniform_buffer,
             bind_group,
+            bind_group_id,
             layout,
-            last_sync_version: material.version,
+            version: material.version,
             active_features: features,
             active_texture_ids: material.textures(),
         };
@@ -404,7 +444,7 @@ impl ResourceManager {
         &self, 
         material: &Material, 
         layout: &wgpu::BindGroupLayout
-    ) -> wgpu::BindGroup {
+    ) -> (wgpu::BindGroup, u64) {
         let uniform_buffer = &self.materials.get(&material.id).unwrap().uniform_buffer;
         
         let mut entries = Vec::new();
@@ -455,11 +495,13 @@ impl ResourceManager {
             }
         }
 
-        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Material BindGroup"),
             layout,
             entries: &entries,
-        })
+        });
+        let id = generate_resource_id();
+        (bind_group, id)
     }
 
     fn get_or_create_material_layout(&mut self, features: MaterialFeatures) -> Arc<wgpu::BindGroupLayout> {
