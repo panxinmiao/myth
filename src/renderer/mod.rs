@@ -7,6 +7,7 @@ mod pipeline;
 mod tracked_render_pass;
 
 use std::sync::Arc;
+use std::collections::HashSet;
 use wgpu::util::DeviceExt;
 
 use crate::core::scene::Scene;
@@ -206,13 +207,25 @@ impl Renderer {
 
 
         // 遍历场景收集 Mesh
-        // 假设 scene.nodes 是 public 的或者提供了遍历器
+        // 创建一个集合，用于记录本帧需要用到的纹理 ID
+        let mut active_texture_ids = HashSet::new();
 
         for (_id, node) in scene.nodes.iter() {
+
             if let Some(mesh_idx) = node.mesh {
                 if let Some(mesh) = scene.meshes.get(mesh_idx) {
                     // 提前检查可见性
                     if !node.visible || !mesh.visible { continue; }
+
+                    // TODO: 视锥体剔除 (Frustum Culling)
+
+                    let mat = mesh.material.read().unwrap();
+                    // 获取该材质用到的所有纹理 ID
+                    for tex_id_opt in mat.textures() {
+                        if let Some(tex_id) = tex_id_opt {
+                            active_texture_ids.insert(tex_id);
+                        }
+                    }
 
                     let model_matrix = node.world_matrix_as_mat4();
                     // let model_matrix_inverse = model_matrix.inverse();
@@ -241,6 +254,16 @@ impl Renderer {
         }
 
         if render_list.is_empty() { return; }
+
+        // 只上传收集到的纹理
+        for tex_id in active_texture_ids {
+            // 从 scene.textures 里找到数据
+            if let Some(tex_arc) = scene.textures.get(&tex_id) {
+                let texture = tex_arc.read().unwrap();
+                // 上传！
+                self.resource_manager.add_or_update_texture(&texture);
+            }
+}
 
         // =========================================================
         // 4. 排序 (Sort)

@@ -134,6 +134,8 @@ pub struct Texture {
     pub transform: TextureTransform,
     
     pub version: u64,
+
+    pub generation_id: u64,
 }
 
 impl Texture {
@@ -154,6 +156,7 @@ impl Texture {
             sampler: TextureSampler::default(),
             transform: TextureTransform::default(),
             version: 0,
+            generation_id: 0,
         }
     }
 
@@ -180,6 +183,7 @@ impl Texture {
             },
             transform: TextureTransform::default(),
             version: 0,
+            generation_id: 0,
         }
     }
 
@@ -190,5 +194,17 @@ impl Texture {
 
     pub fn needs_update(&mut self) {
         self.version = self.version.wrapping_add(1);
+    }
+
+    /// 改变尺寸 (结构性变更)
+    pub fn resize(&mut self, width: u32, height: u32) {
+        if self.source.width == width && self.source.height == height {
+            return;
+        }
+        self.source.width = width;
+        self.source.height = height;
+        // 结构变了，内容肯定也变了（或失效了）
+        self.generation_id = self.generation_id.wrapping_add(1);
+        self.version = self.version.wrapping_add(1); 
     }
 }

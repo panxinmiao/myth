@@ -51,7 +51,8 @@ pub struct GPUGeometry {
 pub struct GPUTexture {
     pub view: wgpu::TextureView,
     pub sampler: wgpu::Sampler,
-    pub version: u64, // 记录创建此 GPU 资源时对应的 CPU Texture 版本
+    pub version: u64,       // 上次同步的数据版本
+    pub generation_id: u64, // 上次同步的结构版本
 }
 
 pub struct GPUMaterial {
@@ -63,7 +64,11 @@ pub struct GPUMaterial {
     // --- 状态追踪 ---
     pub version: u64,           // 上次同步的 Material version
     pub active_features: MaterialFeatures,// 当前 BindGroup 对应的特性
-    pub active_texture_ids: Vec<Option<Uuid>>, // 当前 BindGroup 绑定的纹理 ID 列表
+    
+    // 列表顺序对应 Material::textures() 的顺序
+    // 元素: (Texture UUID, Texture Structure Version)
+    // 如果是 None (没贴图)，则记录为 None
+    pub bound_texture_signatures: Vec<Option<(Uuid, u64)>>,
 }
 
 // ============================================================================
@@ -353,54 +358,60 @@ impl ResourceManager {
         }
 
         // 2. 存在则检查是否需要更新 BindGroup 或 Buffer
-        let (gpu_mat_version, active_features, active_texture_ids) = {
-            let gpu_mat = self.materials.get(&material.id).unwrap();
-            (
-                gpu_mat.version,
-                gpu_mat.active_features,
-                gpu_mat.active_texture_ids.clone(), 
-            )
-        };
+        // let (gpu_mat_version, active_features, active_texture_ids) = {
+        //     let gpu_mat = self.materials.get(&material.id).unwrap();
+        //     (
+        //         gpu_mat.version,
+        //         gpu_mat.active_features,
+        //         gpu_mat.active_texture_ids.clone(), 
+        //     )
+        // };
 
-
-        // 3. 检查结构性变化 (Structural Change)
-        // 结构变化包括：Feature 改变 (如开启/关闭贴图) OR 纹理引用 ID 改变 (如更换贴图)
+        // 2. 存在，检查是否需要重建 BindGroup
         let current_features = material.features();
         let current_texture_ids = material.textures();
 
-        // 这里的逻辑非常关键：
-        // 即使 Feature 没变（都是 USE_MAP），但如果 map 的 UUID 变了，
-        // 或者 map 指向的 Texture 版本变了（贴图内容热更了），都需要重建 BindGroup。
-        
-        let needs_bind_group_rebuild = 
-            active_features != current_features || 
-            active_texture_ids != current_texture_ids;
-            // self.check_if_any_texture_updated(&current_texture_ids);
+        // 计算当前的“纹理签名”
+        let current_signatures: Vec<Option<(Uuid, u64)>> = current_texture_ids.iter().map(|tid_opt| {
+            if let Some(tid) = tid_opt {
+                if let Some(gpu_tex) = self.textures.get(tid) {
+                    // 如果纹理存在，签名是 (ID, StructureVersion)
+                    return Some((*tid, gpu_tex.generation_id));
+                }
+            }
+            // 纹理不存在(还没加载) 或 ID 为 None，签名视为 None (使用 Dummy)
+            None 
+        }).collect();
 
-        if needs_bind_group_rebuild {
-            // 重建 BindGroup (耗时操作，仅在必要时执行)
+        let needs_rebuild = {
+            let gpu_mat = self.materials.get(&id).unwrap();
+            // A. Feature 变了 (宏变了)
+            gpu_mat.active_features != current_features || 
+            // B. 纹理签名变了 (换了贴图 OR 贴图本身Resize了)
+            gpu_mat.bound_texture_signatures != current_signatures
+        };
+
+        if needs_rebuild {
+            // log::info!("Rebuilding BindGroup for Material {:?}", material.name);
             let layout = self.get_or_create_material_layout(current_features);
+            // 这里我们传入计算好的 signatures，存入 GPUMaterial
             let (bind_group, bind_group_id) = self.create_material_bind_group(material, &layout);
             
-            // 获取可变借用写入新状态 (需要 &mut self)
-            let gpu_mat = self.materials.get_mut(&material.id).unwrap();
+            let gpu_mat = self.materials.get_mut(&id).unwrap();
             gpu_mat.bind_group = bind_group;
             gpu_mat.bind_group_id = bind_group_id;
             gpu_mat.layout = layout;
             gpu_mat.active_features = current_features;
-            gpu_mat.active_texture_ids = current_texture_ids;
-            
-            // 注意：Uniform Buffer 不需要重建，除非 Struct 大小变了（但在我们的架构中是固定的）
+            gpu_mat.bound_texture_signatures = current_signatures; // 更新签名
         }
 
-        // 4. 检查数据更新 (Data Update)
-        // 只有当 Material 的版本号比 GPU 缓存的版本新时，才上传数据
-        let gpu_mat = self.materials.get_mut(&material.id).unwrap();
-
-        if material.version > gpu_mat_version {
+        // 3. 数据更新 (Uniform Buffer)
+        let gpu_mat = self.materials.get_mut(&id).unwrap();
+        if material.version > gpu_mat.version {
             self.queue.write_buffer(&gpu_mat.uniform_buffer, 0, material.as_bytes());
             gpu_mat.version = material.version;
         }
+
     }
 
 
@@ -427,6 +438,13 @@ impl ResourceManager {
         // 创建 BindGroup
         let (bind_group, bind_group_id) = self.create_material_bind_group(material, &layout);
 
+        // 计算初始签名
+        let signatures: Vec<Option<(Uuid, u64)>> = material.textures().iter().map(|tid_opt| {
+            tid_opt.and_then(|tid| {
+                self.textures.get(&tid).map(|t| (tid, t.generation_id))
+            })
+        }).collect();
+
         let gpu_mat = GPUMaterial {
             uniform_buffer,
             bind_group,
@@ -434,7 +452,7 @@ impl ResourceManager {
             layout,
             version: material.version,
             active_features: features,
-            active_texture_ids: material.textures(),
+            bound_texture_signatures: signatures, // 初始化
         };
 
         self.materials.insert(material.id, gpu_mat);
@@ -607,34 +625,92 @@ impl ResourceManager {
 
     pub fn add_or_update_texture(&mut self, texture: &Texture) {
         // 如果 Texture 已存在，且版本没变，忽略
-        if let Some(gpu_tex) = self.textures.get(&texture.id) {
-            if gpu_tex.version >= texture.version {
-                return;
+        if let Some(gpu_tex) = self.textures.get_mut(&texture.id) {
+
+            // Case A: 结构变了 (Resize / Format Change) -> 必须重建
+            if gpu_tex.generation_id != texture.generation_id {
+                log::info!("Texture {:?} structure changed, recreating GPU resource...", texture.id);
+                // 销毁旧的 (Drop GPUTexture 会自动释放 wgpu 资源)，创建新的
+                let new_gpu_tex = Self::create_gpu_texture(&self.device, &self.queue, texture);
+                *gpu_tex = new_gpu_tex;
+                return; // 重建包含了数据上传，结束
             }
+
+            // Case B: 只有数据变了 -> write_texture
+            if gpu_tex.version != texture.version {
+                Self::upload_texture_data(&self.queue, &gpu_tex.view.texture(), texture);
+                gpu_tex.version = texture.version;
+            }
+
+            return;
+
         }
 
-        // 创建新 Texture 资源
+        // 2. 不存在 -> 创建新资源
+        let new_gpu_tex = Self::create_gpu_texture(&self.device, &self.queue, texture);
+        self.textures.insert(texture.id, new_gpu_tex);
+        
+    }
+
+
+    // 抽离创建逻辑
+    fn create_gpu_texture(device: &wgpu::Device, queue: &wgpu::Queue, texture: &Texture) -> GPUTexture {
         let size = wgpu::Extent3d {
             width: texture.source.width,
             height: texture.source.height,
             depth_or_array_layers: 1,
         };
 
-        let gpu_texture_obj = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(&format!("Texture {:?}", texture.id)),
+        let gpu_texture_obj = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&format!("Texture {:?}", texture.name)),
             size,
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba8UnormSrgb, // 需从 Texture 获取格式
+            format: texture.source.format, // 使用 Texture 中定义的格式
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
 
+        // 初始上传数据
+        Self::upload_texture_data(queue, &gpu_texture_obj, texture);
+
+        let view = gpu_texture_obj.create_view(&wgpu::TextureViewDescriptor::default());
+        
+        // 创建 Sampler (这里简化处理，实际应读取 texture.sampler 配置)
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            address_mode_u: texture.sampler.address_mode_u,
+            address_mode_v: texture.sampler.address_mode_v,
+            mag_filter: texture.sampler.mag_filter,
+            min_filter: texture.sampler.min_filter,
+            ..Default::default()
+        });
+
+        GPUTexture {
+            view,
+            sampler,
+            version: texture.version,
+            generation_id: texture.generation_id,
+        }
+    }
+
+    fn upload_texture_data(queue: &wgpu::Queue, gpu_texture: &wgpu::Texture, texture: &Texture) {
         if let Some(data) = &texture.source.data {
-            self.queue.write_texture(
+             let size = wgpu::Extent3d {
+                width: texture.source.width,
+                height: texture.source.height,
+                depth_or_array_layers: 1,
+            };
+            // 计算 bytes_per_row (需要对齐)
+            let bytes_per_pixel = texture.source.bytes_per_pixel();
+            let unpadded_bytes_per_row = texture.source.width * bytes_per_pixel;
+            // WGPU 要求 bytes_per_row 是 256 的倍数 (如果不是 copy_texture 可能会失败，除非是单行？)
+            // 这里为了简单假设紧凑排列。如果 wgpu 报错，这里需要做 padding 处理。
+            // 实际上 queue.write_texture 比较宽容，但在 WebGL 后端可能有限制。
+            
+            queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
-                    texture: &gpu_texture_obj,
+                    texture: gpu_texture,
                     mip_level: 0,
                     origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
@@ -642,46 +718,15 @@ impl ResourceManager {
                 data,
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
-                    bytes_per_row: Some(4 * texture.source.width),
+                    bytes_per_row: Some(unpadded_bytes_per_row),
                     rows_per_image: Some(texture.source.height),
                 },
                 size,
             );
         }
-
-        let view = gpu_texture_obj.create_view(&wgpu::TextureViewDescriptor::default());
-        
-        // 创建 Sampler (根据 Texture 配置)
-        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-            address_mode_u: wgpu::AddressMode::Repeat, 
-            address_mode_v: wgpu::AddressMode::Repeat,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        });
-
-        // 插入或更新
-        self.textures.insert(texture.id, GPUTexture {
-            view,
-            sampler,
-            version: texture.version,
-        });
-        
-        // !!! 关键点 !!!
-        // 这是一个生产环境的简单实现：
-        // 当纹理更新时，我们必须通知所有使用该纹理的材质“变脏”。
-        // 否则 Material 的 BindGroup 依然持有旧的 View (或者 Dummy View)。
-        // 
-        // 暴力做法：遍历所有 Material，如果使用了该 Texture，强制 active_texture_ids 失效。
-        for gpu_mat in self.materials.values_mut() {
-            if gpu_mat.active_texture_ids.contains(&Some(texture.id)) {
-                // 强制让它认为结构变了，下次 get_material 时会自动重建 BindGroup
-                gpu_mat.active_texture_ids = Vec::new(); // 清空，制造差异
-            }
-        }
     }
 
-    fn create_dummy_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> GPUTexture {
+fn create_dummy_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> GPUTexture {
         // ... (保持之前的实现，创建一个1x1白色纹理) ...
         let size = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -717,6 +762,7 @@ impl ResourceManager {
             view,
             sampler,
             version: 0,
+            generation_id: 0,
         }
     }
 }

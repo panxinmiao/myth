@@ -1,11 +1,14 @@
 use thunderdome::{Arena, Index};
 use std::sync::{Arc, RwLock};
 use glam::{Affine3A, Vec4}; 
+use std::collections::HashMap;
+use uuid::Uuid;
 use crate::core::node::Node;
 use crate::core::mesh::Mesh;
 use crate::core::camera::Camera;
 use crate::core::material::Material;
 use crate::core::geometry::Geometry;
+use crate::core::texture::Texture;
 
 pub struct Scene {
     pub nodes: Arena<Node>,
@@ -16,6 +19,13 @@ pub struct Scene {
     pub cameras: Arena<Camera>,
 
     // pub lights: Arena<Light>, // 未来可扩展
+
+
+    // === 资源仓库 (Assets/Resources) ===
+    // 这里是所有资源的“源头” (Source of Truth)
+    pub geometries: HashMap<Uuid, Arc<RwLock<Geometry>>>,
+    pub materials: HashMap<Uuid, Arc<RwLock<Material>>>,
+    pub textures: HashMap<Uuid, Arc<RwLock<Texture>>>,
 
     // 暂时简单用 RGBA，后面可以用 Texture
     pub background: Option<Vec4>,
@@ -28,12 +38,17 @@ impl Scene {
             root_nodes: Vec::new(),
             meshes: Arena::new(),
             cameras: Arena::new(),
+
+            geometries: HashMap::new(),
+            materials: HashMap::new(),
+            textures: HashMap::new(),
+
             background: Some(Vec4::new(0.0, 0.0, 0.0, 1.0)),
         }
     }
 
     /// 开始构建一个节点
-    pub fn build_node(&mut self, name: &str) -> NodeBuilder {
+    pub fn build_node(&'_ mut self, name: &str) -> NodeBuilder<'_> {
         NodeBuilder::new(self, name)
     }
 
@@ -144,33 +159,6 @@ impl Scene {
         self.nodes.get_mut(idx)
     }
 
-    // 基础 API：单纯添加 Mesh 数据，返回句柄
-    // 仅供内部或高级用户使用
-    pub fn add_mesh(&mut self, mesh: Mesh) -> Index {
-        self.meshes.insert(mesh)
-    }
-
-    // =========================================================
-    // ✨ 推荐的高级 API：一步到位创建物体
-    // =========================================================
-    pub fn create_mesh(&mut self, name: &str, geometry: Arc<RwLock<Geometry>>, material: Arc<RwLock<Material>>, parent: Option<Index>) -> Index {
-        // 1. 先创建 Node (为了拿到 node_id)
-        let node = Node::new(name);
-        let node_id = self.add_node(node, parent);
-
-        // 2. 再创建 Mesh (填入 node_id)
-        let mesh = Mesh::new(Some(node_id), geometry, material);
-        let mesh_id = self.meshes.insert(mesh);
-
-        // 3. 回填：把 mesh_id 填回 Node
-        // 这一步建立了双向链接：Node -> Mesh, Mesh -> Node
-        if let Some(node) = self.nodes.get_mut(node_id) {
-            node.mesh = Some(mesh_id);
-        }
-
-        // 返回 Node ID，因为用户通常操作的是 Node (移动、旋转)
-        node_id
-    }
 
     // ========================================================================
     // 矩阵更新流水线 (Affine3A 版)
@@ -214,6 +202,102 @@ impl Scene {
         for child_idx in children {
             self.update_transform_recursive(child_idx, current_world_matrix, changed);
         }
+    }
+
+
+    // === 资源管理 API ===
+
+    // 基础 API：单纯添加 Mesh 数据，返回句柄
+    // 仅供内部或高级用户使用
+    pub fn add_mesh(&mut self, mesh: Mesh) -> Index {
+        self.meshes.insert(mesh)
+    }
+
+    // =========================================================
+    // ✨ 推荐的高级 API：一步到位创建物体
+    // =========================================================
+    pub fn create_mesh(&mut self, name: &str, geometry: Arc<RwLock<Geometry>>, material: Arc<RwLock<Material>>, parent: Option<Index>) -> Index {
+        // 1. 先创建 Node (为了拿到 node_id)
+        let node = Node::new(name);
+        let node_id = self.add_node(node, parent);
+
+        // 2. 再创建 Mesh (填入 node_id)
+        let mesh = Mesh::new(Some(node_id), geometry, material);
+        let mesh_id = self.meshes.insert(mesh);
+
+        // 3. 回填：把 mesh_id 填回 Node
+        // 这一步建立了双向链接：Node -> Mesh, Mesh -> Node
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            node.mesh = Some(mesh_id);
+        }
+
+        // 返回 Node ID，因为用户通常操作的是 Node (移动、旋转)
+        node_id
+    }
+
+
+    /// 添加几何体资源
+    pub fn add_geometry(&mut self, geometry: Geometry) -> Arc<RwLock<Geometry>> {
+        // 如果已存在，直接返回旧的（去重策略可根据需求调整）
+        if let Some(geo) = self.geometries.get(&geometry.id) {
+            return geo.clone();
+        }
+        
+        let id = geometry.id;
+        let geo_arc = Arc::new(RwLock::new(geometry));
+        self.geometries.insert(id, geo_arc.clone());
+        geo_arc
+    }
+
+    /// 添加材质资源
+    pub fn add_material(&mut self, material: Material) -> Arc<RwLock<Material>> {
+        // 如果已存在，直接返回旧的（去重策略可根据需求调整）
+        if let Some(mat) = self.materials.get(&material.id) {
+            return mat.clone();
+        }
+        
+        let id = material.id;
+        let mat_arc = Arc::new(RwLock::new(material));
+        self.materials.insert(id, mat_arc.clone());
+        mat_arc
+    }
+
+    /// 添加纹理资源
+    pub fn add_texture(&mut self, texture: Texture) -> Arc<RwLock<Texture>> {
+        // 如果已存在，直接返回旧的（去重策略可根据需求调整）
+        if let Some(tex) = self.textures.get(&texture.id) {
+            return tex.clone();
+        }
+        
+        let id = texture.id;
+        let tex_arc = Arc::new(RwLock::new(texture));
+        self.textures.insert(id, tex_arc.clone());
+        tex_arc
+    }
+
+    pub fn create_mesh_from_uuid(
+        &mut self, 
+        name: &str, 
+        geo_id: Uuid, 
+        mat_id: Uuid, 
+        parent: Option<Index>
+    ) -> Option<Index> {
+        // 1. 从资源库查找
+        let geometry = self.geometries.get(&geo_id)?.clone();
+        let material = self.materials.get(&mat_id)?.clone();
+
+        // 2. 创建 Mesh 实例
+        let node = Node::new(name);
+        let node_id = self.add_node(node, parent);
+        
+        let mesh = Mesh::new(Some(node_id), geometry, material);
+        let mesh_id = self.meshes.insert(mesh);
+
+        if let Some(node) = self.nodes.get_mut(node_id) {
+            node.mesh = Some(mesh_id);
+        }
+
+        Some(node_id)
     }
 }
 
