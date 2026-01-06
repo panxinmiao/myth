@@ -179,16 +179,12 @@ impl PipelineCache {
 
     // 将 Shader 生成逻辑抽离，保持主流程整洁
     fn generate_shader_source(material: &Material, layout: &GeneratedLayout) -> String {
-        // ... (保持你之前的模板字符串代码) ...
-        // 建议：将 VERTEX_TEMPLATE 和 FRAGMENT_TEMPLATE 定义为 const 字符串常量
         
-        let vertex_template = r#"..."#; // 略
-        let fragment_template = r#"..."#; // 略
+        let fragment_template = material.shader_name();
 
-        let vs_input_def = &layout.shader_code;
-        let mat_code = ShaderGenerator::generate_shader(material, fragment_template);
+        let shader_code = ShaderGenerator::generate_shader(material, layout,fragment_template);
         
-        format!("{}\n{}\n{}", vs_input_def, vertex_template, mat_code)
+        shader_code
     }
 
     // 只读获取

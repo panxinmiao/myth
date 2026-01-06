@@ -566,7 +566,9 @@ impl ResourceManager {
             MaterialFeatures::USE_MAP,
             MaterialFeatures::USE_NORMAL_MAP,
             MaterialFeatures::USE_ROUGHNESS_MAP,
+            MaterialFeatures::USE_METALNESS_MAP,
             MaterialFeatures::USE_EMISSIVE_MAP,
+            MaterialFeatures::USE_AO_MAP,
         ];
         
         for feature in feature_list {

@@ -48,8 +48,10 @@ bitflags! {
         const USE_MAP           = 1 << 0; // 基础颜色贴图
         const USE_NORMAL_MAP    = 1 << 1; // 法线贴图
         const USE_ROUGHNESS_MAP = 1 << 2; // 粗糙度贴图
-        const USE_EMISSIVE_MAP  = 1 << 3; // 自发光贴图
-        // const USE_SKINNING   = 1 << 4; // 骨骼动画 (预留)
+        const USE_METALNESS_MAP  = 1 << 3; // 金属度贴图
+        const USE_EMISSIVE_MAP  = 1 << 4; // 自发光贴图
+        const USE_AO_MAP        = 1 << 5; // 环境光遮蔽贴图
+        // const USE_SKINNING   = 1 << 6; // 骨骼动画 (预留)
     }
 }
 

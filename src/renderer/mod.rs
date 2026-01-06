@@ -5,6 +5,7 @@ mod shader_generator;
 mod dynamic_buffer;
 mod pipeline;
 mod tracked_render_pass;
+mod shader_manager;
 
 use std::sync::Arc;
 use std::collections::HashSet;

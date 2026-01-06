@@ -1,5 +1,3 @@
-use uuid::Uuid;
-
 pub struct TrackedRenderPass<'a> {
     pass: wgpu::RenderPass<'a>,
 

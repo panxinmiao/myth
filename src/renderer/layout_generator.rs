@@ -1,6 +1,7 @@
 use std::collections::{HashMap, BTreeMap};
 use wgpu::VertexFormat;
-use crate::core::geometry::Geometry;
+use crate::core::geometry::{Geometry, GeometryBuffer};
+use std::sync::{Arc, RwLock};
 
 /// 【生产级】持有所有权的 VertexBufferLayout
 /// 可以在 Resource Manager 中安全缓存
@@ -9,7 +10,7 @@ pub struct OwnedVertexBufferLayout {
     pub array_stride: u64,
     pub step_mode: wgpu::VertexStepMode,
     pub attributes: Vec<wgpu::VertexAttribute>,
-    pub buffer: std::sync::Arc<std::sync::RwLock<crate::core::geometry::GeometryBuffer>>, // 持有底层 Buffer 的引用
+    pub buffer: Arc<RwLock<GeometryBuffer>>, // 持有底层 Buffer 的引用
 }
 
 impl OwnedVertexBufferLayout {
