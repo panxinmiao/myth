@@ -160,6 +160,9 @@ impl Renderer {
     }
 
     pub fn render(&mut self, scene: &mut Scene, camera: &Camera) {
+
+        self.resource_manager.next_frame();
+
         // 1. 更新场景矩阵
         scene.update_matrix_world();
 
@@ -263,7 +266,7 @@ impl Renderer {
                 // 上传！
                 self.resource_manager.add_or_update_texture(&texture);
             }
-}
+        }
 
         // =========================================================
         // 4. 排序 (Sort)
@@ -422,6 +425,12 @@ impl Renderer {
                 }
 
             }
+        }
+
+        // 提交绘制后，检查是否需要 GC
+        // 每 60 帧检查一次，清理掉超过 600 帧 (10秒) 没用的资源
+        if self.resource_manager.frame_index() % 60 == 0 {
+            self.resource_manager.prune(600);
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

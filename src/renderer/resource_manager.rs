@@ -26,6 +26,7 @@ pub struct GPUBuffer {
     pub buffer: wgpu::Buffer,
     pub size: u64,
     pub version: u64,
+    pub last_used_frame: u64,
 }
 
 pub struct GPUGeometry {
@@ -46,6 +47,7 @@ pub struct GPUGeometry {
     pub instance_range: Range<u32>, 
 
     pub version: u64,     // 上次同步的 Geometry version
+    pub last_used_frame: u64,
 }
 
 pub struct GPUTexture {
@@ -53,6 +55,7 @@ pub struct GPUTexture {
     pub sampler: wgpu::Sampler,
     pub version: u64,       // 上次同步的数据版本
     pub generation_id: u64, // 上次同步的结构版本
+    pub last_used_frame: u64,
 }
 
 pub struct GPUMaterial {
@@ -69,6 +72,7 @@ pub struct GPUMaterial {
     // 元素: (Texture UUID, Texture Structure Version)
     // 如果是 None (没贴图)，则记录为 None
     pub bound_texture_signatures: Vec<Option<(Uuid, u64)>>,
+    pub last_used_frame: u64,
 }
 
 // ============================================================================
@@ -78,6 +82,8 @@ pub struct GPUMaterial {
 pub struct ResourceManager {
     device: Arc<wgpu::Device>,
     queue: Arc<wgpu::Queue>,
+
+    frame_index: u64,
 
     buffers: HashMap<Uuid, (GPUBuffer, u64)>, // 包含物理资源 ID
     geometries: HashMap<Uuid, GPUGeometry>,
@@ -100,6 +106,7 @@ impl ResourceManager {
         Self {
             device,
             queue,
+            frame_index: 0,
             buffers: HashMap::new(),
             geometries: HashMap::new(),
             materials: HashMap::new(),
@@ -109,6 +116,14 @@ impl ResourceManager {
         }
     }
 
+    pub fn next_frame(&mut self) {
+        self.frame_index += 1;
+    }
+
+    /// [新增] 获取当前帧号 (供 Renderer 判断是否需要 prune)
+    pub fn frame_index(&self) -> u64 {
+        self.frame_index
+    }
 
     // === 1. Geometry ===
     // 准备阶段：只负责更新，不返回引用
@@ -207,6 +222,7 @@ impl ResourceManager {
             draw_range: geometry.draw_range.clone(),
             instance_range: 0..1, // 默认单实例
             version: geometry.version,
+            last_used_frame: self.frame_index,
         };
 
         self.geometries.insert(geometry.id, gpu_geo);
@@ -339,6 +355,7 @@ impl ResourceManager {
             buffer: wgpu_buffer,
             size: cpu_buf.data.len() as u64,
             version: cpu_buf.version,
+            last_used_frame: self.frame_index,
         }, id));
     }
 
@@ -453,6 +470,7 @@ impl ResourceManager {
             version: material.version,
             active_features: features,
             bound_texture_signatures: signatures, // 初始化
+            last_used_frame: self.frame_index,
         };
 
         self.materials.insert(material.id, gpu_mat);
@@ -691,6 +709,7 @@ impl ResourceManager {
             sampler,
             version: texture.version,
             generation_id: texture.generation_id,
+            last_used_frame: 0,
         }
     }
 
@@ -763,6 +782,37 @@ fn create_dummy_texture(device: &wgpu::Device, queue: &wgpu::Queue) -> GPUTextur
             sampler,
             version: 0,
             generation_id: 0,
+            last_used_frame: 0,
         }
     }
+
+    // ========================================================================
+    // 4. Garbage Collection (Prune)
+    // ========================================================================
+
+    /// 清理长期未使用的资源
+    /// ttl_frames: 存活时间 (Time To Live)，建议 600 (约10秒)
+    pub fn prune(&mut self, ttl_frames: u64) {
+        if self.frame_index < ttl_frames {
+            return; // 运行时间太短，不清理
+        }
+        
+        let cutoff = self.frame_index - ttl_frames;
+        let initial_count = self.geometries.len() + self.buffers.len() + self.materials.len() + self.textures.len();
+
+        // 1. Prune Geometries
+        self.geometries.retain(|_, v| v.last_used_frame >= cutoff);
+        // 2. Prune Buffers (无 Geometry 引用时才会被删)
+        self.buffers.retain(|_, (v, _)| v.last_used_frame >= cutoff);
+        // 3. Prune Materials
+        self.materials.retain(|_, v| v.last_used_frame >= cutoff);
+        // 4. Prune Textures (无 Material 引用时才会被删)
+        self.textures.retain(|_, v| v.last_used_frame >= cutoff);
+
+        let final_count = self.geometries.len() + self.buffers.len() + self.materials.len() + self.textures.len();
+        if initial_count > final_count {
+            log::info!("GC Pruned {} resources (Current Frame: {})", initial_count - final_count, self.frame_index);
+        }
+    }
+
 }
