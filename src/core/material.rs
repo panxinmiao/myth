@@ -6,7 +6,7 @@ use wgpu::ShaderStages;
 use std::sync::{Arc, RwLock};
 
 use crate::core::binding::{Bindable, BindingDescriptor, BindingResource, BindingType};
-use crate::core::buffer::{CpuBuffer, BufferRef};
+use crate::core::buffer::{DataBuffer, BufferRef};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
@@ -93,7 +93,7 @@ impl Material {
     pub fn new_basic(color: Vec4) -> Self {
         let uniforms = MeshBasicUniforms { color };
         // 初始化 Uniform Buffer
-        let uniform_buffer = Arc::new(RwLock::new(CpuBuffer::new(
+        let uniform_buffer = Arc::new(RwLock::new(DataBuffer::new(
             &[uniforms],
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             Some("MeshBasicUniforms")
@@ -119,7 +119,7 @@ impl Material {
 
     pub fn new_standard() -> Self {
         let uniforms = MeshStandardUniforms::default();
-        let uniform_buffer = Arc::new(RwLock::new(CpuBuffer::new(
+        let uniform_buffer = Arc::new(RwLock::new(DataBuffer::new(
             &[uniforms],
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             Some("MeshStandardUniforms")
@@ -241,10 +241,14 @@ impl Bindable for Material {
        bindings.push(BindingDescriptor {
            name: "MaterialUniforms",
            index: 0,
-           bind_type: BindingType::UniformBuffer,
+           bind_type: BindingType::UniformBuffer { dynamic: false, min_size: None },
            visibility: ShaderStages::FRAGMENT | ShaderStages::VERTEX,
        });
-       resources.push(BindingResource::Buffer(self.get_uniform_buffer()));
+       resources.push(BindingResource::Buffer { 
+           buffer: self.get_uniform_buffer(),
+           offset: 0,
+           size: None 
+       });
 
        // 2. 动态纹理 Bindings
        let mut current_index = 1;

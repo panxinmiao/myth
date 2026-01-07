@@ -107,7 +107,7 @@ impl ShaderGenerator {
             // B. 生成 WGSL 变量声明
             // @group(1) @binding(N) var prefix_name: type;
             let wgsl = match desc.bind_type {
-                BindingType::UniformBuffer => {
+                BindingType::UniformBuffer{..} => {
                     // 假设 UniformBuffer 绑定的结构体名字就是 desc.name (例如 "MaterialUniforms")
                     // 变量名我们固定叫 material，或者也可以根据 desc.name 生成
                     format!("@group(1) @binding({}) var<uniform> material: {};\n", desc.index, desc.name)
@@ -117,6 +117,7 @@ impl ShaderGenerator {
                     let type_str = match (view_dimension, sample_type) {
                         (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Float { .. }) => "texture_2d<f32>",
                         (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Depth) => "texture_depth_2d",
+                        (wgpu::TextureViewDimension::Cube, wgpu::TextureSampleType::Float { .. }) => "texture_cube<f32>",
                         // ... 其他类型可按需添加
                         _ => "texture_2d<f32>", 
                     };

@@ -7,7 +7,10 @@ use crate::core::buffer::BufferRef; // 引入新类型
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum BindingType {
     /// Uniform Buffer (通常用于材质参数，全局变量)
-    UniformBuffer,
+    UniformBuffer { 
+        dynamic: bool,        // 是否开启动态偏移 (has_dynamic_offset)
+        min_size: Option<u64> // 最小绑定大小 (min_binding_size)
+    },
     
     /// Storage Buffer (只读/读写，用于骨骼矩阵、粒子等)
     StorageBuffer { read_only: bool },
@@ -48,7 +51,11 @@ pub struct BindingDescriptor {
 pub enum BindingResource<'a> {
 
     /// 持有 CPU Buffer 的引用 (统一了 Vertex/Index/Uniform/Storage)
-    Buffer(BufferRef), 
+    Buffer {
+        buffer: BufferRef,
+        offset: u64,        // 偏移量 (默认为 0)
+        size: Option<u64>,  // 绑定窗口大小 (None 表示整个 Buffer)
+    },
     
     /// 外部 Buffer ID (用于高级场景，暂保留)
     BufferId(Uuid),

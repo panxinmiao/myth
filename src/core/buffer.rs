@@ -5,7 +5,7 @@ use bytemuck::Pod;
 /// 通用 CPU 端数据缓冲
 /// 统一管理 Vertex, Index, Uniform, Storage 等数据的 CPU 副本
 #[derive(Debug)]
-pub struct CpuBuffer {
+pub struct DataBuffer {
     pub id: Uuid,
     pub label: String,
     pub data: Vec<u8>,
@@ -13,7 +13,7 @@ pub struct CpuBuffer {
     pub usage: wgpu::BufferUsages,
 }
 
-impl CpuBuffer {
+impl DataBuffer {
     pub fn new<T: Pod>(data: &[T], usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -32,4 +32,4 @@ impl CpuBuffer {
 }
 
 /// 线程安全的 Buffer 引用
-pub type BufferRef = Arc<RwLock<CpuBuffer>>;
+pub type BufferRef = Arc<RwLock<DataBuffer>>;

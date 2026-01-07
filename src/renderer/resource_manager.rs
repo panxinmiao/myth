@@ -15,7 +15,7 @@ use crate::core::geometry::{Geometry};
 use crate::core::material::Material;
 use crate::core::texture::Texture;
 use crate::core::binding::{Bindable, BindingType, BindingResource, BindingDescriptor};
-use crate::core::buffer::CpuBuffer;
+use crate::core::buffer::DataBuffer;
 
 use super::vertex_layout::{self, GeneratedVertexLayout};
 use super::gpu_buffer::GpuBuffer;
@@ -117,7 +117,7 @@ impl ResourceManager {
 
     /// 准备 GPU Buffer：如果不存在则创建，如果版本过期则更新
     /// 返回当前 GPU 资源的物理 ID (用于检测 Resize)
-    pub fn prepare_buffer(&mut self, cpu_buffer: &CpuBuffer) -> u64 {
+    pub fn prepare_buffer(&mut self, cpu_buffer: &DataBuffer) -> u64 {
         let id = cpu_buffer.id;
 
         // 1. 获取或创建
@@ -255,8 +255,8 @@ impl ResourceManager {
         // 1. 预处理所有资源 (Buffers & Textures)
         for res in &resources {
             match res {
-                BindingResource::Buffer(buf_ref) => {
-                    let cpu_buf = buf_ref.read().unwrap();
+                BindingResource::Buffer { buffer, offset, size } => {
+                    let cpu_buf = buffer.read().unwrap();
                     self.prepare_buffer(&cpu_buf); // 自动处理所有 Buffer 的创建和更新！
                 },
                 BindingResource::Texture(Some(tex_id)) => {
@@ -273,8 +273,8 @@ impl ResourceManager {
             match res {
                 // 关键点：Buffer 的签名由 CPU ID + GPU 物理 ID 组成
                 // 如果 GPU Buffer Resize 了，物理 ID 会变，从而触发 BindGroup 重建
-                BindingResource::Buffer(buf_ref) => {
-                    let cpu_id = buf_ref.read().unwrap().id;
+                BindingResource::Buffer { buffer, offset, size } => {
+                    let cpu_id = buffer.read().unwrap().id;
                     if let Some(gpu_buf) = self.buffers.get(&cpu_id) {
                         Some(uuid_to_u64(&cpu_id).wrapping_add(gpu_buf.id))
                     } else {
@@ -309,7 +309,7 @@ impl ResourceManager {
         if needs_rebuild {
             let layout = self.get_or_create_layout(&descriptors, layout_hash);
             
-            let (bind_group, bg_id) = self.create_bind_group(&layout, &descriptors, &resources);
+            let (bind_group, bg_id) = self.create_bind_group_from_desc(&layout, &descriptors, &resources);
 
             let gpu_mat = GPUMaterial {
                 bind_group,
@@ -335,13 +335,13 @@ impl ResourceManager {
 
     // --- 内部辅助 ---
 
-    fn compute_layout_hash(&self, descriptors: &[BindingDescriptor]) -> u64 {
+    pub fn compute_layout_hash(&self, descriptors: &[BindingDescriptor]) -> u64 {
         let mut hasher = DefaultHasher::new();
         descriptors.hash(&mut hasher);
         hasher.finish()
     }
 
-    fn get_or_create_layout(&mut self, descriptors: &[BindingDescriptor], hash: u64) -> Arc<wgpu::BindGroupLayout> {
+    pub fn get_or_create_layout(&mut self, descriptors: &[BindingDescriptor], hash: u64) -> Arc<wgpu::BindGroupLayout> {
         if let Some(layout) = self.layout_cache.get(&hash) {
             return layout.clone();
         }
@@ -351,10 +351,10 @@ impl ResourceManager {
                 binding: desc.index,
                 visibility: desc.visibility,
                 ty: match desc.bind_type {
-                    BindingType::UniformBuffer => wgpu::BindingType::Buffer {
+                    BindingType::UniformBuffer { dynamic, min_size }=> wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
+                        has_dynamic_offset: dynamic,
+                        min_binding_size: min_size.and_then(wgpu::BufferSize::new),
                     },
                     BindingType::StorageBuffer { read_only } => wgpu::BindingType::Buffer {
                         ty: wgpu::BufferBindingType::Storage { read_only },
@@ -381,7 +381,7 @@ impl ResourceManager {
         layout
     }
 
-    fn create_bind_group(
+    pub fn create_bind_group_from_desc(
         &self, 
         layout: &wgpu::BindGroupLayout, 
         descriptors: &[BindingDescriptor],
@@ -394,10 +394,15 @@ impl ResourceManager {
             let resource_data = &resources[i];
             
             let binding_resource = match resource_data {
-                BindingResource::Buffer(buf_ref) => {
-                    let cpu_id = buf_ref.read().unwrap().id;
-                    let gpu_buf = self.buffers.get(&cpu_id).expect("Buffer not prepared");
-                    gpu_buf.buffer.as_entire_binding()
+                BindingResource::Buffer { buffer, offset, size } => {
+                    let cpu_id = buffer.read().unwrap().id;
+                    let gpu_buf = self.buffers.get(&cpu_id).expect("Buffer should be prepared before creating bindgroup");
+                    // gpu_buf.buffer.as_entire_binding()
+                    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &gpu_buf.buffer,
+                        offset: *offset,
+                        size: size.and_then(wgpu::BufferSize::new), // 处理 Option<u64> -> Option<NonZeroU64>
+                    })
                 },
                 BindingResource::Texture(tid_opt) => {
                     let gpu_tex = if let Some(tid) = tid_opt {

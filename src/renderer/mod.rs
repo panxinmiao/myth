@@ -110,8 +110,10 @@ impl Renderer {
             }],
         });
 
+        let mut resource_manager = ResourceManager::new(device.clone(), queue.clone());
+
         // 2. 初始化 Model Manager (Group 2)
-        let model_buffer_manager = DynamicBuffer::new(&device, "Model");
+        let model_buffer_manager = DynamicBuffer::new(&mut resource_manager, "Model");
 
         // 3. 深度缓冲
         let depth_texture_view = Self::create_depth_texture(&device, &config);
@@ -122,7 +124,7 @@ impl Renderer {
             surface,
             config,
             depth_format: wgpu::TextureFormat::Depth32Float,
-            resource_manager: ResourceManager::new(device, queue),
+            resource_manager,
             pipeline_cache: PipelineCache::new(),
             model_buffer_manager,
             global_uniform_buffer: global_buffer,
@@ -275,8 +277,7 @@ impl Renderer {
 
         // 上传所有动态物体的矩阵 (自动扩容)
         self.model_buffer_manager.write_and_expand(
-            &self.device, 
-            &self.queue, 
+            &mut self.resource_manager,
             &model_uniforms_data
         );
 

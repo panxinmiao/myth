@@ -4,8 +4,8 @@ use uuid::Uuid;
 use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages};
 use glam::Vec3;
 use core::ops::Range;
-use crate::core::binding::{Bindable, BindingDescriptor, BindingResource, BindingType};
-use crate::core::buffer::{CpuBuffer, BufferRef}; 
+use crate::core::binding::{Bindable, BindingDescriptor, BindingResource};
+use crate::core::buffer::{DataBuffer, BufferRef}; 
 
 
 // ============================================================================
@@ -27,8 +27,8 @@ impl Attribute {
     /// 适用于 Position, Normal, UV 等
     pub fn new_planar<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
         let stride = std::mem::size_of::<T>() as u64;
-        // 创建通用 CpuBuffer
-        let buffer = CpuBuffer::new(
+        // 创建通用 DataBuffer
+        let buffer = DataBuffer::new(
             data, 
             BufferUsages::VERTEX | BufferUsages::COPY_DST, 
             Some("GeometryVertexAttr")
@@ -48,7 +48,7 @@ impl Attribute {
     /// 适用于 InstanceMatrix, InstanceColor 等
     pub fn new_instanced<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
         let stride = std::mem::size_of::<T>() as u64;
-        let buffer = CpuBuffer::new(
+        let buffer = DataBuffer::new(
             data, 
             BufferUsages::VERTEX | BufferUsages::COPY_DST, 
             Some("GeometryInstanceAttr")
@@ -148,7 +148,7 @@ impl Geometry {
 
     pub fn set_indices(&mut self, indices: &[u16]) {
         // self.index_attribute = Some(Attribute::new_planar(indices, VertexFormat::Uint16));
-        let buffer = CpuBuffer::new(
+        let buffer = DataBuffer::new(
             indices, 
             BufferUsages::INDEX | BufferUsages::COPY_DST, 
             Some("IndexBuffer")
@@ -165,7 +165,7 @@ impl Geometry {
     }
 
     pub fn set_indices_u32(&mut self, indices: &[u32]) {
-        let buffer = CpuBuffer::new(
+        let buffer = DataBuffer::new(
             indices, 
             BufferUsages::INDEX | BufferUsages::COPY_DST, 
             Some("IndexBuffer")

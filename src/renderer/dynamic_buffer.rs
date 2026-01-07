@@ -1,100 +1,116 @@
+use std::sync::{Arc, RwLock};
+use wgpu::{BufferUsages, ShaderStages};
 use crate::renderer::uniforms::DynamicModelUniforms;
+use crate::renderer::resource_manager::ResourceManager;
+use crate::core::buffer::DataBuffer;
+use crate::core::binding::{BindingDescriptor, BindingResource, BindingType};
 
-/// 管理动态 Uniform Buffer 的自动扩容和上传
+/// 管理动态 Uniform Buffer (Group 2)
+/// 职责：
+/// 1. CPU 端：收集每一帧的 Model Uniforms 数据
+/// 2. GPU 端：利用 ResourceManager 自动管理 Buffer 生命周期
+/// 3. Binding：维护支持 Dynamic Offset 的 BindGroup
 pub struct DynamicBuffer {
     label: String,
-    pub buffer: wgpu::Buffer,
-    pub bind_group: wgpu::BindGroup,
-    pub layout: wgpu::BindGroupLayout,
     
-    capacity: usize, // 当前 Buffer 能容纳的物体数量
+    // CPU 端数据源
+    pub cpu_buffer: Arc<RwLock<DataBuffer>>,
+    
+    // 渲染需要的资源
+    pub bind_group: wgpu::BindGroup,
+    pub layout: Arc<wgpu::BindGroupLayout>,
+
+    // 状态追踪，用于检测是否需要重建 BindGroup
+    layout_hash: u64,
+    last_buffer_id: u64,
 }
 
 impl DynamicBuffer {
-    pub fn new(device: &wgpu::Device, label: &str) -> Self {
-        // 1. 创建 Layout (has_dynamic_offset = true)
-        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some(&format!("{} Layout", label)),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: true, // <--- 关键：开启动态偏移
-                    min_binding_size: wgpu::BufferSize::new(256), // 单次绑定的视窗大小
-                },
-                count: None,
-            }],
-        });
-
-        // 2. 初始容量 (例如 128 个物体)
+    pub fn new(resource_manager: &mut ResourceManager, label: &str) -> Self {
+        // 1. 初始化 CPU 数据 (预分配一些空间，比如 128 个物体)
         let initial_capacity = 128;
-        let (buffer, bind_group) = Self::create_resources(device, label, &layout, initial_capacity);
+        let initial_data = vec![DynamicModelUniforms::default(); initial_capacity];
+        
+        let cpu_buffer = Arc::new(RwLock::new(DataBuffer::new(
+            &initial_data,
+            BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+            Some(label)
+        )));
+
+        // 2. 立即在 GPU 上准备 Buffer (这会在 RM 中注册并上传数据)
+        let buffer_id = resource_manager.prepare_buffer(&cpu_buffer.read().unwrap());
+        
+        // 3. 创建 Layout 和 BindGroup
+        let (layout, bind_group, layout_hash) = Self::recreate_resources(resource_manager, &cpu_buffer);
 
         Self {
             label: label.to_string(),
-            buffer,
+            cpu_buffer,
             bind_group,
             layout,
-            capacity: initial_capacity,
+            layout_hash,
+            last_buffer_id: buffer_id,
         }
     }
 
     /// 每一帧调用：上传数据，如果容量不足则自动扩容
-    pub fn write_and_expand(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[DynamicModelUniforms]) {
-        if data.is_empty() {
-            return;
-        }
+    pub fn write_and_expand(&mut self, resource_manager: &mut ResourceManager, data: &[DynamicModelUniforms]) {
+        if data.is_empty() { return; }
 
-        let required_count = data.len();
+        // 1. 更新 CPU Buffer
+        // Vec 的自动扩容由 CpuBuffer::update 内部处理
+        self.cpu_buffer.write().unwrap().update(data);
 
-        // 1. 检查是否需要扩容
-        if required_count > self.capacity {
-            // 扩容策略：2 倍增长，避免频繁重分配
-            let new_capacity = (self.capacity * 2).max(required_count);
-            log::info!("Expanding DynamicBuffer '{}' capacity: {} -> {}", self.label, self.capacity, new_capacity);
+        // 2. 委托 RM 同步 GPU Buffer
+        let buffer_ref = self.cpu_buffer.read().unwrap();
+        let new_buffer_id = resource_manager.prepare_buffer(&buffer_ref);
 
-            let (new_buffer, new_bg) = Self::create_resources(device, &self.label, &self.layout, new_capacity);
+        // 3. 检查物理 Buffer 是否发生了变化 (扩容导致重建)
+        if new_buffer_id != self.last_buffer_id {
+            log::info!("Recreating BindGroup for {} (Buffer Resized)", self.label);
             
-            self.buffer = new_buffer;
-            self.bind_group = new_bg;
-            self.capacity = new_capacity;
+            // 重新生成 BindGroup
+            let (layout, bind_group, hash) = Self::recreate_resources(resource_manager, &self.cpu_buffer);
+            
+            // 通常 Layout 不会变，但为了严谨我们更新一下
+            if hash != self.layout_hash {
+                self.layout = layout;
+                self.layout_hash = hash;
+            }
+            self.bind_group = bind_group;
+            self.last_buffer_id = new_buffer_id;
         }
-
-        // 2. 写入数据 (直接覆盖 Buffer)
-        queue.write_buffer(&self.buffer, 0, bytemuck::cast_slice(data));
     }
+    
+    // 内部 helper：根据 CpuBuffer 描述生成资源
+    fn recreate_resources(
+        rm: &mut ResourceManager, 
+        cpu_buffer: &Arc<RwLock<DataBuffer>>,
+    ) -> (Arc<wgpu::BindGroupLayout>, wgpu::BindGroup, u64) {
+        
+        // 定义 Schema：Dynamic Uniform Buffer
+        let descriptors = vec![BindingDescriptor {
+            name: "DynamicModel",
+            index: 0,
+            bind_type: BindingType::UniformBuffer { 
+                dynamic: true,      // <--- 开启 Dynamic Offset
+                min_size: Some(256) // <--- 单个 Uniform 结构体的大小
+            },
+            visibility: ShaderStages::VERTEX,
+        }];
+        
+        // 定义 Resource：指定视窗大小
+        let resources = vec![BindingResource::Buffer {
+            buffer: cpu_buffer.clone(),
+            offset: 0,
+            size: Some(256) // <--- 视窗大小
+        }];
 
-    // 内部辅助：创建 Buffer 和 BindGroup
-    fn create_resources(
-        device: &wgpu::Device, 
-        label: &str, 
-        layout: &wgpu::BindGroupLayout, 
-        count: usize
-    ) -> (wgpu::Buffer, wgpu::BindGroup) {
-        let alignment = 256;
-        let size = (count * alignment) as u64;
-
-        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(&format!("{} Buffer", label)),
-            size,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&format!("{} BindGroup", label)),
-            layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &buffer,
-                    offset: 0,
-                    size: wgpu::BufferSize::new(256),
-                }),
-            }],
-        });
-
-        (buffer, bind_group)
+        // 让 RM 干活
+        let hash = rm.compute_layout_hash(&descriptors);
+        let layout = rm.get_or_create_layout(&descriptors, hash);
+        let (bind_group, _) = rm.create_bind_group_from_desc(&layout, &descriptors, &resources);
+        
+        (layout, bind_group, hash)
     }
 }
