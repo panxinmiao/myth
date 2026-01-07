@@ -51,7 +51,7 @@ impl ShaderGenerator {
         let mut context = global_context.defines.clone();
 
         // 注入 Vertex Buffer 结构定义
-        context.insert("vertex_struct_code".to_string(), Value::String(geometry_layout.shader_code.clone()));
+        context.insert("vertex_struct_code".to_string(), Value::String(geometry_layout.vertex_input_code.clone()));
 
         // Group 2: Model Matrix Binding (目前这部分还没有 Bindable 化，暂时硬编码，后续也可重构)
         let binding_code = r#"

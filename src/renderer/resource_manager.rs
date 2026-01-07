@@ -254,16 +254,6 @@ impl ResourceManager {
         // let id = material.id;
         // let (descriptors ,resources) = material.get_bindings();
 
-        // // 1. 自动上传依赖的纹理
-        // for res in &resources {
-        //     if let BindingResource::Texture(Some(tex_id)) = res {
-        //         if let Some(tex_arc) = texture_assets.get(tex_id) {
-        //             let texture = tex_arc.read().unwrap();
-        //             self.add_or_update_texture(&texture);
-        //         }
-        //     }
-        // }
-
 
         let id = material.id;
         
@@ -272,6 +262,17 @@ impl ResourceManager {
 
         // 计算 Layout Hash (用于 Pipeline 兼容性检查)
         let layout_hash = self.compute_layout_hash(&descriptors);
+
+
+        // 1. 自动上传依赖的纹理
+        for res in &resources {
+            if let BindingResource::Texture(Some(tex_id)) = res {
+                if let Some(tex_arc) = texture_assets.get(tex_id) {
+                    let texture = tex_arc.read().unwrap();
+                    self.add_or_update_texture(&texture);
+                }
+            }
+        }
         
         // 计算 资源签名 (用于 BindGroup 重建检查)
         // 我们需要把 BindingResource 转换为可比较的 ID/Signature
@@ -281,18 +282,6 @@ impl ResourceManager {
                 BindingResource::Buffer(_) => None, // Buffer 内容更新不影响 BindGroup 结构，只影响 write_buffer
                 BindingResource::BufferId(uuid) => Some(uuid_to_u64(uuid)), // 外部 Buffer ID 变了需要重建
                 BindingResource::Texture(Some(tid)) => {
-                    // 尝试从资产表中找到纹理数据
-                    if let Some(tex_arc) = texture_assets.get(tid) {
-                        // 获取读锁 (这里只读，开销很小)
-                        let texture = tex_arc.read().unwrap();
-                        // 调用内部方法检查是否需要上传/更新
-                        self.add_or_update_texture(&texture);
-                    } else {
-                        // 警告：材质引用了纹理 ID，但在 Scene 中找不到对应的纹理数据
-                        // 这种情况下，BindGroup 会自动回退到 Dummy Texture，所以不会崩溃，但值得记录
-                        // log::warn!("Material {:?} references missing texture {:?}", material.name, tex_id);
-                    }
-
                     // 如果引用了纹理，签名不仅包含 ID，还包含纹理的 GenerationID (Resized?)
                     if let Some(gpu_tex) = self.textures.get(tid) {
                         // 组合 UUID hash 和 gen_id，这里简化处理，只用 gen_id 配合 tid

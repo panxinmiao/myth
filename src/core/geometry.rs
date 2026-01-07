@@ -4,6 +4,7 @@ use uuid::Uuid;
 use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode};
 use glam::Vec3;
 use core::ops::Range;
+use crate::core::binding::{Bindable, BindingDescriptor, BindingResource, BindingType};
 
 // ============================================================================
 // 1. 底层数据存储：GeometryBuffer
@@ -255,4 +256,29 @@ impl Geometry {
         // 注意：这种方法比 AABB.center 得到的球更小，更适合做剔除。
         // 虽然不是数学上的最小覆盖球(Welzl算法)，但在引擎初始化速度和剔除效率之间是最好的平衡。
     }
+}
+
+
+// 实现 Bindable
+impl Bindable for Geometry {
+
+    fn get_bindings(&self) -> (Vec<BindingDescriptor>, Vec<BindingResource<'_>>) {
+        let mut bindings = Vec::new();
+        let mut resources = Vec::new();
+        // let mut index = 0;
+
+        // todo : 根据morph target, 生成morth texture的binding
+        // for (name, attr) in &self.attributes {
+        //     bindings.push(BindingDescriptor {
+        //         name: name,
+        //         index: bindings.len() as u32,
+        //         bind_type: BindingType::StorageBuffer,
+        //         visibility: wgpu::ShaderStages::VERTEX,
+        //     });
+        //     resources.push(BindingResource::Buffer(&attr.buffer.read().unwrap().data));
+        // }
+        (bindings, resources)
+
+    }
+
 }

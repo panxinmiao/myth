@@ -31,7 +31,7 @@ pub struct GeneratedVertexLayout {
     pub buffers: Vec<OwnedVertexBufferDesc>,
     
     /// 注入 Shader 的 WGSL 代码 (struct VertexInput)
-    pub shader_code: String,
+    pub vertex_input_code: String,
     
     /// 属性名 -> Shader Location 映射 (供调试或绑定检查)
     pub attribute_locations: HashMap<String, u32>,
@@ -100,14 +100,14 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
     }
 
     // 生成最终 WGSL 代码
-    let shader_code = format!(
+    let vertex_input_code = format!(
         "struct VertexInput {{\n{}\n}};", 
         wgsl_struct_fields.join("\n")
     );
 
     GeneratedVertexLayout {
         buffers: owned_layouts,
-        shader_code,
+        vertex_input_code,
         attribute_locations: location_map,
     }
 }
