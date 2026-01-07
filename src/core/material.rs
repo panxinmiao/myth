@@ -1,30 +1,29 @@
+// src/core/material.rs
 use uuid::Uuid;
 use glam::{Vec3, Vec4};
 use bytemuck::{Pod, Zeroable};
 use bitflags::bitflags;
+use wgpu::ShaderStages;
 
-// ============================================================================
-// 1. GPU 数据层 (POD - Plain Old Data)
-// 只有需要直接 memcpy 到 UniformBuffer 的数据才放在这里
-// 必须严格遵守 std140 内存布局 (16字节对齐)
-// ============================================================================
+// 引入 Binding 抽象
+use crate::core::binding::{Bindable, BindingDescriptor, BindingResource, BindingType};
 
+// ... (MeshBasicUniforms 和 MeshStandardUniforms 保持不变，省略以节省空间) ...
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub struct MeshBasicUniforms {
-    pub color: Vec4, // 16 bytes
+    pub color: Vec4,
 }
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Pod, Zeroable)]
 pub struct MeshStandardUniforms {
-    pub color: Vec4,       // 16 bytes
-    pub emissive: Vec3,    // 12 bytes
-    pub roughness: f32,    // 4 bytes (紧跟 Vec3 填补空缺) -> 共 16 bytes
-    pub metalness: f32,    // 4 bytes
-    pub _padding: [f32; 3],// 12 bytes (补齐 alignment) -> 共 16 bytes
+    pub color: Vec4,
+    pub emissive: Vec3,
+    pub roughness: f32,
+    pub metalness: f32,
+    pub _padding: [f32; 3],
 }
-
 impl Default for MeshStandardUniforms {
     fn default() -> Self {
         Self {
@@ -37,88 +36,65 @@ impl Default for MeshStandardUniforms {
     }
 }
 
-// ============================================================================
-// 2. 材质特性标志位 (Feature Flags)
-// 用于生成 Shader 的 #define 宏，替代之前的 HashMap key 检查
-// ============================================================================
-
+// ... (MaterialFeatures bitflags 保持不变，但稍后我们会用它来辅助判断) ...
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
     pub struct MaterialFeatures: u32 {
-        const USE_MAP           = 1 << 0; // 基础颜色贴图
-        const USE_NORMAL_MAP    = 1 << 1; // 法线贴图
-        const USE_ROUGHNESS_MAP = 1 << 2; // 粗糙度贴图
-        const USE_METALNESS_MAP  = 1 << 3; // 金属度贴图
-        const USE_EMISSIVE_MAP  = 1 << 4; // 自发光贴图
-        const USE_AO_MAP        = 1 << 5; // 环境光遮蔽贴图
-        // const USE_SKINNING   = 1 << 6; // 骨骼动画 (预留)
+        const USE_MAP           = 1 << 0;
+        const USE_NORMAL_MAP    = 1 << 1;
+        const USE_ROUGHNESS_MAP = 1 << 2;
+        const USE_METALNESS_MAP = 1 << 3;
+        const USE_EMISSIVE_MAP  = 1 << 4;
+        const USE_AO_MAP        = 1 << 5;
     }
 }
 
-// ============================================================================
-// 3. 具体材质逻辑结构体 (User Layer)
-// 这里消除了“概念泄漏”：Basic 材质里根本没有 roughness 字段
-// ============================================================================
-
+// ... (MeshBasicMaterial, MeshStandardMaterial, MaterialType 保持不变) ...
 #[derive(Debug, Clone)]
 pub struct MeshBasicMaterial {
     pub uniforms: MeshBasicUniforms,
-    // Basic 材质只支持基础贴图
     pub map: Option<Uuid>, 
 }
 
 #[derive(Debug, Clone)]
 pub struct MeshStandardMaterial {
     pub uniforms: MeshStandardUniforms,
-    // Standard 材质支持完整的 PBR 贴图
     pub map: Option<Uuid>,
     pub normal_map: Option<Uuid>,
     pub roughness_map: Option<Uuid>,
+    pub metalness_map: Option<Uuid>,
     pub emissive_map: Option<Uuid>,
+    pub ao_map: Option<Uuid>,
 }
-
-// ============================================================================
-// 4. 材质类型枚举 (Polymorphic Container)
-// 引擎核心通过这个 Enum 统一管理不同类型的材质
-// ============================================================================
 
 #[derive(Debug, Clone)]
 pub enum MaterialType {
     Basic(MeshBasicMaterial),
     Standard(MeshStandardMaterial),
-    // 未来可扩展: Toon(MeshToonMaterial), Shader(ShaderMaterial) ...
 }
 
-// ============================================================================
-// 5. 主 Material 结构体 (The Public API)
-// ============================================================================
-
+// ... (Material 结构体保持不变) ...
 #[derive(Debug, Clone)]
 pub struct Material {
     pub id: Uuid,
     pub version: u64,
     pub name: Option<String>,
-    
-    // 核心：持有具体的材质数据
     pub data: MaterialType,
-
-    // 通用渲染状态 (Render States) - 所有材质共享
     pub transparent: bool,
     pub opacity: f32,
     pub depth_write: bool,
     pub depth_test: bool,
     pub cull_mode: Option<wgpu::Face>,
-    pub side: u32, // 0: Front, 1: Back, 2: Double (配合 cull_mode 使用)
+    pub side: u32,
 }
 
 impl Material {
-    /// 构造基础材质
+    // ... (new_basic, new_standard 构造函数保持不变) ...
     pub fn new_basic(color: Vec4) -> Self {
-        Self {
+         Self {
             id: Uuid::new_v4(),
             version: 0,
             name: Some("MeshBasic".to_string()),
-            // 只能初始化 Basic 允许的字段
             data: MaterialType::Basic(MeshBasicMaterial {
                 uniforms: MeshBasicUniforms { color },
                 map: None,
@@ -132,19 +108,19 @@ impl Material {
         }
     }
 
-    /// 构造标准 PBR 材质
     pub fn new_standard() -> Self {
         Self {
             id: Uuid::new_v4(),
             version: 0,
             name: Some("MeshStandard".to_string()),
-            // Standard 拥有完整的 PBR 字段
             data: MaterialType::Standard(MeshStandardMaterial {
                 uniforms: MeshStandardUniforms::default(),
                 map: None,
                 normal_map: None,
                 roughness_map: None,
+                metalness_map: None,
                 emissive_map: None,
+                ao_map: None,
             }),
             transparent: false,
             opacity: 1.0,
@@ -155,8 +131,7 @@ impl Material {
         }
     }
 
-    /// 计算当前材质启用的特性 (Feature Flags)
-    /// ShaderGenerator 会使用这个来注入 #define
+    /// 根据当前绑定的资源计算 Features
     pub fn features(&self) -> MaterialFeatures {
         let mut features = MaterialFeatures::empty();
         match &self.data {
@@ -173,27 +148,16 @@ impl Material {
         features
     }
 
-    /// 获取 Shader 模板名称
     pub fn shader_name(&self) -> &'static str {
         match &self.data {
             MaterialType::Basic(_) => "MeshBasic",
             MaterialType::Standard(_) => "MeshStandard",
         }
     }
-
-    /// 获取 Uniform Buffer 的字节数据 (零拷贝)
-    /// 直接用于 wgpu::Queue::write_buffer
-    pub fn as_bytes(&self) -> &[u8] {
-        match &self.data {
-            MaterialType::Basic(m) => bytemuck::bytes_of(&m.uniforms),
-            MaterialType::Standard(m) => bytemuck::bytes_of(&m.uniforms),
-        }
-    }
     
-    /// 获取 WGSL 对应的结构体定义 (单一事实来源)
-    /// 必须与上面的 #[repr(C)] 结构体严格一致
     pub fn wgsl_struct_def(&self) -> &'static str {
-        match &self.data {
+        // ... (保持原样) ...
+         match &self.data {
             MaterialType::Basic(_) => r#"
                 struct MaterialUniforms {
                     color: vec4<f32>,
@@ -209,25 +173,95 @@ impl Material {
             "#,
         }
     }
-
-    /// 获取所有纹理资源 ID 及其对应的 BindGroup 槽位顺序
-    /// 返回值: Vec<Option<Uuid>>
-    /// 顺序必须与 ShaderGenerator 中的 @binding(n) 顺序一致
-    pub fn textures(&self) -> Vec<Option<Uuid>> {
+    
+    // 辅助函数：将 Uniform 转为字节
+    fn as_bytes(&self) -> &[u8] {
         match &self.data {
-            MaterialType::Basic(m) => vec![m.map],
-            // 顺序约定: [Map, Normal, Roughness, Emissive]
-            MaterialType::Standard(m) => vec![
-                m.map, 
-                m.normal_map, 
-                m.roughness_map, 
-                m.emissive_map
-            ],
+            MaterialType::Basic(m) => bytemuck::bytes_of(&m.uniforms),
+            MaterialType::Standard(m) => bytemuck::bytes_of(&m.uniforms),
         }
     }
 
-    /// 标记材质数据已变更 (用户修改属性后必须调用，或者封装在 setter 中)
     pub fn needs_update(&mut self) {
         self.version = self.version.wrapping_add(1);
     }
+}
+
+// === 核心实现：Bindable Trait ===
+// 这里的逻辑取代了原本 Resource Manager 中硬编码的 TEXTURE_DEFINITIONS
+
+impl Bindable for Material {
+
+    fn get_bindings(&self) -> (Vec<BindingDescriptor>, Vec<BindingResource<'_>>) {
+       let mut bindings = Vec::new();
+       let mut resources = Vec::new();
+       // let features = self.features(); // 复用 features 逻辑来判断是否需要生成 Binding
+
+       // 1. Binding 0: Uniform Buffer (所有材质都有)
+       bindings.push(BindingDescriptor {
+           name: "MaterialUniforms",
+           index: 0,
+           bind_type: BindingType::UniformBuffer,
+           visibility: ShaderStages::FRAGMENT | ShaderStages::VERTEX,
+       });
+       resources.push(BindingResource::Buffer(self.as_bytes()));
+
+       // 2. 动态纹理 Bindings
+       // 我们维护一个当前的 binding_index
+       let mut current_index = 1;
+
+       // 辅助闭包：减少重复代码
+       let mut add_texture_slot = |name: &'static str, id: Option<Uuid>| {
+           // Texture Slot
+           bindings.push(BindingDescriptor {
+               name, // 例如 "map" -> 对应 Shader 中的 t_map
+               index: current_index,
+               bind_type: BindingType::Texture { 
+                   sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                   view_dimension: wgpu::TextureViewDimension::D2,
+                   multisampled: false 
+               },
+               visibility: ShaderStages::FRAGMENT,
+           });
+           // Sampler Slot (紧跟 Texture)
+           bindings.push(BindingDescriptor {
+               name, // Sampler 复用名字，Shader 生成器会处理成 s_map
+               index: current_index + 1,
+               bind_type: BindingType::Sampler { 
+                   type_: wgpu::SamplerBindingType::Filtering 
+               },
+               visibility: ShaderStages::FRAGMENT,
+           });
+           resources.push(BindingResource::Texture(id));
+           resources.push(BindingResource::Sampler(id)); // 目前假设 Sampler 与 Texture 绑定
+           current_index += 2;
+       };
+
+       match &self.data {
+           MaterialType::Basic(m) => {
+               // if features.contains(MaterialFeatures::USE_MAP) { add_texture_slot("map", m.map); }
+               if m.map.is_some() {
+                   add_texture_slot("map", m.map);
+               }
+           },
+           MaterialType::Standard(m) => {
+            //    if features.contains(MaterialFeatures::USE_MAP) { add_texture_slot("map", m.map); }
+            //    if features.contains(MaterialFeatures::USE_NORMAL_MAP) { add_texture_slot("normal_map", m.normal_map); }
+            //    if features.contains(MaterialFeatures::USE_ROUGHNESS_MAP) { add_texture_slot("roughness_map", m.roughness_map); }
+            //    if features.contains(MaterialFeatures::USE_METALNESS_MAP) { add_texture_slot("metalness_map", m.metalness_map); }
+            //    if features.contains(MaterialFeatures::USE_EMISSIVE_MAP) { add_texture_slot("emissive_map", m.emissive_map); }
+            //    if features.contains(MaterialFeatures::USE_AO_MAP) { add_texture_slot("ao_map", m.ao_map); }
+               if m.map.is_some() { add_texture_slot("map", m.map);}
+               if m.normal_map.is_some() { add_texture_slot("normal_map", m.normal_map);}
+               if m.roughness_map.is_some() { add_texture_slot("roughness_map", m.roughness_map);}
+               if m.metalness_map.is_some() { add_texture_slot("metalness_map", m.metalness_map);}
+               if m.emissive_map.is_some() { add_texture_slot("emissive_map", m.emissive_map);}
+               if m.ao_map.is_some() { add_texture_slot("ao_map", m.ao_map);}    
+
+           }
+       }
+
+       (bindings, resources)
+    }
+
 }

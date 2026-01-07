@@ -27,6 +27,7 @@ env_logger = "0.11"
 log = "0.4"
 anyhow = "1.0"
 uuid = { version = "1.19.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
+md5 = "0.8.0"
 
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

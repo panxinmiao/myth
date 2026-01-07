@@ -1,3 +1,4 @@
+pub mod binding;
 pub mod material;
 pub mod geometry;
 pub mod node;

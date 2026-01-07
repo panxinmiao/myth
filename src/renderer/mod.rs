@@ -1,4 +1,4 @@
-mod layout_generator;
+mod vertex_layout;
 mod resource_manager;
 mod uniforms;
 mod shader_generator;
@@ -6,9 +6,10 @@ mod dynamic_buffer;
 mod pipeline;
 mod tracked_render_pass;
 mod shader_manager;
+mod gpu_buffer;
+mod gpu_texture;
 
 use std::sync::Arc;
-use std::collections::HashSet;
 use wgpu::util::DeviceExt;
 
 use crate::core::scene::Scene;
@@ -209,11 +210,6 @@ impl Renderer {
 
         let mut render_list = Vec::new();
 
-
-        // 遍历场景收集 Mesh
-        // 创建一个集合，用于记录本帧需要用到的纹理 ID
-        let mut active_texture_ids = HashSet::new();
-
         for (_id, node) in scene.nodes.iter() {
 
             if let Some(mesh_idx) = node.mesh {
@@ -223,13 +219,7 @@ impl Renderer {
 
                     // TODO: 视锥体剔除 (Frustum Culling)
 
-                    let mat = mesh.material.read().unwrap();
-                    // 获取该材质用到的所有纹理 ID
-                    for tex_id_opt in mat.textures() {
-                        if let Some(tex_id) = tex_id_opt {
-                            active_texture_ids.insert(tex_id);
-                        }
-                    }
+                    // let mat = mesh.material.read().unwrap();
 
                     let model_matrix = node.world_matrix_as_mat4();
                     // let model_matrix_inverse = model_matrix.inverse();
@@ -258,16 +248,6 @@ impl Renderer {
         }
 
         if render_list.is_empty() { return; }
-
-        // 只上传收集到的纹理
-        for tex_id in active_texture_ids {
-            // 从 scene.textures 里找到数据
-            if let Some(tex_arc) = scene.textures.get(&tex_id) {
-                let texture = tex_arc.read().unwrap();
-                // 上传！
-                self.resource_manager.add_or_update_texture(&texture);
-            }
-        }
 
         // =========================================================
         // 4. 排序 (Sort)
@@ -314,7 +294,7 @@ impl Renderer {
             // 1. 更新 Geometry
             self.resource_manager.prepare_geometry(&geometry);
             // 2. 更新 Material
-            self.resource_manager.prepare_material(&material);
+            self.resource_manager.prepare_material(&material, &scene.textures);
 
             // 3. 更新 Pipeline (需要先拿到刚才 prepare 好的 GPU 资源)
             // 为了拿到 GPUGeometry 的信息来构建 Pipeline Key，我们需要临时只读借用一下
@@ -328,9 +308,11 @@ impl Renderer {
                         geometry.id,
                         self.config.format,
                         wgpu::TextureFormat::Depth32Float,
-                        &self.global_bind_group_layout,
-                        &gpu_material.layout,
-                        &self.model_buffer_manager.layout
+    &[
+                            &self.global_bind_group_layout, // Group 0
+                            &gpu_material.layout,           // Group 1
+                            &self.model_buffer_manager.layout // Group 2
+                        ],
                     );
                 }
             }

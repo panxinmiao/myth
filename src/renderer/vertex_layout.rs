@@ -6,14 +6,14 @@ use std::sync::{Arc, RwLock};
 /// 【生产级】持有所有权的 VertexBufferLayout
 /// 可以在 Resource Manager 中安全缓存
 #[derive(Debug, Clone)]
-pub struct OwnedVertexBufferLayout {
+pub struct OwnedVertexBufferDesc {
     pub array_stride: u64,
     pub step_mode: wgpu::VertexStepMode,
     pub attributes: Vec<wgpu::VertexAttribute>,
     pub buffer: Arc<RwLock<GeometryBuffer>>, // 持有底层 Buffer 的引用
 }
 
-impl OwnedVertexBufferLayout {
+impl OwnedVertexBufferDesc {
     /// 转换为 WGPU 需要的临时引用格式 (用于 create_pipeline)
     pub fn as_wgpu(&self) -> wgpu::VertexBufferLayout<'_> {
         wgpu::VertexBufferLayout {
@@ -26,9 +26,9 @@ impl OwnedVertexBufferLayout {
 
 /// 生成结果
 #[derive(Debug, Clone)]
-pub struct GeneratedLayout {
+pub struct GeneratedVertexLayout {
     /// Pipeline 需要的 Layout 列表
-    pub buffers: Vec<OwnedVertexBufferLayout>,
+    pub buffers: Vec<OwnedVertexBufferDesc>,
     
     /// 注入 Shader 的 WGSL 代码 (struct VertexInput)
     pub shader_code: String,
@@ -37,7 +37,7 @@ pub struct GeneratedLayout {
     pub attribute_locations: HashMap<String, u32>,
 }
 
-pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedLayout {
+pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
     // 1. 分组：按 Buffer ID 分组，使用 BTreeMap 保证确定性顺序
     let mut buffer_groups: BTreeMap<uuid::Uuid, Vec<(&String, &crate::core::geometry::Attribute)>> = BTreeMap::new();
 
@@ -91,7 +91,7 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedLayout {
         }
 
         // 4. 保存为 OwnedLayout
-        owned_layouts.push(OwnedVertexBufferLayout {
+        owned_layouts.push(OwnedVertexBufferDesc {
             array_stride: stride,
             step_mode,
             attributes: wgpu_attributes,
@@ -105,7 +105,7 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedLayout {
         wgsl_struct_fields.join("\n")
     );
 
-    GeneratedLayout {
+    GeneratedVertexLayout {
         buffers: owned_layouts,
         shader_code,
         attribute_locations: location_map,

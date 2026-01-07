@@ -1,11 +1,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
+use md5;
 
 use crate::core::material::Material;
 use crate::renderer::shader_generator::ShaderGenerator;
 use crate::renderer::shader_generator::ShaderContext;
-use crate::renderer::resource_manager::{generate_resource_id, GPUGeometry}; // 假设引入了 GPUGeometry
+use crate::renderer::resource_manager::{generate_resource_id, GPUGeometry};
 
 /// L2 缓存 Key: 完整描述 Pipeline 的所有特征 (慢，但唯一)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -16,8 +17,12 @@ pub struct PipelineKey {
     pub depth_write: bool,
     pub depth_compare: wgpu::CompareFunction,
     pub blend_state: Option<wgpu::BlendState>,
-    pub layout_signature: String,
-    pub depth_format: wgpu::TextureFormat, // 新增：深度格式也是 Pipeline 的一部分
+    pub color_format: wgpu::TextureFormat,
+    pub depth_format: wgpu::TextureFormat,
+
+    // 是否需要 BindGroup Layout 的变化？
+    // 实际上，只要 Shader （shader_hash）代码不变，Layout 结构通常也不变？
+    // pub layout_ids: Vec<wgpu::Id<wgpu::BindGroupLayout>>,
 }
 
 /// L1 缓存 Key: 基于 ID 和版本号 (极快，无堆分配)
@@ -63,12 +68,13 @@ impl PipelineCache {
         &mut self, 
         device: &wgpu::Device, 
         code: String, 
-        label: &str,
-        stage: wgpu::ShaderStages
+        code_hash: String,
+        stage: wgpu::ShaderStages,
+        label: Option<&str>,
     ) -> Arc<wgpu::ShaderModule> {
 
         let key = ShaderModuleKey {
-            code_hash: code.clone(), // 实际项目中可以用 md5/sha256
+            code_hash,
             stage,
         };
 
@@ -77,7 +83,7 @@ impl PipelineCache {
         }
 
         let module = Arc::new(device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(label),
+            label,
             source: wgpu::ShaderSource::Wgsl(code.into()),
         }));
 
@@ -94,11 +100,9 @@ impl PipelineCache {
         material: &Material,
         gpu_geometry: &GPUGeometry, 
         geometry_id: Uuid,
-        surface_format: wgpu::TextureFormat,
+        color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat, 
-        global_layout: &wgpu::BindGroupLayout,
-        material_layout: &wgpu::BindGroupLayout,
-        model_layout: &wgpu::BindGroupLayout,
+        bind_group_layouts: &[&wgpu::BindGroupLayout],
     ) -> (Arc<wgpu::RenderPipeline>, u64) { // 返回 Arc 更好管理生命周期
         
         // =========================================================
@@ -119,16 +123,43 @@ impl PipelineCache {
             return cached.clone();
         }
 
+
         // =========================================================
-        // 2. 慢速路径 (Slow Path) - 首次创建或状态变更
+        // 生成 Shader 代码
         // =========================================================
         
-        // 2.1 构建完整的 PipelineKey
-        let features = material.features();
-        let geometry_layout = &gpu_geometry.layout_info;
+        // 1. Context
+        let mut base_context = ShaderContext::new();
+        if material.shader_name() == "MeshStandard" {
+            base_context = base_context.define("USE_PBR", true);
+        }
+
+        // 2. Generate Code
+        // 我们需要先生成代码，才能计算 shader_hash
+        // 这比之前稍微慢一点点（因为每次 L1 Miss 都要生成字符串），但对于 L2 命中检查是必要的
+        let vs_code = ShaderGenerator::generate_vertex(
+            &base_context,
+            &gpu_geometry.layout_info,
+            "standard_vert.wgsl"
+        );
+        let fs_code = ShaderGenerator::generate_fragment(
+            &base_context,
+            material,
+            material.shader_name()
+        );
+
+        // 计算代码 Hash
+        let vs_hash = md5::compute(&vs_code); // 或者其他 hash
+        let fs_hash = md5::compute(&fs_code);
+        let shader_hash_str = format!("{:x}_{:x}", vs_hash, fs_hash);
+
+        // 收集 Layout IDs 用于 Cache Key
+        // wgpu::BindGroupLayout 没有直接暴露 ID，但在 Rust 中我们可以利用 global_id 方法或者仅仅依赖 shader_hash?
+        // 实际上，只要 Shader 代码不变，Layout 结构通常也不变。
+        // 为了安全起见，PipelineKey 应该包含 BlendState 等渲染状态。
 
         let canonical_key = PipelineKey {
-            shader_hash: format!("{}_{:?}", material.shader_name(), features),
+            shader_hash: shader_hash_str.clone(),
             topology,
             cull_mode: material.cull_mode,
             depth_write: material.depth_write,
@@ -138,74 +169,34 @@ impl PipelineCache {
             } else {
                 None
             },
-            layout_signature: geometry_layout.shader_code.clone(),
-            depth_format, // 使用传入的格式
+            color_format,
+            depth_format,
         };
 
-        // 2.2 检查 L2 缓存 (去重：不同物体如果材质几何特征完全一致，复用 Pipeline)
         if let Some(cached) = self.canonical_cache.get(&canonical_key) {
-            // 更新 L1 缓存以便下次快速命中
             self.fast_cache.insert(fast_key, cached.clone());
             return cached.clone();
         }
+
 
         // =========================================================
         // 3. 创建 Pipeline (昂贵操作)
         // =========================================================
 
+        let vs_hash_str = format!("{:x}", vs_hash);
+        let fs_hash_str = format!("{:x}", fs_hash);
+        let vs_module = self.get_or_create_module(device, vs_code, vs_hash_str, wgpu::ShaderStages::VERTEX, Some("Vertex Shader"));
+        let fs_module = self.get_or_create_module(device, fs_code, fs_hash_str, wgpu::ShaderStages::FRAGMENT, Some("Fragment Shader"));
 
-
-        // 1. 创建一个全局的基础 Context (可以来自 Renderer 配置)
-        let mut base_context = ShaderContext::new();
-        // .set_value("MAX_LIGHTS", 4)
-        // .define("USE_SHADOWS", true)
-        // .set_value("TONE_MAPPING_EXPOSURE", 1.0);
-
-        // 2. 针对特定 Pipeline 扩展参数 (可选)
-        // if use_instancing {
-        //     base_context = base_context.define("USE_INSTANCING", true);
-        // }
-
-
-         // A. 生成 Vertex Shader 复用 base_context
-        // 只要 Geometry Layout 和模板没变，生成的代码就完全一样，可以复用
-        let vs_code = ShaderGenerator::generate_vertex(
-            &base_context,
-            &gpu_geometry.layout_info,
-            "standard_vert.wgsl" // 或者是传入的模板名
-        );
-
-        // 如果有特定于 Standard 材质的宏
-        if material.shader_name() == "MeshStandard" {
-            base_context = base_context.define("USE_PBR", true);
-        }
-
-        // B. 生成 Fragment Shader
-        // 注意：这里不需要 geometry layout！
-        // 只要 Material 特性没变，生成的代码就完全一样
-        let fs_code = ShaderGenerator::generate_fragment(
-            &base_context,
-            material,
-            material.shader_name() //frag 模板名
-        );
-
-        
-        // =========================================================
-        // 2. 独立创建/获取 Shader Module (模块级复用)
-        // =========================================================
-        
-        let vs_module = self.get_or_create_module(device, vs_code, "vs_module", wgpu::ShaderStages::VERTEX);
-        let fs_module = self.get_or_create_module(device, fs_code, "fs_module", wgpu::ShaderStages::FRAGMENT);
-
-        // 3.2 创建 Layout
+        // 自动创建 PipelineLayout
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[global_layout, material_layout, model_layout],
+            bind_group_layouts,
             immediate_size: 0,
         });
 
         // 3.3 创建 Pipeline
-        let vertex_layouts: Vec<_> = geometry_layout.buffers.iter().map(|l| l.as_wgpu()).collect();
+        let vertex_layouts: Vec<_> = gpu_geometry.layout_info.buffers.iter().map(|l| l.as_wgpu()).collect();
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(&canonical_key.shader_hash),
@@ -220,7 +211,7 @@ impl PipelineCache {
                 module: &fs_module,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: surface_format,
+                    format: color_format,
                     blend: canonical_key.blend_state,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -232,7 +223,7 @@ impl PipelineCache {
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth_format, // <--- 使用传入的 depth_format
+                format: depth_format,
                 depth_write_enabled: canonical_key.depth_write,
                 depth_compare: canonical_key.depth_compare,
                 stencil: wgpu::StencilState::default(),
