@@ -3,8 +3,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::core::material::Material;
-use crate::renderer::layout_generator::GeneratedLayout;
 use crate::renderer::shader_generator::ShaderGenerator;
+use crate::renderer::shader_generator::ShaderContext;
 use crate::renderer::resource_manager::{generate_resource_id, GPUGeometry}; // 假设引入了 GPUGeometry
 
 /// L2 缓存 Key: 完整描述 Pipeline 的所有特征 (慢，但唯一)
@@ -30,6 +30,13 @@ struct FastPipelineKey {
     topology: wgpu::PrimitiveTopology, // 拓扑结构也可能变化
 }
 
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct ShaderModuleKey {
+    code_hash: String, // 代码内容的哈希
+    stage: wgpu::ShaderStages, // Vertex 或 Fragment
+}
+
 pub struct PipelineCache {
     // L1: 快速查找 (命中率 99%+)
     // 存储的是 Arc，方便克隆引用
@@ -37,6 +44,9 @@ pub struct PipelineCache {
 
     // L2: 规范查找 (用于去重)
     canonical_cache: HashMap<PipelineKey, (Arc<wgpu::RenderPipeline>, u64)>,
+
+    // Shader Module 缓存 (避免重复创建)
+    module_cache: HashMap<ShaderModuleKey, Arc<wgpu::ShaderModule>>,
 }
 
 impl PipelineCache {
@@ -44,8 +54,38 @@ impl PipelineCache {
         Self {
             fast_cache: HashMap::new(),
             canonical_cache: HashMap::new(),
+            module_cache: HashMap::new(),
         }
     }
+
+    // 获取或创建 Module 的辅助函数
+    fn get_or_create_module(
+        &mut self, 
+        device: &wgpu::Device, 
+        code: String, 
+        label: &str,
+        stage: wgpu::ShaderStages
+    ) -> Arc<wgpu::ShaderModule> {
+
+        let key = ShaderModuleKey {
+            code_hash: code.clone(), // 实际项目中可以用 md5/sha256
+            stage,
+        };
+
+        if let Some(module) = self.module_cache.get(&key) {
+            return module.clone();
+        }
+
+        let module = Arc::new(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some(label),
+            source: wgpu::ShaderSource::Wgsl(code.into()),
+        }));
+
+        self.module_cache.insert(key, module.clone());
+        module
+    }
+
+
 
     #[allow(clippy::too_many_arguments)]
     pub fn get_or_create(
@@ -112,14 +152,50 @@ impl PipelineCache {
         // =========================================================
         // 3. 创建 Pipeline (昂贵操作)
         // =========================================================
+
+
+
+        // 1. 创建一个全局的基础 Context (可以来自 Renderer 配置)
+        let mut base_context = ShaderContext::new();
+        // .set_value("MAX_LIGHTS", 4)
+        // .define("USE_SHADOWS", true)
+        // .set_value("TONE_MAPPING_EXPOSURE", 1.0);
+
+        // 2. 针对特定 Pipeline 扩展参数 (可选)
+        // if use_instancing {
+        //     base_context = base_context.define("USE_INSTANCING", true);
+        // }
+
+
+         // A. 生成 Vertex Shader 复用 base_context
+        // 只要 Geometry Layout 和模板没变，生成的代码就完全一样，可以复用
+        let vs_code = ShaderGenerator::generate_vertex(
+            &base_context,
+            &gpu_geometry.layout_info,
+            "standard_vert.wgsl" // 或者是传入的模板名
+        );
+
+        // 如果有特定于 Standard 材质的宏
+        if material.shader_name() == "MeshStandard" {
+            base_context = base_context.define("USE_PBR", true);
+        }
+
+        // B. 生成 Fragment Shader
+        // 注意：这里不需要 geometry layout！
+        // 只要 Material 特性没变，生成的代码就完全一样
+        let fs_code = ShaderGenerator::generate_fragment(
+            &base_context,
+            material,
+            material.shader_name() //frag 模板名
+        );
+
         
-        // 3.1 生成 Shader (提取为独立函数)
-        let shader_source = Self::generate_shader_source(material, geometry_layout);
+        // =========================================================
+        // 2. 独立创建/获取 Shader Module (模块级复用)
+        // =========================================================
         
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(&canonical_key.shader_hash),
-            source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-        });
+        let vs_module = self.get_or_create_module(device, vs_code, "vs_module", wgpu::ShaderStages::VERTEX);
+        let fs_module = self.get_or_create_module(device, fs_code, "fs_module", wgpu::ShaderStages::FRAGMENT);
 
         // 3.2 创建 Layout
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -135,13 +211,13 @@ impl PipelineCache {
             label: Some(&canonical_key.shader_hash),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
-                module: &shader,
+                module: &vs_module,
                 entry_point: Some("vs_main"),
                 buffers: &vertex_layouts,
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader,
+                module: &fs_module,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: surface_format,
@@ -177,15 +253,6 @@ impl PipelineCache {
         result
     }
 
-    // 将 Shader 生成逻辑抽离，保持主流程整洁
-    fn generate_shader_source(material: &Material, layout: &GeneratedLayout) -> String {
-        
-        let fragment_template = material.shader_name();
-
-        let shader_code = ShaderGenerator::generate_shader(material, layout,fragment_template);
-        
-        shader_code
-    }
 
     // 只读获取
     pub fn get_pipeline(

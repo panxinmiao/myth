@@ -1,4 +1,5 @@
 use crate::core::material::{Material, MaterialFeatures};
+use crate::renderer::layout_generator::GeneratedLayout;
 use serde_json::{Map, Value};
 use super::shader_manager::get_env;
 
@@ -23,82 +24,171 @@ const TEXTURE_DEFINITIONS: &[TextureDef] = &[
 ];
 
 
+/// Shader 上下文构建器
+/// 用于收集所有的宏定义、代码片段和绑定信息
+pub struct ShaderContext {
+    pub defines: Map<String, Value>,
+}
+
+impl ShaderContext {
+    pub fn new() -> Self {
+        Self {
+            defines: Map::new(),
+        }
+    }
+
+    /// 定义一个宏开关 (boolean)
+    pub fn define(mut self, name: &str, value: bool) -> Self {
+        self.defines.insert(name.to_string(), Value::Bool(value));
+        self
+    }
+
+    /// 定义一个宏值 (int/float/string)
+    pub fn set_value(mut self, name: &str, value: impl Into<Value>) -> Self {
+        self.defines.insert(name.to_string(), value.into());
+        self
+    }
+
+    /// 批量合并另一个 Context (用于继承全局设置)
+    pub fn merge(&mut self, other: &ShaderContext) {
+        for (k, v) in &other.defines {
+            self.defines.insert(k.clone(), v.clone());
+        }
+    }
+
+
+    // pub fn apply_material_features(mut self, features: MaterialFeatures) -> Self {
+    //     // 1. 生成 Texture Bindings
+    //     for def in TEXTURE_DEFINITIONS {
+    //         if features.contains(def.feature) {
+    //             // 定义宏: use_map = true
+    //             self.defines.insert(format!("use_{}", def.name), Value::Bool(true));
+
+    //             // 生成 Binding 代码
+    //             self.binding_code.push_str(&format!(
+    //                 r#"
+    //                 @group(1) @binding({}) var t_{}: texture_2d<f32>;
+    //                 @group(1) @binding({}) var s_{}: sampler;
+    //                 "#,
+    //                 self.next_binding_idx,     def.name,
+    //                 self.next_binding_idx + 1, def.name
+    //             ));
+    //             self.next_binding_idx += 2;
+    //         }
+    //     }
+    //     self
+    // }
+    
+    // 可以在这里添加更多处理，比如 Lighting 相关的宏
+    // pub fn apply_lighting_features(mut self, ...) -> Self { ... }
+}
+
 pub struct ShaderGenerator;
 
 impl ShaderGenerator {
-    // 生成最终的 WGSL 代码
-    /// 
-    /// # 参数
-    /// * `material`: 材质实例，用于确定开启了哪些 Feature
-    /// * `geometry_layout`: 几何体布局，包含 Vertex Input 的定义代码
-    /// * `template_name`: 模板名称 (例如 "materials/mesh_standard")，对应 assets/shaders 下的文件
-    pub fn generate_shader(
-        material: &Material,
-        geometry_layout: &crate::renderer::layout_generator::GeneratedLayout,
-        template_name: &str) -> String {
+
+    // ========================================================================
+    // 1. 顶点着色器生成器
+    // 关注点：几何体布局(Attributes)、模型矩阵(Model)、全局相机(Camera)
+    // ========================================================================
+    pub fn generate_vertex(
+        global_context: &ShaderContext,
+        geometry_layout: &GeneratedLayout,
+        template_name: &str,
+    ) -> String {
 
         let env = get_env();
+
+
+        // 1. 克隆 Context，避免污染全局状态
+        let mut context = global_context.defines.clone();
+
+        context.insert("vertex_struct_code".to_string(), Value::String(geometry_layout.shader_code.clone()));
+
+        // B. Vertex Bindings (Group 0 & 2)
+        // 这里的绑定代码是 Vertex 独有的
+        let binding_code = r#"
+            // Group 2: Model (Storage Buffer)
+            struct ModelUniforms {
+                model_matrix: mat4x4<f32>,
+                model_matrix_inverse: mat4x4<f32>,
+                normal_matrix: mat3x3<f32>,
+            };
+            @group(2) @binding(0) var<storage, read> mesh_models: array<ModelUniforms>;
+        "#;
+        context.insert("binding_code".to_string(), Value::String(binding_code.to_string()));
+
+
+        let vs_template = env.get_template(template_name)
+            .unwrap_or_else(|e| panic!("Vertex template '{}' not found: {}", template_name, e));
+        let vs_code = vs_template.render(&context)
+            .unwrap_or_else(|e| panic!("Failed to render vertex shader: {}", e));
+
+        format!(
+            "// === Auto-generated Vertex Shader ===\n\n{}\n",
+            vs_code
+        )
+    }
+
+    // ========================================================================
+    // 2. 片元着色器生成器
+    // 关注点：材质参数(Material Uniforms)、纹理采样(Textures)、光照计算
+    // ========================================================================
+    pub fn generate_fragment(
+        global_context: &ShaderContext,
+        material: &Material,
+        template_name: &str,
+    ) -> String {
+    
+        let env = get_env();
+
+        // 1. 克隆 Context
+        let mut context = global_context.defines.clone();
         let features = material.features();
 
-
-        let mut context = Map::new();
-        
-        // 2. 注入 Rust 生成的代码片段 (Strings)
-        context.insert(
-            "vertex_struct_code".to_string(), 
-            Value::String(geometry_layout.shader_code.clone())
-        );
+        // 2. 注入 Fragment 特有的系统代码
+        // A. Material Uniform 结构体
         context.insert(
             "uniform_struct_code".to_string(), 
             Value::String(material.wgsl_struct_def().to_string())
         );
 
-        // --------------------------------------------------------
-        // 生成 Binding 代码
-        // --------------------------------------------------------
-
-        
-        let mut binding_code = String::new();
-        // @group(1) @binding(0) var<uniform> material: MaterialUniforms;
-        binding_code.push_str(
+        // B. 动态生成 Texture Bindings (Group 1)
+        let mut binding_code = String::from(
             "@group(1) @binding(0) var<uniform> material: MaterialUniforms;\n"
         );
-        let mut binding_idx = 1; // 0 号位留给了 material uniform
 
+        let mut binding_idx = 1;
         for def in TEXTURE_DEFINITIONS {
             if features.contains(def.feature) {
-                // 自动生成 t_xxx 和 s_xxx
+                // 1. 设置宏: use_map = true (供模板逻辑使用)
+                context.insert(format!("use_{}", def.name), Value::Bool(true));
+
+                // 2. 生成 WGSL Binding 代码
                 binding_code.push_str(&format!(
                     r#"
                     @group(1) @binding({}) var t_{}: texture_2d<f32>;
                     @group(1) @binding({}) var s_{}: sampler;
                     "#,
-                    binding_idx,     def.name, // e.g. binding(1) t_map
-                    binding_idx + 1, def.name  // e.g. binding(2) s_map
+                    binding_idx,     def.name,
+                    binding_idx + 1, def.name
                 ));
-                
-                // 每次消耗 2 个槽位 (Texture + Sampler)
                 binding_idx += 2;
-
-                // B. 注入 Feature 开关 -> "use_map": true
-                context.insert(format!("use_{}", def.name), Value::Bool(true));
             }
         }
-
-        // 注入生成的 binding 代码
         context.insert("binding_code".to_string(), Value::String(binding_code));
 
-        // --------------------------------------------------------
-        // 3. 渲染模板
-        // --------------------------------------------------------
-        let template = env.get_template(template_name)
-            .unwrap_or_else(|e| panic!("Failed to load template '{}': {}", template_name, e));
-        
-        let final_shader = template.render(&context)
-            .unwrap_or_else(|e| panic!("Failed to render shader: {}", e));
+        // B. 渲染 Fragment 部分
+        let fs_template = env.get_template(template_name)
+            .unwrap_or_else(|e| panic!("Fragment template '{}' not found: {}", template_name, e));
+        let fs_code = fs_template.render(&context)
+            .unwrap_or_else(|e| panic!("Failed to render fragment shader: {}", e));
 
-        final_shader
-
+        format!(
+            "// === Auto-generated Fragment Shader ===\n\n{}\n", 
+            fs_code
+        )
     }
+
 
 }
