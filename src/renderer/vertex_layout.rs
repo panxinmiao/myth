@@ -1,16 +1,15 @@
 use std::collections::{HashMap, BTreeMap};
 use wgpu::VertexFormat;
-use crate::core::geometry::{Geometry, GeometryBuffer};
-use std::sync::{Arc, RwLock};
+use crate::core::geometry::{Geometry};
+use crate::core::buffer::BufferRef; // 引入 BufferRef
 
 /// 【生产级】持有所有权的 VertexBufferLayout
-/// 可以在 Resource Manager 中安全缓存
 #[derive(Debug, Clone)]
 pub struct OwnedVertexBufferDesc {
     pub array_stride: u64,
     pub step_mode: wgpu::VertexStepMode,
     pub attributes: Vec<wgpu::VertexAttribute>,
-    pub buffer: Arc<RwLock<GeometryBuffer>>, // 持有底层 Buffer 的引用
+    pub buffer: BufferRef, 
 }
 
 impl OwnedVertexBufferDesc {
@@ -61,7 +60,7 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
 
         // 获取第一个属性的信息作为 Buffer 基准
         let first_attr = attrs[0].1;
-        let stride = first_attr.buffer.read().unwrap().stride;
+        let stride = first_attr.stride;
         let step_mode = first_attr.step_mode;
 
         // 【检查】同一 Buffer 内所有属性 step_mode 必须一致

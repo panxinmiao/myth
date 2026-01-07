@@ -1,6 +1,7 @@
 // src/core/binding.rs
 use uuid::Uuid;
 use wgpu::ShaderStages;
+use crate::core::buffer::BufferRef; // 引入新类型
 
 /// 定义绑定的具体类型 (Schema)
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -45,17 +46,22 @@ pub struct BindingDescriptor {
 /// Core 层只持有 ID 或 数据引用，不持有 GPU 句柄
 #[derive(Debug, Clone)]
 pub enum BindingResource<'a> {
-    /// Buffer 数据 (直接提供 bytes，由 Renderer 写入 GPU Buffer)
-    Buffer(&'a [u8]),
+
+    /// 持有 CPU Buffer 的引用 (统一了 Vertex/Index/Uniform/Storage)
+    Buffer(BufferRef), 
     
-    /// Buffer ID (引用已存在的 GPU Buffer，如骨骼矩阵)
+    /// 外部 Buffer ID (用于高级场景，暂保留)
     BufferId(Uuid),
-    
+
     /// 纹理 ID (可能为空，意味着需要使用缺省纹理)
     Texture(Option<Uuid>),
     
     /// 采样器 ID (通常跟随纹理，但也可以独立)
     Sampler(Option<Uuid>),
+
+    /// 占位符：用于某些需要仅做引用的情况 (可选)
+    #[allow(dead_code)]
+    _Phantom(&'a ()),
 }
 
 /// 核心 Trait：所有能被绑定的对象都要实现此接口
@@ -64,6 +70,4 @@ pub trait Bindable {
     /// 这决定了 PipelineLayout 的结构
     fn get_bindings(&self) -> (Vec<BindingDescriptor>, Vec<BindingResource<'_>>);
 
-
-    // fn get_binding_resources(&self) -> Vec<BindingResource<'_>>;
 }

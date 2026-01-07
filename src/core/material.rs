@@ -1,14 +1,13 @@
-// src/core/material.rs
 use uuid::Uuid;
 use glam::{Vec3, Vec4};
 use bytemuck::{Pod, Zeroable};
 use bitflags::bitflags;
 use wgpu::ShaderStages;
+use std::sync::{Arc, RwLock};
 
-// 引入 Binding 抽象
 use crate::core::binding::{Bindable, BindingDescriptor, BindingResource, BindingType};
+use crate::core::buffer::{CpuBuffer, BufferRef};
 
-// ... (MeshBasicUniforms 和 MeshStandardUniforms 保持不变，省略以节省空间) ...
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
 pub struct MeshBasicUniforms {
@@ -53,12 +52,14 @@ bitflags! {
 #[derive(Debug, Clone)]
 pub struct MeshBasicMaterial {
     pub uniforms: MeshBasicUniforms,
+    pub uniform_buffer: BufferRef,
     pub map: Option<Uuid>, 
 }
 
 #[derive(Debug, Clone)]
 pub struct MeshStandardMaterial {
     pub uniforms: MeshStandardUniforms,
+    pub uniform_buffer: BufferRef,
     pub map: Option<Uuid>,
     pub normal_map: Option<Uuid>,
     pub roughness_map: Option<Uuid>,
@@ -89,14 +90,22 @@ pub struct Material {
 }
 
 impl Material {
-    // ... (new_basic, new_standard 构造函数保持不变) ...
     pub fn new_basic(color: Vec4) -> Self {
+        let uniforms = MeshBasicUniforms { color };
+        // 初始化 Uniform Buffer
+        let uniform_buffer = Arc::new(RwLock::new(CpuBuffer::new(
+            &[uniforms],
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            Some("MeshBasicUniforms")
+        )));
+
          Self {
             id: Uuid::new_v4(),
             version: 0,
             name: Some("MeshBasic".to_string()),
             data: MaterialType::Basic(MeshBasicMaterial {
-                uniforms: MeshBasicUniforms { color },
+                uniforms,
+                uniform_buffer,
                 map: None,
             }),
             transparent: false,
@@ -109,12 +118,20 @@ impl Material {
     }
 
     pub fn new_standard() -> Self {
+        let uniforms = MeshStandardUniforms::default();
+        let uniform_buffer = Arc::new(RwLock::new(CpuBuffer::new(
+            &[uniforms],
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            Some("MeshStandardUniforms")
+        )));
+
         Self {
             id: Uuid::new_v4(),
             version: 0,
             name: Some("MeshStandard".to_string()),
             data: MaterialType::Standard(MeshStandardMaterial {
-                uniforms: MeshStandardUniforms::default(),
+                uniforms,
+                uniform_buffer,
                 map: None,
                 normal_map: None,
                 roughness_map: None,
@@ -143,6 +160,8 @@ impl Material {
                 if m.normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
                 if m.roughness_map.is_some() { features |= MaterialFeatures::USE_ROUGHNESS_MAP; }
                 if m.emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
+                if m.metalness_map.is_some() { features |= MaterialFeatures::USE_METALNESS_MAP; }
+                if m.ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
             }
         }
         features
@@ -173,14 +192,35 @@ impl Material {
             "#,
         }
     }
-    
-    // 辅助函数：将 Uniform 转为字节
-    fn as_bytes(&self) -> &[u8] {
-        match &self.data {
-            MaterialType::Basic(m) => bytemuck::bytes_of(&m.uniforms),
-            MaterialType::Standard(m) => bytemuck::bytes_of(&m.uniforms),
+
+    /// 将当前的 uniforms struct 数据同步到 CPU Buffer
+    /// 必须在修改材质参数后手动调用，或者在 Render 循环前统一调用
+    pub fn flush_uniforms(&mut self) {
+        match &mut self.data {
+            MaterialType::Basic(m) => {
+                m.uniform_buffer.write().unwrap().update(&[m.uniforms]);
+            }
+            MaterialType::Standard(m) => {
+                m.uniform_buffer.write().unwrap().update(&[m.uniforms]);
+            }
         }
     }
+
+    // 辅助：获取 Buffer 引用
+    fn get_uniform_buffer(&self) -> BufferRef {
+        match &self.data {
+            MaterialType::Basic(m) => m.uniform_buffer.clone(),
+            MaterialType::Standard(m) => m.uniform_buffer.clone(),
+        }
+    }
+    
+    // 辅助函数：将 Uniform 转为字节
+    // fn as_bytes(&self) -> &[u8] {
+    //     match &self.data {
+    //         MaterialType::Basic(m) => bytemuck::bytes_of(&m.uniforms),
+    //         MaterialType::Standard(m) => bytemuck::bytes_of(&m.uniforms),
+    //     }
+    // }
 
     pub fn needs_update(&mut self) {
         self.version = self.version.wrapping_add(1);
@@ -197,20 +237,17 @@ impl Bindable for Material {
        let mut resources = Vec::new();
        // let features = self.features(); // 复用 features 逻辑来判断是否需要生成 Binding
 
-       // 1. Binding 0: Uniform Buffer (所有材质都有)
+       // 1. Binding 0: Uniform Buffer
        bindings.push(BindingDescriptor {
            name: "MaterialUniforms",
            index: 0,
            bind_type: BindingType::UniformBuffer,
            visibility: ShaderStages::FRAGMENT | ShaderStages::VERTEX,
        });
-       resources.push(BindingResource::Buffer(self.as_bytes()));
+       resources.push(BindingResource::Buffer(self.get_uniform_buffer()));
 
        // 2. 动态纹理 Bindings
-       // 我们维护一个当前的 binding_index
        let mut current_index = 1;
-
-       // 辅助闭包：减少重复代码
        let mut add_texture_slot = |name: &'static str, id: Option<Uuid>| {
            // Texture Slot
            bindings.push(BindingDescriptor {
@@ -245,19 +282,12 @@ impl Bindable for Material {
                }
            },
            MaterialType::Standard(m) => {
-            //    if features.contains(MaterialFeatures::USE_MAP) { add_texture_slot("map", m.map); }
-            //    if features.contains(MaterialFeatures::USE_NORMAL_MAP) { add_texture_slot("normal_map", m.normal_map); }
-            //    if features.contains(MaterialFeatures::USE_ROUGHNESS_MAP) { add_texture_slot("roughness_map", m.roughness_map); }
-            //    if features.contains(MaterialFeatures::USE_METALNESS_MAP) { add_texture_slot("metalness_map", m.metalness_map); }
-            //    if features.contains(MaterialFeatures::USE_EMISSIVE_MAP) { add_texture_slot("emissive_map", m.emissive_map); }
-            //    if features.contains(MaterialFeatures::USE_AO_MAP) { add_texture_slot("ao_map", m.ao_map); }
                if m.map.is_some() { add_texture_slot("map", m.map);}
                if m.normal_map.is_some() { add_texture_slot("normal_map", m.normal_map);}
                if m.roughness_map.is_some() { add_texture_slot("roughness_map", m.roughness_map);}
                if m.metalness_map.is_some() { add_texture_slot("metalness_map", m.metalness_map);}
                if m.emissive_map.is_some() { add_texture_slot("emissive_map", m.emissive_map);}
-               if m.ao_map.is_some() { add_texture_slot("ao_map", m.ao_map);}    
-
+               if m.ao_map.is_some() { add_texture_slot("ao_map", m.ao_map);} 
            }
        }
 

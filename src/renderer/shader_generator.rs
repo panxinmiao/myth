@@ -1,4 +1,3 @@
-// src/renderer/shader_generator.rs
 use crate::core::material::Material;
 use crate::core::binding::{Bindable, BindingType};
 use crate::renderer::vertex_layout::GeneratedVertexLayout;

@@ -1,4 +1,5 @@
 pub mod binding;
+pub mod buffer;
 pub mod material;
 pub mod geometry;
 pub mod node;

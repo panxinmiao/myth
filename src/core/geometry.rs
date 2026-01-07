@@ -1,45 +1,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
-use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode};
+use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages};
 use glam::Vec3;
 use core::ops::Range;
 use crate::core::binding::{Bindable, BindingDescriptor, BindingResource, BindingType};
+use crate::core::buffer::{CpuBuffer, BufferRef}; 
 
-// ============================================================================
-// 1. 底层数据存储：GeometryBuffer
-// ============================================================================
-
-#[derive(Debug)]
-pub struct GeometryBuffer {
-    pub id: Uuid,         // 资源的唯一标识，Renderer 用它做 Cache Key
-    pub data: Vec<u8>,    // 原始字节数据
-    pub stride: u64,      // 步长
-    pub version: u64,     // 数据版本号 (data 变了 +1)
-}
-
-impl GeometryBuffer {
-    /// 创建一个新的 Buffer
-    pub fn new<T: bytemuck::Pod>(data: &[T], stride: u64) -> Self {
-
-        if stride % 4 != 0 {
-            log::warn!("GeometryBuffer created with stride {} (not a multiple of 4). This may cause WGPU validation errors.", stride);
-        }
-
-        Self {
-            id: Uuid::new_v4(),
-            data: bytemuck::cast_slice(data).to_vec(),
-            stride,
-            version: 0,
-        }
-    }
-
-    /// 更新数据
-    pub fn update<T: bytemuck::Pod>(&mut self, data: &[T]) {
-        self.data = bytemuck::cast_slice(data).to_vec();
-        self.version += 1;
-    }
-}
 
 // ============================================================================
 // 2. 数据视图：Attribute
@@ -47,10 +14,11 @@ impl GeometryBuffer {
 
 #[derive(Debug, Clone)]
 pub struct Attribute {
-    pub buffer: Arc<RwLock<GeometryBuffer>>, // 共享所有权
+    pub buffer: BufferRef,
     pub format: VertexFormat,
     pub offset: u64,
     pub count: u32,
+    pub stride: u64,
     pub step_mode: VertexStepMode,
 }
 
@@ -59,12 +27,19 @@ impl Attribute {
     /// 适用于 Position, Normal, UV 等
     pub fn new_planar<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
         let stride = std::mem::size_of::<T>() as u64;
-        let buffer = GeometryBuffer::new(data, stride);
+        // 创建通用 CpuBuffer
+        let buffer = CpuBuffer::new(
+            data, 
+            BufferUsages::VERTEX | BufferUsages::COPY_DST, 
+            Some("GeometryVertexAttr")
+        );
+
         Self {
             buffer: Arc::new(RwLock::new(buffer)),
             format,
             offset: 0,
             count: data.len() as u32,
+            stride,
             step_mode: VertexStepMode::Vertex,
         }
     }
@@ -73,25 +48,32 @@ impl Attribute {
     /// 适用于 InstanceMatrix, InstanceColor 等
     pub fn new_instanced<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
         let stride = std::mem::size_of::<T>() as u64;
-        let buffer = GeometryBuffer::new(data, stride);
+        let buffer = CpuBuffer::new(
+            data, 
+            BufferUsages::VERTEX | BufferUsages::COPY_DST, 
+            Some("GeometryInstanceAttr")
+        );
+
         Self {
             buffer: Arc::new(RwLock::new(buffer)),
             format,
             offset: 0,
             count: data.len() as u32,
+            stride,
             step_mode: VertexStepMode::Instance,
         }
     }
 
     /// 快捷创建 Interleaved Attribute (需要传入已存在的 Shared Buffer)
     pub fn new_interleaved(
-        buffer: Arc<RwLock<GeometryBuffer>>, 
+        buffer: BufferRef, 
         format: VertexFormat, 
         offset: u64, 
         count: u32,
+        stride: u64, // 需要显式传入 stride
         step_mode: VertexStepMode
     ) -> Self {
-        Self { buffer, format, offset, count, step_mode }
+        Self { buffer, format, offset, count, stride, step_mode }
     }
 }
 
@@ -165,12 +147,37 @@ impl Geometry {
     }
 
     pub fn set_indices(&mut self, indices: &[u16]) {
-        self.index_attribute = Some(Attribute::new_planar(indices, VertexFormat::Uint16));
+        // self.index_attribute = Some(Attribute::new_planar(indices, VertexFormat::Uint16));
+        let buffer = CpuBuffer::new(
+            indices, 
+            BufferUsages::INDEX | BufferUsages::COPY_DST, 
+            Some("IndexBuffer")
+        );
+        self.index_attribute = Some(Attribute {
+            buffer: Arc::new(RwLock::new(buffer)),
+            format: VertexFormat::Uint16,
+            offset: 0,
+            count: indices.len() as u32,
+            stride: 2,
+            step_mode: VertexStepMode::Vertex, // Index buffer 忽略 step_mode
+        });
         self.version += 1;
     }
 
     pub fn set_indices_u32(&mut self, indices: &[u32]) {
-        self.index_attribute = Some(Attribute::new_planar(indices, VertexFormat::Uint32));
+        let buffer = CpuBuffer::new(
+            indices, 
+            BufferUsages::INDEX | BufferUsages::COPY_DST, 
+            Some("IndexBuffer")
+        );
+        self.index_attribute = Some(Attribute {
+            buffer: Arc::new(RwLock::new(buffer)),
+            format: VertexFormat::Uint32,
+            offset: 0,
+            count: indices.len() as u32,
+            stride: 4,
+            step_mode: VertexStepMode::Vertex,
+        });
         self.version += 1;
     }
 
@@ -184,7 +191,7 @@ impl Geometry {
         // 1. 准备数据读取
         let buffer_guard = pos_attr.buffer.read().unwrap();
         let data = &buffer_guard.data;
-        let stride = buffer_guard.stride as usize;
+        let stride = pos_attr.stride as usize;
         let offset = pos_attr.offset as usize;
         let count = pos_attr.count as usize;
 
@@ -259,26 +266,12 @@ impl Geometry {
 }
 
 
-// 实现 Bindable
+// Bindable 实现暂时保留，后续需要根据新 BindingResource 调整
 impl Bindable for Geometry {
-
     fn get_bindings(&self) -> (Vec<BindingDescriptor>, Vec<BindingResource<'_>>) {
-        let mut bindings = Vec::new();
-        let mut resources = Vec::new();
-        // let mut index = 0;
-
-        // todo : 根据morph target, 生成morth texture的binding
-        // for (name, attr) in &self.attributes {
-        //     bindings.push(BindingDescriptor {
-        //         name: name,
-        //         index: bindings.len() as u32,
-        //         bind_type: BindingType::StorageBuffer,
-        //         visibility: wgpu::ShaderStages::VERTEX,
-        //     });
-        //     resources.push(BindingResource::Buffer(&attr.buffer.read().unwrap().data));
-        // }
+        let bindings = Vec::new();
+        let resources = Vec::new();
+        // TODO: 实现 Morph Target 纹理/Buffer 绑定
         (bindings, resources)
-
     }
-
 }
