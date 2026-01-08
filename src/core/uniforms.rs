@@ -97,77 +97,106 @@ pub struct DynamicModelUniforms {
 // ============================================================================
 
 
-// macro_rules! define_uniform_struct {
-//     (
-//         $(#[$meta:meta])* struct $name:ident {
-//             $(
-//                 $field_name:ident : $field_type:ty
-//             ),* $(,)?
-//         }
-//     ) => {
-//         // 1. 生成 Rust 结构体
-//         #[repr(C)]
-//         #[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-//         $(#[$meta])*
-//         pub struct $name {
-//             $(
-//                 pub $field_name : $field_type,
-//             )*
-//         }
+macro_rules! define_uniform_struct {
+    (
+        $(#[$meta:meta])* struct $name:ident {
+            $(
+                $field_name:ident : $field_type:ty
+            ),* $(,)?
+        }
+    ) => {
+        // 1. 生成 Rust 结构体
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+        $(#[$meta])*
+        pub struct $name {
+            $(
+                pub $field_name : $field_type,
+            )*
+        }
 
-//         // 2. 生成获取 WGSL 代码的方法
-//         impl $name {
-//             pub fn wgsl_struct_code(struct_name: &str) -> String {
-//                 let mut code = format!("struct {} {{\n", struct_name);
-//                 $(
-//                     code.push_str(&format!(
-//                         "    {}: {},\n", 
-//                         stringify!($field_name), 
-//                         <$field_type as WgslType>::wgsl_type_name()
-//                     ));
-//                 )*
-//                 code.push_str("};");
-//                 code
-//             }
-//         }
-//     };
-// }
+        // 2. 生成获取 WGSL 代码的方法
+        impl $name {
+            pub fn wgsl_struct_def(struct_name: &str) -> String {
+                let mut code = format!("struct {} {{\n", struct_name);
+                $(
+                    code.push_str(&format!(
+                        "    {}: {},\n", 
+                        stringify!($field_name), 
+                        <$field_type as WgslType>::wgsl_type_name()
+                    ));
+                )*
+                code.push_str("};");
+                code
+            }
+        }
+    };
+}
 
-// // ============================================================================
-// // 3. 材质 Uniform 定义 (在此处修改，两端自动同步)
-// // ============================================================================
+// ============================================================================
+// 3. 材质 Uniform 定义 (在此处修改，两端自动同步)
+// ============================================================================
 
-// // Standard PBR Material
-// // 必须严格遵守 std140 对齐规则
-// define_uniform_struct!(
-//     struct MeshStandardUniforms {
-//         color: Vec4,           // 16
-//         emissive: Vec3,        // 12
-//         occlusion_strength: f32, // 4 (12+4=16)
-//         normal_scale: Vec2,    // 8
-//         roughness: f32,        // 4  
-//         metalness: f32,        // 4
+// Standard PBR Material
+// 必须严格遵守 std140 对齐规则
+define_uniform_struct!(
+    struct MeshStandardUniforms {
+        color: Vec4,           // 16
+        emissive: Vec3,        // 12
+        occlusion_strength: f32, // 4 (12+4=16)
+        normal_scale: Vec2,    // 8
+        roughness: f32,        // 4  
+        metalness: f32,        // 4
 
-//         // 使用优化后的 Mat3A (48 bytes)
-//         map_transform: Mat3A,         
-//         normal_map_transform: Mat3A,   
-//         roughness_map_transform: Mat3A,
-//         metalness_map_transform: Mat3A,
-//         emissive_map_transform: Mat3A, 
-//         occlusion_map_transform: Mat3A,
-//     }
-// );
+        // 使用优化后的 Mat3A (48 bytes)
+        map_transform: Mat3A,         
+        normal_map_transform: Mat3A,   
+        roughness_map_transform: Mat3A,
+        metalness_map_transform: Mat3A,
+        emissive_map_transform: Mat3A, 
+        occlusion_map_transform: Mat3A,
+    }
+);
 
-// // Basic Material
-// define_uniform_struct!(
-//     struct MeshBasicUniforms {
-//         color: Vec4,           // 16
-//         opacity: f32,          // 4
-//         _padding: PadVec3,      // 12 (4+12=16)
+impl Default for MeshStandardUniforms {
+    fn default() -> Self {
+        Self {
+            color: Vec4::ONE,
+            emissive: Vec3::ZERO,
+            occlusion_strength: 1.0,
+            normal_scale: Vec2::ONE,
+            roughness: 1.0,
+            metalness: 0.0,
+            map_transform: Mat3A::IDENTITY,
+            normal_map_transform: Mat3A::IDENTITY,
+            roughness_map_transform: Mat3A::IDENTITY,
+            metalness_map_transform: Mat3A::IDENTITY,
+            emissive_map_transform: Mat3A::IDENTITY,
+            occlusion_map_transform: Mat3A::IDENTITY,
+        }
+    }
+}
 
-//         map_transform: Mat3A,
-//     }
-// );
+// Basic Material
+define_uniform_struct!(
+    struct MeshBasicUniforms {
+        color: Vec4,           // 16
+        opacity: f32,          // 4
+        _padding: PadVec3,      // 12 (4+12=16)
+        map_transform: Mat3A,
+    }
+);
+
+impl Default for MeshBasicUniforms {
+    fn default() -> Self {
+        Self {
+            color: Vec4::ONE,
+            opacity: 1.0,
+            _padding: PadVec3(Vec3::ZERO),
+            map_transform: Mat3A::IDENTITY,
+        }
+    }
+}
 
 // #[cfg(test)]
 // mod tests {

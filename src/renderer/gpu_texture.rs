@@ -26,10 +26,15 @@ impl GpuTexture {
 
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, texture: &Texture) {
         // 1. 结构变更 -> 重建
-        if texture.generation_id != self.generation_id {
+        if texture.generation_id != self.generation_id 
+            || texture.source.format != self.format 
+            || texture.source.width != self.width 
+            || texture.source.height != self.height {
+
             *self = Self::create_internal(device, queue, texture);
             return;
         }
+
 
         // 2. 数据变更 -> 上传
         if texture.version > self.version {
@@ -42,15 +47,15 @@ impl GpuTexture {
         let size = wgpu::Extent3d {
             width: texture.source.width,
             height: texture.source.height,
-            depth_or_array_layers: 1,
+            depth_or_array_layers: texture.source.array_layer_count,
         };
 
         let gpu_texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(&texture.name),
             size,
-            mip_level_count: 1,
+            mip_level_count: texture.source.mip_level_count,
             sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
+            dimension: texture.dimension,
             format: texture.source.format,
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
@@ -58,7 +63,11 @@ impl GpuTexture {
 
         Self::upload_data(queue, &gpu_texture, texture);
 
-        let view = gpu_texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let view = gpu_texture.create_view(&wgpu::TextureViewDescriptor{
+            label: Some(&format!("{}-view", texture.name)),
+            dimension: Some(texture.view_dimension),
+            ..Default::default()
+        });
         
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: texture.sampler.address_mode_u,

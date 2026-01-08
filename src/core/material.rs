@@ -1,6 +1,5 @@
 use uuid::Uuid;
-use glam::{Vec3, Vec4};
-use bytemuck::{Pod, Zeroable};
+use glam::{Vec4};
 use bitflags::bitflags;
 use wgpu::ShaderStages;
 use std::sync::{Arc, RwLock};
@@ -8,32 +7,8 @@ use std::sync::{Arc, RwLock};
 use crate::core::binding::{Bindable, BindingDescriptor, BindingResource, BindingType};
 use crate::core::buffer::{DataBuffer, BufferRef};
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
-pub struct MeshBasicUniforms {
-    pub color: Vec4,
-}
+use crate::core::uniforms::{MeshBasicUniforms, MeshStandardUniforms};
 
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Pod, Zeroable)]
-pub struct MeshStandardUniforms {
-    pub color: Vec4,
-    pub emissive: Vec3,
-    pub roughness: f32,
-    pub metalness: f32,
-    pub _padding: [f32; 3],
-}
-impl Default for MeshStandardUniforms {
-    fn default() -> Self {
-        Self {
-            color: Vec4::ONE,
-            emissive: Vec3::ZERO,
-            roughness: 0.5,
-            metalness: 0.0,
-            _padding: [0.0; 3],
-        }
-    }
-}
 
 // ... (MaterialFeatures bitflags 保持不变，但稍后我们会用它来辅助判断) ...
 bitflags! {
@@ -91,7 +66,9 @@ pub struct Material {
 
 impl Material {
     pub fn new_basic(color: Vec4) -> Self {
-        let uniforms = MeshBasicUniforms { color };
+        let uniforms = MeshBasicUniforms { color,
+            ..Default::default()
+        };
         // 初始化 Uniform Buffer
         let uniform_buffer = Arc::new(RwLock::new(DataBuffer::new(
             &[uniforms],
@@ -174,22 +151,10 @@ impl Material {
         }
     }
     
-    pub fn wgsl_struct_def(&self) -> &'static str {
-        // ... (保持原样) ...
-         match &self.data {
-            MaterialType::Basic(_) => r#"
-                struct MaterialUniforms {
-                    color: vec4<f32>,
-                };
-            "#,
-            MaterialType::Standard(_) => r#"
-                struct MaterialUniforms {
-                    color: vec4<f32>,
-                    emissive: vec3<f32>,
-                    roughness: f32,
-                    metalness: f32,
-                };
-            "#,
+    pub fn wgsl_struct_def(&self) -> String {
+        match &self.data {
+            MaterialType::Basic(_) => MeshBasicUniforms::wgsl_struct_def("MaterialUniforms"),
+            MaterialType::Standard(_) => MeshStandardUniforms::wgsl_struct_def("MaterialUniforms"),
         }
     }
 

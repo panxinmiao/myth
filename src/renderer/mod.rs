@@ -1,6 +1,5 @@
 mod vertex_layout;
 mod resource_manager;
-mod uniforms;
 mod shader_generator;
 mod dynamic_buffer;
 mod pipeline;
@@ -15,11 +14,11 @@ use wgpu::util::DeviceExt;
 use crate::core::scene::Scene;
 use crate::core::camera::Camera;
 use crate::core::mesh::Mesh;
+use crate::core::uniforms::{GlobalUniforms, DynamicModelUniforms, Mat3A};
 
 use self::resource_manager::ResourceManager;
 use self::pipeline::PipelineCache;
 use self::dynamic_buffer::DynamicBuffer;
-use self::uniforms::{GlobalUniforms, DynamicModelUniforms, Mat3A};
 use self::tracked_render_pass::TrackedRenderPass;
 
 
@@ -360,6 +359,9 @@ impl Renderer {
             // 绑定永远不变的 Global (Group 0)
             tracked_pass.set_bind_group(0, 0, &self.global_bind_group, &[]);
 
+            // 获取 stride，确保安全
+            let dynamic_stride = std::mem::size_of::<DynamicModelUniforms>() as u32;
+
             // 状态追踪 (去重)
 
             for (i, item) in render_list.iter().enumerate() {
@@ -387,8 +389,8 @@ impl Renderer {
 
                 // C. Model BindGroup (Group 2) - 动态 Offset
                 // 绑定的是同一个 BindGroup，只是 Offset 不同
-                let offset = (i * 256) as u32; 
-                let model_bg_id = 9999; // 给 Model BindGroup 一个固定的特殊 ID
+                let offset = i as u32 * dynamic_stride; 
+                let model_bg_id = self.model_buffer_manager.bind_group_id; // 使用实际的 BindGroup ID
                 tracked_pass.set_bind_group(
                     2, 
                     model_bg_id, 

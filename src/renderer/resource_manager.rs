@@ -138,12 +138,18 @@ impl ResourceManager {
         gpu_buf.last_used_frame = self.frame_index;
 
         // 2. 更新 (GpuBuffer 内部会比较 version)
-        gpu_buf.update_with_version(
-            &self.device, 
-            &self.queue, 
-            &cpu_buffer.data, 
-            cpu_buffer.version
-        );
+        if cpu_buffer.usage.contains(wgpu::BufferUsages::UNIFORM) {
+            // Uniform 走 Diff 逻辑 (忽略 version)
+            gpu_buf.update_with_data(&self.device, &self.queue, &cpu_buffer.data);
+        } else {
+            // 其他 (Vertex/Index/Storage) 走 Version 逻辑
+            gpu_buf.update_with_version(
+                &self.device, 
+                &self.queue, 
+                &cpu_buffer.data, 
+                cpu_buffer.version
+            );
+        }
 
         gpu_buf.id
     }
@@ -255,7 +261,7 @@ impl ResourceManager {
         // 1. 预处理所有资源 (Buffers & Textures)
         for res in &resources {
             match res {
-                BindingResource::Buffer { buffer, offset, size } => {
+                BindingResource::Buffer { buffer, offset: _, size: _ } => {
                     let cpu_buf = buffer.read().unwrap();
                     self.prepare_buffer(&cpu_buf); // 自动处理所有 Buffer 的创建和更新！
                 },
