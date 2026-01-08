@@ -59,6 +59,7 @@ pub struct GPUMaterial {
     // 用于判断是否需要重建 BindGroup
     // 对应每个 Slot 的资源指纹 (例如 Texture ID + GenerationID)
     pub resource_signatures: Vec<Option<u64>>, 
+    pub material_version: u64,
     pub last_used_frame: u64,
 }
 
@@ -256,6 +257,7 @@ impl ResourceManager {
 
     pub fn prepare_material(&mut self, material: &Material, texture_assets: &HashMap<Uuid, Arc<RwLock<Texture>>>) {
         let id = material.id;
+
         let (descriptors ,resources) = material.get_bindings();
 
         // 1. 预处理所有资源 (Buffers & Textures)
@@ -324,14 +326,18 @@ impl ResourceManager {
                 layout_hash,
                 resource_signatures: current_signatures,
                 last_used_frame: self.frame_index,
+                material_version: material.version,
             };
             self.materials.insert(id, gpu_mat);
         } else {
             // Update LRU
             if let Some(mat) = self.materials.get_mut(&id) {
                 mat.last_used_frame = self.frame_index;
+                mat.material_version = material.version;
             }
         }
+
+
 
     }
 
