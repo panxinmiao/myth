@@ -3,7 +3,7 @@ use wgpu::{BufferUsages, ShaderStages};
 use crate::renderer::resource_manager::ResourceManager;
 use crate::core::uniforms::DynamicModelUniforms;
 use crate::core::buffer::{DataBuffer, BufferRef};
-use crate::core::binding::{BindingDescriptor, BindingResource, BindingType};
+use crate::core::binding::{ResourceBuilder};
 
 /// 管理动态 Uniform Buffer (Group 2)
 /// 职责：
@@ -22,8 +22,6 @@ pub struct DynamicBuffer {
 
     pub layout: Arc<wgpu::BindGroupLayout>,
 
-    // 状态追踪，用于检测是否需要重建 BindGroup
-    layout_hash: u64,
     last_buffer_id: u64,
 }
 
@@ -41,7 +39,7 @@ impl DynamicBuffer {
         // 2. 立即在 GPU 上准备 Buffer (这会在 RM 中注册并上传数据)
         let buffer_id = resource_manager.prepare_buffer(&cpu_buffer.read());
 
-        let (layout, bind_group, layout_hash, bg_id) = Self::recreate_resources(resource_manager, &cpu_buffer);
+        let (layout, bind_group, bg_id) = Self::recreate_resources(resource_manager, &cpu_buffer);
 
         Self {
             label: label.to_string(),
@@ -49,7 +47,6 @@ impl DynamicBuffer {
             bind_group,
             bind_group_id: bg_id,
             layout,
-            layout_hash,
             last_buffer_id: buffer_id,
         }
     }
@@ -71,12 +68,11 @@ impl DynamicBuffer {
             log::info!("Recreating BindGroup for {} (Buffer Resized)", self.label);
             
             // 重新生成 BindGroup
-            let (layout, bind_group, hash, bg_id) = Self::recreate_resources(resource_manager, &self.cpu_buffer);
+            let (layout, bind_group, bg_id) = Self::recreate_resources(resource_manager, &self.cpu_buffer);
 
-            // 通常 Layout 不会变，但为了严谨我们更新一下
-            if hash != self.layout_hash {
+            if !Arc::ptr_eq(&self.layout, &layout) {
+                // 通常不会发生变化，警告？
                 self.layout = layout;
-                self.layout_hash = hash;
             }
             self.bind_group = bind_group;
             self.bind_group_id = bg_id;
@@ -88,30 +84,26 @@ impl DynamicBuffer {
     fn recreate_resources(
         rm: &mut ResourceManager, 
         cpu_buffer: &BufferRef,
-    ) -> (Arc<wgpu::BindGroupLayout>, wgpu::BindGroup, u64, u64) {
-        
-        // 定义 Schema：Dynamic Uniform Buffer
-        let descriptors = vec![BindingDescriptor {
-            name: "DynamicModel",
-            index: 0,
-            bind_type: BindingType::UniformBuffer { 
-                dynamic: true,      // <--- 开启 Dynamic Offset
-                min_size: Some(256) // <--- 单个 Uniform 结构体的大小
-            },
-            visibility: ShaderStages::VERTEX,
-        }];
-        
-        // 定义 Resource：指定视窗大小
-        let resources = vec![BindingResource::Buffer {
-            buffer: cpu_buffer.clone(),
-            offset: 0,
-            size: Some(256) // <--- 视窗大小
-        }];
+    ) -> (Arc<wgpu::BindGroupLayout>, wgpu::BindGroup, u64) {
 
-        // 让 RM 干活
-        let (layout, hash) = rm.get_or_create_layout(&descriptors);
-        let (bind_group, bg_id) = rm.create_bind_group(&layout, &resources);
+        let mut builder = ResourceBuilder::new();
+
+        // 这里的 256 是 min_binding_size，对于动态 Uniform 通常是单个结构体大小
+        // dynamic offset 已经在 add_dynamic_uniform 内部处理了 (has_dynamic_offset = true)
+        builder.add_dynamic_uniform(
+            "DynamicModel", 
+            cpu_buffer, 
+            std::mem::size_of::<DynamicModelUniforms>() as u64, // 自动计算大小
+            ShaderStages::VERTEX
+        );
+
+        // 2. 调用 RM 的通用接口创建 Layout
+        // 这里 DynamicBuffer 和 Material 享受同等的 Layout 缓存待遇
+        let layout = rm.get_or_create_layout(&builder.layout_entries); 
         
-        (layout, bind_group, hash, bg_id)
+        // 2. 创建 BindGroup
+        let (bind_group, bg_id) = rm.create_bind_group(&layout, &builder.resources);
+        
+        (layout, bind_group, bg_id)
     }
 }

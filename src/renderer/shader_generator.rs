@@ -1,19 +1,18 @@
 use crate::core::material::Material;
-use crate::core::binding::{BindingType};
 use crate::renderer::vertex_layout::GeneratedVertexLayout;
 use serde_json::{Map, Value};
 use super::shader_manager::get_env;
 use crate::core::material::MaterialFeatures;
 use crate::core::geometry::GeometryFeatures;
+use crate::core::scene::SceneFeatures;
+use crate::core::binding::ResourceBuilder;
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub struct ShaderCompilationOptions {
     pub mat_features: MaterialFeatures,
     pub geo_features: GeometryFeatures,
-    // 将来可以扩展：
-    // pub alpha_test: OrderedFloat<f32>, 
-    // pub use_instancing: bool,
+    pub scene_features: SceneFeatures,
 }
 
 impl ShaderCompilationOptions {
@@ -32,6 +31,9 @@ impl ShaderCompilationOptions {
         if self.geo_features.contains(GeometryFeatures::USE_TANGENT) { map.insert("use_tangent".into(), true.into()); }
         if self.geo_features.contains(GeometryFeatures::USE_MORPHING) { map.insert("use_morphing".into(), true.into()); }
         if self.geo_features.contains(GeometryFeatures::USE_SKINNING) { map.insert("use_skinning".into(), true.into()); }
+
+        // [新增] 处理 Scene Features (示例)
+        // if self.scene_features.contains(SceneFeatures::USE_SHADOW_MAP) { map.insert("use_shadow_map".into(), true.into()); }
         map
     }
 }
@@ -124,53 +126,55 @@ impl ShaderGenerator {
             Value::String(material.wgsl_struct_def().to_string())
         );
 
-        // // 2. 注入 Defines (使用新系统！)
-        // let defines_map = material.get_defines().to_defines();
-        // for (k, v) in defines_map {
-        //     context.insert(k, v);
-        // }
 
         // 2. 动态生成 Bindings 代码
-        
-        let bindings_layout = material.get_layout();
+        // let bindings_layout = material.get_layout();
+        let mut builder = ResourceBuilder::new();
+        material.define_bindings(&mut builder);
 
         let mut binding_code = String::new();
 
-        for desc in bindings_layout.iter() {
-            // context.insert(format!("use_{}", desc.name), Value::Bool(true));
+        for (i, entry) in builder.layout_entries.iter().enumerate() {
+            let name = &builder.names[i];
 
             // B. 生成 WGSL 变量声明
             // @group(1) @binding(N) var prefix_name: type;
-            let wgsl = match desc.bind_type {
-                BindingType::UniformBuffer{..} => {
-                    // 假设 UniformBuffer 绑定的结构体名字就是 desc.name (例如 "MaterialUniforms")
-                    // 变量名我们固定叫 material，或者也可以根据 desc.name 生成
-                    format!("@group(1) @binding({}) var<uniform> material: {};\n", desc.index, desc.name)
+            let wgsl = match entry.ty {
+                wgpu::BindingType::Buffer { ty, .. } => {
+                    match ty {
+                        wgpu::BufferBindingType::Uniform => {
+                            // 约定：Uniform Buffer 变量名固定为 material，类型名为传入的 name (如 MaterialUniforms)
+                            format!("@group(1) @binding({}) var<uniform> material: {};\n", entry.binding, name)
+                        },
+                        wgpu::BufferBindingType::Storage { read_only } => {
+                            let access = if read_only { "read" } else { "read_write" };
+                            format!("@group(1) @binding({}) var<storage, {}> {}: array<f32>;\n", entry.binding, access, name)
+                        },
+                    }
                 },
-                BindingType::Texture { sample_type, view_dimension, .. } => {
-                    // 根据 Texture 类型生成对应的 WGSL 类型
+
+                wgpu::BindingType::Texture { sample_type, view_dimension, .. } => {
                     let type_str = match (view_dimension, sample_type) {
                         (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Float { .. }) => "texture_2d<f32>",
                         (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Depth) => "texture_depth_2d",
                         (wgpu::TextureViewDimension::Cube, wgpu::TextureSampleType::Float { .. }) => "texture_cube<f32>",
-                        // ... 其他类型可按需添加
-                        _ => "texture_2d<f32>", 
+                        _ => "texture_2d<f32>", // fallback
                     };
                     // 约定：纹理变量名为 t_{name}
-                    format!("@group(1) @binding({}) var t_{}: {};\n", desc.index, desc.name, type_str)
+                    format!("@group(1) @binding({}) var t_{}: {};\n", entry.binding, name, type_str)
                 },
-                BindingType::Sampler { type_ } => {
+
+                wgpu::BindingType::Sampler(type_) => {
                     let type_str = match type_ {
-                        wgpu::SamplerBindingType::Filtering => "sampler",
-                        wgpu::SamplerBindingType::NonFiltering => "sampler",
                         wgpu::SamplerBindingType::Comparison => "sampler_comparison",
+                        _ => "sampler",
                     };
                     // 约定：采样器变量名为 s_{name}
-                    format!("@group(1) @binding({}) var s_{}: {};\n", desc.index, desc.name, type_str)
+                    format!("@group(1) @binding({}) var s_{}: {};\n", entry.binding, name, type_str)
                 },
-                BindingType::StorageBuffer { read_only } => {
-                    let access = if read_only { "read" } else { "read_write" };
-                    format!("@group(1) @binding({}) var<storage, {}> {}: array<f32>;\n", desc.index, access, desc.name)
+
+                _ => {
+                    panic!("Unsupported binding type in shader generation");
                 }
             };
             

@@ -292,6 +292,8 @@ impl Renderer {
             let geometry = item.mesh.geometry.read().unwrap();
             let material = item.mesh.material.read().unwrap();
 
+            // let model_matrix = item.model_matrix;
+
             // 1. 更新 Geometry
             self.resource_manager.prepare_geometry(&geometry);
             // 2. 更新 Material
@@ -306,6 +308,7 @@ impl Renderer {
                         &self.device,
                         &material,
                         &geometry,
+                        &scene,
                         self.config.format,
                         wgpu::TextureFormat::Depth32Float,
                         &gpu_geometry.layout_info, // 传入

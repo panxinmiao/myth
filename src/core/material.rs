@@ -4,7 +4,7 @@ use std::any::Any;
 use wgpu::ShaderStages;
 use bitflags::bitflags;
 
-use crate::core::binding::{BindingDescriptor, BindingResource, BindingType};
+use crate::core::binding::{ResourceBuilder, define_texture_binding};
 use crate::core::buffer::{DataBuffer, BufferRef};
 use crate::core::uniforms::{MeshBasicUniforms, MeshStandardUniforms};
 use crate::core::Mut;
@@ -31,15 +31,10 @@ pub trait MaterialProperty: Send + Sync + std::fmt::Debug + Any {
     /// [L0] 刷新 Uniform 数据到 CPU Buffer (极快，每帧可能调用)
     fn flush_uniforms(&self);
 
-    /// [L1] 获取资源绑定列表 (用于检测 BindGroup 是否需要重建)
-    fn get_resources(&self) -> Vec<BindingResource<'static>>;
+    fn define_bindings(&self, builder: &mut ResourceBuilder);
 
     /// [L2] 获取编译选项 (用于检测 Pipeline 是否需要重建)
     fn get_defines(&self) -> MaterialFeatures;
-    
-    /// 获取绑定描述符 (Layout)
-    fn get_layout(&self) -> Vec<BindingDescriptor>;
-
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -73,36 +68,19 @@ impl MaterialProperty for MeshBasicMaterial {
         features
     }
 
-    fn get_resources(&self) -> Vec<BindingResource<'static>> {
-        let mut resources = Vec::with_capacity(3);
-        // Resource 0: Uniform
-        resources.push(BindingResource::Buffer { 
-            buffer: self.uniform_buffer.clone(), 
-            offset: 0, 
-            size: None 
-        });
-        // Resource 1..N: Textures
-        if let Some(id) = self.map {
-            resources.push(BindingResource::Texture(Some(id)));
-            resources.push(BindingResource::Sampler(Some(id)));
-        }
-        resources
-    }
+    fn define_bindings(&self, builder: &mut ResourceBuilder) {
+        // 1. Uniform Buffer
+        builder.add_uniform(
+            "MaterialUniforms", 
+            &self.uniform_buffer, 
+            ShaderStages::VERTEX | ShaderStages::FRAGMENT
+        );
 
-    fn get_layout(&self) -> Vec<BindingDescriptor> {
-        let mut bindings = Vec::new();
-        // Binding 0
-        bindings.push(BindingDescriptor {
-            name: "MaterialUniforms",
-            index: 0,
-            bind_type: BindingType::UniformBuffer { dynamic: false, min_size: None },
-            visibility: ShaderStages::FRAGMENT | ShaderStages::VERTEX,
-        });
-        // Texture Bindings
-        if self.map.is_some() {
-            add_texture_binding(&mut bindings, "map", 1);
+        // 2. Texture + Sampler
+        if let Some(id) = self.map {
+            define_texture_binding(builder, "map", Some(id));
         }
-        bindings
+
     }
 
     fn as_any(&self) -> &dyn Any { self }
@@ -149,70 +127,37 @@ impl MaterialProperty for MeshStandardMaterial {
         features
     }
 
-    fn get_resources(&self) -> Vec<BindingResource<'static>> {
-        let mut resources = Vec::with_capacity(12);
-        // Resource 0
-        resources.push(BindingResource::Buffer { 
-            buffer: self.uniform_buffer.clone(), 
-            offset: 0, 
-            size: None 
-        });
-        
-        // Textures
-        if let Some(id) = self.map { resources.push(BindingResource::Texture(Some(id))); resources.push(BindingResource::Sampler(Some(id))); }
-        if let Some(id) = self.normal_map { resources.push(BindingResource::Texture(Some(id))); resources.push(BindingResource::Sampler(Some(id))); }
-        if let Some(id) = self.roughness_map { resources.push(BindingResource::Texture(Some(id))); resources.push(BindingResource::Sampler(Some(id))); }
-        if let Some(id) = self.metalness_map { resources.push(BindingResource::Texture(Some(id))); resources.push(BindingResource::Sampler(Some(id))); }
-        if let Some(id) = self.emissive_map { resources.push(BindingResource::Texture(Some(id))); resources.push(BindingResource::Sampler(Some(id))); }
-        if let Some(id) = self.ao_map { resources.push(BindingResource::Texture(Some(id))); resources.push(BindingResource::Sampler(Some(id))); }
-        
-        resources
-    }
+    fn define_bindings(&self, builder: &mut ResourceBuilder) {
+        // 1. Uniform Buffer
+        builder.add_uniform(
+            "MaterialUniforms", 
+            &self.uniform_buffer, 
+            ShaderStages::VERTEX | ShaderStages::FRAGMENT
+        );
 
-    fn get_layout(&self) -> Vec<BindingDescriptor> {
-        let mut bindings = Vec::new();
-        bindings.push(BindingDescriptor {
-            name: "MaterialUniforms",
-            index: 0,
-            bind_type: BindingType::UniformBuffer { dynamic: false, min_size: None },
-            visibility: ShaderStages::FRAGMENT | ShaderStages::VERTEX,
-        });
+        // 2. Maps
+        // 辅助闭包：减少重复代码
+        let mut add_tex = |name: &str, id: Option<Uuid>| {
+            if let Some(tex_id) = id {
+                builder.add_texture(name, Some(tex_id), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, ShaderStages::FRAGMENT);
+                builder.add_sampler(name, Some(tex_id), wgpu::SamplerBindingType::Filtering, ShaderStages::FRAGMENT);
+            }
+        };
 
-        let mut idx = 1;
-        if self.map.is_some() { idx = add_texture_binding(&mut bindings, "map", idx); }
-        if self.normal_map.is_some() { idx = add_texture_binding(&mut bindings, "normal_map", idx); }
-        if self.roughness_map.is_some() { idx = add_texture_binding(&mut bindings, "roughness_map", idx); }
-        if self.metalness_map.is_some() { idx = add_texture_binding(&mut bindings, "metalness_map", idx); }
-        if self.emissive_map.is_some() { idx = add_texture_binding(&mut bindings, "emissive_map", idx); }
-        if self.ao_map.is_some() { add_texture_binding(&mut bindings, "ao_map", idx); }
-
-        bindings
+        add_tex("map", self.map);
+        add_tex("normal_map", self.normal_map);
+        add_tex("roughness_map", self.roughness_map);
+        add_tex("metalness_map", self.metalness_map);
+        add_tex("emissive_map", self.emissive_map);
+        add_tex("ao_map", self.ao_map);
     }
 
     fn as_any(&self) -> &dyn Any { self }
     fn as_any_mut(&mut self) -> &mut dyn Any { self }
 }
 
-// 辅助函数：减少代码重复
-fn add_texture_binding(bindings: &mut Vec<BindingDescriptor>, name: &'static str, start_index: u32) -> u32 {
-    bindings.push(BindingDescriptor {
-        name,
-        index: start_index,
-        bind_type: BindingType::Texture { 
-            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: false 
-        },
-        visibility: ShaderStages::FRAGMENT,
-    });
-    bindings.push(BindingDescriptor {
-        name, 
-        index: start_index + 1,
-        bind_type: BindingType::Sampler { type_: wgpu::SamplerBindingType::Filtering },
-        visibility: ShaderStages::FRAGMENT,
-    });
-    start_index + 2
-}
+
+
 
 
 // === 3. Material 主结构体 ===
@@ -286,9 +231,9 @@ impl Material {
     pub fn shader_name(&self) -> &'static str { self.data.shader_name() }
     pub fn wgsl_struct_def(&self) -> String { self.data.wgsl_struct_def() }
     pub fn flush_uniforms(&self) { self.data.flush_uniforms() }
-    pub fn get_resources(&self) -> Vec<BindingResource<'static>> { self.data.get_resources() }
     pub fn get_defines(&self) -> MaterialFeatures { self.data.get_defines() }
-    pub fn get_layout(&self) -> Vec<BindingDescriptor> { self.data.get_layout() }
+    pub fn define_bindings(&self, builder: &mut ResourceBuilder) { self.data.define_bindings(builder); }
+
 }
 
 

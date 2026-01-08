@@ -5,7 +5,7 @@ use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages, Shader
 use glam::Vec3;
 use core::ops::Range;
 
-use crate::core::binding::{BindingDescriptor, BindingResource, BindingType};
+use crate::core::binding::{ResourceBuilder, define_texture_binding};
 use crate::core::buffer::{DataBuffer, BufferRef};
 // [新增] 引入 Shader 编译选项 (复用 Material 的，或者新建一个 GeometryCompilationOptions)
 // 为了简单起见，且通常 Defines 是合并处理的，我们可以复用或新建。
@@ -311,37 +311,16 @@ impl Geometry {
         features
     }
 
-    /// [L1] 获取资源列表 (用于 BindGroup)
-    /// 即使目前为空，也为未来扩展做好了准备
-    pub fn get_resources(&self) -> Vec<BindingResource<'static>> {
-        let mut resources = Vec::new();
-
-        // 示例：如果有 Morph Targets 纹理，在这里添加
-        // if let Some(morph_texture_id) = self.morph_texture_id {
-        //     resources.push(BindingResource::Texture(Some(morph_texture_id)));
-        // }
-
-        // 示例：如果是 Skinned Mesh，骨骼矩阵 Buffer 可能会在这里 (或者在 Mesh 的 BindGroup 中)
-        // 通常 Skinning Buffer 属于 Mesh 级别 (因为不同实例姿态不同)，
-        // 但如果是在 GPU 做 Vertex Pulling 的静态动画，也可能属于 Geometry。
-        
-        resources
-    }
-
-    /// [Layout] 获取绑定布局
-    pub fn get_layout(&self) -> Vec<BindingDescriptor> {
-        let mut bindings = Vec::new();
+    fn define_bindings(&self, builder: &mut ResourceBuilder) {
 
         // 示例：配合 get_resources
         // if !self.morph_attributes.is_empty() {
-        //     bindings.push(BindingDescriptor {
-        //         name: "morphTargetTexture",
-        //         index: 0,
-        //         bind_type: BindingType::Texture { ... },
-        //         visibility: ShaderStages::VERTEX,
-        //     });
+        //    builder.add_storage_buffer(
+        //        "MorphTargetBuffer",
+        //        &self.morph_buffer,
+        //        false, // read_only
+        //        ShaderStages::VERTEX
+        //    );
         // }
-
-        bindings
     }
 }

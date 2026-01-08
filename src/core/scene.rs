@@ -3,12 +3,24 @@ use std::sync::{Arc, RwLock};
 use glam::{Affine3A, Vec4}; 
 use std::collections::HashMap;
 use uuid::Uuid;
+use bitflags::bitflags;
 use crate::core::node::Node;
 use crate::core::mesh::Mesh;
 use crate::core::camera::Camera;
 use crate::core::material::Material;
 use crate::core::geometry::Geometry;
 use crate::core::texture::Texture;
+
+
+bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+    pub struct SceneFeatures: u32 {
+        // 示例：未来可以在这里添加
+        // const USE_SHADOW_MAP = 1 << 0;
+        // const USE_ENV_MAP    = 1 << 1;
+        // const NUM_POINT_LIGHTS_MASK = 0xF0; // 预留位给数量
+    }
+}
 
 pub struct Scene {
     pub nodes: Arena<Node>,
@@ -298,6 +310,16 @@ impl Scene {
         }
 
         Some(node_id)
+    }
+
+    pub fn get_defines(&self) -> SceneFeatures {
+        let mut features = SceneFeatures::empty();
+        // 示例：未来可以根据场景内容设置标志位
+        // if self.lights.len() > 0 {
+        //     features |= SceneFeatures::USE_SHADOW_MAP;
+        // }
+
+        features
     }
 }
 
