@@ -13,6 +13,9 @@ pub struct ShaderCompilationOptions {
     pub mat_features: MaterialFeatures,
     pub geo_features: GeometryFeatures,
     pub scene_features: SceneFeatures,
+    pub num_dir_lights: u8,
+    pub num_point_lights: u8,
+    pub num_spot_lights: u8,
 }
 
 impl ShaderCompilationOptions {
@@ -32,10 +35,16 @@ impl ShaderCompilationOptions {
         if self.geo_features.contains(GeometryFeatures::USE_MORPHING) { map.insert("use_morphing".into(), true.into()); }
         if self.geo_features.contains(GeometryFeatures::USE_SKINNING) { map.insert("use_skinning".into(), true.into()); }
 
+
+        map.insert("num_dir_lights".into(), self.num_dir_lights.into());
+        map.insert("num_point_lights".into(), self.num_point_lights.into());
+        map.insert("num_spot_lights".into(), self.num_spot_lights.into());
+
         // [新增] 处理 Scene Features (示例)
         // if self.scene_features.contains(SceneFeatures::USE_SHADOW_MAP) { map.insert("use_shadow_map".into(), true.into()); }
         map
     }
+
 }
 
 /// Shader 上下文构建器

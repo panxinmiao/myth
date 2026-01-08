@@ -21,6 +21,12 @@ pub struct PipelineKey {
     pub geo_features: GeometryFeatures,
     pub scene_features: SceneFeatures,
 
+    // [新增] 数值特征 (Numerical Features)
+    // 直接影响 Shader 宏定义，如 #define NUM_POINT_LIGHTS 3
+    pub num_dir_lights: u8,
+    pub num_point_lights: u8,
+    pub num_spot_lights: u8,
+
     // 2. 渲染状态 (Render States)
     pub topology: wgpu::PrimitiveTopology,
     pub cull_mode: Option<wgpu::Face>,
@@ -29,6 +35,7 @@ pub struct PipelineKey {
     pub blend_state: Option<wgpu::BlendState>,
     pub color_format: wgpu::TextureFormat,
     pub depth_format: wgpu::TextureFormat,
+    pub sample_count: u32,
 
     // 是否需要 BindGroup Layout 的变化？
     // BindGroupLayout 的结构通常由 Features 决定, 所以只要 Features 相同，Layout 结构大概率相同
@@ -43,6 +50,8 @@ struct FastPipelineKey {
     geometry_id: Uuid,     // 逻辑 ID
     geometry_version: u64, // 布局版本
     topology: wgpu::PrimitiveTopology, // 拓扑结构也可能变化
+
+    scene_hash: u64, // 场景状态哈希
 }
 
 
@@ -115,6 +124,14 @@ impl PipelineCache {
         bind_group_layouts: &[&wgpu::BindGroupLayout],
     ) -> (Arc<wgpu::RenderPipeline>, u64) { // 返回 Arc 更好管理生命周期
         
+        // 提取场景特征
+        let (scene_features, num_dir, num_point, num_spot) = scene.get_render_stats();
+
+        let scene_hash = (num_dir as u64) 
+            | ((num_point as u64) << 8) 
+            | ((num_spot as u64) << 16) 
+            | ((scene_features.bits() as u64) << 24);
+
         // =========================================================
         // 1. L1 Cache: 快速路径 (Fast Path)
         // =========================================================
@@ -126,6 +143,7 @@ impl PipelineCache {
             geometry_id: geometry.id,
             geometry_version: geometry.version,
             topology,
+            scene_hash,
         };
 
         // 如果命中 L1 缓存，直接返回 (零堆内存分配)
@@ -148,6 +166,9 @@ impl PipelineCache {
             mat_features,
             geo_features,
             scene_features,
+            num_dir_lights: num_dir,
+            num_point_lights: num_point,
+            num_spot_lights: num_spot,
             topology,
             cull_mode: material.cull_mode,
             depth_write: material.depth_write,
@@ -159,6 +180,7 @@ impl PipelineCache {
             },
             color_format,
             depth_format,
+            sample_count: 1, // 暂时写死
         };
 
         // 2.3 查 L2 缓存
@@ -177,6 +199,9 @@ impl PipelineCache {
             mat_features,
             geo_features,
             scene_features,
+            num_dir_lights: num_dir,
+            num_point_lights: num_point,
+            num_spot_lights: num_spot,
         };
         
         // 1. Context
@@ -206,17 +231,6 @@ impl PipelineCache {
         // 3.3 创建 Modules
         let vs_module = self.create_shader_module(device, &vs_code, wgpu::ShaderStages::VERTEX, Some("Vertex Shader"));
         let fs_module = self.create_shader_module(device, &fs_code, wgpu::ShaderStages::FRAGMENT, Some("Fragment Shader"));
-
-        // 计算代码 Hash
-        // let vs_hash = md5::compute(&vs_code); // 或者其他 hash
-        // let fs_hash = md5::compute(&fs_code);
-        // let shader_hash_str = format!("{:x}_{:x}", vs_hash, fs_hash);
-
-
-        // let vs_hash_str = format!("{:x}", vs_hash);
-        // let fs_hash_str = format!("{:x}", fs_hash);
-        // let vs_module = self.get_or_create_module(device, vs_code, vs_hash_str, wgpu::ShaderStages::VERTEX, Some("Vertex Shader"));
-        // let fs_module = self.get_or_create_module(device, fs_code, fs_hash_str, wgpu::ShaderStages::FRAGMENT, Some("Fragment Shader"));
 
         // 自动创建 PipelineLayout
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -280,17 +294,25 @@ impl PipelineCache {
         &self, 
         material: &Material, 
         geometry: &Geometry, 
+        scene: &crate::core::scene::Scene,
         // ... 其他 Key 参数 ... (为了计算 L1 Key)
     ) -> Option<(&wgpu::RenderPipeline, u64)> {
+
+        // 计算 FastKey
+        let (scene_features, num_dir, num_point, num_spot) = scene.get_render_stats();
+         let scene_hash = (num_dir as u64) 
+            | ((num_point as u64) << 8) 
+            | ((num_spot as u64) << 16) 
+            | ((scene_features.bits() as u64) << 24);
         
         // 1. 尝试 L1 快速查找
-        let topology = geometry.topology;
         let fast_key = FastPipelineKey {
             material_id: material.id,
             material_version: material.version,
             geometry_id: geometry.id,
             geometry_version: geometry.version,
-            topology,
+            topology: geometry.topology,
+            scene_hash,
         };
 
         if let Some((arc, id)) = self.fast_cache.get(&fast_key) {

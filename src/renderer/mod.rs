@@ -382,6 +382,7 @@ impl Renderer {
                 if let Some((pipeline_ref, pipeline_id)) = self.pipeline_cache.get_pipeline(
                     &material,
                     &geometry,
+                    &scene,
                     // ... 这里的参数构建 FastKey 用，开销极小
                 ) {
                     tracked_pass.set_pipeline(pipeline_id, pipeline_ref);

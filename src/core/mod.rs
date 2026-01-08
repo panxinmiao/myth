@@ -8,6 +8,7 @@ pub mod mesh;
 pub mod texture;
 pub mod camera;
 pub mod scene;
+pub mod light;
 
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;

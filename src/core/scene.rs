@@ -10,6 +10,7 @@ use crate::core::camera::Camera;
 use crate::core::material::Material;
 use crate::core::geometry::Geometry;
 use crate::core::texture::Texture;
+use crate::core::light::{Light, LightType};
 
 
 bitflags! {
@@ -30,7 +31,7 @@ pub struct Scene {
     pub meshes: Arena<Mesh>,
     pub cameras: Arena<Camera>,
 
-    // pub lights: Arena<Light>, // 未来可扩展
+    pub lights: Arena<Light>,
 
 
     // === 资源仓库 (Assets/Resources) ===
@@ -50,6 +51,7 @@ impl Scene {
             root_nodes: Vec::new(),
             meshes: Arena::new(),
             cameras: Arena::new(),
+            lights: Arena::new(),
 
             geometries: HashMap::new(),
             materials: HashMap::new(),
@@ -245,6 +247,31 @@ impl Scene {
 
         // 返回 Node ID，因为用户通常操作的是 Node (移动、旋转)
         node_id
+    }
+
+    pub fn add_light(&mut self, light: Light) -> Index {
+        self.lights.insert(light)
+    }
+
+    // 返回: (features, num_dir, num_point, num_spot)
+    pub fn get_render_stats(&self) -> (SceneFeatures, u8, u8, u8) {
+        let mut features = SceneFeatures::empty();
+        let mut num_dir = 0;
+        let mut num_point = 0;
+        let mut num_spot = 0;
+
+        for (_, light) in self.lights.iter() {
+            match light.light_type {
+                LightType::Directional => num_dir += 1,
+                LightType::Point => num_point += 1,
+                LightType::Spot => num_spot += 1,
+            }
+        }
+        
+        // 可以在这里设置 Features，比如是否有阴影
+        // if num_dir > 0 { features |= SceneFeatures::USE_SHADOW_MAP; }
+
+        (features, num_dir as u8, num_point as u8, num_spot as u8)
     }
 
 
