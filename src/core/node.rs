@@ -15,6 +15,7 @@ pub struct Node {
     // === 组件关联 ===
     pub mesh: Option<Index>,   // 指向 meshes Arena 中的索引
     pub camera: Option<Index>, // 指向 cameras Arena 中的索引
+    pub light: Option<Index>,  // 指向 lights Arena 中的索引
 
     // 变换属性 (TRS)
     pub position: Vec3,
@@ -50,6 +51,7 @@ impl Node {
 
             mesh: None,
             camera: None,
+            light: None,
             
             // 默认 TRS
             position: Vec3::ZERO,
