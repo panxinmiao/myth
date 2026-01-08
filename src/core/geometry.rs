@@ -34,8 +34,10 @@ impl Attribute {
             Some("GeometryVertexAttr")
         );
 
+        let buffer_ref = BufferRef::new(buffer);
+
         Self {
-            buffer: Arc::new(RwLock::new(buffer)),
+            buffer: buffer_ref,
             format,
             offset: 0,
             count: data.len() as u32,
@@ -54,8 +56,10 @@ impl Attribute {
             Some("GeometryInstanceAttr")
         );
 
+        let buffer_ref = BufferRef::new(buffer);
+
         Self {
-            buffer: Arc::new(RwLock::new(buffer)),
+            buffer: buffer_ref,
             format,
             offset: 0,
             count: data.len() as u32,
@@ -153,8 +157,10 @@ impl Geometry {
             BufferUsages::INDEX | BufferUsages::COPY_DST, 
             Some("IndexBuffer")
         );
+        let buffer_ref = BufferRef::new(buffer);
+
         self.index_attribute = Some(Attribute {
-            buffer: Arc::new(RwLock::new(buffer)),
+            buffer: buffer_ref,
             format: VertexFormat::Uint16,
             offset: 0,
             count: indices.len() as u32,
@@ -170,8 +176,10 @@ impl Geometry {
             BufferUsages::INDEX | BufferUsages::COPY_DST, 
             Some("IndexBuffer")
         );
+        let buffer_ref = BufferRef::new(buffer);
+
         self.index_attribute = Some(Attribute {
-            buffer: Arc::new(RwLock::new(buffer)),
+            buffer: buffer_ref,
             format: VertexFormat::Uint32,
             offset: 0,
             count: indices.len() as u32,
@@ -189,7 +197,7 @@ impl Geometry {
         };
 
         // 1. 准备数据读取
-        let buffer_guard = pos_attr.buffer.read().unwrap();
+        let buffer_guard = pos_attr.buffer.read();
         let data = &buffer_guard.data;
         let stride = pos_attr.stride as usize;
         let offset = pos_attr.offset as usize;

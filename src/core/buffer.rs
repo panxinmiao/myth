@@ -32,4 +32,29 @@ impl DataBuffer {
 }
 
 /// 线程安全的 Buffer 引用
-pub type BufferRef = Arc<RwLock<DataBuffer>>;
+// pub type BufferRef = Arc<RwLock<DataBuffer>>;
+
+// === 新增：高性能引用包装器 ===
+#[derive(Debug, Clone)]
+pub struct BufferRef {
+    pub id: Uuid,
+    inner: Arc<RwLock<DataBuffer>>,
+}
+
+impl BufferRef {
+    pub fn new(buffer: DataBuffer) -> Self {
+        Self {
+            id: buffer.id,
+            inner: Arc::new(RwLock::new(buffer)),
+        }
+    }
+
+    // 转发 read/write
+    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, DataBuffer> {
+        self.inner.read().unwrap()
+    }
+
+    pub fn write(&self) -> std::sync::RwLockWriteGuard<'_, DataBuffer> {
+        self.inner.write().unwrap()
+    }
+}

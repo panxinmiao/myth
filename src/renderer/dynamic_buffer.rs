@@ -1,8 +1,8 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 use wgpu::{BufferUsages, ShaderStages};
 use crate::renderer::resource_manager::ResourceManager;
 use crate::core::uniforms::DynamicModelUniforms;
-use crate::core::buffer::DataBuffer;
+use crate::core::buffer::{DataBuffer, BufferRef};
 use crate::core::binding::{BindingDescriptor, BindingResource, BindingType};
 
 /// 管理动态 Uniform Buffer (Group 2)
@@ -14,7 +14,7 @@ pub struct DynamicBuffer {
     label: String,
     
     // CPU 端数据源
-    pub cpu_buffer: Arc<RwLock<DataBuffer>>,
+    pub cpu_buffer: BufferRef,
     
     // 渲染需要的资源
     pub bind_group: wgpu::BindGroup,
@@ -33,14 +33,13 @@ impl DynamicBuffer {
         let initial_capacity = 128;
         let initial_data = vec![DynamicModelUniforms::default(); initial_capacity];
         
-        let cpu_buffer = Arc::new(RwLock::new(DataBuffer::new(
+        let cpu_buffer = BufferRef::new(DataBuffer::new(
             &initial_data,
             BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             Some(label)
-        )));
-
+        ));
         // 2. 立即在 GPU 上准备 Buffer (这会在 RM 中注册并上传数据)
-        let buffer_id = resource_manager.prepare_buffer(&cpu_buffer.read().unwrap());
+        let buffer_id = resource_manager.prepare_buffer(&cpu_buffer.read());
 
         let (layout, bind_group, layout_hash, bg_id) = Self::recreate_resources(resource_manager, &cpu_buffer);
 
@@ -61,10 +60,10 @@ impl DynamicBuffer {
 
         // 1. 更新 CPU Buffer
         // Vec 的自动扩容由 CpuBuffer::update 内部处理
-        self.cpu_buffer.write().unwrap().update(data);
+        self.cpu_buffer.write().update(data);
 
         // 2. 委托 RM 同步 GPU Buffer
-        let buffer_ref = self.cpu_buffer.read().unwrap();
+        let buffer_ref = self.cpu_buffer.read();
         let new_buffer_id = resource_manager.prepare_buffer(&buffer_ref);
 
         // 3. 检查物理 Buffer 是否发生了变化 (扩容导致重建)
@@ -88,7 +87,7 @@ impl DynamicBuffer {
     // 内部 helper：根据 CpuBuffer 描述生成资源
     fn recreate_resources(
         rm: &mut ResourceManager, 
-        cpu_buffer: &Arc<RwLock<DataBuffer>>,
+        cpu_buffer: &BufferRef,
     ) -> (Arc<wgpu::BindGroupLayout>, wgpu::BindGroup, u64, u64) {
         
         // 定义 Schema：Dynamic Uniform Buffer

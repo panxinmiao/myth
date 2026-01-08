@@ -12,7 +12,7 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 
 use crate::core::scene::Scene;
-use crate::core::camera::Camera;
+use crate::core::camera::{Camera, Frustum};
 use crate::core::mesh::Mesh;
 use crate::core::uniforms::{GlobalUniforms, DynamicModelUniforms, Mat3A};
 
@@ -21,12 +21,7 @@ use self::pipeline::PipelineCache;
 use self::dynamic_buffer::DynamicBuffer;
 use self::tracked_render_pass::TrackedRenderPass;
 
-
-// Helper: Uuid -> u64
-fn uuid_to_u64(uuid: &uuid::Uuid) -> u64 {
-    let bytes = uuid.as_bytes();
-    u64::from_le_bytes(bytes[0..8].try_into().unwrap())
-}
+use crate::core::uuid_to_u64;
 
 pub struct Renderer {
     pub device: Arc<wgpu::Device>,
@@ -190,6 +185,8 @@ impl Renderer {
         let vp_matrix = proj_matrix * view_matrix;
         let vp_matrix_inverse = vp_matrix.inverse();
 
+        let frustum = Frustum::from_matrix(vp_matrix);
+
         let globals = GlobalUniforms {
             view_projection: vp_matrix,
             view_projection_inverse: vp_matrix_inverse,
@@ -218,9 +215,13 @@ impl Renderer {
                     // 提前检查可见性
                     if !node.visible || !mesh.visible { continue; }
 
-                    // TODO: 视锥体剔除 (Frustum Culling)
-
                     // let mat = mesh.material.read().unwrap();
+                    if let Some(bs) = &mesh.geometry.read().unwrap().bounding_sphere{
+                        if !frustum.intersects_sphere(bs.center, bs.radius) {
+                            continue;
+                        }
+                    }
+
 
                     let model_matrix = node.world_matrix_as_mat4();
                     // let model_matrix_inverse = model_matrix.inverse();

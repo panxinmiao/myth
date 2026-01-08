@@ -70,13 +70,14 @@ impl Material {
             ..Default::default()
         };
         // 初始化 Uniform Buffer
-        let uniform_buffer = Arc::new(RwLock::new(DataBuffer::new(
+
+        let uniform_buffer = BufferRef::new(DataBuffer::new(
             &[uniforms],
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             Some("MeshBasicUniforms")
-        )));
+        ));
 
-         Self {
+        Self {
             id: Uuid::new_v4(),
             version: 0,
             name: Some("MeshBasic".to_string()),
@@ -96,11 +97,13 @@ impl Material {
 
     pub fn new_standard() -> Self {
         let uniforms = MeshStandardUniforms::default();
-        let uniform_buffer = Arc::new(RwLock::new(DataBuffer::new(
+
+        let uniform_buffer = BufferRef::new(DataBuffer::new(
             &[uniforms],
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             Some("MeshStandardUniforms")
-        )));
+        ));
+
 
         Self {
             id: Uuid::new_v4(),
@@ -163,10 +166,10 @@ impl Material {
     pub fn flush_uniforms(&mut self) {
         match &mut self.data {
             MaterialType::Basic(m) => {
-                m.uniform_buffer.write().unwrap().update(&[m.uniforms]);
+                m.uniform_buffer.write().update(&[m.uniforms]);
             }
             MaterialType::Standard(m) => {
-                m.uniform_buffer.write().unwrap().update(&[m.uniforms]);
+                m.uniform_buffer.write().update(&[m.uniforms]);
             }
         }
     }

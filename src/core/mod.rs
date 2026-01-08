@@ -8,3 +8,12 @@ pub mod mesh;
 pub mod texture;
 pub mod camera;
 pub mod scene;
+
+use std::hash::{Hash, Hasher};
+use std::collections::hash_map::DefaultHasher;
+
+pub fn uuid_to_u64(uuid: &uuid::Uuid) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    uuid.hash(&mut hasher);
+    hasher.finish()
+}

@@ -1,5 +1,3 @@
-// src/renderer/resource_manager.rs
-
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -20,6 +18,8 @@ use crate::core::buffer::DataBuffer;
 use super::vertex_layout::{self, GeneratedVertexLayout};
 use super::gpu_buffer::GpuBuffer;
 use super::gpu_texture::GpuTexture;
+
+use crate::core::uuid_to_u64;
 
 // 全局资源 ID 生成器
 static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -165,7 +165,7 @@ impl ResourceManager {
 
         // 1. 统一处理 Vertex Buffers
         for attr in geometry.attributes.values() {
-            let cpu_buf = attr.buffer.read().unwrap();
+            let cpu_buf = attr.buffer.read();
             let old_id = self.buffers.get(&cpu_buf.id).map(|b| b.id);
             
             let new_id = self.prepare_buffer(&cpu_buf);
@@ -178,7 +178,7 @@ impl ResourceManager {
 
         // 2. 统一处理 Index Buffer
         if let Some(indices) = &geometry.index_attribute {
-            let cpu_buf = indices.buffer.read().unwrap();
+            let cpu_buf = indices.buffer.read();
             let old_id = self.buffers.get(&cpu_buf.id).map(|b| b.id);
             let new_id = self.prepare_buffer(&cpu_buf);
             if let Some(oid) = old_id {
@@ -215,14 +215,14 @@ impl ResourceManager {
         let mut vertex_buffer_ids = Vec::new();
         
         for layout_desc in &layout_info.buffers {
-            let cpu_buf = layout_desc.buffer.read().unwrap();
+            let cpu_buf = layout_desc.buffer.read();
             let gpu_buf = self.buffers.get(&cpu_buf.id).expect("Buffer prepared");
             vertex_buffers.push(gpu_buf.buffer.clone()); 
             vertex_buffer_ids.push(gpu_buf.id);
         }
 
         let index_buffer = if let Some(indices) = &geometry.index_attribute {
-            let cpu_buf = indices.buffer.read().unwrap();
+            let cpu_buf = indices.buffer.read();
             let gpu_buf = self.buffers.get(&cpu_buf.id).unwrap();
             let format = match indices.format {
                 wgpu::VertexFormat::Uint16 => wgpu::IndexFormat::Uint16,
@@ -262,7 +262,7 @@ impl ResourceManager {
         for res in &resources {
             match res {
                 BindingResource::Buffer { buffer, offset: _, size: _ } => {
-                    let cpu_buf = buffer.read().unwrap();
+                    let cpu_buf = buffer.read();
                     self.prepare_buffer(&cpu_buf); // 自动处理所有 Buffer 的创建和更新！
                 },
                 BindingResource::Texture(Some(tex_id)) => {
@@ -279,8 +279,8 @@ impl ResourceManager {
             match res {
                 // 关键点：Buffer 的签名由 CPU ID + GPU 物理 ID 组成
                 // 如果 GPU Buffer Resize 了，物理 ID 会变，从而触发 BindGroup 重建
-                BindingResource::Buffer { buffer, offset, size } => {
-                    let cpu_id = buffer.read().unwrap().id;
+                BindingResource::Buffer { buffer, offset: _, size: _ } => {
+                    let cpu_id = buffer.id;
                     if let Some(gpu_buf) = self.buffers.get(&cpu_id) {
                         Some(uuid_to_u64(&cpu_id).wrapping_add(gpu_buf.id))
                     } else {
@@ -401,7 +401,7 @@ impl ResourceManager {
             
             let binding_resource = match resource_data {
                 BindingResource::Buffer { buffer, offset, size } => {
-                    let cpu_id = buffer.read().unwrap().id;
+                    let cpu_id = buffer.id;
                     let gpu_buf = self.buffers.get(&cpu_id).expect("Buffer should be prepared before creating bindgroup");
                     // gpu_buf.buffer.as_entire_binding()
                     wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -468,10 +468,4 @@ impl ResourceManager {
         self.textures.retain(|_, v| v.last_used_frame >= cutoff);
         // Layout 缓存也可以清理，但通常 Layout 占内存极小，保留无妨
     }
-}
-
-// Helper
-fn uuid_to_u64(uuid: &uuid::Uuid) -> u64 {
-    let bytes = uuid.as_bytes();
-    u64::from_le_bytes(bytes[0..8].try_into().unwrap())
 }

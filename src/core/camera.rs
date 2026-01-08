@@ -1,4 +1,4 @@
-use glam::{Mat4, Vec3, Affine3A};
+use glam::{Mat4, Vec3, Vec4, Affine3A};
 use thunderdome::Index;
 use super::scene::Scene; // 需要引用 Scene 来查找 Node
 
@@ -116,4 +116,57 @@ impl Camera {
         self.transform = Affine3A::from_mat4(mat);
     }
 
+}
+
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct Frustum {
+    planes: [Vec4; 6], // Left, Right, Bottom, Top, Near, Far
+}
+
+impl Frustum {
+    pub fn from_matrix(m: Mat4) -> Self {
+        let rows = [
+            m.row(0), m.row(1), m.row(2), m.row(3)
+        ];
+        
+        let mut planes = [Vec4::ZERO; 6];
+        // 提取公式: https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
+        // Gribb-Hartmann 方法
+        
+        // Left:   row4 + row1
+        planes[0] = rows[3] + rows[0];
+        // Right:  row4 - row1
+        planes[1] = rows[3] - rows[0];
+        // Bottom: row4 + row2
+        planes[2] = rows[3] + rows[1];
+        // Top:    row4 - row2
+        planes[3] = rows[3] - rows[1];
+        // Near:   row4 + row3 (for OpenGL/WGPU range [0,1] might differ, usually row3 for [0,1])
+        // WGPU NDC Z is [0, 1]. 
+        // Plane extraction depends on projection matrix implementation. 
+        // Assuming Standard:
+        planes[4] = rows[2]; // Near
+        planes[5] = rows[3] - rows[2]; // Far
+
+        // Normalize
+        for plane in &mut planes {
+            let length = Vec3::new(plane.x, plane.y, plane.z).length();
+            *plane /= length;
+        }
+
+        Self { planes }
+    }
+
+    // 简单的球体相交检测
+    pub fn intersects_sphere(&self, center: Vec3, radius: f32) -> bool {
+        for plane in &self.planes {
+            let dist = plane.x * center.x + plane.y * center.y + plane.z * center.z + plane.w;
+            if dist < -radius {
+                return false;
+            }
+        }
+        true
+    }
 }
