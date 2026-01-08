@@ -3,10 +3,13 @@ use std::sync::Arc;
 use uuid::Uuid;
 use md5;
 
+use crate::core::geometry::Geometry;
 use crate::core::material::Material;
 use crate::renderer::shader_generator::ShaderGenerator;
 use crate::renderer::shader_generator::ShaderContext;
-use crate::renderer::resource_manager::{generate_resource_id, GPUGeometry};
+use crate::renderer::resource_manager::{generate_resource_id};
+use crate::renderer::shader_generator::ShaderCompilationOptions;
+use crate::renderer::vertex_layout::GeneratedVertexLayout;
 
 /// L2 缓存 Key: 完整描述 Pipeline 的所有特征 (慢，但唯一)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -98,23 +101,23 @@ impl PipelineCache {
         &mut self,
         device: &wgpu::Device,
         material: &Material,
-        gpu_geometry: &GPUGeometry, 
-        geometry_id: Uuid,
+        geometry: &Geometry,
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat, 
+        vertex_layout: &GeneratedVertexLayout, 
         bind_group_layouts: &[&wgpu::BindGroupLayout],
     ) -> (Arc<wgpu::RenderPipeline>, u64) { // 返回 Arc 更好管理生命周期
         
         // =========================================================
         // 1. 快速路径 (Fast Path) - 热路径优化
         // =========================================================
-        let topology = gpu_geometry.topology;
+        let topology = geometry.topology;
 
         let fast_key = FastPipelineKey {
             material_id: material.id,
             material_version: material.version,
-            geometry_id,
-            geometry_version: gpu_geometry.version,
+            geometry_id: geometry.id,
+            geometry_version: geometry.version,
             topology,
         };
 
@@ -127,19 +130,32 @@ impl PipelineCache {
         // =========================================================
         // 生成 Shader 代码
         // =========================================================
+
+        // 0. 收集编译选项 (Material + Geometry)
+        let options = ShaderCompilationOptions {
+            mat_features: material.get_defines(),
+            geo_features: geometry.get_defines(),
+        };
         
         // 1. Context
         let mut base_context = ShaderContext::new();
-        if material.shader_name() == "MeshStandard" {
-            base_context = base_context.define("USE_PBR", true);
+
+        // 注入 defines
+        let defines_map = options.to_defines();
+        for (k, v) in defines_map {
+            base_context = base_context.set_value(&k, v);
         }
+
+        // if material.shader_name() == "MeshStandard" {
+        //     base_context = base_context.define("USE_PBR", true);
+        // }
 
         // 2. Generate Code
         // 我们需要先生成代码，才能计算 shader_hash
         // 这比之前稍微慢一点点（因为每次 L1 Miss 都要生成字符串），但对于 L2 命中检查是必要的
         let vs_code = ShaderGenerator::generate_vertex(
             &base_context,
-            &gpu_geometry.layout_info,
+            &vertex_layout,
             "standard_vert.wgsl"
         );
         let fs_code = ShaderGenerator::generate_fragment(
@@ -196,7 +212,7 @@ impl PipelineCache {
         });
 
         // 3.3 创建 Pipeline
-        let vertex_layouts: Vec<_> = gpu_geometry.layout_info.buffers.iter().map(|l| l.as_wgpu()).collect();
+        let vertex_layouts: Vec<_> = vertex_layout.buffers.iter().map(|l| l.as_wgpu()).collect();
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(&canonical_key.shader_hash),
@@ -249,18 +265,17 @@ impl PipelineCache {
     pub fn get_pipeline(
         &self, 
         material: &Material, 
-        gpu_geometry: &GPUGeometry, 
-        geometry_id: uuid::Uuid,
+        geometry: &Geometry, 
         // ... 其他 Key 参数 ... (为了计算 L1 Key)
     ) -> Option<(&wgpu::RenderPipeline, u64)> {
         
         // 1. 尝试 L1 快速查找
-        let topology = gpu_geometry.topology;
+        let topology = geometry.topology;
         let fast_key = FastPipelineKey {
             material_id: material.id,
             material_version: material.version,
-            geometry_id,
-            geometry_version: gpu_geometry.version,
+            geometry_id: geometry.id,
+            geometry_version: geometry.version,
             topology,
         };
 

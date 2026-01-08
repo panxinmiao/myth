@@ -47,7 +47,7 @@ pub struct BindingDescriptor {
 
 /// 实际的绑定资源数据 (用于生成 BindGroup)
 /// Core 层只持有 ID 或 数据引用，不持有 GPU 句柄
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum BindingResource<'a> {
 
     /// 持有 CPU Buffer 的引用 (统一了 Vertex/Index/Uniform/Storage)
@@ -69,12 +69,4 @@ pub enum BindingResource<'a> {
     /// 占位符：用于某些需要仅做引用的情况 (可选)
     #[allow(dead_code)]
     _Phantom(&'a ()),
-}
-
-/// 核心 Trait：所有能被绑定的对象都要实现此接口
-pub trait Bindable {
-    /// 获取绑定的布局描述 (Schema)
-    /// 这决定了 PipelineLayout 的结构
-    fn get_bindings(&self) -> (Vec<BindingDescriptor>, Vec<BindingResource<'_>>);
-
 }

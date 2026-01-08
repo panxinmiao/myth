@@ -305,10 +305,10 @@ impl Renderer {
                      self.pipeline_cache.get_or_create(
                         &self.device,
                         &material,
-                        gpu_geometry, // 传入
-                        geometry.id,
+                        &geometry,
                         self.config.format,
                         wgpu::TextureFormat::Depth32Float,
+                        &gpu_geometry.layout_info, // 传入
     &[
                             &self.global_bind_group_layout, // Group 0
                             &gpu_material.layout,           // Group 1
@@ -378,8 +378,7 @@ impl Renderer {
 
                 if let Some((pipeline_ref, pipeline_id)) = self.pipeline_cache.get_pipeline(
                     &material,
-                    gpu_geometry,
-                    geometry.id
+                    &geometry,
                     // ... 这里的参数构建 FastKey 用，开销极小
                 ) {
                     tracked_pass.set_pipeline(pipeline_id, pipeline_ref);

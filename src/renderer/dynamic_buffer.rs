@@ -109,9 +109,8 @@ impl DynamicBuffer {
         }];
 
         // 让 RM 干活
-        let hash = rm.compute_layout_hash(&descriptors);
-        let layout = rm.get_or_create_layout(&descriptors, hash);
-        let (bind_group, bg_id) = rm.create_bind_group_from_desc(&layout, &descriptors, &resources);
+        let (layout, hash) = rm.get_or_create_layout(&descriptors);
+        let (bind_group, bg_id) = rm.create_bind_group(&layout, &resources);
         
         (layout, bind_group, hash, bg_id)
     }

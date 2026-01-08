@@ -1,12 +1,16 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
-use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages};
+use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages, ShaderStages};
 use glam::Vec3;
 use core::ops::Range;
-use crate::core::binding::{Bindable, BindingDescriptor, BindingResource};
-use crate::core::buffer::{DataBuffer, BufferRef}; 
 
+use crate::core::binding::{BindingDescriptor, BindingResource, BindingType};
+use crate::core::buffer::{DataBuffer, BufferRef};
+// [新增] 引入 Shader 编译选项 (复用 Material 的，或者新建一个 GeometryCompilationOptions)
+// 为了简单起见，且通常 Defines 是合并处理的，我们可以复用或新建。
+// 这里建议新建一个 GeometryFeatures，为了演示，我先使用简单的 Bitflags。
+use bitflags::bitflags;
 
 // ============================================================================
 // 2. 数据视图：Attribute
@@ -100,6 +104,16 @@ impl BoundingBox {
 pub struct BoundingSphere {
     pub center: Vec3,
     pub radius: f32,
+}
+
+bitflags! {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
+    pub struct GeometryFeatures: u32 {
+        const USE_VERTEX_COLOR  = 1 << 0;
+        const USE_TANGENT       = 1 << 1;
+        const USE_MORPHING      = 1 << 2; // 变形
+        const USE_SKINNING      = 1 << 3; // 骨骼
+    }
 }
 
 // ============================================================================
@@ -271,15 +285,63 @@ impl Geometry {
         // 注意：这种方法比 AABB.center 得到的球更小，更适合做剔除。
         // 虽然不是数学上的最小覆盖球(Welzl算法)，但在引擎初始化速度和剔除效率之间是最好的平衡。
     }
-}
 
+    /// [L2] 获取 Shader 宏定义
+    /// 根据现有的属性自动推导
+    pub fn get_defines(&self) -> GeometryFeatures {
+        let mut features = GeometryFeatures::empty();
 
-// Bindable 实现暂时保留，后续需要根据新 BindingResource 调整
-impl Bindable for Geometry {
-    fn get_bindings(&self) -> (Vec<BindingDescriptor>, Vec<BindingResource<'_>>) {
-        let bindings = Vec::new();
-        let resources = Vec::new();
-        // TODO: 实现 Morph Target 纹理/Buffer 绑定
-        (bindings, resources)
+        if self.attributes.contains_key("color") {
+            features |= GeometryFeatures::USE_VERTEX_COLOR;
+        }
+        
+        if self.attributes.contains_key("tangent") {
+            features |= GeometryFeatures::USE_TANGENT;
+        }
+
+        if !self.morph_attributes.is_empty() {
+            features |= GeometryFeatures::USE_MORPHING;
+        }
+        
+        // 假设 future extension:
+        // if self.attributes.contains_key("skinIndex") && self.attributes.contains_key("skinWeight") {
+        //     features |= GeometryFeatures::USE_SKINNING;
+        // }
+
+        features
+    }
+
+    /// [L1] 获取资源列表 (用于 BindGroup)
+    /// 即使目前为空，也为未来扩展做好了准备
+    pub fn get_resources(&self) -> Vec<BindingResource<'static>> {
+        let mut resources = Vec::new();
+
+        // 示例：如果有 Morph Targets 纹理，在这里添加
+        // if let Some(morph_texture_id) = self.morph_texture_id {
+        //     resources.push(BindingResource::Texture(Some(morph_texture_id)));
+        // }
+
+        // 示例：如果是 Skinned Mesh，骨骼矩阵 Buffer 可能会在这里 (或者在 Mesh 的 BindGroup 中)
+        // 通常 Skinning Buffer 属于 Mesh 级别 (因为不同实例姿态不同)，
+        // 但如果是在 GPU 做 Vertex Pulling 的静态动画，也可能属于 Geometry。
+        
+        resources
+    }
+
+    /// [Layout] 获取绑定布局
+    pub fn get_layout(&self) -> Vec<BindingDescriptor> {
+        let mut bindings = Vec::new();
+
+        // 示例：配合 get_resources
+        // if !self.morph_attributes.is_empty() {
+        //     bindings.push(BindingDescriptor {
+        //         name: "morphTargetTexture",
+        //         index: 0,
+        //         bind_type: BindingType::Texture { ... },
+        //         visibility: ShaderStages::VERTEX,
+        //     });
+        // }
+
+        bindings
     }
 }

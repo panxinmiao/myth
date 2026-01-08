@@ -41,6 +41,23 @@ pub struct BufferRef {
     inner: Arc<RwLock<DataBuffer>>,
 }
 
+impl PartialEq for BufferRef {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for BufferRef {}
+
+impl std::hash::Hash for BufferRef {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // 只 Hash ID。
+        // 如果 ID 相同，意味着这是同一个 Buffer 引用，
+        // BindGroup 就不需要重建。
+        self.id.hash(state);
+    }
+}
+
 impl BufferRef {
     pub fn new(buffer: DataBuffer) -> Self {
         Self {

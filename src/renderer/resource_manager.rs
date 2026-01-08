@@ -6,20 +6,17 @@ use std::collections::hash_map::DefaultHasher;
 use std::vec;
 
 use uuid::Uuid;
-use wgpu::PrimitiveTopology;
 use core::ops::Range;
 
 use crate::core::geometry::{Geometry};
 use crate::core::material::Material;
 use crate::core::texture::Texture;
-use crate::core::binding::{Bindable, BindingType, BindingResource, BindingDescriptor};
+use crate::core::binding::{BindingType, BindingResource, BindingDescriptor};
 use crate::core::buffer::DataBuffer;
 
 use super::vertex_layout::{self, GeneratedVertexLayout};
 use super::gpu_buffer::GpuBuffer;
 use super::gpu_texture::GpuTexture;
-
-use crate::core::uuid_to_u64;
 
 // 全局资源 ID 生成器
 static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -39,7 +36,6 @@ pub struct GPUGeometry {
     pub vertex_buffer_ids: Vec<u64>,
     pub index_buffer: Option<(wgpu::Buffer, wgpu::IndexFormat, u32, u64)>,
 
-    pub topology: PrimitiveTopology,
     pub draw_range: Range<u32>,
     pub instance_range: Range<u32>, 
     pub version: u64,
@@ -52,15 +48,24 @@ pub struct GPUMaterial {
     pub bind_group_id: u64,
     pub layout: Arc<wgpu::BindGroupLayout>,
 
+
+    // 缓存字段
+    pub last_version: u64,
+    pub last_resource_hash: u64,
+    // layout 相关的 defines 实际上影响的是 Pipeline，但这里我们保存它以防万一
+    // 或者仅仅用于判断是否需要重建 Layout (通常 Layout 只在 Defines 变的时候变)
+    pub last_defines_hash: u64,
+
+
+    pub last_used_frame: u64,
     // 布局签名 (Hash of Vec<BindingDescriptor>)
     // 用于判断是否需要切换 Pipeline Layout
-    pub layout_hash: u64, 
-    // 资源签名列表
-    // 用于判断是否需要重建 BindGroup
-    // 对应每个 Slot 的资源指纹 (例如 Texture ID + GenerationID)
-    pub resource_signatures: Vec<Option<u64>>, 
-    pub material_version: u64,
-    pub last_used_frame: u64,
+    // pub layout_hash: u64, 
+    // // 资源签名列表
+    // // 用于判断是否需要重建 BindGroup
+    // // 对应每个 Slot 的资源指纹 (例如 Texture ID + GenerationID)
+    // pub resource_signatures: Vec<Option<u64>>, 
+    // pub material_version: u64,
 }
 
 // ============================================================================
@@ -86,6 +91,14 @@ pub struct ResourceManager {
 }
 
 impl ResourceManager {
+
+    // 辅助函数：计算 Hash
+    fn calculate_hash<T: Hash>(t: &T) -> u64 {
+        let mut s = DefaultHasher::new();
+        t.hash(&mut s);
+        s.finish()
+    }
+
     pub fn new(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>) -> Self {
 
         let dummy_tex_data = Texture::new_2d("dummy", 1, 1, Some(vec![255, 255, 255, 255]), wgpu::TextureFormat::Rgba8Unorm); 
@@ -240,7 +253,6 @@ impl ResourceManager {
             vertex_buffers,
             vertex_buffer_ids,
             index_buffer,
-            topology: geometry.topology,
             draw_range: geometry.draw_range.clone(),
             instance_range: 0..1,
             version: geometry.version,
@@ -256,11 +268,58 @@ impl ResourceManager {
     // ========================================================================
 
     pub fn prepare_material(&mut self, material: &Material, texture_assets: &HashMap<Uuid, Arc<RwLock<Texture>>>) {
-        let id = material.id;
 
-        let (descriptors ,resources) = material.get_bindings();
+        // [L0] 粗粒度检查
+        if let Some(gpu_mat) = self.materials.get_mut(&material.id) {
+            if gpu_mat.last_version == material.version {
+                gpu_mat.last_used_frame = self.frame_index;
+                return; // 完全没变，直接返回
+            }
+        }
 
-        // 1. 预处理所有资源 (Buffers & Textures)
+        // --- 开始更新流程 ---
+
+        // 1. 总是刷新 Uniforms (开销极小)
+        material.flush_uniforms();
+
+        // 2. 获取当前状态
+        let resources = material.get_resources();
+        let defines = material.get_defines();
+
+        let resource_hash = Self::calculate_hash(&resources);
+        let defines_hash = Self::calculate_hash(&defines);
+
+        // 3. 检查是否可以复用 BindGroup
+        // 我们需要先拿到 old_cache (如果存在)
+        // 注意：这里需要处理 ownership，为了代码清晰，我们采用 remove-then-insert 或者 get_mut
+        
+        let needs_rebuild_layout = if let Some(gpu_mat) = self.materials.get(&material.id) {
+             gpu_mat.last_defines_hash != defines_hash
+        } else {
+            true
+        };
+
+        let needs_rebuild_bindgroup = if let Some(gpu_mat) = self.materials.get(&material.id) {
+            needs_rebuild_layout || gpu_mat.last_resource_hash != resource_hash
+        } else {
+            true
+        };
+
+        if !needs_rebuild_bindgroup {
+            // 只更新版本号，不需要重建 GPU 资源
+            if let Some(gpu_mat) = self.materials.get_mut(&material.id) {
+                gpu_mat.last_version = material.version;
+                gpu_mat.last_used_frame = self.frame_index;
+            }
+            return;
+        }
+
+
+        // let id = material.id;
+
+        // let (descriptors ,resources) = material.get_bindings();
+
+        // 4.预处理所有资源 (Buffers & Textures)
         for res in &resources {
             match res {
                 BindingResource::Buffer { buffer, offset: _, size: _ } => {
@@ -276,68 +335,32 @@ impl ResourceManager {
             }
         }
 
-        // 2. 计算资源签名 (用于判断 BindGroup 是否需要重建)
-        let current_signatures: Vec<Option<u64>> = resources.iter().map(|res| {
-            match res {
-                // 关键点：Buffer 的签名由 CPU ID + GPU 物理 ID 组成
-                // 如果 GPU Buffer Resize 了，物理 ID 会变，从而触发 BindGroup 重建
-                BindingResource::Buffer { buffer, offset: _, size: _ } => {
-                    let cpu_id = buffer.id;
-                    if let Some(gpu_buf) = self.buffers.get(&cpu_id) {
-                        Some(uuid_to_u64(&cpu_id).wrapping_add(gpu_buf.id))
-                    } else {
-                        None // Should not happen if prepared
-                    }
-                },
-                BindingResource::BufferId(_) => None, // 暂未实现
-                BindingResource::Texture(Some(tid)) => {
-                    if let Some(gpu_tex) = self.textures.get(tid) {
-                         Some(gpu_tex.generation_id.wrapping_add(uuid_to_u64(tid))) 
-                    } else { Some(0) }
-                },
-                BindingResource::Texture(None) => Some(0),
-                BindingResource::Sampler(Some(tid)) => Some(uuid_to_u64(tid)),
-                BindingResource::Sampler(None) => Some(0),
-                BindingResource::_Phantom(_) => None,
-            }
-        }).collect();
-    
-        // 计算 Layout Hash (用于 Pipeline 兼容性检查)
-        let layout_hash = self.compute_layout_hash(&descriptors);
-
-
-        // 3. 检查重建
-        let needs_rebuild = if let Some(gpu_mat) = self.materials.get(&id) {
-             gpu_mat.layout_hash != layout_hash || gpu_mat.resource_signatures != current_signatures
+        // 5.重建 Layout (如果 Defines 变了)
+        // 注意：如果只是换贴图，Defines 不变，Layout 也不变
+        let layout = if needs_rebuild_layout {
+            // 调用 material.get_layout() 并创建 wgpu::BindGroupLayout
+            let descriptors = material.get_layout();
+            self.get_or_create_layout(&descriptors).0
         } else {
-            true // 新材质
+            // 复用旧的
+            self.materials.get(&material.id).unwrap().layout.clone()
         };
 
+        // 6. 重建 BindGroup
+        let bind_group = self.create_bind_group(&layout, &resources).0; // 需要实现 create_bind_group
 
-        if needs_rebuild {
-            let layout = self.get_or_create_layout(&descriptors, layout_hash);
-            
-            let (bind_group, bg_id) = self.create_bind_group_from_desc(&layout, &descriptors, &resources);
+        // 7. 更新缓存
+        let new_gpu_mat = GPUMaterial {
+            bind_group,
+            bind_group_id: generate_resource_id(), // 生成新的 ID 触发 RenderPass set_bind_group
+            layout,
+            last_version: material.version,
+            last_resource_hash: resource_hash,
+            last_defines_hash: defines_hash,
+            last_used_frame: self.frame_index,
+        };
 
-            let gpu_mat = GPUMaterial {
-                bind_group,
-                bind_group_id: bg_id,
-                layout,
-                layout_hash,
-                resource_signatures: current_signatures,
-                last_used_frame: self.frame_index,
-                material_version: material.version,
-            };
-            self.materials.insert(id, gpu_mat);
-        } else {
-            // Update LRU
-            if let Some(mat) = self.materials.get_mut(&id) {
-                mat.last_used_frame = self.frame_index;
-                mat.material_version = material.version;
-            }
-        }
-
-
+        self.materials.insert(material.id, new_gpu_mat);
 
     }
 
@@ -353,9 +376,12 @@ impl ResourceManager {
         hasher.finish()
     }
 
-    pub fn get_or_create_layout(&mut self, descriptors: &[BindingDescriptor], hash: u64) -> Arc<wgpu::BindGroupLayout> {
+    pub fn get_or_create_layout(&mut self, descriptors: &[BindingDescriptor]) -> (Arc<wgpu::BindGroupLayout>, u64) {
+
+        let hash = self.compute_layout_hash(descriptors);
+
         if let Some(layout) = self.layout_cache.get(&hash) {
-            return layout.clone();
+            return (layout.clone(), hash);
         }
 
         let entries: Vec<wgpu::BindGroupLayoutEntry> = descriptors.iter().map(|desc| {
@@ -390,21 +416,20 @@ impl ResourceManager {
         }));
 
         self.layout_cache.insert(hash, layout.clone());
-        layout
+        (layout, hash)
     }
 
-    pub fn create_bind_group_from_desc(
+    pub fn create_bind_group(
         &self, 
         layout: &wgpu::BindGroupLayout, 
-        descriptors: &[BindingDescriptor],
+        // descriptors: &[BindingDescriptor],
         resources: &[BindingResource],
     ) -> (wgpu::BindGroup, u64) {
         
         let mut entries = Vec::new();
 
-        for (i, desc) in descriptors.iter().enumerate() {
-            let resource_data = &resources[i];
-            
+        for (i, resource_data) in resources.iter().enumerate() {
+
             let binding_resource = match resource_data {
                 BindingResource::Buffer { buffer, offset, size } => {
                     let cpu_id = buffer.id;
@@ -432,7 +457,7 @@ impl ResourceManager {
             };
 
             entries.push(wgpu::BindGroupEntry {
-                binding: desc.index,
+                binding: i as u32,   // 假设顺序对应, todo: 是否需要更严谨的 mapping？ descriptor.index
                 resource: binding_resource,
             });
         }
