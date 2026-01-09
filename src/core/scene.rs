@@ -338,7 +338,7 @@ impl Scene {
 
     // 返回: (features, num_dir, num_point, num_spot)
     pub fn get_render_stats(&self) -> (SceneFeatures, u8, u8, u8) {
-        let mut features = SceneFeatures::empty();
+        let features = SceneFeatures::empty();
         let mut num_dir = 0;
         let mut num_point = 0;
         let mut num_spot = 0;
@@ -399,8 +399,8 @@ impl Scene {
 
 
 
-    pub fn get_defines(&self) -> SceneFeatures {
-        let mut features = SceneFeatures::empty();
+    pub fn get_features(&self) -> SceneFeatures {
+        let features = SceneFeatures::empty();
         // 示例：未来可以根据场景内容设置标志位
         // if self.lights.len() > 0 {
         //     features |= SceneFeatures::USE_SHADOW_MAP;

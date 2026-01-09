@@ -11,9 +11,10 @@ use core::ops::Range;
 use crate::core::geometry::{Geometry};
 use crate::core::material::Material;
 use crate::core::texture::Texture;
-use crate::core::binding::{BindingResource, ResourceBuilder};
 use crate::core::buffer::DataBuffer;
 
+use crate::renderer::binding::{BindingResource, Bindings};
+use crate::renderer::resource_builder::{ResourceBuilder};
 use super::vertex_layout::{self, GeneratedVertexLayout};
 use super::gpu_buffer::GpuBuffer;
 use super::gpu_texture::GpuTexture;

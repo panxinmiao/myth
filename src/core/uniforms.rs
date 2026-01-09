@@ -215,8 +215,8 @@ macro_rules! define_uniform_struct {
     // 内部规则 3: 生成 WGSL struct string
     // --------------------------------------------------------
     (@impl_wgsl $name:ident { $( $field_name:ident : $field_type:ty ),* }) => {
-        impl $name {
-            pub fn wgsl_struct_def(struct_name: &str) -> String {
+        impl crate::core::uniforms::UniformBlock for $name {
+            fn wgsl_struct_def(struct_name: &str) -> String {
                 let mut code = format!("struct {} {{\n", struct_name);
                 $(
                     // 忽略以 __ 开头的 padding 字段

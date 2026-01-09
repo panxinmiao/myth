@@ -163,9 +163,9 @@ impl PipelineCache {
         // =========================================================
 
         // 2.1 收集 Features (极快，位运算)
-        let mat_features = material.get_defines();
-        let geo_features = geometry.get_defines();
-        let scene_features = scene.get_defines();
+        let mat_features = material.get_features();
+        let geo_features = geometry.get_features();
+        let scene_features = scene.get_features();
 
         // 2.2 构建 Canonical Key (无堆分配，如果 bitflags 和 enum 都是 copy)
         let canonical_key = PipelineKey {
@@ -231,7 +231,6 @@ impl PipelineCache {
         );
         let fs_code = ShaderGenerator::generate_fragment(
             &base_context,
-            material,
             &gpu_material.binding_wgsl,
             material.shader_name()
         );
@@ -300,39 +299,4 @@ impl PipelineCache {
         result
     }
 
-
-    // 只读获取
-    pub fn get_pipeline(
-        &self, 
-        material: &Material, 
-        geometry: &Geometry, 
-        scene: &crate::core::scene::Scene,
-        // ... 其他 Key 参数 ... (为了计算 L1 Key)
-    ) -> Option<(&wgpu::RenderPipeline, u64)> {
-
-        // 计算 FastKey
-        let (scene_features, num_dir, num_point, num_spot) = scene.get_render_stats();
-         let scene_hash = (num_dir as u64) 
-            | ((num_point as u64) << 8) 
-            | ((num_spot as u64) << 16) 
-            | ((scene_features.bits() as u64) << 24);
-        
-        // 1. 尝试 L1 快速查找
-        let fast_key = FastPipelineKey {
-            material_id: material.id,
-            material_version: material.version,
-            geometry_id: geometry.id,
-            geometry_version: geometry.version,
-            topology: geometry.topology,
-            scene_hash,
-        };
-
-        if let Some((arc, id)) = self.fast_cache.get(&fast_key) {
-            return Some((arc.as_ref(), *id));
-        }
-
-        // 理论上 Render 阶段不应该 L1 Miss (因为 Prepare 阶段已经创建了)
-        // 是否需要尝试 L2 查找？这里选择不尝试，直接返回 None
-        None 
-    }
 }

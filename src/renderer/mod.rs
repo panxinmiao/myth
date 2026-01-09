@@ -1,13 +1,14 @@
 mod vertex_layout;
 mod resource_manager;
 mod shader_generator;
-mod dynamic_buffer;
 mod pipeline;
 mod tracked_render_pass;
 mod shader_manager;
 mod gpu_buffer;
 mod gpu_texture;
 mod object_manager;
+mod resource_builder;
+mod binding;
 
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -16,11 +17,9 @@ use crate::core::scene::Scene;
 use crate::core::camera::{Camera, Frustum};
 use crate::core::mesh::Mesh;
 use crate::core::uniforms::{GlobalFrameUniforms, DynamicModelUniforms, Mat3A};
-use crate::renderer::resource_manager::{GPUGeometry, GPUMaterial};
 
 use self::resource_manager::ResourceManager;
 use self::pipeline::PipelineCache;
-use self::dynamic_buffer::DynamicBuffer;
 use self::object_manager::{ObjectManager, ObjectBindingData};
 use self::tracked_render_pass::TrackedRenderPass;
 

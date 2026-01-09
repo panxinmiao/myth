@@ -6,8 +6,9 @@ use uuid::Uuid;
 use crate::renderer::resource_manager::ResourceManager;
 use crate::core::uniforms::DynamicModelUniforms;
 use crate::core::buffer::{DataBuffer, BufferRef};
-use crate::core::binding::{ResourceBuilder};
 use crate::core::geometry::{Geometry, GeometryFeatures};
+use crate::renderer::resource_builder::{ResourceBuilder};
+use crate::renderer::binding::Bindings;
 
 // 缓存 Key：决定了 BindGroup 是否可以复用
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -80,7 +81,7 @@ impl ObjectManager {
         
         // 1. 计算 Key
         // 对于普通物体（无 Morph/Skin），我们可以认为它们共享同一个 "Static" 特征
-        let features = geometry.get_defines();
+        let features = geometry.get_features();
         
         // 如果是纯静态物体(无额外Bind)，我们可以让所有静态物体共享一个 Key，减少 Cache 大小
         let is_static = !features.intersects(GeometryFeatures::USE_MORPHING | GeometryFeatures::USE_SKINNING);
@@ -102,7 +103,7 @@ impl ObjectManager {
         
         // Binding 0: Model Matrix (Dynamic Uniform)
         // 复用 ResourceBuilder，它生成的 layout_entries 会自动兼容 RM 的缓存机制
-        builder.add_dynamic_uniform(
+        builder.add_dynamic_uniform::<DynamicModelUniforms>(
             "DynamicModel", 
             &self.model_buffer, 
             std::mem::size_of::<DynamicModelUniforms>() as u64, 

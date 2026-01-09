@@ -1,14 +1,11 @@
-use crate::core::material::Material;
 use crate::renderer::vertex_layout::GeneratedVertexLayout;
 use serde_json::{Map, Value};
 use super::shader_manager::get_env;
 use crate::core::material::MaterialFeatures;
-use crate::core::geometry::{Geometry, GeometryFeatures};
+use crate::core::geometry::{GeometryFeatures};
 use crate::core::scene::SceneFeatures;
-use crate::core::binding::ResourceBuilder;
-use crate::core::uniforms::DynamicModelUniforms;
-use crate::core::buffer::{DataBuffer, BufferRef};
-use wgpu::ShaderStages;
+use crate::core::uniforms::{DynamicModelUniforms, UniformBlock};
+
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -62,17 +59,17 @@ impl ShaderContext {
         }
     }
 
-    pub fn define(mut self, name: &str, value: bool) -> Self {
-        self.defines.insert(name.to_string(), Value::Bool(value));
-        self
-    }
+    // pub fn define(mut self, name: &str, value: bool) -> Self {
+    //     self.defines.insert(name.to_string(), Value::Bool(value));
+    //     self
+    // }
 
     pub fn set_value(mut self, name: &str, value: impl Into<Value>) -> Self {
         self.defines.insert(name.to_string(), value.into());
         self
     }
 
-    pub fn merge(&mut self, other: &ShaderContext) {
+    pub fn _merge(&mut self, other: &ShaderContext) {
         for (k, v) in &other.defines {
             self.defines.insert(k.clone(), v.clone());
         }
@@ -128,20 +125,12 @@ impl ShaderGenerator {
     // ========================================================================
     pub fn generate_fragment(
         global_context: &ShaderContext,
-        material: &Material,
         material_binding_code: &str,
         template_name: &str,
     ) -> String {
     
         let env = get_env();
         let mut context = global_context.defines.clone();
-
-        // 1. 注入 Material Uniform 结构体定义 (来自 Material 自描述)
-        context.insert(
-            "uniform_struct_code".to_string(), 
-            Value::String(material.wgsl_struct_def().to_string())
-        );
-
 
         // 2. Bindings 代码
         context.insert("binding_code".to_string(), Value::String(material_binding_code.to_string()));

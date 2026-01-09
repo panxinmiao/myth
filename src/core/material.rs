@@ -1,10 +1,8 @@
 use uuid::Uuid;
 use glam::{Vec4};
 use std::any::Any;
-use wgpu::ShaderStages;
 use bitflags::bitflags;
 
-use crate::core::binding::{ResourceBuilder, define_texture_binding};
 use crate::core::buffer::{DataBuffer, BufferRef};
 use crate::core::uniforms::{MeshBasicUniforms, MeshStandardUniforms};
 use crate::core::Mut;
@@ -26,15 +24,12 @@ bitflags! {
 // === 1. 定义材质属性 Trait (扩展性的关键) ===
 pub trait MaterialProperty: Send + Sync + std::fmt::Debug + Any {
     fn shader_name(&self) -> &'static str;
-    fn wgsl_struct_def(&self) -> String;
 
     /// [L0] 刷新 Uniform 数据到 CPU Buffer (极快，每帧可能调用)
     fn flush_uniforms(&self);
 
-    fn define_bindings(&self, builder: &mut ResourceBuilder);
-
     /// [L2] 获取编译选项 (用于检测 Pipeline 是否需要重建)
-    fn get_defines(&self) -> MaterialFeatures;
+    fn get_features(&self) -> MaterialFeatures;
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
@@ -54,33 +49,14 @@ pub struct MeshBasicMaterial {
 impl MaterialProperty for MeshBasicMaterial {
     fn shader_name(&self) -> &'static str { "MeshBasic" }
     
-    fn wgsl_struct_def(&self) -> String {
-        MeshBasicUniforms::wgsl_struct_def("MaterialUniforms")
-    }
-
     fn flush_uniforms(&self) {
         self.uniform_buffer.write().update(&[self.uniforms]);
     }
 
-    fn get_defines(&self) -> MaterialFeatures {
+    fn get_features(&self) -> MaterialFeatures {
         let mut features = MaterialFeatures::empty();
         if self.map.is_some() { features |= MaterialFeatures::USE_MAP; }
         features
-    }
-
-    fn define_bindings(&self, builder: &mut ResourceBuilder) {
-        // 1. Uniform Buffer
-        builder.add_uniform(
-            "MaterialUniforms", 
-            &self.uniform_buffer, 
-            ShaderStages::VERTEX | ShaderStages::FRAGMENT
-        );
-
-        // 2. Texture + Sampler
-        if let Some(id) = self.map {
-            define_texture_binding(builder, "map", Some(id));
-        }
-
     }
 
     fn as_any(&self) -> &dyn Any { self }
@@ -107,15 +83,11 @@ pub struct MeshStandardMaterial {
 impl MaterialProperty for MeshStandardMaterial {
     fn shader_name(&self) -> &'static str { "MeshStandard" }
 
-    fn wgsl_struct_def(&self) -> String {
-        MeshStandardUniforms::wgsl_struct_def("MaterialUniforms")
-    }
-
     fn flush_uniforms(&self) {
         self.uniform_buffer.write().update(&[self.uniforms]);
     }
 
-    fn get_defines(&self) -> MaterialFeatures {
+    fn get_features(&self) -> MaterialFeatures {
         let mut features = MaterialFeatures::empty();
         if self.map.is_some() { features |= MaterialFeatures::USE_MAP; }
         if self.normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
@@ -125,31 +97,6 @@ impl MaterialProperty for MeshStandardMaterial {
         if self.ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
         
         features
-    }
-
-    fn define_bindings(&self, builder: &mut ResourceBuilder) {
-        // 1. Uniform Buffer
-        builder.add_uniform(
-            "MaterialUniforms", 
-            &self.uniform_buffer, 
-            ShaderStages::VERTEX | ShaderStages::FRAGMENT
-        );
-
-        // 2. Maps
-        // 辅助闭包：减少重复代码
-        let mut add_tex = |name: &str, id: Option<Uuid>| {
-            if let Some(tex_id) = id {
-                builder.add_texture(name, Some(tex_id), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, ShaderStages::FRAGMENT);
-                builder.add_sampler(name, Some(tex_id), wgpu::SamplerBindingType::Filtering, ShaderStages::FRAGMENT);
-            }
-        };
-
-        add_tex("map", self.map);
-        add_tex("normal_map", self.normal_map);
-        add_tex("roughness_map", self.roughness_map);
-        add_tex("metalness_map", self.metalness_map);
-        add_tex("emissive_map", self.emissive_map);
-        add_tex("ao_map", self.ao_map);
     }
 
     fn as_any(&self) -> &dyn Any { self }
@@ -229,40 +176,7 @@ impl Material {
 
     // 代理方法
     pub fn shader_name(&self) -> &'static str { self.data.shader_name() }
-    pub fn wgsl_struct_def(&self) -> String { self.data.wgsl_struct_def() }
     pub fn flush_uniforms(&self) { self.data.flush_uniforms() }
-    pub fn get_defines(&self) -> MaterialFeatures { self.data.get_defines() }
-    pub fn define_bindings(&self, builder: &mut ResourceBuilder) { self.data.define_bindings(builder); }
+    pub fn get_features(&self) -> MaterialFeatures { self.data.get_features() }
 
 }
-
-
-// === 4. 实现 Bindable (带缓存逻辑) ===
-
-// impl Bindable for Material {
-//     // 注意：这里我们修改了签名，返回 Cow 或者 Clone 也可以
-//     // 为了兼容之前的接口 (Vec, Vec)，我们这里先 Clone，但由于有缓存，
-//     // generate_bindings 的重头戏（逻辑判断、Vec分配）只会发生一次。
-//     // *更进一步优化*：可以让 Bindable 返回引用，但这需要改动 trait 定义。
-//     // 这里演示“计算缓存”：
-    
-//     fn get_bindings(&self) -> (Vec<BindingDescriptor>, Vec<BindingResource<'static>>) {
-//         let mut cache = self.cache.lock().unwrap();
-        
-//         // 检查缓存有效性
-//         if let Some((ver, ref descs, ref res)) = *cache {
-//             if ver == self.version {
-//                 // 命中缓存！直接 clone 结果 (Clone Vec 比 重新构建 Vec 快得多)
-//                 return (descs.clone(), res.clone());
-//             }
-//         }
-
-//         // 缓存失效，重新生成
-//         let (descs, res) = self.data.generate_bindings();
-        
-//         // 更新缓存
-//         *cache = Some((self.version, descs.clone(), res.clone()));
-        
-//         (descs, res)
-//     }
-// }

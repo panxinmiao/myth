@@ -1,11 +1,9 @@
 use std::collections::HashMap;
-use std::sync::{Arc, RwLock};
 use uuid::Uuid;
-use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages, ShaderStages};
+use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages};
 use glam::Vec3;
 use core::ops::Range;
 
-use crate::core::binding::{ResourceBuilder, define_texture_binding};
 use crate::core::buffer::{DataBuffer, BufferRef};
 // [新增] 引入 Shader 编译选项 (复用 Material 的，或者新建一个 GeometryCompilationOptions)
 // 为了简单起见，且通常 Defines 是合并处理的，我们可以复用或新建。
@@ -286,7 +284,7 @@ impl Geometry {
         // 虽然不是数学上的最小覆盖球(Welzl算法)，但在引擎初始化速度和剔除效率之间是最好的平衡。
     }
 
-    pub fn get_defines(&self) -> GeometryFeatures {
+    pub fn get_features(&self) -> GeometryFeatures {
         let mut features = GeometryFeatures::empty();
 
         if self.attributes.contains_key("color") {
@@ -307,11 +305,11 @@ impl Geometry {
         features
     }
 
-    /// [核心新增] 定义 Group 2 (Object) 中属于 Geometry 的部分
-    pub fn define_bindings(&self, builder: &mut ResourceBuilder) {
+    // 定义 Group 2 (Object) 中属于 Geometry 的部分
+    // pub fn define_bindings(&self, _builder: &mut ResourceBuilder) {
 
-        // 需要根据 morph_attributes 来自动生成 morph texture 资源（或 storage buffer）
-        // 然后绑定到 Group 2 中
+    //     // 需要根据 morph_attributes 来自动生成 morph texture 资源（或 storage buffer）
+    //     // 然后绑定到 Group 2 中
         
-    }
+    // }
 }

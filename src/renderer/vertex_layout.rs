@@ -33,7 +33,7 @@ pub struct GeneratedVertexLayout {
     pub vertex_input_code: String,
     
     /// 属性名 -> Shader Location 映射 (供调试或绑定检查)
-    pub attribute_locations: HashMap<String, u32>,
+    pub _attribute_locations: HashMap<String, u32>,
 }
 
 pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
@@ -107,7 +107,7 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
     GeneratedVertexLayout {
         buffers: owned_layouts,
         vertex_input_code,
-        attribute_locations: location_map,
+        _attribute_locations: location_map,
     }
 }
 
