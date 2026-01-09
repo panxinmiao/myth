@@ -16,10 +16,12 @@ use crate::core::scene::Scene;
 use crate::core::camera::{Camera, Frustum};
 use crate::core::mesh::Mesh;
 use crate::core::uniforms::{GlobalFrameUniforms, DynamicModelUniforms, Mat3A};
+use crate::renderer::resource_manager::{GPUGeometry, GPUMaterial};
 
 use self::resource_manager::ResourceManager;
 use self::pipeline::PipelineCache;
 use self::dynamic_buffer::DynamicBuffer;
+use self::object_manager::{ObjectManager, ObjectBindingData};
 use self::tracked_render_pass::TrackedRenderPass;
 
 use crate::core::uuid_to_u64;
@@ -33,8 +35,9 @@ pub struct Renderer {
     
     // 子系统
     resource_manager: ResourceManager,
+    object_manager: ObjectManager,
     pipeline_cache: PipelineCache,
-    model_buffer_manager: DynamicBuffer, // Group 2 管理器
+    // model_buffer_manager: DynamicBuffer, // Group 2 管理器
 
     // 全局资源 (Group 0)
     global_uniform_buffer: wgpu::Buffer,
@@ -108,7 +111,8 @@ impl Renderer {
         let mut resource_manager = ResourceManager::new(device.clone(), queue.clone());
 
         // 2. 初始化 Model Manager (Group 2)
-        let model_buffer_manager = DynamicBuffer::new(&mut resource_manager, "Model");
+        // let model_buffer_manager = DynamicBuffer::new(&mut resource_manager, "Model");
+        let object_manager = ObjectManager::new(&mut resource_manager);
 
         // 3. 深度缓冲
         let depth_texture_view = Self::create_depth_texture(&device, &config);
@@ -121,7 +125,7 @@ impl Renderer {
             depth_format: wgpu::TextureFormat::Depth32Float,
             resource_manager,
             pipeline_cache: PipelineCache::new(),
-            model_buffer_manager,
+            object_manager,
             global_uniform_buffer: global_buffer,
             global_bind_group,
             global_bind_group_layout,
@@ -276,11 +280,20 @@ impl Renderer {
             });
         }
 
+        
         // 上传所有动态物体的矩阵 (自动扩容)
-        self.model_buffer_manager.write_and_expand(
-            &mut self.resource_manager,
-            &model_uniforms_data
-        );
+        self.object_manager.write_uniforms(&mut self.resource_manager, &model_uniforms_data);
+
+
+        struct RenderCommand{
+            object_data: ObjectBindingData,
+            geometry_id: uuid::Uuid,
+            material_id: uuid::Uuid,
+            renderer_pipeline: Arc<wgpu::RenderPipeline>,
+            renderer_pipeline_id: u64,
+        }
+
+        let mut command_list = Vec::new();
 
         // =========================================================
         // 5. 绘制循环 (Draw Loop)
@@ -300,33 +313,42 @@ impl Renderer {
             // 2. 更新 Material
             self.resource_manager.prepare_material(&material, &scene.textures);
 
+            // 2. 准备 Object BindGroup
+            // item.object_data = Some(object_data);
+            let object_data = self.object_manager.prepare_bind_group(&mut self.resource_manager, &geometry);
+            let gpu_material = self.resource_manager.get_material(material.id).unwrap();
+            let gpu_geometry =  self.resource_manager.get_geometry(geometry.id).unwrap();
+            
             // 3. 更新 Pipeline (需要先拿到刚才 prepare 好的 GPU 资源)
-            // 为了拿到 GPUGeometry 的信息来构建 Pipeline Key，我们需要临时只读借用一下
-            // 注意：因为 prepare 结束了，这里可以借用
-            if let Some(gpu_geometry) = self.resource_manager.get_geometry(geometry.id) {
-                if let Some(gpu_material) = self.resource_manager.get_material(material.id) {
-                     self.pipeline_cache.get_or_create(
-                        &self.device,
-                        &material,
-                        &geometry,
-                        &scene,
-                        self.config.format,
-                        wgpu::TextureFormat::Depth32Float,
-                        &gpu_geometry.layout_info, // 传入
-    &[
-                            &self.global_bind_group_layout, // Group 0
-                            &gpu_material.layout,           // Group 1
-                            &self.model_buffer_manager.layout // Group 2
-                        ],
-                    );
-                }
-            }
+            let pipeline = self.pipeline_cache.get_or_create(
+                &self.device,
+                &material,
+                &geometry,
+                &scene,
+                gpu_material,
+                &object_data,
+                &self.global_bind_group_layout,
+                self.config.format,
+                wgpu::TextureFormat::Depth32Float,
+                &gpu_geometry.layout_info, // 传入 Vertex Layout
+            );
+
+
+            command_list.push(RenderCommand {
+                object_data: object_data,
+                geometry_id: geometry.id,
+                material_id: material.id,
+                renderer_pipeline: pipeline.0,
+                renderer_pipeline_id: pipeline.1,
+            });
         }
 
         // =========================================================
         // Phase B: 渲染录制 (Immutable Pass)
         // 此时 resource_manager 和 pipeline_cache 都是只读的
         // =========================================================
+
+
         
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
@@ -369,25 +391,15 @@ impl Renderer {
 
             // 状态追踪 (去重)
 
-            for (i, item) in render_list.iter().enumerate() {
-                let geometry = item.mesh.geometry.read().unwrap();
-                let material = item.mesh.material.read().unwrap();
-
+            for (i, cmd) in command_list.iter().enumerate() {
+ 
                 // 获取 GPU 资源
                 // 使用 unwrap 是安全的，因为 Phase A 保证了它们存在
-                let gpu_geometry = self.resource_manager.get_geometry(geometry.id).unwrap();
-                let gpu_material = self.resource_manager.get_material(material.id).unwrap();
+                let gpu_geometry =  self.resource_manager.get_geometry(cmd.geometry_id).unwrap();   
+                let gpu_material = self.resource_manager.get_material(cmd.material_id).unwrap();
 
-                //2. 获取 Pipeline (只读引用)
+                tracked_pass.set_pipeline(cmd.renderer_pipeline_id, &cmd.renderer_pipeline);
 
-                if let Some((pipeline_ref, pipeline_id)) = self.pipeline_cache.get_pipeline(
-                    &material,
-                    &geometry,
-                    &scene,
-                    // ... 这里的参数构建 FastKey 用，开销极小
-                ) {
-                    tracked_pass.set_pipeline(pipeline_id, pipeline_ref);
-                }
 
                 // B. Material BindGroup (Group 1)
                 tracked_pass.set_bind_group(1, gpu_material.bind_group_id, &gpu_material.bind_group, &[]);
@@ -395,11 +407,10 @@ impl Renderer {
                 // C. Model BindGroup (Group 2) - 动态 Offset
                 // 绑定的是同一个 BindGroup，只是 Offset 不同
                 let offset = i as u32 * dynamic_stride; 
-                let model_bg_id = self.model_buffer_manager.bind_group_id; // 使用实际的 BindGroup ID
                 tracked_pass.set_bind_group(
                     2, 
-                    model_bg_id, 
-                    &self.model_buffer_manager.bind_group, 
+                    cmd.object_data.bind_group_id, 
+                    &cmd.object_data.bind_group.as_ref(),
                     &[offset]
                 );
 

@@ -48,6 +48,8 @@ pub struct GPUMaterial {
     pub bind_group_id: u64,
     pub layout: Arc<wgpu::BindGroupLayout>,
 
+    pub binding_wgsl: String,
+
     // 缓存字段
     pub last_version: u64,
     pub last_resource_hash: u64,
@@ -153,7 +155,7 @@ impl ResourceManager {
     // Geometry Logic
     // ========================================================================
 
-    pub fn prepare_geometry(&mut self, geometry: &Geometry) {
+    pub fn prepare_geometry(&mut self, geometry: &Geometry) -> &GPUGeometry {
         // let geometry_id = geometry.id;
 
         let mut resized_buffers = HashSet::new();
@@ -197,6 +199,8 @@ impl ResourceManager {
             // gpu_geo.topology = geometry.topology;
             gpu_geo.last_used_frame = self.frame_index;
         }
+
+        self.geometries.get(&geometry.id).unwrap()
     }
 
     pub fn get_geometry(&self, geometry_id: uuid::Uuid) -> Option<&GPUGeometry> {
@@ -248,14 +252,22 @@ impl ResourceManager {
     // Material Logic
     // ========================================================================
 
-    pub fn prepare_material(&mut self, material: &Material, texture_assets: &HashMap<Uuid, Arc<RwLock<Texture>>>) {
+    pub fn prepare_material(&mut self, material: &Material, texture_assets: &HashMap<Uuid, Arc<RwLock<Texture>>>) -> &GPUMaterial{
 
         // [L0] 粗粒度检查
-        if let Some(gpu_mat) = self.materials.get_mut(&material.id) {
-            if gpu_mat.last_version == material.version {
-                gpu_mat.last_used_frame = self.frame_index;
-                return; // 完全没变，直接返回
-            }
+
+        // 先进行一次不可变查找，确认是否命中且版本一致
+        let cache_hit = if let Some(gpu_mat) = self.materials.get(&material.id) {
+            gpu_mat.last_version == material.version
+        } else {
+            false
+        };
+
+        // 如果命中，重新获取可变引用，更新时间戳并返回
+        if cache_hit {
+            let gpu_mat = self.materials.get_mut(&material.id).unwrap();
+            gpu_mat.last_used_frame = self.frame_index;
+            return gpu_mat;
         }
 
         // --- 开始更新流程 ---
@@ -280,7 +292,9 @@ impl ResourceManager {
                 },
                 BindingResource::Texture(Some(tex_id)) => {
                     if let Some(tex_arc) = texture_assets.get(&tex_id) {
-                        self.add_or_update_texture(&tex_arc.read().unwrap());
+                        if let Ok(tex) = tex_arc.read() {
+                            self.add_or_update_texture(&tex);
+                        }
                     }
                     tex_id.hash(&mut resource_hasher);
                 },
@@ -301,33 +315,44 @@ impl ResourceManager {
 
         // 5. 检查是否需要重建 BindGroup
         // 仅当 Layout 指针变化 OR 资源 Hash 变化 OR 是新材质时才重建
-        let mut needs_rebuild = true;
 
-        if let Some(gpu_mat) = self.materials.get_mut(&material.id) {
+        let mut can_reuse_bindgroup = false;
+
+        if let Some(gpu_mat) = self.materials.get(&material.id) {
             let layout_unchanged = Arc::ptr_eq(&gpu_mat.layout, &layout);
             let resources_unchanged = gpu_mat.last_resource_hash == resource_hash;
             if layout_unchanged && resources_unchanged {
-                needs_rebuild = false;
-                gpu_mat.last_version = material.version;
-                gpu_mat.last_used_frame = self.frame_index;
+                can_reuse_bindgroup = true;
             }
         }
 
-        if !needs_rebuild { return; }
+        if can_reuse_bindgroup {
+             let gpu_mat = self.materials.get_mut(&material.id).unwrap();
+             gpu_mat.last_version = material.version;
+             gpu_mat.last_used_frame = self.frame_index;
+             return gpu_mat;
+        }
+
 
         // 6. 创建 BindGroup
         let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
 
+        // 如果需要重建，顺便生成 WGSL
+        let binding_wgsl = builder.generate_wgsl(1); // Group 1
+
         // 7. 更新 Material 缓存
-        let gpu_mat = crate::renderer::resource_manager::GPUMaterial {
+        let gpu_mat = GPUMaterial {
             bind_group,
             bind_group_id: bg_id,
             layout,
+            binding_wgsl,
             last_version: material.version,
             last_resource_hash: resource_hash,
             last_used_frame: self.frame_index,
         };
         self.materials.insert(material.id, gpu_mat);
+
+        self.materials.get(&material.id).unwrap()
 
     }
 

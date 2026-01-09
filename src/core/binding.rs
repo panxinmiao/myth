@@ -1,5 +1,5 @@
 use uuid::Uuid;
-use wgpu::ShaderStages;
+use wgpu::{ShaderStages, wgc::device::resource};
 use crate::core::buffer::BufferRef; // 引入新类型
 
 /// 定义绑定的具体类型 (Schema)
@@ -27,22 +27,6 @@ pub enum BindingType {
     },
 }
 
-/// 单个绑定槽位的描述符 (用于生成 Layout)
-// #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-// pub struct BindingDescriptor {
-//     /// Shader 中的变量名 (主要用于调试和 Shader生成器的变量映射)
-//     /// 例如: "map" -> "t_map", "s_map"
-//     pub name: &'static str,
-    
-//     /// 绑定槽位索引 (binding index)
-//     pub index: u32,
-    
-//     /// 绑定类型
-//     pub bind_type: BindingType,
-    
-//     /// 可见性
-//     pub visibility: ShaderStages,
-// }
 
 /// 实际的绑定资源数据 (用于生成 BindGroup)
 /// Core 层只持有 ID 或 数据引用，不持有 GPU 句柄
@@ -196,6 +180,68 @@ impl ResourceBuilder {
 
         self.names.push(_name.to_string());
         self.next_binding_index += 1;
+    }
+
+    pub fn generate_wgsl(&self, group_index: u32) -> String {
+        let mut code = String::new();
+
+        for (i, entry) in self.layout_entries.iter().enumerate() {
+            let name = &self.names[i];
+            let resource = &self.resources[i];
+            let binding_index = entry.binding; 
+
+            let decl = match entry.ty {
+                wgpu::BindingType::Buffer { ty, .. } => {
+                    match ty {
+                        wgpu::BufferBindingType::Uniform => {
+                            // 简单的类型推断约定
+                            let type_name = if name == "material" {
+                                "MaterialUniforms"
+                            } else if name == "mesh_model" || name == "DynamicModel" {
+                                "DynamicModel" 
+                            } else {
+                                // 对于未知 Uniform，假设结构体名就是大写的变量名 (或者需要扩展 builder 传入类型名)
+                                // 这里为了演示，暂时由外部保证名字匹配
+                                "MaterialUniforms" 
+                            };
+                            format!("@group({}) @binding({}) var<uniform> {}: {};", group_index, binding_index, name, type_name)
+                        },
+                        wgpu::BufferBindingType::Storage { read_only } => {
+                            let access = if read_only { "read" } else { "read_write" };
+                            let type_str = if name == "morph_data" {
+                                "array<f32>" 
+                            } else if name.contains("bone") {
+                                "array<mat4x4<f32>>"
+                            } else {
+                                "array<f32>"
+                            };
+                            format!("@group({}) @binding({}) var<storage, {}> {}: {};", group_index, binding_index, access, name, type_str)
+                        },
+                    }
+                },
+                wgpu::BindingType::Texture { sample_type, view_dimension, .. } => {
+                    let type_str = match (view_dimension, sample_type) {
+                        (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Float { .. }) => "texture_2d<f32>",
+                        (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Depth) => "texture_depth_2d",
+                        (wgpu::TextureViewDimension::Cube, wgpu::TextureSampleType::Float { .. }) => "texture_cube<f32>",
+                        _ => "texture_2d<f32>", 
+                    };
+                    format!("@group({}) @binding({}) var t_{}: {};", group_index, binding_index, name, type_str)
+                },
+                wgpu::BindingType::Sampler(type_) => {
+                    let type_str = match type_ {
+                        wgpu::SamplerBindingType::Comparison => "sampler_comparison",
+                        _ => "sampler",
+                    };
+                    format!("@group({}) @binding({}) var s_{}: {};", group_index, binding_index, name, type_str)
+                },
+                _ => String::new(),
+            };
+
+            code.push_str(&decl);
+            code.push('\n');
+        }
+        code
     }
 }
 

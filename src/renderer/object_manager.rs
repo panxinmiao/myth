@@ -23,7 +23,15 @@ pub struct ObjectManager {
     
     // === 缓存 ===
     // 我们缓存 (BindGroup, BindGroupId, Layout) 三元组，方便渲染时直接取用
-    cache: HashMap<ObjectBindGroupKey, (Arc<wgpu::BindGroup>, u64, Arc<wgpu::BindGroupLayout>)>,
+    cache: HashMap<ObjectBindGroupKey, ObjectBindingData>,
+}
+
+#[derive(Clone)]
+pub struct ObjectBindingData {
+    pub layout: Arc<wgpu::BindGroupLayout>,
+    pub bind_group: Arc<wgpu::BindGroup>,
+    pub bind_group_id: u64,
+    pub binding_wgsl: String, 
 }
 
 impl ObjectManager {
@@ -63,13 +71,27 @@ impl ObjectManager {
         }
     }
 
+    pub fn get_object_binding_data(
+        &self,
+        geometry: &Geometry,
+    ) -> Option<ObjectBindingData> {
+        // 计算 Key
+        let features = geometry.get_defines();
+        let is_static = !features.intersects(GeometryFeatures::USE_MORPHING | GeometryFeatures::USE_SKINNING);
+        let key = ObjectBindGroupKey {
+            geo_id: if is_static { Uuid::nil() } else { geometry.id },
+            model_buffer_id: self.last_model_buffer_id,
+        };
+
+        self.cache.get(&key).cloned()
+    }
+
     /// 获取 Group 2 资源
-    /// 返回: (Layout, BindGroupId, BindGroup)
     pub fn prepare_bind_group(
         &mut self,
         resource_manager: &mut ResourceManager,
         geometry: &Geometry,
-    ) -> (Arc<wgpu::BindGroupLayout>, u64, Arc<wgpu::BindGroup>) {
+    ) -> ObjectBindingData {
         
         // 1. 计算 Key
         // 对于普通物体（无 Morph/Skin），我们可以认为它们共享同一个 "Static" 特征
@@ -84,8 +106,8 @@ impl ObjectManager {
         };
 
         // 2. 查缓存
-        if let Some((bg, bg_id, layout)) = self.cache.get(&key) {
-            return (layout.clone(), *bg_id, bg.clone());
+        if let Some(binding_data) = self.cache.get(&key) {
+            return binding_data.clone();
         }
 
         // 3. 缓存未命中：开始构建
@@ -106,6 +128,9 @@ impl ObjectManager {
         // 我们需要 Geometry 的特定逻辑来填充 builder
         geometry.define_bindings(&mut builder);
 
+
+        let binding_wgsl = builder.generate_wgsl(2); // Group 2
+
         // 我们不自己管理 Layout Cache，而是把 entries 扔给 RM，它会返回一个全局去重的 Layout
         let layout = resource_manager.get_or_create_layout(&builder.layout_entries);
 
@@ -114,9 +139,16 @@ impl ObjectManager {
         let (raw_bg, bg_id) = resource_manager.create_bind_group(&layout, &builder.resources);
         let bind_group = Arc::new(raw_bg);
 
-        // 4. 写入缓存
-        self.cache.insert(key, (bind_group.clone(), bg_id, layout.clone()));
+        let data = ObjectBindingData {
+            layout,
+            bind_group,
+            bind_group_id: bg_id,
+            binding_wgsl,
+        };
 
-        (layout, bg_id, bind_group)
+        // 4. 写入缓存
+        self.cache.insert(key, data.clone());
+
+        data
     }
 }

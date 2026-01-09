@@ -11,6 +11,8 @@ use crate::renderer::shader_generator::ShaderContext;
 use crate::renderer::resource_manager::{generate_resource_id};
 use crate::renderer::shader_generator::ShaderCompilationOptions;
 use crate::renderer::vertex_layout::GeneratedVertexLayout;
+use crate::renderer::resource_manager::GPUMaterial;
+use crate::renderer::object_manager::ObjectBindingData;
 
 /// L2 缓存 Key: 完整描述 Pipeline 的所有特征 (慢，但唯一)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -118,10 +120,14 @@ impl PipelineCache {
         material: &Material,
         geometry: &Geometry,
         scene: &crate::core::scene::Scene,
+
+        gpu_material: &GPUMaterial, 
+        object_data: &ObjectBindingData,
+        global_layout: &wgpu::BindGroupLayout,
+
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat, 
         vertex_layout: &GeneratedVertexLayout, 
-        bind_group_layouts: &[&wgpu::BindGroupLayout],
     ) -> (Arc<wgpu::RenderPipeline>, u64) { // 返回 Arc 更好管理生命周期
         
         // 提取场景特征
@@ -220,12 +226,13 @@ impl PipelineCache {
         let vs_code = ShaderGenerator::generate_vertex(
             &base_context,
             vertex_layout,
-            geometry,
+            &object_data.binding_wgsl,
             "standard_vert.wgsl"
         );
         let fs_code = ShaderGenerator::generate_fragment(
             &base_context,
             material,
+            &gpu_material.binding_wgsl,
             material.shader_name()
         );
 
@@ -236,7 +243,11 @@ impl PipelineCache {
         // 自动创建 PipelineLayout
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts,
+            bind_group_layouts: &[
+                global_layout,
+                &gpu_material.layout, 
+                &object_data.layout 
+            ],
             immediate_size: 0,
         });
 
