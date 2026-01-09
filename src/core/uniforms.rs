@@ -130,11 +130,13 @@ macro_rules! define_uniform_struct {
             pub fn wgsl_struct_def(struct_name: &str) -> String {
                 let mut code = format!("struct {} {{\n", struct_name);
                 $(
-                    code.push_str(&format!(
-                        "    {}: {},\n", 
-                        stringify!($field_name), 
-                        <$field_type as WgslType>::wgsl_type_name()
-                    ));
+                    if !stringify!($field_name).starts_with("_") { // 忽略以 _ 开头的字段（如 Padding）
+                        code.push_str(&format!(
+                            "    {}: {},\n", 
+                            stringify!($field_name), 
+                            <$field_type as WgslType>::wgsl_type_name()
+                        ));
+                    }
                 )*
                 code.push_str("};");
                 code
@@ -227,14 +229,23 @@ impl Default for MeshBasicUniforms {
     }
 }
 
-// #[cfg(test)]
-// mod tests {
-//     use super::*;
-//     use std::mem;
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::mem;
 
-//     #[test]
-//     fn test_alignment() {
-//         assert_eq!(mem::size_of::<MeshStandardUniforms>() % 16, 0, "Standard Uniforms not aligned to 16 bytes");
-//         assert_eq!(mem::size_of::<MeshBasicUniforms>() % 16, 0, "Basic Uniforms not aligned to 16 bytes");
-//     }
-// }
+    #[test]
+    fn test_alignment() {
+        assert_eq!(mem::size_of::<MeshStandardUniforms>() % 16, 0, "Standard Uniforms not aligned to 16 bytes");
+        assert_eq!(mem::size_of::<MeshBasicUniforms>() % 16, 0, "Basic Uniforms not aligned to 16 bytes");
+    }
+
+    #[test]
+    fn test_wgsl_generation() {
+        let standard_wgsl = MeshStandardUniforms::wgsl_struct_def("MeshStandardUniforms");
+        println!("WGSL for MeshStandardUniforms:\n{}", standard_wgsl);
+
+        let basic_wgsl = MeshBasicUniforms::wgsl_struct_def("MeshBasicUniforms");
+        println!("WGSL for MeshBasicUniforms:\n{}", basic_wgsl);
+    }
+}
