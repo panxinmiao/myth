@@ -71,21 +71,6 @@ impl ObjectManager {
         }
     }
 
-    pub fn get_object_binding_data(
-        &self,
-        geometry: &Geometry,
-    ) -> Option<ObjectBindingData> {
-        // 计算 Key
-        let features = geometry.get_defines();
-        let is_static = !features.intersects(GeometryFeatures::USE_MORPHING | GeometryFeatures::USE_SKINNING);
-        let key = ObjectBindGroupKey {
-            geo_id: if is_static { Uuid::nil() } else { geometry.id },
-            model_buffer_id: self.last_model_buffer_id,
-        };
-
-        self.cache.get(&key).cloned()
-    }
-
     /// 获取 Group 2 资源
     pub fn prepare_bind_group(
         &mut self,

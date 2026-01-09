@@ -410,7 +410,7 @@ impl Renderer {
                 tracked_pass.set_bind_group(
                     2, 
                     cmd.object_data.bind_group_id, 
-                    &cmd.object_data.bind_group.as_ref(),
+                    &cmd.object_data.bind_group,
                     &[offset]
                 );
 
