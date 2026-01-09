@@ -1,5 +1,7 @@
 use glam::{Vec2, Vec3, Vec4, Mat3, Mat4};
 use bytemuck::{Pod, Zeroable};
+use std::borrow::Cow;
+use std::ops::{Deref, DerefMut};
 
 /// 专门用于 Uniform Buffer 的 3x3 矩阵
 /// 对应 WGSL 中的 `mat3x3<f32>` (std140 布局)
@@ -47,59 +49,98 @@ impl Mat3A {
 // ============================================================================
 
 pub trait WgslType {
-    fn wgsl_type_name() -> &'static str;
+    fn wgsl_type_name() -> Cow<'static, str>;
 }
 
-impl WgslType for f32 { fn wgsl_type_name() -> &'static str { "f32" } }
-impl WgslType for i32 { fn wgsl_type_name() -> &'static str { "i32" } }
-impl WgslType for u32 { fn wgsl_type_name() -> &'static str { "u32" } }
-impl WgslType for Vec2 { fn wgsl_type_name() -> &'static str { "vec2<f32>" } }
-impl WgslType for Vec3 { fn wgsl_type_name() -> &'static str { "vec3<f32>" } }
-impl WgslType for Vec4 { fn wgsl_type_name() -> &'static str { "vec4<f32>" } }
-impl WgslType for Mat4 { fn wgsl_type_name() -> &'static str { "mat4x4<f32>" } }
-impl WgslType for Mat3A { fn wgsl_type_name() -> &'static str { "mat3x3<f32>" } }
-
-// 专用 Padding 类型 (在 WGSL 中通常用 private 变量或手动对齐，这里简化映射为 f32/vec3)
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct Padf32(pub f32);
-impl WgslType for Padf32 { fn wgsl_type_name() -> &'static str { "f32" } }
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct PadVec3(pub Vec3);
-impl WgslType for PadVec3 { fn wgsl_type_name() -> &'static str { "vec3<f32>" } }
+impl WgslType for f32 { fn wgsl_type_name() -> Cow<'static, str> { "f32".into() } }
+impl WgslType for i32 { fn wgsl_type_name() -> Cow<'static, str> { "i32".into() } }
+impl WgslType for u32 { fn wgsl_type_name() -> Cow<'static, str> { "u32".into() } }
+impl WgslType for Vec2 { fn wgsl_type_name() -> Cow<'static, str> { "vec2<f32>".into() } }
+impl WgslType for Vec3 { fn wgsl_type_name() -> Cow<'static, str> { "vec3<f32>".into() } }
+impl WgslType for Vec4 { fn wgsl_type_name() -> Cow<'static, str> { "vec4<f32>".into() } }
+impl WgslType for Mat4 { fn wgsl_type_name() -> Cow<'static, str> { "mat4x4<f32>".into() } }
+impl WgslType for Mat3A { fn wgsl_type_name() -> Cow<'static, str> { "mat3x3<f32>".into() } }
 
 
-// #[repr(C)]
-// #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
-// pub struct GlobalUniforms {
-//     pub view_projection: Mat4,
-//     pub view_projection_inverse: Mat4,
-//     pub view_matrix: Mat4,
-// }
+// ----------------------------------------------------------------------------
+// 2. 核心：自定义数组类型 UniformArray
+// ----------------------------------------------------------------------------
+/// 专门用于 Uniform Buffer 的数组包装器
+/// 自动处理 WGSL 类型映射和 Default 实现
+#[repr(transparent)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct UniformArray<T: Pod, const N: usize>(pub [T; N]);
 
+// 1. 手动实现 Zeroable (安全：只要内部数组是 Zeroable，且布局透明)
+unsafe impl<T: Pod, const N: usize> Zeroable for UniformArray<T, N> {}
 
-#[repr(C, align(256))] // 强制每个实例占用 256 字节
-#[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
-pub struct DynamicModelUniforms {
-    pub model_matrix: Mat4,       //64
-    pub model_matrix_inverse: Mat4,  //64
-    pub normal_matrix: Mat3A,   //48
+// 2. 手动实现 Pod (安全：只要内部数组是 Pod，且布局透明)
+unsafe impl<T: Pod, const N: usize> Pod for UniformArray<T, N> {}
 
-    pub _padding: [f32; 20], // 填充至 256 bytes
-}
-
-impl DynamicModelUniforms {
-    pub fn wgsl_struct_def(struct_name: &str) -> String {
-        let mut code = format!("struct {} {{\n", struct_name);
-        code.push_str("    model_matrix: mat4x4<f32>,\n");
-        code.push_str("    model_matrix_inverse: mat4x4<f32>,\n");
-        code.push_str("    normal_matrix: mat3x3<f32>,\n");
-        code.push_str("};");
-        code
+// 1. 实现 WgslType：自动生成 array<T, N>
+impl<T: WgslType + Pod, const N: usize> WgslType for UniformArray<T, N> {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        // 动态生成包含长度的 WGSL 类型字符串
+        format!("array<{}, {}>", T::wgsl_type_name(), N).into()
     }
 }
+
+// 2. 实现 Default：自动初始化数组
+impl<T: Default + Pod + Copy, const N: usize> Default for UniformArray<T, N> {
+    fn default() -> Self {
+        Self([T::default(); N])
+    }
+}
+
+// 3. 实现 Deref：让它用起来像普通数组
+impl<T: Pod, const N: usize> Deref for UniformArray<T, N> {
+    type Target = [T; N];
+    fn deref(&self) -> &Self::Target { &self.0 }
+}
+
+impl<T: Pod, const N: usize> DerefMut for UniformArray<T, N> {
+    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+}
+
+// 4. 便捷构造函数
+impl<T: Pod, const N: usize> UniformArray<T, N> {
+    pub fn new(arr: [T; N]) -> Self {
+        Self(arr)
+    }
+}
+
+impl<T: Pod, const N: usize> From<[T; N]> for UniformArray<T, N> {
+    fn from(arr: [T; N]) -> Self {
+        Self(arr)
+    }
+}
+
+pub trait UniformBlock: Pod + Zeroable {
+    fn wgsl_struct_def(struct_name: &str) -> String;
+}
+
+
+// #[repr(C, align(256))] // 强制每个实例占用 256 字节
+// #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
+// pub struct DynamicModelUniforms {
+//     pub model_matrix: Mat4,       //64
+//     pub model_matrix_inverse: Mat4,  //64
+//     pub normal_matrix: Mat3A,   //48
+
+//     pub __padding_20: [f32; 20], // 填充至 256 bytes
+// }
+
+// impl DynamicModelUniforms {
+//     pub fn wgsl_struct_def(struct_name: &str) -> String {
+//         let mut code = format!("struct {} {{\n", struct_name);
+//         code.push_str("    model_matrix: mat4x4<f32>,\n");
+//         code.push_str("    model_matrix_inverse: mat4x4<f32>,\n");
+//         code.push_str("    normal_matrix: mat3x3<f32>,\n");
+//         code.push_str("};");
+//         code
+//     }
+// }
+
 
 
 // ============================================================================
@@ -108,14 +149,39 @@ impl DynamicModelUniforms {
 
 
 macro_rules! define_uniform_struct {
+    // --------------------------------------------------------
+    // 入口模式：匹配 struct 定义
+    // --------------------------------------------------------
     (
         $(#[$meta:meta])* struct $name:ident {
             $(
-                $field_name:ident : $field_type:ty
+                $field_name:ident : $field_type:ty $(= $default_val:expr)?
             ),* $(,)?
         }
     ) => {
-        // 1. 生成 Rust 结构体
+        // 1. 调用内部规则生成 struct 定义 (忽略默认值)
+        define_uniform_struct!(@def_struct 
+            $(#[$meta])* struct $name { 
+                $( $field_name : $field_type ),* }
+        );
+
+        // 2. 调用内部规则生成 Default 实现 (处理默认值)
+        define_uniform_struct!(@impl_default 
+            $name { 
+                $( $field_name : $field_type $(= $default_val)? ),* }
+        );
+
+        // 3. 调用内部规则生成 WGSL 代码 (忽略默认值)
+        define_uniform_struct!(@impl_wgsl 
+            $name { 
+                $( $field_name : $field_type ),* }
+        );
+    };
+
+    // --------------------------------------------------------
+    // 内部规则 1: 生成 Rust Struct
+    // --------------------------------------------------------
+    (@def_struct $(#[$meta:meta])* struct $name:ident { $( $field_name:ident : $field_type:ty ),* }) => {
         #[repr(C)]
         #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
         $(#[$meta])*
@@ -124,13 +190,37 @@ macro_rules! define_uniform_struct {
                 pub $field_name : $field_type,
             )*
         }
+    };
 
-        // 2. 生成获取 WGSL 代码的方法
+    // --------------------------------------------------------
+    // 内部规则 2: 生成 Default 实现
+    // --------------------------------------------------------
+    (@impl_default $name:ident { $( $field_name:ident : $field_type:ty $(= $default_val:expr)? ),* }) => {
+        impl Default for $name {
+            fn default() -> Self {
+                Self {
+                    $(
+                        $field_name: define_uniform_struct!(@val_or_default $field_type $(, $default_val)?),
+                    )*
+                }
+            }
+        }
+    };
+
+    // 辅助规则：如果有显式值，则使用显式值；否则使用 Type::default()
+    (@val_or_default $type:ty, $val:expr) => { $val };
+    (@val_or_default $type:ty) => { <$type as Default>::default() };
+
+    // --------------------------------------------------------
+    // 内部规则 3: 生成 WGSL struct string
+    // --------------------------------------------------------
+    (@impl_wgsl $name:ident { $( $field_name:ident : $field_type:ty ),* }) => {
         impl $name {
             pub fn wgsl_struct_def(struct_name: &str) -> String {
                 let mut code = format!("struct {} {{\n", struct_name);
                 $(
-                    if !stringify!($field_name).starts_with("_") { // 忽略以 _ 开头的字段（如 Padding）
+                    // 忽略以 __ 开头的 padding 字段
+                    if !stringify!($field_name).starts_with("__") { 
                         code.push_str(&format!(
                             "    {}: {},\n", 
                             stringify!($field_name), 
@@ -148,86 +238,71 @@ macro_rules! define_uniform_struct {
 // ============================================================================
 // 3. Uniform 定义 (在此处修改，两端自动同步)
 // ============================================================================
+
+
 define_uniform_struct!(
-    /// 全局 Uniforms (每个 Frame 更新)
-    struct GlobalFrameUniforms {
-        view_projection: Mat4,
-        view_projection_inverse: Mat4,
-        view_matrix: Mat4,
+    /// 动态模型 Uniforms (每个对象更新)
+    struct DynamicModelUniforms {
+        model_matrix: Mat4,       //64
+        model_matrix_inverse: Mat4,  //64
+        normal_matrix: Mat3A,   //48
+
+        __padding_20: UniformArray<f32, 20>, // 填充至 256 bytes
     }
 );
 
-impl Default for GlobalFrameUniforms {
-    fn default() -> Self {
-        Self {
-            view_projection: Mat4::IDENTITY,
-            view_projection_inverse: Mat4::IDENTITY,
-            view_matrix: Mat4::IDENTITY,
-        }
-    }
-}
 
+define_uniform_struct!(
+    /// 全局 Uniforms (每个 Frame 更新)
+    struct GlobalFrameUniforms {
+        view_projection: Mat4 = Mat4::IDENTITY,
+        view_projection_inverse: Mat4 = Mat4::IDENTITY,
+        view_matrix: Mat4 = Mat4::IDENTITY,
+    }
+);
+
+
+define_uniform_struct!(
+    /// 光源 Uniforms (每个 Frame 更新)
+    struct GlobalLightUniforms {
+        directional_light_direction: Vec3,
+        __padding1: f32, // Padding
+        directional_light_color: Vec3,
+        __padding2: f32, // Padding
+    }
+);
 
 // Standard PBR Material
 // 必须严格遵守 std140 对齐规则
 define_uniform_struct!(
     struct MeshStandardUniforms {
-        color: Vec4,           // 16
-        emissive: Vec3,        // 12
-        occlusion_strength: f32, // 4 (12+4=16)
-        normal_scale: Vec2,    // 8
-        roughness: f32,        // 4  
-        metalness: f32,        // 4
-
+        color: Vec4 = Vec4::ONE,           // 16
+        emissive: Vec3 = Vec3::ZERO,        // 12
+        occlusion_strength: f32 = 1.0,     // 4 (12+4=16)
+        normal_scale: Vec2 = Vec2::ONE,    // 8
+        roughness: f32 = 1.0,            // 4  
+        metalness: f32 = 0.0,           // 4
         // 使用优化后的 Mat3A (48 bytes)
-        map_transform: Mat3A,         
-        normal_map_transform: Mat3A,   
-        roughness_map_transform: Mat3A,
-        metalness_map_transform: Mat3A,
-        emissive_map_transform: Mat3A, 
-        occlusion_map_transform: Mat3A,
+        map_transform: Mat3A = Mat3A::IDENTITY,         
+        normal_map_transform: Mat3A = Mat3A::IDENTITY,   
+        roughness_map_transform: Mat3A = Mat3A::IDENTITY,
+        metalness_map_transform: Mat3A = Mat3A::IDENTITY,
+        emissive_map_transform: Mat3A = Mat3A::IDENTITY, 
+        occlusion_map_transform: Mat3A = Mat3A::IDENTITY,
     }
 );
 
-impl Default for MeshStandardUniforms {
-    fn default() -> Self {
-        Self {
-            color: Vec4::ONE,
-            emissive: Vec3::ZERO,
-            occlusion_strength: 1.0,
-            normal_scale: Vec2::ONE,
-            roughness: 1.0,
-            metalness: 0.0,
-            map_transform: Mat3A::IDENTITY,
-            normal_map_transform: Mat3A::IDENTITY,
-            roughness_map_transform: Mat3A::IDENTITY,
-            metalness_map_transform: Mat3A::IDENTITY,
-            emissive_map_transform: Mat3A::IDENTITY,
-            occlusion_map_transform: Mat3A::IDENTITY,
-        }
-    }
-}
 
 // Basic Material
 define_uniform_struct!(
     struct MeshBasicUniforms {
-        color: Vec4,           // 16
-        opacity: f32,          // 4
-        _padding: PadVec3,      // 12 (4+12=16)
-        map_transform: Mat3A,
+        color: Vec4 = Vec4::ONE,           // 16
+        opacity: f32 = 1.0,          // 4
+        __padding: UniformArray<f32, 3>,      // 12 (4+12=16)
+        map_transform: Mat3A = Mat3A::IDENTITY,
     }
 );
 
-impl Default for MeshBasicUniforms {
-    fn default() -> Self {
-        Self {
-            color: Vec4::ONE,
-            opacity: 1.0,
-            _padding: PadVec3(Vec3::ZERO),
-            map_transform: Mat3A::IDENTITY,
-        }
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -243,9 +318,13 @@ mod tests {
     #[test]
     fn test_wgsl_generation() {
         let standard_wgsl = MeshStandardUniforms::wgsl_struct_def("MeshStandardUniforms");
+        let standard_default = MeshStandardUniforms::default();
         println!("WGSL for MeshStandardUniforms:\n{}", standard_wgsl);
+        println!("Default Standard Uniforms: {:?}", standard_default);
 
         let basic_wgsl = MeshBasicUniforms::wgsl_struct_def("MeshBasicUniforms");
+        let basic_default = MeshBasicUniforms::default();
         println!("WGSL for MeshBasicUniforms:\n{}", basic_wgsl);
+        println!("Default Basic Uniforms: {:?}", basic_default);
     }
 }

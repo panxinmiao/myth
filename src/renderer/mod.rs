@@ -276,7 +276,7 @@ impl Renderer {
                 model_matrix: item.model_matrix,
                 model_matrix_inverse,
                 normal_matrix,
-                _padding: [0.0; 20],
+                __padding_20: [0.0; 20].into(),
             });
         }
 
