@@ -7,6 +7,7 @@ mod tracked_render_pass;
 mod shader_manager;
 mod gpu_buffer;
 mod gpu_texture;
+mod object_manager;
 
 use std::sync::Arc;
 use wgpu::util::DeviceExt;
@@ -14,7 +15,7 @@ use wgpu::util::DeviceExt;
 use crate::core::scene::Scene;
 use crate::core::camera::{Camera, Frustum};
 use crate::core::mesh::Mesh;
-use crate::core::uniforms::{GlobalUniforms, DynamicModelUniforms, Mat3A};
+use crate::core::uniforms::{GlobalFrameUniforms, DynamicModelUniforms, Mat3A};
 
 use self::resource_manager::ResourceManager;
 use self::pipeline::PipelineCache;
@@ -74,7 +75,7 @@ impl Renderer {
         surface.configure(&device, &config);
 
         // 1. 初始化 Global Uniforms (Group 0)
-        let global_uniforms = GlobalUniforms::default();
+        let global_uniforms = GlobalFrameUniforms::default();
         let global_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label: Some("Global Uniforms"),
             contents: bytemuck::bytes_of(&global_uniforms),
@@ -187,7 +188,7 @@ impl Renderer {
 
         let frustum = Frustum::from_matrix(vp_matrix);
 
-        let globals = GlobalUniforms {
+        let globals = GlobalFrameUniforms {
             view_projection: vp_matrix,
             view_projection_inverse: vp_matrix_inverse,
             view_matrix: view_matrix,

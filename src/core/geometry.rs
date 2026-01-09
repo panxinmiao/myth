@@ -286,41 +286,32 @@ impl Geometry {
         // 虽然不是数学上的最小覆盖球(Welzl算法)，但在引擎初始化速度和剔除效率之间是最好的平衡。
     }
 
-    /// [L2] 获取 Shader 宏定义
-    /// 根据现有的属性自动推导
     pub fn get_defines(&self) -> GeometryFeatures {
         let mut features = GeometryFeatures::empty();
 
         if self.attributes.contains_key("color") {
             features |= GeometryFeatures::USE_VERTEX_COLOR;
         }
-        
         if self.attributes.contains_key("tangent") {
             features |= GeometryFeatures::USE_TANGENT;
         }
-
-        if !self.morph_attributes.is_empty() {
+        // 根据 buffer 是否存在来判断，而不是仅仅看 attributes
+        // if self.morph_buffer.is_some() {
+        //     features |= GeometryFeatures::USE_MORPHING;
+        // }
+        if self.morph_attributes.len() > 0 {
             features |= GeometryFeatures::USE_MORPHING;
         }
-        
-        // 假设 future extension:
-        // if self.attributes.contains_key("skinIndex") && self.attributes.contains_key("skinWeight") {
-        //     features |= GeometryFeatures::USE_SKINNING;
-        // }
+        // Skinning 同理...
 
         features
     }
 
-    fn define_bindings(&self, builder: &mut ResourceBuilder) {
+    /// [核心新增] 定义 Group 2 (Object) 中属于 Geometry 的部分
+    pub fn define_bindings(&self, builder: &mut ResourceBuilder) {
 
-        // 示例：配合 get_resources
-        // if !self.morph_attributes.is_empty() {
-        //    builder.add_storage_buffer(
-        //        "MorphTargetBuffer",
-        //        &self.morph_buffer,
-        //        false, // read_only
-        //        ShaderStages::VERTEX
-        //    );
-        // }
+        // 需要根据 morph_attributes 来自动生成 morph texture 资源（或 storage buffer）
+        // 然后绑定到 Group 2 中
+        
     }
 }

@@ -3,9 +3,12 @@ use crate::renderer::vertex_layout::GeneratedVertexLayout;
 use serde_json::{Map, Value};
 use super::shader_manager::get_env;
 use crate::core::material::MaterialFeatures;
-use crate::core::geometry::GeometryFeatures;
+use crate::core::geometry::{Geometry, GeometryFeatures};
 use crate::core::scene::SceneFeatures;
 use crate::core::binding::ResourceBuilder;
+use crate::core::uniforms::DynamicModelUniforms;
+use crate::core::buffer::{DataBuffer, BufferRef};
+use wgpu::ShaderStages;
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -79,6 +82,91 @@ impl ShaderContext {
 pub struct ShaderGenerator;
 
 impl ShaderGenerator {
+    // ========================================================================
+    // 核心辅助：根据 ResourceBuilder 生成 WGSL 绑定代码
+    // ========================================================================
+    fn generate_wgsl_bindings(builder: &ResourceBuilder, group_index: u32) -> String {
+        let mut code = String::new();
+
+        for (i, entry) in builder.layout_entries.iter().enumerate() {
+            let name = &builder.names[i];
+            let binding_index = entry.binding; // 使用 builder 中真实的 binding index
+
+            let decl = match entry.ty {
+                wgpu::BindingType::Buffer { ty, .. } => {
+                    match ty {
+                        wgpu::BufferBindingType::Uniform => {
+                            // 约定：Uniform 变量名直接使用 name
+                            // 结构体类型名通常在外部定义，这里我们假设 name 就是结构体实例名
+                            // 对于 Material，通常结构体叫 MaterialUniforms，变量名由 builder 传入 "material"
+                            // 对于 DynamicModel，结构体叫 DynamicModel，变量名 "mesh_model"
+                            
+                            // 这里做一个简单的启发式推断或约定：
+                            // 如果是 Uniform，我们假设 WGSL 中已经定义了对应的大驼峰结构体，
+                            // 或者我们需要 builder 提供类型名。
+                            // 目前 ResourceBuilder.names 存的是变量名。
+                            // 为了通用，我们假设 WGSL 类型名可以通过变量名推导（例如 "material" -> "MaterialUniforms"）
+                            // 或者简单一点：让外部在 define_bindings 时就生成好结构体定义，
+                            // 这里只生成 var<uniform> 声明，类型需要稍微处理一下。
+                            
+                            // 临时方案：针对已知变量名做特殊处理，或者扩展 ResourceBuilder 存类型名。
+                            // 为了不改动 ResourceBuilder，我们这里用简单的映射：
+                            let type_name = if name == "material" {
+                                "MaterialUniforms"
+                            } else if name == "mesh_model" {
+                                "DynamicModel" 
+                            } else {
+                                // 默认尝试大驼峰转化，或者直接用 Name (如果 Name 本身就是类型)
+                                // 这里假设 Name 是变量名，我们无法知道类型名。
+                                // 如果是自定义 Storage Buffer，通常是 array<f32> 或 struct array。
+                                "UnknownType" // 这会报错，但在我们当前的受控环境中足够了
+                            };
+                            
+                            format!("@group({}) @binding({}) var<uniform> {}: {};", group_index, binding_index, name, type_name)
+                        },
+                        wgpu::BufferBindingType::Storage { read_only } => {
+                            let access = if read_only { "read" } else { "read_write" };
+                            // Storage Buffer 通常是 array<f32> 或者 array<Struct>
+                            // 对于 Morph Target，通常是 array<f32>
+                            // 对于 Skinning Matrices，是 array<mat4x4<f32>>
+                            let type_str = if name == "morph_data" {
+                                "array<f32>" // Morph Targets 数据通常是 float 流
+                            } else if name.contains("bone") {
+                                "array<mat4x4<f32>>"
+                            } else {
+                                "array<f32>" // 默认 fallback
+                            };
+                            format!("@group({}) @binding({}) var<storage, {}> {}: {};", group_index, binding_index, access, name, type_str)
+                        },
+                    }
+                },
+                wgpu::BindingType::Texture { sample_type, view_dimension, .. } => {
+                    let type_str = match (view_dimension, sample_type) {
+                        (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Float { .. }) => "texture_2d<f32>",
+                        (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Depth) => "texture_depth_2d",
+                        (wgpu::TextureViewDimension::Cube, wgpu::TextureSampleType::Float { .. }) => "texture_cube<f32>",
+                        _ => "texture_2d<f32>",
+                    };
+                    // 纹理变量名约定：t_{name}
+                    format!("@group({}) @binding({}) var t_{}: {};", group_index, binding_index, name, type_str)
+                },
+                wgpu::BindingType::Sampler(type_) => {
+                    let type_str = match type_ {
+                        wgpu::SamplerBindingType::Comparison => "sampler_comparison",
+                        _ => "sampler",
+                    };
+                    // 采样器变量名约定：s_{name}
+                    format!("@group({}) @binding({}) var s_{}: {};", group_index, binding_index, name, type_str)
+                },
+                _ => String::new(),
+            };
+
+            code.push_str(&decl);
+            code.push('\n');
+        }
+        code
+    }
+
 
     // ========================================================================
     // 1. 顶点着色器生成器
@@ -86,6 +174,7 @@ impl ShaderGenerator {
     pub fn generate_vertex(
         global_context: &ShaderContext,
         geometry_layout: &GeneratedVertexLayout,
+        geometry: &Geometry,
         template_name: &str,
     ) -> String {
 
@@ -95,17 +184,36 @@ impl ShaderGenerator {
         // 注入 Vertex Buffer 结构定义
         context.insert("vertex_struct_code".to_string(), Value::String(geometry_layout.vertex_input_code.clone()));
 
-        // Group 2: Model Matrix Binding (目前这部分还没有 Bindable 化，暂时硬编码，后续也可重构)
-        let binding_code = r#"
-            struct ModelUniforms {
-                model_matrix: mat4x4<f32>,
-                model_matrix_inverse: mat4x4<f32>,
-                normal_matrix: mat3x3<f32>,
-            };
-            @group(2) @binding(0) var<storage, read> mesh_models: array<ModelUniforms>;
-        "#;
-        context.insert("binding_code".to_string(), Value::String(binding_code.to_string()));
+        // 2. Group 2 Bindings (Object Level) - 自动化生成
+        let mut builder = ResourceBuilder::new();
 
+        // 2.1 手动添加 Model Matrix (Binding 0)
+        // 这是一个 Hack: 为了满足 builder.add_dynamic_uniform 需要 BufferRef 的 API，
+        // 我们创建一个临时的 dummy buffer。它不会被真正使用，因为我们只用 builder 生成 layout 代码。
+        let dummy_buffer = BufferRef::new(DataBuffer::new(
+            &[0u8; 256], // 任意数据
+            wgpu::BufferUsages::UNIFORM,
+            Some("DummyGeneratorBuffer")
+        ));
+        
+        let model_size = std::mem::size_of::<DynamicModelUniforms>() as u64;
+        builder.add_dynamic_uniform("mesh_model", &dummy_buffer, model_size, ShaderStages::VERTEX);
+        // 2.2 添加 Geometry 资源 (Binding 1..N)
+        geometry.define_bindings(&mut builder);
+
+        // 2.3 生成 WGSL
+        // 首先需要注入 DynamicModel 的结构体定义
+        let mut binding_code = String::new();
+        binding_code.push_str(&DynamicModelUniforms::wgsl_struct_def("DynamicModel"));
+        binding_code.push_str("\n");
+
+        // 生成 var 定义
+        binding_code.push_str(&Self::generate_wgsl_bindings(&builder, 2));
+
+        context.insert("binding_code".to_string(), Value::String(binding_code));
+
+
+        // 3. 渲染模版
         let vs_template = env.get_template(template_name)
             .unwrap_or_else(|e| panic!("Vertex template '{}' not found: {}", template_name, e));
         let vs_code = vs_template.render(&context)
@@ -141,54 +249,7 @@ impl ShaderGenerator {
         let mut builder = ResourceBuilder::new();
         material.define_bindings(&mut builder);
 
-        let mut binding_code = String::new();
-
-        for (i, entry) in builder.layout_entries.iter().enumerate() {
-            let name = &builder.names[i];
-
-            // B. 生成 WGSL 变量声明
-            // @group(1) @binding(N) var prefix_name: type;
-            let wgsl = match entry.ty {
-                wgpu::BindingType::Buffer { ty, .. } => {
-                    match ty {
-                        wgpu::BufferBindingType::Uniform => {
-                            // 约定：Uniform Buffer 变量名固定为 material，类型名为传入的 name (如 MaterialUniforms)
-                            format!("@group(1) @binding({}) var<uniform> material: {};\n", entry.binding, name)
-                        },
-                        wgpu::BufferBindingType::Storage { read_only } => {
-                            let access = if read_only { "read" } else { "read_write" };
-                            format!("@group(1) @binding({}) var<storage, {}> {}: array<f32>;\n", entry.binding, access, name)
-                        },
-                    }
-                },
-
-                wgpu::BindingType::Texture { sample_type, view_dimension, .. } => {
-                    let type_str = match (view_dimension, sample_type) {
-                        (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Float { .. }) => "texture_2d<f32>",
-                        (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Depth) => "texture_depth_2d",
-                        (wgpu::TextureViewDimension::Cube, wgpu::TextureSampleType::Float { .. }) => "texture_cube<f32>",
-                        _ => "texture_2d<f32>", // fallback
-                    };
-                    // 约定：纹理变量名为 t_{name}
-                    format!("@group(1) @binding({}) var t_{}: {};\n", entry.binding, name, type_str)
-                },
-
-                wgpu::BindingType::Sampler(type_) => {
-                    let type_str = match type_ {
-                        wgpu::SamplerBindingType::Comparison => "sampler_comparison",
-                        _ => "sampler",
-                    };
-                    // 约定：采样器变量名为 s_{name}
-                    format!("@group(1) @binding({}) var s_{}: {};\n", entry.binding, name, type_str)
-                },
-
-                _ => {
-                    panic!("Unsupported binding type in shader generation");
-                }
-            };
-            
-            binding_code.push_str(&wgsl);
-        }
+        let binding_code = Self::generate_wgsl_bindings(&builder, 1);
 
         context.insert("binding_code".to_string(), Value::String(binding_code));
 

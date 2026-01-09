@@ -220,6 +220,7 @@ impl PipelineCache {
         let vs_code = ShaderGenerator::generate_vertex(
             &base_context,
             vertex_layout,
+            geometry,
             "standard_vert.wgsl"
         );
         let fs_code = ShaderGenerator::generate_fragment(

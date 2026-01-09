@@ -71,14 +71,13 @@ pub struct PadVec3(pub Vec3);
 impl WgslType for PadVec3 { fn wgsl_type_name() -> &'static str { "vec3<f32>" } }
 
 
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
-pub struct GlobalUniforms {
-    pub view_projection: Mat4,
-    pub view_projection_inverse: Mat4,
-    pub view_matrix: Mat4,
-}
+// #[repr(C)]
+// #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
+// pub struct GlobalUniforms {
+//     pub view_projection: Mat4,
+//     pub view_projection_inverse: Mat4,
+//     pub view_matrix: Mat4,
+// }
 
 
 #[repr(C, align(256))] // 强制每个实例占用 256 字节
@@ -89,6 +88,17 @@ pub struct DynamicModelUniforms {
     pub normal_matrix: Mat3A,   //48
 
     pub _padding: [f32; 20], // 填充至 256 bytes
+}
+
+impl DynamicModelUniforms {
+    pub fn wgsl_struct_def(struct_name: &str) -> String {
+        let mut code = format!("struct {} {{\n", struct_name);
+        code.push_str("    model_matrix: mat4x4<f32>,\n");
+        code.push_str("    model_matrix_inverse: mat4x4<f32>,\n");
+        code.push_str("    normal_matrix: mat3x3<f32>,\n");
+        code.push_str("};");
+        code
+    }
 }
 
 
@@ -134,8 +144,27 @@ macro_rules! define_uniform_struct {
 }
 
 // ============================================================================
-// 3. 材质 Uniform 定义 (在此处修改，两端自动同步)
+// 3. Uniform 定义 (在此处修改，两端自动同步)
 // ============================================================================
+define_uniform_struct!(
+    /// 全局 Uniforms (每个 Frame 更新)
+    struct GlobalFrameUniforms {
+        view_projection: Mat4,
+        view_projection_inverse: Mat4,
+        view_matrix: Mat4,
+    }
+);
+
+impl Default for GlobalFrameUniforms {
+    fn default() -> Self {
+        Self {
+            view_projection: Mat4::IDENTITY,
+            view_projection_inverse: Mat4::IDENTITY,
+            view_matrix: Mat4::IDENTITY,
+        }
+    }
+}
+
 
 // Standard PBR Material
 // 必须严格遵守 std140 对齐规则
