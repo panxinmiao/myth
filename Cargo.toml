@@ -13,8 +13,9 @@ wgpu = "28.0.0"
 
 bytemuck = { version = "1.24", features = ["derive", "min_const_generics"]}
 bitflags = "2.10"
-glam = { version = "0.30" , features = ["bytemuck"] }
+glam = { version = "0.30.10" , features = ["bytemuck"] }
 thunderdome = "0.6"
+slotmap = { version = "1.1.1", features = ["serde"] }
 
 minijinja = {version ="2.14", features = ["loader", "custom_syntax"] }
 serde = { version = "1.0", features = ["derive"] }

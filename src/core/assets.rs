@@ -1,0 +1,85 @@
+use slotmap::{new_key_type, SlotMap};
+use std::collections::HashMap;
+use uuid::Uuid;
+
+use crate::core::geometry::Geometry;
+use crate::core::material::Material;
+use crate::core::texture::Texture;
+
+// 强类型句柄 (Handle)
+new_key_type! {
+    pub struct GeometryHandle;
+    pub struct MaterialHandle;
+    pub struct TextureHandle;
+}
+
+// 2. 资产服务器 (AssetServer)
+pub struct AssetServer {
+    // 主存储：使用 SlotMap 存放核心资源
+    pub geometries: SlotMap<GeometryHandle, Geometry>,
+    pub materials: SlotMap<MaterialHandle, Material>,
+    pub textures: SlotMap<TextureHandle, Texture>,
+
+    // UUID 映射：用于通过 UUID (通常来自文件加载) 反查运行时 Handle
+    // 这是一个辅助索引，渲染循环中不应使用它
+    pub(crate) lookup_geo: HashMap<Uuid, GeometryHandle>,
+    pub(crate) lookup_mat: HashMap<Uuid, MaterialHandle>,
+    pub(crate) lookup_tex: HashMap<Uuid, TextureHandle>,
+}
+
+impl AssetServer {
+    pub fn new() -> Self {
+        Self {
+            geometries: SlotMap::with_key(),
+            materials: SlotMap::with_key(),
+            textures: SlotMap::with_key(),
+            lookup_geo: HashMap::new(),
+            lookup_mat: HashMap::new(),
+            lookup_tex: HashMap::new(),
+        }
+    }
+
+    // === Geometry ===
+    pub fn add_geometry(&mut self, geometry: Geometry) -> GeometryHandle {
+        let id = geometry.id; // 假设 Geometry 结构体中仍保留 id: Uuid 字段
+        let handle = self.geometries.insert(geometry);
+        self.lookup_geo.insert(id, handle);
+        handle
+    }
+
+    pub fn get_geometry(&self, handle: GeometryHandle) -> Option<&Geometry> {
+        self.geometries.get(handle)
+    }
+
+    pub fn get_geometry_mut(&mut self, handle: GeometryHandle) -> Option<&mut Geometry> {
+        self.geometries.get_mut(handle)
+    }
+
+    // === Material ===
+    pub fn add_material(&mut self, material: Material) -> MaterialHandle {
+        let id = material.id;
+        let handle = self.materials.insert(material);
+        self.lookup_mat.insert(id, handle);
+        handle
+    }
+
+    pub fn get_material(&self, handle: MaterialHandle) -> Option<&Material> {
+        self.materials.get(handle)
+    }
+
+    pub fn get_material_mut(&mut self, handle: MaterialHandle) -> Option<&mut Material> {
+        self.materials.get_mut(handle)
+    }
+
+    // === Texture ===
+    pub fn add_texture(&mut self, texture: Texture) -> TextureHandle {
+        let id = texture.id;
+        let handle = self.textures.insert(texture);
+        self.lookup_tex.insert(id, handle);
+        handle
+    }
+
+    pub fn get_texture(&self, handle: TextureHandle) -> Option<&Texture> {
+        self.textures.get(handle)
+    }
+}

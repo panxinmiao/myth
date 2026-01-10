@@ -1,8 +1,8 @@
-use std::sync::{Arc};
 use uuid::Uuid;
 use thunderdome::Index;
-use crate::core::geometry::Geometry;
-use crate::core::material::{Material};
+use crate::core::assets::{GeometryHandle, MaterialHandle};
+
+pub type MeshHandle = Index;
 
 #[derive(Debug, Clone)]
 pub struct Mesh {
@@ -14,8 +14,8 @@ pub struct Mesh {
     pub node_id: Option<Index>,
     
     // === 资源引用 ===
-    pub geometry: Arc<Geometry>,
-    pub material: Arc<Material>,
+    pub geometry: GeometryHandle,
+    pub material: MaterialHandle,
     
     // === 实例特定的渲染设置 ===
     pub visible: bool, 
@@ -26,29 +26,17 @@ pub struct Mesh {
 
 impl Mesh {
     pub fn new(
-        node_id: Option<Index>, 
-        geometry: Arc<Geometry>, 
-        material: Arc<Material>
+        geometry: GeometryHandle, 
+        material: MaterialHandle
     ) -> Self {
         Self {
             id: Uuid::new_v4(),
             name: "Mesh".to_string(),
-            node_id,
+            node_id : None,
             geometry,
             material,
             visible: true,
             render_order: 0,
         }
-    }
-
-    pub fn from_resource(
-        geometry: Geometry, 
-        material: Material
-    ) -> Self {
-        Self::new(
-            None,
-            Arc::new(geometry),
-            Arc::new(material),
-        )
     }
 }

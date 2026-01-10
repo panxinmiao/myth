@@ -47,11 +47,14 @@ impl App {
         
         let mut basic_mat = MeshBasicMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
         basic_mat.map = Some(texture.clone());
+
+        let geo_handle = scene.add_geometry_data(geometry);
+        let mat_handle = scene.add_material_data(basic_mat.into());
     
         // 创建 Mesh 并加入场景
-        let mesh = Mesh::from_resource(
-            geometry, 
-            basic_mat.into()
+        let mesh = Mesh::new(
+            geo_handle, 
+            mat_handle
         );
 
         scene.add_mesh(mesh, None);

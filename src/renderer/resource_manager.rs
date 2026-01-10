@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap};
 use std::sync::{Arc};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::hash::{Hash, Hasher};
@@ -6,13 +6,14 @@ use std::collections::hash_map::DefaultHasher;
 use std::vec;
 
 use uuid::Uuid;
+use slotmap::{SecondaryMap};
 use core::ops::Range;
 
 use crate::core::geometry::{Geometry};
-use crate::core::material::Material;
 use crate::core::texture::Texture;
 use crate::core::world::WorldEnvironment;
 use crate::core::buffer::BufferRef;
+use crate::core::assets::{AssetServer, GeometryHandle, MaterialHandle}; // 引入 Handle
 
 use crate::renderer::binding::{BindingResource, Bindings};
 use crate::renderer::resource_builder::{ResourceBuilder};
@@ -77,18 +78,17 @@ pub struct ResourceManager {
     queue: Arc<wgpu::Queue>,
     frame_index: u64,
 
+    // 暂时用 UUID，这里先保持不变，避免改动过大
     buffers: HashMap<Uuid, GpuBuffer>,
-    textures: HashMap<Uuid, GpuTexture>,
-
-    geometries: HashMap<Uuid, GPUGeometry>,
-    materials: HashMap<Uuid, GPUMaterial>,
-    worlds: HashMap<Uuid, GPUWorld>,
+    // === 核心修改：使用 SecondaryMap ===
+    // 这种 Map 允许我们用 Handle 直接索引
+    gpu_geometries: SecondaryMap<GeometryHandle, GPUGeometry>,
+    gpu_materials: SecondaryMap<MaterialHandle, GPUMaterial>,
     
-    // Layout 缓存: Hash(BindingDescriptors) -> Layout
-    // 这样不同材质如果结构相同，可以复用 Layout
-    // layout_cache: HashMap<u64, Arc<wgpu::BindGroupLayout>>,
+    gpu_textures: HashMap<Uuid, GpuTexture>,
+    worlds: HashMap<Uuid, GPUWorld>,  // World 比较特殊，且数量极少，暂时用UUID
+    
     layout_cache: HashMap<Vec<wgpu::BindGroupLayoutEntry>, Arc<wgpu::BindGroupLayout>>,
-
     dummy_texture: GpuTexture, 
 }
 
@@ -104,10 +104,13 @@ impl ResourceManager {
             queue,
             frame_index: 0,
             buffers: HashMap::new(),
-            geometries: HashMap::new(),
-            materials: HashMap::new(),
+
+            // 初始化 SecondaryMap
+            gpu_textures: HashMap::new(),
+            gpu_geometries: SecondaryMap::new(),
+            gpu_materials: SecondaryMap::new(),
+
             worlds: HashMap::new(),
-            textures: HashMap::new(),
             layout_cache: HashMap::new(),
             dummy_texture,
         }
@@ -175,55 +178,58 @@ impl ResourceManager {
     // Geometry Logic
     // ========================================================================
 
-    pub fn prepare_geometry(&mut self, geometry: &Geometry) -> &GPUGeometry {
-        // let geometry_id = geometry.id;
+    pub fn prepare_geometry(
+        &mut self, 
+        assets: &AssetServer, 
+        handle: GeometryHandle
+    ) -> Option<&GPUGeometry> {
 
-        let mut resized_buffers = HashSet::new();
+
+        let geometry = assets.get_geometry(handle)?;
+
+        let mut buffer_ids_changed = false;
 
         // 1. 统一处理 Vertex Buffers
         for attr in geometry.attributes.values() {
-            let old_id = self.buffers.get(&attr.buffer.id).map(|b| b.id);
             let new_id = self.prepare_buffer(&attr.buffer);
-            // 检测到底层 Buffer 是否重建了 (Resize)
-            if let Some(oid) = old_id {
-                if oid != new_id { resized_buffers.insert(attr.buffer.id); }
+
+            if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
+                if !gpu_geo.vertex_buffer_ids.contains(&new_id) {
+                     // 只要有一个 Buffer ID 不在旧列表里，认为变了。
+                     buffer_ids_changed = true;
+                }
             }
         }
 
-        // 2. 统一处理 Index Buffer
+        // 2. 检查 Index Buffer
         if let Some(indices) = &geometry.index_attribute {
-            let old_id = self.buffers.get(&indices.buffer.id).map(|b| b.id);
             let new_id = self.prepare_buffer(&indices.buffer);
-            if let Some(oid) = old_id {
-                if oid != new_id { resized_buffers.insert(indices.buffer.id); }
-            }
+             if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
+                 if let Some((_, _, _, old_id)) = gpu_geo.index_buffer {
+                     if old_id != new_id { buffer_ids_changed = true; }
+                 }
+             }
         }
 
         // 3. 检查重建 Geometry 绑定
-        let needs_rebuild = if let Some(gpu_geo) = self.geometries.get(&geometry.id) {
-            geometry.version() > gpu_geo.version || !resized_buffers.is_empty()
+        let needs_rebuild = if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
+            geometry.version() > gpu_geo.version || buffer_ids_changed
         } else {
             true
         };
 
         if needs_rebuild {
-            self.create_gpu_geometry(geometry);
+            self.create_gpu_geometry(geometry, handle);
         }
 
-        if let Some(gpu_geo) = self.geometries.get_mut(&geometry.id) {
-            // gpu_geo.draw_range = geometry.draw_range.clone();
-            // gpu_geo.topology = geometry.topology;
+        if let Some(gpu_geo) = self.gpu_geometries.get_mut(handle) {
             gpu_geo.last_used_frame = self.frame_index;
+            return Some(gpu_geo);
         }
-
-        self.geometries.get(&geometry.id).unwrap()
+        None
     }
 
-    pub fn get_geometry(&self, geometry_id: uuid::Uuid) -> Option<&GPUGeometry> {
-        self.geometries.get(&geometry_id)
-    }
-
-    fn create_gpu_geometry(&mut self, geometry: &Geometry) {
+    fn create_gpu_geometry(&mut self, geometry: &Geometry, handle: GeometryHandle) {
         let layout_info = Arc::new(vertex_layout::generate_vertex_layout(geometry));
 
         let mut vertex_buffers = Vec::new();
@@ -273,44 +279,54 @@ impl ResourceManager {
             last_used_frame: self.frame_index,
         };
 
-        self.geometries.insert(geometry.id, gpu_geo);
+        self.gpu_geometries.insert(handle, gpu_geo);
     }
 
+    pub fn get_geometry(&self, handle: GeometryHandle) -> Option<&GPUGeometry> {
+        self.gpu_geometries.get(handle)
+    }
 
     // ========================================================================
     // Material Logic
     // ========================================================================
 
-    pub fn prepare_material(&mut self, material: &Material) -> &GPUMaterial{
+    pub fn prepare_material(
+        &mut self, 
+        assets: &AssetServer, 
+        handle: MaterialHandle
+    ) -> Option<&GPUMaterial> {
+
+        let material = assets.get_material(handle)?;
 
         // [L0] 粗粒度检查
-
-        // 先进行一次不可变查找，确认是否命中且版本一致
-        let cache_hit = if let Some(gpu_mat) = self.materials.get(&material.id) {
-            gpu_mat.last_version == material.version()
+        if let Some(gpu_mat) = self.gpu_materials.get_mut(handle) {
+            if gpu_mat.last_version == material.version() {
+                gpu_mat.last_used_frame = self.frame_index;
+            } else {
+                // 版本不同，需要更新
+                self.update_gpu_material(assets, handle);
+            }
         } else {
-            false
-        };
-
-        // 如果命中，重新获取可变引用，更新时间戳并返回
-        if cache_hit {
-            let gpu_mat = self.materials.get_mut(&material.id).unwrap();
-            gpu_mat.last_used_frame = self.frame_index;
-            return gpu_mat;
+            // 不存在，需要创建
+            self.update_gpu_material(assets, handle);
         }
 
-        // --- 开始更新流程 ---
+        self.gpu_materials.get(handle)
+    }
 
-        // 1. 总是刷新 Uniforms (开销极小)
+    fn update_gpu_material(&mut self, assets: &AssetServer, handle: MaterialHandle) {
+        let material = assets.get_material(handle).unwrap(); // 安全，前面检查过
+        
+        // 1. Flush Uniforms
         material.flush_uniforms();
 
-        // 2. 获取当前状态
+        // 2. Define Bindings
         let mut builder = ResourceBuilder::new();
         material.define_bindings(&mut builder);
 
-        // 3. 预处理资源 & 计算资源 Hash
+        // 3. 处理资源 & Hash
         let mut resource_hasher = DefaultHasher::new();
-
+        
         for res in &builder.resources {
             match res {
                 BindingResource::Buffer { buffer, .. } => {
@@ -319,9 +335,8 @@ impl ResourceManager {
                     buffer.id.hash(&mut resource_hasher);
                 },
                 BindingResource::Texture(tex_opt) => {
-                    if let Some(tex_arc) = tex_opt {
+                    if let Some(tex) = tex_opt {
                         {
-                            let tex = tex_arc;
                             self.add_or_update_texture(&tex); // 确保 GPU 端存在
                             // 2. Hash：使用 Texture ID 参与 Hash
                             tex.id.hash(&mut resource_hasher);
@@ -344,18 +359,15 @@ impl ResourceManager {
                 }
             }
         }
-
         let resource_hash = resource_hasher.finish();
-
-        // 4. 获取 Layout (利用缓存去重)
         let layout = self.get_or_create_layout(&builder.layout_entries);
+
 
         // 5. 检查是否需要重建 BindGroup
         // 仅当 Layout 指针变化 OR 资源 Hash 变化 OR 是新材质时才重建
-
         let mut can_reuse_bindgroup = false;
 
-        if let Some(gpu_mat) = self.materials.get(&material.id) {
+        if let Some(gpu_mat) = self.gpu_materials.get(handle) {
             let layout_unchanged = Arc::ptr_eq(&gpu_mat.layout, &layout);
             let resources_unchanged = gpu_mat.last_resource_hash == resource_hash;
             if layout_unchanged && resources_unchanged {
@@ -364,20 +376,16 @@ impl ResourceManager {
         }
 
         if can_reuse_bindgroup {
-             let gpu_mat = self.materials.get_mut(&material.id).unwrap();
+             let gpu_mat = self.gpu_materials.get_mut(handle).unwrap(); 
              gpu_mat.last_version = material.version();
              gpu_mat.last_used_frame = self.frame_index;
-             return gpu_mat;
+             return;
         }
-
 
         // 6. 创建 BindGroup
         let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
+        let binding_wgsl = builder.generate_wgsl(1);
 
-        // 如果需要重建，顺便生成 WGSL
-        let binding_wgsl = builder.generate_wgsl(1); // Group 1
-
-        // 7. 更新 Material 缓存
         let gpu_mat = GPUMaterial {
             bind_group,
             bind_group_id: bg_id,
@@ -387,14 +395,12 @@ impl ResourceManager {
             last_resource_hash: resource_hash,
             last_used_frame: self.frame_index,
         };
-        self.materials.insert(material.id, gpu_mat);
-
-        self.materials.get(&material.id).unwrap()
-
+        
+        self.gpu_materials.insert(handle, gpu_mat);
     }
 
-    pub fn get_material(&self, material_id: uuid::Uuid) -> Option<&GPUMaterial> {
-        self.materials.get(&material_id)
+    pub fn get_material(&self, handle: MaterialHandle) -> Option<&GPUMaterial> {
+        self.gpu_materials.get(handle)
     }
 
     // --- 内部辅助 ---
@@ -446,7 +452,7 @@ impl ResourceManager {
                 BindingResource::Texture(tex_opt) => {
                     let gpu_tex = if let Some(tex_arc) = tex_opt {
                         let id = tex_arc.id;
-                        self.textures.get(&id).unwrap_or(&self.dummy_texture)
+                        self.gpu_textures.get(&id).unwrap_or(&self.dummy_texture)
                     } else { 
                         &self.dummy_texture 
                     };
@@ -455,7 +461,7 @@ impl ResourceManager {
                 BindingResource::Sampler(tex_opt) => {
                      let gpu_tex = if let Some(tex_arc) = tex_opt {
                         let id = tex_arc.id;
-                        self.textures.get(&id).unwrap_or(&self.dummy_texture)
+                        self.gpu_textures.get(&id).unwrap_or(&self.dummy_texture)
                     } else { 
                         &self.dummy_texture 
                     };
@@ -479,11 +485,11 @@ impl ResourceManager {
     }
 
     // ========================================================================
-    // Texture Logic (保持不变)
+    // Texture Logic
     // ========================================================================
 
     pub fn add_or_update_texture(&mut self, texture: &Texture) {
-        let gpu_tex = self.textures.entry(texture.id).or_insert_with(|| {
+        let gpu_tex = self.gpu_textures.entry(texture.id).or_insert_with(|| {
              GpuTexture::new(&self.device, &self.queue, texture)
         });
         
@@ -549,10 +555,10 @@ impl ResourceManager {
         if self.frame_index < ttl_frames { return; }
         let cutoff = self.frame_index - ttl_frames;
 
-        self.geometries.retain(|_, v| v.last_used_frame >= cutoff);
+        self.gpu_geometries.retain(|_, v| v.last_used_frame >= cutoff);
         self.buffers.retain(|_, v| v.last_used_frame >= cutoff);
-        self.materials.retain(|_, v| v.last_used_frame >= cutoff);
-        self.textures.retain(|_, v| v.last_used_frame >= cutoff);
+        self.gpu_materials.retain(|_, v| v.last_used_frame >= cutoff);
+        self.gpu_textures.retain(|_, v| v.last_used_frame >= cutoff);
         // Layout 缓存也可以清理，但通常 Layout 占内存极小，保留无妨
     }
 }

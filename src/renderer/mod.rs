@@ -12,18 +12,18 @@ mod binding;
 
 use std::sync::Arc;
 use glam::{Mat4, Mat3A};
+use slotmap::Key;
 
 use crate::core::scene::Scene;
 use crate::core::camera::{Camera};
-use crate::core::mesh::Mesh;
 use crate::core::uniforms::{DynamicModelUniforms};
+use crate::core::assets::{GeometryHandle, MaterialHandle};
 
 use self::resource_manager::ResourceManager;
 use self::pipeline::PipelineCache;
 use self::model_buffer_manager::{ModelBufferManager, ObjectBindingData};
 use self::tracked_render_pass::TrackedRenderPass;
 
-use crate::core::uuid_to_u64;
 use crate::core::world::WorldEnvironment;
 
 pub struct Renderer {
@@ -156,31 +156,31 @@ impl Renderer {
         // 3. 收集 (Collect)
         // =========================================================
         
-        struct RenderItem<'a> {
-            mesh: &'a Mesh,
+        struct RenderItem {
+            geo_handle: GeometryHandle,
+            mat_handle: MaterialHandle,
             model_matrix: glam::Mat4,
             distance_sq: f32, // 用于透明排序
         }
         
         let mut render_list = Vec::new();
-        //let mut transparent_list = Vec::new();
-        
         let frustum = camera.frustum();
-
         let camera_pos = camera.world_matrix().transform_point3(glam::Vec3::ZERO);
 
         for (_id, node) in scene.nodes.iter() {
 
-            if let Some(mesh_idx) = node.mesh {
-                if let Some(mesh) = scene.meshes.get(mesh_idx) {
+            if let Some(mesh_handle) = node.mesh {
+                if let Some(mesh) = scene.meshes.get(mesh_handle) {
                     // 提前检查可见性
                     if !node.visible || !mesh.visible { continue; }
 
+                    // 2. 从 AssetServer 获取 Geometry (用于包围盒计算)
+                    // mesh.geometry 是 GeometryHandle
+                    let geometry = scene.assets.get_geometry(mesh.geometry).expect("Geometry asset missing");
+
                     let node_world_matrix = *node.world_matrix();
                     // let mat = mesh.material.read().unwrap();
-                    if let Some(bs) = &mesh.geometry.bounding_sphere{
-                        // 注意：bounding sphere 需要变换到世界空间
-                        // 这里简单处理：假设 scale 均匀，取 max scale * radius
+                    if let Some(bs) = &geometry.bounding_sphere{
                         let scale = node.scale.max_element(); 
                         let center = node_world_matrix.transform_point3(bs.center);
                         if !frustum.intersects_sphere(center, bs.radius * scale) {
@@ -193,7 +193,8 @@ impl Renderer {
                     
                     // 准备数据
                     let item = RenderItem {
-                        mesh,
+                        geo_handle: mesh.geometry,
+                        mat_handle: mesh.material,
                         model_matrix: Mat4::from(node_world_matrix),
                         distance_sq,
                     };
@@ -206,18 +207,16 @@ impl Renderer {
 
         // if render_list.is_empty() { return; }
 
-
-
         // =========================================================
         // 4 资源准备 (Mutable Pass)
         // =========================================================
         
         struct RenderCommand{
             object_data: ObjectBindingData,
-            geometry_id: uuid::Uuid,
-            material_id: uuid::Uuid,
+            geometry_handle: GeometryHandle, 
+            material_handle: MaterialHandle,
             renderer_pipeline: Arc<wgpu::RenderPipeline>,
-            renderer_pipeline_id: u64,
+            renderer_pipeline_id: u16,
             model_matrix: Mat4,
             sort_key: RenderKey,
         }
@@ -228,20 +227,20 @@ impl Renderer {
         self.resource_manager.prepare_global(&self.world);
 
         for item in &render_list {
-            let geometry = &item.mesh.geometry;
-            let material = &item.mesh.material;
+            // 拿到 CPU 资源引用
+            let geometry = scene.assets.get_geometry(item.geo_handle).unwrap();
+            let material = scene.assets.get_material(item.mat_handle).unwrap();
 
-            // let model_matrix = item.model_matrix;
+            // 1. 更新 
+            self.resource_manager.prepare_geometry(&scene.assets, item.geo_handle);
+            self.resource_manager.prepare_material(&scene.assets, item.mat_handle);
 
-            // 1. 更新 Geometry
-            self.resource_manager.prepare_geometry(&geometry);
-            // 2. 更新 Material
-            self.resource_manager.prepare_material(&material);
-
-            // 2. 准备 Object BindGroup
             let object_data = self.model_buffer_manager.prepare_bind_group(&mut self.resource_manager, &geometry);
-            let gpu_material = self.resource_manager.get_material(material.id).expect("gpu material not found");
-            let gpu_geometry =  self.resource_manager.get_geometry(geometry.id).expect("gpu geometry not found");
+
+            // 2. 获取 GPU 资源
+            // 使用 Handle 获取
+            let gpu_geometry = self.resource_manager.get_geometry(item.geo_handle).expect("gpu material not found");
+            let gpu_material = self.resource_manager.get_material(item.mat_handle).expect("gpu material not found");
             let gpu_world = self.resource_manager.get_world(self.world.id).expect("gpu world not found");
             
             // 3. 更新 Pipeline (需要先拿到刚才 prepare 好的 GPU 资源)
@@ -259,18 +258,21 @@ impl Renderer {
             );
 
             // --- 计算 Sort Key ---
-            // 目标：将 PipelineID (高位) + MaterialID (中位) + Depth (低位) 压缩到一个 u64
-            // Todo 重构 资源ID系统，不在渲染循环中使用UUID。目前 as u16肯定有问题。
+            // 高 32 位是 version，低 32 位是 index
+            let mat_id = item.mat_handle.data().as_ffi() as u32; 
+
+            let pipeline_id = pipeline.1;
+
             let sort_key = RenderKey::new(
-                (pipeline.1) as u16,
-                uuid_to_u64(&material.id) as u16,
+                pipeline_id,
+                mat_id,
                 item.distance_sq
             );
 
             let render_cmd = RenderCommand {
                 object_data: object_data,
-                geometry_id: geometry.id,
-                material_id: material.id,
+                geometry_handle: item.geo_handle,
+                material_handle: item.mat_handle,
                 renderer_pipeline: pipeline.0,
                 renderer_pipeline_id: pipeline.1,
                 model_matrix: item.model_matrix,
@@ -373,8 +375,8 @@ impl Renderer {
  
                 // 获取 GPU 资源
                 // 使用 unwrap 是安全的，因为 Phase A 保证了它们存在
-                let gpu_geometry =  self.resource_manager.get_geometry(cmd.geometry_id).unwrap();   
-                let gpu_material = self.resource_manager.get_material(cmd.material_id).unwrap();
+                let gpu_geometry =  self.resource_manager.get_geometry(cmd.geometry_handle).unwrap();   
+                let gpu_material = self.resource_manager.get_material(cmd.material_handle).unwrap();
 
                 tracked_pass.set_pipeline(cmd.renderer_pipeline_id, &cmd.renderer_pipeline);
 
@@ -425,41 +427,37 @@ impl Renderer {
 pub struct RenderKey(u64);
 
 impl RenderKey {
-    // 掩码常量
-    const _MASK_PIPELINE: u64 = 0xFFFF_0000_0000_0000;
-    const _MASK_MATERIAL: u64 = 0x0000_FFFF_0000_0000;
-    const MASK_DEPTH: u64    = 0x0000_0000_FFFF_FFFF;
+    // 63-50 (14 bits): Pipeline
+    // 49-30 (20 bits): Material Index (SlotMap index)
+    // 29-00 (30 bits): Depth (Reversed or Standard)
+    
+    // 掩码常量 (可选，用于 debug)
+    const _MASK_PIPELINE: u64 = 0xFFFC_0000_0000_0000;
+    const _MASK_MATERIAL: u64 = 0x0003_FFFF_C000_0000;
+    const _MASK_DEPTH: u64    = 0x0000_0000_3FFF_FFFF;
 
-    // 偏移量
-    const SHIFT_PIPELINE: u64 = 48;
-    const SHIFT_MATERIAL: u64 = 32;
 
-    pub fn new(pipeline_id: u16, material_id: u16, depth: f32) -> Self {
-        // 1. 处理 Pipeline (放在最高位)
-        let p_bits = (pipeline_id as u64) << Self::SHIFT_PIPELINE;
+    pub fn new(pipeline_id: u16, material_index: u32, depth: f32) -> Self {
+        // 1. Pipeline (High 14 bits)
+        // 限制在 14 bit (max 16383)
+        let p_bits = ((pipeline_id & 0x3FFF) as u64) << 50;
 
-        // 2. 处理 Material (放在中间)
-        let m_bits = (material_id as u64) << Self::SHIFT_MATERIAL;
+        // 2. Material (Mid 20 bits)
+        // SlotMap index 限制在 20 bit (max ~1,000,000)
+        let m_bits = ((material_index & 0xFFFFF) as u64) << 30;
 
-        // 3. 处理 Depth (放在低位)
-        // 假设是标准深度 0.0 (Near) -> 1.0 (Far)
-        // 对于不透明物体，我们需要由近到远，深度越小 Key 越小，直接转换即可。
-        // 注意：如果 depth 可能是负数，需要反转符号位，但一般 View Space Depth 都是正的。
-        let d_bits = depth.to_bits() as u64; 
-        
-        // 如果是 Reversed-Z (1.0 Near, 0.0 Far)，且想由近到远：
-        // let d_bits = (!depth.to_bits()) as u64; // 取反以保持排序顺序
-        
-        // 组合
-        // 注意：d_bits 必须确保只占 32 位（f32 to_bits 本身就是 u32，转 u64 后高位为0，安全）
+        // 3. Depth (Low 30 bits)
+        // 假设标准深度 0.0 (近) -> 1.0 (远)
+        // 将 f32 转为 u32 的 bit pattern。如果是正数，IEEE754 的顺序与整数顺序一致。
+        // 右移 2 位以适应 30 bits。
+        let d_u32 = if depth.is_sign_negative() { 
+            0 
+        } else { 
+            depth.to_bits() >> 2
+        };
+        let d_bits = (d_u32 as u64) & 0x3FFF_FFFF;
+
         Self(p_bits | m_bits | d_bits)
     }
 
-    //用于调试解码
-    pub fn decode(&self) -> (u16, u16, f32) {
-        let p = (self.0 >> Self::SHIFT_PIPELINE) as u16;
-        let m = (self.0 >> Self::SHIFT_MATERIAL) as u16;
-        let d = f32::from_bits((self.0 & Self::MASK_DEPTH) as u32);
-        (p, m, d)
-    }
 }

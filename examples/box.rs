@@ -35,8 +35,11 @@ impl App {
         let mut basic_mat = Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         basic_mat.map = Some(texture);
+
+        let geo_id = scene.add_geometry_data(geometry);
+        let mat_id = scene.add_material_data(basic_mat.into());
         
-        let mesh = Mesh::from_resource(geometry, basic_mat.into());
+        let mesh = Mesh::new(geo_id, mat_id);
         
         // 3. 添加到场景并保存 ID
         let mesh_mut = scene.add_mesh(mesh, None);

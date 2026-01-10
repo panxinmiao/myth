@@ -3,7 +3,7 @@ pub struct TrackedRenderPass<'a> {
 
     // --- 状态缓存 ---
     // Pipeline
-    current_pipeline_id: Option<u64>,
+    current_pipeline_id: Option<u16>,
 
     // BindGroups: 存储 (ID, 动态偏移列表)
     // 通常 WGPU 支持 4 个 BindGroup Slots
@@ -31,7 +31,7 @@ impl<'a> TrackedRenderPass<'a> {
     // === Pipeline ===
     
     // 这里传入一个 id (可以是 PipelineKey 的 hash，或者指针地址)
-    pub fn set_pipeline(&mut self, pipeline_resource_id: u64, pipeline: &'a wgpu::RenderPipeline) {
+    pub fn set_pipeline(&mut self, pipeline_resource_id: u16, pipeline: &'a wgpu::RenderPipeline) {
         if self.current_pipeline_id != Some(pipeline_resource_id) {
             self.pass.set_pipeline(pipeline);
             self.current_pipeline_id = Some(pipeline_resource_id);

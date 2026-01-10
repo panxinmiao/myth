@@ -8,7 +8,6 @@ use crate::core::material::{Material, MaterialFeatures};
 use crate::core::scene::SceneFeatures;
 use crate::renderer::shader_generator::ShaderGenerator;
 use crate::renderer::shader_generator::ShaderContext;
-use crate::renderer::resource_manager::{generate_resource_id};
 use crate::renderer::shader_generator::ShaderCompilationOptions;
 use crate::renderer::vertex_layout::GeneratedVertexLayout;
 use crate::renderer::resource_manager::GPUMaterial;
@@ -65,14 +64,12 @@ struct ShaderModuleKey {
 
 pub struct PipelineCache {
     // L1: 快速查找 (命中率 99%+)
-    // 存储的是 Arc，方便克隆引用
-    fast_cache: HashMap<FastPipelineKey, (Arc<wgpu::RenderPipeline>, u64)>,
-
+    fast_cache: HashMap<FastPipelineKey, (Arc<wgpu::RenderPipeline>, u16)>,
     // L2: 规范查找 (用于去重)
-    canonical_cache: HashMap<PipelineKey, (Arc<wgpu::RenderPipeline>, u64)>,
-
+    canonical_cache: HashMap<PipelineKey, (Arc<wgpu::RenderPipeline>, u16)>,
     // Shader Module 缓存 (避免重复创建)
     module_cache: HashMap<ShaderModuleKey, Arc<wgpu::ShaderModule>>,
+    next_id: u16, // 下一个 Pipeline ID
 }
 
 impl PipelineCache {
@@ -81,6 +78,7 @@ impl PipelineCache {
             fast_cache: HashMap::new(),
             canonical_cache: HashMap::new(),
             module_cache: HashMap::new(),
+            next_id: 0,
         }
     }
 
@@ -128,7 +126,7 @@ impl PipelineCache {
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat, 
         vertex_layout: &GeneratedVertexLayout, 
-    ) -> (Arc<wgpu::RenderPipeline>, u64) { // 返回 Arc 更好管理生命周期
+    ) -> (Arc<wgpu::RenderPipeline>, u16) {
         
         // 提取场景特征
         let (scene_features, num_dir, num_point, num_spot) = scene.get_render_stats();
@@ -293,7 +291,11 @@ impl PipelineCache {
             cache: None,
         });
 
-        let id = generate_resource_id();
+        let id = self.next_id;
+
+        // 注意：RenderKey 只分配了 14 位 (16384)，超过这个值会导致排序 key 冲突，但不影响渲染正确性
+        self.next_id = self.next_id.wrapping_add(1);
+
         let result = (Arc::new(pipeline), id);
 
         // 4. 同时存入 L1 和 L2 缓存

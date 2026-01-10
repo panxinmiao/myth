@@ -5,6 +5,7 @@ use crate::core::node::Node;
 use crate::core::mesh::Mesh;
 use crate::core::camera::Camera;
 use crate::core::light::{Light, LightType};
+use crate::core::assets::{AssetServer, GeometryHandle, MaterialHandle};
 
 
 bitflags! {
@@ -25,6 +26,7 @@ pub struct Scene {
 
     pub lights: Arena<Light>,
 
+    pub assets: AssetServer,
     // 暂时简单用 RGBA，后面可以用 Texture
     pub background: Option<Vec4>,
 }
@@ -38,9 +40,7 @@ impl Scene {
             cameras: Arena::new(),
             lights: Arena::new(),
 
-            // geometries: HashMap::new(),
-            // materials: HashMap::new(),
-
+            assets: AssetServer::new(),
             background: Some(Vec4::new(0.0, 0.0, 0.0, 1.0)),
         }
     }
@@ -205,22 +205,48 @@ impl Scene {
 
     // === 资源管理 API ===
 
-    pub fn add_mesh(&mut self, mesh: Mesh, parent: Option<Index>) -> &mut Mesh {
-        // 1. 创建 Node
-        let mut node = Node::new(&mesh.name);
+    // === 修改资源添加 API ===
 
+    // 现在的流程是：用户先创建 Geometry/Material 数据 -> 存入 assets 换取 Handle -> 创建 Mesh
+    // 辅助方法：直接添加 Geometry 数据并返回 Handle
+    pub fn add_geometry_data(&mut self, geo: crate::core::geometry::Geometry) -> GeometryHandle {
+        self.assets.add_geometry(geo)
+    }
+
+    pub fn add_material_data(&mut self, mat: crate::core::material::Material) -> MaterialHandle {
+        self.assets.add_material(mat)
+    }
+
+    // 修改 add_mesh：它现在接受 Handle
+    pub fn add_mesh(&mut self, mesh: Mesh, parent: Option<Index>) -> &mut Mesh {
+        // 逻辑保持不变：创建 Node -> 插入 Mesh -> 关联
+        let mut node = crate::core::node::Node::new(&mesh.name);
         node.mesh = Some(self.meshes.insert(mesh));
-        // 2. 插入 Node
         let node_idx = self.add_node(node, parent);
 
-        // 3. 回填 Node ID 到 Mesh
         if let Some(mesh) = self.meshes.get_mut(self.nodes.get(node_idx).unwrap().mesh.unwrap()) {
             mesh.node_id = Some(node_idx);
             return mesh;
         }
-        // should not reach here
-        panic!("Failed to add mesh to scene.");
+        panic!("Failed to add mesh.");
     }
+
+    // pub fn add_mesh(&mut self, mesh: Mesh, parent: Option<Index>) -> &mut Mesh {
+    //     // 1. 创建 Node
+    //     let mut node = Node::new(&mesh.name);
+
+    //     node.mesh = Some(self.meshes.insert(mesh));
+    //     // 2. 插入 Node
+    //     let node_idx = self.add_node(node, parent);
+
+    //     // 3. 回填 Node ID 到 Mesh
+    //     if let Some(mesh) = self.meshes.get_mut(self.nodes.get(node_idx).unwrap().mesh.unwrap()) {
+    //         mesh.node_id = Some(node_idx);
+    //         return mesh;
+    //     }
+    //     // should not reach here
+    //     panic!("Failed to add mesh to scene.");
+    // }
 
     pub fn remove_mesh(&mut self, mesh_idx: Index) {
         // 1. 获取 Mesh 所在的 Node ID
