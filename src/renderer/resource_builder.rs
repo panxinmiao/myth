@@ -1,29 +1,20 @@
-use uuid::Uuid;
 use wgpu::ShaderStages;
 use crate::core::buffer::BufferRef;
 use crate::core::uniforms::UniformBlock;
 use crate::renderer::binding::{BindingResource};
+use std::sync::{Arc, RwLock};
+use crate::core::texture::Texture;
 
 type WgslStructGenerator = fn(&str) -> String;
 
 pub struct ResourceBuilder {
-    // 生成 Layout 需要的信息
     pub layout_entries: Vec<wgpu::BindGroupLayoutEntry>,
-    // 生成 BindGroup 需要的信息 (中间态)
     pub resources: Vec<BindingResource>,
     pub names: Vec<String>,
-    // 存储对应的 Struct 生成器，Option 是因为 Texture/Sampler 不需要 Struct
     pub struct_generators: Vec<Option<WgslStructGenerator>>,
     // 自动维护 binding index
     pub next_binding_index: u32,
 }
-
-// struct BindingDefinition {
-//     pub layout_entry: wgpu::BindGroupLayoutEntry,
-//     pub resource: BindingResource,
-//     pub name: String,
-//     pub struct_generator: Option<WgslStructGenerator>,
-// }
 
 impl ResourceBuilder {
     pub fn new() -> Self {
@@ -84,7 +75,7 @@ impl ResourceBuilder {
     }
 
     /// 添加 Texture (通过 UUID)
-    pub fn add_texture(&mut self, name: &str, texture_id: Option<Uuid>, sample_type: wgpu::TextureSampleType, view_dimension: wgpu::TextureViewDimension, visibility: ShaderStages) {
+    pub fn add_texture(&mut self, name: &str, texture: Option<Arc<RwLock<Texture>>>, sample_type: wgpu::TextureSampleType, view_dimension: wgpu::TextureViewDimension, visibility: ShaderStages) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -96,14 +87,14 @@ impl ResourceBuilder {
             count: None,
         });
 
-        self.resources.push(BindingResource::Texture(texture_id));
+        self.resources.push(BindingResource::Texture(texture));
         self.names.push(name.to_string());
         self.struct_generators.push(None);
         self.next_binding_index += 1;
     }
 
     /// 添加 Sampler (通过 UUID)
-    pub fn add_sampler(&mut self, name: &str, texture_id: Option<Uuid>, sampler_type: wgpu::SamplerBindingType, visibility: ShaderStages) {
+    pub fn add_sampler(&mut self, name: &str, texture: Option<Arc<RwLock<Texture>>>, sampler_type: wgpu::SamplerBindingType, visibility: ShaderStages) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -111,7 +102,7 @@ impl ResourceBuilder {
             count: None,
         });
 
-        self.resources.push(BindingResource::Sampler(texture_id));
+        self.resources.push(BindingResource::Sampler(texture));
         self.names.push(name.to_string());
         self.struct_generators.push(None);
         self.next_binding_index += 1;

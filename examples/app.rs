@@ -1,6 +1,4 @@
-// src/app.rs 或 examples/basic.rs
-
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -12,8 +10,9 @@ use three::renderer::Renderer;
 use three::core::scene::Scene;
 use three::core::camera::Camera;
 use three::core::geometry::{Geometry, Attribute};
-use three::core::material::Material;
+use three::core::material::{MeshBasicMaterial};
 use three::core::mesh::Mesh;
+use three::core::texture::Texture;
 
 /// 应用程序状态容器
 pub struct App {
@@ -41,19 +40,20 @@ impl App {
             [1.0, 0.0],
         ], wgpu::VertexFormat::Float32x2));
 
-        let mut material = Material::new_basic(Vec4::new(0.0, 1.0, 0.0, 1.0));
-
-        let texture = three::core::texture::Texture::create_solid_color("red", [255, 0, 0, 255]);
-
-        material.data.as_any_mut().downcast_mut::<three::core::material::MeshBasicMaterial>()
-
-        .unwrap()
-        .map = Some(texture.id);
-
-        scene.add_texture(texture);
+        
+        let texture = Arc::new(RwLock::new(
+            Texture::create_solid_color("red_tex", [255, 0, 0, 255])
+        ));
+        
+        let mut basic_mat = MeshBasicMaterial::new(Vec4::new(0.0, 1.0, 0.0, 1.0));
+        basic_mat.map = Some(texture.clone());
     
         // 创建 Mesh 并加入场景
-        let mesh = Mesh::new(None, Arc::new(std::sync::RwLock::new(geometry)), Arc::new(std::sync::RwLock::new(material)));
+        let mesh = Mesh::from_resource(
+            geometry, 
+            basic_mat.into()
+        );
+
         scene.add_mesh(mesh, None);
 
         // 2. 初始化相机 (Camera)

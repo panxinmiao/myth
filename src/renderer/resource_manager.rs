@@ -1,5 +1,5 @@
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
@@ -280,7 +280,7 @@ impl ResourceManager {
     // Material Logic
     // ========================================================================
 
-    pub fn prepare_material(&mut self, material: &Material, texture_assets: &HashMap<Uuid, Arc<RwLock<Texture>>>) -> &GPUMaterial{
+    pub fn prepare_material(&mut self, material: &Material) -> &GPUMaterial{
 
         // [L0] 粗粒度检查
 
@@ -318,19 +318,29 @@ impl ResourceManager {
                     // Hash ID
                     buffer.id.hash(&mut resource_hasher);
                 },
-                BindingResource::Texture(Some(tex_id)) => {
-                    if let Some(tex_arc) = texture_assets.get(&tex_id) {
-                        if let Ok(tex) = tex_arc.read() {
-                            self.add_or_update_texture(&tex);
+                BindingResource::Texture(tex_opt) => {
+                    if let Some(tex_arc) = tex_opt {
+                        {
+                            let tex = tex_arc.read().unwrap();
+                            self.add_or_update_texture(&tex); // 确保 GPU 端存在
+                            // 2. Hash：使用 Texture ID 参与 Hash
+                            tex.id.hash(&mut resource_hasher);
                         }
+                    } else {
+                        0.hash(&mut resource_hasher); // 空纹理
                     }
-                    tex_id.hash(&mut resource_hasher);
                 },
-                BindingResource::Texture(None) => {
-                    0.hash(&mut resource_hasher);
-                },
-                BindingResource::Sampler(id) => {
-                    id.hash(&mut resource_hasher);
+                BindingResource::Sampler(tex_opt) => {
+                    // Sampler 同理，也要确保 Texture 资源已上传(因为 Sampler 存在 GpuTexture 里)
+                     if let Some(tex_arc) = tex_opt {
+                        {
+                            let tex = tex_arc.read().unwrap();
+                            self.add_or_update_texture(&tex);
+                            tex.id.hash(&mut resource_hasher); // 这里的 Hash 最好加上 "Sampler" 混淆，不过分开 BindingIndex 已经够了
+                        }
+                    } else {
+                        0.hash(&mut resource_hasher);
+                    }
                 }
             }
         }
@@ -338,7 +348,6 @@ impl ResourceManager {
         let resource_hash = resource_hasher.finish();
 
         // 4. 获取 Layout (利用缓存去重)
-        // 这一步非常快，如果 Layout 结构没变，返回的 Arc 指针不变
         let layout = self.get_or_create_layout(&builder.layout_entries);
 
         // 5. 检查是否需要重建 BindGroup
@@ -434,16 +443,22 @@ impl ResourceManager {
                         size: size.and_then(wgpu::BufferSize::new), // 处理 Option<u64> -> Option<NonZeroU64>
                     })
                 },
-                BindingResource::Texture(tid_opt) => {
-                    let gpu_tex = if let Some(tid) = tid_opt {
-                        self.textures.get(tid).unwrap_or(&self.dummy_texture)
-                    } else { &self.dummy_texture };
+                BindingResource::Texture(tex_opt) => {
+                    let gpu_tex = if let Some(tex_arc) = tex_opt {
+                        let id = tex_arc.read().unwrap().id;
+                        self.textures.get(&id).unwrap_or(&self.dummy_texture)
+                    } else { 
+                        &self.dummy_texture 
+                    };
                     wgpu::BindingResource::TextureView(&gpu_tex.view)
                 },
-                BindingResource::Sampler(tid_opt) => {
-                     let gpu_tex = if let Some(tid) = tid_opt {
-                        self.textures.get(tid).unwrap_or(&self.dummy_texture)
-                    } else { &self.dummy_texture };
+                BindingResource::Sampler(tex_opt) => {
+                     let gpu_tex = if let Some(tex_arc) = tex_opt {
+                        let id = tex_arc.read().unwrap().id;
+                        self.textures.get(&id).unwrap_or(&self.dummy_texture)
+                    } else { 
+                        &self.dummy_texture 
+                    };
                     wgpu::BindingResource::Sampler(&gpu_tex.sampler)
                 },
             };

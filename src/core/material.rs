@@ -1,13 +1,13 @@
 use uuid::Uuid;
-use glam::{Vec4};
-use std::any::Any;
+use glam::Vec4;
+use std::sync::{Arc, RwLock};
 use bitflags::bitflags;
 
 use crate::core::buffer::{DataBuffer, BufferRef};
 use crate::core::uniforms::{MeshBasicUniforms, MeshStandardUniforms};
-use crate::core::Mut;
+use crate::core::texture::Texture;
 
-// Shader 编译选项 (用于 L2 Pipeline 缓存)
+// Shader 编译选项 (不变)
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
     pub struct MaterialFeatures: u32 {
@@ -20,103 +20,302 @@ bitflags! {
     }
 }
 
-
-// === 1. 定义材质属性 Trait (扩展性的关键) ===
-pub trait MaterialProperty: Send + Sync + std::fmt::Debug + Any {
-    fn shader_name(&self) -> &'static str;
-
-    /// [L0] 刷新 Uniform 数据到 CPU Buffer (极快，每帧可能调用)
-    fn flush_uniforms(&self);
-
-    /// [L2] 获取编译选项 (用于检测 Pipeline 是否需要重建)
-    fn get_features(&self) -> MaterialFeatures;
-    fn as_any(&self) -> &dyn Any;
-    fn as_any_mut(&mut self) -> &mut dyn Any;
-}
-
-
-
 // ============================================================================
-// 具体材质实现 (MeshBasicMaterial)
+// 具体材质定义 (Specific Materials)
 // ============================================================================
+
+// 1. MeshBasicMaterial
+// ----------------------------------------------------------------------------
 #[derive(Debug, Clone)]
 pub struct MeshBasicMaterial {
     pub uniforms: MeshBasicUniforms,
+    // 内部使用的 Uniform Buffer，自动管理
     pub uniform_buffer: BufferRef,
-    pub map: Option<Uuid>, 
-}
-
-impl MaterialProperty for MeshBasicMaterial {
-    fn shader_name(&self) -> &'static str { "mesh_basic" }
     
-    fn flush_uniforms(&self) {
-        self.uniform_buffer.write().update(&[self.uniforms]);
-    }
-
-    fn get_features(&self) -> MaterialFeatures {
-        let mut features = MaterialFeatures::empty();
-        if self.map.is_some() { features |= MaterialFeatures::USE_MAP; }
-        features
-    }
-
-    fn as_any(&self) -> &dyn Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+    // 直接持有 Texture 引用，不再是 Uuid
+    pub map: Option<Arc<RwLock<Texture>>>, 
 }
 
+impl MeshBasicMaterial {
+    pub fn new(color: Vec4) -> Self {
+        let uniforms = MeshBasicUniforms { color, ..Default::default() };
+        let uniform_buffer = BufferRef::new(DataBuffer::new(
+            &[uniforms], 
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, 
+            Some("MeshBasicUniforms")
+        ));
+        
+        Self {
+            uniforms,
+            uniform_buffer,
+            map: None,
+        }
+    }
+}
 
-// ============================================================================
-// 具体材质实现 (MeshStandardMaterial)
-// ============================================================================
+// 提供默认实现，方便用户先创建后修改
+impl Default for MeshBasicMaterial {
+    fn default() -> Self {
+        Self::new(Vec4::ONE)
+    }
+}
 
+// 2. MeshStandardMaterial
+// ----------------------------------------------------------------------------
 #[derive(Debug, Clone)]
 pub struct MeshStandardMaterial {
     pub uniforms: MeshStandardUniforms,
     pub uniform_buffer: BufferRef,
-    pub map: Option<Uuid>,
-    pub normal_map: Option<Uuid>,
-    pub roughness_map: Option<Uuid>,
-    pub metalness_map: Option<Uuid>,
-    pub emissive_map: Option<Uuid>,
-    pub ao_map: Option<Uuid>,
+    
+    pub map: Option<Arc<RwLock<Texture>>>,
+    pub normal_map: Option<Arc<RwLock<Texture>>>,
+    pub roughness_map: Option<Arc<RwLock<Texture>>>,
+    pub metalness_map: Option<Arc<RwLock<Texture>>>,
+    pub emissive_map: Option<Arc<RwLock<Texture>>>,
+    pub ao_map: Option<Arc<RwLock<Texture>>>,
 }
 
-impl MaterialProperty for MeshStandardMaterial {
-    fn shader_name(&self) -> &'static str { "MeshStandard" }
+impl MeshStandardMaterial {
+    pub fn new(color: Vec4) -> Self {
+        let uniforms = MeshStandardUniforms { color, ..Default::default() };
+        let uniform_buffer = BufferRef::new(DataBuffer::new(
+            &[uniforms], 
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, 
+            Some("MeshStandardUniforms")
+        ));
+        
+        Self {
+            uniforms,
+            uniform_buffer,
+            map: None,
+            normal_map: None,
+            roughness_map: None,
+            metalness_map: None,
+            emissive_map: None,
+            ao_map: None,
+        }
+    }
+}
 
-    fn flush_uniforms(&self) {
-        self.uniform_buffer.write().update(&[self.uniforms]);
+impl Default for MeshStandardMaterial {
+    fn default() -> Self {
+        Self::new(Vec4::ONE)
+    }
+}
+
+/// MeshBasicMaterial 的构建器
+pub struct MeshBasicMaterialBuilder {
+    // Specific Properties
+    color: Vec4,
+    map: Option<Arc<RwLock<Texture>>>,
+
+    // Common Properties (默认值)
+    name: Option<String>,
+    transparent: bool,
+    opacity: f32,
+    depth_write: bool,
+    depth_test: bool,
+    cull_mode: Option<wgpu::Face>,
+    side: u32,
+}
+
+impl MeshBasicMaterialBuilder {
+    pub fn new() -> Self {
+        Self {
+            color: Vec4::ONE,
+            map: None,
+            // Common Defaults
+            name: None,
+            transparent: false,
+            opacity: 1.0,
+            depth_write: true,
+            depth_test: true,
+            cull_mode: Some(wgpu::Face::Back),
+            side: 0,
+        }
     }
 
-    fn get_features(&self) -> MaterialFeatures {
+    // --- Specific Setters ---
+    pub fn color(mut self, color: Vec4) -> Self { self.color = color; self }
+    pub fn map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.map = Some(map); self }
+
+    // --- Common Setters ---
+    pub fn name(mut self, name: &str) -> Self { self.name = Some(name.into()); self }
+    pub fn transparent(mut self, transparent: bool) -> Self { self.transparent = transparent; self }
+    pub fn opacity(mut self, opacity: f32) -> Self { self.opacity = opacity; self }
+    pub fn depth_write(mut self, enabled: bool) -> Self { self.depth_write = enabled; self }
+    pub fn depth_test(mut self, enabled: bool) -> Self { self.depth_test = enabled; self }
+    pub fn cull_mode(mut self, mode: Option<wgpu::Face>) -> Self { self.cull_mode = mode; self }
+    pub fn side(mut self, side: u32) -> Self { self.side = side; self }
+
+    /// 构建最终的 Material
+    pub fn build(self) -> Material {
+        let mut basic = MeshBasicMaterial::new(self.color);
+        basic.map = self.map;
+
+        Material {
+            id: Uuid::new_v4(),
+            version: 1,
+            name: self.name,
+            data: MaterialData::Basic(basic), // 自动装箱
+            transparent: self.transparent,
+            opacity: self.opacity,
+            depth_write: self.depth_write,
+            depth_test: self.depth_test,
+            cull_mode: self.cull_mode,
+            side: self.side,
+        }
+    }
+}
+
+/// MeshStandardMaterial 的构建器
+pub struct MeshStandardMaterialBuilder {
+    // Specific
+    color: Vec4,
+    roughness: f32,
+    metalness: f32,
+    map: Option<Arc<RwLock<Texture>>>,
+    normal_map: Option<Arc<RwLock<Texture>>>,
+    roughness_map: Option<Arc<RwLock<Texture>>>,
+    metalness_map: Option<Arc<RwLock<Texture>>>,
+    emissive_map: Option<Arc<RwLock<Texture>>>,
+    ao_map: Option<Arc<RwLock<Texture>>>,
+
+    // Common
+    name: Option<String>,
+    transparent: bool,
+    opacity: f32,
+    depth_write: bool,
+    depth_test: bool,
+    cull_mode: Option<wgpu::Face>,
+    side: u32,
+}
+
+impl MeshStandardMaterialBuilder {
+    pub fn new() -> Self {
+        Self {
+            color: Vec4::ONE,
+            roughness: 0.5,
+            metalness: 0.5,
+            map: None, normal_map: None, roughness_map: None, metalness_map: None, emissive_map: None, ao_map: None,
+            // Common Defaults
+            name: None,
+            transparent: false,
+            opacity: 1.0,
+            depth_write: true,
+            depth_test: true,
+            cull_mode: Some(wgpu::Face::Back),
+            side: 0,
+        }
+    }
+
+    // --- Specific Setters ---
+    pub fn color(mut self, color: Vec4) -> Self { self.color = color; self }
+    pub fn roughness(mut self, value: f32) -> Self { self.roughness = value; self }
+    pub fn metalness(mut self, value: f32) -> Self { self.metalness = value; self }
+    
+    pub fn map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.map = Some(map); self }
+    pub fn normal_map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.normal_map = Some(map); self }
+    pub fn roughness_map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.roughness_map = Some(map); self }
+    pub fn metalness_map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.metalness_map = Some(map); self }
+    pub fn emissive_map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.emissive_map = Some(map); self }
+    pub fn ao_map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.ao_map = Some(map); self }
+
+    // --- Common Setters ---
+    pub fn name(mut self, name: &str) -> Self { self.name = Some(name.into()); self }
+    pub fn transparent(mut self, transparent: bool) -> Self { self.transparent = transparent; self }
+    pub fn opacity(mut self, opacity: f32) -> Self { self.opacity = opacity; self }
+    pub fn depth_write(mut self, enabled: bool) -> Self { self.depth_write = enabled; self }
+    pub fn depth_test(mut self, enabled: bool) -> Self { self.depth_test = enabled; self }
+    pub fn cull_mode(mut self, mode: Option<wgpu::Face>) -> Self { self.cull_mode = mode; self }
+    pub fn side(mut self, side: u32) -> Self { self.side = side; self }
+    
+    pub fn build(self) -> Material {
+        let mut standard = MeshStandardMaterial::new(self.color);
+        standard.uniforms.roughness = self.roughness;
+        standard.uniforms.metalness = self.metalness;
+        standard.map = self.map;
+        standard.normal_map = self.normal_map;
+        standard.roughness_map = self.roughness_map;
+        standard.metalness_map = self.metalness_map;
+        standard.emissive_map = self.emissive_map;
+        standard.ao_map = self.ao_map;
+
+        Material {
+            id: Uuid::new_v4(),
+            version: 1,
+            name: self.name,
+            data: MaterialData::Standard(standard),
+            transparent: self.transparent,
+            opacity: self.opacity,
+            depth_write: self.depth_write,
+            depth_test: self.depth_test,
+            cull_mode: self.cull_mode,
+            side: self.side,
+        }
+    }
+}
+
+// ============================================================================
+// 核心材质枚举 (Material Data Enum)
+// ============================================================================
+// 这里替代了之前的 Box<dyn MaterialProperty>，静态分发性能更好且易于使用
+
+#[derive(Debug, Clone)]
+pub enum MaterialData {
+    Basic(MeshBasicMaterial),
+    Standard(MeshStandardMaterial),
+    // 可以在这里扩展更多类型，例如 PBR, CustomShader 等
+}
+
+impl MaterialData {
+    pub fn shader_name(&self) -> &'static str {
+        match self {
+            Self::Basic(_) => "mesh_basic",
+            Self::Standard(_) => "MeshStandard", // 注意：保持和你 shader文件名/entry point 一致
+        }
+    }
+
+    pub fn flush_uniforms(&self) {
+        match self {
+            Self::Basic(m) => m.uniform_buffer.write().update(&[m.uniforms]),
+            Self::Standard(m) => m.uniform_buffer.write().update(&[m.uniforms]),
+        }
+    }
+
+    pub fn get_features(&self) -> MaterialFeatures {
         let mut features = MaterialFeatures::empty();
-        if self.map.is_some() { features |= MaterialFeatures::USE_MAP; }
-        if self.normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
-        if self.roughness_map.is_some() { features |= MaterialFeatures::USE_ROUGHNESS_MAP; }
-        if self.metalness_map.is_some() { features |= MaterialFeatures::USE_METALNESS_MAP; }
-        if self.emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
-        if self.ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
-        
+        match self {
+            Self::Basic(m) => {
+                if m.map.is_some() { features |= MaterialFeatures::USE_MAP; }
+            }
+            Self::Standard(m) => {
+                if m.map.is_some() { features |= MaterialFeatures::USE_MAP; }
+                if m.normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
+                if m.roughness_map.is_some() { features |= MaterialFeatures::USE_ROUGHNESS_MAP; }
+                if m.metalness_map.is_some() { features |= MaterialFeatures::USE_METALNESS_MAP; }
+                if m.emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
+                if m.ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
+            }
+        }
         features
     }
-
-    fn as_any(&self) -> &dyn Any { self }
-    fn as_any_mut(&mut self) -> &mut dyn Any { self }
 }
 
-
-
-
-
-// === 3. Material 主结构体 ===
+// ============================================================================
+// 材质主结构 (Material Wrapper)
+// ============================================================================
 
 #[derive(Debug)]
 pub struct Material {
     pub id: Uuid,
     pub version: u64,
     pub name: Option<String>,
-    pub data: Box<dyn MaterialProperty>, 
     
-    // 渲染状态
+    // 核心数据变成了 Enum，不仅类型安全，而且没有 Box 的堆分配开销
+    pub data: MaterialData, 
+    
+    // 通用渲染状态 (Render States)
     pub transparent: bool,
     pub opacity: f32,
     pub depth_write: bool,
@@ -126,57 +325,51 @@ pub struct Material {
 }
 
 impl Material {
-
-    pub fn new_basic(color: Vec4) -> Self {
-        let uniforms = MeshBasicUniforms { color, ..Default::default() };
-        let uniform_buffer = BufferRef::new(DataBuffer::new(
-            &[uniforms], wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, Some("MeshBasicUniforms")
-        ));
+    /// 基础构造函数
+    pub fn new(data: MaterialData) -> Self {
         Self {
-            id: Uuid::new_v4(), version: 1, name: Some("MeshBasic".into()),
-            data: Box::new(MeshBasicMaterial { uniforms, uniform_buffer, map: None }),
-            transparent: false, opacity: 1.0, depth_write: true, depth_test: true, cull_mode: Some(wgpu::Face::Back), side: 0,
-        }
-    }
-    
-    pub fn new_standard(color: Vec4) -> Self {
-        let uniforms = MeshStandardUniforms { color, ..Default::default() };
-        let uniform_buffer = BufferRef::new(DataBuffer::new(
-            &[uniforms], wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, Some("MeshStandardUniforms")
-        ));
-        Self {
-            id: Uuid::new_v4(), version: 1, name: Some("MeshStandard".into()),
-            data: Box::new(MeshStandardMaterial { 
-                uniforms, uniform_buffer, 
-                map: None, normal_map: None, roughness_map: None, metalness_map: None, emissive_map: None, ao_map: None 
-            }),
-            transparent: false, opacity: 1.0, depth_write: true, depth_test: true, cull_mode: Some(wgpu::Face::Back), side: 0,
-        }
-    }
-
-    /// 核心 API：获取可变数据引用
-    /// 自动处理版本号增加
-    pub fn data_mut<T: 'static>(&mut self) -> Option<Mut<'_, T>> {
-        let data = self.data.as_any_mut().downcast_mut::<T>()?;
-        Some(Mut {
+            id: Uuid::new_v4(),
+            version: 1,
+            name: None,
             data,
-            version: &mut self.version,
-        })
+            transparent: false,
+            opacity: 1.0,
+            depth_write: true,
+            depth_test: true,
+            cull_mode: Some(wgpu::Face::Back),
+            side: 0,
+        }
     }
 
-    /// 手动标记材质需要更新 (版本号自增)
-    // pub fn needs_update(&mut self) {
-    //     self.version = self.version.wrapping_add(1);
-    // }
-
-    /// 获取只读数据 (不变)
-    pub fn data<T: 'static>(&self) -> Option<&T> {
-        self.data.as_any().downcast_ref::<T>()
+    // 辅助构造：Basic
+    pub fn new_basic(color: Vec4) -> Self {
+        Self::new(MaterialData::Basic(MeshBasicMaterial::new(color)))
     }
 
-    // 代理方法
+    // 辅助构造：Standard
+    pub fn new_standard(color: Vec4) -> Self {
+        Self::new(MaterialData::Standard(MeshStandardMaterial::new(color)))
+    }
+
+    // 代理方法：直接转发给内部数据
     pub fn shader_name(&self) -> &'static str { self.data.shader_name() }
     pub fn flush_uniforms(&self) { self.data.flush_uniforms() }
     pub fn get_features(&self) -> MaterialFeatures { self.data.get_features() }
+}
 
+// ============================================================================
+// 语法糖：允许从 具体材质 直接转为 通用材质
+// ============================================================================
+// 这让用户可以写: Mesh::new(geo, MeshBasicMaterial::new(...).into())
+
+impl From<MeshBasicMaterial> for Material {
+    fn from(data: MeshBasicMaterial) -> Self {
+        Material::new(MaterialData::Basic(data))
+    }
+}
+
+impl From<MeshStandardMaterial> for Material {
+    fn from(data: MeshStandardMaterial) -> Self {
+        Material::new(MaterialData::Standard(data))
+    }
 }

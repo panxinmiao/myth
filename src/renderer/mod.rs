@@ -6,7 +6,7 @@ mod tracked_render_pass;
 mod shader_manager;
 mod gpu_buffer;
 mod gpu_texture;
-mod object_manager;
+mod model_buffer_manager;
 mod resource_builder;
 mod binding;
 
@@ -19,7 +19,7 @@ use crate::core::uniforms::{DynamicModelUniforms, Mat3A};
 
 use self::resource_manager::ResourceManager;
 use self::pipeline::PipelineCache;
-use self::object_manager::{ObjectManager, ObjectBindingData};
+use self::model_buffer_manager::{ModelBufferManager, ObjectBindingData};
 use self::tracked_render_pass::TrackedRenderPass;
 
 use crate::core::uuid_to_u64;
@@ -34,7 +34,7 @@ pub struct Renderer {
     
     // 子系统
     resource_manager: ResourceManager,
-    object_manager: ObjectManager,
+    model_buffer_manager: ModelBufferManager,
     pipeline_cache: PipelineCache,
     // model_buffer_manager: DynamicBuffer, // Group 2 管理器
 
@@ -81,7 +81,7 @@ impl Renderer {
 
         // 2. 初始化 Model Manager (Group 2)
         // let model_buffer_manager = DynamicBuffer::new(&mut resource_manager, "Model");
-        let object_manager = ObjectManager::new(&mut resource_manager);
+        let model_buffer_manager = ModelBufferManager::new(&mut resource_manager);
 
         let world = WorldEnvironment::new();
 
@@ -96,7 +96,7 @@ impl Renderer {
             depth_format: wgpu::TextureFormat::Depth32Float,
             resource_manager,
             pipeline_cache: PipelineCache::new(),
-            object_manager,
+            model_buffer_manager,
             world,
             depth_texture_view,
         }
@@ -237,7 +237,7 @@ impl Renderer {
 
         
         // 上传所有动态物体的矩阵 (自动扩容)
-        self.object_manager.write_uniforms(&mut self.resource_manager, &model_uniforms_data);
+        self.model_buffer_manager.write_uniforms(&mut self.resource_manager, &model_uniforms_data);
 
 
         struct RenderCommand{
@@ -269,11 +269,10 @@ impl Renderer {
             // 1. 更新 Geometry
             self.resource_manager.prepare_geometry(&geometry);
             // 2. 更新 Material
-            self.resource_manager.prepare_material(&material, &scene.textures);
+            self.resource_manager.prepare_material(&material);
 
             // 2. 准备 Object BindGroup
-            // item.object_data = Some(object_data);
-            let object_data = self.object_manager.prepare_bind_group(&mut self.resource_manager, &geometry);
+            let object_data = self.model_buffer_manager.prepare_bind_group(&mut self.resource_manager, &geometry);
             let gpu_material = self.resource_manager.get_material(material.id).unwrap();
             let gpu_geometry =  self.resource_manager.get_geometry(geometry.id).unwrap();
             let gpu_world = self.resource_manager.get_world(self.world.id).unwrap();

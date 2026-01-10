@@ -1,15 +1,9 @@
 use thunderdome::{Arena, Index};
-use std::sync::{Arc, RwLock};
 use glam::{Affine3A, Vec4}; 
-use std::collections::HashMap;
-use uuid::Uuid;
 use bitflags::bitflags;
 use crate::core::node::Node;
 use crate::core::mesh::Mesh;
 use crate::core::camera::Camera;
-use crate::core::material::Material;
-use crate::core::geometry::Geometry;
-use crate::core::texture::Texture;
 use crate::core::light::{Light, LightType};
 
 
@@ -33,13 +27,6 @@ pub struct Scene {
 
     pub lights: Arena<Light>,
 
-
-    // === 资源仓库 (Assets/Resources) ===
-    // 这里是所有资源的“源头” (Source of Truth)
-    pub geometries: HashMap<Uuid, Arc<RwLock<Geometry>>>,
-    pub materials: HashMap<Uuid, Arc<RwLock<Material>>>,
-    pub textures: HashMap<Uuid, Arc<RwLock<Texture>>>,
-
     // 暂时简单用 RGBA，后面可以用 Texture
     pub background: Option<Vec4>,
 }
@@ -53,9 +40,8 @@ impl Scene {
             cameras: Arena::new(),
             lights: Arena::new(),
 
-            geometries: HashMap::new(),
-            materials: HashMap::new(),
-            textures: HashMap::new(),
+            // geometries: HashMap::new(),
+            // materials: HashMap::new(),
 
             background: Some(Vec4::new(0.0, 0.0, 0.0, 1.0)),
         }
@@ -356,48 +342,6 @@ impl Scene {
 
         (features, num_dir as u8, num_point as u8, num_spot as u8)
     }
-
-
-    /// 添加几何体资源
-    pub fn add_geometry(&mut self, geometry: Geometry) -> Arc<RwLock<Geometry>> {
-        // 如果已存在，直接返回旧的（去重策略可根据需求调整）
-        if let Some(geo) = self.geometries.get(&geometry.id) {
-            return geo.clone();
-        }
-        
-        let id = geometry.id;
-        let geo_arc = Arc::new(RwLock::new(geometry));
-        self.geometries.insert(id, geo_arc.clone());
-        geo_arc
-    }
-
-    // /// 添加材质资源
-    pub fn add_material(&mut self, material: Material) -> Arc<RwLock<Material>> {
-        // 如果已存在，直接返回旧的（去重策略可根据需求调整）
-        if let Some(mat) = self.materials.get(&material.id) {
-            return mat.clone();
-        }
-        
-        let id = material.id;
-        let mat_arc = Arc::new(RwLock::new(material));
-        self.materials.insert(id, mat_arc.clone());
-        mat_arc
-    }
-
-    /// 添加纹理资源
-    pub fn add_texture(&mut self, texture: Texture) -> Arc<RwLock<Texture>> {
-        // 如果已存在，直接返回旧的（去重策略可根据需求调整）
-        if let Some(tex) = self.textures.get(&texture.id) {
-            return tex.clone();
-        }
-        
-        let id = texture.id;
-        let tex_arc = Arc::new(RwLock::new(texture));
-        self.textures.insert(id, tex_arc.clone());
-        tex_arc
-    }
-
-
 
     pub fn get_features(&self) -> SceneFeatures {
         let features = SceneFeatures::empty();

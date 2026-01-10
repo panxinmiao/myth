@@ -17,7 +17,7 @@ struct ObjectBindGroupKey {
     model_buffer_id: u64,   // 全局 Model Buffer ID (区分扩容)
 }
 
-pub struct ObjectManager {
+pub struct ModelBufferManager {
     // === 数据源 ===
     model_buffer: BufferRef,
     last_model_buffer_id: u64,
@@ -35,7 +35,7 @@ pub struct ObjectBindingData {
     pub binding_wgsl: String, 
 }
 
-impl ObjectManager {
+impl ModelBufferManager {
     pub fn new(resource_manager: &mut ResourceManager) -> Self {
         let initial_capacity = 128;
         let initial_data = vec![DynamicModelUniforms::default(); initial_capacity];

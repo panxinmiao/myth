@@ -1,7 +1,7 @@
-use uuid::Uuid;
-use wgpu::{ShaderStages};
+use std::sync::{Arc, RwLock};
+use crate::core::texture::Texture;
 use crate::core::buffer::BufferRef; 
-use crate::core::material::{MeshBasicMaterial, MeshStandardMaterial, Material};
+use crate::core::material::{Material, MaterialData};
 use crate::core::geometry::Geometry;
 use crate::core::world::WorldEnvironment;
 use crate::core::uniforms::*;
@@ -9,7 +9,7 @@ use crate::renderer::resource_builder::ResourceBuilder;
 
 /// 实际的绑定资源数据 (用于生成 BindGroup)
 /// 层只持有 ID 或 数据引用，不持有 GPU 句柄
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone)]
 pub enum BindingResource {
 
     /// 持有 CPU Buffer 的引用 (统一了 Vertex/Index/Uniform/Storage)
@@ -18,94 +18,95 @@ pub enum BindingResource {
         offset: u64,        // 偏移量 (默认为 0)
         size: Option<u64>,  // 绑定窗口大小 (None 表示整个 Buffer)
     },
-    
-    /// 外部 Buffer ID (用于高级场景，暂保留)
-    // BufferId(Uuid),
 
-    /// 纹理 ID (可能为空，意味着需要使用缺省纹理)
-    Texture(Option<Uuid>),
-    
-    /// 采样器 ID (通常跟随纹理，但也可以独立)
-    Sampler(Option<Uuid>),
+    Texture(Option<Arc<RwLock<Texture>>>),
+    Sampler(Option<Arc<RwLock<Texture>>>),
 
 }
 
-pub fn define_texture_binding(builder: &mut ResourceBuilder, name: &'static str, texture_id: Option<Uuid>) {
-    builder.add_texture(
-        name,
-        texture_id,
-        wgpu::TextureSampleType::Float { filterable: true },
-        wgpu::TextureViewDimension::D2,
-        ShaderStages::FRAGMENT,
-    );
-    builder.add_sampler(
-        name,
-        texture_id,
-        wgpu::SamplerBindingType::Filtering,
-        ShaderStages::FRAGMENT,
-    );
-}
+// pub fn define_texture_binding(builder: &mut ResourceBuilder, name: &'static str, texture_id: Option<Uuid>) {
+//     builder.add_texture(
+//         name,
+//         texture_id,
+//         wgpu::TextureSampleType::Float { filterable: true },
+//         wgpu::TextureViewDimension::D2,
+//         ShaderStages::FRAGMENT,
+//     );
+//     builder.add_sampler(
+//         name,
+//         texture_id,
+//         wgpu::SamplerBindingType::Filtering,
+//         ShaderStages::FRAGMENT,
+//     );
+// }
 
 pub trait Bindings {
     fn define_bindings(&self, builder: &mut ResourceBuilder);
 }
 
-impl Bindings for MeshBasicMaterial {
-    fn define_bindings(&self, builder: &mut ResourceBuilder) {
-        // 1. Uniform Buffer
-        builder.add_uniform::<MeshBasicUniforms>(
-            "material", 
-            &self.uniform_buffer, 
-            ShaderStages::VERTEX | ShaderStages::FRAGMENT
-        );
 
-        // 2. Texture + Sampler
-        if let Some(id) = self.map {
-            define_texture_binding(builder, "map", Some(id));
+impl Bindings for MaterialData {
+    // ... shader_name, flush_uniforms ...
+
+    fn define_bindings(&self, builder: &mut ResourceBuilder) {
+        match self {
+            Self::Basic(m) => {
+                // 1. Uniforms
+                builder.add_uniform::<MeshBasicUniforms>(
+                    "material", 
+                    &m.uniform_buffer, 
+                    wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
+                );
+                
+                // 2. Maps (Texture + Sampler)
+                // 注意：这里直接把 Arc 传给 builder
+                builder.add_texture(
+                    "map", 
+                    m.map.clone(), 
+                    wgpu::TextureSampleType::Float { filterable: true }, 
+                    wgpu::TextureViewDimension::D2, 
+                    wgpu::ShaderStages::FRAGMENT
+                );
+                
+                builder.add_sampler(
+                    "map", 
+                    m.map.clone(), 
+                    wgpu::SamplerBindingType::Filtering, 
+                    wgpu::ShaderStages::FRAGMENT
+                );
+            },
+            Self::Standard(m) => {
+                builder.add_uniform::<MeshStandardUniforms>(
+                    "material", 
+                    &m.uniform_buffer, 
+                    wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
+                );
+                
+                // 批量添加 Standard 材质的贴图
+                // Map
+                builder.add_texture("map", m.map.clone(), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                builder.add_sampler("map", m.map.clone(), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+
+                // Normal Map
+                builder.add_texture("normalMap", m.normal_map.clone(), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                builder.add_sampler("normalMap", m.normal_map.clone(), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+                
+                // ... 其他贴图 (Roughness, Metalness ...)
+            }
         }
     }
 }
 
-impl Bindings for MeshStandardMaterial {
-    fn define_bindings(&self, builder: &mut ResourceBuilder) {
-        // 1. Uniform Buffer
-        builder.add_uniform::<MeshStandardUniforms>(
-            "material", 
-            &self.uniform_buffer, 
-            ShaderStages::VERTEX | ShaderStages::FRAGMENT
-        );
 
-        // 2. Maps
-        // 辅助闭包：减少重复代码
-        let mut add_tex = |name: &str, id: Option<Uuid>| {
-            if let Some(tex_id) = id {
-                builder.add_texture(name, Some(tex_id), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, ShaderStages::FRAGMENT);
-                builder.add_sampler(name, Some(tex_id), wgpu::SamplerBindingType::Filtering, ShaderStages::FRAGMENT);
-            }
-        };
-
-        add_tex("map", self.map);
-        add_tex("normal_map", self.normal_map);
-        add_tex("roughness_map", self.roughness_map);
-        add_tex("metalness_map", self.metalness_map);
-        add_tex("emissive_map", self.emissive_map);
-        add_tex("ao_map", self.ao_map);
-    }
-}
 
 impl Bindings for Material {
+    // ...
     fn define_bindings(&self, builder: &mut ResourceBuilder) {
-        match self.data.as_any().downcast_ref::<MeshBasicMaterial>() {
-            Some(basic) => basic.define_bindings(builder),
-            None => {},
-        }
-
-        match self.data.as_any().downcast_ref::<MeshStandardMaterial>() {
-            Some(standard) => standard.define_bindings(builder),
-            None => {},
-        }
+        self.data.define_bindings(builder);
     }
 }
+
+
 
 impl Bindings for Geometry {
     fn define_bindings(&self, _builder: &mut ResourceBuilder) {

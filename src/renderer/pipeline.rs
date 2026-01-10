@@ -12,7 +12,7 @@ use crate::renderer::resource_manager::{generate_resource_id};
 use crate::renderer::shader_generator::ShaderCompilationOptions;
 use crate::renderer::vertex_layout::GeneratedVertexLayout;
 use crate::renderer::resource_manager::GPUMaterial;
-use crate::renderer::object_manager::ObjectBindingData;
+use crate::renderer::model_buffer_manager::ObjectBindingData;
 
 /// L2 缓存 Key: 完整描述 Pipeline 的所有特征 (慢，但唯一)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

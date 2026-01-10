@@ -188,7 +188,7 @@ impl Texture {
     }
 
     /// 辅助：创建纯色纹理 (1x1)
-    pub fn create_solid_color(name: &str, color: [u8; 4]) -> Self {
+    pub fn create_solid_color(name: &str, color: [u8; 4]) -> Texture {
         Self::new_2d(name, 1, 1, Some(color.to_vec()), wgpu::TextureFormat::Rgba8UnormSrgb)
     }
 

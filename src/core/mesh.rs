@@ -44,4 +44,15 @@ impl Mesh {
             render_order: 0,
         }
     }
+
+    pub fn from_resource(
+        geometry: Geometry, 
+        material: Material
+    ) -> Self {
+        Self::new(
+            None,
+            Arc::new(RwLock::new(geometry)),
+            Arc::new(RwLock::new(material)),
+        )
+    }
 }
