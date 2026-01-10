@@ -234,12 +234,27 @@ impl ResourceManager {
             None
         };
 
+
+        let mut draw_range = geometry.draw_range.clone();
+        if draw_range == (0..u32::MAX) {
+            if let Some(attr) = geometry.attributes.get("position") {
+                // 优先使用 position 的数量
+                draw_range = draw_range.start..std::cmp::min(attr.count, draw_range.end);
+            } else if let Some(attr) = geometry.attributes.values().next() {
+                // 否则使用任意一个属性的数量
+                draw_range = draw_range.start..std::cmp::min(attr.count, draw_range.end);
+            } else {
+                // 没有任何属性，绘制 0 个点
+                draw_range = 0..0;
+            }
+        }
+
         let gpu_geo = GPUGeometry {
             layout_info,
             vertex_buffers,
             vertex_buffer_ids,
             index_buffer,
-            draw_range: geometry.draw_range.clone(),
+            draw_range: draw_range,
             instance_range: 0..1,
             version: geometry.version,
             last_used_frame: self.frame_index,

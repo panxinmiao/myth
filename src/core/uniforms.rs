@@ -322,9 +322,9 @@ mod tests {
         println!("WGSL for MeshStandardUniforms:\n{}", standard_wgsl);
         println!("Default Standard Uniforms: {:?}", standard_default);
 
-        let basic_wgsl = MeshBasicUniforms::wgsl_struct_def("MeshBasicUniforms");
-        let basic_default = MeshBasicUniforms::default();
-        println!("WGSL for MeshBasicUniforms:\n{}", basic_wgsl);
-        println!("Default Basic Uniforms: {:?}", basic_default);
+        let basic_wgsl = DynamicModelUniforms::wgsl_struct_def("DynamicModelUniforms");
+        let basic_default = DynamicModelUniforms::default();
+        println!("WGSL for DynamicModelUniforms:\n{}", basic_wgsl);
+        println!("Default DynamicModelUniforms: {:?}", basic_default);
     }
 }

@@ -227,13 +227,19 @@ impl PipelineCache {
             &base_context,
             vertex_layout,
             &object_data.binding_wgsl,
-            "standard_vert.wgsl"
+            "mesh_basic.wgsl"
         );
         let fs_code = ShaderGenerator::generate_fragment(
             &base_context,
             &gpu_material.binding_wgsl,
             material.shader_name()
         );
+
+        // Debug 输出
+        if cfg!(debug_assertions) {
+            println!("=== Vertex Shader ===\n{}", vs_code);
+            println!("=== Fragment Shader ===\n{}", fs_code);
+        }
 
         // 3.3 创建 Modules
         let vs_module = self.create_shader_module(device, &vs_code, wgpu::ShaderStages::VERTEX, Some("Vertex Shader"));

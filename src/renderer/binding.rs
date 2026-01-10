@@ -79,7 +79,7 @@ impl Bindings for MeshBasicMaterial {
     fn define_bindings(&self, builder: &mut ResourceBuilder) {
         // 1. Uniform Buffer
         builder.add_uniform::<MeshBasicUniforms>(
-            "MaterialUniforms", 
+            "u_material", 
             &self.uniform_buffer, 
             ShaderStages::VERTEX | ShaderStages::FRAGMENT
         );
@@ -95,7 +95,7 @@ impl Bindings for MeshStandardMaterial {
     fn define_bindings(&self, builder: &mut ResourceBuilder) {
         // 1. Uniform Buffer
         builder.add_uniform::<MeshStandardUniforms>(
-            "MaterialUniforms", 
+            "u_material", 
             &self.uniform_buffer, 
             ShaderStages::VERTEX | ShaderStages::FRAGMENT
         );

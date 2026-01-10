@@ -47,7 +47,7 @@ pub struct MeshBasicMaterial {
 }
 
 impl MaterialProperty for MeshBasicMaterial {
-    fn shader_name(&self) -> &'static str { "MeshBasic" }
+    fn shader_name(&self) -> &'static str { "mesh_basic" }
     
     fn flush_uniforms(&self) {
         self.uniform_buffer.write().update(&[self.uniforms]);

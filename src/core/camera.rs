@@ -62,6 +62,10 @@ impl Camera {
         }
     }
 
+    pub fn update_projection_matrix(&mut self){
+
+    }
+
     /// 获取视图矩阵 (V)
     /// View Matrix 本质上是相机 World Matrix 的逆矩阵
     pub fn get_view_matrix(&self, scene: Option<&Scene>) -> Mat4 {

@@ -4,8 +4,6 @@ use super::shader_manager::get_env;
 use crate::core::material::MaterialFeatures;
 use crate::core::geometry::{GeometryFeatures};
 use crate::core::scene::SceneFeatures;
-use crate::core::uniforms::{DynamicModelUniforms, UniformBlock};
-
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -92,6 +90,8 @@ impl ShaderGenerator {
         let env = get_env();
         let mut context = global_context.defines.clone();
 
+        context.insert("SHADER_STAGE".to_string(), Value::String("VERTEX".to_string()));
+
         // 注入 Vertex Buffer 结构定义
         context.insert("vertex_struct_code".to_string(), Value::String(geometry_layout.vertex_input_code.clone()));
 
@@ -99,7 +99,6 @@ impl ShaderGenerator {
         // 2.3 生成 WGSL
         // 首先需要注入 DynamicModel 的结构体定义
         let mut binding_code = String::new();
-        binding_code.push_str(&DynamicModelUniforms::wgsl_struct_def("DynamicModel"));
         binding_code.push_str("\n");
 
         // var 定义
@@ -131,6 +130,8 @@ impl ShaderGenerator {
     
         let env = get_env();
         let mut context = global_context.defines.clone();
+
+        context.insert("SHADER_STAGE".to_string(), Value::String("FRAGMENT".to_string()));
 
         // 2. Bindings 代码
         context.insert("binding_code".to_string(), Value::String(material_binding_code.to_string()));
