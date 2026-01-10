@@ -1,9 +1,8 @@
-use std::collections::{HashMap, BTreeMap};
+use std::collections::{HashMap};
 use wgpu::VertexFormat;
 use crate::core::geometry::{Geometry};
-use crate::core::buffer::BufferRef; // 引入 BufferRef
+use crate::core::buffer::BufferRef;
 
-/// 【生产级】持有所有权的 VertexBufferLayout
 #[derive(Debug, Clone)]
 pub struct OwnedVertexBufferDesc {
     pub array_stride: u64,
@@ -13,7 +12,6 @@ pub struct OwnedVertexBufferDesc {
 }
 
 impl OwnedVertexBufferDesc {
-    /// 转换为 WGPU 需要的临时引用格式 (用于 create_pipeline)
     pub fn as_wgpu(&self) -> wgpu::VertexBufferLayout<'_> {
         wgpu::VertexBufferLayout {
             array_stride: self.array_stride,
@@ -37,13 +35,23 @@ pub struct GeneratedVertexLayout {
 }
 
 pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
-    // 1. 分组：按 Buffer ID 分组，使用 BTreeMap 保证确定性顺序
-    let mut buffer_groups: BTreeMap<uuid::Uuid, Vec<(&String, &crate::core::geometry::Attribute)>> = BTreeMap::new();
+
+    let mut buffer_groups: HashMap<uuid::Uuid, Vec<(&String, &crate::core::geometry::Attribute)>> = HashMap::new();
 
     for (name, attr) in &geometry.attributes {
         let buffer_id = attr.buffer.id;
         buffer_groups.entry(buffer_id).or_default().push((name, attr));
     }
+
+    let mut sorted_groups: Vec<_> = buffer_groups.into_iter().collect();
+
+    sorted_groups.sort_by(|a, b| {
+        // 取该 Buffer 中第一个属性的名字来代表该 Buffer 的顺序
+        // 例如 "position" vs "normal"
+        let name_a = a.1[0].0; 
+        let name_b = b.1[0].0;
+        name_a.cmp(name_b)
+    });
 
     let mut owned_layouts = Vec::new();
     let mut wgsl_struct_fields = Vec::new();
@@ -52,7 +60,7 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
     let mut current_location = 0;
 
     // 2. 遍历每个 Buffer 组
-    for (buffer_id, mut attrs) in buffer_groups {
+    for (buffer_id, mut attrs) in sorted_groups {
         // 排序：保证 Interleaved Buffer 属性顺序正确 (Offset -> Name)
         attrs.sort_by(|a, b| {
             a.1.offset.cmp(&b.1.offset).then(a.0.cmp(b.0))

@@ -8,7 +8,7 @@ use crate::core::buffer::{BufferRef};
 use crate::core::uniforms::{MeshBasicUniforms, MeshStandardUniforms};
 use crate::core::texture::Texture;
 
-// Shader 编译选项 (不变)
+// Shader 编译选项
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
     pub struct MaterialFeatures: u32 {
@@ -347,13 +347,13 @@ impl Material {
     }
 
     // 辅助构造：Basic
-    pub fn new_basic(color: Vec4) -> Self {
-        Self::new(MaterialData::Basic(MeshBasicMaterial::new(color)))
+    pub fn new_basic(color: Vec4) -> MeshBasicMaterial {
+        MeshBasicMaterial::new(color)
     }
 
     // 辅助构造：Standard
-    pub fn new_standard(color: Vec4) -> Self {
-        Self::new(MaterialData::Standard(MeshStandardMaterial::new(color)))
+    pub fn new_standard(color: Vec4) -> MeshStandardMaterial {
+        MeshStandardMaterial::new(color)
     }
 
     // 代理方法：直接转发给内部数据
@@ -365,7 +365,6 @@ impl Material {
 // ============================================================================
 // 语法糖：允许从 具体材质 直接转为 通用材质
 // ============================================================================
-// 这让用户可以写: Mesh::new(geo, MeshBasicMaterial::new(...).into())
 
 impl From<MeshBasicMaterial> for Material {
     fn from(data: MeshBasicMaterial) -> Self {

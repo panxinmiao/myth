@@ -10,10 +10,8 @@ use crate::core::light::{Light, LightType};
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
     pub struct SceneFeatures: u32 {
-        // 示例：未来可以在这里添加
         // const USE_SHADOW_MAP = 1 << 0;
         // const USE_ENV_MAP    = 1 << 1;
-        // const NUM_POINT_LIGHTS_MASK = 0xF0; // 预留位给数量
     }
 }
 
@@ -206,12 +204,6 @@ impl Scene {
 
 
     // === 资源管理 API ===
-
-    // 基础 API：单纯添加 Mesh 数据，返回句柄
-    // 仅供内部或高级用户使用
-    // pub fn add_mesh(&mut self, mesh: Mesh) -> Index {
-    //     self.meshes.insert(mesh)
-    // }
 
     pub fn add_mesh(&mut self, mesh: Mesh, parent: Option<Index>) -> &mut Mesh {
         // 1. 创建 Node

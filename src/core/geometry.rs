@@ -104,10 +104,12 @@ pub struct BoundingSphere {
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
     pub struct GeometryFeatures: u32 {
-        const USE_VERTEX_COLOR  = 1 << 0;
-        const USE_TANGENT       = 1 << 1;
-        const USE_MORPHING      = 1 << 2; // 变形
-        const USE_SKINNING      = 1 << 3; // 骨骼
+        const HAS_NORMAL       = 1 << 0;
+        const HAS_UV           = 1 << 1;
+        const USE_VERTEX_COLOR  = 1 << 2;
+        const USE_TANGENT       = 1 << 3;
+        const USE_MORPHING      = 1 << 4; // 变形
+        const USE_SKINNING      = 1 << 5; // 骨骼
     }
 }
 
@@ -158,9 +160,17 @@ impl Geometry {
         self.version.load(Ordering::Relaxed)
     }
 
+    pub fn mark_dirty(&self) {
+        self.version.fetch_add(1, Ordering::Relaxed);
+    }
+
     pub fn set_attribute(&mut self, name: &str, attr: Attribute) {
         self.attributes.insert(name.to_string(), attr);
-        self.version.fetch_add(1, Ordering::Relaxed); // 标记结构变动
+        self.mark_dirty(); // 标记结构变动
+    }
+
+    pub fn get_attribute(&self, name: &str) -> Option<&Attribute> {
+        self.attributes.get(name)
     }
 
     pub fn set_indices(&mut self, indices: &[u16]) {
@@ -179,7 +189,7 @@ impl Geometry {
             stride: 2,
             step_mode: VertexStepMode::Vertex, // Index buffer 忽略 step_mode
         });
-        self.version.fetch_add(1, Ordering::Relaxed);
+        self.mark_dirty();
     }
 
     pub fn set_indices_u32(&mut self, indices: &[u32]) {
@@ -285,6 +295,12 @@ impl Geometry {
     pub fn get_features(&self) -> GeometryFeatures {
         let mut features = GeometryFeatures::empty();
 
+        if self.attributes.contains_key("uv") {
+            features |= GeometryFeatures::HAS_UV;
+        }
+        if self.attributes.contains_key("normal") {
+            features |= GeometryFeatures::HAS_NORMAL;
+        }
         if self.attributes.contains_key("color") {
             features |= GeometryFeatures::USE_VERTEX_COLOR;
         }
@@ -303,11 +319,82 @@ impl Geometry {
         features
     }
 
-    // 定义 Group 2 (Object) 中属于 Geometry 的部分
-    // pub fn define_bindings(&self, _builder: &mut ResourceBuilder) {
 
-    //     // 需要根据 morph_attributes 来自动生成 morph texture 资源（或 storage buffer）
-    //     // 然后绑定到 Group 2 中
+
+    pub fn new_box(width: f32, height: f32, depth: f32) -> Self {
+        let w = width / 2.0;
+        let h = height / 2.0;
+        let d = depth / 2.0;
+
+        // 24 个顶点 (每个面 4 个)
+        // 格式: [x, y, z]
+        let positions = [
+            // Front face (+Z)
+            [-w, -h,  d], [ w, -h,  d], [ w,  h,  d], [-w,  h,  d],
+            // Back face (-Z)
+            [-w, -h, -d], [-w,  h, -d], [ w,  h, -d], [ w, -h, -d],
+            // Top face (+Y)
+            [-w,  h, -d], [-w,  h,  d], [ w,  h,  d], [ w,  h, -d],
+            // Bottom face (-Y)
+            [-w, -h, -d], [ w, -h, -d], [ w, -h,  d], [-w, -h,  d],
+            // Right face (+X)
+            [ w, -h, -d], [ w,  h, -d], [ w,  h,  d], [ w, -h,  d],
+            // Left face (-X)
+            [-w, -h, -d], [-w, -h,  d], [-w,  h,  d], [-w,  h, -d],
+        ];
+
+        // 法线 (每个面的 4 个顶点法线相同)
+        let normals: [[f32; 3]; 24] = [
+            // Front
+            [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0],
+            // Back
+            [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0],
+            // Top
+            [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0],
+            // Bottom
+            [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0],
+            // Right
+            [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
+            // Left
+            [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
+        ];
+
+        // UV 坐标 (标准 0~1)
+        let uvs: [[f32; 2]; 24] = [
+            // Front
+            [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0],
+            // Back
+            [1.0, 1.0], [1.0, 0.0], [0.0, 0.0], [0.0, 1.0],
+            // Top
+            [0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0],
+            // Bottom
+            [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0],
+            // Right
+            [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0],
+            // Left
+            [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0],
+        ];
+
+        // 索引 (每面 2 个三角形，逆时针绕序 CCW)
+        // 0, 1, 2,  0, 2, 3
+        let indices: Vec<u16> = (0..6).flat_map(|face| {
+            let base = face * 4;
+            [
+                base, base + 1, base + 2,
+                base, base + 2, base + 3,
+            ]
+        }).collect();
+
+        let mut geo = Geometry::new();
+        geo.set_attribute("position", Attribute::new_planar(&positions, VertexFormat::Float32x3));
+        geo.set_attribute("normal", Attribute::new_planar(&normals, VertexFormat::Float32x3));
+        geo.set_attribute("uv", Attribute::new_planar(&uvs, VertexFormat::Float32x2));
+        geo.set_indices(&indices);
         
-    // }
+        // 别忘了计算包围球，这对于视锥剔除很重要！
+        geo.compute_bounding_volume();
+
+        geo
+    }
 }
+

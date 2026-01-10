@@ -27,19 +27,7 @@ pub struct TextureSource {
 
 impl TextureSource {
     pub fn bytes_per_pixel(&self) -> u32 {
-        // 这是一个简化的 helper，实际情况需要根据 Format 查表
-        // 生产环境建议使用 block size 查询库
-        // match self.format {
-        //     TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb => 4,
-        //     TextureFormat::Bgra8Unorm | TextureFormat::Bgra8UnormSrgb => 4,
-        //     TextureFormat::R8Unorm => 1,
-        //     TextureFormat::Rg8Unorm => 2,
-        //     TextureFormat::R32Float => 4,
-        //     TextureFormat::Rgba32Float => 16,
-        //     // ... 其他格式需要完善
-        //     _ => 4, 
-        // }
-
+        // Todo: 确定逻辑是否正确
         self.format.block_copy_size(Some(wgpu::TextureAspect::All)).unwrap_or(4) as u32
     }
 }
@@ -140,7 +128,6 @@ pub struct Texture {
 }
 
 impl Texture {
-/// 创建标准 2D 纹理
     pub fn new_2d(name: &str, width: u32, height: u32, data: Option<Vec<u8>>, format: TextureFormat) -> Self {
         Self {
             id: Uuid::new_v4(),
@@ -211,5 +198,31 @@ impl Texture {
         // 结构变了，内容肯定也变了（或失效了）
         self.generation_id.fetch_add(1, Ordering::Relaxed);
         self.needs_update();
+    }
+
+
+    /// 创建一个棋盘格测试纹理
+    pub fn create_checkerboard(name: &str, width: u32, height: u32, check_size: u32) -> Self {
+        let mut data = Vec::with_capacity((width * height * 4) as usize);
+        
+        let color_a = [255, 255, 255, 255]; // 白
+        let color_b = [0, 0, 0, 255];       // 黑 (或者用粉色 [255, 0, 255, 255] 方便调试)
+
+        for y in 0..height {
+            for x in 0..width {
+                // 简单的异或逻辑生成棋盘格
+                let cx = x / check_size;
+                let cy = y / check_size;
+                let is_a = (cx + cy) % 2 == 0;
+                
+                if is_a {
+                    data.extend_from_slice(&color_a);
+                } else {
+                    data.extend_from_slice(&color_b);
+                }
+            }
+        }
+
+        Self::new_2d(name, width, height, Some(data), wgpu::TextureFormat::Rgba8Unorm)
     }
 }

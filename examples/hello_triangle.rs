@@ -45,7 +45,7 @@ impl App {
             Texture::create_solid_color("red_tex", [255, 0, 0, 255])
         );
         
-        let mut basic_mat = MeshBasicMaterial::new(Vec4::new(0.0, 1.0, 0.0, 1.0));
+        let mut basic_mat = MeshBasicMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
         basic_mat.map = Some(texture.clone());
     
         // 创建 Mesh 并加入场景
@@ -58,12 +58,12 @@ impl App {
 
         // 2. 初始化相机 (Camera)
         let mut camera = Camera::new_perspective(
-            45.0f32.to_radians(), 
+            45.0, 
             1.0, // aspect ratio (稍后在 resize 中更新)
             0.1, 
-            500.0
+            100.0
         );
-        camera.transform.translation = glam::Vec3::new(0.0, 0.0, 100.0).into();
+        camera.transform.translation = glam::Vec3::new(0.0, 0.0, 3.0).into();
 
         camera.look_at(Vec3::ZERO, Vec3::Y);
 

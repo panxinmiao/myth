@@ -11,12 +11,12 @@ mod resource_builder;
 mod binding;
 
 use std::sync::Arc;
-use glam::{Mat4};
+use glam::{Mat4, Mat3A};
 
 use crate::core::scene::Scene;
 use crate::core::camera::{Camera};
 use crate::core::mesh::Mesh;
-use crate::core::uniforms::{DynamicModelUniforms, Mat3A};
+use crate::core::uniforms::{DynamicModelUniforms};
 
 use self::resource_manager::ResourceManager;
 use self::pipeline::PipelineCache;
@@ -160,11 +160,10 @@ impl Renderer {
             mesh: &'a Mesh,
             model_matrix: glam::Mat4,
             distance_sq: f32, // 用于透明排序
-            sort_key: u64, // 排序键 (Pipeline ID + Material ID)
         }
         
-        let mut opaque_list = Vec::new();
-        let mut transparent_list = Vec::new();
+        let mut render_list = Vec::new();
+        //let mut transparent_list = Vec::new();
         
         let frustum = camera.frustum();
 
@@ -189,36 +188,17 @@ impl Renderer {
                         }
                     }
 
-                    let material = &mesh.material;
                     // 计算距离 (平方即可，开方开销大)
                     let distance_sq = camera_pos.distance_squared(node_world_matrix.translation.into());
-                    // let model_matrix_inverse = model_matrix.inverse();
-
-                    // --- 计算 Sort Key ---
-                    // 目标：将 PipelineID (高位) + MaterialID (中位) + Depth (低位) 压缩到一个 u64
-                    // 这里简化实现：使用 Material ID 的 Hash 作为主要排序依据
-                    // 生产环境建议：Renderer 维护一个 MaterialID -> SortKey 的映射缓存
-                    let mat_id_hash = uuid_to_u64(&material.id); // 注意：这里还是拿了锁，但只拿一次
-                    
-                    // 对于不透明物体，按材质排序以减少状态切换
-                    // 对于透明物体，按距离排序 (从远到近)
-                    // 这里暂且只处理不透明物体排序
-                    let sort_key = mat_id_hash;
                     
                     // 准备数据
                     let item = RenderItem {
                         mesh,
                         model_matrix: Mat4::from(node_world_matrix),
                         distance_sq,
-                        // distance: 0.0, // TODO: 计算相机距离
-                        sort_key: sort_key,
                     };
 
-                    if material.transparent {
-                        transparent_list.push(item);
-                    } else {
-                        opaque_list.push(item);
-                    }
+                    render_list.push(item);
 
                 }
             }
@@ -226,74 +206,24 @@ impl Renderer {
 
         // if render_list.is_empty() { return; }
 
-        // =========================================================
-        // 4. 排序 (Sort)
-        // =========================================================
-
-        // [不透明] 优先按 pipeline/material 排序 (减少 BindGroup 切换)，其次按距离(Front-to-Back)
-        opaque_list.sort_unstable_by(|a, b| {
-            if a.sort_key != b.sort_key {
-                a.sort_key.cmp(&b.sort_key)
-            } else {
-                a.distance_sq.partial_cmp(&b.distance_sq).unwrap() // Front-to-Back
-            }
-        });
-
-        // [透明] 严格 Back-to-Front (画家算法)
-        transparent_list.sort_unstable_by(|a, b| {
-            b.distance_sq.partial_cmp(&a.distance_sq).unwrap() // 注意 b cmp a 是降序
-        });
-        
-        let mut render_list = opaque_list;
-        render_list.append(&mut transparent_list);
-
-        // if render_list.is_empty() {
-        //     // 即使没有物体也要提交空的 frame，避免死锁
-        //     self.queue.submit(std::iter::empty());
-        //     output.present();
-        //     return;
-        // }
 
 
         // =========================================================
-        // 5. 准备 Uniform 数据 & 上传 (Prepare & Upload)
+        // 4 资源准备 (Mutable Pass)
         // =========================================================
         
-        let mut model_uniforms_data = Vec::with_capacity(render_list.len());
-        
-        for item in &render_list {
-            let model_matrix_inverse = item.model_matrix.inverse();
-            let normal_matrix = Mat3A::from_mat4(model_matrix_inverse.transpose());
-            model_uniforms_data.push(DynamicModelUniforms {
-                model_matrix: item.model_matrix,
-                model_matrix_inverse,
-                normal_matrix,
-                __padding_20: [0.0; 20].into(),
-            });
-        }
-
-        
-        // 上传所有动态物体的矩阵 (自动扩容)
-        self.model_buffer_manager.write_uniforms(&mut self.resource_manager, &model_uniforms_data);
-
-
         struct RenderCommand{
             object_data: ObjectBindingData,
             geometry_id: uuid::Uuid,
             material_id: uuid::Uuid,
             renderer_pipeline: Arc<wgpu::RenderPipeline>,
             renderer_pipeline_id: u64,
+            model_matrix: Mat4,
+            sort_key: RenderKey,
         }
 
-        let mut command_list = Vec::new();
-
-        // =========================================================
-        // 5. 绘制循环 (Draw Loop)
-        // =========================================================
-
-        // =========================================================
-        // Phase A: 资源准备 (Mutable Pass)
-        // =========================================================
+        let mut opaque_cmd_list = Vec::new();
+        let mut transparent_cmd_list = Vec::new();
 
         self.resource_manager.prepare_global(&self.world);
 
@@ -328,19 +258,69 @@ impl Renderer {
                 &gpu_geometry.layout_info, // 传入 Vertex Layout
             );
 
+            // --- 计算 Sort Key ---
+            // 目标：将 PipelineID (高位) + MaterialID (中位) + Depth (低位) 压缩到一个 u64
+            // Todo 重构 资源ID系统，不在渲染循环中使用UUID。目前 as u16肯定有问题。
+            let sort_key = RenderKey::new(
+                (pipeline.1) as u16,
+                uuid_to_u64(&material.id) as u16,
+                item.distance_sq
+            );
 
-            command_list.push(RenderCommand {
+            let render_cmd = RenderCommand {
                 object_data: object_data,
                 geometry_id: geometry.id,
                 material_id: material.id,
                 renderer_pipeline: pipeline.0,
                 renderer_pipeline_id: pipeline.1,
+                model_matrix: item.model_matrix,
+                sort_key: sort_key,
+            };
+
+            if material.transparent {
+                transparent_cmd_list.push(render_cmd);
+            } else {
+                opaque_cmd_list.push(render_cmd);
+            }
+
+        }
+
+
+        // cmd list 排序
+        opaque_cmd_list.sort_unstable_by(|a, b| {
+            a.sort_key.cmp(&b.sort_key)
+        });
+
+        transparent_cmd_list.sort_unstable_by(|a, b| {
+            b.sort_key.cmp(&a.sort_key) // 注意 b cmp a 是降序
+        });
+
+        let mut command_list = opaque_cmd_list;
+        command_list.append(&mut transparent_cmd_list);
+
+        // =========================================================
+        // 5. 准备 model_uniforms 数据 & 上传 (Prepare & Upload)
+        // =========================================================
+        
+        let mut model_uniforms_data = Vec::with_capacity(command_list.len());
+        
+        for item in &command_list {
+            let model_matrix_inverse = item.model_matrix.inverse();
+            let normal_matrix = Mat3A::from_mat4(model_matrix_inverse.transpose());
+            model_uniforms_data.push(DynamicModelUniforms {
+                model_matrix: item.model_matrix,
+                model_matrix_inverse,
+                normal_matrix,
+                __padding_20: [0.0; 20].into(),
             });
         }
 
+        // 上传所有动态物体的矩阵 (自动扩容)
+        self.model_buffer_manager.write_uniforms(&mut self.resource_manager, &model_uniforms_data);
+
         // =========================================================
+        // 6. 绘制循环 (Immutable Pass)
         // Phase B: 渲染录制 (Immutable Pass)
-        // 此时 resource_manager 和 pipeline_cache 都是只读的
         // =========================================================
         
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -438,4 +418,48 @@ impl Renderer {
     }
 
 
+}
+
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct RenderKey(u64);
+
+impl RenderKey {
+    // 掩码常量
+    const _MASK_PIPELINE: u64 = 0xFFFF_0000_0000_0000;
+    const _MASK_MATERIAL: u64 = 0x0000_FFFF_0000_0000;
+    const MASK_DEPTH: u64    = 0x0000_0000_FFFF_FFFF;
+
+    // 偏移量
+    const SHIFT_PIPELINE: u64 = 48;
+    const SHIFT_MATERIAL: u64 = 32;
+
+    pub fn new(pipeline_id: u16, material_id: u16, depth: f32) -> Self {
+        // 1. 处理 Pipeline (放在最高位)
+        let p_bits = (pipeline_id as u64) << Self::SHIFT_PIPELINE;
+
+        // 2. 处理 Material (放在中间)
+        let m_bits = (material_id as u64) << Self::SHIFT_MATERIAL;
+
+        // 3. 处理 Depth (放在低位)
+        // 假设是标准深度 0.0 (Near) -> 1.0 (Far)
+        // 对于不透明物体，我们需要由近到远，深度越小 Key 越小，直接转换即可。
+        // 注意：如果 depth 可能是负数，需要反转符号位，但一般 View Space Depth 都是正的。
+        let d_bits = depth.to_bits() as u64; 
+        
+        // 如果是 Reversed-Z (1.0 Near, 0.0 Far)，且想由近到远：
+        // let d_bits = (!depth.to_bits()) as u64; // 取反以保持排序顺序
+        
+        // 组合
+        // 注意：d_bits 必须确保只占 32 位（f32 to_bits 本身就是 u32，转 u64 后高位为0，安全）
+        Self(p_bits | m_bits | d_bits)
+    }
+
+    //用于调试解码
+    pub fn decode(&self) -> (u16, u16, f32) {
+        let p = (self.0 >> Self::SHIFT_PIPELINE) as u16;
+        let m = (self.0 >> Self::SHIFT_MATERIAL) as u16;
+        let d = f32::from_bits((self.0 & Self::MASK_DEPTH) as u32);
+        (p, m, d)
+    }
 }

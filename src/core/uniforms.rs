@@ -1,48 +1,8 @@
-use glam::{Vec2, Vec3, Vec4, Mat3, Mat4};
+use glam::{Vec2, Vec3, Vec4, Mat3A, Mat4};
 use bytemuck::{Pod, Zeroable};
 use std::borrow::Cow;
 use std::ops::{Deref, DerefMut};
 
-/// 专门用于 Uniform Buffer 的 3x3 矩阵
-/// 对应 WGSL 中的 `mat3x3<f32>` (std140 布局)
-/// 内存布局: [Col0(4 floats), Col1(4 floats), Col2(4 floats)]
-/// 第 4 个 float 是 padding，GPU 会忽略它
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Pod, Zeroable)]
-pub struct Mat3A {
-    pub cols: [Vec4; 3], 
-}
-
-impl Mat3A {
-    pub const IDENTITY: Self = Self {
-        cols: [
-            Vec4::new(1.0, 0.0, 0.0, 0.0), // Col 0
-            Vec4::new(0.0, 1.0, 0.0, 0.0), // Col 1
-            Vec4::new(0.0, 0.0, 1.0, 0.0), // Col 2
-        ],
-    };
-
-    /// 从 glam::Mat3 转换 (自动处理 Padding)
-    pub fn from_mat3(m: Mat3) -> Self {
-        Self {
-            cols: [
-                Vec4::new(m.x_axis.x, m.x_axis.y, m.x_axis.z, 0.0),
-                Vec4::new(m.y_axis.x, m.y_axis.y, m.y_axis.z, 0.0),
-                Vec4::new(m.z_axis.x, m.z_axis.y, m.z_axis.z, 0.0),
-            ],
-        }
-    }
-
-    pub fn from_mat4(m: Mat4) -> Self {
-        Self {
-            cols: [
-                Vec4::new(m.x_axis.x, m.x_axis.y, m.x_axis.z, 0.0),
-                Vec4::new(m.y_axis.x, m.y_axis.y, m.y_axis.z, 0.0),
-                Vec4::new(m.z_axis.x, m.z_axis.y, m.z_axis.z, 0.0),
-            ],
-        }
-    }
-}
 
 // ============================================================================
 // 1. 类型映射 Trait (Rust Type -> WGSL Type String)

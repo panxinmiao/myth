@@ -37,12 +37,12 @@ pub enum ProjectionType {
 }
 
 impl Camera {
-    pub fn new_perspective(fov_degrees: f32, aspect: f32, near: f32, far: f32) -> Self {
+    pub fn new_perspective(fov: f32, aspect: f32, near: f32, far: f32) -> Self {
         let mut cam = Self {
             node_id: None, // 默认为游离状态
             transform: Affine3A::IDENTITY,
             projection_type: ProjectionType::Perspective,
-            fov: fov_degrees.to_radians(),
+            fov: fov.to_radians(),
             aspect,
             near,
             far,

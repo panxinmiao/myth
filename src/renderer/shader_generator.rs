@@ -28,6 +28,8 @@ impl ShaderCompilationOptions {
         if self.mat_features.contains(MaterialFeatures::USE_EMISSIVE_MAP) { map.insert("use_emissive_map".into(), true.into()); }
         if self.mat_features.contains(MaterialFeatures::USE_AO_MAP) { map.insert("use_ao_map".into(), true.into()); }
 
+        if self.geo_features.contains(GeometryFeatures::HAS_UV) { map.insert("has_uv".into(), true.into()); }
+        if self.geo_features.contains(GeometryFeatures::HAS_NORMAL) { map.insert("has_normal".into(), true.into()); }
         if self.geo_features.contains(GeometryFeatures::USE_VERTEX_COLOR) { map.insert("use_vertex_color".into(), true.into()); }
         if self.geo_features.contains(GeometryFeatures::USE_TANGENT) { map.insert("use_tangent".into(), true.into()); }
         if self.geo_features.contains(GeometryFeatures::USE_MORPHING) { map.insert("use_morphing".into(), true.into()); }

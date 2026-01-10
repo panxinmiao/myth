@@ -2,8 +2,9 @@
 {{ binding_code }}      
 
 struct VertexOutput {
-    @builtin(position) clip_position: vec4<f32>,
+    @builtin(position) position: vec4<f32>,
     @location(0) uv: vec2<f32>,
+    @location(1) normal: vec3<f32>,
 };
 
 $$ if SHADER_STAGE == "VERTEX"
@@ -13,14 +14,20 @@ $$ if SHADER_STAGE == "VERTEX"
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
     
-    // 使用 Group 2 (Object) 和 Group 0 (Global)
     let model_matrix = u_model.model_matrix; 
     let world_pos = model_matrix * vec4<f32>(in.position, 1.0);
     
-    out.clip_position = u_global.view_projection * world_pos;
+    out.position = u_global.view_projection * world_pos;
     
-    // 处理 UV (如果 geometry 有的话)
-    // out.uv = in.uv; 
+    $$ if has_uv
+    out.uv = in.uv;
+    $$ endif 
+
+    let normal_matrix = u_model.normal_matrix;
+
+    $$ if has_normal
+    out.normal = normal_matrix * in.normal;
+    $$ endif
 
     return out;
 }
@@ -34,7 +41,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     $$ if use_map
         let tex_color = textureSample(t_map, s_map, in.uv);
-        final_color = final_color + tex_color;
+        final_color = final_color * tex_color;
     $$ endif
 
     return final_color;
