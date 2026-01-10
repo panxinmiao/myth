@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -41,9 +41,9 @@ impl App {
         ], wgpu::VertexFormat::Float32x2));
 
         
-        let texture = Arc::new(RwLock::new(
+        let texture = Arc::new(
             Texture::create_solid_color("red_tex", [255, 0, 0, 255])
-        ));
+        );
         
         let mut basic_mat = MeshBasicMaterial::new(Vec4::new(0.0, 1.0, 0.0, 1.0));
         basic_mat.map = Some(texture.clone());

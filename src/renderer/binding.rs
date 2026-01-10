@@ -1,4 +1,4 @@
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 use crate::core::texture::Texture;
 use crate::core::buffer::BufferRef; 
 use crate::core::material::{Material, MaterialData};
@@ -19,8 +19,8 @@ pub enum BindingResource {
         size: Option<u64>,  // 绑定窗口大小 (None 表示整个 Buffer)
     },
 
-    Texture(Option<Arc<RwLock<Texture>>>),
-    Sampler(Option<Arc<RwLock<Texture>>>),
+    Texture(Option<Arc<Texture>>),
+    Sampler(Option<Arc<Texture>>),
 
 }
 

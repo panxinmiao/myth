@@ -198,7 +198,7 @@ impl ResourceManager {
 
         // 3. 检查重建 Geometry 绑定
         let needs_rebuild = if let Some(gpu_geo) = self.geometries.get(&geometry.id) {
-            geometry.version > gpu_geo.version || !resized_buffers.is_empty()
+            geometry.version() > gpu_geo.version || !resized_buffers.is_empty()
         } else {
             true
         };
@@ -268,7 +268,7 @@ impl ResourceManager {
             index_buffer,
             draw_range: draw_range,
             instance_range: 0..1,
-            version: geometry.version,
+            version: geometry.version(),
             last_used_frame: self.frame_index,
         };
 
@@ -286,7 +286,7 @@ impl ResourceManager {
 
         // 先进行一次不可变查找，确认是否命中且版本一致
         let cache_hit = if let Some(gpu_mat) = self.materials.get(&material.id) {
-            gpu_mat.last_version == material.version
+            gpu_mat.last_version == material.version()
         } else {
             false
         };
@@ -321,7 +321,7 @@ impl ResourceManager {
                 BindingResource::Texture(tex_opt) => {
                     if let Some(tex_arc) = tex_opt {
                         {
-                            let tex = tex_arc.read().unwrap();
+                            let tex = tex_arc;
                             self.add_or_update_texture(&tex); // 确保 GPU 端存在
                             // 2. Hash：使用 Texture ID 参与 Hash
                             tex.id.hash(&mut resource_hasher);
@@ -334,7 +334,7 @@ impl ResourceManager {
                     // Sampler 同理，也要确保 Texture 资源已上传(因为 Sampler 存在 GpuTexture 里)
                      if let Some(tex_arc) = tex_opt {
                         {
-                            let tex = tex_arc.read().unwrap();
+                            let tex = tex_arc;
                             self.add_or_update_texture(&tex);
                             tex.id.hash(&mut resource_hasher); // 这里的 Hash 最好加上 "Sampler" 混淆，不过分开 BindingIndex 已经够了
                         }
@@ -365,7 +365,7 @@ impl ResourceManager {
 
         if can_reuse_bindgroup {
              let gpu_mat = self.materials.get_mut(&material.id).unwrap();
-             gpu_mat.last_version = material.version;
+             gpu_mat.last_version = material.version();
              gpu_mat.last_used_frame = self.frame_index;
              return gpu_mat;
         }
@@ -383,7 +383,7 @@ impl ResourceManager {
             bind_group_id: bg_id,
             layout,
             binding_wgsl,
-            last_version: material.version,
+            last_version: material.version(),
             last_resource_hash: resource_hash,
             last_used_frame: self.frame_index,
         };
@@ -445,7 +445,7 @@ impl ResourceManager {
                 },
                 BindingResource::Texture(tex_opt) => {
                     let gpu_tex = if let Some(tex_arc) = tex_opt {
-                        let id = tex_arc.read().unwrap().id;
+                        let id = tex_arc.id;
                         self.textures.get(&id).unwrap_or(&self.dummy_texture)
                     } else { 
                         &self.dummy_texture 
@@ -454,7 +454,7 @@ impl ResourceManager {
                 },
                 BindingResource::Sampler(tex_opt) => {
                      let gpu_tex = if let Some(tex_arc) = tex_opt {
-                        let id = tex_arc.read().unwrap().id;
+                        let id = tex_arc.id;
                         self.textures.get(&id).unwrap_or(&self.dummy_texture)
                     } else { 
                         &self.dummy_texture 

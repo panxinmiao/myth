@@ -145,9 +145,9 @@ impl PipelineCache {
 
         let fast_key = FastPipelineKey {
             material_id: material.id,
-            material_version: material.version,
+            material_version: material.version(),
             geometry_id: geometry.id,
-            geometry_version: geometry.version,
+            geometry_version: geometry.version(),
             topology,
             scene_hash,
         };

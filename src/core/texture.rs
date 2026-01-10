@@ -1,4 +1,5 @@
 use uuid::Uuid;
+use std::sync::atomic::{AtomicU64, Ordering};
 use glam::{Vec2, Mat3};
 pub use wgpu::{TextureFormat, TextureDimension, TextureViewDimension, AddressMode, FilterMode, MipmapFilterMode};
 
@@ -133,9 +134,9 @@ pub struct Texture {
     pub sampler: TextureSampler,
     pub transform: TextureTransform,
     
-    pub version: u64,
+    pub version: AtomicU64,
 
-    pub generation_id: u64,
+    pub generation_id: AtomicU64,
 }
 
 impl Texture {
@@ -155,8 +156,8 @@ impl Texture {
             view_dimension: TextureViewDimension::D2, // 默认 2D 视图
             sampler: TextureSampler::default(),
             transform: TextureTransform::default(),
-            version: 0,
-            generation_id: 0,
+            version: AtomicU64::new(0),
+            generation_id: AtomicU64::new(0),
         }
     }
 
@@ -182,8 +183,8 @@ impl Texture {
                 ..Default::default()
             },
             transform: TextureTransform::default(),
-            version: 0,
-            generation_id: 0,
+            version: AtomicU64::new(0),
+            generation_id: AtomicU64::new(0),
         }
     }
 
@@ -193,7 +194,11 @@ impl Texture {
     }
 
     pub fn needs_update(&mut self) {
-        self.version = self.version.wrapping_add(1);
+        self.version.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version.load(Ordering::Relaxed)
     }
 
     /// 改变尺寸 (结构性变更)
@@ -204,7 +209,7 @@ impl Texture {
         self.source.width = width;
         self.source.height = height;
         // 结构变了，内容肯定也变了（或失效了）
-        self.generation_id = self.generation_id.wrapping_add(1);
-        self.version = self.version.wrapping_add(1); 
+        self.generation_id.fetch_add(1, Ordering::Relaxed);
+        self.needs_update();
     }
 }

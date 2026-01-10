@@ -2,7 +2,7 @@ use wgpu::ShaderStages;
 use crate::core::buffer::BufferRef;
 use crate::core::uniforms::UniformBlock;
 use crate::renderer::binding::{BindingResource};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 use crate::core::texture::Texture;
 
 type WgslStructGenerator = fn(&str) -> String;
@@ -75,7 +75,7 @@ impl ResourceBuilder {
     }
 
     /// 添加 Texture (通过 UUID)
-    pub fn add_texture(&mut self, name: &str, texture: Option<Arc<RwLock<Texture>>>, sample_type: wgpu::TextureSampleType, view_dimension: wgpu::TextureViewDimension, visibility: ShaderStages) {
+    pub fn add_texture(&mut self, name: &str, texture: Option<Arc<Texture>>, sample_type: wgpu::TextureSampleType, view_dimension: wgpu::TextureViewDimension, visibility: ShaderStages) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -94,7 +94,7 @@ impl ResourceBuilder {
     }
 
     /// 添加 Sampler (通过 UUID)
-    pub fn add_sampler(&mut self, name: &str, texture: Option<Arc<RwLock<Texture>>>, sampler_type: wgpu::SamplerBindingType, visibility: ShaderStages) {
+    pub fn add_sampler(&mut self, name: &str, texture: Option<Arc<Texture>>, sampler_type: wgpu::SamplerBindingType, visibility: ShaderStages) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,

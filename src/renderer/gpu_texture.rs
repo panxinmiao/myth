@@ -25,8 +25,11 @@ impl GpuTexture {
     }
 
     pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, texture: &Texture) {
+
+        let cpu_gen_id = texture.generation_id.load(std::sync::atomic::Ordering::Relaxed);
+        let cpu_ver = texture.version.load(std::sync::atomic::Ordering::Relaxed);
         // 1. 结构变更 -> 重建
-        if texture.generation_id != self.generation_id 
+        if cpu_gen_id != self.generation_id 
             || texture.source.format != self.format 
             || texture.source.width != self.width 
             || texture.source.height != self.height {
@@ -37,9 +40,9 @@ impl GpuTexture {
 
 
         // 2. 数据变更 -> 上传
-        if texture.version > self.version {
+        if cpu_ver > self.version {
             Self::upload_data(queue, &self.texture, texture);
-            self.version = texture.version;
+            self.version = cpu_ver;
         }
     }
 
@@ -82,8 +85,8 @@ impl GpuTexture {
             view,
             sampler,
             last_used_frame: 0,
-            version: texture.version,
-            generation_id: texture.generation_id,
+            version: texture.version.load(std::sync::atomic::Ordering::Relaxed),
+            generation_id: texture.generation_id.load(std::sync::atomic::Ordering::Relaxed),
             width: texture.source.width,
             height: texture.source.height,
             format: texture.source.format,

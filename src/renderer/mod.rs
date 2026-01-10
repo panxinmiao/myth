@@ -179,7 +179,7 @@ impl Renderer {
 
                     let node_world_matrix = *node.world_matrix();
                     // let mat = mesh.material.read().unwrap();
-                    if let Some(bs) = &mesh.geometry.read().unwrap().bounding_sphere{
+                    if let Some(bs) = &mesh.geometry.bounding_sphere{
                         // 注意：bounding sphere 需要变换到世界空间
                         // 这里简单处理：假设 scale 均匀，取 max scale * radius
                         let scale = node.scale.max_element(); 
@@ -189,7 +189,7 @@ impl Renderer {
                         }
                     }
 
-                    let material = mesh.material.read().unwrap();
+                    let material = &mesh.material;
                     // 计算距离 (平方即可，开方开销大)
                     let distance_sq = camera_pos.distance_squared(node_world_matrix.translation.into());
                     // let model_matrix_inverse = model_matrix.inverse();
@@ -298,8 +298,8 @@ impl Renderer {
         self.resource_manager.prepare_global(&self.world);
 
         for item in &render_list {
-            let geometry = item.mesh.geometry.read().unwrap();
-            let material = item.mesh.material.read().unwrap();
+            let geometry = &item.mesh.geometry;
+            let material = &item.mesh.material;
 
             // let model_matrix = item.model_matrix;
 
@@ -310,9 +310,9 @@ impl Renderer {
 
             // 2. 准备 Object BindGroup
             let object_data = self.model_buffer_manager.prepare_bind_group(&mut self.resource_manager, &geometry);
-            let gpu_material = self.resource_manager.get_material(material.id).unwrap();
-            let gpu_geometry =  self.resource_manager.get_geometry(geometry.id).unwrap();
-            let gpu_world = self.resource_manager.get_world(self.world.id).unwrap();
+            let gpu_material = self.resource_manager.get_material(material.id).expect("gpu material not found");
+            let gpu_geometry =  self.resource_manager.get_geometry(geometry.id).expect("gpu geometry not found");
+            let gpu_world = self.resource_manager.get_world(self.world.id).expect("gpu world not found");
             
             // 3. 更新 Pipeline (需要先拿到刚才 prepare 好的 GPU 资源)
             let pipeline = self.pipeline_cache.get_or_create(

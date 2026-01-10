@@ -1,6 +1,7 @@
 use uuid::Uuid;
+use std::sync::atomic::{AtomicU64, Ordering};
 use glam::Vec4;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc};
 use bitflags::bitflags;
 
 use crate::core::buffer::{DataBuffer, BufferRef};
@@ -33,7 +34,7 @@ pub struct MeshBasicMaterial {
     pub uniform_buffer: BufferRef,
     
     // 直接持有 Texture 引用，不再是 Uuid
-    pub map: Option<Arc<RwLock<Texture>>>, 
+    pub map: Option<Arc<Texture>>, 
 }
 
 impl MeshBasicMaterial {
@@ -62,17 +63,17 @@ impl Default for MeshBasicMaterial {
 
 // 2. MeshStandardMaterial
 // ----------------------------------------------------------------------------
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MeshStandardMaterial {
     pub uniforms: MeshStandardUniforms,
     pub uniform_buffer: BufferRef,
     
-    pub map: Option<Arc<RwLock<Texture>>>,
-    pub normal_map: Option<Arc<RwLock<Texture>>>,
-    pub roughness_map: Option<Arc<RwLock<Texture>>>,
-    pub metalness_map: Option<Arc<RwLock<Texture>>>,
-    pub emissive_map: Option<Arc<RwLock<Texture>>>,
-    pub ao_map: Option<Arc<RwLock<Texture>>>,
+    pub map: Option<Arc<Texture>>,
+    pub normal_map: Option<Arc<Texture>>,
+    pub roughness_map: Option<Arc<Texture>>,
+    pub metalness_map: Option<Arc<Texture>>,
+    pub emissive_map: Option<Arc<Texture>>,
+    pub ao_map: Option<Arc<Texture>>,
 }
 
 impl MeshStandardMaterial {
@@ -107,7 +108,7 @@ impl Default for MeshStandardMaterial {
 pub struct MeshBasicMaterialBuilder {
     // Specific Properties
     color: Vec4,
-    map: Option<Arc<RwLock<Texture>>>,
+    map: Option<Arc<Texture>>,
 
     // Common Properties (默认值)
     name: Option<String>,
@@ -137,7 +138,7 @@ impl MeshBasicMaterialBuilder {
 
     // --- Specific Setters ---
     pub fn color(mut self, color: Vec4) -> Self { self.color = color; self }
-    pub fn map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.map = Some(map); self }
+    pub fn map(mut self, map: Arc<Texture>) -> Self { self.map = Some(map); self }
 
     // --- Common Setters ---
     pub fn name(mut self, name: &str) -> Self { self.name = Some(name.into()); self }
@@ -155,7 +156,7 @@ impl MeshBasicMaterialBuilder {
 
         Material {
             id: Uuid::new_v4(),
-            version: 1,
+            version: AtomicU64::new(0),
             name: self.name,
             data: MaterialData::Basic(basic), // 自动装箱
             transparent: self.transparent,
@@ -174,12 +175,12 @@ pub struct MeshStandardMaterialBuilder {
     color: Vec4,
     roughness: f32,
     metalness: f32,
-    map: Option<Arc<RwLock<Texture>>>,
-    normal_map: Option<Arc<RwLock<Texture>>>,
-    roughness_map: Option<Arc<RwLock<Texture>>>,
-    metalness_map: Option<Arc<RwLock<Texture>>>,
-    emissive_map: Option<Arc<RwLock<Texture>>>,
-    ao_map: Option<Arc<RwLock<Texture>>>,
+    map: Option<Arc<Texture>>,
+    normal_map: Option<Arc<Texture>>,
+    roughness_map: Option<Arc<Texture>>,
+    metalness_map: Option<Arc<Texture>>,
+    emissive_map: Option<Arc<Texture>>,
+    ao_map: Option<Arc<Texture>>,
 
     // Common
     name: Option<String>,
@@ -214,12 +215,12 @@ impl MeshStandardMaterialBuilder {
     pub fn roughness(mut self, value: f32) -> Self { self.roughness = value; self }
     pub fn metalness(mut self, value: f32) -> Self { self.metalness = value; self }
     
-    pub fn map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.map = Some(map); self }
-    pub fn normal_map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.normal_map = Some(map); self }
-    pub fn roughness_map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.roughness_map = Some(map); self }
-    pub fn metalness_map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.metalness_map = Some(map); self }
-    pub fn emissive_map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.emissive_map = Some(map); self }
-    pub fn ao_map(mut self, map: Arc<RwLock<Texture>>) -> Self { self.ao_map = Some(map); self }
+    pub fn map(mut self, map: Arc<Texture>) -> Self { self.map = Some(map); self }
+    pub fn normal_map(mut self, map: Arc<Texture>) -> Self { self.normal_map = Some(map); self }
+    pub fn roughness_map(mut self, map: Arc<Texture>) -> Self { self.roughness_map = Some(map); self }
+    pub fn metalness_map(mut self, map: Arc<Texture>) -> Self { self.metalness_map = Some(map); self }
+    pub fn emissive_map(mut self, map: Arc<Texture>) -> Self { self.emissive_map = Some(map); self }
+    pub fn ao_map(mut self, map: Arc<Texture>) -> Self { self.ao_map = Some(map); self }
 
     // --- Common Setters ---
     pub fn name(mut self, name: &str) -> Self { self.name = Some(name.into()); self }
@@ -243,7 +244,7 @@ impl MeshStandardMaterialBuilder {
 
         Material {
             id: Uuid::new_v4(),
-            version: 1,
+            version: AtomicU64::new(0),
             name: self.name,
             data: MaterialData::Standard(standard),
             transparent: self.transparent,
@@ -261,7 +262,7 @@ impl MeshStandardMaterialBuilder {
 // ============================================================================
 // 这里替代了之前的 Box<dyn MaterialProperty>，静态分发性能更好且易于使用
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum MaterialData {
     Basic(MeshBasicMaterial),
     Standard(MeshStandardMaterial),
@@ -309,7 +310,7 @@ impl MaterialData {
 #[derive(Debug)]
 pub struct Material {
     pub id: Uuid,
-    pub version: u64,
+    pub version: AtomicU64,
     pub name: Option<String>,
     
     // 核心数据变成了 Enum，不仅类型安全，而且没有 Box 的堆分配开销
@@ -329,7 +330,7 @@ impl Material {
     pub fn new(data: MaterialData) -> Self {
         Self {
             id: Uuid::new_v4(),
-            version: 1,
+            version: AtomicU64::new(0),
             name: None,
             data,
             transparent: false,
@@ -339,6 +340,10 @@ impl Material {
             cull_mode: Some(wgpu::Face::Back),
             side: 0,
         }
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version.load(Ordering::Relaxed)
     }
 
     // 辅助构造：Basic

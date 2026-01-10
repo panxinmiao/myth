@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use uuid::Uuid;
+use std::sync::atomic::{AtomicU64, Ordering};
 use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages};
 use glam::Vec3;
 use core::ops::Range;
@@ -117,10 +118,10 @@ bitflags! {
 // ============================================================================
 // 4. 核心容器：Geometry
 // ============================================================================
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct Geometry {
     pub id: Uuid, // Geometry 自身的 ID
-    pub version: u64, // 结构版本号 (如果 set_attribute 了，需要重建 Pipeline)
+    pub version: AtomicU64, // 结构版本号 (如果 set_attribute 了，需要重建 Pipeline)
 
     // 核心数据
     pub attributes: HashMap<String, Attribute>,
@@ -145,7 +146,7 @@ impl Geometry {
     pub fn new() -> Self {
         Self {
             id: Uuid::new_v4(),
-            version: 0,
+            version: AtomicU64::new(0),
             attributes: HashMap::new(),
             index_attribute: None,
             morph_attributes: HashMap::new(),
@@ -157,9 +158,13 @@ impl Geometry {
         }
     }
 
+    pub fn version(&self) -> u64 {
+        self.version.load(Ordering::Relaxed)
+    }
+
     pub fn set_attribute(&mut self, name: &str, attr: Attribute) {
         self.attributes.insert(name.to_string(), attr);
-        self.version += 1; // 标记结构变动
+        self.version.fetch_add(1, Ordering::Relaxed); // 标记结构变动
     }
 
     pub fn set_indices(&mut self, indices: &[u16]) {
@@ -179,7 +184,7 @@ impl Geometry {
             stride: 2,
             step_mode: VertexStepMode::Vertex, // Index buffer 忽略 step_mode
         });
-        self.version += 1;
+        self.version.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn set_indices_u32(&mut self, indices: &[u32]) {
@@ -198,7 +203,7 @@ impl Geometry {
             stride: 4,
             step_mode: VertexStepMode::Vertex,
         });
-        self.version += 1;
+        self.version.fetch_add(1, Ordering::Relaxed);
     }
 
     /// 计算包围体 (AABB 和 Sphere 分开计算，追求更优的包围球)
