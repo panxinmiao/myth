@@ -140,7 +140,7 @@ impl ApplicationHandler for App {
             WindowEvent::RedrawRequested => {
                 if let Some(renderer) = &mut self.renderer {
                     // --- 渲染一帧 ---
-                    renderer.render(&mut self.scene, &self.camera);
+                    renderer.render(&mut self.scene, &mut self.camera);
                     
                     // 请求下一帧重绘
                     self.window.as_ref().unwrap().request_redraw();

@@ -296,32 +296,6 @@ impl Scene {
         }
     }
 
-    // =========================================================
-    // ✨ 推荐的高级 API：一步到位创建物体
-    // =========================================================
-    // pub fn create_mesh(&mut self, name: &str, geometry: Arc<RwLock<Geometry>>, material: Arc<RwLock<Material>>, parent: Option<Index>) -> Index {
-    //     // 1. 先创建 Node (为了拿到 node_id)
-    //     let node = Node::new(name);
-    //     let node_id = self.add_node(node, parent);
-
-    //     // 2. 再创建 Mesh (填入 node_id)
-    //     let mesh = Mesh::new(Some(node_id), geometry, material);
-    //     let mesh_id = self.meshes.insert(mesh);
-
-    //     // 3. 回填：把 mesh_id 填回 Node
-    //     // 这一步建立了双向链接：Node -> Mesh, Mesh -> Node
-    //     if let Some(node) = self.nodes.get_mut(node_id) {
-    //         node.mesh = Some(mesh_id);
-    //     }
-
-    //     // 返回 Node ID，因为用户通常操作的是 Node (移动、旋转)
-    //     node_id
-    // }
-
-    // pub fn add_light(&mut self, light: Light) -> Index {
-    //     self.lights.insert(light)
-    // }
-
     // 返回: (features, num_dir, num_point, num_spot)
     pub fn get_render_stats(&self) -> (SceneFeatures, u8, u8, u8) {
         let features = SceneFeatures::empty();

@@ -218,10 +218,6 @@ impl PipelineCache {
             base_context = base_context.set_value(&k, v);
         }
 
-        // if material.shader_name() == "MeshStandard" {
-        //     base_context = base_context.define("USE_PBR", true);
-        // }
-
         // 2. Generate Code
         let vs_code = ShaderGenerator::generate_vertex(
             &base_context,
@@ -238,7 +234,7 @@ impl PipelineCache {
         );
 
         // Debug 输出
-        if cfg!(debug_assertions) {
+        if cfg!(feature = "debug_shader") {
             println!("=== Vertex Shader ===\n{}", vs_code);
             println!("=== Fragment Shader ===\n{}", fs_code);
         }

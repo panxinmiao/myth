@@ -120,27 +120,82 @@ pub trait UniformBlock: Pod + Zeroable {
 }
 
 
-// #[repr(C, align(256))] // 强制每个实例占用 256 字节
-// #[derive(Copy, Clone, Debug, Default, Pod, Zeroable)]
-// pub struct DynamicModelUniforms {
-//     pub model_matrix: Mat4,       //64
-//     pub model_matrix_inverse: Mat4,  //64
-//     pub normal_matrix: Mat3A,   //48
 
-//     pub __padding_20: [f32; 20], // 填充至 256 bytes
-// }
 
-// impl DynamicModelUniforms {
-//     pub fn wgsl_struct_def(struct_name: &str) -> String {
-//         let mut code = format!("struct {} {{\n", struct_name);
-//         code.push_str("    model_matrix: mat4x4<f32>,\n");
-//         code.push_str("    model_matrix_inverse: mat4x4<f32>,\n");
-//         code.push_str("    normal_matrix: mat3x3<f32>,\n");
-//         code.push_str("};");
-//         code
-//     }
-// }
+// 单个光源数据 (必须 16 字节对齐)
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
+pub struct GpuLightData {
+    // color(rgb) + intensity(a)
+    pub color: [f32; 4], 
+    // position(xyz) + range(w)
+    pub position: [f32; 4], 
+    // direction(xyz) + spot_angle(w)
+    pub direction: [f32; 4],
+    // extra params
+    pub info: [f32; 4], 
+}
 
+pub const MAX_DIR_LIGHTS: usize = 4;
+pub const MAX_POINT_LIGHTS: usize = 16;
+pub const MAX_SPOT_LIGHTS: usize = 4;
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Pod, Zeroable)]
+pub struct GlobalLightUniforms {
+    pub ambient: [f32; 4], // 环境光
+    
+    // 计数器 (注意对齐)
+    pub num_dir_lights: u32,
+    pub num_point_lights: u32,
+    pub num_spot_lights: u32,
+    pub __pad: u32, 
+
+    // 灯光数组
+    pub dir_lights: [GpuLightData; MAX_DIR_LIGHTS],
+    pub point_lights: [GpuLightData; MAX_POINT_LIGHTS],
+    pub spot_lights: [GpuLightData; MAX_SPOT_LIGHTS],
+}
+
+impl Default for GlobalLightUniforms {
+    fn default() -> Self {
+        Self {
+            ambient: [0.05, 0.05, 0.05, 1.0],
+            num_dir_lights: 0,
+            num_point_lights: 0,
+            num_spot_lights: 0,
+            __pad: 0,
+            dir_lights: [GpuLightData::default(); MAX_DIR_LIGHTS],
+            point_lights: [GpuLightData::default(); MAX_POINT_LIGHTS],
+            spot_lights: [GpuLightData::default(); MAX_SPOT_LIGHTS],
+        }
+    }
+}
+
+impl UniformBlock for GlobalLightUniforms {
+    fn wgsl_struct_def(struct_name: &str) -> String {
+        let mut code = format!("struct {} {{\n", struct_name);
+        code.push_str("    ambient: vec4<f32>,\n");
+        code.push_str("    num_dir_lights: u32,\n");
+        code.push_str("    num_point_lights: u32,\n");
+        code.push_str("    num_spot_lights: u32,\n");
+        // code.push_str("    __pad: u32,\n");
+        code.push_str(&format!("    dir_lights: array<LightData, {}>,\n", MAX_DIR_LIGHTS));
+        code.push_str(&format!("    point_lights: array<LightData, {}>,\n", MAX_POINT_LIGHTS));
+        code.push_str(&format!("    spot_lights: array<LightData, {}>,\n", MAX_SPOT_LIGHTS));
+        code.push_str("};\n");
+
+        // LightData 结构体定义
+        code.push_str("struct LightData {\n");
+        code.push_str("    color: vec4<f32>,\n");
+        code.push_str("    position: vec4<f32>,\n");
+        code.push_str("    direction: vec4<f32>,\n");
+        code.push_str("    info: vec4<f32>,\n");
+        code.push_str("};\n");
+
+        code
+    }
+}
 
 
 // ============================================================================
@@ -262,15 +317,15 @@ define_uniform_struct!(
 );
 
 
-define_uniform_struct!(
-    /// 光源 Uniforms (每个 Frame 更新)
-    struct GlobalLightUniforms {
-        directional_light_direction: Vec3,
-        __padding1: f32, // Padding
-        directional_light_color: Vec3,
-        __padding2: f32, // Padding
-    }
-);
+// define_uniform_struct!(
+//     /// 光源 Uniforms (每个 Frame 更新)
+//     struct GlobalLightUniforms {
+//         directional_light_direction: Vec3,
+//         __padding1: f32, // Padding
+//         directional_light_color: Vec3,
+//         __padding2: f32, // Padding
+//     }
+// );
 
 // Standard PBR Material
 // 必须严格遵守 std140 对齐规则

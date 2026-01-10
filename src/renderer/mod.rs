@@ -11,6 +11,7 @@ mod resource_builder;
 mod binding;
 
 use std::sync::Arc;
+use glam::{Mat4};
 
 use crate::core::scene::Scene;
 use crate::core::camera::{Camera};
@@ -40,9 +41,6 @@ pub struct Renderer {
 
     // 全局资源 (Group 0)
     pub world: WorldEnvironment,
-    // global_uniform_buffer: wgpu::Buffer,
-    // global_bind_group: wgpu::BindGroup,
-    // global_bind_group_layout: wgpu::BindGroupLayout, // 公开给 PipelineCache 使用
 
     // 深度缓冲
     depth_texture_view: wgpu::TextureView,
@@ -131,7 +129,7 @@ impl Renderer {
         texture.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
-    pub fn render(&mut self, scene: &mut Scene, camera: &Camera) {
+    pub fn render(&mut self, scene: &mut Scene, camera: &mut Camera) {
 
         self.resource_manager.next_frame();
 
@@ -153,8 +151,7 @@ impl Renderer {
         };
         
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        let frustum = camera.get_frustum(Some(scene));
-
+        
         // =========================================================
         // 3. 收集 (Collect)
         // =========================================================
@@ -162,11 +159,16 @@ impl Renderer {
         struct RenderItem<'a> {
             mesh: &'a Mesh,
             model_matrix: glam::Mat4,
-            // distance: f32, // 用于透明排序
+            distance_sq: f32, // 用于透明排序
             sort_key: u64, // 排序键 (Pipeline ID + Material ID)
         }
+        
+        let mut opaque_list = Vec::new();
+        let mut transparent_list = Vec::new();
+        
+        let frustum = camera.frustum();
 
-        let mut render_list = Vec::new();
+        let camera_pos = camera.world_matrix().transform_point3(glam::Vec3::ZERO);
 
         for (_id, node) in scene.nodes.iter() {
 
@@ -175,22 +177,28 @@ impl Renderer {
                     // 提前检查可见性
                     if !node.visible || !mesh.visible { continue; }
 
+                    let node_world_matrix = *node.world_matrix();
                     // let mat = mesh.material.read().unwrap();
                     if let Some(bs) = &mesh.geometry.read().unwrap().bounding_sphere{
-                        if !frustum.intersects_sphere(bs.center, bs.radius) {
+                        // 注意：bounding sphere 需要变换到世界空间
+                        // 这里简单处理：假设 scale 均匀，取 max scale * radius
+                        let scale = node.scale.max_element(); 
+                        let center = node_world_matrix.transform_point3(bs.center);
+                        if !frustum.intersects_sphere(center, bs.radius * scale) {
                             continue;
                         }
                     }
 
-
-                    let model_matrix = node.world_matrix_as_mat4();
+                    let material = mesh.material.read().unwrap();
+                    // 计算距离 (平方即可，开方开销大)
+                    let distance_sq = camera_pos.distance_squared(node_world_matrix.translation.into());
                     // let model_matrix_inverse = model_matrix.inverse();
 
                     // --- 计算 Sort Key ---
                     // 目标：将 PipelineID (高位) + MaterialID (中位) + Depth (低位) 压缩到一个 u64
                     // 这里简化实现：使用 Material ID 的 Hash 作为主要排序依据
                     // 生产环境建议：Renderer 维护一个 MaterialID -> SortKey 的映射缓存
-                    let mat_id_hash = uuid_to_u64(&mesh.material.read().unwrap().id); // 注意：这里还是拿了锁，但只拿一次
+                    let mat_id_hash = uuid_to_u64(&material.id); // 注意：这里还是拿了锁，但只拿一次
                     
                     // 对于不透明物体，按材质排序以减少状态切换
                     // 对于透明物体，按距离排序 (从远到近)
@@ -198,24 +206,53 @@ impl Renderer {
                     let sort_key = mat_id_hash;
                     
                     // 准备数据
-                    render_list.push(RenderItem {
+                    let item = RenderItem {
                         mesh,
-                        model_matrix,
+                        model_matrix: Mat4::from(node_world_matrix),
+                        distance_sq,
                         // distance: 0.0, // TODO: 计算相机距离
                         sort_key: sort_key,
-                    });
+                    };
+
+                    if material.transparent {
+                        transparent_list.push(item);
+                    } else {
+                        opaque_list.push(item);
+                    }
 
                 }
             }
         }
 
-        if render_list.is_empty() { return; }
+        // if render_list.is_empty() { return; }
 
         // =========================================================
         // 4. 排序 (Sort)
         // =========================================================
+
+        // [不透明] 优先按 pipeline/material 排序 (减少 BindGroup 切换)，其次按距离(Front-to-Back)
+        opaque_list.sort_unstable_by(|a, b| {
+            if a.sort_key != b.sort_key {
+                a.sort_key.cmp(&b.sort_key)
+            } else {
+                a.distance_sq.partial_cmp(&b.distance_sq).unwrap() // Front-to-Back
+            }
+        });
+
+        // [透明] 严格 Back-to-Front (画家算法)
+        transparent_list.sort_unstable_by(|a, b| {
+            b.distance_sq.partial_cmp(&a.distance_sq).unwrap() // 注意 b cmp a 是降序
+        });
         
-        render_list.sort_unstable_by_key(|item| item.sort_key);
+        let mut render_list = opaque_list;
+        render_list.append(&mut transparent_list);
+
+        // if render_list.is_empty() {
+        //     // 即使没有物体也要提交空的 frame，避免死锁
+        //     self.queue.submit(std::iter::empty());
+        //     output.present();
+        //     return;
+        // }
 
 
         // =========================================================

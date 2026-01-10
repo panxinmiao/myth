@@ -11,7 +11,6 @@ pub struct Camera {
 
     // === 游离模式下的 Transform ===
     // 只有在 node_id 为 None 时，以下字段才生效
-    // 我们直接存储 World Matrix (Affine3A)，方便计算
     pub transform: Affine3A,
 
     // === 投影属性 (Projection Only) ===
@@ -23,6 +22,12 @@ pub struct Camera {
 
     // 正交参数
     pub ortho_size: f32, 
+
+    world_matrix: Affine3A,
+    projection_matrix: Mat4,
+    view_matrix: Mat4,
+    view_projection_matrix: Mat4,
+    frustum: Frustum,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -33,24 +38,30 @@ pub enum ProjectionType {
 
 impl Camera {
     pub fn new_perspective(fov_degrees: f32, aspect: f32, near: f32, far: f32) -> Self {
-        Self {
+        let mut cam = Self {
             node_id: None, // 默认为游离状态
             transform: Affine3A::IDENTITY,
-
             projection_type: ProjectionType::Perspective,
             fov: fov_degrees.to_radians(),
             aspect,
             near,
             far,
             ortho_size: 10.0,
-        }
+            
+            world_matrix: Affine3A::IDENTITY,
+            projection_matrix: Mat4::IDENTITY,
+            view_matrix: Mat4::IDENTITY,
+            view_projection_matrix: Mat4::IDENTITY,
+            frustum: Frustum::default(),
+        };
+
+        cam.update_projection_matrix();
+        cam
     }
 
-    /// 获取投影矩阵 (P)
-    pub fn get_projection_matrix(&self) -> Mat4 {
-        match self.projection_type {
+    pub fn update_projection_matrix(&mut self){
+        self.projection_matrix =  match self.projection_type {
             ProjectionType::Perspective => {
-                // 注意：WGPU 的 NDC 深度范围是 [0, 1]，而 OpenGL 是 [-1, 1]
                 // glam 的 perspective_rh 默认是为了 WGPU/Vulkan 设计的 (0 to 1)
                 Mat4::perspective_rh(self.fov, self.aspect, self.near, self.far)
             }
@@ -59,55 +70,48 @@ impl Camera {
                 let h = self.ortho_size;
                 Mat4::orthographic_rh(-w, w, -h, h, self.near, self.far)
             }
-        }
+        };
     }
 
-    pub fn update_projection_matrix(&mut self){
-
-    }
-
-    /// 获取视图矩阵 (V)
-    /// View Matrix 本质上是相机 World Matrix 的逆矩阵
-    pub fn get_view_matrix(&self, scene: Option<&Scene>) -> Mat4 {
-        let world_matrix = if let Some(id) = self.node_id {
-
-            // A. Attached Mode: 从 Scene Graph 获取矩阵
-            if let Some(node) = scene.and_then(|s| s.get_node(id)) {
+    pub fn update_matrix_world(&mut self, scene: &Scene) {
+        // 1. 获取相机在世界空间中的 Transform 矩阵
+        let world_transform = if let Some(id) = self.node_id {
+            // Attach 模式：相信 Scene Graph
+            if let Some(node) = scene.nodes.get(id) {
+                // 注意：这里我们拿的是 Node 的 World Matrix
+                // 假设 Scene 已经调用过 update_matrix_world()
                 *node.world_matrix()
             } else {
-                // 如果 ID 无效 (例如节点被删了)，回退到内部 Transform
+                // 节点丢了？回退
                 self.transform
             }
         } else {
-            // B. Detached Mode: 使用自身管理的矩阵
+            // Detached 模式：相信自己的 transform
             self.transform
         };
 
-        // View Matrix 是 Camera World Matrix 的逆矩阵
-        Mat4::from(world_matrix).inverse()
+        self.world_matrix = world_transform;
+
+        // 2. 计算 View Matrix (World -> Camera)
+        // View = WorldInverse
+        self.view_matrix = Mat4::from(world_transform).inverse();
+
+        // 3. 计算 VP Matrix
+        self.view_projection_matrix = self.projection_matrix * self.view_matrix;
+
+        // 4. 更新视锥体 (用于剔除)
+        self.frustum = Frustum::from_matrix(self.view_projection_matrix);
     }
 
-    /// 获取 View-Projection 矩阵 (VP)
-    pub fn get_view_projection_matrix(&self, scene: Option<&Scene>) -> Mat4 {
-        self.get_projection_matrix() * self.get_view_matrix(scene)
-    }
-
-    pub fn get_view_projection_matrix_inverse(&self, scene: Option<&Scene>) -> Mat4 {
-        self.get_view_projection_matrix(scene).inverse()
-    }
-
-    pub fn get_frustum(&self, scene: Option<&Scene>) -> Frustum {
-        let vp_matrix = self.get_view_projection_matrix(scene);
-        Frustum::from_matrix(vp_matrix)
-    }
+    pub fn world_matrix(&self) -> &Affine3A { &self.world_matrix }
+    pub fn projection_matrix(&self) -> &Mat4 { &self.projection_matrix }
+    pub fn view_matrix(&self) -> &Mat4 { &self.view_matrix }
+    pub fn view_projection_matrix(&self) -> &Mat4 { &self.view_projection_matrix }
+    pub fn frustum(&self) -> &Frustum { &self.frustum }
 
 
     pub fn look_at(&mut self, target: Vec3, up: Vec3) {
-        let position = Vec3::from(self.transform.translation);
-        // glam 的 look_at_rh 生成的是 View Matrix (World -> Camera)
-        // 但我们需要存的是 World Matrix (Camera -> World)
-        // 所以这里要计算 look_at 的逆，或者直接构建 basis
-        
+        let position = Vec3::from(self.transform.translation);        
         let forward = (target - position).normalize();
         let right = forward.cross(up).normalize();
         let new_up = right.cross(forward); // 正交化
@@ -129,7 +133,7 @@ impl Camera {
 
 
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Default)]
 pub struct Frustum {
     planes: [Vec4; 6], // Left, Right, Bottom, Top, Near, Far
 }
@@ -178,4 +182,5 @@ impl Frustum {
         }
         true
     }
+
 }
