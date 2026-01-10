@@ -12,7 +12,7 @@ use crate::core::geometry::{Geometry};
 use crate::core::material::Material;
 use crate::core::texture::Texture;
 use crate::core::world::WorldEnvironment;
-use crate::core::buffer::DataBuffer;
+use crate::core::buffer::BufferRef;
 
 use crate::renderer::binding::{BindingResource, Bindings};
 use crate::renderer::resource_builder::{ResourceBuilder};
@@ -127,40 +127,47 @@ impl ResourceManager {
 
     /// 准备 GPU Buffer：如果不存在则创建，如果版本过期则更新
     /// 返回当前 GPU 资源的物理 ID (用于检测 Resize)
-    pub fn prepare_buffer(&mut self, cpu_buffer: &DataBuffer) -> u64 {
-        let id = cpu_buffer.id;
+    pub fn prepare_buffer(&mut self, buffer_ref: &BufferRef) -> u64 {
+        let id = buffer_ref.id;
 
-        // 1. 获取或创建
+        // 1. [Hot Path] 无锁检查版本！
+        // 如果版本没变，直接返回。这里没有任何锁竞争。
+        if let Some(gpu_buf) = self.buffers.get_mut(&id) {
+            if buffer_ref.version() <= gpu_buf.version {
+                gpu_buf.last_used_frame = self.frame_index;
+                return gpu_buf.id;
+            }
+        }
+
+        // 2. [Cold Path] 只有确实需要更新时，才获取锁并拷贝数据
         let gpu_buf = self.buffers.entry(id).or_insert_with(|| {
+            // 创建逻辑... 需要先 read_data() 获取初始数据
+            let data = buffer_ref.read_data();
+
             let mut buf = GpuBuffer::new(
                 &self.device, 
-                &cpu_buffer.data, 
-                cpu_buffer.usage, 
-                Some(&cpu_buffer.label)
+                &data, 
+                buffer_ref.usage, 
+                Some(&buffer_ref.label)
             );
             // 对于 Uniform Buffer，默认开启 Shadow Copy 以优化频繁的小数据更新
-            if cpu_buffer.usage.contains(wgpu::BufferUsages::UNIFORM) {
+            if buffer_ref.usage.contains(wgpu::BufferUsages::UNIFORM) {
                 buf.enable_shadow_copy();
             }
             buf
         });
 
-        gpu_buf.last_used_frame = self.frame_index;
-
-        // 2. 更新 (GpuBuffer 内部会比较 version)
-        if cpu_buffer.usage.contains(wgpu::BufferUsages::UNIFORM) {
-            // Uniform 走 Diff 逻辑 (忽略 version)
-            gpu_buf.update_with_data(&self.device, &self.queue, &cpu_buffer.data);
-        } else {
-            // 其他 (Vertex/Index/Storage) 走 Version 逻辑
-            gpu_buf.update_with_version(
-                &self.device, 
-                &self.queue, 
-                &cpu_buffer.data, 
-                cpu_buffer.version
-            );
+        // 更新逻辑
+        {
+            let data = buffer_ref.read_data(); // 这里才发生短暂的锁
+            if buffer_ref.usage.contains(wgpu::BufferUsages::UNIFORM) {
+                gpu_buf.update_with_data(&self.device, &self.queue, &data);
+            } else {
+                gpu_buf.update_with_version(&self.device, &self.queue, &data, buffer_ref.version());
+            }
         }
-
+   
+        gpu_buf.last_used_frame = self.frame_index;
         gpu_buf.id
     }
 
@@ -175,24 +182,20 @@ impl ResourceManager {
 
         // 1. 统一处理 Vertex Buffers
         for attr in geometry.attributes.values() {
-            let cpu_buf = attr.buffer.read();
-            let old_id = self.buffers.get(&cpu_buf.id).map(|b| b.id);
-            
-            let new_id = self.prepare_buffer(&cpu_buf);
-            
+            let old_id = self.buffers.get(&attr.buffer.id).map(|b| b.id);
+            let new_id = self.prepare_buffer(&attr.buffer);
             // 检测到底层 Buffer 是否重建了 (Resize)
             if let Some(oid) = old_id {
-                if oid != new_id { resized_buffers.insert(cpu_buf.id); }
+                if oid != new_id { resized_buffers.insert(attr.buffer.id); }
             }
         }
 
         // 2. 统一处理 Index Buffer
         if let Some(indices) = &geometry.index_attribute {
-            let cpu_buf = indices.buffer.read();
-            let old_id = self.buffers.get(&cpu_buf.id).map(|b| b.id);
-            let new_id = self.prepare_buffer(&cpu_buf);
+            let old_id = self.buffers.get(&indices.buffer.id).map(|b| b.id);
+            let new_id = self.prepare_buffer(&indices.buffer);
             if let Some(oid) = old_id {
-                if oid != new_id { resized_buffers.insert(cpu_buf.id); }
+                if oid != new_id { resized_buffers.insert(indices.buffer.id); }
             }
         }
 
@@ -227,15 +230,13 @@ impl ResourceManager {
         let mut vertex_buffer_ids = Vec::new();
         
         for layout_desc in &layout_info.buffers {
-            let cpu_buf = layout_desc.buffer.read();
-            let gpu_buf = self.buffers.get(&cpu_buf.id).expect("Buffer shoould prepared");
+            let gpu_buf = self.buffers.get(&layout_desc.buffer.id).expect("Vertex buffer should be prepared");
             vertex_buffers.push(gpu_buf.buffer.clone()); 
             vertex_buffer_ids.push(gpu_buf.id);
         }
 
         let index_buffer = if let Some(indices) = &geometry.index_attribute {
-            let cpu_buf = indices.buffer.read();
-            let gpu_buf = self.buffers.get(&cpu_buf.id).unwrap();
+            let gpu_buf = self.buffers.get(&indices.buffer.id).expect("Index buffer should be prepared");
             let format = match indices.format {
                 wgpu::VertexFormat::Uint16 => wgpu::IndexFormat::Uint16,
                 wgpu::VertexFormat::Uint32 => wgpu::IndexFormat::Uint32,
@@ -313,8 +314,7 @@ impl ResourceManager {
         for res in &builder.resources {
             match res {
                 BindingResource::Buffer { buffer, .. } => {
-                    let cpu_buf = buffer.read();
-                    self.prepare_buffer(&cpu_buf); // 确保 Buffer 已上传
+                    self.prepare_buffer(&buffer); // 确保 Buffer 已上传
                     // Hash ID
                     buffer.id.hash(&mut resource_hasher);
                 },
@@ -496,11 +496,11 @@ impl ResourceManager {
         // [A] 上传 Buffer 数据 (CPU -> GPU)
         // 注意：prepare_buffer 接受 &DataBuffer，我们需要通过 read() 获取
         {
-            let frame_buf = env.frame_uniforms.read();
+            let frame_buf = &env.frame_uniforms;
             self.prepare_buffer(&frame_buf);
         }
         {
-            let light_buf = env.light_uniforms.read();
+            let light_buf = &env.light_uniforms;
             self.prepare_buffer(&light_buf);
         }
 

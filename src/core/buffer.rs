@@ -1,5 +1,6 @@
 use uuid::Uuid;
 use std::sync::{Arc, RwLock};
+use std::sync::atomic::{AtomicU64, Ordering};
 use bytemuck::Pod;
 
 /// 通用 CPU 端数据缓冲
@@ -8,42 +9,18 @@ use bytemuck::Pod;
 pub struct DataBuffer {
     pub id: Uuid,
     pub label: String,
-    pub data: Vec<u8>,
-    pub version: u64,
+    version: AtomicU64,
+    data: RwLock<Vec<u8>>,
     pub usage: wgpu::BufferUsages,
 }
 
-impl DataBuffer {
-    pub fn new<T: Pod>(data: &[T], usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            label: label.unwrap_or("Buffer").to_string(),
-            data: bytemuck::cast_slice(data).to_vec(),
-            version: 0,
-            usage,
-        }
-    }
-
-    /// 更新数据并增加版本号
-    pub fn update<T: Pod>(&mut self, data: &[T]) {
-        self.data = bytemuck::cast_slice(data).to_vec();
-        self.version = self.version.wrapping_add(1);
-    }
-}
-
-/// 线程安全的 Buffer 引用
-// pub type BufferRef = Arc<RwLock<DataBuffer>>;
-
 // === 新增：高性能引用包装器 ===
 #[derive(Debug, Clone)]
-pub struct BufferRef {
-    pub id: Uuid,
-    inner: Arc<RwLock<DataBuffer>>,
-}
+pub struct BufferRef(Arc<DataBuffer>);
 
 impl PartialEq for BufferRef {
     fn eq(&self, other: &Self) -> bool {
-        self.id == other.id
+        self.0.id == other.0.id
     }
 }
 
@@ -51,27 +28,61 @@ impl Eq for BufferRef {}
 
 impl std::hash::Hash for BufferRef {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // 只 Hash ID。
-        // 如果 ID 相同，意味着这是同一个 Buffer 引用，
-        // BindGroup 就不需要重建。
-        self.id.hash(state);
+        self.0.id.hash(state);
     }
 }
 
 impl BufferRef {
-    pub fn new(buffer: DataBuffer) -> Self {
-        Self {
-            id: buffer.id,
-            inner: Arc::new(RwLock::new(buffer)),
-        }
+    pub fn new<T: Pod>(data: &[T], usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
+        let raw_data = bytemuck::cast_slice(data).to_vec();
+        Self(Arc::new(DataBuffer {
+            id: Uuid::new_v4(),
+            label: label.unwrap_or("Buffer").to_string(),
+            version: AtomicU64::new(1), // 初始版本为 1
+            data: RwLock::new(raw_data),
+            usage,
+        }))
     }
 
-    // 转发 read/write
-    pub fn read(&self) -> std::sync::RwLockReadGuard<'_, DataBuffer> {
-        self.inner.read().unwrap()
+    // === 核心优化：无锁获取版本号 ===
+    pub fn version(&self) -> u64 {
+        self.0.version.load(Ordering::Relaxed)
     }
 
-    pub fn write(&self) -> std::sync::RwLockWriteGuard<'_, DataBuffer> {
-        self.inner.write().unwrap()
+    pub fn id(&self) -> Uuid {
+        self.0.id
+    }
+    
+    pub fn usage(&self) -> wgpu::BufferUsages {
+        self.0.usage
+    }
+    
+    pub fn label(&self) -> &str {
+        &self.0.label
+    }
+
+    // === 数据更新 ===
+    pub fn update<T: Pod>(&self, data: &[T]) {
+        // 1. 获取写锁
+        let mut inner_data = self.0.data.write().unwrap();
+        // 2. 写入数据
+        *inner_data = bytemuck::cast_slice(data).to_vec();
+        // 3. 释放锁 (自动)
+        
+        // 4. 更新版本 (无锁)
+        self.0.version.fetch_add(1, Ordering::Relaxed);
+    }
+    
+    // 提供给 Renderer 读取数据的接口
+    // 只有在确定 version 变了需要上传时，才调用这个
+    pub fn read_data(&self) -> std::sync::RwLockReadGuard<'_, Vec<u8>> {
+        self.0.data.read().unwrap()
+    }
+}
+
+impl std::ops::Deref for BufferRef {
+    type Target = DataBuffer;
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
 }

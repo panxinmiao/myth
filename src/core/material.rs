@@ -4,7 +4,7 @@ use glam::Vec4;
 use std::sync::{Arc};
 use bitflags::bitflags;
 
-use crate::core::buffer::{DataBuffer, BufferRef};
+use crate::core::buffer::{BufferRef};
 use crate::core::uniforms::{MeshBasicUniforms, MeshStandardUniforms};
 use crate::core::texture::Texture;
 
@@ -40,11 +40,11 @@ pub struct MeshBasicMaterial {
 impl MeshBasicMaterial {
     pub fn new(color: Vec4) -> Self {
         let uniforms = MeshBasicUniforms { color, ..Default::default() };
-        let uniform_buffer = BufferRef::new(DataBuffer::new(
+        let uniform_buffer = BufferRef::new(
             &[uniforms], 
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, 
             Some("MeshBasicUniforms")
-        ));
+        );
         
         Self {
             uniforms,
@@ -79,11 +79,11 @@ pub struct MeshStandardMaterial {
 impl MeshStandardMaterial {
     pub fn new(color: Vec4) -> Self {
         let uniforms = MeshStandardUniforms { color, ..Default::default() };
-        let uniform_buffer = BufferRef::new(DataBuffer::new(
+        let uniform_buffer = BufferRef::new(
             &[uniforms], 
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, 
             Some("MeshStandardUniforms")
-        ));
+        );
         
         Self {
             uniforms,
@@ -279,8 +279,8 @@ impl MaterialData {
 
     pub fn flush_uniforms(&self) {
         match self {
-            Self::Basic(m) => m.uniform_buffer.write().update(&[m.uniforms]),
-            Self::Standard(m) => m.uniform_buffer.write().update(&[m.uniforms]),
+            Self::Basic(m) => m.uniform_buffer.update(&[m.uniforms]),
+            Self::Standard(m) => m.uniform_buffer.update(&[m.uniforms]),
         }
     }
 

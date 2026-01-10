@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use crate::renderer::resource_manager::ResourceManager;
 use crate::core::uniforms::DynamicModelUniforms;
-use crate::core::buffer::{DataBuffer, BufferRef};
+use crate::core::buffer::{BufferRef};
 use crate::core::geometry::{Geometry, GeometryFeatures};
 use crate::renderer::resource_builder::{ResourceBuilder};
 use crate::renderer::binding::Bindings;
@@ -39,12 +39,12 @@ impl ModelBufferManager {
     pub fn new(resource_manager: &mut ResourceManager) -> Self {
         let initial_capacity = 128;
         let initial_data = vec![DynamicModelUniforms::default(); initial_capacity];
-        let model_buffer = BufferRef::new(DataBuffer::new(
+        let model_buffer = BufferRef::new(
             &initial_data,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             Some("GlobalModelBuffer")
-        ));
-        let last_model_buffer_id = resource_manager.prepare_buffer(&model_buffer.read());
+        );
+        let last_model_buffer_id = resource_manager.prepare_buffer(&model_buffer);
 
         Self {
             model_buffer,
@@ -58,12 +58,11 @@ impl ModelBufferManager {
         if data.is_empty() { return; }
 
         // 1. 更新 CPU (自动扩容)
-        self.model_buffer.write().update(data);
+        self.model_buffer.update(data);
 
         // 2. 同步 GPU (如果扩容，ID 会变)
-        let buffer_ref = self.model_buffer.read();
-        let new_id = resource_manager.prepare_buffer(&buffer_ref);
-
+        let buffer_ref = &self.model_buffer;
+        let new_id = resource_manager.prepare_buffer(buffer_ref);
         if new_id != self.last_model_buffer_id {
             // Buffer 重建了！所有 BindGroup 失效 (因为它们引用了旧 Buffer)
             log::info!("Model Buffer resized ({} -> {}), clearing ObjectBindGroup cache", self.last_model_buffer_id, new_id);

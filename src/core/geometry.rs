@@ -5,7 +5,7 @@ use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages};
 use glam::Vec3;
 use core::ops::Range;
 
-use crate::core::buffer::{DataBuffer, BufferRef};
+use crate::core::buffer::{BufferRef};
 // [新增] 引入 Shader 编译选项 (复用 Material 的，或者新建一个 GeometryCompilationOptions)
 // 为了简单起见，且通常 Defines 是合并处理的，我们可以复用或新建。
 // 这里建议新建一个 GeometryFeatures，为了演示，我先使用简单的 Bitflags。
@@ -31,13 +31,11 @@ impl Attribute {
     pub fn new_planar<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
         let stride = std::mem::size_of::<T>() as u64;
         // 创建通用 DataBuffer
-        let buffer = DataBuffer::new(
+        let buffer_ref = BufferRef::new(
             data, 
             BufferUsages::VERTEX | BufferUsages::COPY_DST, 
             Some("GeometryVertexAttr")
         );
-
-        let buffer_ref = BufferRef::new(buffer);
 
         Self {
             buffer: buffer_ref,
@@ -53,13 +51,11 @@ impl Attribute {
     /// 适用于 InstanceMatrix, InstanceColor 等
     pub fn new_instanced<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
         let stride = std::mem::size_of::<T>() as u64;
-        let buffer = DataBuffer::new(
+        let buffer_ref = BufferRef::new(
             data, 
             BufferUsages::VERTEX | BufferUsages::COPY_DST, 
             Some("GeometryInstanceAttr")
         );
-
-        let buffer_ref = BufferRef::new(buffer);
 
         Self {
             buffer: buffer_ref,
@@ -169,12 +165,11 @@ impl Geometry {
 
     pub fn set_indices(&mut self, indices: &[u16]) {
         // self.index_attribute = Some(Attribute::new_planar(indices, VertexFormat::Uint16));
-        let buffer = DataBuffer::new(
+        let buffer_ref = BufferRef::new(
             indices, 
             BufferUsages::INDEX | BufferUsages::COPY_DST, 
             Some("IndexBuffer")
         );
-        let buffer_ref = BufferRef::new(buffer);
 
         self.index_attribute = Some(Attribute {
             buffer: buffer_ref,
@@ -188,12 +183,11 @@ impl Geometry {
     }
 
     pub fn set_indices_u32(&mut self, indices: &[u32]) {
-        let buffer = DataBuffer::new(
+        let buffer_ref = BufferRef::new(
             indices, 
             BufferUsages::INDEX | BufferUsages::COPY_DST, 
             Some("IndexBuffer")
         );
-        let buffer_ref = BufferRef::new(buffer);
 
         self.index_attribute = Some(Attribute {
             buffer: buffer_ref,
@@ -214,8 +208,7 @@ impl Geometry {
         };
 
         // 1. 准备数据读取
-        let buffer_guard = pos_attr.buffer.read();
-        let data = &buffer_guard.data;
+        let data = &pos_attr.buffer.read_data();
         let stride = pos_attr.stride as usize;
         let offset = pos_attr.offset as usize;
         let count = pos_attr.count as usize;
