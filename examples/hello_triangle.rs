@@ -41,12 +41,11 @@ impl App {
         ], wgpu::VertexFormat::Float32x2));
 
         
-        let texture = Arc::new(
-            Texture::create_solid_color("red_tex", [255, 0, 0, 255])
-        );
+        let texture = Texture::create_solid_color("red_tex", [255, 0, 0, 255]);
+        let text_handle = scene.add_texture_data(texture);
         
         let mut basic_mat = MeshBasicMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
-        basic_mat.map = Some(texture.clone());
+        basic_mat.map = Some(text_handle);
 
         let geo_handle = scene.add_geometry_data(geometry);
         let mat_handle = scene.add_material_data(basic_mat.into());

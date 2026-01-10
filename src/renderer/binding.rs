@@ -1,6 +1,5 @@
-use std::sync::{Arc};
-use crate::core::texture::Texture;
 use crate::core::buffer::BufferRef; 
+use crate::core::assets::TextureHandle;
 use crate::core::material::{Material, MaterialData};
 use crate::core::geometry::Geometry;
 use crate::core::world::WorldEnvironment;
@@ -19,26 +18,10 @@ pub enum BindingResource {
         size: Option<u64>,  // 绑定窗口大小 (None 表示整个 Buffer)
     },
 
-    Texture(Option<Arc<Texture>>),
-    Sampler(Option<Arc<Texture>>),
+    Texture(Option<TextureHandle>),
+    Sampler(Option<TextureHandle>),
 
 }
-
-// pub fn define_texture_binding(builder: &mut ResourceBuilder, name: &'static str, texture_id: Option<Uuid>) {
-//     builder.add_texture(
-//         name,
-//         texture_id,
-//         wgpu::TextureSampleType::Float { filterable: true },
-//         wgpu::TextureViewDimension::D2,
-//         ShaderStages::FRAGMENT,
-//     );
-//     builder.add_sampler(
-//         name,
-//         texture_id,
-//         wgpu::SamplerBindingType::Filtering,
-//         ShaderStages::FRAGMENT,
-//     );
-// }
 
 pub trait Bindings {
     fn define_bindings(&self, builder: &mut ResourceBuilder);

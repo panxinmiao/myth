@@ -13,7 +13,7 @@ use crate::core::geometry::{Geometry};
 use crate::core::texture::Texture;
 use crate::core::world::WorldEnvironment;
 use crate::core::buffer::BufferRef;
-use crate::core::assets::{AssetServer, GeometryHandle, MaterialHandle}; // 引入 Handle
+use crate::core::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
 
 use crate::renderer::binding::{BindingResource, Bindings};
 use crate::renderer::resource_builder::{ResourceBuilder};
@@ -85,7 +85,7 @@ pub struct ResourceManager {
     gpu_geometries: SecondaryMap<GeometryHandle, GPUGeometry>,
     gpu_materials: SecondaryMap<MaterialHandle, GPUMaterial>,
     
-    gpu_textures: HashMap<Uuid, GpuTexture>,
+    gpu_textures: SecondaryMap<TextureHandle, GpuTexture>,
     worlds: HashMap<Uuid, GPUWorld>,  // World 比较特殊，且数量极少，暂时用UUID
     
     layout_cache: HashMap<Vec<wgpu::BindGroupLayoutEntry>, Arc<wgpu::BindGroupLayout>>,
@@ -106,7 +106,7 @@ impl ResourceManager {
             buffers: HashMap::new(),
 
             // 初始化 SecondaryMap
-            gpu_textures: HashMap::new(),
+            gpu_textures: SecondaryMap::new(),
             gpu_geometries: SecondaryMap::new(),
             gpu_materials: SecondaryMap::new(),
 
@@ -334,24 +334,30 @@ impl ResourceManager {
                     // Hash ID
                     buffer.id.hash(&mut resource_hasher);
                 },
-                BindingResource::Texture(tex_opt) => {
-                    if let Some(tex) = tex_opt {
-                        {
-                            self.add_or_update_texture(&tex); // 确保 GPU 端存在
-                            // 2. Hash：使用 Texture ID 参与 Hash
-                            tex.id.hash(&mut resource_hasher);
+                BindingResource::Texture(handle_opt) => {
+                    if let Some(tex_handle) = handle_opt {
+                        if let Some(texture) = assets.get_texture(*tex_handle) {
+                            // 2. 确保 GPU 资源已创建/更新
+                            self.add_or_update_texture(*tex_handle, texture);
+                            
+                            // 3. Hash：使用 Handle 的唯一 ID (index + generation)
+                            // SlotMap 的 Key 本身就是 u64 且唯一的，非常适合 Hash
+                            tex_handle.hash(&mut resource_hasher); 
+                        } else {
+                            // Handle 无效 (资源被删除了?) -> 当作空纹理处理
+                            0.hash(&mut resource_hasher); 
                         }
                     } else {
                         0.hash(&mut resource_hasher); // 空纹理
                     }
                 },
-                BindingResource::Sampler(tex_opt) => {
-                    // Sampler 同理，也要确保 Texture 资源已上传(因为 Sampler 存在 GpuTexture 里)
-                     if let Some(tex_arc) = tex_opt {
-                        {
-                            let tex = tex_arc;
-                            self.add_or_update_texture(&tex);
-                            tex.id.hash(&mut resource_hasher); // 这里的 Hash 最好加上 "Sampler" 混淆，不过分开 BindingIndex 已经够了
+                BindingResource::Sampler(handle_opt) => {
+                    if let Some(tex_handle) = handle_opt {
+                        if let Some(texture) = assets.get_texture(*tex_handle) {
+                            self.add_or_update_texture(*tex_handle, texture);
+                            tex_handle.hash(&mut resource_hasher);
+                        } else {
+                            0.hash(&mut resource_hasher);
                         }
                     } else {
                         0.hash(&mut resource_hasher);
@@ -449,19 +455,18 @@ impl ResourceManager {
                         size: size.and_then(wgpu::BufferSize::new), // 处理 Option<u64> -> Option<NonZeroU64>
                     })
                 },
-                BindingResource::Texture(tex_opt) => {
-                    let gpu_tex = if let Some(tex_arc) = tex_opt {
-                        let id = tex_arc.id;
-                        self.gpu_textures.get(&id).unwrap_or(&self.dummy_texture)
+                BindingResource::Texture(handle_opt) => {
+                    let gpu_tex = if let Some(handle) = handle_opt {
+                        self.gpu_textures.get(*handle).unwrap_or(&self.dummy_texture)
                     } else { 
                         &self.dummy_texture 
                     };
                     wgpu::BindingResource::TextureView(&gpu_tex.view)
+
                 },
-                BindingResource::Sampler(tex_opt) => {
-                     let gpu_tex = if let Some(tex_arc) = tex_opt {
-                        let id = tex_arc.id;
-                        self.gpu_textures.get(&id).unwrap_or(&self.dummy_texture)
+                BindingResource::Sampler(handle_opt) => {
+                    let gpu_tex = if let Some(handle) = handle_opt {
+                        self.gpu_textures.get(*handle).unwrap_or(&self.dummy_texture)
                     } else { 
                         &self.dummy_texture 
                     };
@@ -488,13 +493,16 @@ impl ResourceManager {
     // Texture Logic
     // ========================================================================
 
-    pub fn add_or_update_texture(&mut self, texture: &Texture) {
-        let gpu_tex = self.gpu_textures.entry(texture.id).or_insert_with(|| {
-             GpuTexture::new(&self.device, &self.queue, texture)
-        });
-        
-        gpu_tex.last_used_frame = self.frame_index;
-        gpu_tex.update(&self.device, &self.queue, texture);
+    pub fn add_or_update_texture(&mut self, handle: TextureHandle, texture: &Texture) {
+        if let Some(gpu_tex) = self.gpu_textures.get_mut(handle) {
+            gpu_tex.last_used_frame = self.frame_index;
+            gpu_tex.update(&self.device, &self.queue, texture);
+        } else {
+            // 插入新资源
+            let mut gpu_tex = GpuTexture::new(&self.device, &self.queue, texture);
+            gpu_tex.last_used_frame = self.frame_index;
+            self.gpu_textures.insert(handle, gpu_tex);
+        }
     }
 
     pub fn prepare_global(&mut self, env: &WorldEnvironment) -> &GPUWorld {

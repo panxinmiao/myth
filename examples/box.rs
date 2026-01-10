@@ -30,11 +30,12 @@ impl App {
         let mut scene = Scene::new();
 
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
-        let texture = Arc::new(Texture::create_checkerboard("checker", 512, 512, 64));
+        let texture = Texture::create_checkerboard("checker", 512, 512, 64);
 
         let mut basic_mat = Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
-        basic_mat.map = Some(texture);
+        let text_handle = scene.add_texture_data(texture);
+        basic_mat.map = Some(text_handle);
 
         let geo_id = scene.add_geometry_data(geometry);
         let mat_id = scene.add_material_data(basic_mat.into());

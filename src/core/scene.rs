@@ -3,9 +3,12 @@ use glam::{Affine3A, Vec4};
 use bitflags::bitflags;
 use crate::core::node::Node;
 use crate::core::mesh::Mesh;
+use crate::core::geometry::Geometry;
+use crate::core::material::Material;
+use crate::core::texture::Texture;
 use crate::core::camera::Camera;
 use crate::core::light::{Light, LightType};
-use crate::core::assets::{AssetServer, GeometryHandle, MaterialHandle};
+use crate::core::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
 
 
 bitflags! {
@@ -209,12 +212,16 @@ impl Scene {
 
     // 现在的流程是：用户先创建 Geometry/Material 数据 -> 存入 assets 换取 Handle -> 创建 Mesh
     // 辅助方法：直接添加 Geometry 数据并返回 Handle
-    pub fn add_geometry_data(&mut self, geo: crate::core::geometry::Geometry) -> GeometryHandle {
+    pub fn add_geometry_data(&mut self, geo: Geometry) -> GeometryHandle {
         self.assets.add_geometry(geo)
     }
 
-    pub fn add_material_data(&mut self, mat: crate::core::material::Material) -> MaterialHandle {
+    pub fn add_material_data(&mut self, mat: Material) -> MaterialHandle {
         self.assets.add_material(mat)
+    }
+
+    pub fn add_texture_data(&mut self, tex: Texture) -> TextureHandle {
+        self.assets.add_texture(tex)
     }
 
     // 修改 add_mesh：它现在接受 Handle

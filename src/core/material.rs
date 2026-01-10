@@ -1,12 +1,11 @@
 use uuid::Uuid;
 use std::sync::atomic::{AtomicU64, Ordering};
 use glam::Vec4;
-use std::sync::{Arc};
 use bitflags::bitflags;
 
 use crate::core::buffer::{BufferRef};
 use crate::core::uniforms::{MeshBasicUniforms, MeshStandardUniforms};
-use crate::core::texture::Texture;
+use crate::core::assets::TextureHandle;
 
 // Shader 编译选项
 bitflags! {
@@ -34,7 +33,7 @@ pub struct MeshBasicMaterial {
     pub uniform_buffer: BufferRef,
     
     // 直接持有 Texture 引用，不再是 Uuid
-    pub map: Option<Arc<Texture>>, 
+    pub map: Option<TextureHandle>, 
 }
 
 impl MeshBasicMaterial {
@@ -68,12 +67,12 @@ pub struct MeshStandardMaterial {
     pub uniforms: MeshStandardUniforms,
     pub uniform_buffer: BufferRef,
     
-    pub map: Option<Arc<Texture>>,
-    pub normal_map: Option<Arc<Texture>>,
-    pub roughness_map: Option<Arc<Texture>>,
-    pub metalness_map: Option<Arc<Texture>>,
-    pub emissive_map: Option<Arc<Texture>>,
-    pub ao_map: Option<Arc<Texture>>,
+    pub map: Option<TextureHandle>,
+    pub normal_map: Option<TextureHandle>,
+    pub roughness_map: Option<TextureHandle>,
+    pub metalness_map: Option<TextureHandle>,
+    pub emissive_map: Option<TextureHandle>,
+    pub ao_map: Option<TextureHandle>,
 }
 
 impl MeshStandardMaterial {
@@ -108,7 +107,7 @@ impl Default for MeshStandardMaterial {
 pub struct MeshBasicMaterialBuilder {
     // Specific Properties
     color: Vec4,
-    map: Option<Arc<Texture>>,
+    map: Option<TextureHandle>,
 
     // Common Properties (默认值)
     name: Option<String>,
@@ -138,7 +137,7 @@ impl MeshBasicMaterialBuilder {
 
     // --- Specific Setters ---
     pub fn color(mut self, color: Vec4) -> Self { self.color = color; self }
-    pub fn map(mut self, map: Arc<Texture>) -> Self { self.map = Some(map); self }
+    pub fn map(mut self, map: TextureHandle) -> Self { self.map = Some(map); self }
 
     // --- Common Setters ---
     pub fn name(mut self, name: &str) -> Self { self.name = Some(name.into()); self }
@@ -175,12 +174,12 @@ pub struct MeshStandardMaterialBuilder {
     color: Vec4,
     roughness: f32,
     metalness: f32,
-    map: Option<Arc<Texture>>,
-    normal_map: Option<Arc<Texture>>,
-    roughness_map: Option<Arc<Texture>>,
-    metalness_map: Option<Arc<Texture>>,
-    emissive_map: Option<Arc<Texture>>,
-    ao_map: Option<Arc<Texture>>,
+    map: Option<TextureHandle>,
+    normal_map: Option<TextureHandle>,
+    roughness_map: Option<TextureHandle>,
+    metalness_map: Option<TextureHandle>,
+    emissive_map: Option<TextureHandle>,
+    ao_map: Option<TextureHandle>,
 
     // Common
     name: Option<String>,
@@ -215,12 +214,12 @@ impl MeshStandardMaterialBuilder {
     pub fn roughness(mut self, value: f32) -> Self { self.roughness = value; self }
     pub fn metalness(mut self, value: f32) -> Self { self.metalness = value; self }
     
-    pub fn map(mut self, map: Arc<Texture>) -> Self { self.map = Some(map); self }
-    pub fn normal_map(mut self, map: Arc<Texture>) -> Self { self.normal_map = Some(map); self }
-    pub fn roughness_map(mut self, map: Arc<Texture>) -> Self { self.roughness_map = Some(map); self }
-    pub fn metalness_map(mut self, map: Arc<Texture>) -> Self { self.metalness_map = Some(map); self }
-    pub fn emissive_map(mut self, map: Arc<Texture>) -> Self { self.emissive_map = Some(map); self }
-    pub fn ao_map(mut self, map: Arc<Texture>) -> Self { self.ao_map = Some(map); self }
+    pub fn map(mut self, map: TextureHandle) -> Self { self.map = Some(map); self }
+    pub fn normal_map(mut self, map: TextureHandle) -> Self { self.normal_map = Some(map); self }
+    pub fn roughness_map(mut self, map: TextureHandle) -> Self { self.roughness_map = Some(map); self }
+    pub fn metalness_map(mut self, map: TextureHandle) -> Self { self.metalness_map = Some(map); self }
+    pub fn emissive_map(mut self, map: TextureHandle) -> Self { self.emissive_map = Some(map); self }
+    pub fn ao_map(mut self, map: TextureHandle) -> Self { self.ao_map = Some(map); self }
 
     // --- Common Setters ---
     pub fn name(mut self, name: &str) -> Self { self.name = Some(name.into()); self }
