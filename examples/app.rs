@@ -17,7 +17,7 @@ use three::core::mesh::Mesh;
 
 /// 应用程序状态容器
 pub struct App {
-    window: Option<Arc<Window>>, // 使用 Arc<Window> 以便与 WGPU 兼容
+    window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
     scene: Scene,
     camera: Camera,
@@ -35,9 +35,23 @@ impl App {
             [-0.5, -0.5, 0.0],
             [0.5, -0.5, 0.0],
         ], wgpu::VertexFormat::Float32x3));
+        geometry.set_attribute("uv", Attribute::new_planar(&[
+            [0.5f32, 1.0],
+            [0.0, 0.0],
+            [1.0, 0.0],
+        ], wgpu::VertexFormat::Float32x2));
 
-        let material = Material::new_basic(Vec4::new(0.0, 1.0, 0.0, 1.0));
-        
+        let mut material = Material::new_basic(Vec4::new(0.0, 1.0, 0.0, 1.0));
+
+        let texture = three::core::texture::Texture::create_solid_color("red", [255, 0, 0, 255]);
+
+        material.data.as_any_mut().downcast_mut::<three::core::material::MeshBasicMaterial>()
+
+        .unwrap()
+        .map = Some(texture.id);
+
+        scene.add_texture(texture);
+    
         // 创建 Mesh 并加入场景
         let mesh = Mesh::new(None, Arc::new(std::sync::RwLock::new(geometry)), Arc::new(std::sync::RwLock::new(material)));
         scene.add_mesh(mesh, None);

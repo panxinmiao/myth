@@ -123,7 +123,7 @@ impl PipelineCache {
 
         gpu_material: &GPUMaterial, 
         object_data: &ObjectBindingData,
-        global_layout: &wgpu::BindGroupLayout,
+        gpu_world: &crate::renderer::resource_manager::GPUWorld,
 
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat, 
@@ -226,11 +226,13 @@ impl PipelineCache {
         let vs_code = ShaderGenerator::generate_vertex(
             &base_context,
             vertex_layout,
+            &gpu_world.binding_wgsl,
             &object_data.binding_wgsl,
             "mesh_basic.wgsl"
         );
         let fs_code = ShaderGenerator::generate_fragment(
             &base_context,
+            &gpu_world.binding_wgsl,
             &gpu_material.binding_wgsl,
             material.shader_name()
         );
@@ -249,7 +251,7 @@ impl PipelineCache {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[
-                global_layout,
+                &gpu_world.layout,
                 &gpu_material.layout, 
                 &object_data.layout 
             ],

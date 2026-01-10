@@ -3,34 +3,9 @@ use wgpu::{ShaderStages};
 use crate::core::buffer::BufferRef; 
 use crate::core::material::{MeshBasicMaterial, MeshStandardMaterial, Material};
 use crate::core::geometry::Geometry;
-use crate::core::uniforms::{MeshBasicUniforms, MeshStandardUniforms};
+use crate::core::world::WorldEnvironment;
+use crate::core::uniforms::*;
 use crate::renderer::resource_builder::ResourceBuilder;
-
-/// 定义绑定的具体类型 (Schema)
-// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-// pub enum BindingType {
-//     /// Uniform Buffer (通常用于材质参数，全局变量)
-//     UniformBuffer { 
-//         dynamic: bool,        // 是否开启动态偏移 (has_dynamic_offset)
-//         min_size: Option<u64> // 最小绑定大小 (min_binding_size)
-//     },
-    
-//     /// Storage Buffer (只读/读写，用于骨骼矩阵、粒子等)
-//     StorageBuffer { read_only: bool },
-    
-//     /// 纹理
-//     Texture {
-//         sample_type: wgpu::TextureSampleType,
-//         view_dimension: wgpu::TextureViewDimension,
-//         multisampled: bool,
-//     },
-    
-//     /// 采样器
-//     Sampler {
-//         type_: wgpu::SamplerBindingType,
-//     },
-// }
-
 
 /// 实际的绑定资源数据 (用于生成 BindGroup)
 /// 层只持有 ID 或 数据引用，不持有 GPU 句柄
@@ -79,7 +54,7 @@ impl Bindings for MeshBasicMaterial {
     fn define_bindings(&self, builder: &mut ResourceBuilder) {
         // 1. Uniform Buffer
         builder.add_uniform::<MeshBasicUniforms>(
-            "u_material", 
+            "material", 
             &self.uniform_buffer, 
             ShaderStages::VERTEX | ShaderStages::FRAGMENT
         );
@@ -95,7 +70,7 @@ impl Bindings for MeshStandardMaterial {
     fn define_bindings(&self, builder: &mut ResourceBuilder) {
         // 1. Uniform Buffer
         builder.add_uniform::<MeshStandardUniforms>(
-            "u_material", 
+            "material", 
             &self.uniform_buffer, 
             ShaderStages::VERTEX | ShaderStages::FRAGMENT
         );
@@ -139,3 +114,25 @@ impl Bindings for Geometry {
        
     }
 }
+
+impl Bindings for WorldEnvironment {
+    fn define_bindings(&self, builder: &mut ResourceBuilder) {
+        // Binding 0: Frame Uniforms (Vertex + Fragment)
+        builder.add_uniform::<GlobalFrameUniforms>(
+            "global", 
+            &self.frame_uniforms, // 传入 BufferRef
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT
+        );
+
+        // Binding 1: Light Uniforms (Fragment only)
+        builder.add_uniform::<GlobalLightUniforms>(
+            "lights",
+            &self.light_uniforms,
+            wgpu::ShaderStages::FRAGMENT
+        );
+    }
+
+    // 未来可以在这里添加：
+    // builder.add_texture("env_map", self.env_map_id, ...)
+}
+

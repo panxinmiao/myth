@@ -11,13 +11,14 @@ use core::ops::Range;
 use crate::core::geometry::{Geometry};
 use crate::core::material::Material;
 use crate::core::texture::Texture;
+use crate::core::world::WorldEnvironment;
 use crate::core::buffer::DataBuffer;
 
 use crate::renderer::binding::{BindingResource, Bindings};
 use crate::renderer::resource_builder::{ResourceBuilder};
-use super::vertex_layout::{self, GeneratedVertexLayout};
-use super::gpu_buffer::GpuBuffer;
-use super::gpu_texture::GpuTexture;
+use crate::renderer::vertex_layout::{self, GeneratedVertexLayout};
+use crate::renderer::gpu_buffer::GpuBuffer;
+use crate::renderer::gpu_texture::GpuTexture;
 
 // 全局资源 ID 生成器
 static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -58,6 +59,15 @@ pub struct GPUMaterial {
     pub last_used_frame: u64,
 }
 
+// 场景全局环境的 GPU 资源
+pub struct GPUWorld {
+    pub bind_group: wgpu::BindGroup,
+    pub bind_group_id: u64,
+    pub layout: Arc<wgpu::BindGroupLayout>,
+    pub binding_wgsl: String, 
+    pub last_used_frame: u64,
+}
+
 // ============================================================================
 // Resource Manager
 // ============================================================================
@@ -72,6 +82,7 @@ pub struct ResourceManager {
 
     geometries: HashMap<Uuid, GPUGeometry>,
     materials: HashMap<Uuid, GPUMaterial>,
+    worlds: HashMap<Uuid, GPUWorld>,
     
     // Layout 缓存: Hash(BindingDescriptors) -> Layout
     // 这样不同材质如果结构相同，可以复用 Layout
@@ -95,6 +106,7 @@ impl ResourceManager {
             buffers: HashMap::new(),
             geometries: HashMap::new(),
             materials: HashMap::new(),
+            worlds: HashMap::new(),
             textures: HashMap::new(),
             layout_cache: HashMap::new(),
             dummy_texture,
@@ -464,7 +476,56 @@ impl ResourceManager {
         gpu_tex.update(&self.device, &self.queue, texture);
     }
 
+    pub fn prepare_global(&mut self, env: &WorldEnvironment) -> &GPUWorld {
+        
+        // [A] 上传 Buffer 数据 (CPU -> GPU)
+        // 注意：prepare_buffer 接受 &DataBuffer，我们需要通过 read() 获取
+        {
+            let frame_buf = env.frame_uniforms.read();
+            self.prepare_buffer(&frame_buf);
+        }
+        {
+            let light_buf = env.light_uniforms.read();
+            self.prepare_buffer(&light_buf);
+        }
 
+        // [B] 检查或创建 BindGroup
+        // 简化策略：只要 id 存在就不重建 (Global Layout 很少变)
+        if !self.worlds.contains_key(&env.id) {
+            
+            // 1. 定义绑定
+            let mut builder = ResourceBuilder::new();
+            env.define_bindings(&mut builder); // 自动收集 frame 和 light buffer
+
+            // 2. 获取 Layout (复用缓存机制)
+            let layout = self.get_or_create_layout(&builder.layout_entries);
+
+            // 3. 创建 BindGroup
+            let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
+
+            // 4. 生成 WGSL (Group 0)
+            let binding_wgsl = builder.generate_wgsl(0); 
+
+            let gpu_world = GPUWorld {
+                bind_group,
+                bind_group_id: bg_id,
+                layout,
+                binding_wgsl,
+                last_used_frame: self.frame_index,
+            };
+
+            self.worlds.insert(env.id, gpu_world);
+        }
+
+        let gpu_world = self.worlds.get_mut(&env.id).unwrap();
+        gpu_world.last_used_frame = self.frame_index;
+        gpu_world
+    }
+
+    // 获取 World 资源的辅助方法
+    pub fn get_world(&self, id: Uuid) -> Option<&GPUWorld> {
+        self.worlds.get(&id)
+    }
     // ========================================================================
     // Garbage Collection
     // ========================================================================

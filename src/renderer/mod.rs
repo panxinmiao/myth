@@ -11,12 +11,11 @@ mod resource_builder;
 mod binding;
 
 use std::sync::Arc;
-use wgpu::util::DeviceExt;
 
 use crate::core::scene::Scene;
-use crate::core::camera::{Camera, Frustum};
+use crate::core::camera::{Camera};
 use crate::core::mesh::Mesh;
-use crate::core::uniforms::{GlobalFrameUniforms, DynamicModelUniforms, Mat3A};
+use crate::core::uniforms::{DynamicModelUniforms, Mat3A};
 
 use self::resource_manager::ResourceManager;
 use self::pipeline::PipelineCache;
@@ -24,6 +23,7 @@ use self::object_manager::{ObjectManager, ObjectBindingData};
 use self::tracked_render_pass::TrackedRenderPass;
 
 use crate::core::uuid_to_u64;
+use crate::core::world::WorldEnvironment;
 
 pub struct Renderer {
     pub device: Arc<wgpu::Device>,
@@ -39,9 +39,10 @@ pub struct Renderer {
     // model_buffer_manager: DynamicBuffer, // Group 2 管理器
 
     // 全局资源 (Group 0)
-    global_uniform_buffer: wgpu::Buffer,
-    global_bind_group: wgpu::BindGroup,
-    global_bind_group_layout: wgpu::BindGroupLayout, // 公开给 PipelineCache 使用
+    pub world: WorldEnvironment,
+    // global_uniform_buffer: wgpu::Buffer,
+    // global_bind_group: wgpu::BindGroup,
+    // global_bind_group_layout: wgpu::BindGroupLayout, // 公开给 PipelineCache 使用
 
     // 深度缓冲
     depth_texture_view: wgpu::TextureView,
@@ -76,42 +77,13 @@ impl Renderer {
         let config = surface.get_default_config(&adapter, width, height).unwrap();
         surface.configure(&device, &config);
 
-        // 1. 初始化 Global Uniforms (Group 0)
-        let global_uniforms = GlobalFrameUniforms::default();
-        let global_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label: Some("Global Uniforms"),
-            contents: bytemuck::bytes_of(&global_uniforms),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        });
-
-        let global_bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Global BindGroup Layout"),
-            entries: &[wgpu::BindGroupLayoutEntry {
-                binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            }],
-        });
-
-        let global_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Global BindGroup"),
-            layout: &global_bind_group_layout,
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: global_buffer.as_entire_binding(),
-            }],
-        });
-
         let mut resource_manager = ResourceManager::new(device.clone(), queue.clone());
 
         // 2. 初始化 Model Manager (Group 2)
         // let model_buffer_manager = DynamicBuffer::new(&mut resource_manager, "Model");
         let object_manager = ObjectManager::new(&mut resource_manager);
+
+        let world = WorldEnvironment::new();
 
         // 3. 深度缓冲
         let depth_texture_view = Self::create_depth_texture(&device, &config);
@@ -125,9 +97,7 @@ impl Renderer {
             resource_manager,
             pipeline_cache: PipelineCache::new(),
             object_manager,
-            global_uniform_buffer: global_buffer,
-            global_bind_group,
-            global_bind_group_layout,
+            world,
             depth_texture_view,
         }
     }
@@ -168,7 +138,8 @@ impl Renderer {
         // 1. 更新场景矩阵
         scene.update_matrix_world();
 
-        // 2. 更新相机 Uniform
+        self.world.update(camera, scene);
+
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
             Err(wgpu::SurfaceError::Lost) => {
@@ -180,24 +151,9 @@ impl Renderer {
                 return;
             }
         };
-
+        
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        let view_matrix = camera.get_view_matrix(Some(scene));
-        let proj_matrix = camera.get_projection_matrix();
-
-        let vp_matrix = proj_matrix * view_matrix;
-        let vp_matrix_inverse = vp_matrix.inverse();
-
-        let frustum = Frustum::from_matrix(vp_matrix);
-
-        let globals = GlobalFrameUniforms {
-            view_projection: vp_matrix,
-            view_projection_inverse: vp_matrix_inverse,
-            view_matrix: view_matrix,
-        };
-        self.queue.write_buffer(&self.global_uniform_buffer, 0, bytemuck::bytes_of(&globals));
-
+        let frustum = camera.get_frustum(Some(scene));
 
         // =========================================================
         // 3. 收集 (Collect)
@@ -301,6 +257,9 @@ impl Renderer {
         // =========================================================
         // Phase A: 资源准备 (Mutable Pass)
         // =========================================================
+
+        self.resource_manager.prepare_global(&self.world);
+
         for item in &render_list {
             let geometry = item.mesh.geometry.read().unwrap();
             let material = item.mesh.material.read().unwrap();
@@ -317,6 +276,7 @@ impl Renderer {
             let object_data = self.object_manager.prepare_bind_group(&mut self.resource_manager, &geometry);
             let gpu_material = self.resource_manager.get_material(material.id).unwrap();
             let gpu_geometry =  self.resource_manager.get_geometry(geometry.id).unwrap();
+            let gpu_world = self.resource_manager.get_world(self.world.id).unwrap();
             
             // 3. 更新 Pipeline (需要先拿到刚才 prepare 好的 GPU 资源)
             let pipeline = self.pipeline_cache.get_or_create(
@@ -326,7 +286,7 @@ impl Renderer {
                 &scene,
                 gpu_material,
                 &object_data,
-                &self.global_bind_group_layout,
+                &gpu_world,
                 self.config.format,
                 wgpu::TextureFormat::Depth32Float,
                 &gpu_geometry.layout_info, // 传入 Vertex Layout
@@ -346,8 +306,6 @@ impl Renderer {
         // Phase B: 渲染录制 (Immutable Pass)
         // 此时 resource_manager 和 pipeline_cache 都是只读的
         // =========================================================
-
-
         
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
@@ -383,7 +341,12 @@ impl Renderer {
             let mut tracked_pass = TrackedRenderPass::new(raw_pass);
 
             // 绑定永远不变的 Global (Group 0)
-            tracked_pass.set_bind_group(0, 0, &self.global_bind_group, &[]);
+
+            if let Some(gpu_world) = self.resource_manager.get_world(self.world.id) {
+                // 绑定 Group 0
+                tracked_pass.set_bind_group(0, gpu_world.bind_group_id, &gpu_world.bind_group, &[]);
+            }
+            // tracked_pass.set_bind_group(0, 0, &gpu_world.bind_group, &[]);
 
             // 获取 stride，确保安全
             let dynamic_stride = std::mem::size_of::<DynamicModelUniforms>() as u32;

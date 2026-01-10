@@ -104,7 +104,7 @@ impl ObjectManager {
         // Binding 0: Model Matrix (Dynamic Uniform)
         // 复用 ResourceBuilder，它生成的 layout_entries 会自动兼容 RM 的缓存机制
         builder.add_dynamic_uniform::<DynamicModelUniforms>(
-            "u_model", 
+            "model", 
             &self.model_buffer, 
             std::mem::size_of::<DynamicModelUniforms>() as u64, 
             ShaderStages::VERTEX

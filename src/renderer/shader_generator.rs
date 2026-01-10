@@ -83,6 +83,7 @@ impl ShaderGenerator {
     pub fn generate_vertex(
         global_context: &ShaderContext,
         geometry_layout: &GeneratedVertexLayout,
+        global_binding_code: &str,
         object_binding_code: &str,
         template_name: &str,
     ) -> String {
@@ -102,8 +103,9 @@ impl ShaderGenerator {
         binding_code.push_str("\n");
 
         // var 定义
+        binding_code.push_str(global_binding_code);
+        binding_code.push_str("\n");
         binding_code.push_str(object_binding_code);
-
         context.insert("binding_code".to_string(), Value::String(binding_code));
 
 
@@ -124,6 +126,7 @@ impl ShaderGenerator {
     // ========================================================================
     pub fn generate_fragment(
         global_context: &ShaderContext,
+        global_binding_code: &str,
         material_binding_code: &str,
         template_name: &str,
     ) -> String {
@@ -134,7 +137,14 @@ impl ShaderGenerator {
         context.insert("SHADER_STAGE".to_string(), Value::String("FRAGMENT".to_string()));
 
         // 2. Bindings 代码
-        context.insert("binding_code".to_string(), Value::String(material_binding_code.to_string()));
+        let mut binding_code = String::new();
+        binding_code.push_str("\n");
+
+        // var 定义
+        binding_code.push_str(global_binding_code);
+        binding_code.push_str("\n");
+        binding_code.push_str(material_binding_code);
+        context.insert("binding_code".to_string(), Value::String(binding_code));
 
         // 3. 渲染模板
         let fs_template = env.get_template(template_name)

@@ -84,7 +84,7 @@ impl ResourceBuilder {
     }
 
     /// 添加 Texture (通过 UUID)
-    pub fn add_texture(&mut self, _name: &str, texture_id: Option<Uuid>, sample_type: wgpu::TextureSampleType, view_dimension: wgpu::TextureViewDimension, visibility: ShaderStages) {
+    pub fn add_texture(&mut self, name: &str, texture_id: Option<Uuid>, sample_type: wgpu::TextureSampleType, view_dimension: wgpu::TextureViewDimension, visibility: ShaderStages) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -97,13 +97,13 @@ impl ResourceBuilder {
         });
 
         self.resources.push(BindingResource::Texture(texture_id));
-        self.names.push(_name.to_string());
+        self.names.push(name.to_string());
         self.struct_generators.push(None);
         self.next_binding_index += 1;
     }
 
     /// 添加 Sampler (通过 UUID)
-    pub fn add_sampler(&mut self, _name: &str, texture_id: Option<Uuid>, sampler_type: wgpu::SamplerBindingType, visibility: ShaderStages) {
+    pub fn add_sampler(&mut self, name: &str, texture_id: Option<Uuid>, sampler_type: wgpu::SamplerBindingType, visibility: ShaderStages) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -112,12 +112,12 @@ impl ResourceBuilder {
         });
 
         self.resources.push(BindingResource::Sampler(texture_id));
-        self.names.push(_name.to_string());
+        self.names.push(name.to_string());
         self.struct_generators.push(None);
         self.next_binding_index += 1;
     }
 
-    pub fn _add_storage_buffer(&mut self, _name: &str, buffer: &BufferRef, read_only: bool, visibility: ShaderStages) {
+    pub fn _add_storage_buffer(&mut self, name: &str, buffer: &BufferRef, read_only: bool, visibility: ShaderStages) {
         // 1. Layout Entry
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
@@ -141,7 +141,7 @@ impl ResourceBuilder {
             size: None,
         });
 
-        self.names.push(_name.to_string());
+        self.names.push(name.to_string());
         self.struct_generators.push(None);
         self.next_binding_index += 1;
     }
@@ -171,7 +171,7 @@ impl ResourceBuilder {
                 wgpu::BindingType::Buffer { ty, .. } => {
                     match ty {
                         wgpu::BufferBindingType::Uniform => {
-                            format!("@group({}) @binding({}) var<uniform> {}: {};", group_index, binding_index, name, struct_type_name)
+                            format!("@group({}) @binding({}) var<uniform> u_{}: {};", group_index, binding_index, name, struct_type_name)
                         },
                         wgpu::BufferBindingType::Storage { read_only } => {
                             let access = if read_only { "read" } else { "read_write" };
@@ -182,7 +182,7 @@ impl ResourceBuilder {
                             } else {
                                 "array<f32>"
                             };
-                            format!("@group({}) @binding({}) var<storage, {}> {}: {};", group_index, binding_index, access, name, type_str)
+                            format!("@group({}) @binding({}) var<storage, {}> st_{}: {};", group_index, binding_index, access, name, type_str)
                         },
                     }
                 },

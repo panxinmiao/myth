@@ -96,6 +96,11 @@ impl Camera {
         self.get_view_projection_matrix(scene).inverse()
     }
 
+    pub fn get_frustum(&self, scene: Option<&Scene>) -> Frustum {
+        let vp_matrix = self.get_view_projection_matrix(scene);
+        Frustum::from_matrix(vp_matrix)
+    }
+
 
     pub fn look_at(&mut self, target: Vec3, up: Vec3) {
         let position = Vec3::from(self.transform.translation);
