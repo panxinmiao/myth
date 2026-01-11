@@ -10,7 +10,7 @@ pub mod node;
 pub mod scene;
 pub mod camera;
 pub mod light;
-pub mod enviroment;
+pub mod environment;
 
 // 重新导出常用类型
 pub use node::Node;

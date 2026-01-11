@@ -3,12 +3,8 @@ use glam::{Affine3A, Vec4};
 use bitflags::bitflags;
 use crate::scene::node::Node;
 use crate::resources::mesh::Mesh;
-use crate::resources::geometry::Geometry;
-use crate::resources::material::Material;
-use crate::resources::texture::Texture;
 use crate::scene::camera::Camera;
 use crate::scene::light::{Light, LightType};
-use crate::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
 
 
 bitflags! {
@@ -26,10 +22,11 @@ pub struct Scene {
     // ====组件/资源池====
     pub meshes: Arena<Mesh>,
     pub cameras: Arena<Camera>,
-
     pub lights: Arena<Light>,
 
-    pub assets: AssetServer,
+    // 环境和全局设置
+    pub environment: crate::scene::environment::Environment,
+    
     // 暂时简单用 RGBA，后面可以用 Texture
     pub background: Option<Vec4>,
 }
@@ -43,7 +40,7 @@ impl Scene {
             cameras: Arena::new(),
             lights: Arena::new(),
 
-            assets: AssetServer::new(),
+            environment: crate::scene::environment::Environment::new(),
             background: Some(Vec4::new(0.0, 0.0, 0.0, 1.0)),
         }
     }
@@ -207,22 +204,8 @@ impl Scene {
 
 
     // === 资源管理 API ===
-
-    // === 修改资源添加 API ===
-
-    // 现在的流程是：用户先创建 Geometry/Material 数据 -> 存入 assets 换取 Handle -> 创建 Mesh
-    // 辅助方法：直接添加 Geometry 数据并返回 Handle
-    pub fn add_geometry_data(&mut self, geo: Geometry) -> GeometryHandle {
-        self.assets.add_geometry(geo)
-    }
-
-    pub fn add_material_data(&mut self, mat: Material) -> MaterialHandle {
-        self.assets.add_material(mat)
-    }
-
-    pub fn add_texture_data(&mut self, tex: Texture) -> TextureHandle {
-        self.assets.add_texture(tex)
-    }
+    // 注意：Scene 不再直接持有 AssetServer
+    // 资源添加请在外部 App 中进行，获取 Handle 后创建 Mesh
 
     // 修改 add_mesh：它现在接受 Handle
     pub fn add_mesh(&mut self, mesh: Mesh, parent: Option<Index>) -> &mut Mesh {

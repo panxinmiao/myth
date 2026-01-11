@@ -10,7 +10,7 @@ use core::ops::Range;
 
 use crate::resources::geometry::Geometry;
 use crate::resources::texture::Texture;
-use crate::scene::enviroment::Environment;
+use crate::scene::environment::Environment;
 use crate::resources::buffer::BufferRef;
 use crate::resources::image::Image;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};

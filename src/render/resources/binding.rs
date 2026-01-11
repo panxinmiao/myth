@@ -2,7 +2,7 @@ use crate::resources::buffer::BufferRef;
 use crate::assets::TextureHandle;
 use crate::resources::material::{Material, MaterialData};
 use crate::resources::geometry::Geometry;
-use crate::scene::enviroment::Environment;
+use crate::scene::environment::Environment;
 use crate::resources::uniforms::*;
 use crate::render::resources::builder::ResourceBuilder;
 

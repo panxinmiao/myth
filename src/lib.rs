@@ -20,3 +20,4 @@ pub use resources::{Mesh, Material, Texture, Image, Geometry};
 pub use assets::AssetServer;
 pub use scene::{Node, Scene, Camera, Light};
 pub use render::Renderer;
+pub use app::App;
