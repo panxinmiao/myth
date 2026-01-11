@@ -1,4 +1,5 @@
-use thunderdome::{Arena, Index};
+use thunderdome::{Arena};
+use slotmap::SlotMap;
 use glam::{Affine3A, Vec4}; 
 use bitflags::bitflags;
 use crate::scene::node::Node;
@@ -6,6 +7,7 @@ use crate::resources::mesh::Mesh;
 use crate::scene::camera::Camera;
 use crate::scene::light::{Light, LightType};
 
+use crate::scene::{NodeIndex, MeshKey, CameraKey, LightKey};
 
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -17,12 +19,12 @@ bitflags! {
 
 pub struct Scene {
     pub nodes: Arena<Node>,
-    pub root_nodes: Vec<Index>,
+    pub root_nodes: Vec<NodeIndex>,
 
     // ====组件/资源池====
-    pub meshes: Arena<Mesh>,
-    pub cameras: Arena<Camera>,
-    pub lights: Arena<Light>,
+    pub meshes: SlotMap<MeshKey, Mesh>,
+    pub cameras: SlotMap<CameraKey, Camera>,
+    pub lights: SlotMap<LightKey, Light>,
 
     // 环境和全局设置
     pub environment: crate::scene::environment::Environment,
@@ -36,9 +38,9 @@ impl Scene {
         Self {
             nodes: Arena::new(),
             root_nodes: Vec::new(),
-            meshes: Arena::new(),
-            cameras: Arena::new(),
-            lights: Arena::new(),
+            meshes: SlotMap::with_key(),
+            cameras: SlotMap::with_key(),
+            lights: SlotMap::with_key(),
 
             environment: crate::scene::environment::Environment::new(),
             background: Some(Vec4::new(0.0, 0.0, 0.0, 1.0)),
@@ -51,13 +53,13 @@ impl Scene {
     }
 
     /// 添加一个节点到场景 (默认放在根节点)
-    pub fn add_node(&mut self, node: Node) -> Index {
+    pub fn add_node(&mut self, node: Node) -> NodeIndex {
         let idx = self.nodes.insert(node);
         self.root_nodes.push(idx);
         idx
     }
 
-    pub fn add_to_parent(&mut self, child: Node, parent_idx: Index) -> Index {
+    pub fn add_to_parent(&mut self, child: Node, parent_idx: NodeIndex) -> NodeIndex {
         let idx = self.nodes.insert(child);
 
         // 建立父子关系
@@ -72,7 +74,7 @@ impl Scene {
     }
 
     /// 移除节点 (递归移除所有子节点)
-    pub fn remove_node(&mut self, idx: Index) {
+    pub fn remove_node(&mut self, idx: NodeIndex) {
         // 1. 先把它的 children 列表拿出来，避免借用冲突
         let children = if let Some(node) = self.nodes.get(idx) {
             node.children.clone()
@@ -104,16 +106,27 @@ impl Scene {
         }
 
         // 3. === 清理组件 ===
-        self.meshes.remove(idx);
-        self.cameras.remove(idx);
-        self.lights.remove(idx);
+        if let Some(node) = self.nodes.get(idx) {
+            // Mesh
+            if let Some(mesh_idx) = node.mesh {
+                self.meshes.remove(mesh_idx);
+            }
+            // Camera
+            if let Some(cam_idx) = node.camera {
+                self.cameras.remove(cam_idx);
+            }
+            // Light
+            if let Some(light_idx) = node.light {
+                self.lights.remove(light_idx);
+            }
+        }
 
         // 4. 彻底删除数据
         self.nodes.remove(idx);
     }
 
     /// 核心逻辑：建立父子关系 (Attach)
-    pub fn attach(&mut self, child_idx: Index, parent_idx: Index) {
+    pub fn attach(&mut self, child_idx: NodeIndex, parent_idx: NodeIndex) {
         if child_idx == parent_idx {{
             log::warn!("Cannot attach node to itself!");
             return;
@@ -150,12 +163,12 @@ impl Scene {
     }
 
     /// 获取只读引用
-    pub fn get_node(&self, idx: Index) -> Option<&Node> {
+    pub fn get_node(&self, idx: NodeIndex) -> Option<&Node> {
         self.nodes.get(idx)
     }
 
     /// 获取可变引用 (用于修改 TRS)
-    pub fn get_node_mut(&mut self, idx: Index) -> Option<&mut Node> {
+    pub fn get_node_mut(&mut self, idx: NodeIndex) -> Option<&mut Node> {
         self.nodes.get_mut(idx)
     }
 
@@ -176,7 +189,7 @@ impl Scene {
 
     fn update_transform_recursive(
         &mut self, 
-        node_idx: Index, 
+        node_idx: NodeIndex, 
         parent_world_matrix: Affine3A, // 注意类型变化
         parent_changed: bool
     ) {
@@ -206,19 +219,19 @@ impl Scene {
 
 
     // === 资源管理 API ===
-    pub fn add_mesh(&mut self, mesh: Mesh) -> Index {
+    pub fn add_mesh(&mut self, mesh: Mesh) -> NodeIndex {
         let mut node = crate::scene::node::Node::new(&mesh.name);
         node.mesh = Some(self.meshes.insert(mesh));
         self.add_node(node)
     }
 
-    pub fn add_mesh_to_parent(&mut self, mesh: Mesh, parent: Index) -> Index {
+    pub fn add_mesh_to_parent(&mut self, mesh: Mesh, parent: NodeIndex) -> NodeIndex {
         let mut node = crate::scene::node::Node::new(&mesh.name);
         node.mesh = Some(self.meshes.insert(mesh));
         self.add_to_parent(node, parent)
     }
 
-    pub fn add_camera(&mut self, camera: Camera) ->  Index {
+    pub fn add_camera(&mut self, camera: Camera) ->  NodeIndex {
         // 1. 创建 Node
         let mut node = Node::new("Camera");
 
@@ -229,7 +242,7 @@ impl Scene {
 
     }
 
-    pub fn add_camera_to_parent(&mut self, camera: Camera, parent: Index) -> Index {
+    pub fn add_camera_to_parent(&mut self, camera: Camera, parent: NodeIndex) -> NodeIndex {
         let mut node = Node::new("Camera");
         node.camera = Some(self.cameras.insert(camera));
         self.add_to_parent(node, parent)
@@ -257,7 +270,7 @@ impl Scene {
         }
     }
 
-    pub fn add_light(&mut self, light: Light) -> Index {
+    pub fn add_light(&mut self, light: Light) -> NodeIndex {
         // 1. 创建 Node
         let mut node = Node::new("Light");
 
@@ -267,7 +280,7 @@ impl Scene {
         self.add_node(node)
     }
 
-    pub fn add_light_to_parent(&mut self, light: Light, parent: Index) -> Index {
+    pub fn add_light_to_parent(&mut self, light: Light, parent: NodeIndex) -> NodeIndex {
         let mut node = Node::new("Light");
         node.light = Some(self.lights.insert(light));
         self.add_to_parent(node, parent)
@@ -309,7 +322,7 @@ impl Scene {
 pub struct NodeBuilder<'a> {
     scene: &'a mut Scene,
     node: Node, // 暂存正在构建的 Node 数据
-    parent: Option<Index>, // 暂存父节点 ID
+    parent: Option<NodeIndex>, // 暂存父节点 ID
 }
 
 impl<'a> NodeBuilder<'a> {
@@ -334,21 +347,21 @@ impl<'a> NodeBuilder<'a> {
     }
 
     /// 设置父节点
-    pub fn with_parent(mut self, parent: Index) -> Self {
+    pub fn with_parent(mut self, parent: NodeIndex) -> Self {
         self.parent = Some(parent);
         self
     }
 
     /// 关联 Mesh (传入 Mesh 句柄)
-    pub fn with_mesh(mut self, mesh_handle: Index) -> Self {
-        self.node.mesh = Some(mesh_handle);
+    pub fn with_mesh(mut self, mesh: crate::scene::MeshKey) -> Self {
+        self.node.mesh = Some(mesh);
         self
     }
 
     // === 终结方法 ===
 
     /// 完成构建，将 Node 插入 Scene，返回 Index
-    pub fn build(self) -> Index {
+    pub fn build(self) -> NodeIndex {
         // 1. 插入 Node Arena
         let node_idx = self.scene.nodes.insert(self.node);
 

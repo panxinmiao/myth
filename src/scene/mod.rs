@@ -17,3 +17,15 @@ pub use node::Node;
 pub use scene::Scene;
 pub use camera::{Camera, ProjectionType};
 pub use light::{Light, LightType};
+
+
+use thunderdome::Index;
+pub type NodeIndex = Index;
+
+use slotmap::new_key_type;
+
+new_key_type! {
+    pub struct MeshKey;
+    pub struct CameraKey;
+    pub struct LightKey;
+}

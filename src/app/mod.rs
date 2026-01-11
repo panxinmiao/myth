@@ -11,9 +11,7 @@ use winit::window::{Window, WindowId};
 use crate::assets::AssetServer;
 use crate::scene::Scene;
 use crate::render::Renderer;
-use thunderdome::Index;
-
-pub type NodeId = Index;
+use crate::scene::NodeIndex;
 
 /// 更新回调函数类型
 pub type UpdateFn = Box<dyn FnMut(&mut Scene, &AssetServer, f32)>;
@@ -28,7 +26,7 @@ pub struct App {
     pub scene: Scene,
 
     // 当前激活的相机节点 ID
-    pub active_camera: Option<NodeId>,
+    pub active_camera: Option<NodeIndex>,
 
     // 自定义更新回调
     update_fn: Option<UpdateFn>,
@@ -165,6 +163,29 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(physical_size) => {
                 if let Some(renderer) = &mut self.renderer {
                     renderer.resize(physical_size.width, physical_size.height);
+                }
+
+
+                if physical_size.height > 0 {
+                    let new_aspect = physical_size.width as f32 / physical_size.height as f32;
+                    
+                    // 为了避开借用检查器 (Cannot borrow `scene.cameras` as mutable because `scene` is also borrowed as immutable)
+                    // 我们分两步走：
+                    
+                    // A. 先获取 Camera 的索引 (ID)
+                    let camera_idx = self.active_camera
+                        .and_then(|node_id| self.scene.get_node(node_id)) // 借用 scene.nodes
+                        .and_then(|node| node.camera); // 复制出 camera index
+
+
+                    // B. 再获取 Camera 的可变引用并修改
+                    if let Some(idx) = camera_idx {
+                        if let Some(camera) = self.scene.cameras.get_mut(idx) { // 借用 scene.cameras
+                            camera.aspect = new_aspect;
+                            // 重新计算投影矩阵
+                            camera.update_projection_matrix();
+                        }
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {

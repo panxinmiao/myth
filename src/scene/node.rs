@@ -1,6 +1,6 @@
 use glam::{Affine3A, Mat4, Quat, Vec3, Mat3, EulerRot};
 use uuid::Uuid;
-use thunderdome::Index;
+use crate::scene::{NodeIndex, MeshKey, CameraKey, LightKey};
 
 #[derive(Debug, Clone)]
 pub struct Node {
@@ -9,13 +9,13 @@ pub struct Node {
     pub name: String,
     
     // === 场景图结构 ===
-    pub parent: Option<Index>,
-    pub children: Vec<Index>,
+    pub parent: Option<NodeIndex>,
+    pub children: Vec<NodeIndex>,
 
     // === 组件关联 ===
-    pub mesh: Option<Index>,   // 指向 meshes Arena 中的索引
-    pub camera: Option<Index>, // 指向 cameras Arena 中的索引
-    pub light: Option<Index>,  // 指向 lights Arena 中的索引
+    pub mesh: Option<MeshKey>, 
+    pub camera: Option<CameraKey>,
+    pub light: Option<LightKey>, 
 
     // 变换属性 (TRS)
     pub position: Vec3,
