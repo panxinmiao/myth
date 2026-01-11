@@ -1,11 +1,11 @@
 use std::collections::HashMap;
-use std::sync::Arc;
-use uuid::Uuid;
 use md5;
 
 use crate::core::geometry::{Geometry, GeometryFeatures};
 use crate::core::material::{Material, MaterialFeatures};
 use crate::core::scene::SceneFeatures;
+use crate::core::assets::{GeometryHandle, MaterialHandle};
+
 use crate::renderer::shader_generator::ShaderGenerator;
 use crate::renderer::shader_generator::ShaderContext;
 use crate::renderer::shader_generator::ShaderCompilationOptions;
@@ -46,12 +46,12 @@ pub struct PipelineKey {
 /// L1 缓存 Key: 基于 ID 和版本号 (极快，无堆分配)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 struct FastPipelineKey {
-    material_id: Uuid,
+    material_handle: MaterialHandle,
     material_version: u64,
-    geometry_id: Uuid,     // 逻辑 ID
-    geometry_version: u64, // 布局版本
-    topology: wgpu::PrimitiveTopology, // 拓扑结构也可能变化
+    geometry_handle: GeometryHandle, 
+    geometry_version: u64, 
 
+    topology: wgpu::PrimitiveTopology, // 拓扑结构也可能变化
     scene_hash: u64, // 场景状态哈希
 }
 
@@ -64,11 +64,11 @@ struct ShaderModuleKey {
 
 pub struct PipelineCache {
     // L1: 快速查找 (命中率 99%+)
-    fast_cache: HashMap<FastPipelineKey, (Arc<wgpu::RenderPipeline>, u16)>,
+    fast_cache: HashMap<FastPipelineKey, (wgpu::RenderPipeline, u16)>,
     // L2: 规范查找 (用于去重)
-    canonical_cache: HashMap<PipelineKey, (Arc<wgpu::RenderPipeline>, u16)>,
+    canonical_cache: HashMap<PipelineKey, (wgpu::RenderPipeline, u16)>,
     // Shader Module 缓存 (避免重复创建)
-    module_cache: HashMap<ShaderModuleKey, Arc<wgpu::ShaderModule>>,
+    module_cache: HashMap<ShaderModuleKey, wgpu::ShaderModule>,
     next_id: u16, // 下一个 Pipeline ID
 }
 
@@ -89,7 +89,7 @@ impl PipelineCache {
         code: &str, 
         stage: wgpu::ShaderStages,
         label: Option<&str>,
-    ) -> Arc<wgpu::ShaderModule> {
+    ) -> wgpu::ShaderModule {
 
         let code_hash = format!("{:x}", md5::compute(code));
         let key = ShaderModuleKey {
@@ -101,10 +101,10 @@ impl PipelineCache {
             return module.clone();
         }
 
-        let module = Arc::new(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label,
             source: wgpu::ShaderSource::Wgsl(code.into()),
-        }));
+        });
 
         self.module_cache.insert(key, module.clone());
         module
@@ -115,7 +115,9 @@ impl PipelineCache {
     pub fn get_or_create(
         &mut self,
         device: &wgpu::Device,
+        material_handle: MaterialHandle,
         material: &Material,
+        geometry_handle: GeometryHandle,
         geometry: &Geometry,
         scene: &crate::core::scene::Scene,
 
@@ -126,7 +128,7 @@ impl PipelineCache {
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat, 
         vertex_layout: &GeneratedVertexLayout, 
-    ) -> (Arc<wgpu::RenderPipeline>, u16) {
+    ) -> (wgpu::RenderPipeline, u16) {
         
         // 提取场景特征
         let (scene_features, num_dir, num_point, num_spot) = scene.get_render_stats();
@@ -142,9 +144,9 @@ impl PipelineCache {
         let topology = geometry.topology;
 
         let fast_key = FastPipelineKey {
-            material_id: material.id,
+            material_handle,
             material_version: material.version(),
-            geometry_id: geometry.id,
+            geometry_handle,
             geometry_version: geometry.version(),
             topology,
             scene_hash,
@@ -296,7 +298,7 @@ impl PipelineCache {
         // 注意：RenderKey 只分配了 14 位 (16384)，超过这个值会导致排序 key 冲突，但不影响渲染正确性
         self.next_id = self.next_id.wrapping_add(1);
 
-        let result = (Arc::new(pipeline), id);
+        let result = (pipeline, id);
 
         // 4. 同时存入 L1 和 L2 缓存
         self.canonical_cache.insert(canonical_key, result.clone());

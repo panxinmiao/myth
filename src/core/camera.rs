@@ -1,10 +1,13 @@
 use glam::{Mat4, Vec3, Vec4, Affine3A};
+use uuid::Uuid;
 use thunderdome::Index;
 use super::scene::Scene; // 需要引用 Scene 来查找 Node
 
 #[derive(Debug, Clone)]
 pub struct Camera {
-// === 关联 ===
+    pub uuid: Uuid,
+    pub name: String,
+    // === 关联 ===
     // 相机依附于哪个节点？
     // 通过这个 ID，我们可以去 Scene.nodes 里查到它的 World Matrix (用于计算 View Matrix)
     pub node_id: Option<Index>,
@@ -39,6 +42,8 @@ pub enum ProjectionType {
 impl Camera {
     pub fn new_perspective(fov: f32, aspect: f32, near: f32, far: f32) -> Self {
         let mut cam = Self {
+            uuid: Uuid::new_v4(),
+            name: "Camera".to_string(),
             node_id: None, // 默认为游离状态
             transform: Affine3A::IDENTITY,
             projection_type: ProjectionType::Perspective,

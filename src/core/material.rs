@@ -154,7 +154,7 @@ impl MeshBasicMaterialBuilder {
         basic.map = self.map;
 
         Material {
-            id: Uuid::new_v4(),
+            uuid: Uuid::new_v4(),
             version: AtomicU64::new(0),
             name: self.name,
             data: MaterialData::Basic(basic), // 自动装箱
@@ -242,7 +242,7 @@ impl MeshStandardMaterialBuilder {
         standard.ao_map = self.ao_map;
 
         Material {
-            id: Uuid::new_v4(),
+            uuid: Uuid::new_v4(),
             version: AtomicU64::new(0),
             name: self.name,
             data: MaterialData::Standard(standard),
@@ -308,7 +308,7 @@ impl MaterialData {
 
 #[derive(Debug)]
 pub struct Material {
-    pub id: Uuid,
+    pub uuid: Uuid,
     pub version: AtomicU64,
     pub name: Option<String>,
     
@@ -328,7 +328,7 @@ impl Material {
     /// 基础构造函数
     pub fn new(data: MaterialData) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            uuid: Uuid::new_v4(),
             version: AtomicU64::new(0),
             name: None,
             data,

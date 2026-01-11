@@ -1,7 +1,5 @@
-use std::sync::Arc;
 use std::collections::HashMap;
 use wgpu::ShaderStages;
-use uuid::Uuid;
 
 use crate::renderer::resource_manager::ResourceManager;
 use crate::core::uniforms::DynamicModelUniforms;
@@ -9,11 +7,12 @@ use crate::core::buffer::{BufferRef};
 use crate::core::geometry::{Geometry, GeometryFeatures};
 use crate::renderer::resource_builder::{ResourceBuilder};
 use crate::renderer::binding::Bindings;
+use crate::core::assets::GeometryHandle;
 
 // 缓存 Key：决定了 BindGroup 是否可以复用
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ObjectBindGroupKey {
-    geo_id: Uuid,           // 几何体 ID (区分 Morph/Skin 资源)
+    geo_id: Option<GeometryHandle>,
     model_buffer_id: u64,   // 全局 Model Buffer ID (区分扩容)
 }
 
@@ -29,8 +28,8 @@ pub struct ModelBufferManager {
 
 #[derive(Clone)]
 pub struct ObjectBindingData {
-    pub layout: Arc<wgpu::BindGroupLayout>,
-    pub bind_group: Arc<wgpu::BindGroup>,
+    pub layout: wgpu::BindGroupLayout,
+    pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
     pub binding_wgsl: String, 
 }
@@ -75,6 +74,7 @@ impl ModelBufferManager {
     pub fn prepare_bind_group(
         &mut self,
         resource_manager: &mut ResourceManager,
+        geometry_handle: GeometryHandle,
         geometry: &Geometry,
     ) -> ObjectBindingData {
         
@@ -86,7 +86,7 @@ impl ModelBufferManager {
         let is_static = !features.intersects(GeometryFeatures::USE_MORPHING | GeometryFeatures::USE_SKINNING);
         
         let key = ObjectBindGroupKey {
-            geo_id: if is_static { Uuid::nil() } else { geometry.id },
+            geo_id: if is_static {None } else { Some(geometry_handle) },
             model_buffer_id: self.last_model_buffer_id,
         };
 
@@ -117,17 +117,16 @@ impl ModelBufferManager {
         let binding_wgsl = builder.generate_wgsl(2); // Group 2
 
         // 我们不自己管理 Layout Cache，而是把 entries 扔给 RM，它会返回一个全局去重的 Layout
-        let layout = resource_manager.get_or_create_layout(&builder.layout_entries);
+        let (layout, _layout_id) = resource_manager.get_or_create_layout(&builder.layout_entries);
 
         // 3.3 创建 BindGroup
         // 这里调用 RM 的工厂方法，它会处理 Buffer/Texture 的 GPU 句柄查找
-        let (raw_bg, bg_id) = resource_manager.create_bind_group(&layout, &builder.resources);
-        let bind_group = Arc::new(raw_bg);
+        let (bind_group, bind_group_id) = resource_manager.create_bind_group(&layout, &builder.resources);
 
         let data = ObjectBindingData {
             layout,
             bind_group,
-            bind_group_id: bg_id,
+            bind_group_id,
             binding_wgsl,
         };
 

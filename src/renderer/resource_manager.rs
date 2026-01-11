@@ -5,7 +5,6 @@ use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;
 use std::vec;
 
-use uuid::Uuid;
 use slotmap::{SecondaryMap};
 use core::ops::Range;
 
@@ -13,6 +12,7 @@ use crate::core::geometry::{Geometry};
 use crate::core::texture::Texture;
 use crate::core::world::WorldEnvironment;
 use crate::core::buffer::BufferRef;
+use crate::core::image::Image;
 use crate::core::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
 
 use crate::renderer::binding::{BindingResource, Bindings};
@@ -20,6 +20,7 @@ use crate::renderer::resource_builder::{ResourceBuilder};
 use crate::renderer::vertex_layout::{self, GeneratedVertexLayout};
 use crate::renderer::gpu_buffer::GpuBuffer;
 use crate::renderer::gpu_texture::GpuTexture;
+use crate::renderer::gpu_image::GpuImage;
 
 // 全局资源 ID 生成器
 static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -49,7 +50,9 @@ pub struct GPUGeometry {
 pub struct GPUMaterial {    
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
-    pub layout: Arc<wgpu::BindGroupLayout>,
+
+    pub layout: wgpu::BindGroupLayout,
+    pub layout_id: u64,
 
     pub binding_wgsl: String,
 
@@ -64,7 +67,7 @@ pub struct GPUMaterial {
 pub struct GPUWorld {
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
-    pub layout: Arc<wgpu::BindGroupLayout>,
+    pub layout: wgpu::BindGroupLayout,
     pub binding_wgsl: String, 
     pub last_used_frame: u64,
 }
@@ -74,45 +77,45 @@ pub struct GPUWorld {
 // ============================================================================
 
 pub struct ResourceManager {
-    device: Arc<wgpu::Device>,
-    queue: Arc<wgpu::Queue>,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
     frame_index: u64,
 
-    // 暂时用 UUID，这里先保持不变，避免改动过大
-    buffers: HashMap<Uuid, GpuBuffer>,
-    // === 核心修改：使用 SecondaryMap ===
-    // 这种 Map 允许我们用 Handle 直接索引
     gpu_geometries: SecondaryMap<GeometryHandle, GPUGeometry>,
     gpu_materials: SecondaryMap<MaterialHandle, GPUMaterial>,
-    
     gpu_textures: SecondaryMap<TextureHandle, GpuTexture>,
-    worlds: HashMap<Uuid, GPUWorld>,  // World 比较特殊，且数量极少，暂时用UUID
+    worlds: HashMap<u64, GPUWorld>, 
+    // Image 使用 u64 ID (高性能)
+    gpu_buffers: HashMap<u64, GpuBuffer>,
+    gpu_images: HashMap<u64, GpuImage>,
     
-    layout_cache: HashMap<Vec<wgpu::BindGroupLayoutEntry>, Arc<wgpu::BindGroupLayout>>,
+    layout_cache: HashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
     dummy_texture: GpuTexture, 
 }
 
 impl ResourceManager {
 
-    pub fn new(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>) -> Self {
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
 
-        let dummy_tex_data = Texture::new_2d("dummy", 1, 1, Some(vec![255, 255, 255, 255]), wgpu::TextureFormat::Rgba8Unorm); 
-        let dummy_texture = GpuTexture::new(&device, &queue, &dummy_tex_data);
+        let dummy_tex = Texture::new_2d("dummy", 1, 1, Some(vec![255, 255, 255, 255]), wgpu::TextureFormat::Rgba8Unorm); 
+        let dummy_gpu_image = GpuImage::new(&device, &queue, &dummy_tex.image);
+        let dummy_gpu_tex = GpuTexture::new(&device, &dummy_tex, &dummy_gpu_image);
         
         Self {
             device,
             queue,
             frame_index: 0,
-            buffers: HashMap::new(),
-
+            
             // 初始化 SecondaryMap
             gpu_textures: SecondaryMap::new(),
             gpu_geometries: SecondaryMap::new(),
             gpu_materials: SecondaryMap::new(),
-
+            
+            gpu_buffers: HashMap::new(),
+            gpu_images: HashMap::new(),
             worlds: HashMap::new(),
             layout_cache: HashMap::new(),
-            dummy_texture,
+            dummy_texture: dummy_gpu_tex,
         }
     }
 
@@ -128,6 +131,12 @@ impl ResourceManager {
     // 通用 Buffer Logic
     // ========================================================================
 
+
+
+    // ========================================================================
+    // 通用 Buffer Logic
+    // ========================================================================
+
     /// 准备 GPU Buffer：如果不存在则创建，如果版本过期则更新
     /// 返回当前 GPU 资源的物理 ID (用于检测 Resize)
     pub fn prepare_buffer(&mut self, buffer_ref: &BufferRef) -> u64 {
@@ -135,7 +144,7 @@ impl ResourceManager {
 
         // 1. [Hot Path] 无锁检查版本！
         // 如果版本没变，直接返回。这里没有任何锁竞争。
-        if let Some(gpu_buf) = self.buffers.get_mut(&id) {
+        if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
             if buffer_ref.version() <= gpu_buf.version {
                 gpu_buf.last_used_frame = self.frame_index;
                 return gpu_buf.id;
@@ -143,7 +152,7 @@ impl ResourceManager {
         }
 
         // 2. [Cold Path] 只有确实需要更新时，才获取锁并拷贝数据
-        let gpu_buf = self.buffers.entry(id).or_insert_with(|| {
+        let gpu_buf = self.gpu_buffers.entry(id).or_insert_with(|| {
             // 创建逻辑... 需要先 read_data() 获取初始数据
             let data = buffer_ref.read_data();
 
@@ -236,13 +245,13 @@ impl ResourceManager {
         let mut vertex_buffer_ids = Vec::new();
         
         for layout_desc in &layout_info.buffers {
-            let gpu_buf = self.buffers.get(&layout_desc.buffer.id).expect("Vertex buffer should be prepared");
+            let gpu_buf = self.gpu_buffers.get(&layout_desc.buffer.id).expect("Vertex buffer should be prepared");
             vertex_buffers.push(gpu_buf.buffer.clone()); 
             vertex_buffer_ids.push(gpu_buf.id);
         }
 
         let index_buffer = if let Some(indices) = &geometry.index_attribute {
-            let gpu_buf = self.buffers.get(&indices.buffer.id).expect("Index buffer should be prepared");
+            let gpu_buf = self.gpu_buffers.get(&indices.buffer.id).expect("Index buffer should be prepared");
             let format = match indices.format {
                 wgpu::VertexFormat::Uint16 => wgpu::IndexFormat::Uint16,
                 wgpu::VertexFormat::Uint32 => wgpu::IndexFormat::Uint32,
@@ -336,16 +345,12 @@ impl ResourceManager {
                 },
                 BindingResource::Texture(handle_opt) => {
                     if let Some(tex_handle) = handle_opt {
-                        if let Some(texture) = assets.get_texture(*tex_handle) {
-                            // 2. 确保 GPU 资源已创建/更新
-                            self.add_or_update_texture(*tex_handle, texture);
-                            
-                            // 3. Hash：使用 Handle 的唯一 ID (index + generation)
-                            // SlotMap 的 Key 本身就是 u64 且唯一的，非常适合 Hash
-                            tex_handle.hash(&mut resource_hasher); 
+                        // 如果准备成功（说明资源存在且有效），则参与 Hash
+                        if self.prepare_texture(assets, *tex_handle).is_some() {
+                            tex_handle.hash(&mut resource_hasher);
                         } else {
-                            // Handle 无效 (资源被删除了?) -> 当作空纹理处理
-                            0.hash(&mut resource_hasher); 
+                            // 资源准备失败（可能被删了），当做空处理
+                            0.hash(&mut resource_hasher);
                         }
                     } else {
                         0.hash(&mut resource_hasher); // 空纹理
@@ -353,8 +358,7 @@ impl ResourceManager {
                 },
                 BindingResource::Sampler(handle_opt) => {
                     if let Some(tex_handle) = handle_opt {
-                        if let Some(texture) = assets.get_texture(*tex_handle) {
-                            self.add_or_update_texture(*tex_handle, texture);
+                        if self.prepare_texture(assets, *tex_handle).is_some() {
                             tex_handle.hash(&mut resource_hasher);
                         } else {
                             0.hash(&mut resource_hasher);
@@ -366,7 +370,7 @@ impl ResourceManager {
             }
         }
         let resource_hash = resource_hasher.finish();
-        let layout = self.get_or_create_layout(&builder.layout_entries);
+        let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
 
 
         // 5. 检查是否需要重建 BindGroup
@@ -374,7 +378,7 @@ impl ResourceManager {
         let mut can_reuse_bindgroup = false;
 
         if let Some(gpu_mat) = self.gpu_materials.get(handle) {
-            let layout_unchanged = Arc::ptr_eq(&gpu_mat.layout, &layout);
+            let layout_unchanged = gpu_mat.layout_id == layout_id;
             let resources_unchanged = gpu_mat.last_resource_hash == resource_hash;
             if layout_unchanged && resources_unchanged {
                 can_reuse_bindgroup = true;
@@ -396,6 +400,7 @@ impl ResourceManager {
             bind_group,
             bind_group_id: bg_id,
             layout,
+            layout_id,
             binding_wgsl,
             last_version: material.version(),
             last_resource_hash: resource_hash,
@@ -411,7 +416,7 @@ impl ResourceManager {
 
     // --- 内部辅助 ---
 
-    pub fn get_or_create_layout(&mut self, entries: &[wgpu::BindGroupLayoutEntry]) -> Arc<wgpu::BindGroupLayout> {
+    pub fn get_or_create_layout(&mut self, entries: &[wgpu::BindGroupLayoutEntry]) -> (wgpu::BindGroupLayout, u64) {
 
         // 1. 查缓存
         // HashMap 允许我们用 slice (&[T]) 去查询 Vec<T> 的 Key，非常高效
@@ -421,17 +426,20 @@ impl ResourceManager {
 
         // 2. 创建 Layout
         // label 可以设为 None，或者根据 entries 生成一个简短的签名
-        let layout = Arc::new(self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let layout = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Cached BindGroupLayout"),
             entries,
-        }));
+        });
+
+        // [新增] 生成唯一 ID
+        let id = generate_resource_id();
 
         // 3. 存入缓存
         // 这里需要 clone 一份 entries 作为 Key 存起来
-        self.layout_cache.insert(entries.to_vec(), layout.clone());
+        self.layout_cache.insert(entries.to_vec(), (layout.clone(), id));
         
         // 返回
-        layout
+        (layout, id)
     }
 
     pub fn create_bind_group(
@@ -447,7 +455,7 @@ impl ResourceManager {
             let binding_resource = match resource_data {
                 BindingResource::Buffer { buffer, offset, size } => {
                     let cpu_id = buffer.id;
-                    let gpu_buf = self.buffers.get(&cpu_id).expect("Buffer should be prepared before creating bindgroup");
+                    let gpu_buf = self.gpu_buffers.get(&cpu_id).expect("Buffer should be prepared before creating bindgroup");
                     // gpu_buf.buffer.as_entire_binding()
                     wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &gpu_buf.buffer,
@@ -489,21 +497,77 @@ impl ResourceManager {
         (bind_group, generate_resource_id())
     }
 
+
+
     // ========================================================================
     // Texture Logic
     // ========================================================================
 
-    pub fn add_or_update_texture(&mut self, handle: TextureHandle, texture: &Texture) {
-        if let Some(gpu_tex) = self.gpu_textures.get_mut(handle) {
-            gpu_tex.last_used_frame = self.frame_index;
-            gpu_tex.update(&self.device, &self.queue, texture);
+    // 1. 准备 Image (Internal)
+    // 这里传入 &Image 引用即可，类似 BufferRef
+    fn prepare_image(&mut self, image: &Image) -> &GpuImage {
+        let id = image.id();
+        
+        // 检查是否存在
+        if let Some(gpu_img) = self.gpu_images.get_mut(&id) {
+            // 更新 (内部会检查 version 和 generation)
+            gpu_img.update(&self.device, &self.queue, image);
+            gpu_img.last_used_frame = self.frame_index;
         } else {
-            // 插入新资源
-            let mut gpu_tex = GpuTexture::new(&self.device, &self.queue, texture);
+            // 创建
+            let gpu_img = GpuImage::new(&self.device, &self.queue, image);
+            self.gpu_images.insert(id, gpu_img);
+        }
+        
+        self.gpu_images.get(&id).unwrap()
+    }
+
+    // 2. 准备 Texture (Public)
+    pub fn prepare_texture(
+        &mut self, 
+        assets: &AssetServer, 
+        handle: TextureHandle
+    ) -> Option<&GpuTexture> {
+        let texture_asset = assets.get_texture(handle)?;
+        
+        // [A] 先准备底层 Image
+        self.prepare_image(&texture_asset.image);
+        
+        let image_id = texture_asset.image.id();
+        let gpu_image = self.gpu_images.get(&image_id).unwrap();
+
+        // [B] 准备/更新 GpuTexture
+        if let Some(gpu_tex) = self.gpu_textures.get_mut(handle) {
+            // 依赖检查
+            let config_changed = gpu_tex.version != texture_asset.version();
+            let image_recreated = gpu_tex.image_generation_id != gpu_image.generation_id;
+            let image_swapped = gpu_tex.image_id != image_id;
+
+            if config_changed || image_recreated || image_swapped {
+                *gpu_tex = GpuTexture::new(&self.device, texture_asset, gpu_image);
+            }
             gpu_tex.last_used_frame = self.frame_index;
+        } else {
+            let gpu_tex = GpuTexture::new(&self.device, texture_asset, gpu_image);
             self.gpu_textures.insert(handle, gpu_tex);
         }
+
+        self.gpu_textures.get(handle)
     }
+
+
+
+    // pub fn add_or_update_texture(&mut self, handle: TextureHandle, texture: &Texture) {
+    //     if let Some(gpu_tex) = self.gpu_textures.get_mut(handle) {
+    //         gpu_tex.last_used_frame = self.frame_index;
+    //         gpu_tex.update(&self.device, &self.queue, texture);
+    //     } else {
+    //         // 插入新资源
+    //         let mut gpu_tex = GpuTexture::new(&self.device, &self.queue, texture);
+    //         gpu_tex.last_used_frame = self.frame_index;
+    //         self.gpu_textures.insert(handle, gpu_tex);
+    //     }
+    // }
 
     pub fn prepare_global(&mut self, env: &WorldEnvironment) -> &GPUWorld {
         
@@ -527,7 +591,7 @@ impl ResourceManager {
             env.define_bindings(&mut builder); // 自动收集 frame 和 light buffer
 
             // 2. 获取 Layout (复用缓存机制)
-            let layout = self.get_or_create_layout(&builder.layout_entries);
+            let (layout, _layout_id) = self.get_or_create_layout(&builder.layout_entries);
 
             // 3. 创建 BindGroup
             let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
@@ -552,7 +616,7 @@ impl ResourceManager {
     }
 
     // 获取 World 资源的辅助方法
-    pub fn get_world(&self, id: Uuid) -> Option<&GPUWorld> {
+    pub fn get_world(&self, id: u64) -> Option<&GPUWorld> {
         self.worlds.get(&id)
     }
     // ========================================================================
@@ -564,9 +628,12 @@ impl ResourceManager {
         let cutoff = self.frame_index - ttl_frames;
 
         self.gpu_geometries.retain(|_, v| v.last_used_frame >= cutoff);
-        self.buffers.retain(|_, v| v.last_used_frame >= cutoff);
         self.gpu_materials.retain(|_, v| v.last_used_frame >= cutoff);
         self.gpu_textures.retain(|_, v| v.last_used_frame >= cutoff);
+
+        self.gpu_buffers.retain(|_, v| v.last_used_frame >= cutoff);
+        self.gpu_images.retain(|_, v| v.last_used_frame >= cutoff);
+        self.worlds.retain(|_, v| v.last_used_frame >= cutoff);
         // Layout 缓存也可以清理，但通常 Layout 占内存极小，保留无妨
     }
 }

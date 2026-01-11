@@ -118,7 +118,7 @@ bitflags! {
 // ============================================================================
 #[derive(Debug)]
 pub struct Geometry {
-    pub id: Uuid, // Geometry 自身的 ID
+    pub uuid: Uuid, // Geometry 自身的 ID
     pub version: AtomicU64, // 结构版本号 (如果 set_attribute 了，需要重建 Pipeline)
 
     // 核心数据
@@ -143,7 +143,7 @@ pub struct Geometry {
 impl Geometry {
     pub fn new() -> Self {
         Self {
-            id: Uuid::new_v4(),
+            uuid: Uuid::new_v4(),
             version: AtomicU64::new(0),
             attributes: HashMap::new(),
             index_attribute: None,

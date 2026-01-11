@@ -7,7 +7,7 @@ pub type MeshHandle = Index;
 #[derive(Debug, Clone)]
 pub struct Mesh {
     // === 标识 ===
-    pub id: Uuid,
+    pub uuid: Uuid,
     pub name: String,
     
     // === 场景图节点 ===
@@ -30,7 +30,7 @@ impl Mesh {
         material: MaterialHandle
     ) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            uuid: Uuid::new_v4(),
             name: "Mesh".to_string(),
             node_id : None,
             geometry,

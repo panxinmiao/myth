@@ -11,7 +11,7 @@ pub enum LightType {
 
 #[derive(Debug, Clone)]
 pub struct Light {
-    pub id: Uuid,
+    pub uuid: Uuid,
     pub node_id: Option<Index>,
     pub light_type: LightType,
     pub color: Vec3,
@@ -34,7 +34,7 @@ pub struct Light {
 impl Light {
     pub fn new_directional(direction: Vec3, color: Vec3, intensity: f32) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            uuid: Uuid::new_v4(),
             node_id: None,
             light_type: LightType::Directional,
             color,
@@ -51,7 +51,7 @@ impl Light {
 
     pub fn new_point(position: Vec3, color: Vec3, intensity: f32, range: f32) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            uuid: Uuid::new_v4(),
             node_id: None,
             light_type: LightType::Point,
             color,

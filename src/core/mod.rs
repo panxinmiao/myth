@@ -10,6 +10,7 @@ pub mod scene;
 pub mod light;
 pub mod world;
 pub mod assets;
+pub mod image;
 
 use std::hash::{Hash, Hasher};
 use std::collections::hash_map::DefaultHasher;

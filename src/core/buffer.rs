@@ -1,13 +1,15 @@
-use uuid::Uuid;
 use std::sync::{Arc, RwLock};
 use std::sync::atomic::{AtomicU64, Ordering};
 use bytemuck::Pod;
+
+// 全局 Buffer ID 生成器
+static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(0);
 
 /// 通用 CPU 端数据缓冲
 /// 统一管理 Vertex, Index, Uniform, Storage 等数据的 CPU 副本
 #[derive(Debug)]
 pub struct DataBuffer {
-    pub id: Uuid,
+    pub id: u64,
     pub label: String,
     version: AtomicU64,
     data: RwLock<Vec<u8>>,
@@ -36,7 +38,7 @@ impl BufferRef {
     pub fn new<T: Pod>(data: &[T], usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         let raw_data = bytemuck::cast_slice(data).to_vec();
         Self(Arc::new(DataBuffer {
-            id: Uuid::new_v4(),
+            id: NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed),
             label: label.unwrap_or("Buffer").to_string(),
             version: AtomicU64::new(1), // 初始版本为 1
             data: RwLock::new(raw_data),
@@ -49,7 +51,7 @@ impl BufferRef {
         self.0.version.load(Ordering::Relaxed)
     }
 
-    pub fn id(&self) -> Uuid {
+    pub fn id(&self) -> u64 {
         self.0.id
     }
     

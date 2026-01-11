@@ -1,6 +1,6 @@
 use std::collections::{HashMap};
 use wgpu::VertexFormat;
-use crate::core::geometry::{Geometry};
+use crate::core::geometry::{Geometry, Attribute};
 use crate::core::buffer::BufferRef;
 
 #[derive(Debug, Clone)]
@@ -36,7 +36,7 @@ pub struct GeneratedVertexLayout {
 
 pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
 
-    let mut buffer_groups: HashMap<uuid::Uuid, Vec<(&String, &crate::core::geometry::Attribute)>> = HashMap::new();
+    let mut buffer_groups: HashMap<u64, Vec<(&String, &Attribute)>> = HashMap::new();
 
     for (name, attr) in &geometry.attributes {
         let buffer_id = attr.buffer.id;

@@ -1,7 +1,5 @@
-// src/core/world.rs
-
-use uuid::Uuid;
 use glam::Vec3;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::core::buffer::{BufferRef};
 use crate::core::uniforms::{GlobalFrameUniforms, GlobalLightUniforms};
@@ -9,9 +7,11 @@ use crate::core::camera::Camera;
 use crate::core::scene::Scene;
 use crate::core::light::{LightType};
 use crate::core::uniforms::{GpuLightData, MAX_DIR_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS};
-/// WorldEnvironment 管理场景的全局渲染环境
+
+static NEXT_WORLD_ID: AtomicU64 = AtomicU64::new(0);
+
 pub struct WorldEnvironment {
-    pub id: Uuid,
+    pub id: u64,
 
     pub frame_uniforms: BufferRef,
     pub light_uniforms: BufferRef,
@@ -37,7 +37,7 @@ impl WorldEnvironment {
         );
 
         Self {
-            id: Uuid::new_v4(),
+            id: NEXT_WORLD_ID.fetch_add(1, Ordering::Relaxed),
             frame_uniforms: frame_buffer,
             light_uniforms: light_buffer,
         }

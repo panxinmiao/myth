@@ -41,9 +41,9 @@ impl AssetServer {
 
     // === Geometry ===
     pub fn add_geometry(&mut self, geometry: Geometry) -> GeometryHandle {
-        let id = geometry.id; // 假设 Geometry 结构体中仍保留 id: Uuid 字段
+        let uuid = geometry.uuid; 
         let handle = self.geometries.insert(geometry);
-        self.lookup_geo.insert(id, handle);
+        self.lookup_geo.insert(uuid, handle);
         handle
     }
 
@@ -57,9 +57,9 @@ impl AssetServer {
 
     // === Material ===
     pub fn add_material(&mut self, material: Material) -> MaterialHandle {
-        let id = material.id;
+        let uuid = material.uuid;
         let handle = self.materials.insert(material);
-        self.lookup_mat.insert(id, handle);
+        self.lookup_mat.insert(uuid, handle);
         handle
     }
 
@@ -73,9 +73,9 @@ impl AssetServer {
 
     // === Texture ===
     pub fn add_texture(&mut self, texture: Texture) -> TextureHandle {
-        let id = texture.id;
+        let uuid = texture.uuid;
         let handle = self.textures.insert(texture);
-        self.lookup_tex.insert(id, handle);
+        self.lookup_tex.insert(uuid, handle);
         handle
     }
 

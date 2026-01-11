@@ -9,8 +9,8 @@ mod gpu_texture;
 mod model_buffer_manager;
 mod resource_builder;
 mod binding;
+mod gpu_image;
 
-use std::sync::Arc;
 use glam::{Mat4, Mat3A};
 use slotmap::Key;
 
@@ -27,8 +27,8 @@ use self::tracked_render_pass::TrackedRenderPass;
 use crate::core::world::WorldEnvironment;
 
 pub struct Renderer {
-    pub device: Arc<wgpu::Device>,
-    pub queue: Arc<wgpu::Queue>,
+    pub device: wgpu::Device,
+    pub queue: wgpu::Queue,
     pub surface: wgpu::Surface<'static>,
     pub config: wgpu::SurfaceConfiguration,
     pub depth_format: wgpu::TextureFormat,
@@ -69,9 +69,6 @@ impl Renderer {
             },
         )).unwrap();
 
-        let device = Arc::new(device);
-        let queue = Arc::new(queue);
-
         let config = surface.get_default_config(&adapter, width, height).unwrap();
         surface.configure(&device, &config);
 
@@ -87,8 +84,8 @@ impl Renderer {
         let depth_texture_view = Self::create_depth_texture(&device, &config);
 
         Self {
-            device: device.clone(),
-            queue: queue.clone(),
+            device: device,
+            queue: queue,
             surface,
             config,
             depth_format: wgpu::TextureFormat::Depth32Float,
@@ -104,9 +101,13 @@ impl Renderer {
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;
-            self.surface.configure(&self.device, &self.config);
-            self.depth_texture_view = Self::create_depth_texture(&self.device, &self.config);
+        }else{
+            self.config.width = 1;
+            self.config.height = 1;
         }
+        self.surface.configure(&self.device, &self.config);
+        self.depth_texture_view = Self::create_depth_texture(&self.device, &self.config);
+
     }
 
     fn create_depth_texture(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> wgpu::TextureView {
@@ -130,7 +131,7 @@ impl Renderer {
     }
 
     pub fn render(&mut self, scene: &mut Scene, camera: &mut Camera) {
-
+        
         self.resource_manager.next_frame();
 
         // 1. 更新场景矩阵
@@ -215,7 +216,7 @@ impl Renderer {
             object_data: ObjectBindingData,
             geometry_handle: GeometryHandle, 
             material_handle: MaterialHandle,
-            renderer_pipeline: Arc<wgpu::RenderPipeline>,
+            renderer_pipeline: wgpu::RenderPipeline,
             renderer_pipeline_id: u16,
             model_matrix: Mat4,
             sort_key: RenderKey,
@@ -235,7 +236,7 @@ impl Renderer {
             self.resource_manager.prepare_geometry(&scene.assets, item.geo_handle);
             self.resource_manager.prepare_material(&scene.assets, item.mat_handle);
 
-            let object_data = self.model_buffer_manager.prepare_bind_group(&mut self.resource_manager, &geometry);
+            let object_data = self.model_buffer_manager.prepare_bind_group(&mut self.resource_manager, item.geo_handle, &geometry);
 
             // 2. 获取 GPU 资源
             // 使用 Handle 获取
@@ -246,7 +247,9 @@ impl Renderer {
             // 3. 更新 Pipeline (需要先拿到刚才 prepare 好的 GPU 资源)
             let pipeline = self.pipeline_cache.get_or_create(
                 &self.device,
+                item.mat_handle,
                 &material,
+                item.geo_handle,
                 &geometry,
                 &scene,
                 gpu_material,

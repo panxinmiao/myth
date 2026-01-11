@@ -1,36 +1,75 @@
 use uuid::Uuid;
 use std::sync::atomic::{AtomicU64, Ordering};
 use glam::{Vec2, Mat3};
-pub use wgpu::{TextureFormat, TextureDimension, TextureViewDimension, AddressMode, FilterMode, MipmapFilterMode};
+use wgpu::{TextureFormat, TextureDimension, TextureViewDimension, AddressMode};
+use crate::core::image::Image;
 
 // ============================================================================
 // 1. 纹理数据源 (支持 Mipmaps 和 Array Layers)
 // ===========================================================================
 
-#[derive(Debug, Clone)]
-pub struct TextureSource {
-    /// 原始二进制数据
-    /// 为了兼容性，这里假设数据是紧凑排列的：
-    /// Layer0[Mip0, Mip1...] -> Layer1[Mip0, Mip1...]
-    pub data: Option<Vec<u8>>,
+// #[derive(Debug)]
+// pub struct SourceInner {
+//     pub id: Uuid, // 或 u64
+//     pub label: String,
 
-    pub width: u32,
-    pub height: u32,
-    /// 对于 2D 纹理是 1，对于 3D 纹理是深度
-    pub depth: u32, 
-
-    pub format: TextureFormat,
+//     // 1. 物理尺寸
+//     pub width: u32,
+//     pub height: u32,
     
-    pub mip_level_count: u32,
-    pub array_layer_count: u32, // 对于 CubeMap 这里是 6
-}
+//     // 关键：统一了 "深度 (3D)" 和 "层数 (Array/Cube)"
+//     // wgpu 的 Extent3d 也是这么设计的 (depth_or_array_layers)
+//     pub depth_or_array_layers: u32, 
 
-impl TextureSource {
-    pub fn bytes_per_pixel(&self) -> u32 {
-        // Todo: 确定逻辑是否正确
-        self.format.block_copy_size(Some(wgpu::TextureAspect::All)).unwrap_or(4) as u32
-    }
-}
+//     // 2. 物理维度 (消除歧义)
+//     // 决定了显存是如何开辟的：D1, D2, D3
+//     pub dimension: wgpu::TextureDimension, 
+
+//     // 3. 格式与层级
+//     pub format: wgpu::TextureFormat,
+//     pub mip_level_count: u32,
+
+//     // 4. 数据内容 (CPU 副本)
+//     pub data: RwLock<Option<Vec<u8>>>,
+//     pub version: AtomicU64,
+// }
+
+// impl SourceInner {
+//     pub fn bytes_per_pixel(&self) -> u32 {
+//         // Todo: 确定逻辑是否正确
+//         self.format.block_copy_size(Some(wgpu::TextureAspect::All)).unwrap_or(4) as u32
+//     }
+// }
+
+
+// #[derive(Debug, Clone)]
+// pub struct TextureSource(Arc<SourceInner>);
+
+// impl TextureSource {
+//     pub fn new(width: u32, height: u32, format: wgpu::TextureFormat, dimension: wgpu::TextureDimension, data: Option<Vec<u8>>) -> Self {
+//         Self(Arc::new(SourceInner {
+//             id: Uuid::new_v4(),
+//             label: "Image".into(),
+//             width, height, depth_or_array_layers: 1, format, mip_level_count: 1,
+//             dimension,
+//             data: RwLock::new(data),
+//             version: AtomicU64::new(0),
+//         }))
+//     }
+
+//     // 类似 BufferRef 的更新机制
+//     pub fn update_data(&self, new_data: Vec<u8>) {
+//         let mut lock = self.0.data.write().unwrap();
+//         *lock = Some(new_data);
+//         self.0.version.fetch_add(1, Ordering::Relaxed);
+//     }
+    
+//     pub fn version(&self) -> u64 {
+//         self.0.version.load(Ordering::Relaxed)
+//     }
+    
+//     // ... getters ...
+// }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureSampler {
@@ -110,70 +149,62 @@ impl TextureTransform {
 
 #[derive(Debug)]
 pub struct Texture {
-    pub id: Uuid,
+    pub uuid: Uuid,
     pub name: String,
     
-    pub source: TextureSource,
-    pub dimension: TextureDimension, // D1, D2, D3
+    pub image: Image,
 
-    // 例如：一个 D2 Texture 可能是 Cube View，也可能是 D2Array View
     pub view_dimension: TextureViewDimension,
 
     pub sampler: TextureSampler,
     pub transform: TextureTransform,
     
     pub version: AtomicU64,
-
-    pub generation_id: AtomicU64,
 }
 
 impl Texture {
-    pub fn new_2d(name: &str, width: u32, height: u32, data: Option<Vec<u8>>, format: TextureFormat) -> Self {
+    /// 基础构造：从现有 Image 创建 Texture
+    pub fn new(name: &str, image: Image, view_dimension: TextureViewDimension) -> Self {
         Self {
-            id: Uuid::new_v4(),
+            uuid: Uuid::new_v4(),
             name: name.to_string(),
-            source: TextureSource {
-                width, height, depth: 1,
-                format,
-                mip_level_count: 1,
-                array_layer_count: 1,
-                data,
-            },
-            dimension: TextureDimension::D2,
-            view_dimension: TextureViewDimension::D2, // 默认 2D 视图
+            image,
+            view_dimension,
             sampler: TextureSampler::default(),
             transform: TextureTransform::default(),
             version: AtomicU64::new(0),
-            generation_id: AtomicU64::new(0),
         }
     }
 
-    /// 创建 Cube Map (天空盒/环境贴图)
-    /// 假设 data 包含了 6 个面的数据，顺序通常是: +X, -X, +Y, -Y, +Z, -Z
-    pub fn new_cube(name: &str, size: u32, data: Option<Vec<u8>>, format: TextureFormat) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            name: name.to_string(),
-            source: TextureSource {
-                width: size, height: size, depth: 1,
-                format,
-                mip_level_count: 1,
-                array_layer_count: 6, // 关键：6层
-                data,
-            },
-            dimension: TextureDimension::D2, // 物理上是 2D 纹理数组
-            view_dimension: TextureViewDimension::Cube, // 逻辑上是 Cube
-            sampler: TextureSampler {
-                address_mode_u: AddressMode::ClampToEdge,
-                address_mode_v: AddressMode::ClampToEdge,
-                address_mode_w: AddressMode::ClampToEdge,
-                ..Default::default()
-            },
-            transform: TextureTransform::default(),
-            version: AtomicU64::new(0),
-            generation_id: AtomicU64::new(0),
-        }
+    /// 辅助构造：创建 2D 纹理 (自动创建 Image)
+    pub fn new_2d(name: &str, width: u32, height: u32, data: Option<Vec<u8>>, format: TextureFormat) -> Self {
+        let image = Image::new(
+            name, width, height, 1, 
+            TextureDimension::D2, 
+            format, data
+        );
+        Self::new(name, image, TextureViewDimension::D2)
     }
+
+    /// 辅助构造：创建 Cube Map
+    pub fn new_cube(name: &str, size: u32, data: Option<Vec<u8>>, format: TextureFormat) -> Self {
+        let image = Image::new(
+            name, size, size, 6, // 6 layers
+            TextureDimension::D2, // 物理维度是 2D
+            format, data
+        );
+        let mut tex = Self::new(name, image, TextureViewDimension::Cube);
+        // Cube Map 默认使用 Clamp 采样
+        tex.sampler.address_mode_u = AddressMode::ClampToEdge;
+        tex.sampler.address_mode_v = AddressMode::ClampToEdge;
+        tex.sampler.address_mode_w = AddressMode::ClampToEdge;
+        tex
+    }
+
+    pub fn version(&self) -> u64 {
+        self.version.load(Ordering::Relaxed)
+    }
+
 
     /// 辅助：创建纯色纹理 (1x1)
     pub fn create_solid_color(name: &str, color: [u8; 4]) -> Texture {
@@ -182,22 +213,6 @@ impl Texture {
 
     pub fn needs_update(&mut self) {
         self.version.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn version(&self) -> u64 {
-        self.version.load(Ordering::Relaxed)
-    }
-
-    /// 改变尺寸 (结构性变更)
-    pub fn resize(&mut self, width: u32, height: u32) {
-        if self.source.width == width && self.source.height == height {
-            return;
-        }
-        self.source.width = width;
-        self.source.height = height;
-        // 结构变了，内容肯定也变了（或失效了）
-        self.generation_id.fetch_add(1, Ordering::Relaxed);
-        self.needs_update();
     }
 
 
