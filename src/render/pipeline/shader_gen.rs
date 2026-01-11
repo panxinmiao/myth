@@ -1,9 +1,11 @@
 use crate::render::pipeline::vertex::GeneratedVertexLayout;
-use serde_json::{Map, Value};
-use super::shader_manager::get_env;
+use serde::{Serialize, Serializer};
+use serde::ser::SerializeMap;
+use super::shader_manager::{get_env, LocationAllocator};
 use crate::resources::material::MaterialFeatures;
 use crate::resources::geometry::GeometryFeatures;
 use crate::scene::scene::SceneFeatures;
+use minijinja::value::Value;
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
@@ -16,147 +18,85 @@ pub struct ShaderCompilationOptions {
     pub num_spot_lights: u8,
 }
 
-impl ShaderCompilationOptions {
-    /// 转换为 minijinja/Handlebars 可用的 Context Map
-    pub fn to_defines(&self) -> serde_json::Map<String, serde_json::Value> {
-        let mut map = serde_json::Map::new();
-        // 自动展开 features
-        if self.mat_features.contains(MaterialFeatures::USE_MAP) { map.insert("use_map".into(), true.into()); }
-        if self.mat_features.contains(MaterialFeatures::USE_NORMAL_MAP) { map.insert("use_normal_map".into(), true.into()); }
-        if self.mat_features.contains(MaterialFeatures::USE_ROUGHNESS_MAP) { map.insert("use_roughness_map".into(), true.into()); }
-        if self.mat_features.contains(MaterialFeatures::USE_METALNESS_MAP) { map.insert("use_metalness_map".into(), true.into()); }
-        if self.mat_features.contains(MaterialFeatures::USE_EMISSIVE_MAP) { map.insert("use_emissive_map".into(), true.into()); }
-        if self.mat_features.contains(MaterialFeatures::USE_AO_MAP) { map.insert("use_ao_map".into(), true.into()); }
+impl Serialize for ShaderCompilationOptions {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let mut map = serializer.serialize_map(None)?;
 
-        if self.geo_features.contains(GeometryFeatures::HAS_UV) { map.insert("has_uv".into(), true.into()); }
-        if self.geo_features.contains(GeometryFeatures::HAS_NORMAL) { map.insert("has_normal".into(), true.into()); }
-        if self.geo_features.contains(GeometryFeatures::USE_VERTEX_COLOR) { map.insert("use_vertex_color".into(), true.into()); }
-        if self.geo_features.contains(GeometryFeatures::USE_TANGENT) { map.insert("use_tangent".into(), true.into()); }
-        if self.geo_features.contains(GeometryFeatures::USE_MORPHING) { map.insert("use_morphing".into(), true.into()); }
-        if self.geo_features.contains(GeometryFeatures::USE_SKINNING) { map.insert("use_skinning".into(), true.into()); }
+        // 展开 features
+        if self.mat_features.contains(MaterialFeatures::USE_MAP) {map.serialize_entry("use_map", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_NORMAL_MAP) { map.serialize_entry("use_normal_map", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_ROUGHNESS_MAP) { map.serialize_entry("use_roughness_map", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_METALNESS_MAP) { map.serialize_entry("use_metalness_map", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_EMISSIVE_MAP) { map.serialize_entry("use_emissive_map", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_AO_MAP) { map.serialize_entry("use_ao_map", &true)?; }
+        if self.geo_features.contains(GeometryFeatures::HAS_UV) { map.serialize_entry("has_uv", &true)?; }
+        if self.geo_features.contains(GeometryFeatures::HAS_NORMAL) { map.serialize_entry("has_normal", &true)?; }
+        if self.geo_features.contains(GeometryFeatures::USE_VERTEX_COLOR) { map.serialize_entry("use_vertex_color", &true)?; }
+        if self.geo_features.contains(GeometryFeatures::USE_TANGENT) { map.serialize_entry("use_tangent", &true)?; }
+        if self.geo_features.contains(GeometryFeatures::USE_MORPHING) { map.serialize_entry("use_morphing", &true)?; }
 
+        if self.geo_features.contains(GeometryFeatures::USE_SKINNING) { map.serialize_entry("use_skinning", &true)?; }
 
-        map.insert("num_dir_lights".into(), self.num_dir_lights.into());
-        map.insert("num_point_lights".into(), self.num_point_lights.into());
-        map.insert("num_spot_lights".into(), self.num_spot_lights.into());
+        // === Light Counts ===
+        map.serialize_entry("num_dir_lights", &self.num_dir_lights)?;
+        map.serialize_entry("num_point_lights", &self.num_point_lights)?;
+        map.serialize_entry("num_spot_lights", &self.num_spot_lights)?;
 
-        // [新增] 处理 Scene Features (示例)
-        // if self.scene_features.contains(SceneFeatures::USE_SHADOW_MAP) { map.insert("use_shadow_map".into(), true.into()); }
-        map
+        // other scene features can be added here
+        
+        map.end()
     }
-
 }
 
-/// Shader 上下文构建器
-pub struct ShaderContext {
-    pub defines: Map<String, Value>,
-}
+#[derive(Serialize)]
+struct ShaderContext<'a> {
+    #[serde(flatten)]
+    options: &'a ShaderCompilationOptions,
 
-impl ShaderContext {
-    pub fn new() -> Self {
-        Self {
-            defines: Map::new(),
-        }
-    }
-
-    // pub fn define(mut self, name: &str, value: bool) -> Self {
-    //     self.defines.insert(name.to_string(), Value::Bool(value));
-    //     self
-    // }
-
-    pub fn set_value(mut self, name: &str, value: impl Into<Value>) -> Self {
-        self.defines.insert(name.to_string(), value.into());
-        self
-    }
-
-    pub fn _merge(&mut self, other: &ShaderContext) {
-        for (k, v) in &other.defines {
-            self.defines.insert(k.clone(), v.clone());
-        }
-    }
+    vertex_input_code: Option<&'a str>,
+    binding_code: &'a str,
+    
+    loc: Value, 
 }
 
 pub struct ShaderGenerator;
 
 impl ShaderGenerator {
-    // ========================================================================
-    // 1. 顶点着色器生成器
-    // ========================================================================
-    pub fn generate_vertex(
-        global_context: &ShaderContext,
+    pub fn generate_shader(
         geometry_layout: &GeneratedVertexLayout,
         global_binding_code: &str,
         object_binding_code: &str,
-        template_name: &str,
-    ) -> String {
-
-        let env = get_env();
-        let mut context = global_context.defines.clone();
-
-        context.insert("SHADER_STAGE".to_string(), Value::String("VERTEX".to_string()));
-
-        // 注入 Vertex Buffer 结构定义
-        context.insert("vertex_struct_code".to_string(), Value::String(geometry_layout.vertex_input_code.clone()));
-
-
-        // 2.3 生成 WGSL
-        // 首先需要注入 DynamicModel 的结构体定义
-        let mut binding_code = String::new();
-        binding_code.push_str("\n");
-
-        // var 定义
-        binding_code.push_str(global_binding_code);
-        binding_code.push_str("\n");
-        binding_code.push_str(object_binding_code);
-        context.insert("binding_code".to_string(), Value::String(binding_code));
-
-
-        // 3. 渲染模版
-        let vs_template = env.get_template(template_name)
-            .unwrap_or_else(|e| panic!("Vertex template '{}' not found: {}", template_name, e));
-        let vs_code = vs_template.render(&context)
-            .unwrap_or_else(|e| panic!("Failed to render vertex shader: {}", e));
-
-        format!(
-            "// === Auto-generated Vertex Shader ===\n\n{}\n",
-            vs_code
-        )
-    }
-
-    // ========================================================================
-    // 2. 片元着色器生成器 (完全动态化)
-    // ========================================================================
-    pub fn generate_fragment(
-        global_context: &ShaderContext,
-        global_binding_code: &str,
         material_binding_code: &str,
         template_name: &str,
+        options: &ShaderCompilationOptions,
     ) -> String {
-    
         let env = get_env();
-        let mut context = global_context.defines.clone();
+        let allocator = LocationAllocator::new();
+        let loc_value = Value::from_object(allocator);
 
-        context.insert("SHADER_STAGE".to_string(), Value::String("FRAGMENT".to_string()));
+        let binding_code = format!("{}\n{}\n{}", global_binding_code, material_binding_code, object_binding_code);
 
-        // 2. Bindings 代码
-        let mut binding_code = String::new();
-        binding_code.push_str("\n");
+        // 构建合并的 Context
+        let ctx = ShaderContext {
+            options,
+            vertex_input_code: Some(&geometry_layout.vertex_input_code),
+            binding_code: &binding_code,
+            loc: loc_value,
+        };
 
-        // var 定义
-        binding_code.push_str(global_binding_code);
-        binding_code.push_str("\n");
-        binding_code.push_str(material_binding_code);
-        context.insert("binding_code".to_string(), Value::String(binding_code));
+        let template_name = format!("templates/{}", template_name);
 
-        // 3. 渲染模板
-        let fs_template = env.get_template(template_name)
-            .unwrap_or_else(|e| panic!("Fragment template '{}' not found: {}", template_name, e));
-        let fs_code = fs_template.render(&context)
-            .unwrap_or_else(|e| panic!("Failed to render fragment shader: {}", e));
+        let template = env.get_template(&template_name)
+            .expect("Shader template not found");
+        
+        let source = template.render(&ctx)
+            .expect("Shader render failed");
 
-        format!(
-            "// === Auto-generated Fragment Shader ===\n\n{}\n", 
-            fs_code
-        )
+        format!("// === Auto-generated Unified Shader ===\n{}", source)
     }
+
+
 }

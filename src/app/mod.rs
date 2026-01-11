@@ -21,6 +21,8 @@ pub struct App {
     window: Option<Arc<Window>>,
     renderer: Option<Renderer>,
 
+    title: String,
+
     // 核心逻辑组件
     pub assets: AssetServer,
     pub scene: Scene,
@@ -45,6 +47,7 @@ impl App {
         Self {
             window: None,
             renderer: None,
+            title: "Three-rs Engine".to_string(),
             assets,
             scene,
             active_camera: None,
@@ -134,7 +137,7 @@ impl ApplicationHandler for App {
 
         // 创建窗口
         let window_attributes = Window::default_attributes()
-            .with_title("Three-rs Engine")
+            .with_title(self.title.clone())
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
 
         let window = event_loop.create_window(window_attributes).unwrap();

@@ -80,6 +80,8 @@ pub struct Renderer {
     resource_manager: ResourceManager,
     model_buffer_manager: ModelBufferManager,
     pipeline_cache: PipelineCache,
+
+    _size: winit::dpi::PhysicalSize<u32>,
 }
 
 impl Renderer {
@@ -124,10 +126,12 @@ impl Renderer {
             resource_manager,
             pipeline_cache: PipelineCache::new(),
             model_buffer_manager,
+            _size: size,
         }
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
+        self._size = winit::dpi::PhysicalSize::new(width, height);
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;
@@ -158,6 +162,10 @@ impl Renderer {
 
     /// 核心渲染入口
     pub fn render(&mut self, scene: &Scene, camera: &Camera, assets: &AssetServer) {
+        if self._size.width == 0 || self._size.height == 0 {
+            return;
+        }
+
         // 0. 帧首准备 (清理上一帧的临时资源)
         self.resource_manager.next_frame();
 

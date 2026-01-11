@@ -276,18 +276,7 @@ define_uniform_struct!(
 );
 
 
-// define_uniform_struct!(
-//     /// 光源 Uniforms (每个 Frame 更新)
-//     struct GlobalLightUniforms {
-//         directional_light_direction: Vec3,
-//         __padding1: f32, // Padding
-//         directional_light_color: Vec3,
-//         __padding2: f32, // Padding
-//     }
-// );
-
 // Standard PBR Material
-// 必须严格遵守 std140 对齐规则
 define_uniform_struct!(
     struct MeshStandardUniforms {
         color: Vec4 = Vec4::ONE,           // 16

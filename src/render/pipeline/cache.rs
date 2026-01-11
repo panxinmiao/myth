@@ -7,7 +7,6 @@ use crate::scene::scene::SceneFeatures;
 use crate::assets::{GeometryHandle, MaterialHandle};
 
 use crate::render::pipeline::shader_gen::ShaderGenerator;
-use crate::render::pipeline::shader_gen::ShaderContext;
 use crate::render::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::render::pipeline::vertex::GeneratedVertexLayout;
 use crate::render::resources::manager::GPUMaterial;
@@ -209,39 +208,39 @@ impl PipelineCache {
             num_point_lights: num_point,
             num_spot_lights: num_spot,
         };
-        
-        // 1. Context
-        let mut base_context = ShaderContext::new();
 
-        // 注入 defines
-        for (k, v) in options.to_defines() {
-            base_context = base_context.set_value(&k, v);
-        }
+        let template_name = material.shader_name();
 
         // 2. Generate Code
-        let vs_code = ShaderGenerator::generate_vertex(
-            &base_context,
-            vertex_layout,
-            &gpu_enviroment.binding_wgsl,
-            &object_data.binding_wgsl,
-            "mesh_basic.wgsl"
-        );
-        let fs_code = ShaderGenerator::generate_fragment(
-            &base_context,
+        let shader_source = ShaderGenerator::generate_shader(
+            &vertex_layout,
             &gpu_enviroment.binding_wgsl,
             &gpu_material.binding_wgsl,
-            material.shader_name()
+            &object_data.binding_wgsl,
+            &template_name,
+            &options,
         );
+        // let vs_code = ShaderGenerator::generate_vertex(
+        //     &options,
+        //     vertex_layout,
+        //     &gpu_enviroment.binding_wgsl,
+        //     &object_data.binding_wgsl,
+        //     "standard_vert"
+        // );
+        // let fs_code = ShaderGenerator::generate_fragment(
+        //     &options,
+        //     &gpu_enviroment.binding_wgsl,
+        //     &gpu_material.binding_wgsl,
+        //     material.shader_name()
+        // );
 
         // Debug 输出
         if cfg!(feature = "debug_shader") {
-            println!("=== Vertex Shader ===\n{}", vs_code);
-            println!("=== Fragment Shader ===\n{}", fs_code);
+            println!("================= Generated Shader Code {} ==================\n {}", template_name, shader_source);
         }
 
         // 3.3 创建 Modules
-        let vs_module = self.create_shader_module(device, &vs_code, wgpu::ShaderStages::VERTEX, Some("Vertex Shader"));
-        let fs_module = self.create_shader_module(device, &fs_code, wgpu::ShaderStages::FRAGMENT, Some("Fragment Shader"));
+        let shader_module = self.create_shader_module(device, &shader_source, wgpu::ShaderStages::VERTEX, Some(template_name));
 
         // 自动创建 PipelineLayout
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -261,13 +260,13 @@ impl PipelineCache {
             label: Some("Auto-Generated Pipeline"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
-                module: &vs_module,
+                module: &shader_module,
                 entry_point: Some("vs_main"),
                 buffers: &vertex_buffers_layout,
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &fs_module,
+                module: &shader_module,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,

@@ -272,7 +272,7 @@ impl MaterialData {
     pub fn shader_name(&self) -> &'static str {
         match self {
             Self::Basic(_) => "mesh_basic",
-            Self::Standard(_) => "MeshStandard", // 注意：保持和你 shader文件名/entry point 一致
+            Self::Standard(_) => "mesh_standard",
         }
     }
 
@@ -359,6 +359,10 @@ impl Material {
     pub fn shader_name(&self) -> &'static str { self.data.shader_name() }
     pub fn flush_uniforms(&self) { self.data.flush_uniforms() }
     pub fn get_features(&self) -> MaterialFeatures { self.data.get_features() }
+
+    pub fn mark_dirty(&self) {
+        self.version.fetch_add(1, Ordering::Relaxed);
+    }
 }
 
 // ============================================================================

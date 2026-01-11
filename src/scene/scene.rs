@@ -6,6 +6,7 @@ use crate::scene::node::Node;
 use crate::resources::mesh::Mesh;
 use crate::scene::camera::Camera;
 use crate::scene::light::{Light, LightType};
+use crate::scene::environment::Environment;
 
 use crate::scene::{NodeIndex, MeshKey, CameraKey, LightKey};
 
@@ -27,7 +28,7 @@ pub struct Scene {
     pub lights: SlotMap<LightKey, Light>,
 
     // 环境和全局设置
-    pub environment: crate::scene::environment::Environment,
+    pub environment: Environment,
     
     // 暂时简单用 RGBA，后面可以用 Texture
     pub background: Option<Vec4>,
@@ -42,7 +43,7 @@ impl Scene {
             cameras: SlotMap::with_key(),
             lights: SlotMap::with_key(),
 
-            environment: crate::scene::environment::Environment::new(),
+            environment: Environment::new(),
             background: Some(Vec4::new(0.0, 0.0, 0.0, 1.0)),
         }
     }
