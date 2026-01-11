@@ -1,4 +1,4 @@
-use glam::Vec3;
+use glam::{Vec3, Vec4};
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use crate::resources::buffer::{BufferRef};
@@ -83,8 +83,8 @@ impl Environment {
                             LightType::Directional => {
                                 if dir_count < MAX_DIR_LIGHTS {
                                     uniforms.dir_lights[dir_count] = GpuLightData {
-                                        color: [light.color.x, light.color.y, light.color.z, light.intensity],
-                                        direction: [dir.x, dir.y, dir.z, 0.0],
+                                        color: Vec4::new(light.color.x, light.color.y, light.color.z, light.intensity),
+                                        direction: Vec4::new(dir.x, dir.y, dir.z, 0.0),
                                         ..Default::default()
                                     };
                                     dir_count += 1;
@@ -93,8 +93,8 @@ impl Environment {
                             LightType::Point => {
                                 if point_count < MAX_POINT_LIGHTS {
                                     uniforms.point_lights[point_count] = GpuLightData {
-                                        color: [light.color.x, light.color.y, light.color.z, light.intensity],
-                                        position: [pos.x, pos.y, pos.z, light.range],
+                                        color: Vec4::new(light.color.x, light.color.y, light.color.z, light.intensity),
+                                        position: Vec4::new(pos.x, pos.y, pos.z, light.range),
                                         ..Default::default()
                                     };
                                     point_count += 1;
@@ -103,10 +103,10 @@ impl Environment {
                             LightType::Spot => {
                                 if spot_count < MAX_SPOT_LIGHTS {
                                     uniforms.spot_lights[spot_count] = GpuLightData {
-                                        color: [light.color.x, light.color.y, light.color.z, light.intensity],
-                                        position: [pos.x, pos.y, pos.z, light.range],
-                                        direction: [dir.x, dir.y, dir.z, 0.0],
-                                        info: [light.inner_cone.cos(), light.outer_cone.cos(), 0.0, 0.0],
+                                        color: Vec4::new(light.color.x, light.color.y, light.color.z, light.intensity),
+                                        position: Vec4::new(pos.x, pos.y, pos.z, light.range),
+                                        direction: Vec4::new(dir.x, dir.y, dir.z, 0.0),
+                                        info: Vec4::new(light.inner_cone.cos(), light.outer_cone.cos(), 0.0, 0.0),
                                         ..Default::default()
                                     };
                                     spot_count += 1;

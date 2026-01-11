@@ -387,7 +387,7 @@ impl Renderer {
                     model_matrix: cmd.model_matrix,
                     model_matrix_inverse,
                     normal_matrix,
-                    __padding_20: [0.0; 20].into(),
+                    ..Default::default()
                 });
 
                 let dynamic_stride = std::mem::size_of::<DynamicModelUniforms>() as u32;

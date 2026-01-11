@@ -2,14 +2,18 @@ use glam::{Vec2, Vec3, Vec4, Mat3A, Mat4};
 use bytemuck::{Pod, Zeroable};
 use std::borrow::Cow;
 use std::ops::{Deref, DerefMut};
+use std::collections::HashSet;
 
 
 // ============================================================================
 // 1. 类型映射 Trait (Rust Type -> WGSL Type String)
 // ============================================================================
-
 pub trait WgslType {
     fn wgsl_type_name() -> Cow<'static, str>;
+
+    fn collect_wgsl_defs(_defs: &mut Vec<String>, _inserted: &mut HashSet<String>) {
+        // 默认实现为空（针对 f32, vec3 等基础类型）
+    }
 }
 
 impl WgslType for f32 { fn wgsl_type_name() -> Cow<'static, str> { "f32".into() } }
@@ -22,19 +26,12 @@ impl WgslType for Mat4 { fn wgsl_type_name() -> Cow<'static, str> { "mat4x4<f32>
 impl WgslType for Mat3A { fn wgsl_type_name() -> Cow<'static, str> { "mat3x3<f32>".into() } }
 
 
-// ----------------------------------------------------------------------------
-// 2. 核心：自定义数组类型 UniformArray
-// ----------------------------------------------------------------------------
 /// 专门用于 Uniform Buffer 的数组包装器
-/// 自动处理 WGSL 类型映射和 Default 实现
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UniformArray<T: Pod, const N: usize>(pub [T; N]);
 
-// 1. 手动实现 Zeroable (安全：只要内部数组是 Zeroable，且布局透明)
 unsafe impl<T: Pod, const N: usize> Zeroable for UniformArray<T, N> {}
-
-// 2. 手动实现 Pod (安全：只要内部数组是 Pod，且布局透明)
 unsafe impl<T: Pod, const N: usize> Pod for UniformArray<T, N> {}
 
 // 1. 实现 WgslType：自动生成 array<T, N>
@@ -42,6 +39,10 @@ impl<T: WgslType + Pod, const N: usize> WgslType for UniformArray<T, N> {
     fn wgsl_type_name() -> Cow<'static, str> {
         // 动态生成包含长度的 WGSL 类型字符串
         format!("array<{}, {}>", T::wgsl_type_name(), N).into()
+    }
+
+    fn collect_wgsl_defs(defs: &mut Vec<String>, inserted: &mut HashSet<String>) {
+        T::collect_wgsl_defs(defs, inserted);
     }
 }
 
@@ -82,81 +83,6 @@ pub trait UniformBlock: Pod + Zeroable {
 
 
 
-// 单个光源数据 (必须 16 字节对齐)
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable, Default)]
-pub struct GpuLightData {
-    // color(rgb) + intensity(a)
-    pub color: [f32; 4], 
-    // position(xyz) + range(w)
-    pub position: [f32; 4], 
-    // direction(xyz) + spot_angle(w)
-    pub direction: [f32; 4],
-    // extra params
-    pub info: [f32; 4], 
-}
-
-pub const MAX_DIR_LIGHTS: usize = 4;
-pub const MAX_POINT_LIGHTS: usize = 16;
-pub const MAX_SPOT_LIGHTS: usize = 4;
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, Pod, Zeroable)]
-pub struct GlobalLightUniforms {
-    pub ambient: [f32; 4], // 环境光
-    
-    // 计数器 (注意对齐)
-    pub num_dir_lights: u32,
-    pub num_point_lights: u32,
-    pub num_spot_lights: u32,
-    pub __pad: u32, 
-
-    // 灯光数组
-    pub dir_lights: [GpuLightData; MAX_DIR_LIGHTS],
-    pub point_lights: [GpuLightData; MAX_POINT_LIGHTS],
-    pub spot_lights: [GpuLightData; MAX_SPOT_LIGHTS],
-}
-
-impl Default for GlobalLightUniforms {
-    fn default() -> Self {
-        Self {
-            ambient: [0.05, 0.05, 0.05, 1.0],
-            num_dir_lights: 0,
-            num_point_lights: 0,
-            num_spot_lights: 0,
-            __pad: 0,
-            dir_lights: [GpuLightData::default(); MAX_DIR_LIGHTS],
-            point_lights: [GpuLightData::default(); MAX_POINT_LIGHTS],
-            spot_lights: [GpuLightData::default(); MAX_SPOT_LIGHTS],
-        }
-    }
-}
-
-impl UniformBlock for GlobalLightUniforms {
-    fn wgsl_struct_def(struct_name: &str) -> String {
-        let mut code = format!("struct {} {{\n", struct_name);
-        code.push_str("    ambient: vec4<f32>,\n");
-        code.push_str("    num_dir_lights: u32,\n");
-        code.push_str("    num_point_lights: u32,\n");
-        code.push_str("    num_spot_lights: u32,\n");
-        // code.push_str("    __pad: u32,\n");
-        code.push_str(&format!("    dir_lights: array<LightData, {}>,\n", MAX_DIR_LIGHTS));
-        code.push_str(&format!("    point_lights: array<LightData, {}>,\n", MAX_POINT_LIGHTS));
-        code.push_str(&format!("    spot_lights: array<LightData, {}>,\n", MAX_SPOT_LIGHTS));
-        code.push_str("};\n");
-
-        // LightData 结构体定义
-        code.push_str("struct LightData {\n");
-        code.push_str("    color: vec4<f32>,\n");
-        code.push_str("    position: vec4<f32>,\n");
-        code.push_str("    direction: vec4<f32>,\n");
-        code.push_str("    info: vec4<f32>,\n");
-        code.push_str("};\n");
-
-        code
-    }
-}
-
 
 // ============================================================================
 // 2. 宏定义 (Single Source of Truth)
@@ -164,104 +90,142 @@ impl UniformBlock for GlobalLightUniforms {
 
 macro_rules! define_uniform_struct {
     // --------------------------------------------------------
-    // 入口模式：匹配 struct 定义
+    // 入口模式
     // --------------------------------------------------------
     (
         $(#[$meta:meta])* struct $name:ident {
             $(
-                $field_name:ident : $field_type:ty $(= $default_val:expr)?
+                $vis:vis $field_name:ident : $field_type:ty $(= $default_val:expr)?
             ),* $(,)?
         }
     ) => {
-        // 1. 调用内部规则生成 struct 定义 (忽略默认值)
+        // 1. 生成 Rust Struct
         define_uniform_struct!(@def_struct 
             $(#[$meta])* struct $name { 
-                $( $field_name : $field_type ),* }
+                $( $vis $field_name : $field_type ),* }
         );
 
-        // 2. 调用内部规则生成 Default 实现 (处理默认值)
+        // 2. 生成 Default 实现
         define_uniform_struct!(@impl_default 
             $name { 
                 $( $field_name : $field_type $(= $default_val)? ),* }
         );
 
-        // 3. 调用内部规则生成 WGSL 代码 (忽略默认值)
-        define_uniform_struct!(@impl_wgsl 
+        // 3. 生成 WgslType 实现 (支持作为嵌套字段)
+        define_uniform_struct!(@impl_wgsl_type 
+            $name { 
+                $( $field_name : $field_type ),* }
+        );
+
+        // 4. 生成 UniformBlock 实现 (顶层入口)
+        define_uniform_struct!(@impl_uniform_block 
             $name { 
                 $( $field_name : $field_type ),* }
         );
     };
 
-    // --------------------------------------------------------
-    // 内部规则 1: 生成 Rust Struct
-    // --------------------------------------------------------
-    (@def_struct $(#[$meta:meta])* struct $name:ident { $( $field_name:ident : $field_type:ty ),* }) => {
+    (@def_struct $(#[$meta:meta])* struct $name:ident { $( $vis:vis $field_name:ident : $field_type:ty ),* }) => {
         #[repr(C)]
         #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
         $(#[$meta])*
         pub struct $name {
-            $(
-                pub $field_name : $field_type,
-            )*
+            $( $vis $field_name : $field_type, )*
         }
     };
 
-    // --------------------------------------------------------
-    // 内部规则 2: 生成 Default 实现
-    // --------------------------------------------------------
-    (@impl_default $name:ident { $( $field_name:ident : $field_type:ty $(= $default_val:expr)? ),* }) => {
+    (@impl_default $name:ident { $( $vis:vis $field_name:ident : $field_type:ty $(= $default_val:expr)? ),* }) => {
         impl Default for $name {
             fn default() -> Self {
                 Self {
-                    $(
-                        $field_name: define_uniform_struct!(@val_or_default $field_type $(, $default_val)?),
-                    )*
+                    $( $field_name: define_uniform_struct!(@val_or_default $field_type $(, $default_val)?), )*
+                }
+            }
+        }
+    };
+    (@val_or_default $type:ty, $val:expr) => { $val };
+    (@val_or_default $type:ty) => { <$type as Default>::default() };
+
+
+    // --------------------------------------------------------
+    // 新增规则: 生成 WGSL 结构体定义逻辑 (供内部和外部使用)
+    // --------------------------------------------------------
+    (@gen_body $name_str:expr, { $( $vis:vis$field_name:ident : $field_type:ty ),* }) => {{
+        let mut code = format!("struct {} {{\n", $name_str);
+        $(
+            if !stringify!($field_name).starts_with("__") { 
+                code.push_str(&format!(
+                    "    {}: {},\n", 
+                    stringify!($field_name), 
+                    <$field_type as WgslType>::wgsl_type_name()
+                ));
+            }
+        )*
+        code.push_str("};\n");
+        code
+    }};
+
+    // --------------------------------------------------------
+    // 内部规则 3: 实现 WgslType (让该结构体可以被嵌套)
+    // --------------------------------------------------------
+    (@impl_wgsl_type $name:ident { $( $vis:vis $field_name:ident : $field_type:ty ),* }) => {
+        impl WgslType for $name {
+            fn wgsl_type_name() -> std::borrow::Cow<'static, str> {
+                stringify!($name).into()
+            }
+
+            fn collect_wgsl_defs(defs: &mut Vec<String>, inserted: &mut std::collections::HashSet<String>) {
+                // 1. 递归收集所有字段的定义 (依赖优先)
+                $(
+                    <$field_type as WgslType>::collect_wgsl_defs(defs, inserted);
+                )*
+
+                // 2. 生成自身的定义
+                let my_name = stringify!($name);
+                if !inserted.contains(my_name) {
+                    let my_def = define_uniform_struct!(@gen_body my_name, { $( $field_name : $field_type ),* });
+                    defs.push(my_def);
+                    inserted.insert(my_name.to_string());
                 }
             }
         }
     };
 
-    // 辅助规则：如果有显式值，则使用显式值；否则使用 Type::default()
-    (@val_or_default $type:ty, $val:expr) => { $val };
-    (@val_or_default $type:ty) => { <$type as Default>::default() };
-
     // --------------------------------------------------------
-    // 内部规则 3: 生成 WGSL struct string
+    // 内部规则 4: 实现 UniformBlock (顶层调用)
     // --------------------------------------------------------
-    (@impl_wgsl $name:ident { $( $field_name:ident : $field_type:ty ),* }) => {
+    (@impl_uniform_block $name:ident { $( $vis:vis $field_name:ident : $field_type:ty ),* }) => {
         impl crate::resources::uniforms::UniformBlock for $name {
             fn wgsl_struct_def(struct_name: &str) -> String {
-                let mut code = format!("struct {} {{\n", struct_name);
+                let mut defs = Vec::new();
+                let mut inserted = std::collections::HashSet::new();
+
+                // 1. 收集所有字段的依赖 (例如 LightData)
                 $(
-                    // 忽略以 __ 开头的 padding 字段
-                    if !stringify!($field_name).starts_with("__") { 
-                        code.push_str(&format!(
-                            "    {}: {},\n", 
-                            stringify!($field_name), 
-                            <$field_type as WgslType>::wgsl_type_name()
-                        ));
-                    }
+                    <$field_type as WgslType>::collect_wgsl_defs(&mut defs, &mut inserted);
                 )*
-                code.push_str("};");
-                code
+
+                // 2. 生成顶层结构体 (使用传入的 struct_name，可能被重命名)
+                let top_def = define_uniform_struct!(@gen_body struct_name, { $( $vis $field_name : $field_type ),* });
+                
+                // 3. 拼接所有内容
+                defs.push(top_def);
+                defs.join("\n")
             }
         }
     };
 }
-
 // ============================================================================
 // 3. Uniform 定义 (在此处修改，两端自动同步)
 // ============================================================================
 
-
 define_uniform_struct!(
     /// 动态模型 Uniforms (每个对象更新)
     struct DynamicModelUniforms {
-        model_matrix: Mat4,       //64
-        model_matrix_inverse: Mat4,  //64
-        normal_matrix: Mat3A,   //48
+        pub model_matrix: Mat4,       //64
+        pub model_matrix_inverse: Mat4,  //64
+        pub normal_matrix: Mat3A,   //48
 
-        __padding_20: UniformArray<f32, 20>, // 填充至 256 bytes
+        pub(crate) __padding_20: UniformArray<f32, 20> = UniformArray::new([0.0; 20]),
     }
 );
 
@@ -269,29 +233,9 @@ define_uniform_struct!(
 define_uniform_struct!(
     /// 全局 Uniforms (每个 Frame 更新)
     struct GlobalFrameUniforms {
-        view_projection: Mat4 = Mat4::IDENTITY,
-        view_projection_inverse: Mat4 = Mat4::IDENTITY,
-        view_matrix: Mat4 = Mat4::IDENTITY,
-    }
-);
-
-
-// Standard PBR Material
-define_uniform_struct!(
-    struct MeshStandardUniforms {
-        color: Vec4 = Vec4::ONE,           // 16
-        emissive: Vec3 = Vec3::ZERO,        // 12
-        occlusion_strength: f32 = 1.0,     // 4 (12+4=16)
-        normal_scale: Vec2 = Vec2::ONE,    // 8
-        roughness: f32 = 1.0,            // 4  
-        metalness: f32 = 0.0,           // 4
-        // 使用优化后的 Mat3A (48 bytes)
-        map_transform: Mat3A = Mat3A::IDENTITY,         
-        normal_map_transform: Mat3A = Mat3A::IDENTITY,   
-        roughness_map_transform: Mat3A = Mat3A::IDENTITY,
-        metalness_map_transform: Mat3A = Mat3A::IDENTITY,
-        emissive_map_transform: Mat3A = Mat3A::IDENTITY, 
-        occlusion_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub view_projection: Mat4 = Mat4::IDENTITY,
+        pub view_projection_inverse: Mat4 = Mat4::IDENTITY,
+        pub view_matrix: Mat4 = Mat4::IDENTITY,
     }
 );
 
@@ -299,10 +243,61 @@ define_uniform_struct!(
 // Basic Material
 define_uniform_struct!(
     struct MeshBasicUniforms {
-        color: Vec4 = Vec4::ONE,           // 16
-        opacity: f32 = 1.0,          // 4
-        __padding: UniformArray<f32, 3>,      // 12 (4+12=16)
-        map_transform: Mat3A = Mat3A::IDENTITY,
+        pub color: Vec4 = Vec4::ONE,           // 16
+        pub opacity: f32 = 1.0,          // 4
+        pub(crate) __padding: UniformArray<f32, 3>,      // 12 (4+12=16)
+        pub map_transform: Mat3A = Mat3A::IDENTITY,
+    }
+);
+
+
+// Standard PBR Material
+define_uniform_struct!(
+    struct MeshStandardUniforms {
+        pub color: Vec4 = Vec4::ONE,           // 16
+        pub emissive: Vec3 = Vec3::ZERO,        // 12
+        pub occlusion_strength: f32 = 1.0,     // 4 (12+4=16)
+        pub normal_scale: Vec2 = Vec2::ONE,    // 8
+        pub roughness: f32 = 1.0,            // 4  
+        pub metalness: f32 = 0.0,           // 4
+        // 使用优化后的 Mat3A (48 bytes)
+        pub map_transform: Mat3A = Mat3A::IDENTITY,         
+        pub normal_map_transform: Mat3A = Mat3A::IDENTITY,   
+        pub roughness_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub metalness_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub emissive_map_transform: Mat3A = Mat3A::IDENTITY, 
+        pub occlusion_map_transform: Mat3A = Mat3A::IDENTITY,
+    }
+);
+
+define_uniform_struct!(
+    struct GpuLightData {
+        pub color: Vec4,
+        pub position: Vec4,
+        pub direction: Vec4,
+        pub info: Vec4,
+    }
+);
+
+pub const MAX_DIR_LIGHTS: usize = 4;
+pub const MAX_POINT_LIGHTS: usize = 16;
+pub const MAX_SPOT_LIGHTS: usize = 4;
+
+define_uniform_struct!(
+    struct GlobalLightUniforms {
+        pub ambient: Vec4 = Vec4::new(0.05, 0.05, 0.05, 1.0),
+        
+        pub num_dir_lights: u32,
+        pub num_point_lights: u32,
+        pub num_spot_lights: u32,
+        pub(crate) __pad: u32, 
+
+        // 直接使用 UniformArray<GpuLightData, N>
+        // 宏会自动发现 GpuLightData 也是通过 define_uniform_struct 定义的
+        // 并自动将其 struct 定义包含进最终的 WGSL 中
+        pub dir_lights: UniformArray<GpuLightData, MAX_DIR_LIGHTS>,
+        pub point_lights: UniformArray<GpuLightData, MAX_POINT_LIGHTS>,
+        pub spot_lights: UniformArray<GpuLightData, MAX_SPOT_LIGHTS>,
     }
 );
 
@@ -329,5 +324,11 @@ mod tests {
         let basic_default = DynamicModelUniforms::default();
         println!("WGSL for DynamicModelUniforms:\n{}", basic_wgsl);
         println!("Default DynamicModelUniforms: {:?}", basic_default);
+    }
+
+    #[test]
+    fn test_nested_wgsl() {
+        let wgsl = GlobalLightUniforms::wgsl_struct_def("GlobalUniforms");
+        println!("{}", wgsl);
     }
 }
