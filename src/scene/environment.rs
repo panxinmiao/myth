@@ -44,18 +44,18 @@ impl Environment {
     }
 
     /// 每帧调用：从 Camera 和 Scene 更新 CPU Buffer 数据
-    pub fn update(&self, camera: &mut Camera, scene: &Scene) {
+    pub fn update(&self, camera: &Camera, scene: &Scene) {
         // 1. 更新 Frame Uniforms
         {
             let mut uniforms = GlobalFrameUniforms::default();
-            camera.update_matrix_world(scene);
+            // camera.update_matrix_world(scene);
             
-            let view_matrix = camera.view_matrix();
-            let vp_matrix =  camera.view_projection_matrix();
+            let view_matrix = camera.view_matrix;
+            let vp_matrix =  camera.view_projection_matrix;
 
-            uniforms.view_projection = *vp_matrix;
+            uniforms.view_projection = vp_matrix;
             uniforms.view_projection_inverse = vp_matrix.inverse();
-            uniforms.view_matrix = *view_matrix;
+            uniforms.view_matrix = view_matrix;
 
             // 获取写锁并更新数据
             self.frame_uniforms.update(&[uniforms]);

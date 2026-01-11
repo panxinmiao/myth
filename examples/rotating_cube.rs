@@ -20,28 +20,18 @@ fn main() -> anyhow::Result<()> {
 
     // === 2. 创建 Mesh 并添加到场景 ===
     let mesh = Mesh::new(geo_handle, mat_handle);
-    let mesh_ref = app.scene.add_mesh(mesh, None);
-    let cube_node_id = mesh_ref.node_id.unwrap(); // 保存立方体节点 ID
+    let cube_node_id = app.scene.add_mesh(mesh);
 
     // === 3. 设置相机 ===
     let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1, 100.0);
     
     // 添加相机到场景
-    let camera_ref = app.scene.add_camera(camera, None);
-    let camera_node_id = camera_ref.node_id.unwrap();
+    let camera_node_id = app.scene.add_camera(camera);
     
     // 通过节点设置相机位置
     if let Some(cam_node) = app.scene.get_node_mut(camera_node_id) {
-        cam_node.position = Vec3::new(0.0, 3.0, 10.0);
-        // 计算朝向原点的旋转
-        let forward = (Vec3::ZERO - cam_node.position).normalize();
-        let right = forward.cross(Vec3::Y).normalize();
-        let up = right.cross(forward).normalize();
-        cam_node.rotation = Quat::from_mat3(&glam::Mat3::from_cols(
-            right,
-            up,
-            -forward,
-        ));
+        cam_node.position = Vec3::new(0.0, 3.0, 20.0);
+        cam_node.look_at(Vec3::ZERO, Vec3::Y);
     }
     
     app.active_camera = Some(camera_node_id);
@@ -52,7 +42,7 @@ fn main() -> anyhow::Result<()> {
         Vec3::new(1.0, 1.0, 1.0),               // 白光
         1.5                                      // 强度
     );
-    app.scene.add_light(light, None);
+    app.scene.add_light(light);
 
     // === 5. 设置更新回调 - 让立方体旋转 ===
     app.set_update_fn(move |scene, _assets, time| {

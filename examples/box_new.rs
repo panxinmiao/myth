@@ -20,14 +20,13 @@ fn main() -> anyhow::Result<()> {
 
     // === 2. 创建 Mesh 并添加到场景 ===
     let mesh = Mesh::new(geo_handle, mat_handle);
-    app.scene.add_mesh(mesh, None);
+    app.scene.add_mesh(mesh);
 
     // === 3. 设置相机 ===
     let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1, 100.0);
     
     // 添加相机到场景
-    let camera_ref = app.scene.add_camera(camera, None);
-    let camera_node_id = camera_ref.node_id.unwrap();
+    let camera_node_id = app.scene.add_camera(camera);
     
     // 通过节点设置相机位置
     if let Some(cam_node) = app.scene.get_node_mut(camera_node_id) {
@@ -51,7 +50,7 @@ fn main() -> anyhow::Result<()> {
         Vec3::new(1.0, 1.0, 1.0),               // 白光
         1.5                                      // 强度
     );
-    app.scene.add_light(light, None);
+    app.scene.add_light(light);
 
     // === 5. 运行应用 ===
     app.run()

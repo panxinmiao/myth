@@ -51,21 +51,23 @@ impl Scene {
     }
 
     /// 添加一个节点到场景 (默认放在根节点)
-    pub fn add_node(&mut self, node: Node, parent: Option<Index>) -> Index {
+    pub fn add_node(&mut self, node: Node) -> Index {
         let idx = self.nodes.insert(node);
+        self.root_nodes.push(idx);
+        idx
+    }
 
-        if let Some(parent_idx) = parent {
-            // 如果指定了父节点，建立父子关系
-            if let Some(p) = self.nodes.get_mut(parent_idx) {
-                p.children.push(idx);
-            }
-            if let Some(c) = self.nodes.get_mut(idx) {
-                c.parent = Some(parent_idx);
-            }
-        } else {
-            // 否则作为根节点
-            self.root_nodes.push(idx);
+    pub fn add_to_parent(&mut self, child: Node, parent_idx: Index) -> Index {
+        let idx = self.nodes.insert(child);
+
+        // 建立父子关系
+        if let Some(p) = self.nodes.get_mut(parent_idx) {
+            p.children.push(idx);
         }
+        if let Some(c) = self.nodes.get_mut(idx) {
+            c.parent = Some(parent_idx);
+        }
+
         idx
     }
 
@@ -204,104 +206,71 @@ impl Scene {
 
 
     // === 资源管理 API ===
-    // 注意：Scene 不再直接持有 AssetServer
-    // 资源添加请在外部 App 中进行，获取 Handle 后创建 Mesh
-
-    // 修改 add_mesh：它现在接受 Handle
-    pub fn add_mesh(&mut self, mesh: Mesh, parent: Option<Index>) -> &mut Mesh {
-        // 逻辑保持不变：创建 Node -> 插入 Mesh -> 关联
+    pub fn add_mesh(&mut self, mesh: Mesh) -> Index {
         let mut node = crate::scene::node::Node::new(&mesh.name);
         node.mesh = Some(self.meshes.insert(mesh));
-        let node_idx = self.add_node(node, parent);
-
-        if let Some(mesh) = self.meshes.get_mut(self.nodes.get(node_idx).unwrap().mesh.unwrap()) {
-            mesh.node_id = Some(node_idx);
-            return mesh;
-        }
-        panic!("Failed to add mesh.");
+        self.add_node(node)
     }
 
-    // pub fn add_mesh(&mut self, mesh: Mesh, parent: Option<Index>) -> &mut Mesh {
-    //     // 1. 创建 Node
-    //     let mut node = Node::new(&mesh.name);
-
-    //     node.mesh = Some(self.meshes.insert(mesh));
-    //     // 2. 插入 Node
-    //     let node_idx = self.add_node(node, parent);
-
-    //     // 3. 回填 Node ID 到 Mesh
-    //     if let Some(mesh) = self.meshes.get_mut(self.nodes.get(node_idx).unwrap().mesh.unwrap()) {
-    //         mesh.node_id = Some(node_idx);
-    //         return mesh;
-    //     }
-    //     // should not reach here
-    //     panic!("Failed to add mesh to scene.");
-    // }
-
-    pub fn remove_mesh(&mut self, mesh_idx: Index) {
-        // 1. 获取 Mesh 所在的 Node ID
-        if let Some(mesh) = self.meshes.get(mesh_idx) {
-            if let Some(node_idx) = mesh.node_id {
-                // 2. 移除对应的 Node (会递归删除子节点)
-                self.remove_node(node_idx);
-            }
-        }
+    pub fn add_mesh_to_parent(&mut self, mesh: Mesh, parent: Index) -> Index {
+        let mut node = crate::scene::node::Node::new(&mesh.name);
+        node.mesh = Some(self.meshes.insert(mesh));
+        self.add_to_parent(node, parent)
     }
 
-    pub fn add_camera(&mut self, camera: Camera, parent: Option<Index>) ->  &mut Camera {
+    pub fn add_camera(&mut self, camera: Camera) ->  Index {
         // 1. 创建 Node
         let mut node = Node::new("Camera");
 
         node.camera = Some(self.cameras.insert(camera));
 
         // 2. 插入 Node
-        let node_idx = self.add_node(node, parent);
+        self.add_node(node)
 
-        // 3. 回填 Node ID 到 Camera
-        if let Some(cam) = self.cameras.get_mut(self.nodes.get(node_idx).unwrap().camera.unwrap()) {
-            cam.node_id = Some(node_idx);
-            return cam;
-        }
-        // should not reach here
-        panic!("Failed to add camera to scene.");
     }
 
-    pub fn remove_camera(&mut self, camera_idx: Index) {
-        // 1. 获取 Camera 所在的 Node ID
-        if let Some(camera) = self.cameras.get(camera_idx) {
-            if let Some(node_idx) = camera.node_id {
-                // 2. 移除对应的 Node (会递归删除子节点)
-                self.remove_node(node_idx);
+    pub fn add_camera_to_parent(&mut self, camera: Camera, parent: Index) -> Index {
+        let mut node = Node::new("Camera");
+        node.camera = Some(self.cameras.insert(camera));
+        self.add_to_parent(node, parent)
+    }
+
+    pub fn update_cameras(&mut self) {
+        // 1. 收集阶段：遍历 Node，找到挂载了相机的节点，记录 (CameraID, WorldMatrix)
+        // 这一步只借用了 self.nodes，没有借用 self.cameras
+        let mut updates = Vec::new();
+        
+        for (_node_idx, node) in self.nodes.iter() {
+            if let Some(camera_idx) = node.camera {
+                // 如果节点被隐藏，是否更新相机？通常还是要更新的，除非逻辑上禁用了相机
+                let world_matrix = *node.world_matrix();
+                updates.push((camera_idx, world_matrix));
+            }
+        }
+
+        // 2. 更新阶段：遍历收集到的任务，更新 Camera
+        // 这一步只借用了 self.cameras
+        for (cam_idx, world_matrix) in updates {
+            if let Some(camera) = self.cameras.get_mut(cam_idx) {
+                camera.update_view_projection(&world_matrix);
             }
         }
     }
 
-    pub fn add_light(&mut self, light: Light, parent: Option<Index>) -> &mut Light {
+    pub fn add_light(&mut self, light: Light) -> Index {
         // 1. 创建 Node
         let mut node = Node::new("Light");
 
         node.light = Some(self.lights.insert(light));
 
         // 2. 插入 Node
-        let node_idx = self.add_node(node, parent);
-
-        // 3. 回填 Node ID 到 Light
-        if let Some(lgt) = self.lights.get_mut(self.nodes.get(node_idx).unwrap().light.unwrap()) {
-            lgt.node_id = Some(node_idx);
-            return lgt;
-        }
-        // should not reach here
-        panic!("Failed to add light to scene.");
+        self.add_node(node)
     }
 
-    pub fn remove_light(&mut self, light_idx: Index) {
-        // 1. 获取 Light 所在的 Node ID
-        if let Some(light) = self.lights.get(light_idx) {
-            if let Some(node_idx) = light.node_id {
-                // 2. 移除对应的 Node (会递归删除子节点)
-                self.remove_node(node_idx);
-            }
-        }
+    pub fn add_light_to_parent(&mut self, light: Light, parent: Index) -> Index {
+        let mut node = Node::new("Light");
+        node.light = Some(self.lights.insert(light));
+        self.add_to_parent(node, parent)
     }
 
     // 返回: (features, num_dir, num_point, num_spot)

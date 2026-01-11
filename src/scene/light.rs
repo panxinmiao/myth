@@ -1,5 +1,4 @@
 use glam::{Vec3};
-use thunderdome::Index;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -12,7 +11,7 @@ pub enum LightType {
 #[derive(Debug, Clone)]
 pub struct Light {
     pub uuid: Uuid,
-    pub node_id: Option<Index>,
+
     pub light_type: LightType,
     pub color: Vec3,
     pub intensity: f32,
@@ -35,7 +34,6 @@ impl Light {
     pub fn new_directional(direction: Vec3, color: Vec3, intensity: f32) -> Self {
         Self {
             uuid: Uuid::new_v4(),
-            node_id: None,
             light_type: LightType::Directional,
             color,
             intensity,
@@ -52,7 +50,6 @@ impl Light {
     pub fn new_point(position: Vec3, color: Vec3, intensity: f32, range: f32) -> Self {
         Self {
             uuid: Uuid::new_v4(),
-            node_id: None,
             light_type: LightType::Point,
             color,
             intensity,

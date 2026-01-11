@@ -1,138 +1,66 @@
-use std::sync::{Arc};
-use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
-use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
-use glam::{Vec3, Vec4, Quat, Vec3A}; // 引入 Quat
-
-// 引入你的引擎模块
-use three::render::Renderer;
-use three::scene::{Scene, Camera};
+use glam::{Vec3, Vec4, Quat};
+use three::app::App; // 使用引擎提供的 App 抽象
 use three::resources::{Geometry, Material, Mesh, Texture};
-use thunderdome::Index; // 需要保存 Node ID
+use three::scene::Camera;
 
-pub struct App {
-    window: Option<Arc<Window>>,
-    renderer: Option<Renderer>,
-    scene: Scene,
-    camera: Camera,
-    
-    // 新增：保存旋转立方体的 Node ID，以便在 update 中访问
-    cube_node_id: Option<Index>,
-}
-
-impl App {
-    pub fn new() -> Self {
-        let mut scene = Scene::new();
-
-        let geometry = Geometry::new_box(2.0, 2.0, 2.0);
-        let texture = Texture::create_checkerboard("checker", 512, 512, 64);
-
-        let mut basic_mat = Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0));
-
-        let text_handle = scene.add_texture_data(texture);
-        basic_mat.map = Some(text_handle);
-
-        let geo_id = scene.add_geometry_data(geometry);
-        let mat_id = scene.add_material_data(basic_mat.into());
-        
-        let mesh = Mesh::new(geo_id, mat_id);
-        
-        // 3. 添加到场景并保存 ID
-        let mesh_mut = scene.add_mesh(mesh, None);
-        let node_id = mesh_mut.node_id.unwrap();
-        
-        // 4. 设置相机
-        let mut camera = Camera::new_perspective(
-            45.0, 
-            1.0, 
-            0.1, 
-            100.0
-        );
-        camera.transform.translation = Vec3A::new(0.0, 3.0, 10.0); //稍微抬高一点视角
-        camera.look_at(Vec3::ZERO, Vec3::Y);
-
-        Self {
-            window: None,
-            renderer: None,
-            scene,
-            camera,
-            cube_node_id: Some(node_id), // 保存立方体的 Node ID
-        }
-    }
-    
-    // ... run 方法保持不变 ...
-    pub fn run(&mut self) {
-        let event_loop = EventLoop::new().unwrap();
-        event_loop.set_control_flow(ControlFlow::Poll); 
-        event_loop.run_app(self).unwrap();
-    }
-}
-
-impl ApplicationHandler for App {
-    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // ... 初始化逻辑保持不变 ...
-        // 只是标题改一下
-        if self.window.is_none() {
-             let window_attributes = Window::default_attributes()
-                .with_title("Three-RS: Spinning Cube");
-            // ... 其余 renderer 初始化代码复制之前的 ...
-             let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
-            self.window = Some(window.clone());
-            
-            let instance = wgpu::Instance::default();
-            let surface = instance.create_surface(window.clone()).unwrap();
-            let size = window.inner_size();
-            let renderer = Renderer::new(&instance, surface, size.width, size.height);
-            self.renderer = Some(renderer);
-        }
-    }
-
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
-        match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
-            WindowEvent::Resized(physical_size) => {
-                if let Some(renderer) = &mut self.renderer {
-                    renderer.resize(physical_size.width, physical_size.height);
-                    self.camera.aspect = physical_size.width as f32 / physical_size.height as f32;
-                    self.camera.update_projection_matrix();
-                }
-            }
-            WindowEvent::RedrawRequested => {
-                if let Some(renderer) = &mut self.renderer {
-                    
-                    // === 核心：更新旋转逻辑 ===
-                    if let Some(node_id) = self.cube_node_id {
-                        if let Some(node) = self.scene.get_node_mut(node_id) {
-                            // 每帧旋转一点点 (绕 Y 轴和 X 轴)
-                            let rot_y = Quat::from_rotation_y(0.02);
-                            let rot_x = Quat::from_rotation_x(0.01);
-                            
-                            // 累加旋转
-                            node.rotation = node.rotation * rot_y * rot_x;
-                            // 注意：现在的架构会自动检测 node.rotation 的变化并更新矩阵
-                        }
-                    }
-
-                    // 渲染
-                    renderer.render(&mut self.scene, &mut self.camera);
-                    
-                    self.window.as_ref().unwrap().request_redraw();
-                }
-            }
-            _ => {}
-        }
-    }
-
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
-        }
-    }
-}
-
-fn main() {
+fn main() -> anyhow::Result<()> {
     env_logger::init();
+
+    // 1. 初始化引擎 App
     let mut app = App::new();
-    app.run();
+
+    // 2. 准备资源 (Geometry, Texture, Material)
+    let geometry = Geometry::new_box(2.0, 2.0, 2.0);
+    let texture = Texture::create_checkerboard("checker", 512, 512, 64);
+    let mut basic_mat = Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0));
+
+    // 3. 将资源添加到 AssetServer，获取 Handle
+    let tex_handle = app.assets.add_texture(texture);
+    basic_mat.map = Some(tex_handle);
+    
+    let geo_handle = app.assets.add_geometry(geometry);
+    let mat_handle = app.assets.add_material(basic_mat.into());
+
+    // 4. 创建 Mesh 并加入场景
+    let mesh = Mesh::new(geo_handle, mat_handle);
+
+    let cube_node_id = app.scene.add_mesh(mesh);
+
+    // 5. 设置相机
+    // 5.1 创建相机组件 (纯投影数据)
+    let camera = Camera::new_perspective(
+        45.0, 
+        1280.0 / 720.0, // 默认窗口大小的长宽比
+        0.1, 
+        100.0
+    );
+    
+    // 5.2 将相机加入场景 (自动创建 Node)
+    let cam_node_id = app.scene.add_camera(camera);
+    
+    // 5.3 设置相机节点的位置和朝向
+    if let Some(node) = app.scene.get_node_mut(cam_node_id) {
+        node.position = Vec3::new(0.0, 3.0, 10.0);
+        // 使用我们刚实现的 look_at 方法
+        node.look_at(Vec3::ZERO, Vec3::Y);
+    }
+    
+    // 5.4 激活相机
+    app.active_camera = Some(cam_node_id);
+
+    // 6. 设置 Update 回调 (处理旋转动画)
+    // move 闭包捕获 cube_node_id
+    app.set_update_fn(move |scene, _assets, _dt| {
+        if let Some(node) = scene.get_node_mut(cube_node_id) {
+            // 每帧旋转
+            let rot_y = Quat::from_rotation_y(0.02);
+            let rot_x = Quat::from_rotation_x(0.01);
+            
+            // 累加旋转，update_matrix_world 会自动处理矩阵更新
+            node.rotation = node.rotation * rot_y * rot_x;
+        }
+    });
+
+    // 7. 运行
+    app.run()
 }

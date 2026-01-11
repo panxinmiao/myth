@@ -1,20 +1,10 @@
 use glam::{Mat4, Vec3, Vec4, Affine3A};
 use uuid::Uuid;
-use thunderdome::Index;
-use super::scene::Scene; // 需要引用 Scene 来查找 Node
 
 #[derive(Debug, Clone)]
 pub struct Camera {
     pub uuid: Uuid,
     pub name: String,
-    // === 关联 ===
-    // 相机依附于哪个节点？
-    // 通过这个 ID，我们可以去 Scene.nodes 里查到它的 World Matrix (用于计算 View Matrix)
-    pub node_id: Option<Index>,
-
-    // === 游离模式下的 Transform ===
-    // 只有在 node_id 为 None 时，以下字段才生效
-    pub transform: Affine3A,
 
     // === 投影属性 (Projection Only) ===
     pub projection_type: ProjectionType,
@@ -22,15 +12,14 @@ pub struct Camera {
     pub aspect: f32,
     pub near: f32,
     pub far: f32,
-
-    // 正交参数
     pub ortho_size: f32, 
 
-    world_matrix: Affine3A,
-    projection_matrix: Mat4,
-    view_matrix: Mat4,
-    view_projection_matrix: Mat4,
-    frustum: Frustum,
+    // 缓存的矩阵 renderer只读
+    pub(crate) world_matrix: Affine3A,
+    pub(crate) view_matrix: Mat4,
+    pub(crate) projection_matrix: Mat4,
+    pub(crate) view_projection_matrix: Mat4,
+    pub(crate) frustum: Frustum,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,15 +33,13 @@ impl Camera {
         let mut cam = Self {
             uuid: Uuid::new_v4(),
             name: "Camera".to_string(),
-            node_id: None, // 默认为游离状态
-            transform: Affine3A::IDENTITY,
             projection_type: ProjectionType::Perspective,
             fov: fov.to_radians(),
             aspect,
             near,
             far,
             ortho_size: 10.0,
-            
+
             world_matrix: Affine3A::IDENTITY,
             projection_matrix: Mat4::IDENTITY,
             view_matrix: Mat4::IDENTITY,
@@ -78,61 +65,38 @@ impl Camera {
         };
     }
 
-    pub fn update_matrix_world(&mut self, scene: &Scene) {
-        // 1. 获取相机在世界空间中的 Transform 矩阵
-        let world_transform = if let Some(id) = self.node_id {
-            // Attach 模式：相信 Scene Graph
-            if let Some(node) = scene.nodes.get(id) {
-                // 注意：这里我们拿的是 Node 的 World Matrix
-                // 假设 Scene 已经调用过 update_matrix_world()
-                *node.world_matrix()
-            } else {
-                // 节点丢了？回退
-                self.transform
-            }
-        } else {
-            // Detached 模式：相信自己的 transform
-            self.transform
-        };
+    pub fn update_view_projection(&mut self, world_transform: &Affine3A) {
+        self.world_matrix = *world_transform;
 
-        self.world_matrix = world_transform;
-
-        // 2. 计算 View Matrix (World -> Camera)
-        // View = WorldInverse
-        self.view_matrix = Mat4::from(world_transform).inverse();
-
-        // 3. 计算 VP Matrix
+        // 1. View Matrix = World Inverse
+        self.view_matrix = Mat4::from(*world_transform).inverse();
+        
+        // 2. VP
         self.view_projection_matrix = self.projection_matrix * self.view_matrix;
-
-        // 4. 更新视锥体 (用于剔除)
+        
+        // 3. Frustum
         self.frustum = Frustum::from_matrix(self.view_projection_matrix);
     }
 
-    pub fn world_matrix(&self) -> &Affine3A { &self.world_matrix }
-    pub fn projection_matrix(&self) -> &Mat4 { &self.projection_matrix }
-    pub fn view_matrix(&self) -> &Mat4 { &self.view_matrix }
-    pub fn view_projection_matrix(&self) -> &Mat4 { &self.view_projection_matrix }
-    pub fn frustum(&self) -> &Frustum { &self.frustum }
 
+    // pub fn look_at(&mut self, target: Vec3, up: Vec3) {
+    //     let position = Vec3::from(self.transform.translation);        
+    //     let forward = (target - position).normalize();
+    //     let right = forward.cross(up).normalize();
+    //     let new_up = right.cross(forward); // 正交化
 
-    pub fn look_at(&mut self, target: Vec3, up: Vec3) {
-        let position = Vec3::from(self.transform.translation);        
-        let forward = (target - position).normalize();
-        let right = forward.cross(up).normalize();
-        let new_up = right.cross(forward); // 正交化
-
-        // 构建旋转矩阵 (列向量)
-        let rotation = Mat4::from_cols(
-            right.extend(0.0),
-            new_up.extend(0.0),
-            -forward.extend(0.0), // Camera looks down -Z
-            Vec3::ZERO.extend(1.0),
-        );
+    //     // 构建旋转矩阵 (列向量)
+    //     let rotation = Mat4::from_cols(
+    //         right.extend(0.0),
+    //         new_up.extend(0.0),
+    //         -forward.extend(0.0), // Camera looks down -Z
+    //         Vec3::ZERO.extend(1.0),
+    //     );
         
-        // 重新组合 Affine3A
-        let mat = Mat4::from_translation(position) * rotation;
-        self.transform = Affine3A::from_mat4(mat);
-    }
+    //     // 重新组合 Affine3A
+    //     let mat = Mat4::from_translation(position) * rotation;
+    //     self.transform = Affine3A::from_mat4(mat);
+    // }
 
 }
 

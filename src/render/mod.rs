@@ -234,12 +234,8 @@ impl Renderer {
 
     // --- 内部辅助方法 (拆分逻辑) ---
     fn prepare_global_resources(&mut self, environment: &Environment, camera: &Camera, scene: &Scene) {
-        // 更新 Environment 的数据
-        // 注意：environment.update 需要可变相机，我们在这里临时克隆一个
-        let mut camera_copy = camera.clone();
-        camera_copy.update_matrix_world(scene);
-        environment.update(&mut camera_copy, scene);
         // 准备 GPU 资源
+        environment.update(camera, scene);
         self.resource_manager.prepare_global(environment);
     }
 
@@ -250,8 +246,8 @@ impl Renderer {
         camera: &Camera, 
     ) -> Vec<RenderItem> {
         let mut list = Vec::new();
-        let frustum = camera.frustum();
-        let camera_pos = camera.world_matrix().translation;
+        let frustum = camera.frustum;
+        let camera_pos = camera.world_matrix.translation;
 
         for (_id, node) in scene.nodes.iter() {
             if let Some(mesh_idx) = node.mesh {

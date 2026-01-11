@@ -97,6 +97,7 @@ impl App {
 
         // 更新场景变换
         self.scene.update_matrix_world();
+        self.scene.update_cameras();
     }
 
     /// 渲染场景
@@ -113,12 +114,7 @@ impl App {
                 if let Some(node) = scene_ref.get_node(cam_id) {
                     if let Some(camera_idx) = node.camera {
                         if let Some(camera) = self.scene.cameras.get(camera_idx) {
-                            // 克隆相机用于更新
-                            let mut camera_copy = camera.clone();
-                            camera_copy.update_matrix_world(scene_ref);
-                            
-                            // 渲染使用克隆的相机
-                            renderer.render(scene_ref, &camera_copy, &self.assets);
+                            renderer.render(&self.scene, camera, &self.assets);
                         }
                     } else {
                         log::warn!("Active camera node has no Camera component!");

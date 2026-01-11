@@ -1,4 +1,4 @@
-use glam::{Affine3A, Mat4, Quat, Vec3, EulerRot};
+use glam::{Affine3A, Mat4, Quat, Vec3, Mat3, EulerRot};
 use uuid::Uuid;
 use thunderdome::Index;
 
@@ -112,12 +112,9 @@ impl Node {
     /// 这是一个 Helper，本质上是在修改 self.rotation
     pub fn set_rotation_euler(&mut self, x: f32, y: f32, z: f32) {
         self.rotation = Quat::from_euler(EulerRot::XYZ, x, y, z);
-        // 注意：这里我们不需要手动调 mark_dirty()
-        // 因为下一帧 update_local_matrix 时，会检测到 self.rotation 变了
     }
 
     /// 获取当前的欧拉角 (XYZ 顺序)
-    /// 这是一个实时计算，会有微小的计算开销，但对于 UI 显示足够了
     pub fn rotation_euler(&self) -> Vec3 {
         let (x, y, z) = self.rotation.to_euler(EulerRot::XYZ);
         Vec3::new(x, y, z)
@@ -184,6 +181,32 @@ impl Node {
         // 尝试转换为 Affine3A (丢弃最后一行)
         let affine = Affine3A::from_mat4(mat);
         self.apply_local_matrix(affine);
+    }
+
+    /// `target` 和 `up` 应该处于该节点的父节点坐标系中（如果没有父节点，则是世界坐标系）。
+    /// 对于绝大多数场景根节点下的相机，这就是世界坐标。
+    pub fn look_at(&mut self, target: Vec3, up: Vec3) {
+        // 1. 计算前向矢量 (从自身指向目标)
+        let forward = (target - self.position).normalize();
+
+        // 2. 检查退化情况 (Forward 平行于 Up)
+        // 如果平行，cross 结果为零向量，会导致 NaN。这里做一个简单保护。
+        if forward.cross(up).length_squared() < 1e-4 {
+            return;
+        }
+
+        // 3. 构建正交基 (Gram-Schmidt process)
+        // Right = Forward x Up
+        let right = forward.cross(up).normalize();
+        // Up' = Right x Forward
+        let new_up = right.cross(forward).normalize(); 
+
+        let rot_mat = Mat3::from_cols(
+            right, 
+            new_up, 
+            -forward
+        );
+        self.rotation = Quat::from_mat3(&rot_mat);
     }
     
     /// 手动标记脏 (例如用于强制刷新)
