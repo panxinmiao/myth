@@ -2,8 +2,6 @@
 //! 
 //! 提供顶层的 App 抽象，管理窗口、渲染器、场景和资产
 
-pub mod window;
-
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
