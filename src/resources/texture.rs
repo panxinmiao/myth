@@ -2,7 +2,7 @@ use uuid::Uuid;
 use std::sync::atomic::{AtomicU64, Ordering};
 use glam::{Vec2, Mat3};
 use wgpu::{TextureFormat, TextureDimension, TextureViewDimension, AddressMode};
-use crate::core::image::Image;
+use crate::resources::image::Image;
 
 // ============================================================================
 // 1. 纹理数据源 (支持 Mipmaps 和 Array Layers)

@@ -3,9 +3,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use glam::Vec4;
 use bitflags::bitflags;
 
-use crate::core::buffer::{BufferRef};
-use crate::core::uniforms::{MeshBasicUniforms, MeshStandardUniforms};
-use crate::core::assets::TextureHandle;
+use crate::resources::buffer::BufferRef;
+use crate::resources::uniforms::{MeshBasicUniforms, MeshStandardUniforms};
+use crate::assets::TextureHandle;
 
 // Shader 编译选项
 bitflags! {

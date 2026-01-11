@@ -1,31 +1,34 @@
-mod vertex_layout;
-mod resource_manager;
-mod shader_generator;
-mod pipeline;
-mod tracked_render_pass;
-mod shader_manager;
-mod gpu_buffer;
-mod gpu_texture;
-mod model_buffer_manager;
-mod resource_builder;
-mod binding;
-mod gpu_image;
+//! 渲染器模块
+//! 
+//! 管理 GPU 渲染流程的顶层模块。
+//! 
+//! # 模块组织
+//! 
+//! - `resources/`: GPU 资源对象管理（显存分配、BindGroup 创建、数据上传）
+//! - `pipeline/`: 管线状态与着色器（Shader 加载、编译、Pipeline 缓存）
+//! - `data/`: 帧级动态数据（每帧变化的 Uniform Buffer 管理）
+//! - `passes/`: 渲染流程封装（Draw Call 组织、RenderPass 管理）
+
+pub mod resources;
+pub mod pipeline;
+pub mod data;
+pub mod passes;
 
 use glam::{Mat4, Mat3A};
 use slotmap::Key;
 
-use crate::core::scene::Scene;
-use crate::core::camera::{Camera};
-use crate::core::uniforms::{DynamicModelUniforms};
-use crate::core::assets::{GeometryHandle, MaterialHandle};
+use crate::scene::Scene;
+use crate::scene::camera::Camera;
+use crate::resources::uniforms::DynamicModelUniforms;
+use crate::assets::{GeometryHandle, MaterialHandle};
+use crate::scene::enviroment::Environment;
 
-use self::resource_manager::ResourceManager;
+use self::resources::ResourceManager;
 use self::pipeline::PipelineCache;
-use self::model_buffer_manager::{ModelBufferManager, ObjectBindingData};
-use self::tracked_render_pass::TrackedRenderPass;
+use self::data::{ModelBufferManager, ObjectBindingData};
+use self::passes::TrackedRenderPass;
 
-use crate::core::world::WorldEnvironment;
-
+/// 主渲染器
 pub struct Renderer {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
@@ -37,10 +40,9 @@ pub struct Renderer {
     resource_manager: ResourceManager,
     model_buffer_manager: ModelBufferManager,
     pipeline_cache: PipelineCache,
-    // model_buffer_manager: DynamicBuffer, // Group 2 管理器
 
     // 全局资源 (Group 0)
-    pub world: WorldEnvironment,
+    pub world: Environment,
 
     // 深度缓冲
     depth_texture_view: wgpu::TextureView,
@@ -73,19 +75,13 @@ impl Renderer {
         surface.configure(&device, &config);
 
         let mut resource_manager = ResourceManager::new(device.clone(), queue.clone());
-
-        // 2. 初始化 Model Manager (Group 2)
-        // let model_buffer_manager = DynamicBuffer::new(&mut resource_manager, "Model");
         let model_buffer_manager = ModelBufferManager::new(&mut resource_manager);
-
-        let world = WorldEnvironment::new();
-
-        // 3. 深度缓冲
+        let world = Environment::new();
         let depth_texture_view = Self::create_depth_texture(&device, &config);
 
         Self {
-            device: device,
-            queue: queue,
+            device,
+            queue,
             surface,
             config,
             depth_format: wgpu::TextureFormat::Depth32Float,
@@ -101,13 +97,12 @@ impl Renderer {
         if width > 0 && height > 0 {
             self.config.width = width;
             self.config.height = height;
-        }else{
+        } else {
             self.config.width = 1;
             self.config.height = 1;
         }
         self.surface.configure(&self.device, &self.config);
         self.depth_texture_view = Self::create_depth_texture(&self.device, &self.config);
-
     }
 
     fn create_depth_texture(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration) -> wgpu::TextureView {
@@ -131,12 +126,10 @@ impl Renderer {
     }
 
     pub fn render(&mut self, scene: &mut Scene, camera: &mut Camera) {
-        
         self.resource_manager.next_frame();
 
         // 1. 更新场景矩阵
         scene.update_matrix_world();
-
         self.world.update(camera, scene);
 
         let output = match self.surface.get_current_texture() {
@@ -153,15 +146,12 @@ impl Renderer {
         
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
         
-        // =========================================================
-        // 3. 收集 (Collect)
-        // =========================================================
-        
+        // 收集渲染项
         struct RenderItem {
             geo_handle: GeometryHandle,
             mat_handle: MaterialHandle,
             model_matrix: glam::Mat4,
-            distance_sq: f32, // 用于透明排序
+            distance_sq: f32,
         }
         
         let mut render_list = Vec::new();
@@ -169,19 +159,14 @@ impl Renderer {
         let camera_pos = camera.world_matrix().transform_point3(glam::Vec3::ZERO);
 
         for (_id, node) in scene.nodes.iter() {
-
             if let Some(mesh_handle) = node.mesh {
                 if let Some(mesh) = scene.meshes.get(mesh_handle) {
-                    // 提前检查可见性
                     if !node.visible || !mesh.visible { continue; }
 
-                    // 2. 从 AssetServer 获取 Geometry (用于包围盒计算)
-                    // mesh.geometry 是 GeometryHandle
                     let geometry = scene.assets.get_geometry(mesh.geometry).expect("Geometry asset missing");
-
                     let node_world_matrix = *node.world_matrix();
-                    // let mat = mesh.material.read().unwrap();
-                    if let Some(bs) = &geometry.bounding_sphere{
+                    
+                    if let Some(bs) = &geometry.bounding_sphere {
                         let scale = node.scale.max_element(); 
                         let center = node_world_matrix.transform_point3(bs.center);
                         if !frustum.intersects_sphere(center, bs.radius * scale) {
@@ -189,10 +174,8 @@ impl Renderer {
                         }
                     }
 
-                    // 计算距离 (平方即可，开方开销大)
                     let distance_sq = camera_pos.distance_squared(node_world_matrix.translation.into());
                     
-                    // 准备数据
                     let item = RenderItem {
                         geo_handle: mesh.geometry,
                         mat_handle: mesh.material,
@@ -201,18 +184,12 @@ impl Renderer {
                     };
 
                     render_list.push(item);
-
                 }
             }
         }
 
-        // if render_list.is_empty() { return; }
-
-        // =========================================================
-        // 4 资源准备 (Mutable Pass)
-        // =========================================================
-        
-        struct RenderCommand{
+        // 资源准备
+        struct RenderCommand {
             object_data: ObjectBindingData,
             geometry_handle: GeometryHandle, 
             material_handle: MaterialHandle,
@@ -228,23 +205,18 @@ impl Renderer {
         self.resource_manager.prepare_global(&self.world);
 
         for item in &render_list {
-            // 拿到 CPU 资源引用
             let geometry = scene.assets.get_geometry(item.geo_handle).unwrap();
             let material = scene.assets.get_material(item.mat_handle).unwrap();
 
-            // 1. 更新 
             self.resource_manager.prepare_geometry(&scene.assets, item.geo_handle);
             self.resource_manager.prepare_material(&scene.assets, item.mat_handle);
 
             let object_data = self.model_buffer_manager.prepare_bind_group(&mut self.resource_manager, item.geo_handle, &geometry);
 
-            // 2. 获取 GPU 资源
-            // 使用 Handle 获取
-            let gpu_geometry = self.resource_manager.get_geometry(item.geo_handle).expect("gpu material not found");
+            let gpu_geometry = self.resource_manager.get_geometry(item.geo_handle).expect("gpu geometry not found");
             let gpu_material = self.resource_manager.get_material(item.mat_handle).expect("gpu material not found");
             let gpu_world = self.resource_manager.get_world(self.world.id).expect("gpu world not found");
             
-            // 3. 更新 Pipeline (需要先拿到刚才 prepare 好的 GPU 资源)
             let pipeline = self.pipeline_cache.get_or_create(
                 &self.device,
                 item.mat_handle,
@@ -257,29 +229,21 @@ impl Renderer {
                 &gpu_world,
                 self.config.format,
                 wgpu::TextureFormat::Depth32Float,
-                &gpu_geometry.layout_info, // 传入 Vertex Layout
+                &gpu_geometry.layout_info,
             );
 
-            // --- 计算 Sort Key ---
-            // 高 32 位是 version，低 32 位是 index
             let mat_id = item.mat_handle.data().as_ffi() as u32; 
-
             let pipeline_id = pipeline.1;
-
-            let sort_key = RenderKey::new(
-                pipeline_id,
-                mat_id,
-                item.distance_sq
-            );
+            let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq);
 
             let render_cmd = RenderCommand {
-                object_data: object_data,
+                object_data,
                 geometry_handle: item.geo_handle,
                 material_handle: item.mat_handle,
                 renderer_pipeline: pipeline.0,
                 renderer_pipeline_id: pipeline.1,
                 model_matrix: item.model_matrix,
-                sort_key: sort_key,
+                sort_key,
             };
 
             if material.transparent {
@@ -287,26 +251,15 @@ impl Renderer {
             } else {
                 opaque_cmd_list.push(render_cmd);
             }
-
         }
 
-
-        // cmd list 排序
-        opaque_cmd_list.sort_unstable_by(|a, b| {
-            a.sort_key.cmp(&b.sort_key)
-        });
-
-        transparent_cmd_list.sort_unstable_by(|a, b| {
-            b.sort_key.cmp(&a.sort_key) // 注意 b cmp a 是降序
-        });
+        opaque_cmd_list.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
+        transparent_cmd_list.sort_unstable_by(|a, b| b.sort_key.cmp(&a.sort_key));
 
         let mut command_list = opaque_cmd_list;
         command_list.append(&mut transparent_cmd_list);
 
-        // =========================================================
-        // 5. 准备 model_uniforms 数据 & 上传 (Prepare & Upload)
-        // =========================================================
-        
+        // 准备模型矩阵数据
         let mut model_uniforms_data = Vec::with_capacity(command_list.len());
         
         for item in &command_list {
@@ -320,14 +273,9 @@ impl Renderer {
             });
         }
 
-        // 上传所有动态物体的矩阵 (自动扩容)
         self.model_buffer_manager.write_uniforms(&mut self.resource_manager, &model_uniforms_data);
 
-        // =========================================================
-        // 6. 绘制循环 (Immutable Pass)
-        // Phase B: 渲染录制 (Immutable Pass)
-        // =========================================================
-        
+        // 绘制循环
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder"),
         });
@@ -361,43 +309,22 @@ impl Renderer {
 
             let mut tracked_pass = TrackedRenderPass::new(raw_pass);
 
-            // 绑定永远不变的 Global (Group 0)
-
             if let Some(gpu_world) = self.resource_manager.get_world(self.world.id) {
-                // 绑定 Group 0
                 tracked_pass.set_bind_group(0, gpu_world.bind_group_id, &gpu_world.bind_group, &[]);
             }
-            // tracked_pass.set_bind_group(0, 0, &gpu_world.bind_group, &[]);
 
-            // 获取 stride，确保安全
             let dynamic_stride = std::mem::size_of::<DynamicModelUniforms>() as u32;
 
-            // 状态追踪 (去重)
-
             for (i, cmd) in command_list.iter().enumerate() {
- 
-                // 获取 GPU 资源
-                // 使用 unwrap 是安全的，因为 Phase A 保证了它们存在
-                let gpu_geometry =  self.resource_manager.get_geometry(cmd.geometry_handle).unwrap();   
+                let gpu_geometry = self.resource_manager.get_geometry(cmd.geometry_handle).unwrap();   
                 let gpu_material = self.resource_manager.get_material(cmd.material_handle).unwrap();
 
                 tracked_pass.set_pipeline(cmd.renderer_pipeline_id, &cmd.renderer_pipeline);
-
-
-                // B. Material BindGroup (Group 1)
                 tracked_pass.set_bind_group(1, gpu_material.bind_group_id, &gpu_material.bind_group, &[]);
 
-                // C. Model BindGroup (Group 2) - 动态 Offset
-                // 绑定的是同一个 BindGroup，只是 Offset 不同
                 let offset = i as u32 * dynamic_stride; 
-                tracked_pass.set_bind_group(
-                    2, 
-                    cmd.object_data.bind_group_id, 
-                    &cmd.object_data.bind_group,
-                    &[offset]
-                );
+                tracked_pass.set_bind_group(2, cmd.object_data.bind_group_id, &cmd.object_data.bind_group, &[offset]);
 
-                // D. Vertex Buffers
                 for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
                     tracked_pass.set_vertex_buffer(slot as u32, gpu_geometry.vertex_buffer_ids[slot], buffer.slice(..));
                 }
@@ -405,15 +332,12 @@ impl Renderer {
                 if let Some((index_buffer, index_format, count, id)) = &gpu_geometry.index_buffer {
                     tracked_pass.set_index_buffer(*id, index_buffer.slice(..), *index_format);
                     tracked_pass.draw_indexed(0..*count, 0, gpu_geometry.instance_range.clone());
-                }else{
+                } else {
                     tracked_pass.draw(gpu_geometry.draw_range.clone(), gpu_geometry.instance_range.clone());
                 }
-
             }
         }
 
-        // 提交绘制后，检查是否需要 GC
-        // 每 60 帧检查一次，清理掉超过 600 帧 (10秒) 没用的资源
         if self.resource_manager.frame_index() % 60 == 0 {
             self.resource_manager.prune(600);
         }
@@ -421,46 +345,25 @@ impl Renderer {
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
     }
-
-
 }
-
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RenderKey(u64);
 
 impl RenderKey {
-    // 63-50 (14 bits): Pipeline
-    // 49-30 (20 bits): Material Index (SlotMap index)
-    // 29-00 (30 bits): Depth (Reversed or Standard)
-    
-    // 掩码常量 (可选，用于 debug)
     const _MASK_PIPELINE: u64 = 0xFFFC_0000_0000_0000;
     const _MASK_MATERIAL: u64 = 0x0003_FFFF_C000_0000;
     const _MASK_DEPTH: u64    = 0x0000_0000_3FFF_FFFF;
 
-
     pub fn new(pipeline_id: u16, material_index: u32, depth: f32) -> Self {
-        // 1. Pipeline (High 14 bits)
-        // 限制在 14 bit (max 16383)
         let p_bits = ((pipeline_id & 0x3FFF) as u64) << 50;
-
-        // 2. Material (Mid 20 bits)
-        // SlotMap index 限制在 20 bit (max ~1,000,000)
         let m_bits = ((material_index & 0xFFFFF) as u64) << 30;
-
-        // 3. Depth (Low 30 bits)
-        // 假设标准深度 0.0 (近) -> 1.0 (远)
-        // 将 f32 转为 u32 的 bit pattern。如果是正数，IEEE754 的顺序与整数顺序一致。
-        // 右移 2 位以适应 30 bits。
         let d_u32 = if depth.is_sign_negative() { 
             0 
         } else { 
             depth.to_bits() >> 2
         };
         let d_bits = (d_u32 as u64) & 0x3FFF_FFFF;
-
         Self(p_bits | m_bits | d_bits)
     }
-
 }

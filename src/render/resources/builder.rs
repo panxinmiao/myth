@@ -1,8 +1,8 @@
 use wgpu::ShaderStages;
-use crate::core::buffer::BufferRef;
-use crate::core::uniforms::UniformBlock;
-use crate::renderer::binding::{BindingResource};
-use crate::core::assets::TextureHandle;
+use crate::resources::buffer::BufferRef;
+use crate::resources::uniforms::UniformBlock;
+use crate::render::resources::binding::BindingResource;
+use crate::assets::TextureHandle;
 
 type WgslStructGenerator = fn(&str) -> String;
 

@@ -1,23 +1,23 @@
 use glam::Vec3;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::core::buffer::{BufferRef};
-use crate::core::uniforms::{GlobalFrameUniforms, GlobalLightUniforms};
-use crate::core::camera::Camera;
-use crate::core::scene::Scene;
-use crate::core::light::{LightType};
-use crate::core::uniforms::{GpuLightData, MAX_DIR_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS};
+use crate::resources::buffer::{BufferRef};
+use crate::resources::uniforms::{GlobalFrameUniforms, GlobalLightUniforms};
+use crate::scene::camera::Camera;
+use crate::scene::scene::Scene;
+use crate::scene::light::{LightType};
+use crate::resources::uniforms::{GpuLightData, MAX_DIR_LIGHTS, MAX_POINT_LIGHTS, MAX_SPOT_LIGHTS};
 
 static NEXT_WORLD_ID: AtomicU64 = AtomicU64::new(0);
 
-pub struct WorldEnvironment {
+pub struct Environment {
     pub id: u64,
 
     pub frame_uniforms: BufferRef,
     pub light_uniforms: BufferRef,
 }
 
-impl WorldEnvironment {
+impl Environment {
     pub fn new() -> Self {
         // 1. 初始化 GlobalFrameUniforms Buffer
         // DataBuffer::new 需要初始数据，我们传入 default

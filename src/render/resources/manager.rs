@@ -8,19 +8,19 @@ use std::vec;
 use slotmap::{SecondaryMap};
 use core::ops::Range;
 
-use crate::core::geometry::{Geometry};
-use crate::core::texture::Texture;
-use crate::core::world::WorldEnvironment;
-use crate::core::buffer::BufferRef;
-use crate::core::image::Image;
-use crate::core::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
+use crate::resources::geometry::Geometry;
+use crate::resources::texture::Texture;
+use crate::scene::enviroment::Environment;
+use crate::resources::buffer::BufferRef;
+use crate::resources::image::Image;
+use crate::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
 
-use crate::renderer::binding::{BindingResource, Bindings};
-use crate::renderer::resource_builder::{ResourceBuilder};
-use crate::renderer::vertex_layout::{self, GeneratedVertexLayout};
-use crate::renderer::gpu_buffer::GpuBuffer;
-use crate::renderer::gpu_texture::GpuTexture;
-use crate::renderer::gpu_image::GpuImage;
+use crate::render::resources::binding::{BindingResource, Bindings};
+use crate::render::resources::builder::ResourceBuilder;
+use crate::render::pipeline::vertex::{GeneratedVertexLayout};
+use crate::render::resources::buffer::GpuBuffer;
+use crate::render::resources::texture::GpuTexture;
+use crate::render::resources::image::GpuImage;
 
 // 全局资源 ID 生成器
 static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -64,7 +64,7 @@ pub struct GPUMaterial {
 }
 
 // 场景全局环境的 GPU 资源
-pub struct GPUWorld {
+pub struct GPUEnviroment {
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
     pub layout: wgpu::BindGroupLayout,
@@ -84,7 +84,7 @@ pub struct ResourceManager {
     gpu_geometries: SecondaryMap<GeometryHandle, GPUGeometry>,
     gpu_materials: SecondaryMap<MaterialHandle, GPUMaterial>,
     gpu_textures: SecondaryMap<TextureHandle, GpuTexture>,
-    worlds: HashMap<u64, GPUWorld>, 
+    worlds: HashMap<u64, GPUEnviroment>, 
     // Image 使用 u64 ID (高性能)
     gpu_buffers: HashMap<u64, GpuBuffer>,
     gpu_images: HashMap<u64, GpuImage>,
@@ -239,7 +239,7 @@ impl ResourceManager {
     }
 
     fn create_gpu_geometry(&mut self, geometry: &Geometry, handle: GeometryHandle) {
-        let layout_info = Arc::new(vertex_layout::generate_vertex_layout(geometry));
+        let layout_info = Arc::new(crate::render::pipeline::vertex::generate_vertex_layout(geometry));
 
         let mut vertex_buffers = Vec::new();
         let mut vertex_buffer_ids = Vec::new();
@@ -569,7 +569,7 @@ impl ResourceManager {
     //     }
     // }
 
-    pub fn prepare_global(&mut self, env: &WorldEnvironment) -> &GPUWorld {
+    pub fn prepare_global(&mut self, env: &Environment) -> &GPUEnviroment {
         
         // [A] 上传 Buffer 数据 (CPU -> GPU)
         // 注意：prepare_buffer 接受 &DataBuffer，我们需要通过 read() 获取
@@ -599,7 +599,7 @@ impl ResourceManager {
             // 4. 生成 WGSL (Group 0)
             let binding_wgsl = builder.generate_wgsl(0); 
 
-            let gpu_world = GPUWorld {
+            let gpu_world = GPUEnviroment {
                 bind_group,
                 bind_group_id: bg_id,
                 layout,
@@ -616,7 +616,7 @@ impl ResourceManager {
     }
 
     // 获取 World 资源的辅助方法
-    pub fn get_world(&self, id: u64) -> Option<&GPUWorld> {
+    pub fn get_world(&self, id: u64) -> Option<&GPUEnviroment> {
         self.worlds.get(&id)
     }
     // ========================================================================

@@ -10,7 +10,7 @@ pub static SHADER_ENV: OnceLock<Environment<'static>> = OnceLock::new();
 
 // 定义要嵌入的文件夹
 #[derive(RustEmbed)]
-#[folder = "src/assets/shaders"]
+#[folder = "src/render/pipeline/shaders"]
 struct ShaderAssets;
 
 pub fn get_env() -> &'static Environment<'static> {
@@ -53,7 +53,7 @@ fn shader_loader(name: &str) -> Result<Option<String>, Error> {
     // 策略 A: 优先尝试物理文件 (Debug Friendly)
     #[cfg(debug_assertions)] 
     {
-        let path = Path::new("src/assets/shaders").join(filename.as_ref());
+        let path = Path::new("src/render/pipeline/shaders").join(filename.as_ref());
         if path.exists() {
             match std::fs::read_to_string(&path) {
                 Ok(source) => return Ok(Some(source)),

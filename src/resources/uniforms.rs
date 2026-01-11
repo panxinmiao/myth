@@ -162,7 +162,6 @@ impl UniformBlock for GlobalLightUniforms {
 // 2. 宏定义 (Single Source of Truth)
 // ============================================================================
 
-
 macro_rules! define_uniform_struct {
     // --------------------------------------------------------
     // 入口模式：匹配 struct 定义
@@ -230,7 +229,7 @@ macro_rules! define_uniform_struct {
     // 内部规则 3: 生成 WGSL struct string
     // --------------------------------------------------------
     (@impl_wgsl $name:ident { $( $field_name:ident : $field_type:ty ),* }) => {
-        impl crate::core::uniforms::UniformBlock for $name {
+        impl crate::resources::uniforms::UniformBlock for $name {
             fn wgsl_struct_def(struct_name: &str) -> String {
                 let mut code = format!("struct {} {{\n", struct_name);
                 $(

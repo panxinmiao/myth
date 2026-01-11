@@ -1,10 +1,10 @@
-use crate::core::buffer::BufferRef; 
-use crate::core::assets::TextureHandle;
-use crate::core::material::{Material, MaterialData};
-use crate::core::geometry::Geometry;
-use crate::core::world::WorldEnvironment;
-use crate::core::uniforms::*;
-use crate::renderer::resource_builder::ResourceBuilder;
+use crate::resources::buffer::BufferRef; 
+use crate::assets::TextureHandle;
+use crate::resources::material::{Material, MaterialData};
+use crate::resources::geometry::Geometry;
+use crate::scene::enviroment::Environment;
+use crate::resources::uniforms::*;
+use crate::render::resources::builder::ResourceBuilder;
 
 /// 实际的绑定资源数据 (用于生成 BindGroup)
 /// 层只持有 ID 或 数据引用，不持有 GPU 句柄
@@ -99,7 +99,7 @@ impl Bindings for Geometry {
     }
 }
 
-impl Bindings for WorldEnvironment {
+impl Bindings for Environment {
     fn define_bindings(&self, builder: &mut ResourceBuilder) {
         // Binding 0: Frame Uniforms (Vertex + Fragment)
         builder.add_uniform::<GlobalFrameUniforms>(

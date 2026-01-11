@@ -2,9 +2,9 @@ use slotmap::{new_key_type, SlotMap};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-use crate::core::geometry::Geometry;
-use crate::core::material::Material;
-use crate::core::texture::Texture;
+use crate::resources::geometry::Geometry;
+use crate::resources::material::Material;
+use crate::resources::texture::Texture;
 
 // 强类型句柄 (Handle)
 new_key_type! {

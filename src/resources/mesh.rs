@@ -1,6 +1,6 @@
 use uuid::Uuid;
 use thunderdome::Index;
-use crate::core::assets::{GeometryHandle, MaterialHandle};
+use crate::assets::{GeometryHandle, MaterialHandle};
 
 pub type MeshHandle = Index;
 

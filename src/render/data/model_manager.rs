@@ -1,13 +1,13 @@
 use std::collections::HashMap;
 use wgpu::ShaderStages;
 
-use crate::renderer::resource_manager::ResourceManager;
-use crate::core::uniforms::DynamicModelUniforms;
-use crate::core::buffer::{BufferRef};
-use crate::core::geometry::{Geometry, GeometryFeatures};
-use crate::renderer::resource_builder::{ResourceBuilder};
-use crate::renderer::binding::Bindings;
-use crate::core::assets::GeometryHandle;
+use crate::render::resources::manager::ResourceManager;
+use crate::resources::uniforms::DynamicModelUniforms;
+use crate::resources::buffer::BufferRef;
+use crate::resources::geometry::{Geometry, GeometryFeatures};
+use crate::render::resources::builder::ResourceBuilder;
+use crate::render::resources::binding::Bindings;
+use crate::assets::GeometryHandle;
 
 // 缓存 Key：决定了 BindGroup 是否可以复用
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

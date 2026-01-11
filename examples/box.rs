@@ -6,13 +6,9 @@ use winit::window::{Window, WindowId};
 use glam::{Vec3, Vec4, Quat, Vec3A}; // 引入 Quat
 
 // 引入你的引擎模块
-use three::renderer::Renderer;
-use three::core::scene::Scene;
-use three::core::camera::Camera;
-use three::core::geometry::{Geometry}; // 不再需要 Attribute, MeshBasicMaterial 等细节
-use three::core::material::{Material}; // 使用统一的 Material 包装
-use three::core::mesh::Mesh;
-use three::core::texture::Texture;
+use three::render::Renderer;
+use three::scene::{Scene, Camera};
+use three::resources::{Geometry, Material, Mesh, Texture};
 use thunderdome::Index; // 需要保存 Node ID
 
 pub struct App {

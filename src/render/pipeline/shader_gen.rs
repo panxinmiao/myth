@@ -1,9 +1,9 @@
-use crate::renderer::vertex_layout::GeneratedVertexLayout;
+use crate::render::pipeline::vertex::GeneratedVertexLayout;
 use serde_json::{Map, Value};
 use super::shader_manager::get_env;
-use crate::core::material::MaterialFeatures;
-use crate::core::geometry::{GeometryFeatures};
-use crate::core::scene::SceneFeatures;
+use crate::resources::material::MaterialFeatures;
+use crate::resources::geometry::GeometryFeatures;
+use crate::scene::scene::SceneFeatures;
 
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]

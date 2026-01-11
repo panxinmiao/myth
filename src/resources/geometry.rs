@@ -5,7 +5,7 @@ use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages};
 use glam::Vec3;
 use core::ops::Range;
 
-use crate::core::buffer::{BufferRef};
+use crate::resources::buffer::{BufferRef};
 // [新增] 引入 Shader 编译选项 (复用 Material 的，或者新建一个 GeometryCompilationOptions)
 // 为了简单起见，且通常 Defines 是合并处理的，我们可以复用或新建。
 // 这里建议新建一个 GeometryFeatures，为了演示，我先使用简单的 Bitflags。

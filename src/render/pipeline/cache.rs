@@ -1,17 +1,17 @@
 use std::collections::HashMap;
 use md5;
 
-use crate::core::geometry::{Geometry, GeometryFeatures};
-use crate::core::material::{Material, MaterialFeatures};
-use crate::core::scene::SceneFeatures;
-use crate::core::assets::{GeometryHandle, MaterialHandle};
+use crate::resources::geometry::{Geometry, GeometryFeatures};
+use crate::resources::material::{Material, MaterialFeatures};
+use crate::scene::scene::SceneFeatures;
+use crate::assets::{GeometryHandle, MaterialHandle};
 
-use crate::renderer::shader_generator::ShaderGenerator;
-use crate::renderer::shader_generator::ShaderContext;
-use crate::renderer::shader_generator::ShaderCompilationOptions;
-use crate::renderer::vertex_layout::GeneratedVertexLayout;
-use crate::renderer::resource_manager::GPUMaterial;
-use crate::renderer::model_buffer_manager::ObjectBindingData;
+use crate::render::pipeline::shader_gen::ShaderGenerator;
+use crate::render::pipeline::shader_gen::ShaderContext;
+use crate::render::pipeline::shader_gen::ShaderCompilationOptions;
+use crate::render::pipeline::vertex::GeneratedVertexLayout;
+use crate::render::resources::manager::GPUMaterial;
+use crate::render::data::model_manager::ObjectBindingData;
 
 /// L2 缓存 Key: 完整描述 Pipeline 的所有特征 (慢，但唯一)
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -119,11 +119,11 @@ impl PipelineCache {
         material: &Material,
         geometry_handle: GeometryHandle,
         geometry: &Geometry,
-        scene: &crate::core::scene::Scene,
+        scene: &crate::scene::scene::Scene,
 
         gpu_material: &GPUMaterial, 
         object_data: &ObjectBindingData,
-        gpu_world: &crate::renderer::resource_manager::GPUWorld,
+        gpu_enviroment: &crate::render::resources::manager::GPUEnviroment,
 
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat, 
@@ -222,13 +222,13 @@ impl PipelineCache {
         let vs_code = ShaderGenerator::generate_vertex(
             &base_context,
             vertex_layout,
-            &gpu_world.binding_wgsl,
+            &gpu_enviroment.binding_wgsl,
             &object_data.binding_wgsl,
             "mesh_basic.wgsl"
         );
         let fs_code = ShaderGenerator::generate_fragment(
             &base_context,
-            &gpu_world.binding_wgsl,
+            &gpu_enviroment.binding_wgsl,
             &gpu_material.binding_wgsl,
             material.shader_name()
         );
@@ -247,7 +247,7 @@ impl PipelineCache {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[
-                &gpu_world.layout,
+                &gpu_enviroment.layout,
                 &gpu_material.layout, 
                 &object_data.layout 
             ],

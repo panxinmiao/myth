@@ -6,13 +6,9 @@ use winit::window::{Window, WindowId};
 use glam::{Vec3, Vec4};
 
 // 引入你的引擎模块
-use three::renderer::Renderer;
-use three::core::scene::Scene;
-use three::core::camera::Camera;
-use three::core::geometry::{Geometry, Attribute};
-use three::core::material::{MeshBasicMaterial};
-use three::core::mesh::Mesh;
-use three::core::texture::Texture;
+use three::render::Renderer;
+use three::scene::{Scene, Camera};
+use three::resources::{Geometry, Attribute, MeshBasicMaterial, Mesh, Texture};
 
 /// 应用程序状态容器
 pub struct App {

@@ -1,7 +1,7 @@
 use std::collections::{HashMap};
 use wgpu::VertexFormat;
-use crate::core::geometry::{Geometry, Attribute};
-use crate::core::buffer::BufferRef;
+use crate::resources::geometry::{Geometry, Attribute};
+use crate::resources::buffer::BufferRef;
 
 #[derive(Debug, Clone)]
 pub struct OwnedVertexBufferDesc {

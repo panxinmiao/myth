@@ -1,6 +1,6 @@
 use wgpu;
-use crate::core::texture::Texture;
-use crate::renderer::gpu_image::GpuImage;
+use crate::resources::texture::Texture;
+use crate::render::resources::image::GpuImage;
 
 pub struct GpuTexture {
     pub view: wgpu::TextureView,

@@ -1,4 +1,4 @@
-use crate::core::image::ImageInner;
+use crate::resources::image::ImageInner;
 use std::sync::atomic::Ordering;
 
 pub struct GpuImage {

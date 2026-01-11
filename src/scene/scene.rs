@@ -1,14 +1,14 @@
 use thunderdome::{Arena, Index};
 use glam::{Affine3A, Vec4}; 
 use bitflags::bitflags;
-use crate::core::node::Node;
-use crate::core::mesh::Mesh;
-use crate::core::geometry::Geometry;
-use crate::core::material::Material;
-use crate::core::texture::Texture;
-use crate::core::camera::Camera;
-use crate::core::light::{Light, LightType};
-use crate::core::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
+use crate::scene::node::Node;
+use crate::resources::mesh::Mesh;
+use crate::resources::geometry::Geometry;
+use crate::resources::material::Material;
+use crate::resources::texture::Texture;
+use crate::scene::camera::Camera;
+use crate::scene::light::{Light, LightType};
+use crate::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
 
 
 bitflags! {
@@ -227,7 +227,7 @@ impl Scene {
     // 修改 add_mesh：它现在接受 Handle
     pub fn add_mesh(&mut self, mesh: Mesh, parent: Option<Index>) -> &mut Mesh {
         // 逻辑保持不变：创建 Node -> 插入 Mesh -> 关联
-        let mut node = crate::core::node::Node::new(&mesh.name);
+        let mut node = crate::scene::node::Node::new(&mesh.name);
         node.mesh = Some(self.meshes.insert(mesh));
         let node_idx = self.add_node(node, parent);
 

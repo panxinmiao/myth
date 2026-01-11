@@ -1,6 +1,6 @@
-// src/renderer/gpu_buffer.rs
+// src/render/resources/buffer.rs
 use wgpu::util::DeviceExt;
-use crate::renderer::resource_manager::{generate_resource_id};
+use crate::render::resources::manager::generate_resource_id;
 
 /// GPU Buffer 抽象
 /// 统一管理 Vertex, Index, Uniform, Storage Buffer 的生命周期和数据更新
