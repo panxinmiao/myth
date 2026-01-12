@@ -4,8 +4,8 @@ pub mod resources;
 pub mod pipeline;
 pub mod data;
 pub mod passes;
-pub mod context; // 新增
-pub mod settings; // 新增
+pub mod context;
+pub mod settings;
 
 use std::sync::Arc;
 use winit::window::Window;

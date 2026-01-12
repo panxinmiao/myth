@@ -128,7 +128,7 @@ impl RenderContext {
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // 1. 准备全局资源
-        self.prepare_global_resources(&scene.environment, camera);
+        self.prepare_global_resources(assets, &scene.environment, camera);
 
         // 2. 剔除
         let render_items = self.cull_scene(scene, assets, camera);
@@ -213,9 +213,9 @@ impl RenderContext {
 
     // --- Internal Logic ---
 
-    fn prepare_global_resources(&mut self, environment: &Environment, camera: &Camera) {
+    fn prepare_global_resources(&mut self, assets: &AssetServer, environment: &Environment, camera: &Camera) {
         self.render_state.update(camera);
-        self.resource_manager.prepare_global(environment, &self.render_state);
+        self.resource_manager.prepare_global(assets, environment, &self.render_state);
     }
 
     fn cull_scene(&self, scene: &Scene, assets: &AssetServer, camera: &Camera) -> Vec<RenderItem> {

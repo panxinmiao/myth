@@ -9,8 +9,8 @@ use crate::assets::{GeometryHandle, MaterialHandle};
 use crate::render::pipeline::shader_gen::ShaderGenerator;
 use crate::render::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::render::pipeline::vertex::GeneratedVertexLayout;
-use crate::render::resources::manager::GPUMaterial;
-use crate::render::resources::manager::GPUEnvironment;
+use crate::render::resources::manager::GpuMaterial;
+use crate::render::resources::manager::GpuEnvironment;
 use crate::render::data::model_manager::ObjectBindingData;
 
 /// L2 缓存 Key: 完整描述 Pipeline 的所有特征 (慢，但唯一)
@@ -117,9 +117,9 @@ impl PipelineCache {
         scene: &Scene,
 
         vertex_layout: &GeneratedVertexLayout, 
-        gpu_material: &GPUMaterial, 
+        gpu_material: &GpuMaterial, 
         object_data: &ObjectBindingData,
-        gpu_environment: &GPUEnvironment,
+        gpu_environment: &GpuEnvironment,
 
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat, 

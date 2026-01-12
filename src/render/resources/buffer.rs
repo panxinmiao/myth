@@ -60,11 +60,11 @@ impl GpuBuffer {
     /// 【Diff 模式更新】
     /// 比较数据内容，仅当数据变化时上传
     /// 适合: UniformBuffer
-    pub fn update_with_data(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) {
+    pub fn update_with_data(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) -> bool{
         // 1. Diff 检查
         if let Some(prev) = &mut self.shadow_data {
             if prev == data {
-                return; // 数据完全一致，跳过
+                return false; // 数据完全一致，跳过
             }
             // 更新影子
             // 如果容量不够，重新分配
@@ -75,7 +75,7 @@ impl GpuBuffer {
         }
 
         // 2. 写入 GPU
-        self.write_to_gpu(device, queue, data);
+        self.write_to_gpu(device, queue, data)
     }
 
     /// 【Version 模式更新】

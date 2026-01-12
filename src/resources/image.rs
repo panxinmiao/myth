@@ -19,8 +19,8 @@ pub struct ImageDescriptor {
 
 #[derive(Debug)]
 pub struct ImageInner {
-    pub id: u64, // 使用 u64 替代 Uuid 以提升渲染层性能
-    pub uuid: Uuid, // 保留 UUID 用于资产序列化/反序列化
+    pub id: u64,
+    pub uuid: Uuid,
     pub label: String,
 
     // 元数据

@@ -30,7 +30,6 @@ impl Environment {
         // 更新 Light Storage Buffer
         if let Some(light_storage_buffer) = &self.light_storage_buffer {
             light_storage_buffer.update(&gpu_lights);
-            self.id = NEXT_WORLD_ID.fetch_add(1, Ordering::Relaxed);
         }
         else {
             let light_storage_buffer = BufferRef::new(
