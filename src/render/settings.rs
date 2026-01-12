@@ -1,0 +1,20 @@
+#[derive(Debug, Clone)]
+pub struct RendererSettings {
+    pub power_preference: wgpu::PowerPreference,
+    pub required_features: wgpu::Features,
+    pub required_limits: wgpu::Limits,
+    pub clear_color: wgpu::Color,
+    pub depth_format: wgpu::TextureFormat,
+}
+
+impl Default for RendererSettings {
+    fn default() -> Self {
+        Self {
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            clear_color: wgpu::Color { r: 0.1, g: 0.1, b: 0.1, a: 1.0 },
+            depth_format: wgpu::TextureFormat::Depth32Float,
+        }
+    }
+}
