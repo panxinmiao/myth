@@ -2,7 +2,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use glam::{Mat4, Mat3A};
 use slotmap::Key;
 
-use crate::scene::Scene;
+use crate::scene::{Scene};
 use crate::scene::camera::Camera;
 use crate::scene::environment::Environment;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
@@ -77,11 +77,14 @@ impl RenderState {
     fn update(&mut self, camera: &Camera) {
         let view_matrix = camera.view_matrix;
         let vp_matrix =  camera.view_projection_matrix;
+        let camera_position = camera.world_matrix.translation.to_vec3();
 
         let frame_uniform = RenderStateUniforms{
             view_projection: vp_matrix,
             view_projection_inverse: vp_matrix.inverse(),
             view_matrix,
+            camera_position,
+            time: 0.0,
         };
 
         self.uniform_buffer.update(&[frame_uniform]);

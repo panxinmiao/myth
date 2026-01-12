@@ -29,7 +29,10 @@ fn main() -> anyhow::Result<()> {
     
     // 4. 添加到 AssetServer
     let tex_handle = app.assets.add_texture(texture);
-    basic_mat.map = Some(tex_handle);
+
+    if let Some(basic) = basic_mat.as_basic_mut() {
+        basic.map = Some(tex_handle);
+    }
 
     let geo_handle = app.assets.add_geometry(geometry);
     let mat_handle = app.assets.add_material(basic_mat.into());

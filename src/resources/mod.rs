@@ -11,6 +11,7 @@
 
 pub mod mesh;
 pub mod material;
+pub mod material_builder;
 pub mod texture;
 pub mod image;
 pub mod geometry;
@@ -21,9 +22,9 @@ pub mod uniforms;
 pub use mesh::{Mesh, MeshHandle};
 pub use material::{
     Material, MaterialData, MaterialFeatures,
-    MeshBasicMaterial, MeshStandardMaterial,
-    MeshBasicMaterialBuilder, MeshStandardMaterialBuilder,
+    MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial,
 };
+pub use material_builder::{MeshBasicMaterialBuilder, MeshStandardMaterialBuilder};
 pub use texture::{Texture, TextureSampler};
 pub use image::{Image, ImageDescriptor};
 pub use geometry::{

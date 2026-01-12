@@ -1,7 +1,7 @@
 use glam::{Vec3, Vec4, Quat};
 use three::app::App; // 使用引擎提供的 App 抽象
 use three::resources::{Geometry, Material, Mesh, Texture};
-use three::scene::Camera;
+use three::scene::{Camera};
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -12,24 +12,27 @@ fn main() -> anyhow::Result<()> {
     // 2. 准备资源 (Geometry, Texture, Material)
     let geometry = Geometry::new_box(2.0, 2.0, 2.0);
     let texture: Texture = Texture::create_checkerboard("checker", 512, 512, 64);
-    let mut basic_mat = Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0));
+    let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
     // 3. 将资源添加到 AssetServer，获取 Handle
     let tex_handle = app.assets.add_texture(texture);
 
 
-    if let Some(basic) = basic_mat.as_basic_mut() {
-        basic.map = Some(tex_handle);
-        basic.color = Vec4::new(0.8, 0.0, 0.8, 1.0);
+    if let Some(phong) = mat.as_phong_mut() {
+        phong.map = Some(tex_handle);
+        phong.color = Vec4::new(0.8, 0.0, 0.8, 1.0);
     }
     
     let geo_handle = app.assets.add_geometry(geometry);
-    let mat_handle = app.assets.add_material(basic_mat.into());
+    let mat_handle = app.assets.add_material(mat.into());
 
     // 4. 创建 Mesh 并加入场景
     let mesh = Mesh::new(geo_handle, mat_handle);
 
     let cube_node_id = app.scene.add_mesh(mesh);
+
+    // let light = light::Light::new_directional(Vec3::new(1.0, -1.0, -1.0), 1.0);
+    // app.scene.add_light(light);
 
     // 5. 设置相机
     // 5.1 创建相机组件 (纯投影数据)

@@ -66,6 +66,17 @@ impl BufferRef {
         }))
     }
 
+    pub fn new_with_capacity(capacity: usize, usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
+        let data = vec![0u8; capacity];
+        Self(Arc::new(DataBuffer {
+            id: NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed),
+            label: label.unwrap_or("Buffer").to_string(),
+            version: AtomicU64::new(0), 
+            data: RwLock::new(data),
+            usage,
+        }))
+    }
+
     // === 核心优化：无锁获取版本号 ===
     pub fn version(&self) -> u64 {
         self.0.version.load(Ordering::Relaxed)

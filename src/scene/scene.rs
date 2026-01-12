@@ -265,28 +265,6 @@ impl Scene {
         self.add_to_parent(node, parent)
     }
 
-    pub fn update_cameras(&mut self) {
-        // 1. 收集阶段：遍历 Node，找到挂载了相机的节点，记录 (CameraID, WorldMatrix)
-        // 这一步只借用了 self.nodes，没有借用 self.cameras
-        let mut updates = Vec::new();
-        
-        for (_node_idx, node) in self.nodes.iter() {
-            if let Some(camera_idx) = node.camera {
-                // 如果节点被隐藏，是否更新相机？通常还是要更新的，除非逻辑上禁用了相机
-                let world_matrix = *node.world_matrix();
-                updates.push((camera_idx, world_matrix));
-            }
-        }
-
-        // 2. 更新阶段：遍历收集到的任务，更新 Camera
-        // 这一步只借用了 self.cameras
-        for (cam_idx, world_matrix) in updates {
-            if let Some(camera) = self.cameras.get_mut(cam_idx) {
-                camera.update_view_projection(&world_matrix);
-            }
-        }
-    }
-
     pub fn add_light(&mut self, light: Light) -> NodeIndex {
         // 1. 创建 Node
         let mut node = Node::new("Light");
@@ -309,13 +287,11 @@ impl Scene {
         // if self.lights.len() > 0 {
         //     features |= SceneFeatures::USE_SHADOW_MAP;
         // }
-
         features
     }
 
     pub fn update(&mut self) {
         self.update_matrix_world();
-        // self.update_cameras();
         let gpu_lights = self.collect_lights();
         self.environment.update_lights(gpu_lights);
     }

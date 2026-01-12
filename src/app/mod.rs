@@ -76,8 +76,7 @@ impl App {
         if let Some(ref mut update_fn) = self.update_fn {
             update_fn(&mut self.scene, &self.assets, self.last_frame_time);
         }
-        self.scene.update_matrix_world();
-        self.scene.update_cameras();
+        self.scene.update();
     }
 
     fn render(&mut self) {

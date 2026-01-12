@@ -232,6 +232,16 @@ define_uniform_struct!(
         pub view_projection: Mat4 = Mat4::IDENTITY,
         pub view_projection_inverse: Mat4 = Mat4::IDENTITY,
         pub view_matrix: Mat4 = Mat4::IDENTITY,
+        pub camera_position: Vec3 = Vec3::ZERO,
+        pub time: f32 = 0.0,
+    }
+);
+
+
+define_uniform_struct!(
+    /// 全局 Uniforms (每个 Frame 更新)
+    struct EnvironmentUniforms {
+        pub num_lights: u32 = 0,
     }
 );
 
@@ -246,6 +256,20 @@ define_uniform_struct!(
     }
 );
 
+// Phong Material
+define_uniform_struct!(
+    struct MeshPhongUniforms {
+        pub color: Vec4 = Vec4::ONE,
+        pub specular: Vec3 = Vec3::ONE,
+        pub opacity: f32 = 1.0,
+        pub emissive: Vec3 = Vec3::ZERO,
+        pub shininess: f32 = 30.0,
+
+        pub map_transform: Mat3A = Mat3A::IDENTITY,
+        pub normal_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub specular_map_transform: Mat3A = Mat3A::IDENTITY,
+    }
+);
 
 // Standard PBR Material
 define_uniform_struct!(
