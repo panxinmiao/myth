@@ -9,15 +9,20 @@ use glam::{Mat4, Mat3A};
 use slotmap::Key;
 use std::sync::Arc;
 use winit::window::Window;
+use std::sync::atomic::AtomicU32;
+use std::sync::atomic::Ordering;
 
 use crate::scene::Scene;
 use crate::scene::camera::Camera;
 use crate::resources::uniforms::DynamicModelUniforms;
 use crate::assets::{GeometryHandle, MaterialHandle, AssetServer};
 use crate::scene::environment::Environment;
+use crate::resources::buffer::BufferRef;
+use crate::resources::uniforms::{RenderStateUniforms};
 
 use self::resources::ResourceManager;
-use self::pipeline::PipelineCache;
+use self::pipeline::{PipelineCache, FastPipelineKey};
+
 use self::data::{ModelBufferManager, ObjectBindingData};
 use self::passes::TrackedRenderPass;
 
@@ -66,6 +71,35 @@ struct RenderCommand {
     dynamic_offset: u32,
 }
 
+pub(crate) struct RenderState {
+    pub id: u32,
+    pub(crate) uniform_buffer: BufferRef,
+}
+
+static NEXT_RENDER_STATE_ID: AtomicU32 = AtomicU32::new(0);
+
+impl RenderState {
+    fn new() -> Self {
+        Self {
+            id: NEXT_RENDER_STATE_ID.fetch_add(0, Ordering::Relaxed),
+            uniform_buffer: BufferRef::empty(wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, Some("RenderState Uniforms")),
+        }
+    }
+
+    fn update(&mut self, camera: &Camera) {
+        let view_matrix = camera.view_matrix;
+        let vp_matrix =  camera.view_projection_matrix;
+
+        let frame_uniform = RenderStateUniforms{
+            view_projection: vp_matrix,
+            view_projection_inverse: vp_matrix.inverse(),
+            view_matrix,
+        };
+
+        self.uniform_buffer.update(&[frame_uniform]);
+    }
+}
+
 /// 主渲染器
 pub struct Renderer {
     device: wgpu::Device,
@@ -76,12 +110,14 @@ pub struct Renderer {
     pub depth_format: wgpu::TextureFormat,
     depth_texture_view: wgpu::TextureView,  
     
+    pub(crate) render_state: RenderState,
     // 子系统
     resource_manager: ResourceManager,
     model_buffer_manager: ModelBufferManager,
     pipeline_cache: PipelineCache,
 
     _size: winit::dpi::PhysicalSize<u32>,
+
 }
 
 impl Renderer {
@@ -116,6 +152,8 @@ impl Renderer {
         let depth_format = wgpu::TextureFormat::Depth32Float;
         let depth_texture_view = Self::create_depth_texture(&device, &config, depth_format);
 
+        let render_state = RenderState::new();
+
         Self {
             device,
             queue,
@@ -123,6 +161,7 @@ impl Renderer {
             config,
             depth_format,
             depth_texture_view,
+            render_state,
             resource_manager,
             pipeline_cache: PipelineCache::new(),
             model_buffer_manager,
@@ -162,6 +201,7 @@ impl Renderer {
 
     /// 核心渲染入口
     pub fn render(&mut self, scene: &Scene, camera: &Camera, assets: &AssetServer) {
+
         if self._size.width == 0 || self._size.height == 0 {
             return;
         }
@@ -185,7 +225,7 @@ impl Renderer {
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         // 1. 准备全局资源 (Camera, Light, Environment)
-        self.prepare_global_resources(&scene.environment, camera, scene);
+        self.prepare_global_resources(&scene.environment, camera);
 
         // 2. 剔除与收集 (Culling)
         let render_items = self.cull_scene(scene, assets, camera);
@@ -241,10 +281,12 @@ impl Renderer {
     }
 
     // --- 内部辅助方法 (拆分逻辑) ---
-    fn prepare_global_resources(&mut self, environment: &Environment, camera: &Camera, scene: &Scene) {
-        // 准备 GPU 资源
-        environment.update(camera, scene);
-        self.resource_manager.prepare_global(environment);
+    fn prepare_global_resources(&mut self, environment: &Environment, camera: &Camera) {
+        // 全局资源来自 RenderState 和 Scene.Environment
+
+        // 更新 RenderState 中的 Camera 数据
+        self.render_state.update(camera);
+        self.resource_manager.prepare_global(environment, &self.render_state);
     }
 
     fn cull_scene(
@@ -320,21 +362,34 @@ impl Renderer {
             // 4. 获取 GPU 资源引用
             let gpu_geometry = self.resource_manager.get_geometry(item.geo_handle).unwrap();
             let gpu_material = self.resource_manager.get_material(item.mat_handle).unwrap();
+            let gpu_world = self.resource_manager.get_world(self.render_state.id, scene.environment.id).unwrap();    
             
             // 5. 获取/编译 Pipeline (PSO)
+
+            let fast_key = FastPipelineKey {
+                material_handle: item.mat_handle,
+                material_version: material.version(),
+                geometry_handle: item.geo_handle,
+                geometry_version: geometry.version(),
+                render_state_id: self.render_state.id,
+                scene_id: scene.environment.id,
+            };
+
+
             let (pipeline, pipeline_id) = self.pipeline_cache.get_or_create(
                 &self.device,
-                item.mat_handle,
-                material,
-                item.geo_handle,
+                fast_key,
+ 
                 geometry,
+                material,
                 scene,
+
+                &gpu_geometry.layout_info,
                 gpu_material,
                 &object_data,
-                self.resource_manager.get_world(scene.environment.id).unwrap(),
+                gpu_world,
                 self.config.format,
                 self.depth_format,
-                &gpu_geometry.layout_info,
             );
 
             // 6. 生成排序键
@@ -405,7 +460,7 @@ impl Renderer {
         if cmds.is_empty() { return; }
 
         // 1. 设置全局 Group 0
-        if let Some(gpu_global) = self.resource_manager.get_world(environment.id) {
+        if let Some(gpu_global) = self.resource_manager.get_world(self.render_state.id, environment.id) {
             pass.set_bind_group(0, gpu_global.bind_group_id, &gpu_global.bind_group, &[]);
         } else {
             return;

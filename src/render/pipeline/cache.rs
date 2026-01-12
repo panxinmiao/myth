@@ -3,13 +3,14 @@ use md5;
 
 use crate::resources::geometry::{Geometry, GeometryFeatures};
 use crate::resources::material::{Material, MaterialFeatures};
-use crate::scene::scene::SceneFeatures;
+use crate::scene::scene::{Scene, SceneFeatures};
 use crate::assets::{GeometryHandle, MaterialHandle};
 
 use crate::render::pipeline::shader_gen::ShaderGenerator;
 use crate::render::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::render::pipeline::vertex::GeneratedVertexLayout;
 use crate::render::resources::manager::GPUMaterial;
+use crate::render::resources::manager::GPUEnvironment;
 use crate::render::data::model_manager::ObjectBindingData;
 
 /// L2 缓存 Key: 完整描述 Pipeline 的所有特征 (慢，但唯一)
@@ -20,12 +21,6 @@ pub struct PipelineKey {
     pub mat_features: MaterialFeatures,
     pub geo_features: GeometryFeatures,
     pub scene_features: SceneFeatures,
-
-    // [新增] 数值特征 (Numerical Features)
-    // 直接影响 Shader 宏定义，如 #define NUM_POINT_LIGHTS 3
-    pub num_dir_lights: u8,
-    pub num_point_lights: u8,
-    pub num_spot_lights: u8,
 
     // 2. 渲染状态 (Render States)
     pub topology: wgpu::PrimitiveTopology,
@@ -44,14 +39,14 @@ pub struct PipelineKey {
 
 /// L1 缓存 Key: 基于 ID 和版本号 (极快，无堆分配)
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
-struct FastPipelineKey {
-    material_handle: MaterialHandle,
-    material_version: u64,
-    geometry_handle: GeometryHandle, 
-    geometry_version: u64, 
+pub struct FastPipelineKey {
+    pub material_handle: MaterialHandle,
+    pub material_version: u64,
+    pub geometry_handle: GeometryHandle, 
+    pub geometry_version: u64, 
 
-    topology: wgpu::PrimitiveTopology, // 拓扑结构也可能变化
-    scene_hash: u64, // 场景状态哈希
+    pub render_state_id: u32,
+    pub scene_id: u32,
 }
 
 
@@ -114,48 +109,30 @@ impl PipelineCache {
     pub fn get_or_create(
         &mut self,
         device: &wgpu::Device,
-        material_handle: MaterialHandle,
-        material: &Material,
-        geometry_handle: GeometryHandle,
-        geometry: &Geometry,
-        scene: &crate::scene::scene::Scene,
 
+        fast_key: FastPipelineKey,
+
+        geometry: &Geometry,
+        material: &Material,
+        scene: &Scene,
+
+        vertex_layout: &GeneratedVertexLayout, 
         gpu_material: &GPUMaterial, 
         object_data: &ObjectBindingData,
-        gpu_enviroment: &crate::render::resources::manager::GPUEnviroment,
+        gpu_environment: &GPUEnvironment,
 
         color_format: wgpu::TextureFormat,
         depth_format: wgpu::TextureFormat, 
-        vertex_layout: &GeneratedVertexLayout, 
     ) -> (wgpu::RenderPipeline, u16) {
-        
-        // 提取场景特征
-        let (scene_features, num_dir, num_point, num_spot) = scene.get_render_stats();
-
-        let scene_hash = (num_dir as u64) 
-            | ((num_point as u64) << 8) 
-            | ((num_spot as u64) << 16) 
-            | ((scene_features.bits() as u64) << 24);
 
         // =========================================================
         // 1. L1 Cache: 快速路径 (Fast Path)
         // =========================================================
-        let topology = geometry.topology;
-
-        let fast_key = FastPipelineKey {
-            material_handle,
-            material_version: material.version(),
-            geometry_handle,
-            geometry_version: geometry.version(),
-            topology,
-            scene_hash,
-        };
 
         // 如果命中 L1 缓存，直接返回 (零堆内存分配)
         if let Some(cached) = self.fast_cache.get(&fast_key) {
             return cached.clone();
         }
-
 
         // =========================================================
         // 2. L2 Cache: 规范路径 (Canonical Path)
@@ -165,15 +142,13 @@ impl PipelineCache {
         let mat_features = material.get_features();
         let geo_features = geometry.get_features();
         let scene_features = scene.get_features();
+        let topology = geometry.topology;
 
         // 2.2 构建 Canonical Key (无堆分配，如果 bitflags 和 enum 都是 copy)
         let canonical_key = PipelineKey {
             mat_features,
             geo_features,
             scene_features,
-            num_dir_lights: num_dir,
-            num_point_lights: num_point,
-            num_spot_lights: num_spot,
             topology,
             cull_mode: material.cull_mode,
             depth_write: material.depth_write,
@@ -204,9 +179,6 @@ impl PipelineCache {
             mat_features,
             geo_features,
             scene_features,
-            num_dir_lights: num_dir,
-            num_point_lights: num_point,
-            num_spot_lights: num_spot,
         };
 
         let template_name = material.shader_name();
@@ -214,25 +186,12 @@ impl PipelineCache {
         // 2. Generate Code
         let shader_source = ShaderGenerator::generate_shader(
             &vertex_layout,
-            &gpu_enviroment.binding_wgsl,
+            &gpu_environment.binding_wgsl,
             &gpu_material.binding_wgsl,
             &object_data.binding_wgsl,
             &template_name,
             &options,
         );
-        // let vs_code = ShaderGenerator::generate_vertex(
-        //     &options,
-        //     vertex_layout,
-        //     &gpu_enviroment.binding_wgsl,
-        //     &object_data.binding_wgsl,
-        //     "standard_vert"
-        // );
-        // let fs_code = ShaderGenerator::generate_fragment(
-        //     &options,
-        //     &gpu_enviroment.binding_wgsl,
-        //     &gpu_material.binding_wgsl,
-        //     material.shader_name()
-        // );
 
         // Debug 输出
         if cfg!(feature = "debug_shader") {
@@ -246,7 +205,7 @@ impl PipelineCache {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[
-                &gpu_enviroment.layout,
+                &gpu_environment.layout,
                 &gpu_material.layout, 
                 &object_data.layout 
             ],

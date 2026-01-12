@@ -11,7 +11,4 @@ pub mod vertex;
 pub mod shader_manager;
 pub mod shader_gen;
 
-// 重新导出常用类型
-pub use cache::PipelineCache;
-pub use vertex::{GeneratedVertexLayout, OwnedVertexBufferDesc};
-pub use shader_gen::ShaderGenerator;
+pub(crate) use cache::{PipelineCache, FastPipelineKey};

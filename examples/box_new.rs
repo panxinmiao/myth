@@ -2,7 +2,7 @@ use glam::{Vec3, Vec4};
 
 use three::app::App;
 use three::resources::{Geometry, Material, Mesh};
-use three::scene::{Camera, Light};
+use three::scene::{Camera};
 
 fn main() -> anyhow::Result<()> {
     // 初始化日志
@@ -43,14 +43,6 @@ fn main() -> anyhow::Result<()> {
     }
     
     app.active_camera = Some(camera_node_id);
-
-    // === 4. 添加光源 ===
-    let light = Light::new_directional(
-        Vec3::new(0.0, -1.0, -1.0).normalize(), // 方向
-        Vec3::new(1.0, 1.0, 1.0),               // 白光
-        1.5                                      // 强度
-    );
-    app.scene.add_light(light);
 
     // === 5. 运行应用 ===
     app.run()

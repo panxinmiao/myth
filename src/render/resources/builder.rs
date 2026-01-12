@@ -1,6 +1,6 @@
 use wgpu::ShaderStages;
 use crate::resources::buffer::BufferRef;
-use crate::resources::uniforms::UniformBlock;
+use crate::resources::uniforms::WgslStruct;
 use crate::render::resources::binding::BindingResource;
 use crate::assets::TextureHandle;
 
@@ -27,7 +27,7 @@ impl ResourceBuilder {
     }
 
     /// 添加 Uniform Buffer
-    pub fn add_uniform<T: UniformBlock>(&mut self, name: &str, buffer: &BufferRef, visibility: ShaderStages) {
+    pub fn add_uniform<T: WgslStruct>(&mut self, name: &str, buffer: &BufferRef, visibility: ShaderStages) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -50,7 +50,7 @@ impl ResourceBuilder {
         self.next_binding_index += 1;
     }
 
-    pub fn add_dynamic_uniform<T: UniformBlock>(&mut self, name: &str, buffer: &BufferRef, min_binding_size: u64, visibility: ShaderStages) {
+    pub fn add_dynamic_uniform<T: WgslStruct>(&mut self, name: &str, buffer: &BufferRef, min_binding_size: u64, visibility: ShaderStages) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -107,7 +107,7 @@ impl ResourceBuilder {
         self.next_binding_index += 1;
     }
 
-    pub fn _add_storage_buffer(&mut self, name: &str, buffer: &BufferRef, read_only: bool, visibility: ShaderStages) {
+    pub fn add_storage(&mut self, name: &str, buffer: &BufferRef, read_only: bool, visibility: ShaderStages, struct_generator: Option<WgslStructGenerator>) {
         // 1. Layout Entry
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
@@ -132,8 +132,18 @@ impl ResourceBuilder {
         });
 
         self.names.push(name.to_string());
-        self.struct_generators.push(None);
+        self.struct_generators.push(struct_generator);
         self.next_binding_index += 1;
+    }
+
+     /// 添加 Storage Buffer
+
+    pub fn add_storage_with_struct<T: WgslStruct>(&mut self, name: &str, buffer: &BufferRef, read_only: bool, visibility: ShaderStages) {
+        self.add_storage(name, buffer, read_only, visibility, Some(T::wgsl_struct_def));
+    }
+
+    pub fn add_storage_buffer(&mut self, name: &str, buffer: &BufferRef, read_only: bool, visibility: ShaderStages) {
+        self.add_storage(name, buffer, read_only, visibility, None);
     }
 
     pub fn generate_wgsl(&self, group_index: u32) -> String {

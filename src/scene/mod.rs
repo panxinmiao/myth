@@ -16,7 +16,7 @@ pub mod environment;
 pub use node::Node;
 pub use scene::Scene;
 pub use camera::{Camera, ProjectionType};
-pub use light::{Light, LightType};
+pub use light::{Light, LightKind};
 
 
 use thunderdome::Index;

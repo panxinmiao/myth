@@ -11,7 +11,7 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     let model_matrix = u_model.model_matrix; 
     let world_pos = model_matrix * vec4<f32>(in.position, 1.0);
     
-    out.position = u_global.view_projection * world_pos;
+    out.position = u_render_state.view_projection * world_pos;
     $$ if has_uv
         out.uv = in.uv;
     $$ endif 

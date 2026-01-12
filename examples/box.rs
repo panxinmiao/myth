@@ -11,7 +11,7 @@ fn main() -> anyhow::Result<()> {
 
     // 2. 准备资源 (Geometry, Texture, Material)
     let geometry = Geometry::new_box(2.0, 2.0, 2.0);
-    let texture = Texture::create_checkerboard("checker", 512, 512, 64);
+    let texture: Texture = Texture::create_checkerboard("checker", 512, 512, 64);
     let mut basic_mat = Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
     // 3. 将资源添加到 AssetServer，获取 Handle

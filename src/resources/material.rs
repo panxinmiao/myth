@@ -30,7 +30,7 @@ bitflags! {
 pub struct MeshBasicMaterial {
     pub uniforms: MeshBasicUniforms,
     // 内部使用的 Uniform Buffer，自动管理
-    pub uniform_buffer: BufferRef,
+    pub(crate) uniform_buffer: BufferRef,
     
     // 直接持有 Texture 引用，不再是 Uuid
     pub map: Option<TextureHandle>, 

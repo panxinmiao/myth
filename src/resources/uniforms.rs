@@ -76,13 +76,9 @@ impl<T: Pod, const N: usize> From<[T; N]> for UniformArray<T, N> {
     }
 }
 
-pub trait UniformBlock: Pod + Zeroable {
+pub trait WgslStruct: Pod + Zeroable {
     fn wgsl_struct_def(struct_name: &str) -> String;
 }
-
-
-
-
 
 // ============================================================================
 // 2. 宏定义 (Single Source of Truth)
@@ -194,7 +190,7 @@ macro_rules! define_uniform_struct {
     // 内部规则 4: 实现 UniformBlock (顶层调用)
     // --------------------------------------------------------
     (@impl_uniform_block $name:ident { $( $vis:vis $field_name:ident : $field_type:ty ),* }) => {
-        impl crate::resources::uniforms::UniformBlock for $name {
+        impl crate::resources::uniforms::WgslStruct for $name {
             fn wgsl_struct_def(struct_name: &str) -> String {
                 let mut defs = Vec::new();
                 let mut inserted = std::collections::HashSet::new();
@@ -232,7 +228,7 @@ define_uniform_struct!(
 
 define_uniform_struct!(
     /// 全局 Uniforms (每个 Frame 更新)
-    struct GlobalFrameUniforms {
+    struct RenderStateUniforms {
         pub view_projection: Mat4 = Mat4::IDENTITY,
         pub view_projection_inverse: Mat4 = Mat4::IDENTITY,
         pub view_matrix: Mat4 = Mat4::IDENTITY,
@@ -271,33 +267,24 @@ define_uniform_struct!(
 );
 
 define_uniform_struct!(
-    struct GpuLightData {
-        pub color: Vec4,
-        pub position: Vec4,
-        pub direction: Vec4,
-        pub info: Vec4,
-    }
-);
+    struct GpuLightStorage {
+        // 16 bytes chunk 0
+        pub color: Vec3,
+        pub intensity: f32,
 
-pub const MAX_DIR_LIGHTS: usize = 4;
-pub const MAX_POINT_LIGHTS: usize = 16;
-pub const MAX_SPOT_LIGHTS: usize = 4;
+        // 16 bytes chunk 1
+        pub position: Vec3,
+        pub range: f32,
 
-define_uniform_struct!(
-    struct GlobalLightUniforms {
-        pub ambient: Vec4 = Vec4::new(0.05, 0.05, 0.05, 1.0),
-        
-        pub num_dir_lights: u32,
-        pub num_point_lights: u32,
-        pub num_spot_lights: u32,
-        pub(crate) __pad: u32, 
+        // 16 bytes chunk 2
+        pub direction: Vec3,
+        pub light_type: u32,
 
-        // 直接使用 UniformArray<GpuLightData, N>
-        // 宏会自动发现 GpuLightData 也是通过 define_uniform_struct 定义的
-        // 并自动将其 struct 定义包含进最终的 WGSL 中
-        pub dir_lights: UniformArray<GpuLightData, MAX_DIR_LIGHTS>,
-        pub point_lights: UniformArray<GpuLightData, MAX_POINT_LIGHTS>,
-        pub spot_lights: UniformArray<GpuLightData, MAX_SPOT_LIGHTS>,
+        // 16 bytes chunk 3
+        pub inner_cone_cos: f32,
+        pub outer_cone_cos: f32,
+        pub(crate) _padding1: f32,
+        pub(crate) _padding2: f32,
     }
 );
 
@@ -328,7 +315,7 @@ mod tests {
 
     #[test]
     fn test_nested_wgsl() {
-        let wgsl = GlobalLightUniforms::wgsl_struct_def("GlobalUniforms");
+        let wgsl = GpuLightStorage::wgsl_struct_def("GpuLightStorage");
         println!("{}", wgsl);
     }
 }

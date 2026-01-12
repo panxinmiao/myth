@@ -21,6 +21,7 @@ use crate::render::pipeline::vertex::{GeneratedVertexLayout};
 use crate::render::resources::buffer::GpuBuffer;
 use crate::render::resources::texture::GpuTexture;
 use crate::render::resources::image::GpuImage;
+use crate::render::RenderState;
 
 // 全局资源 ID 生成器
 static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -64,7 +65,7 @@ pub struct GPUMaterial {
 }
 
 // 场景全局环境的 GPU 资源
-pub struct GPUEnviroment {
+pub struct GPUEnvironment {
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
     pub layout: wgpu::BindGroupLayout,
@@ -84,7 +85,7 @@ pub struct ResourceManager {
     gpu_geometries: SecondaryMap<GeometryHandle, GPUGeometry>,
     gpu_materials: SecondaryMap<MaterialHandle, GPUMaterial>,
     gpu_textures: SecondaryMap<TextureHandle, GpuTexture>,
-    worlds: HashMap<u64, GPUEnviroment>, 
+    worlds: HashMap<u64, GPUEnvironment>, 
     // Image 使用 u64 ID (高性能)
     gpu_buffers: HashMap<u64, GpuBuffer>,
     gpu_images: HashMap<u64, GpuImage>,
@@ -555,40 +556,31 @@ impl ResourceManager {
         self.gpu_textures.get(handle)
     }
 
-
-
-    // pub fn add_or_update_texture(&mut self, handle: TextureHandle, texture: &Texture) {
-    //     if let Some(gpu_tex) = self.gpu_textures.get_mut(handle) {
-    //         gpu_tex.last_used_frame = self.frame_index;
-    //         gpu_tex.update(&self.device, &self.queue, texture);
-    //     } else {
-    //         // 插入新资源
-    //         let mut gpu_tex = GpuTexture::new(&self.device, &self.queue, texture);
-    //         gpu_tex.last_used_frame = self.frame_index;
-    //         self.gpu_textures.insert(handle, gpu_tex);
-    //     }
-    // }
-
-    pub fn prepare_global(&mut self, env: &Environment) -> &GPUEnviroment {
+    pub(crate) fn prepare_global(&mut self, env: &Environment, render_state: &RenderState) -> &GPUEnvironment {
         
         // [A] 上传 Buffer 数据 (CPU -> GPU)
         // 注意：prepare_buffer 接受 &DataBuffer，我们需要通过 read() 获取
         {
-            let frame_buf = &env.frame_uniforms;
+            let frame_buf = &render_state.uniform_buffer;
             self.prepare_buffer(&frame_buf);
         }
         {
-            let light_buf = &env.light_uniforms;
-            self.prepare_buffer(&light_buf);
+            if let Some(light_buf) = &env.light_storage_buffer {
+                self.prepare_buffer(&light_buf);
+            }
         }
+
+        let world_id = Self::compose_env_render_state_id(render_state.id, env.id);
 
         // [B] 检查或创建 BindGroup
         // 简化策略：只要 id 存在就不重建 (Global Layout 很少变)
-        if !self.worlds.contains_key(&env.id) {
+        if !self.worlds.contains_key(&world_id) {
             
             // 1. 定义绑定
             let mut builder = ResourceBuilder::new();
-            env.define_bindings(&mut builder); // 自动收集 frame 和 light buffer
+
+            render_state.define_bindings(&mut builder);
+            env.define_bindings(&mut builder);
 
             // 2. 获取 Layout (复用缓存机制)
             let (layout, _layout_id) = self.get_or_create_layout(&builder.layout_entries);
@@ -599,7 +591,7 @@ impl ResourceManager {
             // 4. 生成 WGSL (Group 0)
             let binding_wgsl = builder.generate_wgsl(0); 
 
-            let gpu_world = GPUEnviroment {
+            let gpu_world = GPUEnvironment {
                 bind_group,
                 bind_group_id: bg_id,
                 layout,
@@ -607,17 +599,22 @@ impl ResourceManager {
                 last_used_frame: self.frame_index,
             };
 
-            self.worlds.insert(env.id, gpu_world);
+            self.worlds.insert(world_id, gpu_world);
         }
 
-        let gpu_world = self.worlds.get_mut(&env.id).unwrap();
+        let gpu_world = self.worlds.get_mut(&world_id).unwrap();
         gpu_world.last_used_frame = self.frame_index;
         gpu_world
     }
 
+    fn compose_env_render_state_id(render_state_id: u32, env_id: u32) -> u64 {
+        ((render_state_id as u64) << 32) | (env_id as u64)
+    }
+
     // 获取 World 资源的辅助方法
-    pub fn get_world(&self, id: u64) -> Option<&GPUEnviroment> {
-        self.worlds.get(&id)
+    pub fn get_world(&self, render_state_id: u32, env_id: u32) -> Option<&GPUEnvironment> {
+        let world_id = Self::compose_env_render_state_id(render_state_id, env_id);
+        self.worlds.get(&world_id)
     }
     // ========================================================================
     // Garbage Collection

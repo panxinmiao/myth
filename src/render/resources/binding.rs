@@ -5,13 +5,13 @@ use crate::resources::geometry::Geometry;
 use crate::scene::environment::Environment;
 use crate::resources::uniforms::*;
 use crate::render::resources::builder::ResourceBuilder;
+use crate::render::RenderState;
 
 /// 实际的绑定资源数据 (用于生成 BindGroup)
 /// 层只持有 ID 或 数据引用，不持有 GPU 句柄
 #[derive(Debug, Clone)]
 pub enum BindingResource {
 
-    /// 持有 CPU Buffer 的引用 (统一了 Vertex/Index/Uniform/Storage)
     Buffer {
         buffer: BufferRef,
         offset: u64,        // 偏移量 (默认为 0)
@@ -101,22 +101,23 @@ impl Bindings for Geometry {
 
 impl Bindings for Environment {
     fn define_bindings(&self, builder: &mut ResourceBuilder) {
-        // Binding 0: Frame Uniforms (Vertex + Fragment)
-        builder.add_uniform::<GlobalFrameUniforms>(
-            "global", 
-            &self.frame_uniforms, // 传入 BufferRef
-            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT
-        );
+        if let Some(light_storage_buffer) = &self.light_storage_buffer {
+            // builder.add_storage_with_struct::<GpuLightStorage>("lights", light_storage_buffer, true, wgpu::ShaderStages::FRAGMENT);
+            builder.add_storage("lights", light_storage_buffer, true, wgpu::ShaderStages::FRAGMENT, Some(GpuLightStorage::wgsl_struct_def));
+        }
 
-        // Binding 1: Light Uniforms (Fragment only)
-        builder.add_uniform::<GlobalLightUniforms>(
-            "lights",
-            &self.light_uniforms,
-            wgpu::ShaderStages::FRAGMENT
-        );
     }
 
     // 未来可以在这里添加：
     // builder.add_texture("env_map", self.env_map_id, ...)
 }
 
+impl Bindings for RenderState {
+    fn define_bindings(&self, builder: &mut ResourceBuilder) {
+        builder.add_uniform::<RenderStateUniforms>(
+            "render_state", 
+            &self.uniform_buffer,
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT
+        );
+    }
+}

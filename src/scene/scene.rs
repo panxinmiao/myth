@@ -1,12 +1,14 @@
 use thunderdome::{Arena};
 use slotmap::SlotMap;
-use glam::{Affine3A, Vec4}; 
+use glam::{Affine3A, Vec4, Vec3}; 
 use bitflags::bitflags;
 use crate::scene::node::Node;
 use crate::resources::mesh::Mesh;
 use crate::scene::camera::Camera;
-use crate::scene::light::{Light, LightType};
+use crate::scene::light::{Light, LightKind};
 use crate::scene::environment::Environment;
+
+use crate::resources::uniforms::{GpuLightStorage};
 
 use crate::scene::{NodeIndex, MeshKey, CameraKey, LightKey};
 
@@ -208,6 +210,20 @@ impl Scene {
                 // Affine3A 的乘法比 Mat4 更快，忽略最后一行 0,0,0,1 的计算
                 let new_world = parent_world_matrix * *node.local_matrix();
                 node.set_world_matrix(new_world);
+
+                if let Some(camera_idx) = node.camera {
+
+                    // 更新 Camera 的矩阵
+                    if let Some(camera) = self.cameras.get_mut(camera_idx) {
+                        camera.update_view_projection(&new_world);
+                    }
+
+                    log::debug!("Updated world matrix for Camera Node: {:?}", camera_idx);
+                }
+
+                if let Some(light_idx) = node.light {
+                    log::debug!("Updated world matrix for Light Node: {:?}", light_idx);
+                }
             }
 
             (*node.world_matrix(), node.children.clone(), world_needs_update)
@@ -287,27 +303,6 @@ impl Scene {
         self.add_to_parent(node, parent)
     }
 
-    // 返回: (features, num_dir, num_point, num_spot)
-    pub fn get_render_stats(&self) -> (SceneFeatures, u8, u8, u8) {
-        let features = SceneFeatures::empty();
-        let mut num_dir = 0;
-        let mut num_point = 0;
-        let mut num_spot = 0;
-
-        for (_, light) in self.lights.iter() {
-            match light.light_type {
-                LightType::Directional => num_dir += 1,
-                LightType::Point => num_point += 1,
-                LightType::Spot => num_spot += 1,
-            }
-        }
-        
-        // 可以在这里设置 Features，比如是否有阴影
-        // if num_dir > 0 { features |= SceneFeatures::USE_SHADOW_MAP; }
-
-        (features, num_dir as u8, num_point as u8, num_spot as u8)
-    }
-
     pub fn get_features(&self) -> SceneFeatures {
         let features = SceneFeatures::empty();
         // 示例：未来可以根据场景内容设置标志位
@@ -316,6 +311,64 @@ impl Scene {
         // }
 
         features
+    }
+
+    pub fn update(&mut self) {
+        self.update_matrix_world();
+        // self.update_cameras();
+        let gpu_lights = self.collect_lights();
+        self.environment.update_lights(gpu_lights);
+    }
+
+    fn collect_lights(&self) -> Vec<GpuLightStorage> {
+            
+        let mut light_storages = vec![];
+
+        for (_id, node) in self.nodes.iter() {
+            if let Some(light_idx) = node.light {
+                if let Some(light) = self.lights.get(light_idx) {
+                    
+                    // 获取灯光的世界变换
+                    let world_mat = node.world_matrix(); 
+                    let pos= world_mat.translation.to_vec3();
+                    // 从旋转中提取方向 (-Z)
+                    let dir = world_mat.transform_vector3(-Vec3::Z).normalize();
+
+                    // todo shadows:
+                    // shadow = light.shadow,
+                    let mut gpu_light_storage = GpuLightStorage{
+                        color: light.color,
+                        intensity: light.intensity,
+                        position: pos,
+                        direction: dir,
+                        ..Default::default()
+                    };
+
+                    gpu_light_storage.color = light.color;
+                    gpu_light_storage.intensity = light.intensity;
+                    gpu_light_storage.position = pos;
+                    gpu_light_storage.direction = dir;
+                    
+
+                    match &light.kind {
+                        LightKind::Point(light) => {
+                            gpu_light_storage.range = light.range;
+                        },
+                        LightKind::Spot(light) => {
+                            gpu_light_storage.range = light.range;
+                            gpu_light_storage.inner_cone_cos = light.inner_cone.cos();
+                            gpu_light_storage.outer_cone_cos = light.outer_cone.cos();
+                        },
+                        __ => {}
+                    }
+
+                    light_storages.push(gpu_light_storage);
+
+                }
+            }
+        }
+
+        light_storages
     }
 }
 

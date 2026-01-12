@@ -13,9 +13,6 @@ pub struct ShaderCompilationOptions {
     pub mat_features: MaterialFeatures,
     pub geo_features: GeometryFeatures,
     pub scene_features: SceneFeatures,
-    pub num_dir_lights: u8,
-    pub num_point_lights: u8,
-    pub num_spot_lights: u8,
 }
 
 impl Serialize for ShaderCompilationOptions {
@@ -32,18 +29,15 @@ impl Serialize for ShaderCompilationOptions {
         if self.mat_features.contains(MaterialFeatures::USE_METALNESS_MAP) { map.serialize_entry("use_metalness_map", &true)?; }
         if self.mat_features.contains(MaterialFeatures::USE_EMISSIVE_MAP) { map.serialize_entry("use_emissive_map", &true)?; }
         if self.mat_features.contains(MaterialFeatures::USE_AO_MAP) { map.serialize_entry("use_ao_map", &true)?; }
+
+
         if self.geo_features.contains(GeometryFeatures::HAS_UV) { map.serialize_entry("has_uv", &true)?; }
         if self.geo_features.contains(GeometryFeatures::HAS_NORMAL) { map.serialize_entry("has_normal", &true)?; }
         if self.geo_features.contains(GeometryFeatures::USE_VERTEX_COLOR) { map.serialize_entry("use_vertex_color", &true)?; }
         if self.geo_features.contains(GeometryFeatures::USE_TANGENT) { map.serialize_entry("use_tangent", &true)?; }
         if self.geo_features.contains(GeometryFeatures::USE_MORPHING) { map.serialize_entry("use_morphing", &true)?; }
-
         if self.geo_features.contains(GeometryFeatures::USE_SKINNING) { map.serialize_entry("use_skinning", &true)?; }
 
-        // === Light Counts ===
-        map.serialize_entry("num_dir_lights", &self.num_dir_lights)?;
-        map.serialize_entry("num_point_lights", &self.num_point_lights)?;
-        map.serialize_entry("num_spot_lights", &self.num_spot_lights)?;
 
         // other scene features can be added here
         

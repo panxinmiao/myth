@@ -40,8 +40,28 @@ impl BufferRef {
         Self(Arc::new(DataBuffer {
             id: NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed),
             label: label.unwrap_or("Buffer").to_string(),
-            version: AtomicU64::new(1), // 初始版本为 1
+            version: AtomicU64::new(0), 
             data: RwLock::new(raw_data),
+            usage,
+        }))
+    }
+
+    pub fn from_bytes(data: &[u8], usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
+        Self(Arc::new(DataBuffer {
+            id: NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed),
+            label: label.unwrap_or("Buffer").to_string(),
+            version: AtomicU64::new(0), 
+            data: RwLock::new(data.to_vec()),
+            usage,
+        }))
+    }
+
+    pub fn empty(usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
+        Self(Arc::new(DataBuffer {
+            id: NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed),
+            label: label.unwrap_or("Buffer").to_string(),
+            version: AtomicU64::new(0), 
+            data: RwLock::new(Vec::new()),
             usage,
         }))
     }
@@ -75,8 +95,7 @@ impl BufferRef {
         self.0.version.fetch_add(1, Ordering::Relaxed);
     }
     
-    // 提供给 Renderer 读取数据的接口
-    // 只有在确定 version 变了需要上传时，才调用这个
+    //读取数据的接口
     pub fn read_data(&self) -> std::sync::RwLockReadGuard<'_, Vec<u8>> {
         self.0.data.read().unwrap()
     }
