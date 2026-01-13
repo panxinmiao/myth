@@ -41,13 +41,25 @@ pub struct MaterialBindings {
 }
 
 /// 材质设置 - 对应 Pipeline 变化
-#[derive(Default, PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Eq, Clone, Debug)]
 pub struct MaterialSettings {
     pub transparent: bool,
     pub depth_write: bool,
     pub depth_test: bool,
     pub cull_mode: Option<wgpu::Face>,
     pub side: u32,
+}
+
+impl Default for MaterialSettings {
+    fn default() -> Self {
+        Self {
+            transparent: false,
+            depth_write: true, 
+            depth_test: true,  
+            cull_mode: Some(wgpu::Face::Back), 
+            side: 0,
+        }
+    }
 }
 
 // ============================================================================
