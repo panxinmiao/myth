@@ -48,8 +48,8 @@ pub struct GPUGeometry {
     pub last_used_frame: u64,
 }
 
-/// 材质的 GPU 资源
-pub struct GpuBindGroup {    
+/// 材质的 GPU 资源（三级版本控制）
+pub struct GpuMaterial {    
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
 
@@ -57,16 +57,29 @@ pub struct GpuBindGroup {
     pub layout_id: u64,
 
     pub binding_wgsl: String,
+    
+    // GPU Buffer 引用（用于快速更新 uniform 数据）
+    pub uniform_buffers: Vec<u64>, // Buffer IDs
 
-    // 缓存字段
-    pub last_version: u64,
-    pub last_resource_hash: u64,
+    // 三级版本控制
+    pub last_data_version: u64,      // Uniform 数据版本
+    pub last_binding_version: u64,   // 绑定资源版本（纹理等）
+    pub last_layout_version: u64,    // 管线布局版本（shader 特性）
 
     pub last_used_frame: u64,
 }
 
-pub type GpuMaterial = GpuBindGroup;
-pub type GpuEnvironment = GpuBindGroup;
+/// 环境/全局资源的 GPU 缓存
+pub struct GpuEnvironment {
+    pub bind_group: wgpu::BindGroup,
+    pub bind_group_id: u64,
+    pub layout: wgpu::BindGroupLayout,
+    pub layout_id: u64,
+    pub binding_wgsl: String,
+    pub last_version: u64,
+    pub last_resource_hash: u64,
+    pub last_used_frame: u64,
+}
 
 // ============================================================================
 // Resource Manager
@@ -417,18 +430,65 @@ impl ResourceManager {
         assets: &AssetServer, 
         handle: MaterialHandle
     ) -> Option<&GpuMaterial> {
-
         let material = assets.get_material(handle)?;
 
+        // === 三级版本控制检查 ===
+        let uniform_ver = material.data.uniform_version();
+        let binding_ver = material.data.binding_version();
+        let layout_ver = material.data.layout_version();
+
+        // 情况 A: 全新材质，走完整构建流程
+        if !self.gpu_materials.contains_key(handle) {
+            return Some(self.build_full_material(assets, handle, &material));
+        }
+
+        let gpu_mat = self.gpu_materials.get(handle).unwrap();
+
+        // 情况 B: 检查更新（热路径）
+        
+        // 1. 检查最严重的：Layout/Pipeline 变化
+        if layout_ver != gpu_mat.last_layout_version {
+            // 重建 Pipeline + BindGroup + 上传数据
+            return Some(self.build_full_material(assets, handle, &material));
+        }
+
+        // 2. 检查次严重的：Binding 变化
+        if binding_ver != gpu_mat.last_binding_version {
+            // 只需重建 BindGroup（Pipeline 复用）
+            return Some(self.rebuild_bind_group(handle, &material));
+        }
+
+        // 3. 检查最轻微的：数据变化
+        if uniform_ver != gpu_mat.last_data_version {
+            // 极快：直接写入 GPU Buffer
+            self.update_material_uniforms(handle, &material);
+        }
+
+        // 更新帧计数
+        let gpu_mat = self.gpu_materials.get_mut(handle).unwrap();
+        gpu_mat.last_used_frame = self.frame_index;
+        
+        Some(gpu_mat)
+    }
+    
+    /// 完整构建材质（冷路径）
+    fn build_full_material(
+        &mut self,
+        assets: &AssetServer,
+        handle: MaterialHandle,
+        material: &crate::resources::material::Material,
+    ) -> &GpuMaterial {
         let mut builder = ResourceBuilder::new();
         material.define_bindings(&mut builder);
 
-        // ✅ 通用地准备所有资源（从 BindingResource 中获取信息）
+        // 准备所有资源
+        let mut uniform_buffers = Vec::new();
+        
         for resource in &builder.resources {
             match resource {
                 BindingResource::UniformSlot { slot_id, data, label } => {
-                    // 直接使用 BindingResource 中的数据引用
-                    self.prepare_uniform_slot_data(*slot_id, data, label);
+                    let buf_id = self.prepare_uniform_slot_data(*slot_id, data, label);
+                    uniform_buffers.push(buf_id);
                 },
                 BindingResource::Buffer { buffer, .. } => {
                     self.prepare_buffer(buffer);
@@ -437,37 +497,14 @@ impl ResourceManager {
                     if let Some(handle) = handle_opt {
                         self.prepare_texture(assets, *handle);
                     }
+                    // Texture 准备需要 AssetServer，这里暂时跳过
+                    // 实际实现应该通过参数传递 AssetServer
                 },
-                BindingResource::Sampler(_) | BindingResource::_Phantom(_) => {
-                    // Sampler不需要prepare
-                },
+                BindingResource::Sampler(_) | BindingResource::_Phantom(_) => {},
             }
         }
-
-        let resource_hash = self.compute_resource_hash(&builder.resources);
 
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
-
-        // 5. 检查是否需要重建 BindGroup
-        // 仅当 Layout 指针变化 OR 资源 Hash 变化 OR 是新材质时才重建
-        let mut can_reuse_bindgroup = false;
-
-        if let Some(gpu_mat) = self.gpu_materials.get(handle) {
-            let layout_unchanged = gpu_mat.layout_id == layout_id;
-            let resources_unchanged = gpu_mat.last_resource_hash == resource_hash;
-            if layout_unchanged && resources_unchanged {
-                can_reuse_bindgroup = true;
-            }
-        }
-
-        if can_reuse_bindgroup {
-             let gpu_mat = self.gpu_materials.get_mut(handle).unwrap(); 
-             gpu_mat.last_version = material.version();
-             gpu_mat.last_used_frame = self.frame_index;
-             return Some(gpu_mat);
-        }
-
-        // 6. 创建 BindGroup
         let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
         let binding_wgsl = builder.generate_wgsl(1);
 
@@ -477,13 +514,95 @@ impl ResourceManager {
             layout,
             layout_id,
             binding_wgsl,
-            last_version: material.version(),
-            last_resource_hash: resource_hash,
+            uniform_buffers,
+            last_data_version: material.data.uniform_version(),
+            last_binding_version: material.data.binding_version(),
+            last_layout_version: material.data.layout_version(),
             last_used_frame: self.frame_index,
         };
         
         self.gpu_materials.insert(handle, gpu_mat);
-        self.gpu_materials.get(handle)
+        self.gpu_materials.get(handle).unwrap()
+    }
+    
+    /// 重建 BindGroup（中路径）
+    fn rebuild_bind_group(
+        &mut self,
+        handle: MaterialHandle,
+        material: &crate::resources::material::Material,
+    ) -> &GpuMaterial {
+        let mut builder = ResourceBuilder::new();
+        material.define_bindings(&mut builder);
+
+        // 准备资源（纹理可能变了）- 这里需要 AssetServer，暂时跳过
+        
+        // 先获取 layout 的克隆（避免借用冲突）
+        let layout = {
+            let gpu_mat = self.gpu_materials.get(handle).unwrap();
+            gpu_mat.layout.clone()
+        };
+        
+        // 创建新的 bind_group
+        let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
+        
+        // 更新 gpu_mat
+        {
+            let gpu_mat = self.gpu_materials.get_mut(handle).unwrap();
+            gpu_mat.bind_group = bind_group;
+            gpu_mat.bind_group_id = bg_id;
+            gpu_mat.last_binding_version = material.data.binding_version();
+            gpu_mat.last_used_frame = self.frame_index;
+        }
+        
+        self.gpu_materials.get(handle).unwrap()
+    }
+    
+    /// 更新 Uniform 数据（热路径）
+    fn update_material_uniforms(
+        &mut self,
+        handle: MaterialHandle,
+        material: &crate::resources::material::Material,
+    ) {
+        use crate::resources::material::MaterialData;
+        
+        // 直接写入 GPU Buffer（最快路径）
+        match &material.data {
+            MaterialData::Basic(m) => {
+                let data = bytemuck::bytes_of(m.uniforms());
+                if let Some(gpu_mat) = self.gpu_materials.get(handle) {
+                    if let Some(&buf_id) = gpu_mat.uniform_buffers.first() {
+                        if let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
+                            self.queue.write_buffer(&gpu_buf.buffer, 0, data);
+                        }
+                    }
+                }
+            },
+            MaterialData::Phong(m) => {
+                let data = bytemuck::bytes_of(m.uniforms());
+                if let Some(gpu_mat) = self.gpu_materials.get(handle) {
+                    if let Some(&buf_id) = gpu_mat.uniform_buffers.first() {
+                        if let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
+                            self.queue.write_buffer(&gpu_buf.buffer, 0, data);
+                        }
+                    }
+                }
+            },
+            MaterialData::Standard(m) => {
+                let data = bytemuck::bytes_of(m.uniforms());
+                if let Some(gpu_mat) = self.gpu_materials.get(handle) {
+                    if let Some(&buf_id) = gpu_mat.uniform_buffers.first() {
+                        if let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
+                            self.queue.write_buffer(&gpu_buf.buffer, 0, data);
+                        }
+                    }
+                }
+            },
+        }
+        
+        // 更新版本号
+        if let Some(gpu_mat) = self.gpu_materials.get_mut(handle) {
+            gpu_mat.last_data_version = material.data.uniform_version();
+        }
     }
 
     pub fn get_material(&self, handle: MaterialHandle) -> Option<&GpuMaterial> {

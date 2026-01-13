@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
     let tex_handle = app.assets.add_texture(texture);
 
     if let Some(basic) = basic_mat.as_basic_mut() {
-        basic.map = Some(tex_handle);
+        basic.bindings_mut().map = Some(tex_handle);
     }
 
     let geo_handle = app.assets.add_geometry(geometry);

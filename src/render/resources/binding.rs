@@ -41,18 +41,17 @@ impl Bindings for MaterialData {
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
         match self {
             Self::Basic(m) => {
-                // 使用新的 add_uniform_slot 方法
-                builder.add_uniform_slot::<MeshBasicUniforms>(
-                    "material", 
-                    &m.uniforms, 
-                    wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
-                );
+                // Uniform 数据
+                let data = bytemuck::bytes_of(m.uniforms());
+                builder.add_uniform_with_generator::<MeshBasicUniforms>("material", data, 
+                    wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX);
                 
-                // 纹理绑定保持不变
-                if let Some(map) = &m.map {
+                // 纹理绑定
+                let bindings = m.bindings();
+                if let Some(map) = &bindings.map {
                     builder.add_texture(
                         "map", 
-                        map.clone(), 
+                        *map, 
                         wgpu::TextureSampleType::Float { filterable: true }, 
                         wgpu::TextureViewDimension::D2, 
                         wgpu::ShaderStages::FRAGMENT
@@ -60,60 +59,60 @@ impl Bindings for MaterialData {
                     
                     builder.add_sampler(
                         "map", 
-                        map.clone(), 
+                        *map, 
                         wgpu::SamplerBindingType::Filtering, 
                         wgpu::ShaderStages::FRAGMENT
                     );
                 }
             },
             Self::Phong(m) => {
-                builder.add_uniform_slot::<MeshPhongUniforms>(
-                    "material", 
-                    &m.uniforms, 
-                    wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
-                );
+                // Uniform 数据
+                let data = bytemuck::bytes_of(m.uniforms());
+                builder.add_uniform_with_generator::<MeshPhongUniforms>("material", data, 
+                    wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX);
 
                 // 纹理绑定
-                if let Some(map) = &m.map {
+                let bindings = m.bindings();
+                if let Some(map) = &bindings.map {
                     builder.add_texture("map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
-                if let Some(map) = &m.normal_map {
+                if let Some(map) = &bindings.normal_map {
                     builder.add_texture("normal_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("normal_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
-                if let Some(map) = &m.specular_map {
+                if let Some(map) = &bindings.specular_map {
                     builder.add_texture("specular_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("specular_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
-                if let Some(map) = &m.emissive_map {
+                if let Some(map) = &bindings.emissive_map {
                     builder.add_texture("emissive_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("emissive_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
             },
 
             Self::Standard(m) => {
-                builder.add_uniform_slot::<MeshStandardUniforms>(
-                    "material", 
-                    &m.uniforms, 
-                    wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
-                );
+                // Uniform 数据
+                let data = bytemuck::bytes_of(m.uniforms());
+                builder.add_uniform_with_generator::<MeshStandardUniforms>("material", data, 
+                    wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX);
                 
                 // 纹理绑定
-                if let Some(map) = &m.map {
+                let bindings = m.bindings();
+                if let Some(map) = &bindings.map {
                     builder.add_texture("map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
-                if let Some(map) = &m.ao_map {
+                if let Some(map) = &bindings.ao_map {
                     builder.add_texture("ao_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("ao_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
-                if let Some(map) = &m.normal_map {
+                if let Some(map) = &bindings.normal_map {
                     builder.add_texture("normal_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("normal_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }

@@ -19,8 +19,8 @@ fn main() -> anyhow::Result<()> {
 
 
     if let Some(basic) = basic_mat.as_basic_mut() {
-        basic.map = Some(tex_handle);
-        basic.color = Vec4::new(0.8, 0.0, 0.8, 1.0);
+        basic.bindings_mut().map = Some(tex_handle);
+        basic.uniforms_mut().color = Vec4::new(1.0, 1.0, 1.0, 1.0);
     }
     
     let geo_handle = app.assets.add_geometry(geometry);

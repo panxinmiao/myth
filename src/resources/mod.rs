@@ -18,6 +18,7 @@ pub mod geometry;
 pub mod buffer;
 pub mod uniforms;
 pub mod uniform_slot;
+pub mod version_tracker;
 
 // 重新导出常用类型
 pub use mesh::{Mesh, MeshHandle};

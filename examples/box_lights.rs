@@ -1,5 +1,5 @@
 use glam::{Vec3, Vec4, Quat};
-use three::app::App; // 使用引擎提供的 App 抽象
+use three::app::App;
 use three::resources::{Geometry, Material, Mesh, Texture};
 use three::scene::{Camera};
 use three::scene::light;
@@ -13,15 +13,14 @@ fn main() -> anyhow::Result<()> {
     // 2. 准备资源 (Geometry, Texture, Material)
     let geometry = Geometry::new_box(2.0, 2.0, 2.0);
     let texture: Texture = Texture::create_checkerboard("checker", 512, 512, 64);
-    let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
+    let mut mat = Material::new_phong(Vec4::new(1.0, 0.0, 1.0, 1.0));
 
     // 3. 将资源添加到 AssetServer，获取 Handle
     let tex_handle = app.assets.add_texture(texture);
 
 
     if let Some(phong) = mat.as_phong_mut() {
-        phong.map = Some(tex_handle);
-        // phong.color = Vec4::new(0.8, 0.0, 0.8, 1.0);
+        phong.bindings_mut().map = Some(tex_handle);
     }
     
     let geo_handle = app.assets.add_geometry(geometry);

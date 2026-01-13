@@ -329,7 +329,7 @@ impl RenderContext {
                 dynamic_offset: 0,
             };
 
-            if material.transparent {
+            if material.transparent() {
                 transparent.push(cmd);
             } else {
                 opaque.push(cmd);

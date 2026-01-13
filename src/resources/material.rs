@@ -1,9 +1,8 @@
 use uuid::Uuid;
-use std::sync::atomic::{AtomicU64, Ordering};
 use glam::{Vec4};
 use bitflags::bitflags;
 
-use crate::resources::uniform_slot::UniformSlot;
+use crate::resources::version_tracker::MutGuard;
 use crate::resources::uniforms::{MeshBasicUniforms, MeshStandardUniforms, MeshPhongUniforms};
 use crate::assets::TextureHandle;
 
@@ -25,48 +24,103 @@ bitflags! {
 // 具体材质定义 (Specific Materials)
 // ============================================================================
 
+// ============================================================================
+// 材质纯数据结构 (POD - Plain Old Data)
+// ============================================================================
+
+/// 资源绑定数据 - 对应 BindGroup 变化
+#[derive(Default, Clone, Debug)]
+pub struct MaterialBindings {
+    pub map: Option<TextureHandle>,
+    pub normal_map: Option<TextureHandle>,
+    pub roughness_map: Option<TextureHandle>,
+    pub metalness_map: Option<TextureHandle>,
+    pub emissive_map: Option<TextureHandle>,
+    pub ao_map: Option<TextureHandle>,
+    pub specular_map: Option<TextureHandle>,
+}
+
+/// 材质设置 - 对应 Pipeline 变化
+#[derive(Default, PartialEq, Eq, Clone, Debug)]
+pub struct MaterialSettings {
+    pub transparent: bool,
+    pub depth_write: bool,
+    pub depth_test: bool,
+    pub cull_mode: Option<wgpu::Face>,
+    pub side: u32,
+}
+
+// ============================================================================
+// 具体材质定义 (使用三级版本控制)
+// ============================================================================
+
 // MeshBasicMaterial
 // ----------------------------------------------------------------------------
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct MeshBasicMaterial {
-    // 使用 UniformSlot 直接持有 Uniform 数据
-    pub(crate) uniforms: UniformSlot<MeshBasicUniforms>,
+    // 1. Uniform 数据
+    uniforms: MeshBasicUniforms,
     
-    // 直接持有 Texture 引用，不再是 Uuid
-    pub map: Option<TextureHandle>, 
+    // 2. 绑定资源
+    bindings: MaterialBindings,
+    
+    // 3. 材质设置
+    settings: MaterialSettings,
+    
+    // 版本追踪
+    pub uniform_version: u64,
+    pub binding_version: u64,
+    pub layout_version: u64,
 }
 
 impl MeshBasicMaterial {
     pub fn new(color: Vec4) -> Self {
-        let uniforms = MeshBasicUniforms { color, ..Default::default() };
-        
         Self {
-            uniforms: UniformSlot::new(uniforms, "MeshBasicUniforms"),
-            map: None,
+            uniforms: MeshBasicUniforms { color, ..Default::default() },
+            bindings: MaterialBindings::default(),
+            settings: MaterialSettings::default(),
+            uniform_version: 0,
+            binding_version: 0,
+            layout_version: 0,
         }
     }
     
-    // 便捷访问器
-    pub fn color(&self) -> Vec4 {
-        self.uniforms.get().color
+    // === 读取方法 (零成本) ===
+    pub fn uniforms(&self) -> &MeshBasicUniforms { &self.uniforms }
+    pub fn bindings(&self) -> &MaterialBindings { &self.bindings }
+    pub fn settings(&self) -> &MaterialSettings { &self.settings }
+    
+    // === 写入方法 (返回 Guard，自动标记版本) ===
+    pub fn uniforms_mut(&mut self) -> MutGuard<'_, MeshBasicUniforms> {
+        MutGuard::new(&mut self.uniforms, &mut self.uniform_version)
     }
     
+    pub fn bindings_mut(&mut self) -> MutGuard<'_, MaterialBindings> {
+        MutGuard::new(&mut self.bindings, &mut self.binding_version)
+    }
+    
+    pub fn settings_mut(&mut self) -> MutGuard<'_, MaterialSettings> {
+        MutGuard::new(&mut self.settings, &mut self.layout_version)
+    }
+    
+    // === 便捷辅助方法 ===
     pub fn set_color(&mut self, color: Vec4) {
-        self.uniforms.get_mut().color = color;
-        self.uniforms.mark_dirty();
-    }
-    
-    pub fn opacity(&self) -> f32 {
-        self.uniforms.get().opacity
+        self.uniforms_mut().color = color;
     }
     
     pub fn set_opacity(&mut self, opacity: f32) {
-        self.uniforms.get_mut().opacity = opacity;
-        self.uniforms.mark_dirty();
+        self.uniforms_mut().opacity = opacity;
+    }
+    
+    pub fn set_map(&mut self, texture: Option<TextureHandle>) {
+        let layout_changed = self.bindings.map.is_some() != texture.is_some();
+        self.bindings_mut().map = texture;
+        if layout_changed {
+            self.layout_version = self.layout_version.wrapping_add(1);
+        }
     }
 }
 
-// 提供默认实现，方便用户先创建后修改
 impl Default for MeshBasicMaterial {
     fn default() -> Self {
         Self::new(Vec4::ONE)
@@ -78,35 +132,70 @@ impl Default for MeshBasicMaterial {
 // ----------------------------------------------------------------------------
 #[derive(Debug)]
 pub struct MeshPhongMaterial {
-    pub(crate) uniforms: UniformSlot<MeshPhongUniforms>,
+    // 1. Uniform 数据
+    uniforms: MeshPhongUniforms,
     
-    pub map: Option<TextureHandle>,
-    pub normal_map: Option<TextureHandle>,
-    pub specular_map: Option<TextureHandle>,
-    pub emissive_map: Option<TextureHandle>,
+    // 2. 绑定资源
+    bindings: MaterialBindings,
+    
+    // 3. 材质设置
+    settings: MaterialSettings,
+    
+    // 版本追踪
+    pub uniform_version: u64,
+    pub binding_version: u64,
+    pub layout_version: u64,
 }
 
 impl MeshPhongMaterial {
     pub fn new(color: Vec4) -> Self {
-        let uniforms = MeshPhongUniforms { color, ..Default::default() };
-
         Self {
-            uniforms: UniformSlot::new(uniforms, "MeshPhongUniforms"),
-            map: None,
-            normal_map: None,
-            specular_map: None,
-            emissive_map: None,
+            uniforms: MeshPhongUniforms { color, ..Default::default() },
+            bindings: MaterialBindings::default(),
+            settings: MaterialSettings::default(),
+            uniform_version: 0,
+            binding_version: 0,
+            layout_version: 0,
         }
     }
     
-    // 便捷访问器
-    pub fn color(&self) -> Vec4 {
-        self.uniforms.get().color
+    // === 读取方法 ===
+    pub fn uniforms(&self) -> &MeshPhongUniforms { &self.uniforms }
+    pub fn bindings(&self) -> &MaterialBindings { &self.bindings }
+    pub fn settings(&self) -> &MaterialSettings { &self.settings }
+    
+    // === 写入方法 ===
+    pub fn uniforms_mut(&mut self) -> MutGuard<'_, MeshPhongUniforms> {
+        MutGuard::new(&mut self.uniforms, &mut self.uniform_version)
     }
     
+    pub fn bindings_mut(&mut self) -> MutGuard<'_, MaterialBindings> {
+        MutGuard::new(&mut self.bindings, &mut self.binding_version)
+    }
+    
+    pub fn settings_mut(&mut self) -> MutGuard<'_, MaterialSettings> {
+        MutGuard::new(&mut self.settings, &mut self.layout_version)
+    }
+    
+    // === 便捷方法 ===
     pub fn set_color(&mut self, color: Vec4) {
-        self.uniforms.get_mut().color = color;
-        self.uniforms.mark_dirty();
+        self.uniforms_mut().color = color;
+    }
+    
+    pub fn set_map(&mut self, texture: Option<TextureHandle>) {
+        let layout_changed = self.bindings.map.is_some() != texture.is_some();
+        self.bindings_mut().map = texture;
+        if layout_changed {
+            self.layout_version = self.layout_version.wrapping_add(1);
+        }
+    }
+    
+    pub fn set_normal_map(&mut self, texture: Option<TextureHandle>) {
+        let layout_changed = self.bindings.normal_map.is_some() != texture.is_some();
+        self.bindings_mut().normal_map = texture;
+        if layout_changed {
+            self.layout_version = self.layout_version.wrapping_add(1);
+        }
     }
 }
 
@@ -121,57 +210,70 @@ impl Default for MeshPhongMaterial {
 // ----------------------------------------------------------------------------
 #[derive(Debug)]
 pub struct MeshStandardMaterial {
-    pub(crate) uniforms: UniformSlot<MeshStandardUniforms>,
+    // 1. Uniform 数据
+    uniforms: MeshStandardUniforms,
     
-    pub map: Option<TextureHandle>,
-    pub normal_map: Option<TextureHandle>,
-    pub roughness_map: Option<TextureHandle>,
-    pub metalness_map: Option<TextureHandle>,
-    pub emissive_map: Option<TextureHandle>,
-    pub ao_map: Option<TextureHandle>,
+    // 2. 绑定资源
+    bindings: MaterialBindings,
+    
+    // 3. 材质设置
+    settings: MaterialSettings,
+    
+    // 版本追踪
+    pub uniform_version: u64,
+    pub binding_version: u64,
+    pub layout_version: u64,
 }
 
 impl MeshStandardMaterial {
     pub fn new(color: Vec4) -> Self {
-        let uniforms = MeshStandardUniforms { color, ..Default::default() };
-        
         Self {
-            uniforms: UniformSlot::new(uniforms, "MeshStandardUniforms"),
-            map: None,
-            normal_map: None,
-            roughness_map: None,
-            metalness_map: None,
-            emissive_map: None,
-            ao_map: None,
+            uniforms: MeshStandardUniforms { color, ..Default::default() },
+            bindings: MaterialBindings::default(),
+            settings: MaterialSettings::default(),
+            uniform_version: 0,
+            binding_version: 0,
+            layout_version: 0,
         }
     }
     
-    // 便捷访问器
-    pub fn color(&self) -> Vec4 {
-        self.uniforms.get().color
+    // === 读取方法 ===
+    pub fn uniforms(&self) -> &MeshStandardUniforms { &self.uniforms }
+    pub fn bindings(&self) -> &MaterialBindings { &self.bindings }
+    pub fn settings(&self) -> &MaterialSettings { &self.settings }
+    
+    // === 写入方法 ===
+    pub fn uniforms_mut(&mut self) -> MutGuard<'_, MeshStandardUniforms> {
+        MutGuard::new(&mut self.uniforms, &mut self.uniform_version)
     }
     
+    pub fn bindings_mut(&mut self) -> MutGuard<'_, MaterialBindings> {
+        MutGuard::new(&mut self.bindings, &mut self.binding_version)
+    }
+    
+    pub fn settings_mut(&mut self) -> MutGuard<'_, MaterialSettings> {
+        MutGuard::new(&mut self.settings, &mut self.layout_version)
+    }
+    
+    // === 便捷方法 ===
     pub fn set_color(&mut self, color: Vec4) {
-        self.uniforms.get_mut().color = color;
-        self.uniforms.mark_dirty();
-    }
-    
-    pub fn roughness(&self) -> f32 {
-        self.uniforms.get().roughness
+        self.uniforms_mut().color = color;
     }
     
     pub fn set_roughness(&mut self, roughness: f32) {
-        self.uniforms.get_mut().roughness = roughness;
-        self.uniforms.mark_dirty();
-    }
-    
-    pub fn metalness(&self) -> f32 {
-        self.uniforms.get().metalness
+        self.uniforms_mut().roughness = roughness;
     }
     
     pub fn set_metalness(&mut self, metalness: f32) {
-        self.uniforms.get_mut().metalness = metalness;
-        self.uniforms.mark_dirty();
+        self.uniforms_mut().metalness = metalness;
+    }
+    
+    pub fn set_map(&mut self, texture: Option<TextureHandle>) {
+        let layout_changed = self.bindings.map.is_some() != texture.is_some();
+        self.bindings_mut().map = texture;
+        if layout_changed {
+            self.layout_version = self.layout_version.wrapping_add(1);
+        }
     }
 }
 
@@ -190,7 +292,6 @@ pub enum MaterialData {
     Basic(MeshBasicMaterial),
     Phong(MeshPhongMaterial),
     Standard(MeshStandardMaterial),
-    // 可以在这里扩展更多类型，例如 PBR, CustomShader 等
 }
 
 impl MaterialData {
@@ -202,31 +303,55 @@ impl MaterialData {
         }
     }
 
-    // ✅ 删除 flush_uniforms() - 不再需要手动同步！
-    // UniformSlot 会自动管理版本号，ResourceManager 会自动检测变更
-
     pub fn get_features(&self) -> MaterialFeatures {
         let mut features = MaterialFeatures::empty();
         match self {
             Self::Basic(m) => {
-                if m.map.is_some() { features |= MaterialFeatures::USE_MAP; }
+                if m.bindings().map.is_some() { features |= MaterialFeatures::USE_MAP; }
             }
             Self::Phong(m) => {
-                if m.map.is_some() { features |= MaterialFeatures::USE_MAP; }
-                if m.normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
-                if m.specular_map.is_some() { features |= MaterialFeatures::USE_SPECULAR_MAP; }
-                if m.emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
+                let b = m.bindings();
+                if b.map.is_some() { features |= MaterialFeatures::USE_MAP; }
+                if b.normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
+                if b.specular_map.is_some() { features |= MaterialFeatures::USE_SPECULAR_MAP; }
+                if b.emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
             }
             Self::Standard(m) => {
-                if m.map.is_some() { features |= MaterialFeatures::USE_MAP; }
-                if m.normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
-                if m.roughness_map.is_some() { features |= MaterialFeatures::USE_ROUGHNESS_MAP; }
-                if m.metalness_map.is_some() { features |= MaterialFeatures::USE_METALNESS_MAP; }
-                if m.emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
-                if m.ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
+                let b = m.bindings();
+                if b.map.is_some() { features |= MaterialFeatures::USE_MAP; }
+                if b.normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
+                if b.roughness_map.is_some() { features |= MaterialFeatures::USE_ROUGHNESS_MAP; }
+                if b.metalness_map.is_some() { features |= MaterialFeatures::USE_METALNESS_MAP; }
+                if b.emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
+                if b.ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
             }
         }
         features
+    }
+    
+    // 版本访问辅助方法
+    pub fn uniform_version(&self) -> u64 {
+        match self {
+            Self::Basic(m) => m.uniform_version,
+            Self::Phong(m) => m.uniform_version,
+            Self::Standard(m) => m.uniform_version,
+        }
+    }
+    
+    pub fn binding_version(&self) -> u64 {
+        match self {
+            Self::Basic(m) => m.binding_version,
+            Self::Phong(m) => m.binding_version,
+            Self::Standard(m) => m.binding_version,
+        }
+    }
+    
+    pub fn layout_version(&self) -> u64 {
+        match self {
+            Self::Basic(m) => m.layout_version,
+            Self::Phong(m) => m.layout_version,
+            Self::Standard(m) => m.layout_version,
+        }
     }
 }
 
@@ -237,63 +362,40 @@ impl MaterialData {
 #[derive(Debug)]
 pub struct Material {
     pub uuid: Uuid,
-    pub version: AtomicU64,
     pub name: Option<String>,
-    
-    // 核心数据变成了 Enum，不仅类型安全，而且没有 Box 的堆分配开销
     pub data: MaterialData, 
-    
-    // 通用渲染状态 (Render States)
-    pub transparent: bool,
-    pub depth_write: bool,
-    pub depth_test: bool,
-    pub cull_mode: Option<wgpu::Face>,
-    pub side: u32,
 }
 
 impl Material {
-    /// 基础构造函数
     pub fn new(data: MaterialData) -> Self {
         Self {
             uuid: Uuid::new_v4(),
-            version: AtomicU64::new(0),
             name: None,
             data,
-            transparent: false,
-            depth_write: true,
-            depth_test: true,
-            cull_mode: Some(wgpu::Face::Back),
-            side: 0,
         }
     }
 
-    pub fn version(&self) -> u64 {
-        self.version.load(Ordering::Relaxed)
-    }
-
-    // 辅助构造：Basic
+    // 辅助构造方法
     pub fn new_basic(color: Vec4) -> Self {
-        let data = MeshBasicMaterial::new(color);
-        Self::from(data)
+        Self::from(MeshBasicMaterial::new(color))
     }
 
     pub fn new_phong(color: Vec4) -> Self {
-        let data = MeshPhongMaterial::new(color);
-        Self::from(data)
+        Self::from(MeshPhongMaterial::new(color))
     }
 
-    // 辅助构造：Standard
     pub fn new_standard(color: Vec4) -> Self {
-        let data = MeshStandardMaterial::new(color);
-        Self::from(data)
+        Self::from(MeshStandardMaterial::new(color))
     }
 
+    // 类型转换辅助方法
     pub fn as_basic(&self) -> Option<&MeshBasicMaterial> {
         match &self.data {
             MaterialData::Basic(m) => Some(m),
             _ => None,
         }
     }
+    
     pub fn as_basic_mut(&mut self) -> Option<&mut MeshBasicMaterial> {
         match &mut self.data {
             MaterialData::Basic(m) => Some(m),
@@ -307,7 +409,7 @@ impl Material {
             _ => None,
         }
     }
-
+    
     pub fn as_phong_mut(&mut self) -> Option<&mut MeshPhongMaterial> {
         match &mut self.data {
             MaterialData::Phong(m) => Some(m),
@@ -321,6 +423,7 @@ impl Material {
             _ => None,
         }
     }
+    
     pub fn as_standard_mut(&mut self) -> Option<&mut MeshStandardMaterial> {
         match &mut self.data {
             MaterialData::Standard(m) => Some(m),
@@ -328,17 +431,52 @@ impl Material {
         }
     }
 
-    // 代理方法：直接转发给内部数据
-    pub fn shader_name(&self) -> &'static str { self.data.shader_name() }
-    pub fn get_features(&self) -> MaterialFeatures { self.data.get_features() }
-
-    pub fn mark_dirty(&self) {
-        self.version.fetch_add(1, Ordering::Relaxed);
+    // 代理方法
+    pub fn shader_name(&self) -> &'static str { 
+        self.data.shader_name() 
+    }
+    
+    pub fn get_features(&self) -> MaterialFeatures { 
+        self.data.get_features() 
+    }
+    
+    // 获取渲染设置（从具体材质中）
+    pub fn get_settings(&self) -> &MaterialSettings {
+        match &self.data {
+            MaterialData::Basic(m) => m.settings(),
+            MaterialData::Phong(m) => m.settings(),
+            MaterialData::Standard(m) => m.settings(),
+        }
+    }
+    
+    // 便捷访问器（兼容旧代码）
+    pub fn transparent(&self) -> bool {
+        self.get_settings().transparent
+    }
+    
+    pub fn depth_write(&self) -> bool {
+        self.get_settings().depth_write
+    }
+    
+    pub fn depth_test(&self) -> bool {
+        self.get_settings().depth_test
+    }
+    
+    pub fn cull_mode(&self) -> Option<wgpu::Face> {
+        self.get_settings().cull_mode
+    }
+    
+    // 版本号（组合三级版本）
+    pub fn version(&self) -> u64 {
+        // 组合三个版本号，layout 变化最重要
+        self.data.layout_version() * 1000000 + 
+        self.data.binding_version() * 1000 + 
+        self.data.uniform_version()
     }
 }
 
 // ============================================================================
-// 语法糖：允许从 具体材质 直接转为 通用材质
+// 语法糖：允许从具体材质直接转为通用材质
 // ============================================================================
 
 impl From<MeshBasicMaterial> for Material {
@@ -347,60 +485,14 @@ impl From<MeshBasicMaterial> for Material {
     }
 }
 
-impl std::ops::Deref for MeshBasicMaterial {
-    type Target = MeshBasicUniforms;
-
-    fn deref(&self) -> &Self::Target {
-        &self.uniforms
-     }
-}
-
-impl std::ops::DerefMut for MeshBasicMaterial {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.uniforms
-     }
-}
-
 impl From<MeshPhongMaterial> for Material {
     fn from(data: MeshPhongMaterial) -> Self {
         Material::new(MaterialData::Phong(data))
     }
 }
 
-impl std::ops::Deref for MeshPhongMaterial {
-    type Target = MeshPhongUniforms;
-    
-    fn deref(&self) -> &Self::Target {
-        &self.uniforms
-     }
-}
-
-impl std::ops::DerefMut for MeshPhongMaterial {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.uniforms
-     }
-}
-
-// ✅ 删除Deref - uniforms现在是UniformSlot，应使用get()/get_mut()
-
 impl From<MeshStandardMaterial> for Material {
     fn from(data: MeshStandardMaterial) -> Self {
         Material::new(MaterialData::Standard(data))
     }
-}
-
-// ✅ 删除Deref - uniforms现在是UniformSlot，应使用get()/get_mut()
-
-impl std::ops::Deref for MeshStandardMaterial {
-    type Target = MeshStandardUniforms;
-    
-    fn deref(&self) -> &Self::Target {
-        &self.uniforms
-     }
-}
-
-impl std::ops::DerefMut for MeshStandardMaterial {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.uniforms
-     }
 }

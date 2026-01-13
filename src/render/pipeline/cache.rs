@@ -150,10 +150,10 @@ impl PipelineCache {
             geo_features,
             scene_features,
             topology,
-            cull_mode: material.cull_mode,
-            depth_write: material.depth_write,
-            depth_compare: if material.depth_test { wgpu::CompareFunction::Less } else { wgpu::CompareFunction::Always },
-            blend_state: if material.transparent {
+            cull_mode: material.cull_mode(),
+            depth_write: material.depth_write(),
+            depth_compare: if material.depth_test() { wgpu::CompareFunction::Less } else { wgpu::CompareFunction::Always },
+            blend_state: if material.transparent() {
                 Some(wgpu::BlendState::ALPHA_BLENDING)
             } else {
                 None

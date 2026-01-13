@@ -5,8 +5,12 @@ use crate::resources::uniforms::WgslStruct;
 use crate::render::resources::binding::BindingResource;
 use crate::assets::TextureHandle;
 use bytemuck::Pod;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 type WgslStructGenerator = fn(&str) -> String;
+
+// 临时 uniform 数据的 ID 生成器
+static NEXT_TEMP_UNIFORM_ID: AtomicU64 = AtomicU64::new(1 << 61);
 
 pub enum WgslStructName{
     Generator(WgslStructGenerator),
@@ -64,10 +68,10 @@ impl<'a> ResourceBuilder<'a> {
 
     /// 【保留】添加 Uniform Buffer（使用BufferRef，向后兼容）
     pub fn add_uniform_with_struct<T: WgslStruct>(&mut self, name: &str, buffer: &BufferRef, visibility: ShaderStages) {
-        self.add_uniform(name, buffer, visibility, Some(WgslStructName::Generator(T::wgsl_struct_def)));
+        self.add_uniform_buffer(name, buffer, visibility, Some(WgslStructName::Generator(T::wgsl_struct_def)));
     }
 
-    pub fn add_uniform(&mut self, name: &str, buffer: &BufferRef, visibility: ShaderStages, struct_name: Option<WgslStructName>) {
+    pub fn add_uniform_buffer(&mut self, name: &str, buffer: &BufferRef, visibility: ShaderStages, struct_name: Option<WgslStructName>) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -87,6 +91,63 @@ impl<'a> ResourceBuilder<'a> {
 
         self.names.push(name.to_string());
         self.struct_generators.push(struct_name); 
+        self.next_binding_index += 1;
+    }
+    
+    /// 【新】添加 Uniform 数据（直接使用数据引用，带struct生成器）
+    pub fn add_uniform_with_generator<T: WgslStruct>(
+        &mut self, 
+        name: &str, 
+        data: &'a [u8],
+        visibility: ShaderStages
+    ) {
+        let temp_id = NEXT_TEMP_UNIFORM_ID.fetch_add(1, Ordering::Relaxed);
+        
+        self.layout_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: self.next_binding_index,
+            visibility,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
+
+        self.resources.push(BindingResource::UniformSlot {
+            slot_id: temp_id,
+            data,
+            label: "", // label不重要，只是为了满足类型
+        });
+
+        self.names.push(name.to_string());
+        self.struct_generators.push(Some(WgslStructName::Generator(T::wgsl_struct_def)));
+        self.next_binding_index += 1;
+    }
+    
+    /// 【新】添加 Uniform 数据（直接使用数据引用）
+    pub fn add_uniform(&mut self, name: &str, data: &'a [u8], label: &'a str, visibility: ShaderStages) {
+        let temp_id = NEXT_TEMP_UNIFORM_ID.fetch_add(1, Ordering::Relaxed);
+        
+        self.layout_entries.push(wgpu::BindGroupLayoutEntry {
+            binding: self.next_binding_index,
+            visibility,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        });
+
+        self.resources.push(BindingResource::UniformSlot {
+            slot_id: temp_id,
+            data,
+            label,
+        });
+
+        self.names.push(name.to_string());
+        self.struct_generators.push(Some(WgslStructName::Name(label.to_string())));
         self.next_binding_index += 1;
     }
 

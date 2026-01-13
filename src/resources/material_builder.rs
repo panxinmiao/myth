@@ -1,5 +1,3 @@
-use uuid::Uuid;
-use std::sync::atomic::{AtomicU64};
 use glam::{Vec4, Vec3};
 
 use crate::assets::TextureHandle;
@@ -52,19 +50,21 @@ impl MeshBasicMaterialBuilder {
     /// 构建最终的 Material
     pub fn build(self) -> Material {
         let mut basic = MeshBasicMaterial::new(self.color);
-        basic.map = self.map;
+        basic.bindings_mut().map = self.map;
+        basic.uniforms_mut().opacity = self.opacity;
+        
+        // 设置渲染状态
+        let mut settings = basic.settings_mut();
+        settings.transparent = self.transparent;
+        settings.depth_write = self.depth_write;
+        settings.depth_test = self.depth_test;
+        settings.cull_mode = self.cull_mode;
+        settings.side = self.side;
+        drop(settings); // 显式drop以释放MutGuard
 
-        Material {
-            uuid: Uuid::new_v4(),
-            version: AtomicU64::new(0),
-            name: self.name,
-            data: MaterialData::Basic(basic), // 自动装箱
-            transparent: self.transparent,
-            depth_write: self.depth_write,
-            depth_test: self.depth_test,
-            cull_mode: self.cull_mode,
-            side: self.side,
-        }
+        let mut mat = Material::new(MaterialData::Basic(basic));
+        mat.name = self.name;
+        mat
     }
 }
 
@@ -136,31 +136,39 @@ impl MeshStandardMaterialBuilder {
     pub fn build(self) -> Material {
         let mut standard = MeshStandardMaterial::new(self.color);
         
-        // 使用 get_mut() 访问 UniformSlot 中的数据
-        standard.uniforms.color = self.color;
-        standard.uniforms.emissive = Vec3::ZERO;
-        standard.uniforms.roughness = self.roughness;
-        standard.uniforms.metalness = self.metalness;
-        standard.uniforms.occlusion_strength = 1.0;
-        standard.uniforms.mark_dirty();
-
-        standard.map = self.map;
-        standard.normal_map = self.normal_map;
-        standard.roughness_map = self.roughness_map;
-        standard.metalness_map = self.metalness_map;
-        standard.emissive_map = self.emissive_map;
-        standard.ao_map = self.ao_map;
-
-        Material {
-            uuid: Uuid::new_v4(),
-            version: AtomicU64::new(0),
-            name: self.name,
-            data: MaterialData::Standard(standard),
-            transparent: self.transparent,
-            depth_write: self.depth_write,
-            depth_test: self.depth_test,
-            cull_mode: self.cull_mode,
-            side: self.side,
+        // 使用访问器设置 uniform 数据
+        {
+            let mut uniforms = standard.uniforms_mut();
+            uniforms.color = self.color;
+            uniforms.emissive = Vec3::ZERO;
+            uniforms.roughness = self.roughness;
+            uniforms.metalness = self.metalness;
+            uniforms.occlusion_strength = 1.0;
         }
+
+        // 设置纹理绑定
+        {
+            let mut bindings = standard.bindings_mut();
+            bindings.map = self.map;
+            bindings.normal_map = self.normal_map;
+            bindings.roughness_map = self.roughness_map;
+            bindings.metalness_map = self.metalness_map;
+            bindings.emissive_map = self.emissive_map;
+            bindings.ao_map = self.ao_map;
+        }
+
+        // 设置渲染状态
+        {
+            let mut settings = standard.settings_mut();
+            settings.transparent = self.transparent;
+            settings.depth_write = self.depth_write;
+            settings.depth_test = self.depth_test;
+            settings.cull_mode = self.cull_mode;
+            settings.side = self.side;
+        }
+
+        let mut mat = Material::new(MaterialData::Standard(standard));
+        mat.name = self.name;
+        mat
     }
 }
