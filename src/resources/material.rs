@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use glam::{Vec4};
 use bitflags::bitflags;
 
-use crate::resources::buffer::BufferRef;
+use crate::resources::uniform_slot::UniformSlot;
 use crate::resources::uniforms::{MeshBasicUniforms, MeshStandardUniforms, MeshPhongUniforms};
 use crate::assets::TextureHandle;
 
@@ -29,9 +29,8 @@ bitflags! {
 // ----------------------------------------------------------------------------
 #[derive(Debug, Clone)]
 pub struct MeshBasicMaterial {
-    pub uniforms: MeshBasicUniforms,
-    // 内部使用的 Uniform Buffer，自动管理
-    pub(crate) uniform_buffer: BufferRef,
+    // 使用 UniformSlot 直接持有 Uniform 数据
+    pub(crate) uniforms: UniformSlot<MeshBasicUniforms>,
     
     // 直接持有 Texture 引用，不再是 Uuid
     pub map: Option<TextureHandle>, 
@@ -40,17 +39,30 @@ pub struct MeshBasicMaterial {
 impl MeshBasicMaterial {
     pub fn new(color: Vec4) -> Self {
         let uniforms = MeshBasicUniforms { color, ..Default::default() };
-        let uniform_buffer = BufferRef::new(
-            &[uniforms], 
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, 
-            Some("MeshBasicUniforms")
-        );
         
         Self {
-            uniforms,
-            uniform_buffer,
+            uniforms: UniformSlot::new(uniforms, "MeshBasicUniforms"),
             map: None,
         }
+    }
+    
+    // 便捷访问器
+    pub fn color(&self) -> Vec4 {
+        self.uniforms.get().color
+    }
+    
+    pub fn set_color(&mut self, color: Vec4) {
+        self.uniforms.get_mut().color = color;
+        self.uniforms.mark_dirty();
+    }
+    
+    pub fn opacity(&self) -> f32 {
+        self.uniforms.get().opacity
+    }
+    
+    pub fn set_opacity(&mut self, opacity: f32) {
+        self.uniforms.get_mut().opacity = opacity;
+        self.uniforms.mark_dirty();
     }
 }
 
@@ -66,8 +78,7 @@ impl Default for MeshBasicMaterial {
 // ----------------------------------------------------------------------------
 #[derive(Debug)]
 pub struct MeshPhongMaterial {
-    pub uniforms: MeshPhongUniforms,
-    pub(crate) uniform_buffer: BufferRef,
+    pub(crate) uniforms: UniformSlot<MeshPhongUniforms>,
     
     pub map: Option<TextureHandle>,
     pub normal_map: Option<TextureHandle>,
@@ -78,20 +89,24 @@ pub struct MeshPhongMaterial {
 impl MeshPhongMaterial {
     pub fn new(color: Vec4) -> Self {
         let uniforms = MeshPhongUniforms { color, ..Default::default() };
-        let uniform_buffer = BufferRef::new(
-            &[uniforms], 
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, 
-            Some("MeshPhongUniforms")
-        );
 
         Self {
-            uniforms,
-            uniform_buffer,
+            uniforms: UniformSlot::new(uniforms, "MeshPhongUniforms"),
             map: None,
             normal_map: None,
             specular_map: None,
             emissive_map: None,
         }
+    }
+    
+    // 便捷访问器
+    pub fn color(&self) -> Vec4 {
+        self.uniforms.get().color
+    }
+    
+    pub fn set_color(&mut self, color: Vec4) {
+        self.uniforms.get_mut().color = color;
+        self.uniforms.mark_dirty();
     }
 }
 
@@ -106,8 +121,7 @@ impl Default for MeshPhongMaterial {
 // ----------------------------------------------------------------------------
 #[derive(Debug)]
 pub struct MeshStandardMaterial {
-    pub uniforms: MeshStandardUniforms,
-    pub(crate) uniform_buffer: BufferRef,
+    pub(crate) uniforms: UniformSlot<MeshStandardUniforms>,
     
     pub map: Option<TextureHandle>,
     pub normal_map: Option<TextureHandle>,
@@ -120,15 +134,9 @@ pub struct MeshStandardMaterial {
 impl MeshStandardMaterial {
     pub fn new(color: Vec4) -> Self {
         let uniforms = MeshStandardUniforms { color, ..Default::default() };
-        let uniform_buffer = BufferRef::new(
-            &[uniforms], 
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, 
-            Some("MeshStandardUniforms")
-        );
         
         Self {
-            uniforms,
-            uniform_buffer,
+            uniforms: UniformSlot::new(uniforms, "MeshStandardUniforms"),
             map: None,
             normal_map: None,
             roughness_map: None,
@@ -136,6 +144,34 @@ impl MeshStandardMaterial {
             emissive_map: None,
             ao_map: None,
         }
+    }
+    
+    // 便捷访问器
+    pub fn color(&self) -> Vec4 {
+        self.uniforms.get().color
+    }
+    
+    pub fn set_color(&mut self, color: Vec4) {
+        self.uniforms.get_mut().color = color;
+        self.uniforms.mark_dirty();
+    }
+    
+    pub fn roughness(&self) -> f32 {
+        self.uniforms.get().roughness
+    }
+    
+    pub fn set_roughness(&mut self, roughness: f32) {
+        self.uniforms.get_mut().roughness = roughness;
+        self.uniforms.mark_dirty();
+    }
+    
+    pub fn metalness(&self) -> f32 {
+        self.uniforms.get().metalness
+    }
+    
+    pub fn set_metalness(&mut self, metalness: f32) {
+        self.uniforms.get_mut().metalness = metalness;
+        self.uniforms.mark_dirty();
     }
 }
 
@@ -166,13 +202,8 @@ impl MaterialData {
         }
     }
 
-    pub fn flush_uniforms(&self) {
-        match self {
-            Self::Basic(m) => m.uniform_buffer.update(&[m.uniforms]),
-            Self::Phong(m) => m.uniform_buffer.update(&[m.uniforms]),
-            Self::Standard(m) => m.uniform_buffer.update(&[m.uniforms]),
-        }
-    }
+    // ✅ 删除 flush_uniforms() - 不再需要手动同步！
+    // UniformSlot 会自动管理版本号，ResourceManager 会自动检测变更
 
     pub fn get_features(&self) -> MaterialFeatures {
         let mut features = MaterialFeatures::empty();
@@ -299,7 +330,6 @@ impl Material {
 
     // 代理方法：直接转发给内部数据
     pub fn shader_name(&self) -> &'static str { self.data.shader_name() }
-    pub fn flush_uniforms(&self) { self.data.flush_uniforms() }
     pub fn get_features(&self) -> MaterialFeatures { self.data.get_features() }
 
     pub fn mark_dirty(&self) {
@@ -351,11 +381,15 @@ impl std::ops::DerefMut for MeshPhongMaterial {
      }
 }
 
+// ✅ 删除Deref - uniforms现在是UniformSlot，应使用get()/get_mut()
+
 impl From<MeshStandardMaterial> for Material {
     fn from(data: MeshStandardMaterial) -> Self {
         Material::new(MaterialData::Standard(data))
     }
 }
+
+// ✅ 删除Deref - uniforms现在是UniformSlot，应使用get()/get_mut()
 
 impl std::ops::Deref for MeshStandardMaterial {
     type Target = MeshStandardUniforms;

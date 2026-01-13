@@ -12,6 +12,7 @@ use crate::resources::geometry::Geometry;
 use crate::resources::texture::{Texture, TextureSampler};
 use crate::scene::environment::Environment;
 use crate::resources::buffer::BufferRef;
+use crate::resources::uniform_slot::UniformSlot;
 use crate::resources::image::Image;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
 
@@ -189,6 +190,69 @@ impl ResourceManager {
         gpu_buf.id
     }
 
+    /// 【新】准备 UniformSlot（通用版本，接收数据引用）
+    /// 无锁直接访问数据，性能更优
+    pub fn prepare_uniform_slot_data(
+        &mut self,
+        slot_id: u64,
+        data: &[u8],
+        label: &str,
+    ) -> u64 {
+        // 1. 检查版本（暂时简化，总是更新）
+        // TODO: 可以添加 version 参数来优化
+        
+        // 2. 创建或更新
+        let gpu_buf = self.gpu_buffers.entry(slot_id).or_insert_with(|| {
+            let mut buf = GpuBuffer::new(
+                &self.device,
+                data,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some(label),
+            );
+            buf.enable_shadow_copy(); // Uniform自动启用Shadow Copy
+            buf
+        });
+
+        // 3. 更新数据（Diff模式）
+        gpu_buf.update_with_data(&self.device, &self.queue, data);
+        gpu_buf.last_used_frame = self.frame_index;
+        gpu_buf.id
+    }
+
+    /// 【保留】准备 UniformSlot（从 UniformSlot<T> 直接准备）
+    pub fn prepare_uniform_slot<T: bytemuck::Pod>(
+        &mut self, 
+        slot: &UniformSlot<T>
+    ) -> u64 {
+        let id = slot.id();
+
+        // 1. 检查版本
+        if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
+            if slot.version() <= gpu_buf.version {
+                gpu_buf.last_used_frame = self.frame_index;
+                return gpu_buf.id;
+            }
+        }
+
+        // 2. 创建或更新
+        let gpu_buf = self.gpu_buffers.entry(id).or_insert_with(|| {
+            let mut buf = GpuBuffer::new(
+                &self.device,
+                slot.as_bytes(),
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some(slot.label()),
+            );
+            buf.enable_shadow_copy(); // Uniform自动启用Shadow Copy
+            buf
+        });
+
+        // 3. 更新数据（Diff模式）
+        gpu_buf.update_with_data(&self.device, &self.queue, slot.as_bytes());
+        gpu_buf.version = slot.version();
+        gpu_buf.last_used_frame = self.frame_index;
+        gpu_buf.id
+    }
+
     // ========================================================================
     // Geometry Logic
     // ========================================================================
@@ -302,35 +366,24 @@ impl ResourceManager {
     }
 
 
-    fn prepare_resources(&mut self, assets: &AssetServer, resources: &[BindingResource]) -> u64 {
-        // 批量准备纹理 (去重，避免重复调用 prepare_texture)
-        let mut textures_to_update = Vec::with_capacity(16); 
-        for res in resources {
-            match res {
-                BindingResource::Texture(Some(h)) | BindingResource::Sampler(Some(h)) => {
-                    textures_to_update.push(*h);
-                },
-                _ => {}
-            }
-        }
-        
-        if !textures_to_update.is_empty() {
-            textures_to_update.sort_unstable();
-            textures_to_update.dedup();
-            
-            for tex_handle in textures_to_update {
-                self.prepare_texture(assets, tex_handle);
-            }
-        }
-
-        // 计算资源 Hash
-
+    fn compute_resource_hash(&self, resources: &[BindingResource]) -> u64 {
         let mut hasher = DefaultHasher::new();
         for res in resources {
             match res {
+                BindingResource::UniformSlot { slot_id, .. } => {
+                    // 使用 slot_id 作为稳定标识
+                    slot_id.hash(&mut hasher);
+                    // 可选：包含版本号来检测数据变化
+                    if let Some(gpu_buf) = self.gpu_buffers.get(slot_id) {
+                        gpu_buf.version.hash(&mut hasher);
+                    }
+                },
                 BindingResource::Buffer { buffer, .. } => {
-                    let gpu_id = self.prepare_buffer(buffer);
+                    let gpu_id = buffer.id;
                     gpu_id.hash(&mut hasher);
+                    if let Some(gpu_buf) = self.gpu_buffers.get(&gpu_id) {
+                        gpu_buf.version.hash(&mut hasher);
+                    }
                 },
                 BindingResource::Texture(handle_opt) => {
                     if let Some(h) = handle_opt {
@@ -343,11 +396,13 @@ impl ResourceManager {
                 },
                 BindingResource::Sampler(handle_opt) => {
                     if let Some(h) = handle_opt {
-                        // Sampler 只关心 Version
                         if let Some(t) = self.gpu_textures.get(*h) {
                             t.version.hash(&mut hasher);
                         } else { 0.hash(&mut hasher); }
                     } else { 0.hash(&mut hasher); }
+                },
+                BindingResource::_Phantom(_) => {
+                    // 忽略 PhantomData
                 }
             }
         }
@@ -365,16 +420,31 @@ impl ResourceManager {
 
         let material = assets.get_material(handle)?;
 
-        material.flush_uniforms();
-
         let mut builder = ResourceBuilder::new();
         material.define_bindings(&mut builder);
 
+        // ✅ 通用地准备所有资源（从 BindingResource 中获取信息）
+        for resource in &builder.resources {
+            match resource {
+                BindingResource::UniformSlot { slot_id, data, label } => {
+                    // 直接使用 BindingResource 中的数据引用
+                    self.prepare_uniform_slot_data(*slot_id, data, label);
+                },
+                BindingResource::Buffer { buffer, .. } => {
+                    self.prepare_buffer(buffer);
+                },
+                BindingResource::Texture(handle_opt) => {
+                    if let Some(handle) = handle_opt {
+                        self.prepare_texture(assets, *handle);
+                    }
+                },
+                BindingResource::Sampler(_) | BindingResource::_Phantom(_) => {
+                    // Sampler不需要prepare
+                },
+            }
+        }
 
-        // // 批量准备纹理 (去重，避免重复调用 prepare_texture)
-        // self.batch_prepare_textures(assets, &builder.resources);
-
-        let resource_hash = self.prepare_resources(assets, &builder.resources);
+        let resource_hash = self.compute_resource_hash(&builder.resources);
 
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
 
@@ -459,14 +529,22 @@ impl ResourceManager {
         for (i, resource_data) in resources.iter().enumerate() {
 
             let binding_resource = match resource_data {
+                BindingResource::UniformSlot { slot_id, .. } => {
+                    let gpu_buf = self.gpu_buffers.get(slot_id)
+                        .expect("UniformSlot should be prepared before creating bindgroup");
+                    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                        buffer: &gpu_buf.buffer,
+                        offset: 0,
+                        size: None,
+                    })
+                },
                 BindingResource::Buffer { buffer, offset, size } => {
                     let cpu_id = buffer.id;
                     let gpu_buf = self.gpu_buffers.get(&cpu_id).expect("Buffer should be prepared before creating bindgroup");
-                    // gpu_buf.buffer.as_entire_binding()
                     wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &gpu_buf.buffer,
                         offset: *offset,
-                        size: size.and_then(wgpu::BufferSize::new), // 处理 Option<u64> -> Option<NonZeroU64>
+                        size: size.and_then(wgpu::BufferSize::new),
                     })
                 },
                 BindingResource::Texture(handle_opt) => {
@@ -486,10 +564,13 @@ impl ResourceManager {
                     };
                     wgpu::BindingResource::Sampler(sampler)
                 },
+                BindingResource::_Phantom(_) => {
+                    unreachable!("_Phantom should never be used")
+                },
             };
 
             entries.push(wgpu::BindGroupEntry {
-                binding: i as u32,   // 假设顺序对应, todo: 是否需要更严谨的 mapping？ descriptor.index
+                binding: i as u32,
                 resource: binding_resource,
             });
         }
@@ -597,13 +678,27 @@ impl ResourceManager {
         sampler
     }
 
-    pub fn prepare_global(&mut self, assets: &AssetServer, env: &Environment, render_state: &RenderState) -> &GpuEnvironment {
+    pub fn prepare_global(&mut self, _assets: &AssetServer, env: &Environment, render_state: &RenderState) -> &GpuEnvironment {
 
         let mut builder = ResourceBuilder::new();
         render_state.define_bindings(&mut builder);
         env.define_bindings(&mut builder);
 
-        let resource_hash = self.prepare_resources(assets, &builder.resources);
+        // ✅ 通用地准备所有资源（从 BindingResource 中获取信息）
+        for resource in &builder.resources {
+            match resource {
+                BindingResource::UniformSlot { slot_id, data, label } => {
+                    self.prepare_uniform_slot_data(*slot_id, data, label);
+                },
+                BindingResource::Buffer { buffer, .. } => {
+                    self.prepare_buffer(buffer);
+                },
+                _ => {} // Texture/Sampler 不需要在这里处理
+            }
+        }
+
+        // ✅ 计算资源hash（资源已准备好）
+        let resource_hash = self.compute_resource_hash(&builder.resources);
 
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
         let world_id = Self::compose_env_render_state_id(render_state.id, env.id);

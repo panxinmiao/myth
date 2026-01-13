@@ -96,7 +96,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // 组合
     let ambient = vec3<f32>(0.1) * base_color.rgb; // 简单环境光
-    let final_color = ambient + (total_diffuse * base_color.rgb) + total_specular + u_material.emissive.rgb;
+    let final_color = (total_diffuse * base_color.rgb) + total_specular + u_material.emissive.rgb;
 
     return vec4<f32>(final_color, base_color.a);
 }

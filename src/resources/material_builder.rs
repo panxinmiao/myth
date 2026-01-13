@@ -135,11 +135,14 @@ impl MeshStandardMaterialBuilder {
     
     pub fn build(self) -> Material {
         let mut standard = MeshStandardMaterial::new(self.color);
+        
+        // 使用 get_mut() 访问 UniformSlot 中的数据
         standard.uniforms.color = self.color;
-        standard.occlusion_strength = 1.0;
         standard.uniforms.emissive = Vec3::ZERO;
         standard.uniforms.roughness = self.roughness;
         standard.uniforms.metalness = self.metalness;
+        standard.uniforms.occlusion_strength = 1.0;
+        standard.uniforms.mark_dirty();
 
         standard.map = self.map;
         standard.normal_map = self.normal_map;

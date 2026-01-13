@@ -7,7 +7,7 @@ use crate::scene::camera::Camera;
 use crate::scene::environment::Environment;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::resources::uniforms::{DynamicModelUniforms, RenderStateUniforms};
-use crate::resources::buffer::BufferRef;
+use crate::resources::uniform_slot::UniformSlot;
 
 use super::resources::ResourceManager;
 use super::pipeline::{PipelineCache, FastPipelineKey};
@@ -61,7 +61,7 @@ pub struct RenderCommand {
 
 pub struct RenderState {
     pub id: u32,
-    pub(crate) uniform_buffer: BufferRef,
+    pub(crate) uniforms: UniformSlot<RenderStateUniforms>,
 }
 
 static NEXT_RENDER_STATE_ID: AtomicU32 = AtomicU32::new(0);
@@ -69,25 +69,29 @@ static NEXT_RENDER_STATE_ID: AtomicU32 = AtomicU32::new(0);
 impl RenderState {
     pub fn new() -> Self {
         Self {
-            id: NEXT_RENDER_STATE_ID.fetch_add(1, Ordering::Relaxed), // Fixed: add 1
-            uniform_buffer: BufferRef::empty(wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, Some("RenderState Uniforms")),
+            id: NEXT_RENDER_STATE_ID.fetch_add(1, Ordering::Relaxed),
+            uniforms: UniformSlot::new(
+                RenderStateUniforms::default(),
+                "RenderState Uniforms"
+            ),
         }
     }
 
     fn update(&mut self, camera: &Camera) {
         let view_matrix = camera.view_matrix;
-        let vp_matrix =  camera.view_projection_matrix;
+        let vp_matrix = camera.view_projection_matrix;
         let camera_position = camera.world_matrix.translation.to_vec3();
 
-        let frame_uniform = RenderStateUniforms{
-            view_projection: vp_matrix,
-            view_projection_inverse: vp_matrix.inverse(),
-            view_matrix,
-            camera_position,
-            time: 0.0,
-        };
-
-        self.uniform_buffer.update(&[frame_uniform]);
+        // 直接修改 UniformSlot 中的数据
+        let u = self.uniforms.get_mut();
+        u.view_projection = vp_matrix;
+        u.view_projection_inverse = vp_matrix.inverse();
+        u.view_matrix = view_matrix;
+        u.camera_position = camera_position;
+        u.time = 0.0;
+        
+        // 标记为脏数据
+        self.uniforms.mark_dirty();
     }
 }
 

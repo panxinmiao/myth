@@ -2,6 +2,7 @@ use glam::{Vec3, Vec4, Quat};
 use three::app::App; // 使用引擎提供的 App 抽象
 use three::resources::{Geometry, Material, Mesh, Texture};
 use three::scene::{Camera};
+use three::scene::light;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -20,7 +21,7 @@ fn main() -> anyhow::Result<()> {
 
     if let Some(phong) = mat.as_phong_mut() {
         phong.map = Some(tex_handle);
-        phong.color = Vec4::new(0.8, 0.0, 0.8, 1.0);
+        // phong.color = Vec4::new(0.8, 0.0, 0.8, 1.0);
     }
     
     let geo_handle = app.assets.add_geometry(geometry);
@@ -31,8 +32,8 @@ fn main() -> anyhow::Result<()> {
 
     let cube_node_id = app.scene.add_mesh(mesh);
 
-    // let light = light::Light::new_directional(Vec3::new(1.0, -1.0, -1.0), 1.0);
-    // app.scene.add_light(light);
+    let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
+    app.scene.add_light(light);
 
     // 5. 设置相机
     // 5.1 创建相机组件 (纯投影数据)
