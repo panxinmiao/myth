@@ -39,7 +39,7 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
     let mut buffer_groups: HashMap<u64, Vec<(&String, &Attribute)>> = HashMap::new();
 
     for (name, attr) in &geometry.attributes {
-        let buffer_id = attr.buffer.id;
+        let buffer_id = attr.buffer.id();
         buffer_groups.entry(buffer_id).or_default().push((name, attr));
     }
 

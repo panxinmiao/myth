@@ -17,10 +17,8 @@ pub mod image;
 pub mod geometry;
 pub mod buffer;
 pub mod uniforms;
-pub mod uniform_slot;
 pub mod version_tracker;
 
-// 重新导出常用类型
 pub use mesh::{Mesh, MeshHandle};
 pub use material::{
     Material, MaterialData, MaterialFeatures,
@@ -36,4 +34,3 @@ pub use geometry::{
 };
 pub use buffer::{BufferRef};
 pub use uniforms::{WgslType};
-pub use uniform_slot::{UniformSlot};

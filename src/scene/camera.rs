@@ -63,6 +63,9 @@ impl Camera {
                 Mat4::orthographic_rh(-w, w, -h, h, self.near, self.far)
             }
         };
+
+        self.view_projection_matrix = self.projection_matrix * self.view_matrix;
+        self.frustum = Frustum::from_matrix(self.view_projection_matrix);
     }
 
     pub fn update_view_projection(&mut self, world_transform: &Affine3A) {

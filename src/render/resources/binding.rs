@@ -160,9 +160,10 @@ impl Bindings for Environment {
 
 impl Bindings for RenderState {
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
-        builder.add_uniform_slot::<RenderStateUniforms>(
-            "render_state", 
-            &self.uniforms,
+        let data = bytemuck::bytes_of(self.uniforms());
+        builder.add_uniform_with_generator::<RenderStateUniforms>(
+            "render_state",
+            data,
             wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT
         );
     }

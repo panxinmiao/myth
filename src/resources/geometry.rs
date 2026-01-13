@@ -201,7 +201,7 @@ impl Geometry {
             None => return,
         };
 
-        let data = &pos_attr.buffer.read_data();
+        let data = pos_attr.buffer.peek_data(|d| d.to_vec()).unwrap_or_default();
         let stride = pos_attr.stride as usize;
         let offset = pos_attr.offset as usize;
         let count = pos_attr.count as usize;

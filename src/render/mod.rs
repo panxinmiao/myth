@@ -101,13 +101,12 @@ impl Renderer {
         }
     }
 
-    /// 渲染代理
-    pub fn render(&mut self, scene: &Scene, camera: &Camera, assets: &AssetServer) {
+    pub fn render(&mut self, scene: &Scene, camera: &Camera, assets: &AssetServer, time: f32) {
         if self._size.width == 0 || self._size.height == 0 {
             return;
         }
         if let Some(ctx) = &mut self.context {
-            ctx.render_frame(scene, camera, assets);
+            ctx.render_frame(scene, camera, assets, time);
         }
     }
 }

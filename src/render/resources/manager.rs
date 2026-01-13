@@ -12,7 +12,6 @@ use crate::resources::geometry::Geometry;
 use crate::resources::texture::{Texture, TextureSampler};
 use crate::scene::environment::Environment;
 use crate::resources::buffer::BufferRef;
-use crate::resources::uniform_slot::UniformSlot;
 use crate::resources::image::Image;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
 
@@ -160,61 +159,41 @@ impl ResourceManager {
     /// 准备 GPU Buffer：如果不存在则创建，如果版本过期则更新
     /// 返回当前 GPU 资源的物理 ID (用于检测 Resize)
     pub fn prepare_buffer(&mut self, buffer_ref: &BufferRef) -> u64 {
-        let id = buffer_ref.id;
+        let id = buffer_ref.id();
 
-        // 1. [Hot Path] 无锁检查版本！
-        // 如果版本没变，直接返回。这里没有任何锁竞争。
         if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
-            if buffer_ref.version() <= gpu_buf.version {
-                gpu_buf.last_used_frame = self.frame_index;
-                return gpu_buf.id;
+            if let Some(new_data) = buffer_ref.peek_data(|d| d.to_vec()) {
+                gpu_buf.update_with_data(&self.device, &self.queue, &new_data);
             }
+            gpu_buf.last_used_frame = self.frame_index;
+            return gpu_buf.id;
         }
 
-        // 2. [Cold Path] 只有确实需要更新时，才获取锁并拷贝数据
-        let gpu_buf = self.gpu_buffers.entry(id).or_insert_with(|| {
-            // 创建逻辑... 需要先 read_data() 获取初始数据
-            let data = buffer_ref.read_data();
+        let data = buffer_ref.peek_data(|d| d.to_vec()).unwrap_or_default();
 
-            let mut buf = GpuBuffer::new(
-                &self.device, 
-                &data, 
-                buffer_ref.usage, 
-                Some(&buffer_ref.label)
-            );
-            // 对于 Uniform Buffer，默认开启 Shadow Copy 以优化频繁的小数据更新
-            if buffer_ref.usage.contains(wgpu::BufferUsages::UNIFORM) {
-                buf.enable_shadow_copy();
-            }
-            buf
-        });
+        let mut gpu_buf = GpuBuffer::new(
+            &self.device,
+            &data,
+            buffer_ref.usage(),
+            Some(buffer_ref.label())
+        );
 
-        // 更新逻辑
-        {
-            let data = buffer_ref.read_data(); // 这里才发生短暂的锁
-            if buffer_ref.usage.contains(wgpu::BufferUsages::UNIFORM) {
-                gpu_buf.update_with_data(&self.device, &self.queue, &data);
-            } else {
-                gpu_buf.update_with_version(&self.device, &self.queue, &data, buffer_ref.version());
-            }
+        if buffer_ref.usage().contains(wgpu::BufferUsages::UNIFORM) {
+            gpu_buf.enable_shadow_copy();
         }
-   
+
         gpu_buf.last_used_frame = self.frame_index;
-        gpu_buf.id
+        let buf_id = gpu_buf.id;
+        self.gpu_buffers.insert(id, gpu_buf);
+        buf_id
     }
 
-    /// 【新】准备 UniformSlot（通用版本，接收数据引用）
-    /// 无锁直接访问数据，性能更优
     pub fn prepare_uniform_slot_data(
         &mut self,
         slot_id: u64,
         data: &[u8],
         label: &str,
     ) -> u64 {
-        // 1. 检查版本（暂时简化，总是更新）
-        // TODO: 可以添加 version 参数来优化
-        
-        // 2. 创建或更新
         let gpu_buf = self.gpu_buffers.entry(slot_id).or_insert_with(|| {
             let mut buf = GpuBuffer::new(
                 &self.device,
@@ -222,53 +201,14 @@ impl ResourceManager {
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 Some(label),
             );
-            buf.enable_shadow_copy(); // Uniform自动启用Shadow Copy
+            buf.enable_shadow_copy();
             buf
         });
 
-        // 3. 更新数据（Diff模式）
         gpu_buf.update_with_data(&self.device, &self.queue, data);
         gpu_buf.last_used_frame = self.frame_index;
         gpu_buf.id
     }
-
-    /// 【保留】准备 UniformSlot（从 UniformSlot<T> 直接准备）
-    pub fn prepare_uniform_slot<T: bytemuck::Pod>(
-        &mut self, 
-        slot: &UniformSlot<T>
-    ) -> u64 {
-        let id = slot.id();
-
-        // 1. 检查版本
-        if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
-            if slot.version() <= gpu_buf.version {
-                gpu_buf.last_used_frame = self.frame_index;
-                return gpu_buf.id;
-            }
-        }
-
-        // 2. 创建或更新
-        let gpu_buf = self.gpu_buffers.entry(id).or_insert_with(|| {
-            let mut buf = GpuBuffer::new(
-                &self.device,
-                slot.as_bytes(),
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some(slot.label()),
-            );
-            buf.enable_shadow_copy(); // Uniform自动启用Shadow Copy
-            buf
-        });
-
-        // 3. 更新数据（Diff模式）
-        gpu_buf.update_with_data(&self.device, &self.queue, slot.as_bytes());
-        gpu_buf.version = slot.version();
-        gpu_buf.last_used_frame = self.frame_index;
-        gpu_buf.id
-    }
-
-    // ========================================================================
-    // Geometry Logic
-    // ========================================================================
 
     pub fn prepare_geometry(
         &mut self, 
@@ -327,13 +267,13 @@ impl ResourceManager {
         let mut vertex_buffer_ids = Vec::new();
         
         for layout_desc in &layout_info.buffers {
-            let gpu_buf = self.gpu_buffers.get(&layout_desc.buffer.id).expect("Vertex buffer should be prepared");
+            let gpu_buf = self.gpu_buffers.get(&layout_desc.buffer.id()).expect("Vertex buffer should be prepared");
             vertex_buffers.push(gpu_buf.buffer.clone()); 
             vertex_buffer_ids.push(gpu_buf.id);
         }
 
         let index_buffer = if let Some(indices) = &geometry.index_attribute {
-            let gpu_buf = self.gpu_buffers.get(&indices.buffer.id).expect("Index buffer should be prepared");
+            let gpu_buf = self.gpu_buffers.get(&indices.buffer.id()).expect("Index buffer should be prepared");
             let format = match indices.format {
                 wgpu::VertexFormat::Uint16 => wgpu::IndexFormat::Uint16,
                 wgpu::VertexFormat::Uint32 => wgpu::IndexFormat::Uint32,
@@ -391,7 +331,7 @@ impl ResourceManager {
                     }
                 },
                 BindingResource::Buffer { buffer, .. } => {
-                    let gpu_id = buffer.id;
+                    let gpu_id = buffer.id();
                     gpu_id.hash(&mut hasher);
                     if let Some(gpu_buf) = self.gpu_buffers.get(&gpu_id) {
                         gpu_buf.version.hash(&mut hasher);
@@ -657,7 +597,7 @@ impl ResourceManager {
                     })
                 },
                 BindingResource::Buffer { buffer, offset, size } => {
-                    let cpu_id = buffer.id;
+                    let cpu_id = buffer.id();
                     let gpu_buf = self.gpu_buffers.get(&cpu_id).expect("Buffer should be prepared before creating bindgroup");
                     wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &gpu_buf.buffer,

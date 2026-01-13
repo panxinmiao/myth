@@ -70,16 +70,10 @@ impl Default for MaterialSettings {
 // ----------------------------------------------------------------------------
 #[derive(Debug)]
 pub struct MeshBasicMaterial {
-    // 1. Uniform 数据
     uniforms: MeshBasicUniforms,
-    
-    // 2. 绑定资源
     bindings: MaterialBindings,
-    
-    // 3. 材质设置
     settings: MaterialSettings,
     
-    // 版本追踪
     pub uniform_version: u64,
     pub binding_version: u64,
     pub layout_version: u64,
@@ -97,12 +91,10 @@ impl MeshBasicMaterial {
         }
     }
     
-    // === 读取方法 (零成本) ===
     pub fn uniforms(&self) -> &MeshBasicUniforms { &self.uniforms }
     pub fn bindings(&self) -> &MaterialBindings { &self.bindings }
     pub fn settings(&self) -> &MaterialSettings { &self.settings }
     
-    // === 写入方法 (返回 Guard，自动标记版本) ===
     pub fn uniforms_mut(&mut self) -> MutGuard<'_, MeshBasicUniforms> {
         MutGuard::new(&mut self.uniforms, &mut self.uniform_version)
     }
@@ -115,7 +107,6 @@ impl MeshBasicMaterial {
         MutGuard::new(&mut self.settings, &mut self.layout_version)
     }
     
-    // === 便捷辅助方法 ===
     pub fn set_color(&mut self, color: Vec4) {
         self.uniforms_mut().color = color;
     }
@@ -144,16 +135,10 @@ impl Default for MeshBasicMaterial {
 // ----------------------------------------------------------------------------
 #[derive(Debug)]
 pub struct MeshPhongMaterial {
-    // 1. Uniform 数据
     uniforms: MeshPhongUniforms,
-    
-    // 2. 绑定资源
     bindings: MaterialBindings,
-    
-    // 3. 材质设置
     settings: MaterialSettings,
     
-    // 版本追踪
     pub uniform_version: u64,
     pub binding_version: u64,
     pub layout_version: u64,
@@ -171,12 +156,10 @@ impl MeshPhongMaterial {
         }
     }
     
-    // === 读取方法 ===
     pub fn uniforms(&self) -> &MeshPhongUniforms { &self.uniforms }
     pub fn bindings(&self) -> &MaterialBindings { &self.bindings }
     pub fn settings(&self) -> &MaterialSettings { &self.settings }
     
-    // === 写入方法 ===
     pub fn uniforms_mut(&mut self) -> MutGuard<'_, MeshPhongUniforms> {
         MutGuard::new(&mut self.uniforms, &mut self.uniform_version)
     }
@@ -222,16 +205,10 @@ impl Default for MeshPhongMaterial {
 // ----------------------------------------------------------------------------
 #[derive(Debug)]
 pub struct MeshStandardMaterial {
-    // 1. Uniform 数据
     uniforms: MeshStandardUniforms,
-    
-    // 2. 绑定资源
     bindings: MaterialBindings,
-    
-    // 3. 材质设置
     settings: MaterialSettings,
     
-    // 版本追踪
     pub uniform_version: u64,
     pub binding_version: u64,
     pub layout_version: u64,
@@ -254,7 +231,6 @@ impl MeshStandardMaterial {
     pub fn bindings(&self) -> &MaterialBindings { &self.bindings }
     pub fn settings(&self) -> &MaterialSettings { &self.settings }
     
-    // === 写入方法 ===
     pub fn uniforms_mut(&mut self) -> MutGuard<'_, MeshStandardUniforms> {
         MutGuard::new(&mut self.uniforms, &mut self.uniform_version)
     }
@@ -480,10 +456,14 @@ impl Material {
     
     // 版本号（组合三级版本）
     pub fn version(&self) -> u64 {
-        // 组合三个版本号，layout 变化最重要
-        self.data.layout_version() * 1000000 + 
-        self.data.binding_version() * 1000 + 
-        self.data.uniform_version()
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        
+        let mut hasher = DefaultHasher::new();
+        self.data.layout_version().hash(&mut hasher);
+        self.data.binding_version().hash(&mut hasher);
+        self.data.uniform_version().hash(&mut hasher);
+        hasher.finish()
     }
 }
 

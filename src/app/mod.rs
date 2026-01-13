@@ -86,7 +86,7 @@ impl App {
                 if let Some(node) = scene_ref.get_node(cam_id) {
                     if let Some(camera_idx) = node.camera {
                         if let Some(camera) = self.scene.cameras.get(camera_idx) {
-                            self.renderer.render(&self.scene, camera, &self.assets);
+                            self.renderer.render(&self.scene, camera, &self.assets, self.last_frame_time);
                         }
                     }
                 }

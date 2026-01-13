@@ -7,7 +7,7 @@ use crate::scene::camera::Camera;
 use crate::scene::environment::Environment;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::resources::uniforms::{DynamicModelUniforms, RenderStateUniforms};
-use crate::resources::uniform_slot::UniformSlot;
+use crate::resources::version_tracker::MutGuard;
 
 use super::resources::ResourceManager;
 use super::pipeline::{PipelineCache, FastPipelineKey};
@@ -61,7 +61,8 @@ pub struct RenderCommand {
 
 pub struct RenderState {
     pub id: u32,
-    pub(crate) uniforms: UniformSlot<RenderStateUniforms>,
+    uniforms: RenderStateUniforms,
+    pub version: u64,
 }
 
 static NEXT_RENDER_STATE_ID: AtomicU32 = AtomicU32::new(0);
@@ -70,28 +71,30 @@ impl RenderState {
     pub fn new() -> Self {
         Self {
             id: NEXT_RENDER_STATE_ID.fetch_add(1, Ordering::Relaxed),
-            uniforms: UniformSlot::new(
-                RenderStateUniforms::default(),
-                "RenderState Uniforms"
-            ),
+            uniforms: RenderStateUniforms::default(),
+            version: 0,
         }
     }
 
-    fn update(&mut self, camera: &Camera) {
+    pub fn uniforms_mut(&mut self) -> MutGuard<'_, RenderStateUniforms> {
+        MutGuard::new(&mut self.uniforms, &mut self.version)
+    }
+
+    pub fn uniforms(&self) -> &RenderStateUniforms {
+        &self.uniforms
+    }
+
+    fn update(&mut self, camera: &Camera, time: f32) {
         let view_matrix = camera.view_matrix;
         let vp_matrix = camera.view_projection_matrix;
         let camera_position = camera.world_matrix.translation.to_vec3();
 
-        // 直接修改 UniformSlot 中的数据
-        let u = self.uniforms.get_mut();
+        let mut u = self.uniforms_mut();
         u.view_projection = vp_matrix;
         u.view_projection_inverse = vp_matrix.inverse();
         u.view_matrix = view_matrix;
         u.camera_position = camera_position;
-        u.time = 0.0;
-        
-        // 标记为脏数据
-        self.uniforms.mark_dirty();
+        u.time = time;
     }
 }
 
@@ -118,12 +121,9 @@ pub struct RenderContext {
 }
 
 impl RenderContext {
-    /// 渲染帧入口
-    pub fn render_frame(&mut self, scene: &Scene, camera: &Camera, assets: &AssetServer) {
-        // 0. 帧首准备
+    pub fn render_frame(&mut self, scene: &Scene, camera: &Camera, assets: &AssetServer, time: f32) {
         self.resource_manager.next_frame();
 
-        // Swapchain
         let output = match self.surface.get_current_texture() {
             Ok(output) => output,
             Err(wgpu::SurfaceError::Lost) => return, // Resize should be handled by event loop
@@ -134,20 +134,13 @@ impl RenderContext {
         };
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // 1. 准备全局资源
-        self.prepare_global_resources(assets, &scene.environment, camera);
-
-        // 2. 剔除
+        self.prepare_global_resources(assets, &scene.environment, camera, time);
         let render_items = self.cull_scene(scene, assets, camera);
-
-        // 3. 排序与指令生成
         let (mut opaque_cmds, mut transparent_cmds) = self.prepare_and_sort_commands(scene, assets, &render_items);
-
-        // 4. 上传动态 Uniform
         self.upload_dynamic_uniforms(&mut opaque_cmds, &mut transparent_cmds);
 
-        // 5. Render Pass
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Render Encoder") });
+        
         {
             let pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Main Pass"),
@@ -176,7 +169,6 @@ impl RenderContext {
             let pass = encoder.begin_render_pass(&pass_desc);
             let mut tracked = TrackedRenderPass::new(pass);
 
-            // ⚠️ 关键修正：显式传入 resource_manager，避开对 self 的借用冲突
             Self::draw_list(&self.resource_manager, &mut tracked, &opaque_cmds, scene.environment.id, self.render_state.id);
             Self::draw_list(&self.resource_manager, &mut tracked, &transparent_cmds, scene.environment.id, self.render_state.id);
         }
@@ -220,8 +212,8 @@ impl RenderContext {
 
     // --- Internal Logic ---
 
-    fn prepare_global_resources(&mut self, assets: &AssetServer, environment: &Environment, camera: &Camera) {
-        self.render_state.update(camera);
+    fn prepare_global_resources(&mut self, assets: &AssetServer, environment: &Environment, camera: &Camera, time: f32) {
+        self.render_state.update(camera, time);
         self.resource_manager.prepare_global(assets, environment, &self.render_state);
     }
 

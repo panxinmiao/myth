@@ -1,10 +1,8 @@
 use wgpu::ShaderStages;
 use crate::resources::buffer::BufferRef;
-use crate::resources::uniform_slot::UniformSlot;
 use crate::resources::uniforms::WgslStruct;
 use crate::render::resources::binding::BindingResource;
 use crate::assets::TextureHandle;
-use bytemuck::Pod;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 type WgslStructGenerator = fn(&str) -> String;
@@ -37,36 +35,6 @@ impl<'a> ResourceBuilder<'a> {
         }
     }
 
-    /// 【新】添加 UniformSlot（推荐用于小型Uniform）
-    pub fn add_uniform_slot<T: WgslStruct + Pod>(
-        &mut self, 
-        name: &str, 
-        slot: &'a UniformSlot<T>, 
-        visibility: ShaderStages
-    ) {
-        self.layout_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: self.next_binding_index,
-            visibility,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
-
-        self.resources.push(BindingResource::UniformSlot {
-            slot_id: slot.id(),
-            data: slot.as_bytes(),  // 直接获取数据引用
-            label: slot.label(),    // 直接获取标签引用
-        });
-
-        self.names.push(name.to_string());
-        self.struct_generators.push(Some(WgslStructName::Generator(T::wgsl_struct_def)));
-        self.next_binding_index += 1;
-    }
-
-    /// 【保留】添加 Uniform Buffer（使用BufferRef，向后兼容）
     pub fn add_uniform_with_struct<T: WgslStruct>(&mut self, name: &str, buffer: &BufferRef, visibility: ShaderStages) {
         self.add_uniform_buffer(name, buffer, visibility, Some(WgslStructName::Generator(T::wgsl_struct_def)));
     }
