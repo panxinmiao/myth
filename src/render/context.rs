@@ -293,7 +293,7 @@ impl RenderContext {
                 material_handle: item.mat_handle,
                 material_version: material.version(),
                 geometry_handle: item.geo_handle,
-                geometry_version: geometry.version(),
+                geometry_version: geometry.layout_version(),
                 render_state_id: self.render_state.id,
                 scene_id: scene.environment.id,
             };

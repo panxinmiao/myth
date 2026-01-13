@@ -303,9 +303,8 @@ impl ResourceManager {
              }
         }
 
-        // 3. 检查重建 Geometry 绑定
         let needs_rebuild = if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
-            geometry.version() > gpu_geo.version || buffer_ids_changed
+            geometry.structure_version() > gpu_geo.version || buffer_ids_changed
         } else {
             true
         };
@@ -367,7 +366,7 @@ impl ResourceManager {
             index_buffer,
             draw_range: draw_range,
             instance_range: 0..1,
-            version: geometry.version(),
+            version: geometry.structure_version(),
             last_used_frame: self.frame_index,
         };
 

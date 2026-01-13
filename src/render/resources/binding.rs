@@ -142,13 +142,13 @@ impl Bindings for Geometry {
 
 impl Bindings for Environment {
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
-        // Uniform 使用 UniformSlot
-        builder.add_uniform_slot::<EnvironmentUniforms>(
+        let data = bytemuck::bytes_of(self.uniforms());
+        builder.add_uniform_with_generator::<EnvironmentUniforms>(
             "environment", 
-            &self.uniforms,
+            data,
             wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
         );
-        // Storage 继续使用 BufferRef
+        
         builder.add_storage_with_struct::<GpuLightStorage>(
             "lights", 
             &self.light_storage_buffer, 
