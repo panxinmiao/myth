@@ -13,7 +13,7 @@ impl Default for RendererSettings {
             power_preference: wgpu::PowerPreference::HighPerformance,
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
-            clear_color: wgpu::Color { r: 0.1, g: 0.1, b: 0.1, a: 1.0 },
+            clear_color: wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
             depth_format: wgpu::TextureFormat::Depth32Float,
         }
     }

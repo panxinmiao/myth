@@ -9,7 +9,7 @@ fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     // 1. 初始化引擎 App
-    let mut app = App::new();
+    let mut app = App::new().with_title("Earth");
 
     // 2. 准备资源 (Geometry, Texture, Material)
     let geometry = three::create_sphere(three::resources::primitives::SphereOptions {
@@ -39,7 +39,7 @@ fn main() -> anyhow::Result<()> {
         let mut uniforms = phong.uniforms_mut();
         uniforms.normal_scale = Vec2::new(0.85, -0.85);
         uniforms.shininess = 10.0;
-        uniforms.emissive = Vec3::new(0.345, 0.345, 0.259);
+        uniforms.emissive = Vec3::new(0.0962, 0.0962, 0.0512);
         uniforms.emissive_intensity = 3.0;
     }
         
@@ -85,10 +85,9 @@ fn main() -> anyhow::Result<()> {
 
     let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
 
-    // app.scene.environment.uniforms_mut().ambient_light = Vec3::new(0.1, 0.1, 0.1);
     let light_index = app.scene.add_light(light);
 
-    app.scene.environment.uniforms_mut().ambient_light = Vec3::new(0.01, 0.01, 0.01);
+    app.scene.environment.uniforms_mut().ambient_light = Vec3::new(0.0001, 0.0001, 0.0001);
 
     if let Some(light_node) = app.scene.get_node_mut(light_index) {
         light_node.position = Vec3::new(3.0, 0.0, 1.0);
@@ -116,15 +115,15 @@ fn main() -> anyhow::Result<()> {
     app.active_camera = Some(cam_node_id);
 
 
-    let rot = Quat::from_rotation_y(0.001);
-    let rot_clouds = Quat::from_rotation_y(0.00125);
+    let rot = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.001, 0.0);
+    let rot_clouds = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.00125, 0.0);
 
     app.set_update_fn(move |scene, _assets, _dt| {
         if let Some(node) = scene.get_node_mut(earth_node_id) {
-            node.rotation = node.rotation * rot;
+            node.rotation = rot * node.rotation;
         }
         if let Some(clouds) = scene.get_node_mut(cloud_node_id) {
-            clouds.rotation = clouds.rotation * rot_clouds;
+            clouds.rotation = rot_clouds * clouds.rotation;
         }
     });
 

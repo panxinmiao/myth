@@ -262,7 +262,7 @@ define_uniform_struct!(
     struct MeshPhongUniforms {
         pub color: Vec4 = Vec4::ONE,
 
-        pub specular: Vec3 = Vec3::ONE,
+        pub specular: Vec3 = Vec3::splat(0.06667),  // 0x111111. 代表了非金属（电介质）材料，如塑料、岩石或水
         pub opacity: f32 = 1.0,
 
         pub emissive: Vec3 = Vec3::ZERO,

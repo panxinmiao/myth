@@ -14,9 +14,9 @@ pub type UpdateFn = Box<dyn FnMut(&mut Scene, &AssetServer, f32)>;
 
 pub struct App {
     window: Option<Arc<Window>>,
-    pub renderer: Renderer, // 始终存在
+    pub renderer: Renderer,
 
-    title: String,
+    pub title: String,
     pub assets: AssetServer,
     pub scene: Scene,
     pub active_camera: Option<NodeIndex>,
@@ -35,7 +35,7 @@ impl App {
         Self {
             window: None,
             renderer,
-            title: "Three-rs Engine".to_string(),
+            title: "Three-rs Engine".into(),
             assets,
             scene,
             active_camera: None,
@@ -43,6 +43,11 @@ impl App {
             start_time: None,
             last_frame_time: 0.0,
         }
+    }
+
+    pub fn with_title(mut self, title: impl Into<String>) -> Self {
+        self.title = title.into();
+        self
     }
 
     /// 允许用户替换 Renderer (配置阶段)

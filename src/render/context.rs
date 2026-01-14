@@ -141,7 +141,7 @@ impl RenderContext {
         self.upload_dynamic_uniforms(&mut opaque_cmds, &mut transparent_cmds);
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Render Encoder") });
-        
+
         {
             let pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Main Pass"),
@@ -269,6 +269,16 @@ impl RenderContext {
         assets: &AssetServer, 
         items: &[RenderItem]
     ) -> (Vec<RenderCommand>, Vec<RenderCommand>) {
+        if let Some(bg_color) = scene.background {
+
+            self.clear_color = wgpu::Color {
+                r: bg_color.x as f64,
+                g: bg_color.y as f64,
+                b: bg_color.z as f64,
+                a: bg_color.w as f64,
+            };
+        }
+
         let mut opaque = Vec::new();
         let mut transparent = Vec::new();
 
