@@ -24,7 +24,7 @@ fn main() -> anyhow::Result<()> {
     ], wgpu::VertexFormat::Float32x2));
 
     // 3. 准备材质和纹理
-    let texture = Texture::create_solid_color("red_tex", [255, 0, 0, 255]);
+    let texture = Texture::create_solid_color(Some("red_tex"), [255, 0, 0, 255]);
     let mut basic_mat = Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0));
     
     // 4. 添加到 AssetServer

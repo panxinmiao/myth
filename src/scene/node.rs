@@ -1,12 +1,13 @@
 use glam::{Affine3A, Mat4, Quat, Vec3, Mat3, EulerRot};
 use uuid::Uuid;
+use std::borrow::Cow;
 use crate::scene::{NodeIndex, MeshKey, CameraKey, LightKey};
 
 #[derive(Debug, Clone)]
 pub struct Node {
     // === Public 属性 (API 友好，直接修改) ===
     pub id: Uuid,
-    pub name: String,
+    pub name: Cow<'static, str>,
     
     // === 场景图结构 ===
     pub parent: Option<NodeIndex>,
@@ -45,7 +46,7 @@ impl Node {
     pub fn new(name: &str) -> Self {
         Self {
             id: Uuid::new_v4(),
-            name: name.to_string(),
+            name: Cow::Owned(name.to_string()),
             parent: None,
             children: Vec::new(),
 

@@ -1,4 +1,5 @@
 use uuid::Uuid;
+use std::borrow::Cow;
 use glam::{Vec4};
 use bitflags::bitflags;
 
@@ -350,7 +351,7 @@ impl MaterialData {
 #[derive(Debug)]
 pub struct Material {
     pub uuid: Uuid,
-    pub name: Option<String>,
+    pub name: Option<Cow<'static, str>>,
     pub data: MaterialData, 
 }
 

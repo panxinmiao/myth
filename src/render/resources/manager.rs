@@ -112,7 +112,7 @@ impl ResourceManager {
 
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
 
-        let dummy_tex = Texture::new_2d("dummy", 1, 1, Some(vec![255, 255, 255, 255]), wgpu::TextureFormat::Rgba8Unorm); 
+        let dummy_tex = Texture::new_2d(Some("dummy"), 1, 1, Some(vec![255, 255, 255, 255]), wgpu::TextureFormat::Rgba8Unorm); 
         let dummy_gpu_image = GpuImage::new(&device, &queue, &dummy_tex.image);
         let dummy_gpu_tex = GpuTexture::new(&dummy_tex, &dummy_gpu_image);
 
@@ -152,10 +152,6 @@ impl ResourceManager {
         self.frame_index
     }
 
-// Buffer Logic
-
-    /// [New] 直接写入 GPU Buffer (Push 模式)
-    /// 适用于 Dynamic Data (Lights, Uniforms)
     pub fn write_buffer(&mut self, buffer_ref: &BufferRef, data: &[u8]) -> u64 {
         let id = buffer_ref.id();
         
@@ -169,7 +165,7 @@ impl ResourceManager {
                 &self.device,
                 data, // 初始数据
                 buffer_ref.usage(),
-                Some(buffer_ref.label())
+                buffer_ref.label()
             );
             gpu_buf.last_used_frame = self.frame_index;
             let buf_id = gpu_buf.id;
@@ -202,7 +198,7 @@ impl ResourceManager {
                 &self.device,
                 bytes,
                 attr.buffer.usage(),
-                Some(attr.buffer.label())
+                attr.buffer.label()
             );
             gpu_buf.last_uploaded_version = attr.version;
             gpu_buf.last_used_frame = self.frame_index;
@@ -210,7 +206,7 @@ impl ResourceManager {
             self.gpu_buffers.insert(id, gpu_buf);
             return buf_id;
         } else {
-            panic!("Geometry attribute buffer {} missing CPU data for upload!", attr.buffer.label());
+            panic!("Geometry attribute buffer {} missing CPU data for upload!", attr.buffer.label().unwrap_or("unnamed"));
         }
     }
 
@@ -457,7 +453,7 @@ impl ResourceManager {
                             &self.device,
                             &empty_data,
                             buffer.usage(),
-                            Some(buffer.label()),
+                            buffer.label(),
                         );
                         gpu_buf.last_used_frame = self.frame_index;
                         self.gpu_buffers.insert(id, gpu_buf);
@@ -725,7 +721,7 @@ impl ResourceManager {
 
             // 2. Sampler (Cached & Deduped)
             // 使用 TextureSampler 配置去查找或创建唯一 Sampler
-            let sampler = self.get_or_create_sampler(&texture_asset.sampler, &texture_asset.name);
+            let sampler = self.get_or_create_sampler(&texture_asset.sampler, texture_asset.name());
             self.gpu_samplers.insert(handle, sampler);
         }
 
@@ -737,14 +733,14 @@ impl ResourceManager {
     }
 
 
-    fn get_or_create_sampler(&mut self, config: &TextureSampler, label: &str) -> wgpu::Sampler {
+    fn get_or_create_sampler(&mut self, config: &TextureSampler, label: Option<&str>) -> wgpu::Sampler {
         if let Some(sampler) = self.sampler_cache.get(config) {
             return sampler.clone();
         }
 
         // Create new sampler
         let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some(&format!("{}_sampler", label)),
+            label: label,
             address_mode_u: config.address_mode_u,
             address_mode_v: config.address_mode_v,
             address_mode_w: config.address_mode_w,
@@ -787,7 +783,7 @@ impl ResourceManager {
                             &self.device,
                             &empty_data,
                             buffer.usage(),
-                            Some(buffer.label()),
+                            buffer.label(),
                         );
                         gpu_buf.last_used_frame = self.frame_index;
                         self.gpu_buffers.insert(id, gpu_buf);

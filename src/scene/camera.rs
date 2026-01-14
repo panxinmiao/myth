@@ -1,10 +1,11 @@
 use glam::{Mat4, Vec3, Vec4, Affine3A};
+use std::borrow::Cow;
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
 pub struct Camera {
     pub uuid: Uuid,
-    pub name: String,
+    pub name: Cow<'static, str>,
 
     // === 投影属性 (Projection Only) ===
     pub projection_type: ProjectionType,
@@ -32,7 +33,7 @@ impl Camera {
     pub fn new_perspective(fov: f32, aspect: f32, near: f32, far: f32) -> Self {
         let mut cam = Self {
             uuid: Uuid::new_v4(),
-            name: "Camera".to_string(),
+            name: Cow::Owned("Camera".to_string()),
             projection_type: ProjectionType::Perspective,
             fov: fov.to_radians(),
             aspect,

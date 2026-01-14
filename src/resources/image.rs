@@ -1,4 +1,6 @@
 use std::sync::{Arc, RwLock};
+#[cfg(debug_assertions)]
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 
@@ -21,7 +23,8 @@ pub struct ImageDescriptor {
 pub struct ImageInner {
     pub id: u64,
     pub uuid: Uuid,
-    pub label: String,
+    #[cfg(debug_assertions)]
+    label: Cow<'static, str>,
 
     // 元数据
     pub descriptor: RwLock<ImageDescriptor>,
@@ -31,6 +34,19 @@ pub struct ImageInner {
     // 版本控制
     pub version: AtomicU64,  // 数据版本 (Data 内容变更时改变)
     pub generation_id: AtomicU64, // 结构版本 (尺寸/格式变更时改变)
+}
+
+impl ImageInner {
+    pub fn label(&self) -> Option<&str> {
+        #[cfg(debug_assertions)]
+        {
+            Some(&self.label)
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            None
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -46,7 +62,7 @@ impl std::hash::Hash for Image {
 
 impl Image {
     pub fn new(
-        label: &str,
+        _label: Option<&str>,
         width: u32, 
         height: u32, 
         depth_or_array_layers: u32,
@@ -65,7 +81,10 @@ impl Image {
         Self(Arc::new(ImageInner {
             id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed),
             uuid: Uuid::new_v4(),
-            label: label.to_string(),
+            #[cfg(debug_assertions)]
+            label: _label
+                .map(|s| Cow::Owned(s.to_string()))
+                .unwrap_or(Cow::Borrowed("Unnamed Image")),
             descriptor: RwLock::new(image_descriptor),
             data: RwLock::new(data),
             version: AtomicU64::new(1),
@@ -77,6 +96,7 @@ impl Image {
     pub fn uuid(&self) -> Uuid { self.0.uuid }
     pub fn version(&self) -> u64 { self.0.version.load(Ordering::Relaxed) }
     pub fn generation_id(&self) -> u64 { self.0.generation_id.load(Ordering::Relaxed) }
+    
 
     /// 更新数据
     pub fn update_data(&self, data: Vec<u8>) {

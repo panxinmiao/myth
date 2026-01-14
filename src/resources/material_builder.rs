@@ -1,4 +1,5 @@
 use glam::{Vec4, Vec3};
+use std::borrow::Cow;
 
 use crate::assets::TextureHandle;
 use crate::resources::material::*;
@@ -9,7 +10,7 @@ pub struct MeshBasicMaterialBuilder {
     map: Option<TextureHandle>,
 
     // Common Properties (默认值)
-    name: Option<String>,
+    name: Option<Cow<'static, str>>,
     transparent: bool,
     opacity: f32,
     depth_write: bool,
@@ -39,7 +40,7 @@ impl MeshBasicMaterialBuilder {
     pub fn map(mut self, map: TextureHandle) -> Self { self.map = Some(map); self }
 
     // --- Common Setters ---
-    pub fn name(mut self, name: &str) -> Self { self.name = Some(name.into()); self }
+    pub fn name(mut self, name: &str) -> Self { self.name = Some(Cow::Owned(name.to_string())); self }
     pub fn transparent(mut self, transparent: bool) -> Self { self.transparent = transparent; self }
     pub fn opacity(mut self, opacity: f32) -> Self { self.opacity = opacity; self }
     pub fn depth_write(mut self, enabled: bool) -> Self { self.depth_write = enabled; self }
@@ -83,7 +84,7 @@ pub struct MeshStandardMaterialBuilder {
     ao_map: Option<TextureHandle>,
 
     // Common
-    name: Option<String>,
+    name: Option<Cow<'static, str>>,
     transparent: bool,
     opacity: f32,
     depth_write: bool,
@@ -125,7 +126,7 @@ impl MeshStandardMaterialBuilder {
     pub fn ao_map(mut self, map: TextureHandle) -> Self { self.ao_map = Some(map); self }
 
     // --- Common Setters ---
-    pub fn name(mut self, name: &str) -> Self { self.name = Some(name.into()); self }
+    pub fn name(mut self, name: &str) -> Self { self.name = Some(Cow::Owned(name.to_string())); self }
     pub fn transparent(mut self, transparent: bool) -> Self { self.transparent = transparent; self }
     pub fn opacity(mut self, opacity: f32) -> Self { self.opacity = opacity; self }
     pub fn depth_write(mut self, enabled: bool) -> Self { self.depth_write = enabled; self }

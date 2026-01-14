@@ -22,7 +22,7 @@ impl GpuImage {
         };
 
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some(&image.label),
+            label: image.label(),
             size,
             mip_level_count: desc.mip_level_count,
             sample_count: 1,

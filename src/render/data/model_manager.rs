@@ -63,7 +63,7 @@ impl ModelBufferManager {
         if bytes.len() > self.model_buffer.size() {
             // 扩容为当前所需的两倍，避免频繁扩容
             let new_cap = bytes.len() * 2;
-            self.model_buffer = BufferRef::with_capacity(new_cap, self.model_buffer.usage(), Some(self.model_buffer.label()));
+            self.model_buffer = BufferRef::with_capacity(new_cap, self.model_buffer.usage(), self.model_buffer.label());
         }
 
         // 2. 同步 GPU (写入并获取 GPU 资源 ID)

@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 use std::sync::Arc;
-use std::path::{Path};
 use std::sync::OnceLock;
 use minijinja::{Environment, Error, ErrorKind, syntax::SyntaxConfig};
 use rust_embed::RustEmbed;
@@ -58,7 +57,7 @@ fn shader_loader(name: &str) -> Result<Option<String>, Error> {
     // 策略 A: 优先尝试物理文件 (Debug Friendly)
     #[cfg(debug_assertions)] 
     {
-        let path = Path::new("src/render/pipeline/shaders").join(filename.as_ref());
+        let path = std::path::Path::new("src/render/pipeline/shaders").join(filename.as_ref());
         if path.exists() {
             match std::fs::read_to_string(&path) {
                 Ok(source) => return Ok(Some(source)),

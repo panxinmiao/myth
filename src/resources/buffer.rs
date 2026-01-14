@@ -1,4 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(debug_assertions)]
+use std::borrow::Cow;
 use bytemuck::Pod;
 
 static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(0);
@@ -7,17 +9,20 @@ static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(0);
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BufferRef {
     pub id: u64,
-    pub label: String,
+    #[cfg(debug_assertions)]
+    label: Cow<'static, str>,
     pub usage: wgpu::BufferUsages,
     pub size: usize, // 记录大小，用于创建时的参考
 }
 
 impl BufferRef {
-    /// 只是生成 ID 和元数据，不再持有数据
-    pub fn new(size: usize, usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
+    pub fn new(size: usize, usage: wgpu::BufferUsages, _label: Option<&str>) -> Self {
         Self {
             id: NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed),
-            label: label.unwrap_or("Buffer").to_string(),
+            #[cfg(debug_assertions)]
+            label: _label
+                .map(|s| Cow::Owned(s.to_string()))
+                .unwrap_or(Cow::Borrowed("Unnamed Buffer")),
             usage,
             size,
         }
@@ -46,6 +51,15 @@ impl BufferRef {
 
     pub fn id(&self) -> u64 { self.id }
     pub fn usage(&self) -> wgpu::BufferUsages { self.usage }
-    pub fn label(&self) -> &str { &self.label }
+    pub fn label(&self) -> Option<&str> {
+        #[cfg(debug_assertions)]
+        {
+            Some(&self.label)
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            None
+        }
+    }
     pub fn size(&self) -> usize { self.size }
 }

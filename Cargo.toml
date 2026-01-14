@@ -20,7 +20,7 @@ slotmap = { version = "1.1.1", features = ["serde"] }
 minijinja = {version ="2.14", features = ["loader", "custom_syntax"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-rust-embed = "8.9"
+rust-embed = "8.10"
 
 pollster = "0.4" 
 # 日志处理
