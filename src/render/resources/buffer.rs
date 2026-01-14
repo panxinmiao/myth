@@ -15,6 +15,7 @@ pub struct GpuBuffer {
 
     // --- 状态追踪 ---
     pub version: u64,        // 数据版本 (用于基于版本的更新，如 Geometry)
+    pub last_uploaded_version: u64, // 最后上传的版本号
     
     // --- 影子副本 (用于 Diff 更新) ---
     // 仅对于 Uniform Buffer 或小型动态 Buffer 开启，用于避免重复上传相同数据
@@ -45,6 +46,7 @@ impl GpuBuffer {
             label: label.unwrap_or("Buffer").to_string(),
             last_used_frame: 0,
             version: 0,
+            last_uploaded_version: 0,
             shadow_data: None,
         }
     }

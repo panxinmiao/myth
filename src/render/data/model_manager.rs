@@ -37,13 +37,14 @@ pub struct ObjectBindingData {
 impl ModelBufferManager {
     pub fn new(resource_manager: &mut ResourceManager) -> Self {
         let initial_capacity = 128;
-        let initial_data = vec![DynamicModelUniforms::default(); initial_capacity];
-        let model_buffer = BufferRef::new(
-            &initial_data,
+        let model_buffer = BufferRef::with_capacity(
+            initial_capacity * std::mem::size_of::<DynamicModelUniforms>(),
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             Some("GlobalModelBuffer")
         );
-        let last_model_buffer_id = resource_manager.prepare_buffer(&model_buffer);
+        let initial_data = vec![DynamicModelUniforms::default(); initial_capacity];
+        let bytes = bytemuck::cast_slice(&initial_data);
+        let last_model_buffer_id = resource_manager.write_buffer(&model_buffer, bytes);
 
         Self {
             model_buffer,
@@ -56,12 +57,17 @@ impl ModelBufferManager {
     pub fn write_uniforms(&mut self, resource_manager: &mut ResourceManager, data: &[DynamicModelUniforms]) {
         if data.is_empty() { return; }
 
-        // 1. 更新 CPU (自动扩容)
-        self.model_buffer.update(data);
+        let bytes = bytemuck::cast_slice(data);
 
-        // 2. 同步 GPU (如果扩容，ID 会变)
-        let buffer_ref = &self.model_buffer;
-        let new_id = resource_manager.prepare_buffer(buffer_ref);
+        // 1. 如果长度超过当前 capacity，需要替换 BufferRef
+        if bytes.len() > self.model_buffer.size() {
+            // 扩容为当前所需的两倍，避免频繁扩容
+            let new_cap = bytes.len() * 2;
+            self.model_buffer = BufferRef::with_capacity(new_cap, self.model_buffer.usage(), Some(self.model_buffer.label()));
+        }
+
+        // 2. 同步 GPU (写入并获取 GPU 资源 ID)
+        let new_id = resource_manager.write_buffer(&self.model_buffer, bytes);
         if new_id != self.last_model_buffer_id {
             // Buffer 重建了！所有 BindGroup 失效 (因为它们引用了旧 Buffer)
             log::info!("Model Buffer resized ({} -> {}), clearing ObjectBindGroup cache", self.last_model_buffer_id, new_id);

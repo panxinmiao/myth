@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages};
 use glam::Vec3;
@@ -7,9 +9,17 @@ use bitflags::bitflags;
 
 use crate::resources::buffer::{BufferRef};
 
+/// Attribute holds CPU-side data (Option<Arc<Vec<u8>>>) and metadata.
 #[derive(Debug, Clone)]
 pub struct Attribute {
     pub buffer: BufferRef,
+    
+    /// CPU-side data shared via Arc (supports interleaved buffers)
+    pub data: Option<Arc<Vec<u8>>>,
+
+    /// Data version for change detection
+    pub version: u64,
+    
     pub format: VertexFormat,
     pub offset: u64,
     pub count: u32,
@@ -17,52 +27,119 @@ pub struct Attribute {
     pub step_mode: VertexStepMode,
 }
 
+static NEXT_ATTR_VERSION: AtomicU64 = AtomicU64::new(1);
+
 impl Attribute {
+    /// 创建 Planar (非交错) 属性
     pub fn new_planar<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
-        let stride = std::mem::size_of::<T>() as u64;
+        let raw_data = bytemuck::cast_slice(data).to_vec();
+        let size = raw_data.len();
+        
+        // 创建句柄
         let buffer_ref = BufferRef::new(
-            data, 
+            size,
             BufferUsages::VERTEX | BufferUsages::COPY_DST, 
             Some("GeometryVertexAttr")
         );
 
         Self {
             buffer: buffer_ref,
+            data: Some(Arc::new(raw_data)),
+            version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
             format,
             offset: 0,
             count: data.len() as u32,
-            stride,
+            stride: std::mem::size_of::<T>() as u64,
             step_mode: VertexStepMode::Vertex,
         }
     }
 
+    /// 创建 Instance 属性
     pub fn new_instanced<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
-        let stride = std::mem::size_of::<T>() as u64;
+        let raw_data = bytemuck::cast_slice(data).to_vec();
+        let size = raw_data.len();
+        
         let buffer_ref = BufferRef::new(
-            data, 
+            size,
             BufferUsages::VERTEX | BufferUsages::COPY_DST, 
             Some("GeometryInstanceAttr")
         );
 
         Self {
             buffer: buffer_ref,
+            data: Some(Arc::new(raw_data)),
+            version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
             format,
             offset: 0,
             count: data.len() as u32,
-            stride,
+            stride: std::mem::size_of::<T>() as u64,
             step_mode: VertexStepMode::Instance,
         }
     }
 
+    /// 创建 Interleaved (交错) 属性
+    /// 多个 Attribute 可以共享同一个 BufferRef 和 data (Arc)
     pub fn new_interleaved(
         buffer: BufferRef, 
+        data: Option<Arc<Vec<u8>>>,
         format: VertexFormat, 
         offset: u64, 
         count: u32,
         stride: u64,
         step_mode: VertexStepMode
     ) -> Self {
-        Self { buffer, format, offset, count, stride, step_mode }
+        Self { 
+            buffer, 
+            data,
+            version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
+            format, 
+            offset, 
+            count, 
+            stride, 
+            step_mode 
+        }
+    }
+
+    /// 原地更新数据 (保留 ID，复用显存)
+    /// 使用 Arc::make_mut 实现 Copy-On-Write
+    pub fn update_data<T: bytemuck::Pod>(&mut self, new_data: &[T]) {
+        if let Some(arc_vec) = &mut self.data {
+            // Arc::make_mut：如果只有一个引用，直接修改；否则克隆后修改
+            let vec = Arc::make_mut(arc_vec);
+            
+            let bytes: &[u8] = bytemuck::cast_slice(new_data);
+            
+            // 如果长度变了，需要调整 Vec
+            if vec.len() != bytes.len() {
+                vec.resize(bytes.len(), 0);
+            }
+            vec.copy_from_slice(bytes);
+            
+            // 更新元数据
+            self.count = new_data.len() as u32;
+            self.version = NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// 局部更新属性数据
+    pub fn update_region<T: bytemuck::Pod>(
+        &mut self, 
+        offset_bytes: u64, 
+        new_data: &[T]
+    ) {
+        if let Some(arc_vec) = &mut self.data {
+            let vec = Arc::make_mut(arc_vec);
+            let bytes = bytemuck::cast_slice(new_data);
+            
+            let start = offset_bytes as usize;
+            let end = start + bytes.len();
+            
+            // 边界检查
+            if end <= vec.len() {
+                vec[start..end].copy_from_slice(bytes);
+                self.version = NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed);
+            }
+        }
     }
 }
 
@@ -160,14 +237,19 @@ impl Geometry {
     }
 
     pub fn set_indices(&mut self, indices: &[u16]) {
+        let raw_data = bytemuck::cast_slice(indices).to_vec();
+        let size = raw_data.len();
+        
         let buffer_ref = BufferRef::new(
-            indices, 
+            size,
             BufferUsages::INDEX | BufferUsages::COPY_DST, 
             Some("IndexBuffer")
         );
 
         self.index_attribute = Some(Attribute {
             buffer: buffer_ref,
+            data: Some(Arc::new(raw_data)),
+            version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
             format: VertexFormat::Uint16,
             offset: 0,
             count: indices.len() as u32,
@@ -178,14 +260,19 @@ impl Geometry {
     }
 
     pub fn set_indices_u32(&mut self, indices: &[u32]) {
+        let raw_data = bytemuck::cast_slice(indices).to_vec();
+        let size = raw_data.len();
+        
         let buffer_ref = BufferRef::new(
-            indices, 
+            size,
             BufferUsages::INDEX | BufferUsages::COPY_DST, 
             Some("IndexBuffer")
         );
 
         self.index_attribute = Some(Attribute {
             buffer: buffer_ref,
+            data: Some(Arc::new(raw_data)),
+            version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
             format: VertexFormat::Uint32,
             offset: 0,
             count: indices.len() as u32,
@@ -201,7 +288,12 @@ impl Geometry {
             None => return,
         };
 
-        let data = pos_attr.buffer.peek_data(|d| d.to_vec()).unwrap_or_default();
+        // 从 Attribute 的 data 中获取数据
+        let data = match &pos_attr.data {
+            Some(arc_data) => arc_data.as_ref().clone(),
+            None => return,
+        };
+        
         let stride = pos_attr.stride as usize;
         let offset = pos_attr.offset as usize;
         let count = pos_attr.count as usize;
@@ -257,6 +349,53 @@ impl Geometry {
             center: centroid,
             radius: max_dist_sq.sqrt(),
         });
+    }
+
+    /// 设置交错属性 (Interleaved Attributes)
+    /// 从一个交错数组中创建多个共享同一个 Buffer 的 Attribute
+    pub fn set_interleaved_attributes(
+        &mut self,
+        interleaved_data: Vec<u8>, // 原始交错数据
+        stride: u64,
+        attributes: Vec<(&str, VertexFormat, u64)> // (名字, 格式, 偏移量)
+    ) {
+        let shared_data = Arc::new(interleaved_data);
+        let count = (shared_data.len() as u64 / stride) as u32;
+
+        let shared_buffer_ref = BufferRef::new(
+            shared_data.len(),
+            wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            Some("InterleavedBuffer")
+        );
+
+        // Create attributes sharing the same buffer and data
+        for (name, format, offset) in attributes {
+            let attr = Attribute {
+                buffer: shared_buffer_ref.clone(), 
+                data: Some(shared_data.clone()), 
+
+                version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
+                format,
+                offset,
+                stride,
+                count,
+                step_mode: VertexStepMode::Vertex,
+            };
+
+            self.set_attribute(name, attr);
+        }
+    }
+
+    /// 局部更新属性数据
+    pub fn update_attribute_region<T: bytemuck::Pod>(
+        &mut self, 
+        name: &str, 
+        offset_bytes: u64, 
+        data: &[T]
+    ) {
+        if let Some(attr) = self.attributes.get_mut(name) {
+            attr.update_region(offset_bytes, data);
+        }
     }
 
     pub fn get_features(&self) -> GeometryFeatures {

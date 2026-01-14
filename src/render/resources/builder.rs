@@ -21,7 +21,7 @@ pub struct ResourceBuilder<'a> {
     pub names: Vec<String>,
     pub struct_generators: Vec<Option<WgslStructName>>,
     // 自动维护 binding index
-    pub next_binding_index: u32,
+    next_binding_index: u32,
 }
 
 impl<'a> ResourceBuilder<'a> {

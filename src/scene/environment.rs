@@ -43,6 +43,7 @@ pub struct Environment {
     settings: EnvironmentSettings,
     
     pub lights: Vec<Light>,
+    pub(crate) gpu_light_data: Vec<GpuLightStorage>, 
     pub(crate) light_storage_buffer: BufferRef,
     
     pub uniform_version: u64,
@@ -58,8 +59,9 @@ impl Environment {
             bindings: EnvironmentBindings::default(),
             settings: EnvironmentSettings::default(),
             lights: Vec::new(),
-            light_storage_buffer: BufferRef::new_with_capacity(
-                std::mem::size_of::<GpuLightStorage>() * 32, 
+            gpu_light_data: Vec::new(), // 初始化为空
+            light_storage_buffer: BufferRef::with_capacity(
+                std::mem::size_of::<GpuLightStorage>() * 32, // 预估大小
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, 
                 Some("Light Storage Buffer")
             ),
@@ -103,10 +105,23 @@ impl Environment {
 
     pub fn update_lights(&mut self, gpu_lights: Vec<GpuLightStorage>) {
         if gpu_lights.is_empty() {
+            self.gpu_light_data.clear();
+            self.uniforms_mut().num_lights = 0;
             return;
         }
 
-        self.light_storage_buffer.update(&gpu_lights);
-        self.uniforms_mut().num_lights = gpu_lights.len() as u32;
+        self.gpu_light_data = gpu_lights;
+        self.uniforms_mut().num_lights = self.gpu_light_data.len() as u32;
+
+        // Check capacity and resize if needed (2x growth)
+        let current_bytes = std::mem::size_of_val(self.gpu_light_data.as_slice());
+        if current_bytes > self.light_storage_buffer.size() {
+            let new_capacity = current_bytes * 2;
+            self.light_storage_buffer = BufferRef::with_capacity(
+                new_capacity,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                Some("Light Storage Buffer (Resized)")
+            );
+        }
     }
 }

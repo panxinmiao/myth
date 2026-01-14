@@ -152,40 +152,66 @@ impl ResourceManager {
         self.frame_index
     }
 
-    // ========================================================================
-    // 通用 Buffer Logic
-    // ========================================================================
+// Buffer Logic
 
-    /// 准备 GPU Buffer：如果不存在则创建，如果版本过期则更新
-    /// 返回当前 GPU 资源的物理 ID (用于检测 Resize)
-    pub fn prepare_buffer(&mut self, buffer_ref: &BufferRef) -> u64 {
+    /// [New] 直接写入 GPU Buffer (Push 模式)
+    /// 适用于 Dynamic Data (Lights, Uniforms)
+    pub fn write_buffer(&mut self, buffer_ref: &BufferRef, data: &[u8]) -> u64 {
         let id = buffer_ref.id();
+        
+        if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
+            // 直接写，无锁！
+            self.queue.write_buffer(&gpu_buf.buffer, 0, data);
+            gpu_buf.last_used_frame = self.frame_index;
+            return gpu_buf.id;
+        } else {
+            let mut gpu_buf = GpuBuffer::new(
+                &self.device,
+                data, // 初始数据
+                buffer_ref.usage(),
+                Some(buffer_ref.label())
+            );
+            gpu_buf.last_used_frame = self.frame_index;
+            let buf_id = gpu_buf.id;
+            self.gpu_buffers.insert(id, gpu_buf);
+            return buf_id;
+        }
+    }
+
+    /// [Modified] 准备静态 Buffer (Pull 模式变体)
+    /// 从 Attribute 中提取数据并上传
+    pub fn prepare_attribute_buffer(&mut self, attr: &crate::resources::geometry::Attribute) -> u64 {
+        let id = attr.buffer.id();
 
         if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
-            if let Some(new_data) = buffer_ref.peek_data(|d| d.to_vec()) {
-                gpu_buf.update_with_data(&self.device, &self.queue, &new_data);
+            // 检查版本，如果数据更新了则重新上传
+            if attr.version > gpu_buf.last_uploaded_version {
+                if let Some(data) = &attr.data {
+                    let bytes: &[u8] = data.as_ref();
+                    self.queue.write_buffer(&gpu_buf.buffer, 0, bytes);
+                    gpu_buf.last_uploaded_version = attr.version;
+                }
             }
             gpu_buf.last_used_frame = self.frame_index;
             return gpu_buf.id;
         }
 
-        let data = buffer_ref.peek_data(|d| d.to_vec()).unwrap_or_default();
-
-        let mut gpu_buf = GpuBuffer::new(
-            &self.device,
-            &data,
-            buffer_ref.usage(),
-            Some(buffer_ref.label())
-        );
-
-        if buffer_ref.usage().contains(wgpu::BufferUsages::UNIFORM) {
-            gpu_buf.enable_shadow_copy();
+        if let Some(data) = &attr.data {
+             let bytes: &[u8] = data.as_ref();
+             let mut gpu_buf = GpuBuffer::new(
+                &self.device,
+                bytes,
+                attr.buffer.usage(),
+                Some(attr.buffer.label())
+            );
+            gpu_buf.last_uploaded_version = attr.version;
+            gpu_buf.last_used_frame = self.frame_index;
+            let buf_id = gpu_buf.id;
+            self.gpu_buffers.insert(id, gpu_buf);
+            return buf_id;
+        } else {
+            panic!("Geometry attribute buffer {} missing CPU data for upload!", attr.buffer.label());
         }
-
-        gpu_buf.last_used_frame = self.frame_index;
-        let buf_id = gpu_buf.id;
-        self.gpu_buffers.insert(id, gpu_buf);
-        buf_id
     }
 
     pub fn prepare_uniform_slot_data(
@@ -215,15 +241,13 @@ impl ResourceManager {
         assets: &AssetServer, 
         handle: GeometryHandle
     ) -> Option<&GPUGeometry> {
-
-
         let geometry = assets.get_geometry(handle)?;
 
         let mut buffer_ids_changed = false;
 
-        // 1. 统一处理 Vertex Buffers
+        // 1. 统一处理 Vertex Buffers (使用新的 prepare_attribute_buffer)
         for attr in geometry.attributes.values() {
-            let new_id = self.prepare_buffer(&attr.buffer);
+            let new_id = self.prepare_attribute_buffer(attr);
 
             if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
                 if !gpu_geo.vertex_buffer_ids.contains(&new_id) {
@@ -235,7 +259,7 @@ impl ResourceManager {
 
         // 2. 检查 Index Buffer
         if let Some(indices) = &geometry.index_attribute {
-            let new_id = self.prepare_buffer(&indices.buffer);
+            let new_id = self.prepare_attribute_buffer(indices);
              if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
                  if let Some((_, _, _, old_id)) = gpu_geo.index_buffer {
                      if old_id != new_id { buffer_ids_changed = true; }
@@ -361,9 +385,7 @@ impl ResourceManager {
         hasher.finish()
     }
 
-    // ========================================================================
-    // Material Logic
-    // ========================================================================
+// Material Logic
     pub fn prepare_material(
         &mut self, 
         assets: &AssetServer, 
@@ -371,33 +393,26 @@ impl ResourceManager {
     ) -> Option<&GpuMaterial> {
         let material = assets.get_material(handle)?;
 
-        // === 三级版本控制检查 ===
         let uniform_ver = material.data.uniform_version();
         let binding_ver = material.data.binding_version();
         let layout_ver = material.data.layout_version();
 
-        // 情况 A: 全新材质，走完整构建流程
         if !self.gpu_materials.contains_key(handle) {
             return Some(self.build_full_material(assets, handle, &material));
         }
 
         let gpu_mat = self.gpu_materials.get(handle).unwrap();
-
-        // 情况 B: 检查更新（热路径）
         
-        // 1. 检查最严重的：Layout/Pipeline 变化
         if layout_ver != gpu_mat.last_layout_version {
             // 重建 Pipeline + BindGroup + 上传数据
             return Some(self.build_full_material(assets, handle, &material));
         }
 
-        // 2. 检查次严重的：Binding 变化
         if binding_ver != gpu_mat.last_binding_version {
             // 只需重建 BindGroup（Pipeline 复用）
             return Some(self.rebuild_bind_group(handle, &material));
         }
 
-        // 3. 检查最轻微的：数据变化
         if uniform_ver != gpu_mat.last_data_version {
             // 极快：直接写入 GPU Buffer
             self.update_material_uniforms(handle, &material);
@@ -430,7 +445,23 @@ impl ResourceManager {
                     uniform_buffers.push(buf_id);
                 },
                 BindingResource::Buffer { buffer, .. } => {
-                    self.prepare_buffer(buffer);
+                    // 适配新架构：如果是 Attribute 对应的 BufferRef，
+                    // prepare_buffer 已经被替换为 prepare_attribute_buffer 在几处调用。
+                    // 这里仍然保留对 Buffer 类型的懒处理：如果需要上传数据，应由调用方显式调用 write_buffer。
+                    // 但为了兼容旧的 BindingResource::Buffer，我们确保 GPU buffer 存在（仅创建空占位）
+                    let id = buffer.id();
+                    if !self.gpu_buffers.contains_key(&id) {
+                        // 创建一个空的 GPU buffer 占位（大小参考 buffer.size）
+                        let empty_data = vec![0u8; buffer.size()];
+                        let mut gpu_buf = GpuBuffer::new(
+                            &self.device,
+                            &empty_data,
+                            buffer.usage(),
+                            Some(buffer.label()),
+                        );
+                        gpu_buf.last_used_frame = self.frame_index;
+                        self.gpu_buffers.insert(id, gpu_buf);
+                    }
                 },
                 BindingResource::Texture(handle_opt) => {
                     if let Some(handle) = handle_opt {
@@ -537,6 +568,7 @@ impl ResourceManager {
                 }
             },
         }
+
         
         // 更新版本号
         if let Some(gpu_mat) = self.gpu_materials.get_mut(handle) {
@@ -552,27 +584,19 @@ impl ResourceManager {
 
     pub fn get_or_create_layout(&mut self, entries: &[wgpu::BindGroupLayoutEntry]) -> (wgpu::BindGroupLayout, u64) {
 
-        // 1. 查缓存
-        // HashMap 允许我们用 slice (&[T]) 去查询 Vec<T> 的 Key，非常高效
         if let Some(layout) = self.layout_cache.get(entries) {
             return layout.clone();
         }
 
-        // 2. 创建 Layout
-        // label 可以设为 None，或者根据 entries 生成一个简短的签名
         let layout = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Cached BindGroupLayout"),
             entries,
         });
 
-        // [新增] 生成唯一 ID
         let id = generate_resource_id();
 
-        // 3. 存入缓存
-        // 这里需要 clone 一份 entries 作为 Key 存起来
         self.layout_cache.insert(entries.to_vec(), (layout.clone(), id));
         
-        // 返回
         (layout, id)
     }
 
@@ -742,20 +766,38 @@ impl ResourceManager {
         render_state.define_bindings(&mut builder);
         env.define_bindings(&mut builder);
 
-        // ✅ 通用地准备所有资源（从 BindingResource 中获取信息）
+        // 通用地准备所有资源（从 BindingResource 中获取信息）
         for resource in &builder.resources {
             match resource {
                 BindingResource::UniformSlot { slot_id, data, label } => {
                     self.prepare_uniform_slot_data(*slot_id, data, label);
                 },
                 BindingResource::Buffer { buffer, .. } => {
-                    self.prepare_buffer(buffer);
+                    // 确保 GPU buffer 占位存在（对于纯句柄式 BufferRef）
+            // 如果 Environment 有灯光数据，主动推送到 GPU
+            if !env.gpu_light_data.is_empty() {
+                let light_bytes = bytemuck::cast_slice(&env.gpu_light_data);
+                let _ = self.write_buffer(&env.light_storage_buffer, light_bytes);
+            }
+
+                    let id = buffer.id();
+                    if !self.gpu_buffers.contains_key(&id) {
+                        let empty_data = vec![0u8; buffer.size()];
+                        let mut gpu_buf = GpuBuffer::new(
+                            &self.device,
+                            &empty_data,
+                            buffer.usage(),
+                            Some(buffer.label()),
+                        );
+                        gpu_buf.last_used_frame = self.frame_index;
+                        self.gpu_buffers.insert(id, gpu_buf);
+                    }
                 },
                 _ => {} // Texture/Sampler 不需要在这里处理
             }
         }
 
-        // ✅ 计算资源hash（资源已准备好）
+        // 计算资源 hash（资源已准备好）
         let resource_hash = self.compute_resource_hash(&builder.resources);
 
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
