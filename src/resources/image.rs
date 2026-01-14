@@ -100,13 +100,13 @@ impl Image {
 
     /// 更新数据
     pub fn update_data(&self, data: Vec<u8>) {
-        let mut lock = self.0.data.write().unwrap();
+        let mut lock = self.0.data.write().expect("Image data lock poisoned");
         *lock = Some(data);
         self.0.version.fetch_add(1, Ordering::Relaxed);
     }
 
     pub fn resize(&self, width: u32, height: u32) {
-        let mut desc = self.0.descriptor.write().unwrap();
+        let mut desc = self.0.descriptor.write().expect("Image descriptor lock poisoned");
         
         // 1. 检查是否真的变了 (避免无谓的 GPU 重建)
         if desc.width == width && desc.height == height {
@@ -122,7 +122,7 @@ impl Image {
     }
 
     pub fn set_format(&self, format: wgpu::TextureFormat) {
-        let mut desc = self.0.descriptor.write().unwrap();
+        let mut desc = self.0.descriptor.write().expect("Image descriptor lock poisoned");
         if desc.format != format {
             desc.format = format;
             self.0.generation_id.fetch_add(1, Ordering::Relaxed);

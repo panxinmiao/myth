@@ -62,8 +62,7 @@ impl App {
     pub fn run(mut self) -> anyhow::Result<()> {
         let event_loop = EventLoop::new()?;
         event_loop.set_control_flow(ControlFlow::Poll);
-        event_loop.run_app(&mut self)?;
-        Ok(())
+        event_loop.run_app(&mut self).map_err(Into::into)
     }
 
     fn update(&mut self) {
@@ -103,13 +102,17 @@ impl ApplicationHandler for App {
             .with_title(self.title.clone())
             .with_inner_size(winit::dpi::LogicalSize::new(1280.0, 720.0));
 
-        let window = event_loop.create_window(window_attributes).unwrap();
+        let window = event_loop.create_window(window_attributes).expect("Failed to create window");
         let window = Arc::new(window);
         self.window = Some(window.clone());
 
         // 延迟初始化 Renderer
         log::info!("Initializing Renderer Backend...");
-        pollster::block_on(self.renderer.init(window.clone()));
+
+        if let Err(e) = pollster::block_on(self.renderer.init(window)) {
+            log::error!("Fatal Renderer Error: {}", e);
+            event_loop.exit(); 
+        }
     }
 
     fn window_event(

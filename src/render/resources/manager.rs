@@ -206,7 +206,22 @@ impl ResourceManager {
             self.gpu_buffers.insert(id, gpu_buf);
             return buf_id;
         } else {
-            panic!("Geometry attribute buffer {} missing CPU data for upload!", attr.buffer.label().unwrap_or("unnamed"));
+            log::error!("Geometry attribute buffer {:?} missing CPU data for upload!", attr.buffer.label());
+            // 策略 A: 如果之前有缓存，复用旧的（如果有的话）
+            if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
+                return gpu_buf.id;
+            }
+            // 策略 B: 创建一个最小的空 Buffer 作为占位符
+            let dummy_data = [0u8; 1];
+            let gpu_buf = GpuBuffer::new(
+                &self.device,
+                &dummy_data,
+                attr.buffer.usage(),
+                Some("Dummy Fallback Buffer")
+            );
+            let buf_id = gpu_buf.id;
+            self.gpu_buffers.insert(id, gpu_buf);
+            return buf_id;
         }
     }
 
@@ -386,27 +401,32 @@ impl ResourceManager {
         &mut self, 
         assets: &AssetServer, 
         handle: MaterialHandle
-    ) -> Option<&GpuMaterial> {
-        let material = assets.get_material(handle)?;
+    ) {
+        let Some(material) = assets.get_material(handle) else{
+            log::warn!("Material {:?} not found in AssetServer.", handle);
+            return;
+        };
 
         let uniform_ver = material.data.uniform_version();
         let binding_ver = material.data.binding_version();
         let layout_ver = material.data.layout_version();
 
         if !self.gpu_materials.contains_key(handle) {
-            return Some(self.build_full_material(assets, handle, &material));
+            self.build_full_material(assets, handle, &material);
         }
 
-        let gpu_mat = self.gpu_materials.get(handle).unwrap();
+        let gpu_mat = self.gpu_materials.get(handle).expect("gpu material should exist.");
         
         if layout_ver != gpu_mat.last_layout_version {
             // 重建 Pipeline + BindGroup + 上传数据
-            return Some(self.build_full_material(assets, handle, &material));
+            self.build_full_material(assets, handle, &material);
+            return;
         }
 
         if binding_ver != gpu_mat.last_binding_version {
             // 只需重建 BindGroup（Pipeline 复用）
-            return Some(self.rebuild_bind_group(handle, &material));
+            self.rebuild_bind_group(assets, handle, &material);
+            return;
         }
 
         if uniform_ver != gpu_mat.last_data_version {
@@ -415,36 +435,27 @@ impl ResourceManager {
         }
 
         // 更新帧计数
-        let gpu_mat = self.gpu_materials.get_mut(handle).unwrap();
+        let gpu_mat = self.gpu_materials.get_mut(handle).expect("gpu material should exist.");
         gpu_mat.last_used_frame = self.frame_index;
         
-        Some(gpu_mat)
+        // Some(gpu_mat)
     }
-    
-    /// 完整构建材质（冷路径）
-    fn build_full_material(
+
+    fn prepare_binding_resources(
         &mut self,
         assets: &AssetServer,
-        handle: MaterialHandle,
-        material: &crate::resources::material::Material,
-    ) -> &GpuMaterial {
-        let mut builder = ResourceBuilder::new();
-        material.define_bindings(&mut builder);
-
+        resources: &[BindingResource],
+    ) -> Vec<u64> {
         // 准备所有资源
         let mut uniform_buffers = Vec::new();
         
-        for resource in &builder.resources {
+        for resource in resources {
             match resource {
                 BindingResource::UniformSlot { slot_id, data, label } => {
                     let buf_id = self.prepare_uniform_slot_data(*slot_id, data, label);
                     uniform_buffers.push(buf_id);
                 },
                 BindingResource::Buffer { buffer, .. } => {
-                    // 适配新架构：如果是 Attribute 对应的 BufferRef，
-                    // prepare_buffer 已经被替换为 prepare_attribute_buffer 在几处调用。
-                    // 这里仍然保留对 Buffer 类型的懒处理：如果需要上传数据，应由调用方显式调用 write_buffer。
-                    // 但为了兼容旧的 BindingResource::Buffer，我们确保 GPU buffer 存在（仅创建空占位）
                     let id = buffer.id();
                     if !self.gpu_buffers.contains_key(&id) {
                         // 创建一个空的 GPU buffer 占位（大小参考 buffer.size）
@@ -463,12 +474,24 @@ impl ResourceManager {
                     if let Some(handle) = handle_opt {
                         self.prepare_texture(assets, *handle);
                     }
-                    // Texture 准备需要 AssetServer，这里暂时跳过
-                    // 实际实现应该通过参数传递 AssetServer
                 },
-                BindingResource::Sampler(_) | BindingResource::_Phantom(_) => {},
+                _ => {}
             }
         }
+        uniform_buffers
+    }
+    
+    /// 完整构建材质（冷路径）
+    fn build_full_material(
+        &mut self,
+        assets: &AssetServer,
+        handle: MaterialHandle,
+        material: &crate::resources::material::Material,
+    ) -> &GpuMaterial {
+        let mut builder = ResourceBuilder::new();
+        material.define_bindings(&mut builder);
+
+        let uniform_buffers = self.prepare_binding_resources(assets, &builder.resources);
 
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
         let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
@@ -488,23 +511,24 @@ impl ResourceManager {
         };
         
         self.gpu_materials.insert(handle, gpu_mat);
-        self.gpu_materials.get(handle).unwrap()
+        self.gpu_materials.get(handle).expect("Just inserted")
     }
     
     /// 重建 BindGroup（中路径）
     fn rebuild_bind_group(
         &mut self,
+        assets: &AssetServer,
         handle: MaterialHandle,
         material: &crate::resources::material::Material,
     ) -> &GpuMaterial {
         let mut builder = ResourceBuilder::new();
         material.define_bindings(&mut builder);
 
-        // 准备资源（纹理可能变了）- 这里需要 AssetServer，暂时跳过
+        let uniform_buffers = self.prepare_binding_resources(assets, &builder.resources);
         
         // 先获取 layout 的克隆（避免借用冲突）
         let layout = {
-            let gpu_mat = self.gpu_materials.get(handle).unwrap();
+            let gpu_mat = self.gpu_materials.get(handle).expect("gpu material should exist.");
             gpu_mat.layout.clone()
         };
         
@@ -513,14 +537,15 @@ impl ResourceManager {
         
         // 更新 gpu_mat
         {
-            let gpu_mat = self.gpu_materials.get_mut(handle).unwrap();
+            let gpu_mat = self.gpu_materials.get_mut(handle).expect("gpu material should exist.");
             gpu_mat.bind_group = bind_group;
             gpu_mat.bind_group_id = bg_id;
+            gpu_mat.uniform_buffers = uniform_buffers;
             gpu_mat.last_binding_version = material.data.binding_version();
             gpu_mat.last_used_frame = self.frame_index;
         }
         
-        self.gpu_materials.get(handle).unwrap()
+        self.gpu_materials.get(handle).expect("gpu material should exist.")
     }
     
     /// 更新 Uniform 数据（热路径）
@@ -669,7 +694,7 @@ impl ResourceManager {
     // ========================================================================
 
     // 1. 准备 Image (Internal)
-    fn prepare_image(&mut self, image: &Image) -> &GpuImage {
+    fn prepare_image(&mut self, image: &Image){
         let id = image.id();
         if let Some(gpu_img) = self.gpu_images.get_mut(&id) {
             // 更新 (内部会检查 version 和 generation)
@@ -680,7 +705,6 @@ impl ResourceManager {
             let gpu_img = GpuImage::new(&self.device, &self.queue, image);
             self.gpu_images.insert(id, gpu_img);
         }
-        self.gpu_images.get(&id).unwrap()
     }
 
     // 2. 准备 Texture (Public)
@@ -688,14 +712,20 @@ impl ResourceManager {
         &mut self, 
         assets: &AssetServer, 
         handle: TextureHandle
-    ) -> Option<&GpuTexture> {
-        let texture_asset = assets.get_texture(handle)?;
+    ) {
+        let texture_asset = match assets.get_texture(handle) {
+            Some(t) => {t},
+            None => {
+                log::warn!("Texture asset not found for handle: {:?}", handle);
+                return;
+            },
+        };
         
         // [A] 先准备底层 Image
         self.prepare_image(&texture_asset.image);
         
         let image_id = texture_asset.image.id();
-        let gpu_image = self.gpu_images.get(&image_id).unwrap();
+        let gpu_image = self.gpu_images.get(&image_id).expect("gpu image should exist.");
 
         // [B] 准备/更新 GpuTexture
         let mut needs_update = false;
@@ -729,7 +759,6 @@ impl ResourceManager {
             gpu_tex.last_used_frame = self.frame_index;
         }
 
-        self.gpu_textures.get(handle)
     }
 
 
@@ -756,7 +785,7 @@ impl ResourceManager {
         sampler
     }
 
-    pub fn prepare_global(&mut self, _assets: &AssetServer, env: &Environment, render_state: &RenderState) -> &GpuEnvironment {
+    pub fn prepare_global(&mut self, _assets: &AssetServer, env: &Environment, render_state: &RenderState) {
 
         let mut builder = ResourceBuilder::new();
         render_state.define_bindings(&mut builder);
@@ -809,7 +838,7 @@ impl ResourceManager {
                 gpu_env.last_used_frame = self.frame_index;
                 gpu_env.last_version = world_id;
             }
-            return self.worlds.get(&world_id).unwrap();
+            return;
         }
 
         // 6. 重建 BindGroup (Create)
@@ -829,7 +858,6 @@ impl ResourceManager {
             last_used_frame: self.frame_index,
         };
         self.worlds.insert(world_id, gpu_world);
-        self.worlds.get(&world_id).unwrap()
 
     }
 

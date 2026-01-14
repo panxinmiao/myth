@@ -13,7 +13,8 @@ pub struct GpuImage {
 
 impl GpuImage {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, image: &ImageInner) -> Self {
-        let desc = *image.descriptor.read().unwrap();
+
+        let desc = *image.descriptor.read().expect("Failed to read image descriptor");
 
         let size = wgpu::Extent3d {
             width: desc.width,
@@ -62,7 +63,8 @@ impl GpuImage {
     }
 
     fn upload_data(queue: &wgpu::Queue, texture: &wgpu::Texture, image: &ImageInner) {
-        if let Some(data) = &*image.data.read().unwrap() {
+        let data_guard = image.data.read().expect("Failed to read image data");
+        if let Some(data) = &*data_guard {
             let width = texture.width();
             let height = texture.height();
             let depth = texture.depth_or_array_layers();

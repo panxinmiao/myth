@@ -8,6 +8,7 @@ use core::ops::Range;
 use bitflags::bitflags;
 
 use crate::resources::buffer::{BufferRef};
+use crate::resources::primitives;
 
 /// Attribute holds CPU-side data (Option<Arc<Vec<u8>>>) and metadata.
 #[derive(Debug, Clone)]
@@ -310,17 +311,20 @@ impl Geometry {
         for i in 0..count {
             let start = offset + i * stride;
             let end = start + 12;
-            if end > data.len() { break; }
 
-            let bytes: &[u8; 12] = data[start..end].try_into().unwrap();
-            let vals: &[f32; 3] = bytemuck::cast_ref(bytes);
-            let vec = Vec3::from_array(*vals);
+            if let Some(slice) = data.get(start..end) {
+                if let Ok(bytes) = slice.try_into() as Result<&[u8; 12], _>{
+                    let vals: &[f32; 3] = bytemuck::cast_ref(bytes);
+                    let vec = Vec3::from_array(*vals);
 
-            min = min.min(vec);
-            max = max.max(vec);
-            
-            sum_pos += vec;
-            valid_points_count += 1;
+                    min = min.min(vec);
+                    max = max.max(vec);
+                    sum_pos += vec;
+                    valid_points_count += 1;
+                }
+            } else {
+                break; 
+            }
         }
 
         if valid_points_count == 0 { return; }
@@ -334,15 +338,20 @@ impl Geometry {
         for i in 0..count {
             let start = offset + i * stride;
             let end = start + 12;
-            if end > data.len() { break; }
-            let bytes: &[u8; 12] = data[start..end].try_into().unwrap();
-            let vals: &[f32; 3] = bytemuck::cast_ref(bytes);
-            let vec = Vec3::from_array(*vals);
-
-            let dist_sq = vec.distance_squared(centroid);
-            if dist_sq > max_dist_sq {
-                max_dist_sq = dist_sq;
+            
+            if let Some(slice) = data.get(start..end) {
+                if let Ok(bytes) = slice.try_into() as Result<&[u8; 12], _>{
+                    let vals: &[f32; 3] = bytemuck::cast_ref(bytes);
+                    let vec = Vec3::from_array(*vals);
+                    let dist_sq = vec.distance_squared(centroid);
+                    if dist_sq > max_dist_sq {
+                        max_dist_sq = dist_sq;
+                    }
+                }
+            }else {
+                break; 
             }
+            
         }
 
         self.bounding_sphere = Some(BoundingSphere {
@@ -421,77 +430,21 @@ impl Geometry {
     }
 
     pub fn new_box(width: f32, height: f32, depth: f32) -> Self {
-        let w = width / 2.0;
-        let h = height / 2.0;
-        let d = depth / 2.0;
+        primitives::create_box(width, height, depth)
+    }
 
-        // 24 个顶点 (每个面 4 个)
-        // 格式: [x, y, z]
-        let positions = [
-            // Front face (+Z)
-            [-w, -h,  d], [ w, -h,  d], [ w,  h,  d], [-w,  h,  d],
-            // Back face (-Z)
-            [-w, -h, -d], [-w,  h, -d], [ w,  h, -d], [ w, -h, -d],
-            // Top face (+Y)
-            [-w,  h, -d], [-w,  h,  d], [ w,  h,  d], [ w,  h, -d],
-            // Bottom face (-Y)
-            [-w, -h, -d], [ w, -h, -d], [ w, -h,  d], [-w, -h,  d],
-            // Right face (+X)
-            [ w, -h, -d], [ w,  h, -d], [ w,  h,  d], [ w, -h,  d],
-            // Left face (-X)
-            [-w, -h, -d], [-w, -h,  d], [-w,  h,  d], [-w,  h, -d],
-        ];
+    pub fn new_sphere(radius: f32) -> Self {
+        primitives::create_sphere(primitives::SphereOptions {
+            radius,
+            ..Default::default()
+        })
+    }
 
-        // 法线 (每个面的 4 个顶点法线相同)
-        let normals: [[f32; 3]; 24] = [
-            // Front
-            [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0], [0.0, 0.0, 1.0],
-            // Back
-            [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0], [0.0, 0.0, -1.0],
-            // Top
-            [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0], [0.0, 1.0, 0.0],
-            // Bottom
-            [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0], [0.0, -1.0, 0.0],
-            // Right
-            [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0], [1.0, 0.0, 0.0],
-            // Left
-            [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0], [-1.0, 0.0, 0.0],
-        ];
-
-        // UV 坐标 (标准 0~1)
-        let uvs: [[f32; 2]; 24] = [
-            // Front
-            [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0],
-            // Back
-            [1.0, 1.0], [1.0, 0.0], [0.0, 0.0], [0.0, 1.0],
-            // Top
-            [0.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, 0.0],
-            // Bottom
-            [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0],
-            // Right
-            [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0],
-            // Left
-            [0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0],
-        ];
-
-        // 索引 (每面 2 个三角形，逆时针绕序 CCW)
-        // 0, 1, 2,  0, 2, 3
-        let indices: Vec<u16> = (0..6).flat_map(|face| {
-            let base = face * 4;
-            [
-                base, base + 1, base + 2,
-                base, base + 2, base + 3,
-            ]
-        }).collect();
-
-        let mut geo = Geometry::new();
-        geo.set_attribute("position", Attribute::new_planar(&positions, VertexFormat::Float32x3));
-        geo.set_attribute("normal", Attribute::new_planar(&normals, VertexFormat::Float32x3));
-        geo.set_attribute("uv", Attribute::new_planar(&uvs, VertexFormat::Float32x2));
-        geo.set_indices(&indices);
-        
-        geo.compute_bounding_volume();
-
-        geo
+    pub fn new_plane(width: f32, height: f32) -> Self {
+        primitives::create_plane(primitives::PlaneOptions {
+            width,
+            height,
+            ..Default::default()
+        })
     }
 }

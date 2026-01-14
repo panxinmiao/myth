@@ -3,20 +3,28 @@
 
 {{ binding_code }}      
 
-$$ include "vert_out.wgsl"
+struct VertexOutput {
+    @builtin(position) position: vec4<f32>,
+    $$ if has_uv
+    @location({{ loc.next() }}) uv: vec2<f32>,
+    $$ endif
+    $$ if has_normal
+    @location({{ loc.next() }}) normal: vec3<f32>,
+    $$ endif
+};
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    let model_matrix = u_model.model_matrix; 
+    let model_matrix = u_model.world_matrix; 
     let world_pos = model_matrix * vec4<f32>(in.position, 1.0);
     
     out.position = u_render_state.view_projection * world_pos;
     $$ if has_uv
         out.uv = in.uv;
     $$ endif 
-        let normal_matrix = u_model.normal_matrix;
     $$ if has_normal
+        let normal_matrix = u_model.normal_matrix;
         out.normal = normal_matrix * in.normal;
     $$ endif
     return out;

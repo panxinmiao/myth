@@ -13,7 +13,7 @@ fn main() -> anyhow::Result<()> {
     // 2. 准备资源 (Geometry, Texture, Material)
     let geometry = Geometry::new_box(2.0, 2.0, 2.0);
     let texture: Texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
-    let mut mat = Material::new_phong(Vec4::new(1.0, 0.0, 1.0, 1.0));
+    let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
     // 3. 将资源添加到 AssetServer，获取 Handle
     let tex_handle = app.assets.add_texture(texture);
@@ -70,5 +70,6 @@ fn main() -> anyhow::Result<()> {
     });
 
     // 7. 运行
-    app.run()
+    app.run()?;
+    Ok(())
 }

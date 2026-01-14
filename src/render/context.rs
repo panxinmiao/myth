@@ -1,6 +1,7 @@
 use std::sync::atomic::{AtomicU32, Ordering};
 use glam::{Mat4, Mat3A};
 use slotmap::Key;
+use log::{warn, error};
 
 use crate::scene::{Scene};
 use crate::scene::camera::Camera;
@@ -222,7 +223,7 @@ impl RenderContext {
         let frustum = camera.frustum;
         let camera_pos = camera.world_matrix.translation;
 
-        for (_id, node) in scene.nodes.iter() {
+        for (node_id, node) in scene.nodes.iter() {
             if let Some(mesh_idx) = node.mesh {
                 if let Some(mesh) = scene.meshes.get(mesh_idx) {
                     if !node.visible || !mesh.visible { continue; }
@@ -230,7 +231,14 @@ impl RenderContext {
                     let geo_handle = mesh.geometry;
                     let mat_handle = mesh.material;
 
-                    let geometry = assets.get_geometry(geo_handle).expect("Missing Geometry");
+                    let geometry = match assets.get_geometry(geo_handle) {
+                        Some(geo) => geo,
+                        None => {
+                            // 频率限制日志：实际项目中可以用 lazy_static 或 atomic 限制每秒打印次数，防止刷屏
+                            warn!("Node {:?} refers to missing Geometry {:?}", node_id, geo_handle);
+                            continue;
+                        }
+                    };
                     let node_world = *node.world_matrix();
                     
                     if let Some(bs) = &geometry.bounding_sphere {
@@ -277,9 +285,24 @@ impl RenderContext {
                 geometry
             );
 
-            let gpu_geometry = self.resource_manager.get_geometry(item.geo_handle).unwrap();
-            let gpu_material = self.resource_manager.get_material(item.mat_handle).unwrap();
-            let gpu_world = self.resource_manager.get_world(self.render_state.id, scene.environment.id).unwrap();    
+            let gpu_geometry = if let Some(g) = self.resource_manager.get_geometry(item.geo_handle){
+                g
+            } else {
+                error!("CRITICAL: GpuGeometry missing immediately after prepare! Handle: {:?}", item.geo_handle);
+                continue;
+            };
+            let gpu_material = if let Some(m) = self.resource_manager.get_material(item.mat_handle) {
+                m
+            } else {
+                error!("CRITICAL: GPU Material missing immediately after prepare! Handle: {:?}", item.mat_handle);
+                continue;
+            };
+            let gpu_world = if let Some(w) = self.resource_manager.get_world(self.render_state.id, scene.environment.id) {
+                w
+            } else {
+                error!("Render Environment missing for render state {:?} and scene {:?}", self.render_state.id, scene.environment.id);
+                continue;
+            };
             
             let fast_key = FastPipelineKey {
                 material_handle: item.mat_handle,
@@ -342,12 +365,12 @@ impl RenderContext {
         let mut process_cmds = |cmds: &mut [RenderCommand], start_idx: usize| {
             for (i, cmd) in cmds.iter_mut().enumerate() {
                 let global_idx = start_idx + i;
-                let model_matrix_inverse = cmd.model_matrix.inverse();
-                let normal_matrix = Mat3A::from_mat4(model_matrix_inverse.transpose());
+                let world_matrix_inverse = cmd.model_matrix.inverse();
+                let normal_matrix = Mat3A::from_mat4(world_matrix_inverse.transpose());
                 
                 data.push(DynamicModelUniforms {
-                    model_matrix: cmd.model_matrix,
-                    model_matrix_inverse,
+                    world_matrix: cmd.model_matrix,
+                    world_matrix_inverse: world_matrix_inverse,
                     normal_matrix,
                     ..Default::default()
                 });

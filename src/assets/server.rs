@@ -1,6 +1,7 @@
 use slotmap::{new_key_type, SlotMap};
 use std::collections::HashMap;
 use uuid::Uuid;
+use std::path::Path;
 
 use crate::resources::geometry::Geometry;
 use crate::resources::material::Material;
@@ -81,5 +82,11 @@ impl AssetServer {
 
     pub fn get_texture(&self, handle: TextureHandle) -> Option<&Texture> {
         self.textures.get(handle)
+    }
+
+    pub fn load_texture_from_file(&mut self, path: impl AsRef<Path>, color_space: crate::assets::ColorSpace) -> anyhow::Result<TextureHandle> {
+        let texture = crate::assets::load_texture_from_file(path, color_space)?;
+        let handle = self.add_texture(texture);
+        Ok(handle)
     }
 }

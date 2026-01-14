@@ -217,8 +217,8 @@ macro_rules! define_uniform_struct {
 define_uniform_struct!(
     /// 动态模型 Uniforms (每个对象更新)
     struct DynamicModelUniforms {
-        pub model_matrix: Mat4,       //64
-        pub model_matrix_inverse: Mat4,  //64
+        pub world_matrix: Mat4,       //64
+        pub world_matrix_inverse: Mat4,  //64
         pub normal_matrix: Mat3A,   //48
 
         pub(crate) __padding_20: UniformArray<f32, 20> = UniformArray::new([0.0; 20]),
@@ -241,6 +241,7 @@ define_uniform_struct!(
 define_uniform_struct!(
     /// 全局 Uniforms (每个 Frame 更新)
     struct EnvironmentUniforms {
+        pub ambient_light: Vec3 = Vec3::ZERO,
         pub num_lights: u32 = 0,
     }
 );
@@ -260,14 +261,22 @@ define_uniform_struct!(
 define_uniform_struct!(
     struct MeshPhongUniforms {
         pub color: Vec4 = Vec4::ONE,
+
         pub specular: Vec3 = Vec3::ONE,
         pub opacity: f32 = 1.0,
+
         pub emissive: Vec3 = Vec3::ZERO,
+        pub emissive_intensity: f32 = 1.0,
+
+        pub normal_scale: Vec2 = Vec2::ONE,
         pub shininess: f32 = 30.0,
+        pub(crate) __padding: f32, // 4 (12+4=16)
 
         pub map_transform: Mat3A = Mat3A::IDENTITY,
         pub normal_map_transform: Mat3A = Mat3A::IDENTITY,
         pub specular_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub emissive_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub light_map_transform: Mat3A = Mat3A::IDENTITY,
     }
 );
 
@@ -302,13 +311,13 @@ define_uniform_struct!(
 
         // 16 bytes chunk 2
         pub direction: Vec3,
-        pub light_type: u32,
+        pub decay: f32,
 
-        // 16 bytes chunk 3
         pub inner_cone_cos: f32,
         pub outer_cone_cos: f32,
+
+        pub light_type: u32,
         pub(crate) _padding1: f32,
-        pub(crate) _padding2: f32,
     }
 );
 

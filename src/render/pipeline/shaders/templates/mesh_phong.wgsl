@@ -1,102 +1,139 @@
 {{ vertex_input_code }} 
 
-{{ binding_code }}    
+{{ binding_code }}
+
+{$ include 'light_common' $}
+{$ include 'bsdf/phong' $}
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
+    @location({{ loc.next() }}) world_position: vec3<f32>,
     $$ if has_uv
     @location({{ loc.next() }}) uv: vec2<f32>,
     $$ endif
     $$ if has_normal
     @location({{ loc.next() }}) normal: vec3<f32>,
+    @location({{ loc.next() }}) geometry_normal: vec3<f32>,
     $$ endif
-    @location({{ loc.next() }}) world_normal: vec3<f32>,
-    @location({{ loc.next() }}) world_position: vec3<f32>,
+    $$ if use_vertex_color
+    @location({{ loc.next() }}) color: vec4<f32>,
+    $$ endif
+    {$ include 'uv_vetex_output' $}
 };
 
 @vertex
-fn vs_main(input: VertexInput) -> VertexOutput {
+fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    let world_pos = u_model.model_matrix * vec4<f32>(input.position, 1.0);
-    out.world_position = world_pos.xyz;
+
+    let world_pos = u_model.world_matrix * vec4<f32>(in.position, 1.0);
     out.position = u_render_state.view_projection * world_pos;
-    out.world_normal = normalize(u_model.normal_matrix * input.normal);
-    
-    out.uv = input.uv;
+    out.world_position = world_pos.xyz / world_pos.w;
+
+    $$ if use_vertex_color
+        out.color = in.color;
+    $$ endif
+
+    out.uv = in.uv;
+    out.geometry_normal = in.normal;
+    out.normal = normalize(u_model.normal_matrix * in.normal);
+    {$ include 'uv' $}
     return out;
 }
 
-// === Fragment Shader ===
-fn get_attenuation(light: Struct_lights, dist: f32) -> f32 {
-    if (light.light_type == 0u) { return 1.0; } 
-    let d = min(dist, light.range);
-    let attn = 1.0 - pow(d / light.range, 4.0);
-    return max(attn * attn, 0.0) / (1.0 + dist * dist); 
-}
-
-fn get_spot_factor(light: Struct_lights, L: vec3<f32>) -> f32 {
-    if (light.light_type != 2u) { return 1.0; }
-    let actual_cos = dot(-L, normalize(light.direction));
-    return smoothstep(light.outer_cone_cos, light.inner_cone_cos, actual_cos);
-}
-
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    var base_color = u_material.color;
-    $$ if use_map
-        let tex_color = textureSample(t_map, s_map, in.uv);
-        base_color = base_color * tex_color;
+fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+    var surface_normal = normalize(vec3<f32>(varyings.normal));
+    $$ if flat_shading
+        let u = dpdx(varyings.world_position);
+        let v = dpdy(varyings.world_position);
+        surface_normal = normalize(cross(u, v));
     $$ endif
 
-    let N = normalize(in.world_normal);
-    let V = normalize(u_render_state.camera_position - in.world_position);
+    $$ if color_mode == 'normal'
+        var diffuse_color = vec4<f32>((normalize(surface_normal) * 0.5 + 0.5), 1.0);
+    $$ else
+        var diffuse_color = u_material.color;
 
-    var total_diffuse = vec3<f32>(0.0);
-    var total_specular = vec3<f32>(0.0);
+        $$ if use_vertex_color
+            diffuse_color *= varyings.color;
+        $$ endif
 
-    let num_lights = arrayLength(&st_lights);
-    
-    for (var i = 0u; i < num_lights; i = i + 1u) {
-        // 直接索引结构体数组
-        let light = st_lights[i];
-        
-        var L: vec3<f32>;
-        var dist: f32 = 1.0;
-        
-        if (light.light_type == 0u) {
-            L = normalize(-light.direction);
-            dist = 0.0;
-        } else {
-            let light_dir = light.position - in.world_position;
-            dist = length(light_dir);
-            L = normalize(light_dir);
-        }
+        {$ if use_map $}
+            let tex_color = textureSample(t_map, s_map, varyings.uv);
+            diffuse_color *= tex_color;
+        {$ endif $}
 
-        var attenuation = light.intensity;
-        if (light.light_type != 0u) {
-            if (dist > light.range) { continue; }
-            attenuation *= get_attenuation(light, dist);
-        }
-        
-        if (light.light_type == 2u) {
-            attenuation *= get_spot_factor(light, L);
-        }
+    $$ endif
 
-        if (attenuation <= 0.001) { continue; }
 
-        // Phong 计算
-        let n_dot_l = max(dot(N, L), 0.0);
-        total_diffuse += n_dot_l * light.color * attenuation;
-        
-        let H = normalize(L + V);
-        let n_dot_h = max(dot(N, H), 0.0);
-        let spec_factor = pow(n_dot_h, u_material.shininess);
-        total_specular += spec_factor * u_material.specular.rgb * light.color * attenuation;
-    }
+    // Apply opacity
+    diffuse_color.a = diffuse_color.a * u_material.opacity;
 
-    // 组合
-    let ambient = vec3<f32>(0.1) * base_color.rgb; // 简单环境光
-    let final_color = (total_diffuse * base_color.rgb) + total_specular + u_material.emissive.rgb;
+    let view = normalize(u_render_state.camera_position - varyings.world_position);
+    var normal = surface_normal;
+    let face_direction = f32(is_front) * 2.0 - 1.0;
 
-    return vec4<f32>(final_color, base_color.a);
+    $$ if use_normal_map is defined
+
+        let tbn = getTangentFrame(view, normal, varyings.normal_map_uv );
+
+        let normal_map = textureSample( t_normal_map, s_normal_map, varyings.normal_map_uv ) * 2.0 - 1.0;
+        let map_n = vec3f(normal_map.xy * u_material.normal_scale, normal_map.z);
+        normal = normalize(tbn * map_n);
+    $$ endif
+
+
+    $$ if use_specular_map is defined
+        let specular_map = textureSample( t_specular_map, s_specular_map, varyings.specular_map_uv );
+        let specular_strength = specular_map.r;
+    $$ else
+        let specular_strength = 1.0;
+    $$ endif
+
+    // Init the reflected light. Defines diffuse and specular, both direct and indirect
+    var reflected_light: ReflectedLight = ReflectedLight(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
+
+    var geometry: GeometricContext;
+    geometry.position = varyings.world_position;
+    geometry.normal = surface_normal;
+    geometry.view_dir = view;
+
+    var material: BlinnPhongMaterial;
+    material.diffuse_color = diffuse_color.rgb;
+    material.specular_color = u_material.specular.rgb;
+    material.specular_shininess = u_material.shininess;
+    material.specular_strength = specular_strength;
+
+    {$ include 'light_punctual' $}
+
+    // Indirect Diffuse Light
+    let ambient_color = u_environment.ambient_light.rgb;
+    var irradiance = getAmbientLightIrradiance( ambient_color );
+    // Light map (pre-baked lighting)
+    $$ if use_light_map is defined
+        let light_map_color = textureSample(t_light_map, s_light_map, varyings.light_map_uv ).rgb;
+        irradiance += light_map_color * u_material.light_map_intensity;
+    $$ endif
+
+    // Process irradiance
+    RE_IndirectDiffuse( irradiance, geometry, material, &reflected_light );
+
+    // Ambient occlusion
+    $$ if use_ao_map is defined
+        let ao_map_intensity = u_material.ao_map_intensity;
+        let ambient_occlusion = ( textureSample( t_ao_map, s_ao_map, varyings.ao_map_uv ).r - 1.0 ) * ao_map_intensity + 1.0;
+
+        reflected_light.indirect_diffuse *= ambient_occlusion;
+    $$ endif
+
+    // Combine direct and indirect light
+    var out_color = reflected_light.direct_diffuse + reflected_light.direct_specular + reflected_light.indirect_diffuse + reflected_light.indirect_specular;
+
+    var emissive_color = u_material.emissive.rgb * u_material.emissive_intensity;
+    $$ if use_emissive_map is defined
+        emissive_color *= textureSample(t_emissive_map, s_emissive_map, varyings.emissive_map_uv).rgb;
+    $$ endif
+    out_color += emissive_color;
+
+    return vec4<f32>(out_color, diffuse_color.a);
 }

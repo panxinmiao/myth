@@ -13,6 +13,7 @@ use winit::window::Window;
 use crate::scene::Scene;
 use crate::scene::camera::Camera;
 use crate::assets::{AssetServer};
+use crate::errors::{ThreeError, Result};
 
 use self::resources::ResourceManager;
 use self::pipeline::{PipelineCache};
@@ -38,22 +39,23 @@ impl Renderer {
     }
 
     /// 阶段 2: 初始化 GPU 上下文 (需要 Window)
-    pub async fn init(&mut self, window: Arc<Window>) {
-        if self.context.is_some() { return; }
+    pub async fn init(&mut self, window: Arc<Window>) -> Result<()>{
+        if self.context.is_some() { return Ok(()); }
 
         let size = window.inner_size();
         self._size = size;
 
         let instance = wgpu::Instance::default();
-        let surface = instance.create_surface(window.clone()).unwrap();
+        let surface = instance.create_surface(window.clone()).map_err(|e| ThreeError::AdapterRequestFailed(e.to_string()))?;
         
         let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
             power_preference: self.settings.power_preference,
             compatible_surface: Some(&surface),
             force_fallback_adapter: false,
-        }).await.unwrap();
+        }).await
+        .map_err(|e| ThreeError::AdapterRequestFailed(e.to_string()))?;
 
-        let (device, queue) = adapter.request_device(
+        let (device, queue): (wgpu::Device, wgpu::Queue) = adapter.request_device(
             &wgpu::DeviceDescriptor {
                 label: None,
                 required_features: self.settings.required_features,
@@ -61,9 +63,10 @@ impl Renderer {
                 memory_hints: wgpu::MemoryHints::Performance,
                 ..Default::default()
             },
-        ).await.unwrap();
+        ).await?;
 
-        let config = surface.get_default_config(&adapter, size.width, size.height).unwrap();
+        let config = surface.get_default_config(&adapter, size.width, size.height)
+            .ok_or_else(|| ThreeError::AdapterRequestFailed("Surface not supported by adapter".to_string()))?;
         surface.configure(&device, &config);
 
         // 初始化子系统
@@ -92,6 +95,7 @@ impl Renderer {
         });
         
         log::info!("Renderer Initialized");
+        Ok(())
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {

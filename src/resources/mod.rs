@@ -15,6 +15,7 @@ pub mod material_builder;
 pub mod texture;
 pub mod image;
 pub mod geometry;
+pub mod primitives;
 pub mod buffer;
 pub mod uniforms;
 pub mod version_tracker;

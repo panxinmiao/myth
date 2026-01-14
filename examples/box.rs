@@ -67,5 +67,6 @@ fn main() -> anyhow::Result<()> {
     });
 
     // 7. 运行
-    app.run()
+    app.run()?;
+    Ok(())
 }

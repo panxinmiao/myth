@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use md5;
+use xxhash_rust::xxh3::xxh3_128;
 
 use crate::resources::geometry::{Geometry, GeometryFeatures};
 use crate::resources::material::{Material, MaterialFeatures};
@@ -31,10 +31,6 @@ pub struct PipelineKey {
     pub color_format: wgpu::TextureFormat,
     pub depth_format: wgpu::TextureFormat,
     pub sample_count: u32,
-
-    // 是否需要 BindGroup Layout 的变化？
-    // BindGroupLayout 的结构通常由 Features 决定, 所以只要 Features 相同，Layout 结构大概率相同
-    // pub layout_ids: Vec<wgpu::Id<wgpu::BindGroupLayout>>,
 }
 
 /// L1 缓存 Key: 基于 ID 和版本号 (极快，无堆分配)
@@ -49,20 +45,13 @@ pub struct FastPipelineKey {
     pub scene_id: u32,
 }
 
-
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-struct ShaderModuleKey {
-    code_hash: String, // 代码内容的哈希
-    stage: wgpu::ShaderStages, // Vertex 或 Fragment
-}
-
 pub struct PipelineCache {
     // L1: 快速查找 (命中率 99%+)
     fast_cache: HashMap<FastPipelineKey, (wgpu::RenderPipeline, u16)>,
     // L2: 规范查找 (用于去重)
     canonical_cache: HashMap<PipelineKey, (wgpu::RenderPipeline, u16)>,
     // Shader Module 缓存 (避免重复创建)
-    module_cache: HashMap<ShaderModuleKey, wgpu::ShaderModule>,
+    module_cache: HashMap<u128, wgpu::ShaderModule>,
     next_id: u16, // 下一个 Pipeline ID
 }
 
@@ -75,35 +64,6 @@ impl PipelineCache {
             next_id: 0,
         }
     }
-
-    // 获取或创建 Module 的辅助函数
-    fn create_shader_module(
-        &mut self, 
-        device: &wgpu::Device, 
-        code: &str, 
-        stage: wgpu::ShaderStages,
-        label: Option<&str>,
-    ) -> wgpu::ShaderModule {
-
-        let code_hash = format!("{:x}", md5::compute(code));
-        let key = ShaderModuleKey {
-            code_hash,
-            stage,
-        };
-
-        if let Some(module) = self.module_cache.get(&key) {
-            return module.clone();
-        }
-
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label,
-            source: wgpu::ShaderSource::Wgsl(code.into()),
-        });
-
-        self.module_cache.insert(key, module.clone());
-        module
-    }
-
 
     #[allow(clippy::too_many_arguments)]
     pub fn get_or_create(
@@ -197,9 +157,16 @@ impl PipelineCache {
         if cfg!(feature = "debug_shader") {
             println!("================= Generated Shader Code {} ==================\n {}", template_name, shader_source);
         }
-
+        
+        let code_hash = xxh3_128(shader_source.as_bytes());
+        
         // 3.3 创建 Modules
-        let shader_module = self.create_shader_module(device, &shader_source, wgpu::ShaderStages::VERTEX, Some(template_name));
+        let shader_module = self.module_cache.entry(code_hash).or_insert(
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(&format!("Shader Module {}", template_name)),
+                source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+            })
+        );
 
         // 自动创建 PipelineLayout
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

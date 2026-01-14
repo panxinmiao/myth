@@ -62,5 +62,6 @@ fn main() -> anyhow::Result<()> {
     app.active_camera = Some(cam_node_id);
 
     // 7. 运行 (不需要 update_fn，因为是静态场景)
-    app.run()
+    app.run()?;
+    Ok(())
 }

@@ -49,5 +49,6 @@ fn main() -> anyhow::Result<()> {
     });
 
     // === 6. 运行应用 ===
-    app.run()
+    app.run()?;
+    Ok(())
 }

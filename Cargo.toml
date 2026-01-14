@@ -16,17 +16,22 @@ bitflags = "2.10"
 glam = { version = "0.30.10" , features = ["bytemuck"] }
 thunderdome = "0.6"
 slotmap = { version = "1.1.1", features = ["serde"] }
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 
 minijinja = {version ="2.14", features = ["loader", "custom_syntax"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-rust-embed = "8.10"
+
+image = "0.25"
+
+rust-embed = "8.11.0"
 
 pollster = "0.4" 
 # 日志处理
 env_logger = "0.11"
 log = "0.4"
 anyhow = "1.0"
+thiserror = "2.0.17"
 uuid = { version = "1.19.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
 md5 = "0.8.0"
 

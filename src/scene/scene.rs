@@ -197,9 +197,7 @@ impl Scene {
         parent_changed: bool
     ) {
         // 1. 借用 Node 数据
-        let (current_world_matrix, children, changed) = {
-            let node = self.nodes.get_mut(node_idx).unwrap();
-            
+        let (current_world_matrix, children, changed) = if let Some(node) = self.nodes.get_mut(node_idx){            
             // 1. 智能更新局部矩阵 (Shadow State Check)
             let local_changed = node.update_local_matrix();
 
@@ -227,6 +225,9 @@ impl Scene {
             }
 
             (*node.world_matrix(), node.children.clone(), world_needs_update)
+        }else {
+            log::warn!("Scene graph inconsistency: Node {:?} in hierarchy but missing from Arena.", node_idx);
+            return;
         }; 
 
         for child_idx in children {
