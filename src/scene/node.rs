@@ -6,7 +6,6 @@ use crate::scene::transform::Transform;
 
 #[derive(Debug, Clone)]
 pub struct Node {
-    // === Public 属性 (API 友好，直接修改) ===
     pub id: Uuid,
     pub name: Cow<'static, str>,
     

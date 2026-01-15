@@ -187,28 +187,14 @@ impl Scene {
     // ========================================================================
 
     /// 获取主相机的 (Transform, Camera) 组合
-    /// 解决了 &mut Node 和 &Camera 的借用冲突问题
     pub fn query_main_camera_bundle(&mut self) -> Option<(&mut Transform, &Camera)> {
         let node_id = self.active_camera?;
         self.query_camera_bundle(node_id)
     }
 
-    /// 通用的相机组件查询方法
-    /// 
-    /// 返回指定节点的 Transform 可变引用和 Camera 不可变引用
-    /// 这种设计充分利用了 Rust 的借用规则：
-    /// - Transform 借用自 self.nodes
-    /// - Camera 借用自 self.cameras
-    /// 两者是不同的字段，因此可以同时借用
     pub fn query_camera_bundle(&mut self, node_id: NodeIndex) -> Option<(&mut Transform, &Camera)> {
-        // 1. 先通过不可变引用获取 Camera Key
         let camera_key = self.nodes.get(node_id)?.camera?;
-
-        // 2. 获取 Camera 引用 (借用 self.cameras)
         let camera = self.cameras.get(camera_key)?;
-
-        // 3. 获取 Transform 可变引用 (借用 self.nodes)
-        // 由于我们访问的是 self 的两个不同字段，Rust 可以识别这是安全的
         let transform = &mut self.nodes.get_mut(node_id)?.transform;
 
         Some((transform, camera))
@@ -421,23 +407,6 @@ impl Scene {
         self.get_node(id)
     }
 
-
-    /// 专门为控制器设计的辅助方法
-    /// 返回：(可变节点, 垂直FOV弧度)
-    pub fn get_main_camera_mut_with_fov(&mut self) -> Option<(&mut Node, f32)> {
-        let cam_id = self.active_camera?;
-
-        let fov = {
-            let node = self.nodes.get(cam_id)?;      // 借用 self.nodes
-            let cam_idx = node.camera?;
-            let camera = self.cameras.get(cam_idx)?; // 借用 self.cameras
-            camera.fov
-        }; 
-
-        let node_mut = self.nodes.get_mut(cam_id)?;
-
-        Some((node_mut, fov))
-    }
 }
 
 
