@@ -392,7 +392,7 @@ impl RenderContext {
         process_cmds(opaque, 0);
         process_cmds(transparent, opaque.len());
 
-        self.model_buffer_manager.write_uniforms(&mut self.resource_manager, &data);
+        self.model_buffer_manager.write_uniforms(&mut self.resource_manager, data);
     }
 
     // 静态方法：不依赖 &self，只依赖明确传入的 resource_manager

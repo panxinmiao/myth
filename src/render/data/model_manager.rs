@@ -60,7 +60,7 @@ impl ModelBufferManager {
     }
 
     /// 每一帧开始时调用：上传所有矩阵数据
-    pub fn write_uniforms(&mut self, resource_manager: &mut ResourceManager, data: &[DynamicModelUniforms]) {
+    pub fn write_uniforms(&mut self, resource_manager: &mut ResourceManager, data: Vec<DynamicModelUniforms>) {
         if data.is_empty() { return; }
 
         // 1. 检查是否需要扩容
@@ -68,8 +68,7 @@ impl ModelBufferManager {
             let new_cap = (data.len() * 2).max(128);
             log::info!("Model Buffer expanding capacity: {} -> {}", self.current_capacity, new_cap);
             
-            // 为了保持 GPU Buffer 的大容量，我们需要用 padded 数据初始化新的 CpuBuffer
-            let mut new_data = data.to_vec();
+            let mut new_data = data;
             new_data.resize(new_cap, DynamicModelUniforms::default());
 
             // 【关键】创建新的 CpuBuffer -> 生成新的 BufferRef ID
@@ -80,27 +79,13 @@ impl ModelBufferManager {
             );
             self.current_capacity = new_cap;
 
-            // ID 变了，所有引用旧 Buffer 的 BindGroup 都失效了
             self.cache.clear();
-            
-            // 新 Buffer，ResourceManager 会在 write_buffer 时自动处理创建
+
         } else {
-            // 2. 容量足够：直接更新数据
-            // 我们通过 write() 获取 Guard，将数据拷贝进去
-            // 注意：CpuBuffer 内部的 Vec 长度会变成 data.len()。
-            // 只要 data.len() <= current_capacity (即 GPU Buffer 的 size)，
-            // ResourceManager 的 write_buffer 就能正常工作（部分写入）。
-            
-            let mut guard = self.model_buffer.write();
-            *guard = data.to_vec(); // 这里会分配内存拷贝，但对于几十KB的数据量通常可接受
-            
-            // Guard Drop 时，version 会自动 +1
+            *self.model_buffer.write() = data;
         }
 
         // 3. 显式触发上传
-        // 这一步是必须的，因为 ModelBufferManager 的 BindGroup 缓存可能命中，
-        // 导致 prepare_bind_group 不会被调用，或者 RM 不会检查这个资源。
-        // 我们利用 ResourceManager 现有的 write_buffer (它支持盲写)
         resource_manager.write_buffer(
             self.model_buffer.handle(), 
             self.model_buffer.as_bytes()

@@ -177,8 +177,9 @@ bitflags! {
 pub struct Geometry {
     pub uuid: Uuid,
     
-    pub layout_version: u64,
-    pub structure_version: u64,
+    layout_version: u64,
+    structure_version: u64,
+    data_version: u64,
 
     pub attributes: HashMap<String, Attribute>,
     pub index_attribute: Option<Attribute>,
@@ -205,6 +206,7 @@ impl Geometry {
             uuid: Uuid::new_v4(),
             layout_version: 0,
             structure_version: 0,
+            data_version: 0,
             attributes: HashMap::new(),
             index_attribute: None,
             morph_attributes: HashMap::new(),
@@ -224,6 +226,10 @@ impl Geometry {
         self.structure_version
     }
 
+    pub fn data_version(&self) -> u64 {
+        self.data_version
+    }
+
     pub fn set_attribute(&mut self, name: &str, attr: Attribute) {
         let layout_changed = if let Some(old) = self.attributes.get(name) {
             old.format != attr.format || old.step_mode != attr.step_mode
@@ -237,10 +243,16 @@ impl Geometry {
             self.layout_version = self.layout_version.wrapping_add(1);
         }
         self.structure_version = self.structure_version.wrapping_add(1);
+        self.data_version = self.data_version.wrapping_add(1);
     }
 
     pub fn get_attribute(&self, name: &str) -> Option<&Attribute> {
         self.attributes.get(name)
+    }
+
+    pub fn get_attribute_mut(&mut self, name: &str) -> Option<&mut Attribute> {
+        self.data_version += 1;
+        self.attributes.get_mut(name)
     }
 
     pub fn set_indices(&mut self, indices: &[u16]) {
@@ -264,6 +276,7 @@ impl Geometry {
             step_mode: VertexStepMode::Vertex,
         });
         self.structure_version = self.structure_version.wrapping_add(1);
+        self.data_version = self.data_version.wrapping_add(1);
     }
 
     pub fn set_indices_u32(&mut self, indices: &[u32]) {
@@ -287,6 +300,7 @@ impl Geometry {
             step_mode: VertexStepMode::Vertex,
         });
         self.structure_version = self.structure_version.wrapping_add(1);
+        self.data_version = self.data_version.wrapping_add(1);
     }
 
     pub fn compute_bounding_volume(&mut self) {
@@ -399,6 +413,7 @@ impl Geometry {
 
             self.set_attribute(name, attr);
         }
+        self.data_version = self.data_version.wrapping_add(1);
     }
 
     /// 局部更新属性数据
@@ -410,6 +425,7 @@ impl Geometry {
     ) {
         if let Some(attr) = self.attributes.get_mut(name) {
             attr.update_region(offset_bytes, data);
+            self.data_version = self.data_version.wrapping_add(1);
         }
     }
 

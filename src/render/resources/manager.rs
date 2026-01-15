@@ -42,6 +42,7 @@ pub struct GpuGeometry {
     pub draw_range: Range<u32>,
     pub instance_range: Range<u32>, 
     pub version: u64,
+    pub last_data_version: u64,
     pub last_used_frame: u64,
 }
 
@@ -162,24 +163,26 @@ impl ResourceManager {
 
     pub fn write_buffer(&mut self, buffer_ref: &BufferRef, data: &[u8]) -> u64 {
         let id = buffer_ref.id();
-        
-        if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
-            // 直接写，无锁！
-            self.queue.write_buffer(&gpu_buf.buffer, 0, data);
-            gpu_buf.last_used_frame = self.frame_index;
-            gpu_buf.id
+
+        let gpu_buf = if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
+            gpu_buf
         } else {
-            let mut gpu_buf = GpuBuffer::new(
+            let gpu_buf = GpuBuffer::new(
                 &self.device,
                 data, // 初始数据
                 buffer_ref.usage(),
                 buffer_ref.label()
             );
-            gpu_buf.last_used_frame = self.frame_index;
-            let buf_id = gpu_buf.id;
             self.gpu_buffers.insert(id, gpu_buf);
-            buf_id
+            self.gpu_buffers.get_mut(&id).unwrap()
+        };
+
+        if buffer_ref.version > gpu_buf.last_uploaded_version {
+            self.queue.write_buffer(&gpu_buf.buffer, 0, data);
+            gpu_buf.last_uploaded_version = buffer_ref.version;
         }
+        gpu_buf.last_used_frame = self.frame_index;
+        gpu_buf.id
     }
 
     /// [Modified] 准备静态 Buffer (Pull 模式变体)
@@ -258,30 +261,74 @@ impl ResourceManager {
         &mut self, 
         assets: &AssetServer, 
         handle: GeometryHandle
-    ) -> Option<&GpuGeometry> {
-        let geometry = assets.get_geometry(handle)?;
+    ){
+
+        let geometry = if let Some(geo) = assets.get_geometry(handle) {
+            geo
+        } else {
+            log::warn!("Geometry {:?} not found in AssetServer.", handle);
+            return;
+        };
+        
+        if let Some(gpu_geo) = self.gpu_geometries.get_mut(handle) {
+            
+            // =========================================================
+            // [Fast Path] 极速热路径
+            // 结构没变 (Layout OK) 且 数据没变 (Buffer Content OK)
+            // 直接标记活跃并返回，零 HashMap 开销
+            // =========================================================
+            if geometry.structure_version() == gpu_geo.version 
+               && geometry.data_version() == gpu_geo.last_data_version {
+                gpu_geo.last_used_frame = self.frame_index;
+            }
+        }
+
+        // =========================================================
+        // [Update Path] 数据更新路径
+        // 只有当 data_version 变了，才去遍历 attributes
+        // =========================================================
 
         let mut buffer_ids_changed = false;
+        
+        // 只有在数据确实陈旧，或者还没有 GPU 资源时，才执行遍历
+        let needs_data_update = if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
+            geometry.data_version() != gpu_geo.last_data_version
+        } else {
+            true // 首次创建
+        };
 
-        // 1. 统一处理 Vertex Buffers (使用新的 prepare_attribute_buffer)
-        for attr in geometry.attributes.values() {
-            let new_id = self.prepare_attribute_buffer(attr);
+        if needs_data_update {
+            // 1. 统一处理 Vertex Buffers
+            for attr in geometry.attributes.values() {
+                let new_id = self.prepare_attribute_buffer(attr);
 
-            if let Some(gpu_geo) = self.gpu_geometries.get(handle)
-                && !gpu_geo.vertex_buffer_ids.contains(&new_id) {
-                     // 只要有一个 Buffer ID 不在旧列表里，认为变了。
-                     buffer_ids_changed = true;
+                // 检查 ID 是否变化 (例如扩容导致了重建 Buffer)
+                // 如果 Buffer ID 变了，GpuGeometry 里存的 bind info 就失效了，需要 Rebuild
+                if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
+                     if !gpu_geo.vertex_buffer_ids.contains(&new_id) {
+                         buffer_ids_changed = true;
+                     }
                 }
+            }
+
+            // 2. 检查 Index Buffer
+            if let Some(indices) = &geometry.index_attribute {
+                let new_id = self.prepare_attribute_buffer(indices);
+                if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
+                    if let Some((_, _, _, old_id)) = gpu_geo.index_buffer {
+                        if old_id != new_id {
+                            buffer_ids_changed = true;
+                        }
+                    }
+                }
+            }
+
         }
 
-        // 2. 检查 Index Buffer
-        if let Some(indices) = &geometry.index_attribute {
-            let new_id = self.prepare_attribute_buffer(indices);
-             if let Some(gpu_geo) = self.gpu_geometries.get(handle)
-                 && let Some((_, _, _, old_id)) = gpu_geo.index_buffer
-                     && old_id != new_id { buffer_ids_changed = true; }
-        }
-
+        // =========================================================
+        // [Rebuild Path] 重建路径
+        // 结构变了，或者底层的 Buffer ID 变了（扩容），需要重建 GpuGeometry
+        // =========================================================
         let needs_rebuild = if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
             geometry.structure_version() > gpu_geo.version || buffer_ids_changed
         } else {
@@ -290,13 +337,18 @@ impl ResourceManager {
 
         if needs_rebuild {
             self.create_gpu_geometry(geometry, handle);
+        } else if needs_data_update {
+            // 如果不需要完全重建，但数据更新了，我们需要更新 last_data_version
+            if let Some(gpu_geo) = self.gpu_geometries.get_mut(handle) {
+                gpu_geo.last_data_version = geometry.data_version();
+            }
         }
 
+        // 标记活跃并返回
         if let Some(gpu_geo) = self.gpu_geometries.get_mut(handle) {
             gpu_geo.last_used_frame = self.frame_index;
-            return Some(gpu_geo);
         }
-        None
+
     }
 
     fn create_gpu_geometry(&mut self, geometry: &Geometry, handle: GeometryHandle) {
@@ -346,6 +398,7 @@ impl ResourceManager {
             draw_range,
             instance_range: 0..1,
             version: geometry.structure_version(),
+            last_data_version: geometry.data_version(),
             last_used_frame: self.frame_index,
         };
 
@@ -857,7 +910,7 @@ impl ResourceManager {
         sampler
     }
 
-    pub fn prepare_global(&mut self, _assets: &AssetServer, env: &Environment, render_state: &RenderState) {
+    pub fn prepare_global(&mut self, assets: &AssetServer, env: &Environment, render_state: &RenderState) {
 
         let world_id = Self::compose_env_render_state_id(render_state.id, env.id);
 
@@ -888,50 +941,7 @@ impl ResourceManager {
         render_state.define_bindings(&mut builder);
         env.define_bindings(&mut builder);
 
-        // 通用地准备所有资源（从 BindingResource 中获取信息）
-        for resource in &builder.resources {
-            match resource {
-                BindingResource::Buffer { buffer, data, .. } => {
-                    // 更新 Environment light storage
-                    if buffer.id == env.light_storage.buffer.id {
-                         let _ = self.write_buffer(&env.light_storage.buffer, env.light_storage.as_bytes());
-                    }
-                    
-                    // 更新 RenderState uniforms
-                    if buffer.id == render_state.uniforms.buffer.id {
-                        let _ = self.write_buffer(&render_state.uniforms.buffer, render_state.uniforms.as_bytes());
-                    }
-                    
-                    // 更新 Environment uniforms
-                    if buffer.id == env.uniforms.buffer.id {
-                        let _ = self.write_buffer(&env.uniforms.buffer, env.uniforms.as_bytes());
-                    }
-
-                    let id = buffer.id;
-                    // 跳过大小为0的buffer（wgpu不允许绑定大小为0的buffer）
-                    if buffer.size() > 0 && !self.gpu_buffers.contains_key(&id) {
-                        // 使用实际数据初始化 Buffer（如果有的话）
-                        let init_data = if let Some(d) = data {
-                            d.to_vec()
-                        } else {
-                            vec![0u8; buffer.size()]
-                        };
-                        let mut gpu_buf = GpuBuffer::new(
-                            &self.device,
-                            &init_data,
-                            buffer.usage(),
-                            buffer.label(),
-                        );
-                        gpu_buf.last_used_frame = self.frame_index;
-                        self.gpu_buffers.insert(id, gpu_buf);
-                    }
-                },
-                _ => {} // Texture/Sampler 不需要在这里处理
-            }
-        }
-
-        // 计算资源 hash（资源已准备好）
-        // let resource_hash = self.compute_resource_hash(&builder.resources);
+        self.prepare_binding_resources(assets, &builder.resources);
 
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
         
