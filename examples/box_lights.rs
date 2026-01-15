@@ -3,6 +3,7 @@ use three::app::App;
 use three::resources::{Geometry, Material, Mesh, Texture};
 use three::scene::{Camera};
 use three::scene::light;
+use three::OrbitControls;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -54,11 +55,13 @@ fn main() -> anyhow::Result<()> {
     }
     
     // 5.4 激活相机
-    app.active_camera = Some(cam_node_id);
+    app.scene.active_camera = Some(cam_node_id);
+
+    let mut controls = OrbitControls::new(Vec3::ZERO, 10.0);
 
     // 6. 设置 Update 回调 (处理旋转动画)
     // move 闭包捕获 cube_node_id
-    app.set_update_fn(move |scene, _assets, _dt| {
+    app.set_update_fn(move |scene, _assets, input, _time, _dt| {
         if let Some(node) = scene.get_node_mut(cube_node_id) {
             // 每帧旋转
             let rot_y = Quat::from_rotation_y(0.02);
@@ -66,6 +69,11 @@ fn main() -> anyhow::Result<()> {
             
             // 累加旋转，update_matrix_world 会自动处理矩阵更新
             node.rotation = node.rotation * rot_y * rot_x;
+        }
+
+        // 使用新的组件查询 API
+        if let Some((transform, camera)) = scene.query_main_camera_bundle() {
+            controls.update(transform, input, camera.fov.to_degrees());
         }
     });
 

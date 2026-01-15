@@ -2,11 +2,13 @@
 //! 
 //! 管理场景层级结构和组件：
 //! - Node: 场景节点（支持父子关系和变换）
+//! - Transform: 变换组件（位置、旋转、缩放）
 //! - Scene: 场景容器
 //! - Camera: 相机组件
 //! - Light: 光源组件
 
 pub mod node;
+pub mod transform;
 pub mod scene;
 pub mod camera;
 pub mod light;
@@ -14,6 +16,7 @@ pub mod environment;
 
 // 重新导出常用类型
 pub use node::Node;
+pub use transform::Transform;
 pub use scene::Scene;
 pub use camera::{Camera, ProjectionType};
 pub use light::{Light, LightKind};

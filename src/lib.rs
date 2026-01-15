@@ -1,9 +1,26 @@
+#![warn(clippy::all)]
+
+#![warn(clippy::pedantic)]
+
+#![allow(clippy::cast_precision_loss)] 
+
+#![allow(clippy::cast_possible_truncation)]
+
+#![allow(clippy::module_name_repetitions)]
+
+#![allow(clippy::missing_errors_doc)]
+#![allow(clippy::missing_panics_doc)]
+
+#![allow(clippy::too_many_arguments)]
+
+
 pub mod resources;
 pub mod assets;
 pub mod scene;
 pub mod render;
 pub mod app;
 pub mod errors;
+pub mod utils;
 
 pub use resources::{Mesh, Material, Texture, Image, Geometry};
 pub use assets::{AssetServer, ColorSpace};
@@ -12,4 +29,4 @@ pub use resources::primitives::*;
 pub use render::Renderer;
 pub use app::App;
 pub use errors::ThreeError;
-
+pub use utils::orbit_control::OrbitControls;

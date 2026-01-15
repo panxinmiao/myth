@@ -4,6 +4,7 @@ use three::app::App;
 use three::resources::{Material, Mesh};
 use three::scene::{Camera};
 use three::scene::light;
+use three::OrbitControls;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -112,18 +113,27 @@ fn main() -> anyhow::Result<()> {
     }
     
     // 5.4 激活相机
-    app.active_camera = Some(cam_node_id);
+    app.scene.active_camera = Some(cam_node_id);
 
 
     let rot = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.001, 0.0);
     let rot_clouds = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.00125, 0.0);
 
-    app.set_update_fn(move |scene, _assets, _dt| {
+    let mut controls = OrbitControls::new(Vec3::ZERO, 250.0);
+
+    app.set_update_fn(move |scene, _assets, input, _time, _dt| {
+        // 1. 地球自转
         if let Some(node) = scene.get_node_mut(earth_node_id) {
             node.rotation = rot * node.rotation;
         }
+        // 2. 云层自转
         if let Some(clouds) = scene.get_node_mut(cloud_node_id) {
             clouds.rotation = rot_clouds * clouds.rotation;
+        }
+
+        // 3. 相机控制
+        if let Some((transform, camera)) = scene.query_main_camera_bundle() {
+            controls.update(transform, input, camera.fov.to_degrees());
         }
     });
 

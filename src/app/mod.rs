@@ -1,3 +1,6 @@
+pub mod input;
+
+use self::input::Input;
 
 use std::sync::Arc;
 use winit::application::ApplicationHandler;
@@ -8,21 +11,21 @@ use winit::window::{Window, WindowId};
 use crate::assets::AssetServer;
 use crate::scene::Scene;
 use crate::render::{Renderer, settings::RendererSettings};
-use crate::scene::NodeIndex;
 
-pub type UpdateFn = Box<dyn FnMut(&mut Scene, &AssetServer, f32)>;
+pub type UpdateFn = Box<dyn FnMut(&mut Scene, &AssetServer, &Input, f32, f32)>;
 
 pub struct App {
     window: Option<Arc<Window>>,
-    pub renderer: Renderer,
-
     pub title: String,
+    pub renderer: Renderer,
     pub assets: AssetServer,
     pub scene: Scene,
-    pub active_camera: Option<NodeIndex>,
+
     update_fn: Option<UpdateFn>,
-    start_time: Option<std::time::Instant>,
-    last_frame_time: f32,
+    start_time: std::time::Instant,
+    last_loop_time: std::time::Instant,
+
+    input: Input,
 }
 
 impl App {
@@ -32,16 +35,17 @@ impl App {
         // 创建默认配置的 Renderer
         let renderer = Renderer::new(RendererSettings::default());
 
+        let now = std::time::Instant::now();
         Self {
             window: None,
-            renderer,
             title: "Three-rs Engine".into(),
+            renderer,
             assets,
             scene,
-            active_camera: None,
             update_fn: None,
-            start_time: None,
-            last_frame_time: 0.0,
+            start_time: now,
+            last_loop_time: now,
+            input: Input::new(),
         }
     }
 
@@ -58,7 +62,7 @@ impl App {
 
     pub fn set_update_fn<F>(&mut self, f: F) -> &mut Self 
     where
-        F: FnMut(&mut Scene, &AssetServer, f32) + 'static,
+        F: FnMut(&mut Scene, &AssetServer, &Input, f32, f32) + 'static,
     {
         self.update_fn = Some(Box::new(f));
         self
@@ -71,26 +75,31 @@ impl App {
     }
 
     fn update(&mut self) {
-        if self.start_time.is_none() {
-            self.start_time = Some(std::time::Instant::now());
-        }
-        if let Some(start) = self.start_time {
-            self.last_frame_time = start.elapsed().as_secs_f32();
-        }
+
+        let now = std::time::Instant::now();
+        let total_time = now.duration_since(self.start_time).as_secs_f32();
+        let dt = now.duration_since(self.last_loop_time).as_secs_f32();
+        self.last_loop_time = now;
+
         if let Some(ref mut update_fn) = self.update_fn {
-            update_fn(&mut self.scene, &self.assets, self.last_frame_time);
+            update_fn(&mut self.scene, &self.assets, &self.input, total_time, dt );
         }
+
+        self.input.end_frame();
         self.scene.update();
     }
 
     fn render(&mut self) {
         if self.window.is_some()
-            && let Some(cam_id) = self.active_camera {
+            && let Some(cam_id) = self.scene.active_camera {
                 let scene_ref = &self.scene;
                 if let Some(node) = scene_ref.get_node(cam_id)
                     && let Some(camera_idx) = node.camera
                         && let Some(camera) = self.scene.cameras.get(camera_idx) {
-                            self.renderer.render(&self.scene, camera, &self.assets, self.last_frame_time);
+                            let time_seconds = self.last_loop_time
+                                .duration_since(self.start_time)
+                                .as_secs_f32();
+                            self.renderer.render(&self.scene, camera, &self.assets, time_seconds);
                         }
             }
     }
@@ -130,9 +139,11 @@ impl ApplicationHandler for App {
             WindowEvent::Resized(physical_size) => {
                 self.renderer.resize(physical_size.width, physical_size.height);
 
+                self.input.handle_resize(physical_size.width, physical_size.height);
+
                 if physical_size.height > 0 {
                     let new_aspect = physical_size.width as f32 / physical_size.height as f32;
-                    let camera_idx = self.active_camera
+                    let camera_idx = self.scene.active_camera
                         .and_then(|node_id| self.scene.get_node(node_id))
                         .and_then(|node| node.camera);
 
@@ -149,6 +160,15 @@ impl ApplicationHandler for App {
                 if let Some(window) = &self.window {
                     window.request_redraw();
                 }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.input.handle_cursor_move(position.x, position.y);
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                self.input.handle_mouse_input(state, button);
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                self.input.handle_mouse_wheel(delta);
             }
             _ => {}
         }
