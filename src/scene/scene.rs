@@ -196,42 +196,52 @@ impl Scene {
         parent_world_matrix: Affine3A, // 注意类型变化
         parent_changed: bool
     ) {
-        // 1. 借用 Node 数据
-        let (current_world_matrix, children, changed) = if let Some(node) = self.nodes.get_mut(node_idx){            
-            // 1. 智能更新局部矩阵 (Shadow State Check)
+        // ========================================================================
+        // 阶段 1: 处理当前节点 (持有 &mut self)
+        // ========================================================================
+        let (current_world_matrix, children_len, world_needs_update) = if let Some(node) = self.nodes.get_mut(node_idx) {
+            
+            // 1. 智能更新局部矩阵
             let local_changed = node.update_local_matrix();
 
             // 2. 决定是否更新世界矩阵
             let world_needs_update = local_changed || parent_changed;
 
             if world_needs_update {
-                // Affine3A 的乘法比 Mat4 更快，忽略最后一行 0,0,0,1 的计算
+                // 计算新的世界矩阵
                 let new_world = parent_world_matrix * *node.local_matrix();
                 node.set_world_matrix(new_world);
 
+                // --- 同步更新组件 (Camera / Light) ---
                 if let Some(camera_idx) = node.camera {
-
-                    // 更新 Camera 的矩阵
                     if let Some(camera) = self.cameras.get_mut(camera_idx) {
                         camera.update_view_projection(&new_world);
                     }
-
-                    log::debug!("Updated world matrix for Camera Node: {:?}", camera_idx);
                 }
-
-                if let Some(light_idx) = node.light {
-                    log::debug!("Updated world matrix for Light Node: {:?}", light_idx);
-                }
+                // (Light 通常只需要位置数据，在 collect_lights 中读取，这里可以不处理，或者做标记)
             }
 
-            (*node.world_matrix(), node.children.clone(), world_needs_update)
-        }else {
-            log::warn!("Scene graph inconsistency: Node {:?} in hierarchy but missing from Arena.", node_idx);
+            (
+                *node.world_matrix(), 
+                node.children.len(), 
+                world_needs_update
+            )
+        } else {
             return;
         }; 
 
-        for child_idx in children {
-            self.update_transform_recursive(child_idx, current_world_matrix, changed);
+        // ========================================================================
+        // 阶段 2: 递归子节点 (避免 Clone)
+        // ========================================================================
+        
+        for i in 0..children_len {
+            let child_idx = self.nodes
+                .get(node_idx)
+                .and_then(|n| n.children.get(i).copied()); 
+            
+            if let Some(child_idx) = child_idx {
+                self.update_transform_recursive(child_idx, current_world_matrix, world_needs_update);
+            }
         }
     }
 
