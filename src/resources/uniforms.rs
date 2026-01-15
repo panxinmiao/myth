@@ -243,6 +243,10 @@ define_uniform_struct!(
     struct EnvironmentUniforms {
         pub ambient_light: Vec3 = Vec3::ZERO,
         pub num_lights: u32 = 0,
+
+        pub env_map_intensity: f32 = 1.0,
+        pub env_map_max_mip_level: f32 = 0.0,
+        pub(crate) __padding: UniformArray<f32, 2>,
     }
 );
 

@@ -155,6 +155,24 @@ impl Bindings for Environment {
             true, 
             wgpu::ShaderStages::FRAGMENT
         );
+
+        let bindings = &self.bindings();
+
+        if let Some(env_map) = &bindings.env_map {
+            builder.add_texture(
+                "env_map", 
+                *env_map, 
+                wgpu::TextureSampleType::Float { filterable: true }, 
+                wgpu::TextureViewDimension::Cube, 
+                wgpu::ShaderStages::FRAGMENT
+            );
+            builder.add_sampler(
+                "env_map", 
+                *env_map, 
+                wgpu::SamplerBindingType::Filtering, 
+                wgpu::ShaderStages::FRAGMENT
+            );
+        }
     }
 }
 

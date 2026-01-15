@@ -11,8 +11,6 @@ static NEXT_WORLD_ID: AtomicU32 = AtomicU32::new(0);
 #[derive(Default, Clone, Debug)]
 pub struct EnvironmentBindings {
     pub env_map: Option<TextureHandle>,
-    pub diffuse_map: Option<TextureHandle>,
-    pub specular_map: Option<TextureHandle>,
     pub brdf_lut: Option<TextureHandle>,
 }
 

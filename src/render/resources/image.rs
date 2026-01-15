@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 pub struct GpuImage {
     pub texture: wgpu::Texture,
     
-    pub id: u64, // 对应的 Image ID
+    pub id: u64,
     pub version: u64,
     pub generation_id: u64,
 
