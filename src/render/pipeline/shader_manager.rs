@@ -70,11 +70,10 @@ fn shader_loader(name: &str) -> Result<Option<String>, Error> {
     }
 
     // 策略 B: 尝试从 RustEmbed 加载 (Release Friendly)
-    if let Some(file) = ShaderAssets::get(filename.as_ref()) {
-        if let Ok(source) = std::str::from_utf8(file.data.as_ref()) {
+    if let Some(file) = ShaderAssets::get(filename.as_ref())
+        && let Ok(source) = std::str::from_utf8(file.data.as_ref()) {
             return Ok(Some(source.to_string()));
         }
-    }
 
     // 没找到
     Ok(None)
@@ -89,6 +88,12 @@ fn next_location(allocator: &LocationAllocator) -> u32 {
 pub struct LocationAllocator {
     #[serde(skip)]
     counter: AtomicU32,
+}
+
+impl Default for LocationAllocator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LocationAllocator {

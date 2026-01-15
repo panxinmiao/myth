@@ -28,6 +28,12 @@ pub struct AssetServer {
     pub(crate) lookup_tex: HashMap<Uuid, TextureHandle>,
 }
 
+impl Default for AssetServer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AssetServer {
     pub fn new() -> Self {
         Self {

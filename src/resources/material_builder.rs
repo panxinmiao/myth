@@ -19,6 +19,12 @@ pub struct MeshBasicMaterialBuilder {
     side: u32,
 }
 
+impl Default for MeshBasicMaterialBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MeshBasicMaterialBuilder {
     pub fn new() -> Self {
         Self {
@@ -91,6 +97,12 @@ pub struct MeshStandardMaterialBuilder {
     depth_test: bool,
     cull_mode: Option<wgpu::Face>,
     side: u32,
+}
+
+impl Default for MeshStandardMaterialBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl MeshStandardMaterialBuilder {

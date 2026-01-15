@@ -34,7 +34,7 @@ pub fn generate_resource_id() -> u64 {
 // GPU 资源包装器
 // ============================================================================
 
-pub struct GPUGeometry {
+pub struct GpuGeometry {
     pub layout_info: Arc<GeneratedVertexLayout>,
 
     pub vertex_buffers: Vec<wgpu::Buffer>,
@@ -89,7 +89,7 @@ pub struct ResourceManager {
     queue: wgpu::Queue,
     frame_index: u64,
 
-    gpu_geometries: SecondaryMap<GeometryHandle, GPUGeometry>,
+    gpu_geometries: SecondaryMap<GeometryHandle, GpuGeometry>,
     gpu_materials: SecondaryMap<MaterialHandle, GpuMaterial>,
     gpu_textures: SecondaryMap<TextureHandle, GpuTexture>,
     // 采样器映射表：TextureHandle -> Sampler
@@ -159,7 +159,7 @@ impl ResourceManager {
             // 直接写，无锁！
             self.queue.write_buffer(&gpu_buf.buffer, 0, data);
             gpu_buf.last_used_frame = self.frame_index;
-            return gpu_buf.id;
+            gpu_buf.id
         } else {
             let mut gpu_buf = GpuBuffer::new(
                 &self.device,
@@ -170,7 +170,7 @@ impl ResourceManager {
             gpu_buf.last_used_frame = self.frame_index;
             let buf_id = gpu_buf.id;
             self.gpu_buffers.insert(id, gpu_buf);
-            return buf_id;
+            buf_id
         }
     }
 
@@ -181,13 +181,12 @@ impl ResourceManager {
 
         if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
             // 检查版本，如果数据更新了则重新上传
-            if attr.version > gpu_buf.last_uploaded_version {
-                if let Some(data) = &attr.data {
+            if attr.version > gpu_buf.last_uploaded_version
+                && let Some(data) = &attr.data {
                     let bytes: &[u8] = data.as_ref();
                     self.queue.write_buffer(&gpu_buf.buffer, 0, bytes);
                     gpu_buf.last_uploaded_version = attr.version;
                 }
-            }
             gpu_buf.last_used_frame = self.frame_index;
             return gpu_buf.id;
         }
@@ -204,7 +203,7 @@ impl ResourceManager {
             gpu_buf.last_used_frame = self.frame_index;
             let buf_id = gpu_buf.id;
             self.gpu_buffers.insert(id, gpu_buf);
-            return buf_id;
+            buf_id
         } else {
             log::error!("Geometry attribute buffer {:?} missing CPU data for upload!", attr.buffer.label());
             // 策略 A: 如果之前有缓存，复用旧的（如果有的话）
@@ -221,7 +220,7 @@ impl ResourceManager {
             );
             let buf_id = gpu_buf.id;
             self.gpu_buffers.insert(id, gpu_buf);
-            return buf_id;
+            buf_id
         }
     }
 
@@ -251,7 +250,7 @@ impl ResourceManager {
         &mut self, 
         assets: &AssetServer, 
         handle: GeometryHandle
-    ) -> Option<&GPUGeometry> {
+    ) -> Option<&GpuGeometry> {
         let geometry = assets.get_geometry(handle)?;
 
         let mut buffer_ids_changed = false;
@@ -260,22 +259,19 @@ impl ResourceManager {
         for attr in geometry.attributes.values() {
             let new_id = self.prepare_attribute_buffer(attr);
 
-            if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
-                if !gpu_geo.vertex_buffer_ids.contains(&new_id) {
+            if let Some(gpu_geo) = self.gpu_geometries.get(handle)
+                && !gpu_geo.vertex_buffer_ids.contains(&new_id) {
                      // 只要有一个 Buffer ID 不在旧列表里，认为变了。
                      buffer_ids_changed = true;
                 }
-            }
         }
 
         // 2. 检查 Index Buffer
         if let Some(indices) = &geometry.index_attribute {
             let new_id = self.prepare_attribute_buffer(indices);
-             if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
-                 if let Some((_, _, _, old_id)) = gpu_geo.index_buffer {
-                     if old_id != new_id { buffer_ids_changed = true; }
-                 }
-             }
+             if let Some(gpu_geo) = self.gpu_geometries.get(handle)
+                 && let Some((_, _, _, old_id)) = gpu_geo.index_buffer
+                     && old_id != new_id { buffer_ids_changed = true; }
         }
 
         let needs_rebuild = if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
@@ -334,12 +330,12 @@ impl ResourceManager {
             }
         }
 
-        let gpu_geo = GPUGeometry {
+        let gpu_geo = GpuGeometry {
             layout_info,
             vertex_buffers,
             vertex_buffer_ids,
             index_buffer,
-            draw_range: draw_range,
+            draw_range,
             instance_range: 0..1,
             version: geometry.structure_version(),
             last_used_frame: self.frame_index,
@@ -348,7 +344,7 @@ impl ResourceManager {
         self.gpu_geometries.insert(handle, gpu_geo);
     }
 
-    pub fn get_geometry(&self, handle: GeometryHandle) -> Option<&GPUGeometry> {
+    pub fn get_geometry(&self, handle: GeometryHandle) -> Option<&GpuGeometry> {
         self.gpu_geometries.get(handle)
     }
 
@@ -412,26 +408,26 @@ impl ResourceManager {
         let layout_ver = material.data.layout_version();
 
         if !self.gpu_materials.contains_key(handle) {
-            self.build_full_material(assets, handle, &material);
+            self.build_full_material(assets, handle, material);
         }
 
         let gpu_mat = self.gpu_materials.get(handle).expect("gpu material should exist.");
         
         if layout_ver != gpu_mat.last_layout_version {
             // 重建 Pipeline + BindGroup + 上传数据
-            self.build_full_material(assets, handle, &material);
+            self.build_full_material(assets, handle, material);
             return;
         }
 
         if binding_ver != gpu_mat.last_binding_version {
             // 只需重建 BindGroup（Pipeline 复用）
-            self.rebuild_bind_group(assets, handle, &material);
+            self.rebuild_bind_group(assets, handle, material);
             return;
         }
 
         if uniform_ver != gpu_mat.last_data_version {
             // 极快：直接写入 GPU Buffer
-            self.update_material_uniforms(handle, &material);
+            self.update_material_uniforms(handle, material);
         }
 
         // 更新帧计数
@@ -560,33 +556,27 @@ impl ResourceManager {
         match &material.data {
             MaterialData::Basic(m) => {
                 let data = bytemuck::bytes_of(m.uniforms());
-                if let Some(gpu_mat) = self.gpu_materials.get(handle) {
-                    if let Some(&buf_id) = gpu_mat.uniform_buffers.first() {
-                        if let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
+                if let Some(gpu_mat) = self.gpu_materials.get(handle)
+                    && let Some(&buf_id) = gpu_mat.uniform_buffers.first()
+                        && let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
                             self.queue.write_buffer(&gpu_buf.buffer, 0, data);
                         }
-                    }
-                }
             },
             MaterialData::Phong(m) => {
                 let data = bytemuck::bytes_of(m.uniforms());
-                if let Some(gpu_mat) = self.gpu_materials.get(handle) {
-                    if let Some(&buf_id) = gpu_mat.uniform_buffers.first() {
-                        if let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
+                if let Some(gpu_mat) = self.gpu_materials.get(handle)
+                    && let Some(&buf_id) = gpu_mat.uniform_buffers.first()
+                        && let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
                             self.queue.write_buffer(&gpu_buf.buffer, 0, data);
                         }
-                    }
-                }
             },
             MaterialData::Standard(m) => {
                 let data = bytemuck::bytes_of(m.uniforms());
-                if let Some(gpu_mat) = self.gpu_materials.get(handle) {
-                    if let Some(&buf_id) = gpu_mat.uniform_buffers.first() {
-                        if let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
+                if let Some(gpu_mat) = self.gpu_materials.get(handle)
+                    && let Some(&buf_id) = gpu_mat.uniform_buffers.first()
+                        && let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
                             self.queue.write_buffer(&gpu_buf.buffer, 0, data);
                         }
-                    }
-                }
             },
         }
 
@@ -769,7 +759,7 @@ impl ResourceManager {
 
         // Create new sampler
         let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-            label: label,
+            label,
             address_mode_u: config.address_mode_u,
             address_mode_v: config.address_mode_v,
             address_mode_w: config.address_mode_w,

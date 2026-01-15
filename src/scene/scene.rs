@@ -36,6 +36,12 @@ pub struct Scene {
     pub background: Option<Vec4>,
 }
 
+impl Default for Scene {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Scene {
     pub fn new() -> Self {
         Self {
@@ -96,11 +102,10 @@ impl Scene {
 
         if let Some(parent_idx) = parent_opt {
             // 从父节点的 children 列表中移除自己
-            if let Some(parent) = self.nodes.get_mut(parent_idx) {
-                if let Some(pos) = parent.children.iter().position(|&x| x == idx) {
+            if let Some(parent) = self.nodes.get_mut(parent_idx)
+                && let Some(pos) = parent.children.iter().position(|&x| x == idx) {
                     parent.children.remove(pos);
                 }
-            }
         } else {
             // 如果是根节点，从 root_nodes 移除
             if let Some(pos) = self.root_nodes.iter().position(|&x| x == idx) {
@@ -137,15 +142,12 @@ impl Scene {
         // 1. Detach from old
         let old_parent = self.nodes.get(child_idx).and_then(|n| n.parent);
         if let Some(p) = old_parent {
-            if let Some(n) = self.nodes.get_mut(p) {
-                if let Some(i) = n.children.iter().position(|&x| x == child_idx) {
+            if let Some(n) = self.nodes.get_mut(p)
+                && let Some(i) = n.children.iter().position(|&x| x == child_idx) {
                     n.children.remove(i);
                 }
-            }
-        } else {
-             if let Some(i) = self.root_nodes.iter().position(|&x| x == child_idx) {
-                self.root_nodes.remove(i);
-            }
+        } else if let Some(i) = self.root_nodes.iter().position(|&x| x == child_idx) {
+            self.root_nodes.remove(i);
         }
 
         // 2. Attach to new
@@ -213,11 +215,10 @@ impl Scene {
                 node.set_world_matrix(new_world);
 
                 // --- 同步更新组件 (Camera / Light) ---
-                if let Some(camera_idx) = node.camera {
-                    if let Some(camera) = self.cameras.get_mut(camera_idx) {
+                if let Some(camera_idx) = node.camera
+                    && let Some(camera) = self.cameras.get_mut(camera_idx) {
                         camera.update_view_projection(&new_world);
                     }
-                }
                 // (Light 通常只需要位置数据，在 collect_lights 中读取，这里可以不处理，或者做标记)
             }
 
@@ -293,12 +294,12 @@ impl Scene {
     }
 
     pub fn get_features(&self) -> SceneFeatures {
-        let features = SceneFeatures::empty();
+        
         // 示例：未来可以根据场景内容设置标志位
         // if self.lights.len() > 0 {
         //     features |= SceneFeatures::USE_SHADOW_MAP;
         // }
-        features
+        SceneFeatures::empty()
     }
 
     pub fn update(&mut self) {
@@ -312,8 +313,8 @@ impl Scene {
         let mut light_storages = vec![];
 
         for (_id, node) in self.nodes.iter() {
-            if let Some(light_idx) = node.light {
-                if let Some(light) = self.lights.get(light_idx) {
+            if let Some(light_idx) = node.light
+                && let Some(light) = self.lights.get(light_idx) {
                     
                     // 获取灯光的世界变换
                     let world_mat = node.world_matrix(); 
@@ -352,7 +353,6 @@ impl Scene {
                     light_storages.push(gpu_light_storage);
 
                 }
-            }
         }
 
         light_storages

@@ -55,6 +55,12 @@ pub struct PipelineCache {
     next_id: u16, // 下一个 Pipeline ID
 }
 
+impl Default for PipelineCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PipelineCache {
     pub fn new() -> Self {
         Self {
@@ -145,11 +151,11 @@ impl PipelineCache {
 
         // 2. Generate Code
         let shader_source = ShaderGenerator::generate_shader(
-            &vertex_layout,
+            vertex_layout,
             &gpu_environment.binding_wgsl,
             &gpu_material.binding_wgsl,
             &object_data.binding_wgsl,
-            &template_name,
+            template_name,
             &options,
         );
 
@@ -186,13 +192,13 @@ impl PipelineCache {
             label: Some("Auto-Generated Pipeline"),
             layout: Some(&layout),
             vertex: wgpu::VertexState {
-                module: &shader_module,
+                module: shader_module,
                 entry_point: Some("vs_main"),
                 buffers: &vertex_buffers_layout,
                 compilation_options: Default::default(),
             },
             fragment: Some(wgpu::FragmentState {
-                module: &shader_module,
+                module: shader_module,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
                     format: color_format,

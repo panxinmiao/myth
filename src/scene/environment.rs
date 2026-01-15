@@ -17,6 +17,7 @@ pub struct EnvironmentBindings {
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(Default)]
 pub struct EnvironmentSettings {
     pub shadows_enabled: bool,
     pub fog_enabled: bool,
@@ -24,16 +25,6 @@ pub struct EnvironmentSettings {
     pub ibl_enabled: bool,
 }
 
-impl Default for EnvironmentSettings {
-    fn default() -> Self {
-        Self {
-            shadows_enabled: false,
-            fog_enabled: false,
-            tone_mapping: 0,
-            ibl_enabled: false,
-        }
-    }
-}
 
 pub struct Environment {
     pub id: u32,
@@ -49,6 +40,12 @@ pub struct Environment {
     pub uniform_version: u64,
     pub binding_version: u64,
     pub layout_version: u64,
+}
+
+impl Default for Environment {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Environment {

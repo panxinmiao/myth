@@ -178,7 +178,7 @@ impl Texture {
                 // 简单的异或逻辑生成棋盘格
                 let cx = x / check_size;
                 let cy = y / check_size;
-                let is_a = (cx + cy) % 2 == 0;
+                let is_a = (cx + cy).is_multiple_of(2);
                 
                 if is_a {
                     data.extend_from_slice(&color_a);

@@ -193,6 +193,12 @@ pub struct Geometry {
     pub bounding_sphere: Option<BoundingSphere>,
 }
 
+impl Default for Geometry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Geometry {
     pub fn new() -> Self {
         Self {

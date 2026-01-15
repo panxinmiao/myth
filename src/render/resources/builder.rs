@@ -24,6 +24,12 @@ pub struct ResourceBuilder<'a> {
     next_binding_index: u32,
 }
 
+impl<'a> Default for ResourceBuilder<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<'a> ResourceBuilder<'a> {
     pub fn new() -> Self {
         Self {

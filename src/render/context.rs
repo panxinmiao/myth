@@ -68,6 +68,12 @@ pub struct RenderState {
 
 static NEXT_RENDER_STATE_ID: AtomicU32 = AtomicU32::new(0);
 
+impl Default for RenderState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RenderState {
     pub fn new() -> Self {
         Self {
@@ -177,7 +183,7 @@ impl RenderContext {
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
-        if self.resource_manager.frame_index() % 60 == 0 {
+        if self.resource_manager.frame_index().is_multiple_of(60) {
             self.resource_manager.prune(600);
         }
     }
@@ -224,8 +230,8 @@ impl RenderContext {
         let camera_pos = camera.world_matrix.translation;
 
         for (node_id, node) in scene.nodes.iter() {
-            if let Some(mesh_idx) = node.mesh {
-                if let Some(mesh) = scene.meshes.get(mesh_idx) {
+            if let Some(mesh_idx) = node.mesh
+                && let Some(mesh) = scene.meshes.get(mesh_idx) {
                     if !node.visible || !mesh.visible { continue; }
 
                     let geo_handle = mesh.geometry;
@@ -249,7 +255,7 @@ impl RenderContext {
                         }
                     }
 
-                    let distance_sq = camera_pos.distance_squared(node_world.translation.into());
+                    let distance_sq = camera_pos.distance_squared(node_world.translation);
 
                     list.push(RenderItem {
                         geo_handle,
@@ -258,7 +264,6 @@ impl RenderContext {
                         distance_sq,
                     });
                 }
-            }
         }
         list
     }
@@ -380,7 +385,7 @@ impl RenderContext {
                 
                 data.push(DynamicModelUniforms {
                     world_matrix: cmd.model_matrix,
-                    world_matrix_inverse: world_matrix_inverse,
+                    world_matrix_inverse,
                     normal_matrix,
                     ..Default::default()
                 });

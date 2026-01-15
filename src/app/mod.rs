@@ -84,18 +84,15 @@ impl App {
     }
 
     fn render(&mut self) {
-        if self.window.is_some() {
-            if let Some(cam_id) = self.active_camera {
+        if self.window.is_some()
+            && let Some(cam_id) = self.active_camera {
                 let scene_ref = &self.scene;
-                if let Some(node) = scene_ref.get_node(cam_id) {
-                    if let Some(camera_idx) = node.camera {
-                        if let Some(camera) = self.scene.cameras.get(camera_idx) {
+                if let Some(node) = scene_ref.get_node(cam_id)
+                    && let Some(camera_idx) = node.camera
+                        && let Some(camera) = self.scene.cameras.get(camera_idx) {
                             self.renderer.render(&self.scene, camera, &self.assets, self.last_frame_time);
                         }
-                    }
-                }
             }
-        }
     }
 }
 
@@ -139,12 +136,11 @@ impl ApplicationHandler for App {
                         .and_then(|node_id| self.scene.get_node(node_id))
                         .and_then(|node| node.camera);
 
-                    if let Some(idx) = camera_idx {
-                        if let Some(camera) = self.scene.cameras.get_mut(idx) {
+                    if let Some(idx) = camera_idx
+                        && let Some(camera) = self.scene.cameras.get_mut(idx) {
                             camera.aspect = new_aspect;
                             camera.update_projection_matrix();
                         }
-                    }
                 }
             }
             WindowEvent::RedrawRequested => {
