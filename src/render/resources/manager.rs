@@ -8,6 +8,7 @@ use std::vec;
 use slotmap::{SecondaryMap};
 use core::ops::Range;
 
+use crate::render::resources::mipmap_generator;
 use crate::resources::geometry::Geometry;
 use crate::resources::texture::{Texture, TextureSampler};
 use crate::scene::environment::Environment;
@@ -106,6 +107,8 @@ pub struct ResourceManager {
     dummy_texture: GpuTexture, 
     //默认采样器
     dummy_sampler: wgpu::Sampler,
+
+    mipmap_generator: crate::render::resources::mipmap_generator::MipmapGenerator,
 }
 
 impl ResourceManager {
@@ -113,13 +116,15 @@ impl ResourceManager {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
 
         let dummy_tex = Texture::new_2d(Some("dummy"), 1, 1, Some(vec![255, 255, 255, 255]), wgpu::TextureFormat::Rgba8Unorm); 
-        let dummy_gpu_image = GpuImage::new(&device, &queue, &dummy_tex.image);
+        let dummy_gpu_image = GpuImage::new(&device, &queue, &dummy_tex.image, 1, wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
         let dummy_gpu_tex = GpuTexture::new(&dummy_tex, &dummy_gpu_image);
 
         let dummy_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Dummy Sampler"),
             ..Default::default()
         });
+
+        let mipmap_generator = crate::render::resources::mipmap_generator::MipmapGenerator::new(&device);
         
         Self {
             device,
@@ -141,6 +146,8 @@ impl ResourceManager {
 
             dummy_texture: dummy_gpu_tex,
             dummy_sampler,
+
+            mipmap_generator,
         }
     }
 
@@ -684,16 +691,39 @@ impl ResourceManager {
     // ========================================================================
 
     // 1. 准备 Image (Internal)
-    fn prepare_image(&mut self, image: &Image){
+    fn prepare_image(&mut self, image: &Image, required_mip_count: u32, required_usage: wgpu::TextureUsages) {
         let id = image.id();
-        if let Some(gpu_img) = self.gpu_images.get_mut(&id) {
-            // 更新 (内部会检查 version 和 generation)
-            gpu_img.update(&self.device, &self.queue, image);
-            gpu_img.last_used_frame = self.frame_index;
+
+        let mut needs_recreate = false;
+
+        if let Some(gpu_img) = self.gpu_images.get(&id) {
+            if gpu_img.mip_level_count < required_mip_count {
+                needs_recreate = true;
+            }
+            else if !gpu_img.usage.contains(required_usage) {
+                needs_recreate = true;
+            }
         } else {
-            // 创建
-            let gpu_img = GpuImage::new(&self.device, &self.queue, image);
+            needs_recreate = true; // 不存在，直接创建
+        }
+
+        if needs_recreate {
+            self.gpu_images.remove(&id);
+
+            let mut gpu_img = GpuImage::new(
+                &self.device, 
+                &self.queue, 
+                image, 
+                required_mip_count,
+                required_usage
+            );
+            gpu_img.last_used_frame = self.frame_index;
             self.gpu_images.insert(id, gpu_img);
+        } else {
+            if let Some(gpu_img) = self.gpu_images.get_mut(&id) {
+                gpu_img.update(&self.device, &self.queue, image);
+                gpu_img.last_used_frame = self.frame_index;
+            }
         }
     }
 
@@ -703,22 +733,59 @@ impl ResourceManager {
         assets: &AssetServer, 
         handle: TextureHandle
     ) {
-        let texture_asset = match assets.get_texture(handle) {
-            Some(t) => {t},
-            None => {
-                log::warn!("Texture asset not found for handle: {:?}", handle);
-                return;
-            },
+        let Some(texture_asset) = assets.get_texture(handle) else {
+            log::warn!("Texture asset not found for handle: {:?}", handle);
+            return;
         };
-        
-        // [A] 先准备底层 Image
-        self.prepare_image(&texture_asset.image);
-        
+
+        let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
+
+        let image_mips = 1; // 这里简化处理，假设 ImageInner 只有 1 层 (如果支持 DDS/KTX 需读取 descriptor)
+        let generated_mips = if texture_asset.generate_mipmaps {
+             texture_asset.mip_level_count()
+        } else {
+             1
+        };
+
+        let final_mip_count = std::cmp::max(image_mips, generated_mips);
+
+        if final_mip_count > 1 {
+            usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
+        }
+
+        self.prepare_image(
+            &texture_asset.image, 
+            final_mip_count, 
+            usage
+        );
+
         let image_id = texture_asset.image.id();
-        let gpu_image = self.gpu_images.get(&image_id).expect("gpu image should exist.");
+        let gpu_image = self.gpu_images.get(&image_id).expect("GpuImage should be ready");
+
+
+        // === 3. Mipmap 生成 (Mipmap Generation) ===
+        // 仅当需要生成 且 尚未生成时 才执行
+        // gpu_image.mipmaps_generated 标记会在 upload_data 时被置为 false
+        if texture_asset.generate_mipmaps && !gpu_image.mipmaps_generated {
+            let gpu_img_mut = self.gpu_images.get_mut(&image_id).unwrap();
+            
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Mipmap Gen") });
+            
+            self.mipmap_generator.generate(
+                &mut encoder, 
+                &gpu_img_mut.texture, 
+                gpu_img_mut.mip_level_count
+            );
+            
+            self.queue.submit(Some(encoder.finish()));
+            gpu_img_mut.mipmaps_generated = true;
+        }
+
+        let gpu_image = self.gpu_images.get(&image_id).unwrap();
+
 
         // [B] 准备/更新 GpuTexture
-        let mut needs_update = false;
+        let mut needs_update_texture = false;
         if let Some(gpu_tex) = self.gpu_textures.get_mut(handle) {
             // 依赖检查
             let config_changed = gpu_tex.version != texture_asset.version();
@@ -726,15 +793,15 @@ impl ResourceManager {
             let image_swapped = gpu_tex.image_id != image_id;
 
             if config_changed || image_recreated || image_swapped {
-                needs_update = true;
+                needs_update_texture = true;
             }
             gpu_tex.last_used_frame = self.frame_index;
         } else {
-            needs_update = true;
+            needs_update_texture = true;
             // self.gpu_textures.insert(handle, gpu_tex);
         }
 
-        if needs_update {
+        if needs_update_texture {
             // 1. GpuTexture (View Only)
             let gpu_tex = GpuTexture::new(texture_asset, gpu_image);
             self.gpu_textures.insert(handle, gpu_tex);

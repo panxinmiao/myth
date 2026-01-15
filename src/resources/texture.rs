@@ -95,6 +95,8 @@ pub struct Texture {
 
     pub sampler: TextureSampler,
     pub transform: TextureTransform,
+
+    pub generate_mipmaps: bool,
     
     version: AtomicU64,
 }
@@ -112,6 +114,7 @@ impl Texture {
             view_dimension,
             sampler: TextureSampler::default(),
             transform: TextureTransform::default(),
+            generate_mipmaps: false,
             version: AtomicU64::new(0),
         }
     }
@@ -139,6 +142,15 @@ impl Texture {
         tex.sampler.address_mode_v = AddressMode::ClampToEdge;
         tex.sampler.address_mode_w = AddressMode::ClampToEdge;
         tex
+    }
+
+    pub fn mip_level_count(&self) -> u32 {
+        if !self.generate_mipmaps {
+            return 1;
+        }
+        let desc = self.image.descriptor.read().unwrap();
+        let max_dim = std::cmp::max(desc.width, desc.height);
+        (max_dim as f32).log2().floor() as u32 + 1
     }
 
     pub fn version(&self) -> u64 {

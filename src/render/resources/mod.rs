@@ -14,6 +14,7 @@ pub mod texture;
 pub mod buffer;
 pub mod binding;
 pub mod builder;
+pub mod mipmap_generator;
 
 // 重新导出常用类型
 pub use manager::ResourceManager;
