@@ -3,12 +3,9 @@ use crate::resources::buffer::BufferRef;
 use crate::resources::uniforms::WgslStruct;
 use crate::render::resources::binding::BindingResource;
 use crate::assets::TextureHandle;
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::resources::buffer::{CpuBuffer,GpuData};
 
 type WgslStructGenerator = fn(&str) -> String;
-
-// 临时 uniform 数据的 ID 生成器
-static NEXT_TEMP_UNIFORM_ID: AtomicU64 = AtomicU64::new(1 << 61);
 
 pub enum WgslStructName{
     Generator(WgslStructGenerator),
@@ -41,11 +38,14 @@ impl<'a> ResourceBuilder<'a> {
         }
     }
 
-    pub fn add_uniform_with_struct<T: WgslStruct>(&mut self, name: &str, buffer: &BufferRef, visibility: ShaderStages) {
-        self.add_uniform_buffer(name, buffer, visibility, Some(WgslStructName::Generator(T::wgsl_struct_def)));
-    }
-
-    pub fn add_uniform_buffer(&mut self, name: &str, buffer: &BufferRef, visibility: ShaderStages, struct_name: Option<WgslStructName>) {
+    pub fn add_buffer(
+        &mut self, 
+        name: &str, 
+        buffer: &BufferRef, 
+        data: Option<&'a [u8]>,
+        visibility: ShaderStages,
+        struct_name: Option<WgslStructName>
+    ) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -61,73 +61,45 @@ impl<'a> ResourceBuilder<'a> {
             buffer: buffer.clone(),
             offset: 0,
             size: None,
+            data,
         });
 
         self.names.push(name.to_string());
         self.struct_generators.push(struct_name); 
         self.next_binding_index += 1;
     }
-    
-    /// 【新】添加 Uniform 数据（直接使用数据引用，带struct生成器）
-    pub fn add_uniform_with_generator<T: WgslStruct>(
-        &mut self, 
-        name: &str, 
-        data: &'a [u8],
-        visibility: ShaderStages
-    ) {
-        let temp_id = NEXT_TEMP_UNIFORM_ID.fetch_add(1, Ordering::Relaxed);
-        
-        self.layout_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: self.next_binding_index,
-            visibility,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
 
-        self.resources.push(BindingResource::UniformSlot {
-            slot_id: temp_id,
-            data,
-            label: "", // label不重要，只是为了满足类型
-        });
-
-        self.names.push(name.to_string());
-        self.struct_generators.push(Some(WgslStructName::Generator(T::wgsl_struct_def)));
-        self.next_binding_index += 1;
+    pub fn add_uniform<T: WgslStruct + GpuData>(&mut self, name: &str, cpu_buffer: &'a CpuBuffer<T>, visibility: ShaderStages) {
+        self.add_buffer(name, cpu_buffer.handle(), Some(cpu_buffer.as_bytes()), visibility, Some(WgslStructName::Generator(T::wgsl_struct_def)));
     }
-    
-    /// 【新】添加 Uniform 数据（直接使用数据引用）
-    pub fn add_uniform(&mut self, name: &str, data: &'a [u8], label: &'a str, visibility: ShaderStages) {
-        let temp_id = NEXT_TEMP_UNIFORM_ID.fetch_add(1, Ordering::Relaxed);
-        
-        self.layout_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: self.next_binding_index,
-            visibility,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
-            },
-            count: None,
-        });
 
-        self.resources.push(BindingResource::UniformSlot {
-            slot_id: temp_id,
-            data,
-            label,
-        });
+    // pub fn add_uniform_buffer<T: WgslStruct + GpuData>(&mut self, name: &str, cpu_buffer: &'a CpuBuffer<T>, visibility: ShaderStages, struct_name: Option<WgslStructName>) {
+    //     self.layout_entries.push(wgpu::BindGroupLayoutEntry {
+    //         binding: self.next_binding_index,
+    //         visibility,
+    //         ty: wgpu::BindingType::Buffer {
+    //             ty: wgpu::BufferBindingType::Uniform,
+    //             has_dynamic_offset: false,
+    //             min_binding_size: None,
+    //         },
+    //         count: None,
+    //     });
 
-        self.names.push(name.to_string());
-        self.struct_generators.push(Some(WgslStructName::Name(label.to_string())));
-        self.next_binding_index += 1;
-    }
+    //     self.resources.push(BindingResource::Buffer {
+    //         buffer: cpu_buffer.handle().clone(),
+    //         offset: 0,
+    //         size: None,
+    //         data: Some(cpu_buffer.as_bytes()),
+    //     });
+
+    //     self.names.push(name.to_string());
+    //     self.struct_generators.push(struct_name); 
+    //     self.next_binding_index += 1;
+    // }
 
      /// 添加 Dynamic Uniform Buffer
 
-    pub fn add_dynamic_uniform<T: WgslStruct>(&mut self, name: &str, buffer: &BufferRef, min_binding_size: u64, visibility: ShaderStages) {
+    pub fn add_dynamic_uniform<T: WgslStruct>(&mut self, name: &str, cpu_buffer: &'a CpuBuffer<Vec<T>>, min_binding_size: u64, visibility: ShaderStages) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -140,9 +112,10 @@ impl<'a> ResourceBuilder<'a> {
         });
 
         self.resources.push(BindingResource::Buffer {
-            buffer: buffer.clone(),
+            buffer: cpu_buffer.handle().clone(),
             offset: 0,
             size: Some(min_binding_size),
+            data: Some(cpu_buffer.as_bytes()),
         });
 
         self.names.push(name.to_string());
@@ -182,7 +155,7 @@ impl<'a> ResourceBuilder<'a> {
         self.next_binding_index += 1;
     }
 
-    pub fn add_storage(&mut self, name: &str, buffer: &BufferRef, read_only: bool, visibility: ShaderStages, struct_name: Option<WgslStructName>) {
+    pub fn add_storage_buffer(&mut self, name: &str, buffer: &BufferRef, data: &'a [u8], read_only: bool, visibility: ShaderStages, struct_name: Option<WgslStructName>) {
         // 1. Layout Entry
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
@@ -204,6 +177,7 @@ impl<'a> ResourceBuilder<'a> {
             buffer: buffer.clone(), // Arc 克隆，开销很小
             offset: 0,
             size: None,
+            data: Some(data),
         });
 
         self.names.push(name.to_string());
@@ -211,10 +185,15 @@ impl<'a> ResourceBuilder<'a> {
         self.next_binding_index += 1;
     }
 
-     /// 添加 Storage Buffer
-
-    pub fn add_storage_with_struct<T: WgslStruct>(&mut self, name: &str, buffer: &BufferRef, read_only: bool, visibility: ShaderStages) {
-        self.add_storage(name, buffer, read_only, visibility, Some(WgslStructName::Generator(T::wgsl_struct_def)));
+    pub fn add_storage<T: WgslStruct>(
+        &mut self,
+        name: &str,
+        buffer: &BufferRef,
+        data: &'a [u8],
+        read_only: bool,
+        visibility: ShaderStages
+    ) {
+        self.add_storage_buffer(name, buffer, data, read_only, visibility, Some(WgslStructName::Generator(T::wgsl_struct_def)));
     }
 
     pub fn generate_wgsl(&self, group_index: u32) -> String {

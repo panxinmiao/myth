@@ -3,11 +3,11 @@ use wgpu::ShaderStages;
 
 use crate::render::resources::manager::ResourceManager;
 use crate::resources::uniforms::DynamicModelUniforms;
-use crate::resources::buffer::BufferRef;
 use crate::resources::geometry::{Geometry, GeometryFeatures};
 use crate::render::resources::builder::ResourceBuilder;
 use crate::render::resources::binding::Bindings;
 use crate::assets::GeometryHandle;
+use crate::resources::buffer::CpuBuffer;
 
 // 缓存 Key：决定了 BindGroup 是否可以复用
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -18,9 +18,10 @@ struct ObjectBindGroupKey {
 
 pub struct ModelBufferManager {
     // === 数据源 ===
-    model_buffer: BufferRef,
-    last_model_buffer_id: u64,
+    model_buffer: CpuBuffer<Vec<DynamicModelUniforms>>,
     
+    // 记录当前的分配容量（元素个数），用于判断是否需要重建 Buffer
+    current_capacity: usize,
     // === 缓存 ===
     // 我们缓存 (BindGroup, BindGroupId, Layout) 三元组，方便渲染时直接取用
     cache: HashMap<ObjectBindGroupKey, ObjectBindingData>,
@@ -37,18 +38,23 @@ pub struct ObjectBindingData {
 impl ModelBufferManager {
     pub fn new(resource_manager: &mut ResourceManager) -> Self {
         let initial_capacity = 128;
-        let model_buffer = BufferRef::with_capacity(
-            initial_capacity * std::mem::size_of::<DynamicModelUniforms>(),
+        let initial_data = vec![DynamicModelUniforms::default(); initial_capacity];
+
+        let model_buffer = CpuBuffer::new(
+            initial_data,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             Some("GlobalModelBuffer")
         );
-        let initial_data = vec![DynamicModelUniforms::default(); initial_capacity];
-        let bytes = bytemuck::cast_slice(&initial_data);
-        let last_model_buffer_id = resource_manager.write_buffer(&model_buffer, bytes);
+
+        // 立即上传初始 Buffer 到 GPU，确保后续 prepare_bind_group 时 Buffer 已存在
+        resource_manager.write_buffer(
+            model_buffer.handle(), 
+            model_buffer.as_bytes()
+        );
 
         Self {
             model_buffer,
-            last_model_buffer_id,
+            current_capacity: initial_capacity,
             cache: HashMap::new(),
         }
     }
@@ -57,23 +63,49 @@ impl ModelBufferManager {
     pub fn write_uniforms(&mut self, resource_manager: &mut ResourceManager, data: &[DynamicModelUniforms]) {
         if data.is_empty() { return; }
 
-        let bytes = bytemuck::cast_slice(data);
+        // 1. 检查是否需要扩容
+        if data.len() > self.current_capacity {
+            let new_cap = (data.len() * 2).max(128);
+            log::info!("Model Buffer expanding capacity: {} -> {}", self.current_capacity, new_cap);
+            
+            // 为了保持 GPU Buffer 的大容量，我们需要用 padded 数据初始化新的 CpuBuffer
+            let mut new_data = data.to_vec();
+            new_data.resize(new_cap, DynamicModelUniforms::default());
 
-        // 1. 如果长度超过当前 capacity，需要替换 BufferRef
-        if bytes.len() > self.model_buffer.size() {
-            // 扩容为当前所需的两倍，避免频繁扩容
-            let new_cap = bytes.len() * 2;
-            self.model_buffer = BufferRef::with_capacity(new_cap, self.model_buffer.usage(), self.model_buffer.label());
-        }
+            // 【关键】创建新的 CpuBuffer -> 生成新的 BufferRef ID
+            self.model_buffer = CpuBuffer::new(
+                new_data,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some("GlobalModelBuffer")
+            );
+            self.current_capacity = new_cap;
 
-        // 2. 同步 GPU (写入并获取 GPU 资源 ID)
-        let new_id = resource_manager.write_buffer(&self.model_buffer, bytes);
-        if new_id != self.last_model_buffer_id {
-            // Buffer 重建了！所有 BindGroup 失效 (因为它们引用了旧 Buffer)
-            log::info!("Model Buffer resized ({} -> {}), clearing ObjectBindGroup cache", self.last_model_buffer_id, new_id);
+            // ID 变了，所有引用旧 Buffer 的 BindGroup 都失效了
             self.cache.clear();
-            self.last_model_buffer_id = new_id;
+            
+            // 新 Buffer，ResourceManager 会在 write_buffer 时自动处理创建
+        } else {
+            // 2. 容量足够：直接更新数据
+            // 我们通过 write() 获取 Guard，将数据拷贝进去
+            // 注意：CpuBuffer 内部的 Vec 长度会变成 data.len()。
+            // 只要 data.len() <= current_capacity (即 GPU Buffer 的 size)，
+            // ResourceManager 的 write_buffer 就能正常工作（部分写入）。
+            
+            let mut guard = self.model_buffer.write();
+            *guard = data.to_vec(); // 这里会分配内存拷贝，但对于几十KB的数据量通常可接受
+            
+            // Guard Drop 时，version 会自动 +1
         }
+
+        // 3. 显式触发上传
+        // 这一步是必须的，因为 ModelBufferManager 的 BindGroup 缓存可能命中，
+        // 导致 prepare_bind_group 不会被调用，或者 RM 不会检查这个资源。
+        // 我们利用 ResourceManager 现有的 write_buffer (它支持盲写)
+        resource_manager.write_buffer(
+            self.model_buffer.handle(), 
+            self.model_buffer.as_bytes()
+        );
+
     }
 
     /// 获取 Group 2 资源
@@ -92,8 +124,9 @@ impl ModelBufferManager {
         let is_static = !features.intersects(GeometryFeatures::USE_MORPHING | GeometryFeatures::USE_SKINNING);
         
         let key = ObjectBindGroupKey {
-            geo_id: if is_static {None } else { Some(geometry_handle) },
-            model_buffer_id: self.last_model_buffer_id,
+            geo_id: if is_static { None } else { Some(geometry_handle) },
+            // 直接使用 CpuBuffer 的 ID
+            model_buffer_id: self.model_buffer.handle().id,
         };
 
         // 2. 查缓存

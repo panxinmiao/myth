@@ -8,7 +8,7 @@ use crate::scene::camera::Camera;
 use crate::scene::environment::Environment;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::resources::uniforms::{DynamicModelUniforms, RenderStateUniforms};
-use crate::resources::version_tracker::MutGuard;
+use crate::resources::buffer::CpuBuffer;
 
 use super::resources::ResourceManager;
 use super::pipeline::{PipelineCache, FastPipelineKey};
@@ -62,8 +62,7 @@ pub struct RenderCommand {
 
 pub struct RenderState {
     pub id: u32,
-    uniforms: RenderStateUniforms,
-    pub version: u64,
+    pub uniforms: CpuBuffer<RenderStateUniforms>,
 }
 
 static NEXT_RENDER_STATE_ID: AtomicU32 = AtomicU32::new(0);
@@ -78,17 +77,12 @@ impl RenderState {
     pub fn new() -> Self {
         Self {
             id: NEXT_RENDER_STATE_ID.fetch_add(1, Ordering::Relaxed),
-            uniforms: RenderStateUniforms::default(),
-            version: 0,
+            uniforms: CpuBuffer::new(
+                RenderStateUniforms::default(),
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some("RenderState Uniforms")
+            ),
         }
-    }
-
-    pub fn uniforms_mut(&mut self) -> MutGuard<'_, RenderStateUniforms> {
-        MutGuard::new(&mut self.uniforms, &mut self.version)
-    }
-
-    pub fn uniforms(&self) -> &RenderStateUniforms {
-        &self.uniforms
     }
 
     fn update(&mut self, camera: &Camera, time: f32) {
@@ -96,7 +90,7 @@ impl RenderState {
         let vp_matrix = camera.view_projection_matrix;
         let camera_position = camera.world_matrix.translation.to_vec3();
 
-        let mut u = self.uniforms_mut();
+        let mut u = self.uniforms.write();
         u.view_projection = vp_matrix;
         u.view_projection_inverse = vp_matrix.inverse();
         u.view_matrix = view_matrix;

@@ -363,3 +363,13 @@ mod tests {
         println!("{}", wgsl);
     }
 }
+
+crate::impl_gpu_data_for_pod!(
+    DynamicModelUniforms,
+    RenderStateUniforms,
+    EnvironmentUniforms,
+    MeshBasicUniforms,
+    MeshPhongUniforms,
+    MeshStandardUniforms,
+    GpuLightStorage
+);

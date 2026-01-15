@@ -19,7 +19,7 @@ fn main() -> anyhow::Result<()> {
 
 
     if let Some(basic) = basic_mat.as_basic_mut() {
-        basic.bindings_mut().map = Some(tex_handle);
+        basic.bindings.map = Some(tex_handle);
         basic.uniforms_mut().color = Vec4::new(1.0, 1.0, 1.0, 1.0);
     }
     

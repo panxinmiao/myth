@@ -1,8 +1,6 @@
 use std::collections::{HashMap};
 use std::sync::{Arc};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::hash::{Hash, Hasher};
-use std::collections::hash_map::DefaultHasher;
 use std::vec;
 
 use slotmap::{SecondaryMap};
@@ -358,50 +356,6 @@ impl ResourceManager {
         self.gpu_geometries.get(handle)
     }
 
-
-    fn compute_resource_hash(&self, resources: &[BindingResource]) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        for res in resources {
-            match res {
-                BindingResource::UniformSlot { slot_id, .. } => {
-                    // 使用 slot_id 作为稳定标识
-                    slot_id.hash(&mut hasher);
-                    // 可选：包含版本号来检测数据变化
-                    if let Some(gpu_buf) = self.gpu_buffers.get(slot_id) {
-                        gpu_buf.version.hash(&mut hasher);
-                    }
-                },
-                BindingResource::Buffer { buffer, .. } => {
-                    let gpu_id = buffer.id();
-                    gpu_id.hash(&mut hasher);
-                    if let Some(gpu_buf) = self.gpu_buffers.get(&gpu_id) {
-                        gpu_buf.version.hash(&mut hasher);
-                    }
-                },
-                BindingResource::Texture(handle_opt) => {
-                    if let Some(h) = handle_opt {
-                        if let Some(t) = self.gpu_textures.get(*h) {
-                            t.version.hash(&mut hasher);
-                            t.image_id.hash(&mut hasher);
-                            t.image_generation_id.hash(&mut hasher);
-                        } else { 0.hash(&mut hasher); }
-                    } else { 0.hash(&mut hasher); }
-                },
-                BindingResource::Sampler(handle_opt) => {
-                    if let Some(h) = handle_opt {
-                        if let Some(t) = self.gpu_textures.get(*h) {
-                            t.version.hash(&mut hasher);
-                        } else { 0.hash(&mut hasher); }
-                    } else { 0.hash(&mut hasher); }
-                },
-                BindingResource::_Phantom(_) => {
-                    // 忽略 PhantomData
-                }
-            }
-        }
-        hasher.finish()
-    }
-
     // Material Logic
     pub fn prepare_material(
         &mut self, 
@@ -457,24 +411,71 @@ impl ResourceManager {
         
         for resource in resources {
             match resource {
-                BindingResource::UniformSlot { slot_id, data, label } => {
-                    let buf_id = self.prepare_uniform_slot_data(*slot_id, data, label);
-                    uniform_buffers.push(buf_id);
-                },
-                BindingResource::Buffer { buffer, .. } => {
-                    let id = buffer.id();
-                    if !self.gpu_buffers.contains_key(&id) {
-                        // 创建一个空的 GPU buffer 占位（大小参考 buffer.size）
-                        let empty_data = vec![0u8; buffer.size()];
-                        let mut gpu_buf = GpuBuffer::new(
-                            &self.device,
-                            &empty_data,
-                            buffer.usage(),
-                            buffer.label(),
-                        );
+                BindingResource::Buffer { buffer: buffer_ref, offset: _, size: _, data } => {
+                    let id = buffer_ref.id();
+
+                    if let Some(bytes) = data {
+                        // =========================================================
+                        // Case A: 提供了数据 (Some) -> 负责 "创建" 或 "更新"
+                        // =========================================================
+                        
+                        // 1. 查找或创建 (Create)
+                        let gpu_buf = self.gpu_buffers.entry(id).or_insert_with(|| {
+                            // 只有这里有数据，才能执行初始化创建
+                            let mut buf = GpuBuffer::new(
+                                &self.device,
+                                bytes, // 使用 data 初始化
+                                buffer_ref.usage,
+                                buffer_ref.label(),
+                            );
+                            // 初始版本同步
+                            buf.last_uploaded_version = buffer_ref.version; 
+                            buf
+                        });
+
+                        // 2. 版本检查与更新 (Update)
+                        // 只有 CPU 版本比 GPU 新时才上传
+                        if buffer_ref.version > gpu_buf.last_uploaded_version {
+                            // 检查容量：如果数据变大导致显存不够，需要销毁重建
+                            if bytes.len() as u64 > gpu_buf.size {
+                                log::debug!("Recreating buffer {:?} due to size increase.", buffer_ref.label());
+                                *gpu_buf = GpuBuffer::new(
+                                    &self.device,
+                                    bytes,
+                                    buffer_ref.usage,
+                                    buffer_ref.label(),
+                                );
+                            } else {
+                                // 容量够用，直接写入 (Zero-Copy 到底层)
+                                self.queue.write_buffer(&gpu_buf.buffer, 0, bytes);
+                            }
+                            // 更新版本号，防止重复上传
+                            gpu_buf.last_uploaded_version = buffer_ref.version;
+                        }
+
+                        // 3. 标记活跃
                         gpu_buf.last_used_frame = self.frame_index;
-                        self.gpu_buffers.insert(id, gpu_buf);
+
+                    } else {
+                        // =========================================================
+                        // Case B: 没有数据 (None) -> 负责 "绑定" (Bind Only)
+                        // =========================================================
+                        
+                        // 尝试获取 GPU Buffer
+                        if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
+                            // 找到了：标记活跃即可，无需做任何上传操作
+                            gpu_buf.last_used_frame = self.frame_index;
+                        } else {
+                            // 没找到：这是一个严重错误！
+                            // 你试图绑定一个既没在 GPU 上创建，又没提供数据来创建的 Buffer。
+                            // 即使我们可以创建一个全 0 的 Buffer，这通常也不是用户想要的。
+                            panic!(
+                                "ResourceManager: Trying to bind buffer {:?} (ID: {}) but it is not initialized on GPU and no data was provided.", 
+                                buffer_ref.label(), id
+                            );
+                        }
                     }
+                    uniform_buffers.push(id);
                 },
                 BindingResource::Texture(handle_opt) => {
                     if let Some(handle) = handle_opt {
@@ -562,36 +563,31 @@ impl ResourceManager {
     ) {
         use crate::resources::material::MaterialData;
         
-        // 直接写入 GPU Buffer（最快路径）
         match &material.data {
             MaterialData::Basic(m) => {
-                let data = bytemuck::bytes_of(m.uniforms());
                 if let Some(gpu_mat) = self.gpu_materials.get(handle)
                     && let Some(&buf_id) = gpu_mat.uniform_buffers.first()
                         && let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
-                            self.queue.write_buffer(&gpu_buf.buffer, 0, data);
+                            self.queue.write_buffer(&gpu_buf.buffer, 0, m.uniforms.as_bytes());
                         }
             },
             MaterialData::Phong(m) => {
-                let data = bytemuck::bytes_of(m.uniforms());
                 if let Some(gpu_mat) = self.gpu_materials.get(handle)
                     && let Some(&buf_id) = gpu_mat.uniform_buffers.first()
                         && let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
-                            self.queue.write_buffer(&gpu_buf.buffer, 0, data);
+                            self.queue.write_buffer(&gpu_buf.buffer, 0, m.uniforms.as_bytes());
                         }
             },
             MaterialData::Standard(m) => {
-                let data = bytemuck::bytes_of(m.uniforms());
                 if let Some(gpu_mat) = self.gpu_materials.get(handle)
                     && let Some(&buf_id) = gpu_mat.uniform_buffers.first()
                         && let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
-                            self.queue.write_buffer(&gpu_buf.buffer, 0, data);
+                            self.queue.write_buffer(&gpu_buf.buffer, 0, m.uniforms.as_bytes());
                         }
             },
         }
 
         
-        // 更新版本号
         if let Some(gpu_mat) = self.gpu_materials.get_mut(handle) {
             gpu_mat.last_data_version = material.data.uniform_version();
         }
@@ -632,16 +628,7 @@ impl ResourceManager {
         for (i, resource_data) in resources.iter().enumerate() {
 
             let binding_resource = match resource_data {
-                BindingResource::UniformSlot { slot_id, .. } => {
-                    let gpu_buf = self.gpu_buffers.get(slot_id)
-                        .expect("UniformSlot should be prepared before creating bindgroup");
-                    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &gpu_buf.buffer,
-                        offset: 0,
-                        size: None,
-                    })
-                },
-                BindingResource::Buffer { buffer, offset, size } => {
+                BindingResource::Buffer { buffer, data:_, offset, size } => {
                     let cpu_id = buffer.id();
                     let gpu_buf = self.gpu_buffers.get(&cpu_id).expect("Buffer should be prepared before creating bindgroup");
                     wgpu::BindingResource::Buffer(wgpu::BufferBinding {
@@ -879,11 +866,11 @@ impl ResourceManager {
         // =========================================================
         if let Some(gpu_env) = self.worlds.get_mut(&world_id) {
             // 检查版本号是否完全一致
-            let uniform_match = gpu_env.last_uniform_version == env.uniform_version;
+            let uniform_match = gpu_env.last_uniform_version == env.uniforms.buffer.version;
             let binding_match = gpu_env.last_binding_version == env.binding_version;
             let layout_match  = gpu_env.last_layout_version == env.layout_version;
 
-            let render_state_match = render_state.version == gpu_env.last_render_state_version;
+            let render_state_match = render_state.uniforms.buffer.version == gpu_env.last_render_state_version;
 
             if uniform_match && binding_match && layout_match && render_state_match {
                 // 完全命中，无需任何操作
@@ -904,22 +891,34 @@ impl ResourceManager {
         // 通用地准备所有资源（从 BindingResource 中获取信息）
         for resource in &builder.resources {
             match resource {
-                BindingResource::UniformSlot { slot_id, data, label } => {
-                    self.prepare_uniform_slot_data(*slot_id, data, label);
-                },
-                BindingResource::Buffer { buffer, .. } => {
-                    // 如果 Environment 有灯光数据，主动推送到 GPU
-                    if buffer.id == env.light_storage_buffer.id && !env.gpu_light_data.is_empty() {
-                         let light_bytes = bytemuck::cast_slice(&env.gpu_light_data);
-                         let _ = self.write_buffer(&env.light_storage_buffer, light_bytes);
+                BindingResource::Buffer { buffer, data, .. } => {
+                    // 更新 Environment light storage
+                    if buffer.id == env.light_storage.buffer.id {
+                         let _ = self.write_buffer(&env.light_storage.buffer, env.light_storage.as_bytes());
+                    }
+                    
+                    // 更新 RenderState uniforms
+                    if buffer.id == render_state.uniforms.buffer.id {
+                        let _ = self.write_buffer(&render_state.uniforms.buffer, render_state.uniforms.as_bytes());
+                    }
+                    
+                    // 更新 Environment uniforms
+                    if buffer.id == env.uniforms.buffer.id {
+                        let _ = self.write_buffer(&env.uniforms.buffer, env.uniforms.as_bytes());
                     }
 
                     let id = buffer.id;
-                    if !self.gpu_buffers.contains_key(&id) {
-                        let empty_data = vec![0u8; buffer.size()];
+                    // 跳过大小为0的buffer（wgpu不允许绑定大小为0的buffer）
+                    if buffer.size() > 0 && !self.gpu_buffers.contains_key(&id) {
+                        // 使用实际数据初始化 Buffer（如果有的话）
+                        let init_data = if let Some(d) = data {
+                            d.to_vec()
+                        } else {
+                            vec![0u8; buffer.size()]
+                        };
                         let mut gpu_buf = GpuBuffer::new(
                             &self.device,
-                            &empty_data,
+                            &init_data,
                             buffer.usage(),
                             buffer.label(),
                         );
@@ -944,8 +943,8 @@ impl ResourceManager {
 
         if !needs_new_bind_group {
              if let Some(gpu_env) = self.worlds.get_mut(&world_id) {
-                gpu_env.last_uniform_version = env.uniform_version;
-                gpu_env.last_render_state_version = render_state.version;
+                gpu_env.last_uniform_version = env.uniforms.buffer.version;
+                gpu_env.last_render_state_version = render_state.uniforms.buffer.version;
                 gpu_env.last_used_frame = self.frame_index;
             }
             return;
@@ -963,10 +962,10 @@ impl ResourceManager {
             layout,
             layout_id,
             binding_wgsl,
-            last_uniform_version: env.uniform_version,
+            last_uniform_version: env.uniforms.buffer.version,
             last_binding_version: env.binding_version,
             last_layout_version: env.layout_version,
-            last_render_state_version: render_state.version,
+            last_render_state_version: render_state.uniforms.buffer.version,
             last_used_frame: self.frame_index,
         };
         self.worlds.insert(world_id, gpu_world);

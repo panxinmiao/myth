@@ -5,6 +5,38 @@ use bytemuck::Pod;
 
 static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(0);
 
+pub trait GpuData {
+    fn as_bytes(&self) -> &[u8];
+    fn byte_size(&self) -> usize;
+}
+
+impl<T: Pod> GpuData for Vec<T> {
+    fn as_bytes(&self) -> &[u8] {
+        bytemuck::cast_slice(self)
+    }
+    
+    fn byte_size(&self) -> usize {
+        std::mem::size_of::<T>() * self.len()
+    }
+}
+
+#[macro_export]
+macro_rules! impl_gpu_data_for_pod {
+    ($($t:ty),*) => {
+        $(
+            impl $crate::resources::buffer::GpuData for $t {
+                fn as_bytes(&self) -> &[u8] {
+                    bytemuck::bytes_of(self)
+                }
+                
+                fn byte_size(&self) -> usize {
+                    std::mem::size_of::<Self>()
+                }
+            }
+        )*
+    };
+}
+
 /// BufferRef: lightweight handle (id, label, usage, size). No CPU data owned.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BufferRef {
@@ -64,4 +96,80 @@ impl BufferRef {
         }
     }
     pub fn size(&self) -> usize { self.size }
+}
+
+pub struct BufferGuard<'a, T: GpuData> {
+    buffer: &'a mut CpuBuffer<T>,
+}
+
+impl<'a, T: GpuData> std::ops::Deref for BufferGuard<'a, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.buffer.data
+    }
+}
+
+impl<'a, T: GpuData> std::ops::DerefMut for BufferGuard<'a, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.buffer.data
+    }
+}
+
+impl<'a, T: GpuData> Drop for BufferGuard<'a, T> {
+    fn drop(&mut self) {
+        self.buffer.buffer.version = self.buffer.buffer.version.wrapping_add(1);
+        
+        let new_size = self.buffer.data.byte_size();
+        if new_size != self.buffer.buffer.size {
+            self.buffer.buffer.size = new_size;
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CpuBuffer<T: GpuData> {
+    data: T,
+    pub buffer: BufferRef,
+}
+
+impl<T: GpuData> CpuBuffer<T> {
+    pub fn new(data: T, usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
+        let size = data.byte_size();
+        let mut buffer = BufferRef::new(size, usage, label);
+        buffer.version = 0;
+        Self { data, buffer }
+    }
+
+    pub fn read(&self) -> &T {
+        &self.data
+    }
+
+    pub fn write(&mut self) -> BufferGuard<'_, T> {
+        BufferGuard { buffer: self }
+    }
+    
+    pub fn handle(&self) -> &BufferRef {
+        &self.buffer
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        self.data.as_bytes()
+    }
+}
+
+impl<T: GpuData> std::ops::Deref for CpuBuffer<T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.data
+    }
+}
+
+impl<T: GpuData> GpuData for CpuBuffer<T> {
+    fn as_bytes(&self) -> &[u8] {
+        self.data.as_bytes()
+    }
+    
+    fn byte_size(&self) -> usize {
+        self.data.byte_size()
+    }
 }

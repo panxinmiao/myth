@@ -21,7 +21,7 @@ fn main() -> anyhow::Result<()> {
 
 
     if let Some(standard) = mat.as_standard_mut() {
-        standard.bindings_mut().map = Some(tex_handle);
+        standard.bindings.map = Some(tex_handle);
     }
     
     let geo_handle = app.assets.add_geometry(geometry);
