@@ -100,13 +100,17 @@ impl Environment {
 
     pub fn update_lights(&mut self, gpu_lights: Vec<GpuLightStorage>) {
         if gpu_lights.is_empty() {
-            self.gpu_light_data.clear();
-            self.uniforms_mut().num_lights = 0;
+            if !self.gpu_light_data.is_empty() {
+                self.gpu_light_data.clear();
+                self.uniforms_mut().num_lights = 0;
+            }
             return;
         }
 
         self.gpu_light_data = gpu_lights;
-        self.uniforms_mut().num_lights = self.gpu_light_data.len() as u32;
+        if (self.uniforms.num_lights as usize) != self.gpu_light_data.len() {
+            self.uniforms_mut().num_lights = self.gpu_light_data.len() as u32;
+        }
 
         // Check capacity and resize if needed (2x growth)
         let current_bytes = std::mem::size_of_val(self.gpu_light_data.as_slice());
@@ -117,6 +121,9 @@ impl Environment {
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 Some("Light Storage Buffer (Resized)")
             );
+            self.binding_version = self.binding_version.wrapping_add(1);
+        }else{
+            self.light_storage_buffer.version = self.light_storage_buffer.version.wrapping_add(1);
         }
     }
 }

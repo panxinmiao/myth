@@ -13,6 +13,7 @@ pub struct BufferRef {
     label: Cow<'static, str>,
     pub usage: wgpu::BufferUsages,
     pub size: usize, // 记录大小，用于创建时的参考
+    pub version: u64, // 版本号，用于追踪内容变更
 }
 
 impl BufferRef {
@@ -25,6 +26,7 @@ impl BufferRef {
                 .unwrap_or(Cow::Borrowed("Unnamed Buffer")),
             usage,
             size,
+            version: 0,
         }
     }
     

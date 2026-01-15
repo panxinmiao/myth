@@ -75,8 +75,12 @@ pub struct GpuEnvironment {
     pub layout: wgpu::BindGroupLayout,
     pub layout_id: u64,
     pub binding_wgsl: String,
-    pub last_version: u64,
-    pub last_resource_hash: u64,
+
+    pub last_uniform_version: u64,
+    pub last_binding_version: u64,
+    pub last_layout_version: u64,
+    pub last_render_state_version: u64,
+
     pub last_used_frame: u64,
 }
 
@@ -398,7 +402,7 @@ impl ResourceManager {
         hasher.finish()
     }
 
-// Material Logic
+    // Material Logic
     pub fn prepare_material(
         &mut self, 
         assets: &AssetServer, 
@@ -868,6 +872,31 @@ impl ResourceManager {
 
     pub fn prepare_global(&mut self, _assets: &AssetServer, env: &Environment, render_state: &RenderState) {
 
+        let world_id = Self::compose_env_render_state_id(render_state.id, env.id);
+
+        // =========================================================
+        // 1. 极速热路径 (Hot Path) - 零分配、零哈希
+        // =========================================================
+        if let Some(gpu_env) = self.worlds.get_mut(&world_id) {
+            // 检查版本号是否完全一致
+            let uniform_match = gpu_env.last_uniform_version == env.uniform_version;
+            let binding_match = gpu_env.last_binding_version == env.binding_version;
+            let layout_match  = gpu_env.last_layout_version == env.layout_version;
+
+            let render_state_match = render_state.version == gpu_env.last_render_state_version;
+
+            if uniform_match && binding_match && layout_match && render_state_match {
+                // 完全命中，无需任何操作
+                gpu_env.last_used_frame = self.frame_index;
+                return;
+            }
+        }        
+        
+        // =========================================================
+        // 2. 慢速构建/更新路径 (Build/Update Path)
+        // =========================================================
+        
+        // 无论如何，我们都需要收集 Binding 信息来处理 Buffer 上传
         let mut builder = ResourceBuilder::new();
         render_state.define_bindings(&mut builder);
         env.define_bindings(&mut builder);
@@ -879,14 +908,13 @@ impl ResourceManager {
                     self.prepare_uniform_slot_data(*slot_id, data, label);
                 },
                 BindingResource::Buffer { buffer, .. } => {
-                    // 确保 GPU buffer 占位存在（对于纯句柄式 BufferRef）
-            // 如果 Environment 有灯光数据，主动推送到 GPU
-            if !env.gpu_light_data.is_empty() {
-                let light_bytes = bytemuck::cast_slice(&env.gpu_light_data);
-                let _ = self.write_buffer(&env.light_storage_buffer, light_bytes);
-            }
+                    // 如果 Environment 有灯光数据，主动推送到 GPU
+                    if buffer.id == env.light_storage_buffer.id && !env.gpu_light_data.is_empty() {
+                         let light_bytes = bytemuck::cast_slice(&env.gpu_light_data);
+                         let _ = self.write_buffer(&env.light_storage_buffer, light_bytes);
+                    }
 
-                    let id = buffer.id();
+                    let id = buffer.id;
                     if !self.gpu_buffers.contains_key(&id) {
                         let empty_data = vec![0u8; buffer.size()];
                         let mut gpu_buf = GpuBuffer::new(
@@ -904,26 +932,27 @@ impl ResourceManager {
         }
 
         // 计算资源 hash（资源已准备好）
-        let resource_hash = self.compute_resource_hash(&builder.resources);
+        // let resource_hash = self.compute_resource_hash(&builder.resources);
 
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
-        let world_id = Self::compose_env_render_state_id(render_state.id, env.id);
-        let is_valid = if let Some(gpu_env) = self.worlds.get(&world_id) {
-            gpu_env.layout_id == layout_id && gpu_env.last_resource_hash == resource_hash
+        
+        let needs_new_bind_group = if let Some(gpu_env) = self.worlds.get(&world_id) {
+             gpu_env.layout_id != layout_id || gpu_env.last_binding_version != env.binding_version
         } else {
-            false
+            true
         };
 
-        if is_valid {
-            if let Some(gpu_env) = self.worlds.get_mut(&world_id) {
+        if !needs_new_bind_group {
+             if let Some(gpu_env) = self.worlds.get_mut(&world_id) {
+                gpu_env.last_uniform_version = env.uniform_version;
+                gpu_env.last_render_state_version = render_state.version;
                 gpu_env.last_used_frame = self.frame_index;
-                gpu_env.last_version = world_id;
             }
             return;
         }
 
         // 6. 重建 BindGroup (Create)
-        log::debug!("Rebuilding Global BindGroup. Layout: {}, ResHash: {}", layout_id, resource_hash);
+        // log::debug!("Rebuilding Global BindGroup. Layout: {}, ResHash: {}", layout_id, resource_hash);
 
         let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
         let binding_wgsl = builder.generate_wgsl(0); 
@@ -934,8 +963,10 @@ impl ResourceManager {
             layout,
             layout_id,
             binding_wgsl,
-            last_version: world_id,
-            last_resource_hash: resource_hash,
+            last_uniform_version: env.uniform_version,
+            last_binding_version: env.binding_version,
+            last_layout_version: env.layout_version,
+            last_render_state_version: render_state.version,
             last_used_frame: self.frame_index,
         };
         self.worlds.insert(world_id, gpu_world);
