@@ -22,13 +22,12 @@ pub struct GpuImage {
 impl GpuImage {
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, image: &ImageInner, mip_level_count: u32, usage: wgpu::TextureUsages) -> Self {
 
-        let desc = *image.descriptor.read().expect("Failed to read image descriptor");
+        // let desc = *image.descriptor.read().expect("Failed to read image descriptor");
 
-        let width = desc.width;
-        let height = desc.height;
-        let depth = desc.depth_or_array_layers;
-        let format = desc.format;
-
+        let width = image.width.load(Ordering::Relaxed);
+        let height = image.height.load(Ordering::Relaxed);
+        let depth = image.depth.load(Ordering::Relaxed);
+        let desc = image.description.read().expect("Failed to read image descriptor");
         let size = wgpu::Extent3d {
             width: width,
             height: height,
@@ -46,7 +45,7 @@ impl GpuImage {
             view_formats: &[],
         });
 
-        Self::upload_data(queue, &texture, image, width, height, depth, format);
+        Self::upload_data(queue, &texture, image, width, height, depth, desc.format);
 
         let mipmaps_generated = mip_level_count <= 1;
         Self {
@@ -58,7 +57,7 @@ impl GpuImage {
             width,
             height,
             depth,
-            format,
+            format: desc.format,
             mip_level_count,
             usage,
 

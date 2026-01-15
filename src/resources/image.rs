@@ -1,7 +1,7 @@
 use std::sync::{Arc, RwLock};
 #[cfg(debug_assertions)]
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
 use uuid::Uuid;
 
 // 全局 Image ID 生成器 (为了高性能 Map 查找，使用 u64)
@@ -11,12 +11,8 @@ static NEXT_IMAGE_ID: AtomicU64 = AtomicU64::new(0);
 // 把所有可能触发 Re-creation 的元数据打包
 #[derive(Debug, Clone, Copy)]
 pub struct ImageDescriptor {
-    pub width: u32,
-    pub height: u32,
-    pub depth_or_array_layers: u32,
     pub dimension: wgpu::TextureDimension,
     pub format: wgpu::TextureFormat,
-    pub mip_level_count: u32,
 }
 
 #[derive(Debug)]
@@ -26,8 +22,14 @@ pub struct ImageInner {
     #[cfg(debug_assertions)]
     label: Cow<'static, str>,
 
-    // 元数据
-    pub descriptor: RwLock<ImageDescriptor>,
+    pub width: AtomicU32,
+    pub height: AtomicU32,
+    pub depth: AtomicU32,
+    pub mip_level_count: AtomicU32, // 源数据的 mip 层级
+
+    // 格式信息 (Complex types, RwLock)
+    pub description: RwLock<ImageDescriptor>,
+
     // 数据内容 (像素)
     pub data: RwLock<Option<Vec<u8>>>,
     
@@ -71,12 +73,8 @@ impl Image {
         data: Option<Vec<u8>>
     ) -> Self {
         let image_descriptor = ImageDescriptor {
-            width,
-            height,
-            depth_or_array_layers,
             dimension,
             format,
-            mip_level_count: 1, // 暂简化
         };
         Self(Arc::new(ImageInner {
             id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed),
@@ -85,7 +83,14 @@ impl Image {
             label: _label
                 .map(|s| Cow::Owned(s.to_string()))
                 .unwrap_or(Cow::Borrowed("Unnamed Image")),
-            descriptor: RwLock::new(image_descriptor),
+            
+            width: AtomicU32::new(width),
+            height: AtomicU32::new(height),
+            depth: AtomicU32::new(depth_or_array_layers),
+            mip_level_count: AtomicU32::new(1),
+
+            description: RwLock::new(image_descriptor),
+
             data: RwLock::new(data),
             version: AtomicU64::new(1),
             generation_id: AtomicU64::new(1),
@@ -97,6 +102,16 @@ impl Image {
     pub fn version(&self) -> u64 { self.0.version.load(Ordering::Relaxed) }
     pub fn generation_id(&self) -> u64 { self.0.generation_id.load(Ordering::Relaxed) }
     
+    pub fn width(&self) -> u32 {self.0.width.load(Ordering::Relaxed)}
+    pub fn height(&self) -> u32 {self.0.height.load(Ordering::Relaxed)}
+    pub fn depth(&self) -> u32 {self.0.depth.load(Ordering::Relaxed)}
+
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.0.description.read().expect("Image descriptor lock poisoned").format
+    }
+    pub fn dimension(&self) -> wgpu::TextureDimension {
+        self.0.description.read().expect("Image descriptor lock poisoned").dimension
+    }
 
     /// 更新数据
     pub fn update_data(&self, data: Vec<u8>) {
@@ -106,28 +121,24 @@ impl Image {
     }
 
     pub fn resize(&self, width: u32, height: u32) {
-        let mut desc = self.0.descriptor.write().expect("Image descriptor lock poisoned");
+        let old_w = self.width();
+        let old_h = self.height();
         
-        // 1. 检查是否真的变了 (避免无谓的 GPU 重建)
-        if desc.width == width && desc.height == height {
-            return;
-        }
-
-        // 2. 更新 CPU 端数据
-        desc.width = width;
-        desc.height = height;
-
-        // 3. 标记结构脏数据 -> 触发 GpuImage 重建 -> 触发 GpuTexture 重建
-        self.0.generation_id.fetch_add(1, Ordering::Relaxed);
-    }
-
-    pub fn set_format(&self, format: wgpu::TextureFormat) {
-        let mut desc = self.0.descriptor.write().expect("Image descriptor lock poisoned");
-        if desc.format != format {
-            desc.format = format;
+        if old_w != width || old_h != height {
+            self.0.width.store(width, Ordering::Relaxed);
+            self.0.height.store(height, Ordering::Relaxed);
+            // 触发结构版本更新
             self.0.generation_id.fetch_add(1, Ordering::Relaxed);
         }
     }
+
+    // pub fn set_format(&self, format: wgpu::TextureFormat) {
+    //     let mut desc = self.0.descriptor.write().expect("Image descriptor lock poisoned");
+    //     if desc.format != format {
+    //         desc.format = format;
+    //         self.0.generation_id.fetch_add(1, Ordering::Relaxed);
+    //     }
+    // }
 }
 
 // Deref 方便直接访问内部数据 (只读)

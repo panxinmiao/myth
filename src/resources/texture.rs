@@ -148,8 +148,10 @@ impl Texture {
         if !self.generate_mipmaps {
             return 1;
         }
-        let desc = self.image.descriptor.read().unwrap();
-        let max_dim = std::cmp::max(desc.width, desc.height);
+        let w = self.image.width();
+        let h = self.image.height();
+        let max_dim = std::cmp::max(w, h);
+        if max_dim == 0 { return 1; }
         (max_dim as f32).log2().floor() as u32 + 1
     }
 

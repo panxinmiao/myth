@@ -9,6 +9,8 @@ pub struct GpuTexture {
     pub image_generation_id: u64,
     
     pub version: u64,
+
+    pub image_data_version: u64,
     pub last_used_frame: u64,
 }
 
@@ -26,6 +28,7 @@ impl GpuTexture {
             image_id: gpu_image.id,
             image_generation_id: gpu_image.generation_id,
             version: texture.version(),
+            image_data_version: gpu_image.version,
             last_used_frame: 0,
         }
     }

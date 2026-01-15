@@ -8,7 +8,6 @@ use std::vec;
 use slotmap::{SecondaryMap};
 use core::ops::Range;
 
-use crate::render::resources::mipmap_generator;
 use crate::resources::geometry::Geometry;
 use crate::resources::texture::{Texture, TextureSampler};
 use crate::scene::environment::Environment;
@@ -738,6 +737,30 @@ impl ResourceManager {
             return;
         };
 
+        // 极速热路径 (Hot Path) - 版本完全匹配时直接返回
+        // 检查所有版本号：如果 Texture 配置、Image 结构、Image 数据都没变，直接返回！
+        if let Some(gpu_tex) = self.gpu_textures.get_mut(handle) {
+            let tex_ver_match = gpu_tex.version == texture_asset.version();
+            let img_id_match = gpu_tex.image_id == texture_asset.image.id();
+            let img_gen_match = gpu_tex.image_generation_id == texture_asset.image.generation_id();
+            let img_data_match = gpu_tex.image_data_version == texture_asset.image.version();
+
+            if tex_ver_match && img_id_match && img_gen_match && img_data_match {
+                // 完全命中缓存，无需计算 mip_count，无需检查 mipmaps_generated
+                // 因为如果版本没变，上次 prepare 一定已经处理好了 Mipmap
+                gpu_tex.last_used_frame = self.frame_index;
+                // 更新 Image 的活跃帧 (防止被过早回收)
+                if let Some(gpu_img) = self.gpu_images.get_mut(&gpu_tex.image_id) {
+                    gpu_img.last_used_frame = self.frame_index;
+                }
+                return; 
+            }
+        }
+
+        // =========================================================
+        // 冷路径 (Cold Path) - 只有版本不匹配时才执行复杂的意图计算
+        // =========================================================
+
         let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
 
         let image_mips = 1; // 这里简化处理，假设 ImageInner 只有 1 层 (如果支持 DDS/KTX 需读取 descriptor)
@@ -772,6 +795,7 @@ impl ResourceManager {
             let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Mipmap Gen") });
             
             self.mipmap_generator.generate(
+                &self.device, 
                 &mut encoder, 
                 &gpu_img_mut.texture, 
                 gpu_img_mut.mip_level_count
