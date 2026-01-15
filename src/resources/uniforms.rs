@@ -284,11 +284,18 @@ define_uniform_struct!(
 define_uniform_struct!(
     struct MeshStandardUniforms {
         pub color: Vec4 = Vec4::ONE,           // 16
+
         pub emissive: Vec3 = Vec3::ZERO,        // 12
-        pub occlusion_strength: f32 = 1.0,     // 4 (12+4=16)
-        pub normal_scale: Vec2 = Vec2::ONE,    // 8
+        pub emissive_intensity: f32 = 1.0,    // 4
+
         pub roughness: f32 = 1.0,            // 4  
         pub metalness: f32 = 0.0,           // 4
+        pub opacity: f32 = 1.0,            // 4
+        pub occlusion_strength: f32 = 1.0,     // 4 
+
+        pub normal_scale: Vec2 = Vec2::ONE,    // 8
+        pub(crate) __padding: UniformArray<f32, 2>, // 8 (8+8=16)
+
         // 使用优化后的 Mat3A (48 bytes)
         pub map_transform: Mat3A = Mat3A::IDENTITY,         
         pub normal_map_transform: Mat3A = Mat3A::IDENTITY,   

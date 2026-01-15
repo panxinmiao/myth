@@ -8,6 +8,7 @@ fn pow4( x: f32 ) -> f32 {
 }
 
 const RECIPROCAL_PI: f32 = 0.3183098861837907;
+const EPSILON = 1e-6;
 
 fn getDistanceAttenuation(light_distance: f32, cutoff_distance: f32, decay_exponent: f32) -> f32 {
     var distance_falloff: f32 = 1.0 / max( pow( light_distance, decay_exponent ), 0.01 );

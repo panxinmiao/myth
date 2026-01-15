@@ -42,12 +42,15 @@ fn vs_main(in: VertexInput) -> VertexOutput {
 
 @fragment
 fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
-    var surface_normal = normalize(vec3<f32>(varyings.normal));
+    var normal = normalize(varyings.normal);
     $$ if flat_shading
         let u = dpdx(varyings.world_position);
         let v = dpdy(varyings.world_position);
-        surface_normal = normalize(cross(u, v));
+        normal = normalize(cross(u, v));
+    $$ else
+        normal = select(-normal, normal, is_front);
     $$ endif
+
 
     $$ if color_mode == 'normal'
         var diffuse_color = vec4<f32>((normalize(surface_normal) * 0.5 + 0.5), 1.0);
@@ -69,9 +72,11 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     // Apply opacity
     diffuse_color.a = diffuse_color.a * u_material.opacity;
 
+    // todo alpha test
+
     let view = normalize(u_render_state.camera_position - varyings.world_position);
-    var normal = surface_normal;
-    let face_direction = f32(is_front) * 2.0 - 1.0;
+
+    // let face_direction = f32(is_front) * 2.0 - 1.0;
 
     $$ if use_normal_map is defined
 
@@ -95,7 +100,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
 
     var geometry: GeometricContext;
     geometry.position = varyings.world_position;
-    geometry.normal = surface_normal;
+    geometry.normal = normal;
     geometry.view_dir = view;
 
     var material: BlinnPhongMaterial;

@@ -288,7 +288,7 @@ impl MaterialData {
         match self {
             Self::Basic(_) => "mesh_basic",
             Self::Phong(_) => "mesh_phong",
-            Self::Standard(_) => "mesh_standard",
+            Self::Standard(_) => "mesh_physical",
         }
     }
 
