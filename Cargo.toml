@@ -35,6 +35,7 @@ thiserror = "2.0.17"
 uuid = { version = "1.19.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
 md5 = "0.8.0"
 
+rustc-hash = "2.1.1"
 
 [features]
 default = []
@@ -45,9 +46,9 @@ debug_shader = []
 console_error_panic_hook = "0.1.6"
 console_log = "1.0"
 wgpu = { version = "28.0", features = ["webgl"]}
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4.56"
-web-sys = { version = "0.3.83", features = [
+wasm-bindgen = "0.2.108"
+wasm-bindgen-futures = "0.4.58"
+web-sys = { version = "0.3.85", features = [
     "Document",
     "Window",
     "Element",

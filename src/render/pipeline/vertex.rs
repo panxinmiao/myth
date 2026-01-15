@@ -1,4 +1,4 @@
-use std::collections::{HashMap};
+use rustc_hash::FxHashMap;
 use wgpu::VertexFormat;
 use crate::resources::geometry::{Geometry, Attribute};
 use crate::resources::buffer::BufferRef;
@@ -31,12 +31,12 @@ pub struct GeneratedVertexLayout {
     pub vertex_input_code: String,
     
     /// 属性名 -> Shader Location 映射 (供调试或绑定检查)
-    pub _attribute_locations: HashMap<String, u32>,
+    pub _attribute_locations: FxHashMap<String, u32>,
 }
 
 pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
 
-    let mut buffer_groups: HashMap<u64, Vec<(&String, &Attribute)>> = HashMap::new();
+    let mut buffer_groups: FxHashMap<u64, Vec<(&String, &Attribute)>> = FxHashMap::default();
 
     for (name, attr) in &geometry.attributes {
         let buffer_id = attr.buffer.id();
@@ -55,7 +55,7 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
 
     let mut owned_layouts = Vec::new();
     let mut wgsl_struct_fields = Vec::new();
-    let mut location_map = HashMap::new();
+    let mut location_map = FxHashMap::default();
     
     let mut current_location = 0;
 

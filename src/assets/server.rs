@@ -1,5 +1,5 @@
 use slotmap::{new_key_type, SlotMap};
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use uuid::Uuid;
 use std::path::Path;
 
@@ -23,9 +23,9 @@ pub struct AssetServer {
 
     // UUID 映射：用于通过 UUID (通常来自文件加载) 反查运行时 Handle
     // 这是一个辅助索引，渲染循环中不应使用它
-    pub(crate) lookup_geo: HashMap<Uuid, GeometryHandle>,
-    pub(crate) lookup_mat: HashMap<Uuid, MaterialHandle>,
-    pub(crate) lookup_tex: HashMap<Uuid, TextureHandle>,
+    pub(crate) lookup_geo: FxHashMap<Uuid, GeometryHandle>,
+    pub(crate) lookup_mat: FxHashMap<Uuid, MaterialHandle>,
+    pub(crate) lookup_tex: FxHashMap<Uuid, TextureHandle>,
 }
 
 impl Default for AssetServer {
@@ -40,9 +40,9 @@ impl AssetServer {
             geometries: SlotMap::with_key(),
             materials: SlotMap::with_key(),
             textures: SlotMap::with_key(),
-            lookup_geo: HashMap::new(),
-            lookup_mat: HashMap::new(),
-            lookup_tex: HashMap::new(),
+            lookup_geo: FxHashMap::default(),
+            lookup_mat: FxHashMap::default(),
+            lookup_tex: FxHashMap::default(),
         }
     }
 

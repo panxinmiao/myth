@@ -38,7 +38,7 @@ fn main() -> anyhow::Result<()> {
 
 
     // === 5. 设置更新回调 - 让立方体旋转 ===
-    app.set_update_fn(move |scene, _assets, _input, time, _dt| {
+    app.set_update_fn(move |_window, scene, _assets, _input, time, _dt| {
         // 通过 node_id 获取立方体节点
         if let Some(cube_node) = scene.get_node_mut(cube_node_id) {
             // 绕 Y 轴和 X 轴旋转

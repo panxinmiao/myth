@@ -1,10 +1,10 @@
-use std::collections::{HashMap};
 use std::sync::{Arc};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::vec;
 
 use slotmap::{SecondaryMap};
 use core::ops::Range;
+use rustc_hash::{FxHashMap};
 
 use crate::resources::geometry::Geometry;
 use crate::resources::texture::{Texture, TextureSampler};
@@ -98,13 +98,13 @@ pub struct ResourceManager {
     // 采样器映射表：TextureHandle -> Sampler
     gpu_samplers: SecondaryMap<TextureHandle, wgpu::Sampler>,
 
-    worlds: HashMap<u64, GpuEnvironment>, 
+    worlds: FxHashMap<u64, GpuEnvironment>,
     // Image 使用 u64 ID (高性能)
-    gpu_buffers: HashMap<u64, GpuBuffer>,
-    gpu_images: HashMap<u64, GpuImage>,
+    gpu_buffers: FxHashMap<u64, GpuBuffer>,
+    gpu_images: FxHashMap<u64, GpuImage>,
 
-    sampler_cache: HashMap<TextureSampler, wgpu::Sampler>,
-    layout_cache: HashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
+    sampler_cache: FxHashMap<TextureSampler, wgpu::Sampler>,
+    layout_cache: FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
 
     dummy_texture: GpuTexture, 
     //默认采样器
@@ -139,12 +139,12 @@ impl ResourceManager {
             gpu_textures: SecondaryMap::new(),
             gpu_samplers: SecondaryMap::new(),
             
-            worlds: HashMap::new(),
-            gpu_buffers: HashMap::new(),
-            gpu_images: HashMap::new(),
+            worlds: FxHashMap::default(),
+            gpu_buffers: FxHashMap::default(),
+            gpu_images: FxHashMap::default(),
 
-            layout_cache: HashMap::new(),
-            sampler_cache: HashMap::new(),
+            layout_cache: FxHashMap::default(),
+            sampler_cache: FxHashMap::default(),
 
             dummy_texture: dummy_gpu_tex,
             dummy_sampler,
@@ -275,11 +275,11 @@ impl ResourceManager {
             // =========================================================
             // [Fast Path] 极速热路径
             // 结构没变 (Layout OK) 且 数据没变 (Buffer Content OK)
-            // 直接标记活跃并返回，零 HashMap 开销
             // =========================================================
             if geometry.structure_version() == gpu_geo.version 
                && geometry.data_version() == gpu_geo.last_data_version {
                 gpu_geo.last_used_frame = self.frame_index;
+                return;
             }
         }
 

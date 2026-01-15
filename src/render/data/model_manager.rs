@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use wgpu::ShaderStages;
+use rustc_hash::{FxHashMap};
 
 use crate::render::resources::manager::ResourceManager;
 use crate::resources::uniforms::DynamicModelUniforms;
@@ -24,7 +24,7 @@ pub struct ModelBufferManager {
     current_capacity: usize,
     // === 缓存 ===
     // 我们缓存 (BindGroup, BindGroupId, Layout) 三元组，方便渲染时直接取用
-    cache: HashMap<ObjectBindGroupKey, ObjectBindingData>,
+    cache: FxHashMap<ObjectBindGroupKey, ObjectBindingData>,
 }
 
 #[derive(Clone)]
@@ -55,7 +55,7 @@ impl ModelBufferManager {
         Self {
             model_buffer,
             current_capacity: initial_capacity,
-            cache: HashMap::new(),
+            cache: FxHashMap::default(),
         }
     }
 

@@ -5,12 +5,19 @@ use three::resources::{Material, Mesh};
 use three::scene::{Camera};
 use three::scene::light;
 use three::OrbitControls;
+use three::utils::fps_counter::{FpsCounter};
+use three::render::settings::RenderSettings;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     // 1. 初始化引擎 App
-    let mut app = App::new().with_title("Earth");
+    let mut app = App::new().with_title("Earth").with_settings(RenderSettings {
+        vsync: false,
+        ..Default::default()
+    });
+
+    let mut fps_counter = FpsCounter::new();
 
     // 2. 准备资源 (Geometry, Texture, Material)
     let geometry = three::create_sphere(three::resources::primitives::SphereOptions {
@@ -105,12 +112,13 @@ fn main() -> anyhow::Result<()> {
     app.scene.active_camera = Some(cam_node_id);
 
 
-    let rot = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.001, 0.0);
-    let rot_clouds = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.00125, 0.0);
-
     let mut controls = OrbitControls::new(Vec3::ZERO, 250.0);
 
-    app.set_update_fn(move |scene, _assets, input, _time, _dt| {
+    app.set_update_fn(move |window, scene, _assets, input, _time, dt| {
+
+        let rot = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.001 * 60.0 * dt, 0.0);
+        let rot_clouds = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.00125 * 60.0 * dt, 0.0);
+
         // 1. 地球自转
         if let Some(node) = scene.get_node_mut(earth_node_id) {
             node.rotation = rot * node.rotation;
@@ -123,6 +131,11 @@ fn main() -> anyhow::Result<()> {
         // 3. 相机控制
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
             controls.update(transform, input, camera.fov.to_degrees());
+        }
+
+        if let Some(fps) = fps_counter.update() {
+            let title = format!("Earth | FPS: {:.2}", fps);
+            window.set_title(&title);
         }
     });
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::{FxHashMap};
 use xxhash_rust::xxh3::xxh3_128;
 
 use crate::resources::geometry::{Geometry, GeometryFeatures};
@@ -47,11 +47,11 @@ pub struct FastPipelineKey {
 
 pub struct PipelineCache {
     // L1: 快速查找 (命中率 99%+)
-    fast_cache: HashMap<FastPipelineKey, (wgpu::RenderPipeline, u16)>,
+    fast_cache: FxHashMap<FastPipelineKey, (wgpu::RenderPipeline, u16)>,
     // L2: 规范查找 (用于去重)
-    canonical_cache: HashMap<PipelineKey, (wgpu::RenderPipeline, u16)>,
+    canonical_cache: FxHashMap<PipelineKey, (wgpu::RenderPipeline, u16)>,
     // Shader Module 缓存 (避免重复创建)
-    module_cache: HashMap<u128, wgpu::ShaderModule>,
+    module_cache: FxHashMap<u128, wgpu::ShaderModule>,
     next_id: u16, // 下一个 Pipeline ID
 }
 
@@ -64,9 +64,9 @@ impl Default for PipelineCache {
 impl PipelineCache {
     pub fn new() -> Self {
         Self {
-            fast_cache: HashMap::new(),
-            canonical_cache: HashMap::new(),
-            module_cache: HashMap::new(),
+            fast_cache: FxHashMap::default(),
+            canonical_cache: FxHashMap::default(),
+            module_cache: FxHashMap::default(),
             next_id: 0,
         }
     }

@@ -10,9 +10,9 @@ use winit::window::{Window, WindowId};
 
 use crate::assets::AssetServer;
 use crate::scene::Scene;
-use crate::render::{Renderer, settings::RendererSettings};
+use crate::render::{Renderer, settings::RenderSettings};
 
-pub type UpdateFn = Box<dyn FnMut(&mut Scene, &AssetServer, &Input, f32, f32)>;
+pub type UpdateFn = Box<dyn FnMut(&winit::window::Window, &mut Scene, &AssetServer, &Input, f32, f32)>;
 
 pub struct App {
     window: Option<Arc<Window>>,
@@ -33,7 +33,7 @@ impl App {
         let assets = AssetServer::new();
         let scene = Scene::new();
         // 创建默认配置的 Renderer
-        let renderer = Renderer::new(RendererSettings::default());
+        let renderer = Renderer::new(RenderSettings::default());
 
         let now = std::time::Instant::now();
         Self {
@@ -60,9 +60,14 @@ impl App {
         self
     }
 
+    pub fn with_settings(mut self, settings: RenderSettings) -> Self {
+        self.renderer = Renderer::new(settings);
+        self
+    }
+
     pub fn set_update_fn<F>(&mut self, f: F) -> &mut Self 
     where
-        F: FnMut(&mut Scene, &AssetServer, &Input, f32, f32) + 'static,
+        F: FnMut(&winit::window::Window, &mut Scene, &AssetServer, &Input, f32, f32) + 'static,
     {
         self.update_fn = Some(Box::new(f));
         self
@@ -82,7 +87,9 @@ impl App {
         self.last_loop_time = now;
 
         if let Some(ref mut update_fn) = self.update_fn {
-            update_fn(&mut self.scene, &self.assets, &self.input, total_time, dt );
+            if let Some(window) = &self.window {
+                update_fn(window, &mut self.scene, &self.assets, &self.input, total_time, dt );
+            }
         }
 
         self.input.end_frame();

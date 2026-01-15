@@ -19,18 +19,18 @@ use self::resources::ResourceManager;
 use self::pipeline::{PipelineCache};
 use self::data::{ModelBufferManager};
 use self::context::{RenderContext, RenderState};
-use self::settings::RendererSettings;
+use self::settings::RenderSettings;
 
 /// 主渲染器
 pub struct Renderer {
-    settings: RendererSettings,
+    settings: RenderSettings,
     context: Option<RenderContext>,
     _size: winit::dpi::PhysicalSize<u32>,
 }
 
 impl Renderer {
     /// 阶段 1: 创建配置 (无 GPU 资源)
-    pub fn new(settings: RendererSettings) -> Self {
+    pub fn new(settings: RenderSettings) -> Self {
         Self {
             settings,
             context: None,
@@ -65,8 +65,14 @@ impl Renderer {
             },
         ).await?;
 
-        let config = surface.get_default_config(&adapter, size.width, size.height)
+        let mut config = surface.get_default_config(&adapter, size.width, size.height)
             .ok_or_else(|| ThreeError::AdapterRequestFailed("Surface not supported by adapter".to_string()))?;
+
+        config.present_mode = if self.settings.vsync {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
         surface.configure(&device, &config);
 
         // 初始化子系统

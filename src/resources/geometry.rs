@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use std::sync::Arc;
+use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages};
@@ -181,10 +181,10 @@ pub struct Geometry {
     structure_version: u64,
     data_version: u64,
 
-    pub attributes: HashMap<String, Attribute>,
+    pub attributes: FxHashMap<String, Attribute>,
     pub index_attribute: Option<Attribute>,
     
-    pub morph_attributes: HashMap<String, Vec<Attribute>>,
+    pub morph_attributes: FxHashMap<String, Vec<Attribute>>,
     pub morph_target_names: Vec<String>,
 
     pub topology: PrimitiveTopology,
@@ -207,9 +207,9 @@ impl Geometry {
             layout_version: 0,
             structure_version: 0,
             data_version: 0,
-            attributes: HashMap::new(),
+            attributes: FxHashMap::default(),
             index_attribute: None,
-            morph_attributes: HashMap::new(),
+            morph_attributes: FxHashMap::default(),
             morph_target_names: Vec::new(),
             topology: PrimitiveTopology::TriangleList,
             draw_range: 0..u32::MAX,

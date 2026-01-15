@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 use std::borrow::Cow;
 
 const BLIT_WGSL: &str = r#"
@@ -35,7 +35,7 @@ pub struct MipmapGenerator {
     sampler: wgpu::Sampler,
     shader: wgpu::ShaderModule,
     // [缓存] 针对不同纹理格式的 Pipeline
-    pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    pipelines: FxHashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
 }
 
 impl MipmapGenerator {
@@ -84,7 +84,7 @@ impl MipmapGenerator {
             layout,
             sampler,
             shader,
-            pipelines: HashMap::new(),
+            pipelines: FxHashMap::default(),
         }
     }
 

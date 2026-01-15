@@ -4,12 +4,16 @@ use three::resources::{Geometry, Material, Mesh, Texture};
 use three::scene::{Camera};
 use three::scene::light;
 use three::OrbitControls;
+use three::utils::fps_counter::{FpsCounter};
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     // 1. 初始化引擎 App
-    let mut app = App::new();
+    let mut app = App::new().with_settings(three::render::settings::RenderSettings {
+        vsync: false,
+        ..Default::default()
+    });
 
     // 2. 准备资源 (Geometry, Texture, Material)
     let geometry = Geometry::new_box(2.0, 2.0, 2.0);
@@ -59,13 +63,15 @@ fn main() -> anyhow::Result<()> {
 
     let mut controls = OrbitControls::new(Vec3::ZERO, 10.0);
 
+    let mut fps_counter = FpsCounter::new();
+
     // 6. 设置 Update 回调 (处理旋转动画)
     // move 闭包捕获 cube_node_id
-    app.set_update_fn(move |scene, _assets, input, _time, _dt| {
+    app.set_update_fn(move |window, scene, _assets, input, _time, dt| {
         if let Some(node) = scene.get_node_mut(cube_node_id) {
             // 每帧旋转
-            let rot_y = Quat::from_rotation_y(0.02);
-            let rot_x = Quat::from_rotation_x(0.01);
+            let rot_y = Quat::from_rotation_y(0.02 * 60.0 * dt);
+            let rot_x = Quat::from_rotation_x(0.01 * 60.0 * dt);
             
             // 累加旋转，update_matrix_world 会自动处理矩阵更新
             node.rotation = node.rotation * rot_y * rot_x;
@@ -74,6 +80,11 @@ fn main() -> anyhow::Result<()> {
         // 使用新的组件查询 API
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
             controls.update(transform, input, camera.fov.to_degrees());
+        }
+
+        if let Some(fps) = fps_counter.update() {
+            let title = format!("Box PBR | FPS: {:.2}", fps);
+            window.set_title(&title);
         }
     });
 
