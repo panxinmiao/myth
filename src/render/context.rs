@@ -330,14 +330,16 @@ impl RenderContext {
                 continue;
             };
 
-            let geo_features = geometry.get_features();
+            // let geo_features = geometry.get_features();
 
-            let mut effective_features = geo_features;
+            let mut geo_features = geometry.get_features();
+            let mut instance_variants = 0;
         
             if item.skin_binding.is_none(){
                 // 如果没有骨骼绑定，强行移除 SKINNING 特征，
                 // 这样 Shader Generator 就不会生成 USE_SKINNING 宏
-                effective_features.remove(GeometryFeatures::USE_SKINNING);
+                geo_features.remove(GeometryFeatures::USE_SKINNING);
+                instance_variants |= 1 << 0;
             }
             
             let fast_key = FastPipelineKey {
@@ -345,6 +347,7 @@ impl RenderContext {
                 material_version: material.layout_version(),
                 geometry_handle: item.geo_handle,
                 geometry_version: geometry.layout_version(),
+                instance_variants: instance_variants,
                 scene_id: scene.environment.id,
                 scene_version: scene.environment.layout_version(),
                 render_state_id: self.render_state.id,
@@ -357,7 +360,7 @@ impl RenderContext {
                 // L1 未命中，计算 Canonical Key
                 let canonical_key = PipelineKey {
                     mat_features: material.get_features(),
-                    geo_features: geometry.get_features(),
+                    geo_features: geo_features,
                     scene_features: scene.get_features(),
                     topology: geometry.topology,
                     cull_mode: material.cull_mode(),
