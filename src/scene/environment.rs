@@ -8,7 +8,7 @@ use crate::resources::texture::Texture;
 
 static NEXT_WORLD_ID: AtomicU32 = AtomicU32::new(0);
 
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, PartialEq)]
 pub struct EnvironmentBindings {
     pub env_map: Option<TextureHandle>,
     pub brdf_lut: Option<TextureHandle>,
@@ -23,19 +23,85 @@ pub struct EnvironmentSettings {
     pub ibl_enabled: bool,
 }
 
+/// BindingsGuard for Environment
+pub struct EnvBindingsGuard<'a> {
+    bindings: &'a mut EnvironmentBindings,
+    binding_version: &'a mut u64,
+    layout_version: &'a mut u64,
+    old_bindings: EnvironmentBindings,
+}
+
+impl<'a> std::ops::Deref for EnvBindingsGuard<'a> {
+    type Target = EnvironmentBindings;
+    fn deref(&self) -> &Self::Target {
+        self.bindings
+    }
+}
+
+impl<'a> std::ops::DerefMut for EnvBindingsGuard<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.bindings
+    }
+}
+
+impl<'a> Drop for EnvBindingsGuard<'a> {
+    fn drop(&mut self) {
+        let old = &self.old_bindings;
+        let new = &*self.bindings;
+        
+        let layout_changed = 
+            (old.env_map.is_some() != new.env_map.is_some()) ||
+            (old.brdf_lut.is_some() != new.brdf_lut.is_some());
+        
+        if layout_changed {
+            *self.layout_version = self.layout_version.wrapping_add(1);
+            *self.binding_version = self.binding_version.wrapping_add(1);
+        } else if old != new {
+            *self.binding_version = self.binding_version.wrapping_add(1);
+        }
+    }
+}
+
+/// SettingsGuard for Environment
+pub struct EnvSettingsGuard<'a> {
+    settings: &'a mut EnvironmentSettings,
+    layout_version: &'a mut u64,
+    old_settings: EnvironmentSettings,
+}
+
+impl<'a> std::ops::Deref for EnvSettingsGuard<'a> {
+    type Target = EnvironmentSettings;
+    fn deref(&self) -> &Self::Target {
+        self.settings
+    }
+}
+
+impl<'a> std::ops::DerefMut for EnvSettingsGuard<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.settings
+    }
+}
+
+impl<'a> Drop for EnvSettingsGuard<'a> {
+    fn drop(&mut self) {
+        if &self.old_settings != &*self.settings {
+            *self.layout_version = self.layout_version.wrapping_add(1);
+        }
+    }
+}
 
 pub struct Environment {
     pub id: u32,
     
-    pub uniforms: CpuBuffer<EnvironmentUniforms>,
-    pub bindings: EnvironmentBindings,
-    pub settings: EnvironmentSettings,
+    uniforms: CpuBuffer<EnvironmentUniforms>,
+    bindings: EnvironmentBindings,
+    settings: EnvironmentSettings,
     
     pub lights: Vec<Light>,
     pub light_storage: CpuBuffer<Vec<GpuLightStorage>>,
     
-    pub binding_version: u64,
-    pub layout_version: u64,
+    binding_version: u64,
+    layout_version: u64,
 }
 
 impl Default for Environment {
@@ -66,44 +132,78 @@ impl Environment {
         }
     }
     
+    // Uniforms accessor
+    pub fn uniforms(&self) -> &CpuBuffer<EnvironmentUniforms> {
+        &self.uniforms
+    }
+    
     pub fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, EnvironmentUniforms> {
         self.uniforms.write()
     }
 
+    // Bindings accessors
     pub fn bindings(&self) -> &EnvironmentBindings {
         &self.bindings
     }
     
+    pub fn bindings_mut(&mut self) -> EnvBindingsGuard<'_> {
+        EnvBindingsGuard {
+            old_bindings: self.bindings.clone(),
+            bindings: &mut self.bindings,
+            binding_version: &mut self.binding_version,
+            layout_version: &mut self.layout_version,
+        }
+    }
+
+    // Settings accessors
+    pub fn settings(&self) -> &EnvironmentSettings {
+        &self.settings
+    }
+    
+    pub fn settings_mut(&mut self) -> EnvSettingsGuard<'_> {
+        EnvSettingsGuard {
+            old_settings: self.settings.clone(),
+            settings: &mut self.settings,
+            layout_version: &mut self.layout_version,
+        }
+    }
+
+    // Version accessors
+    pub fn binding_version(&self) -> u64 {
+        self.binding_version
+    }
+    
+    pub fn layout_version(&self) -> u64 {
+        self.layout_version
+    }
+    
+    // Convenience methods
     pub fn set_env_map(&mut self, texture_bundle: Option<(TextureHandle, &Texture)>) {
-        let layout_changed = self.bindings.env_map.is_some() != texture_bundle.is_some();
-        self.bindings.env_map = texture_bundle.map(|(handle, _)| handle);
+        let mut bindings = self.bindings_mut();
+        bindings.env_map = texture_bundle.map(|(handle, _)| handle);
 
         let max_mip_count = texture_bundle
             .map(|(_, texture)| texture.mip_level_count())
             .unwrap_or(1);
 
+        drop(bindings);
         self.uniforms_mut().env_map_max_mip_level = (max_mip_count - 1) as f32;
-
-        if layout_changed {
-            self.layout_version = self.layout_version.wrapping_add(1);
-            self.binding_version = self.binding_version.wrapping_add(1);
-        } else {
-            self.binding_version = self.binding_version.wrapping_add(1);
-        }
+    }
+    
+    pub fn set_brdf_lut(&mut self, handle: Option<TextureHandle>) {
+        self.bindings_mut().brdf_lut = handle;
     }
     
     pub fn set_shadows_enabled(&mut self, enabled: bool) {
-        if self.settings.shadows_enabled != enabled {
-            self.settings.shadows_enabled = enabled;
-            self.layout_version = self.layout_version.wrapping_add(1);
-        }
+        self.settings_mut().shadows_enabled = enabled;
     }
     
     pub fn set_fog_enabled(&mut self, enabled: bool) {
-        if self.settings.fog_enabled != enabled {
-            self.settings.fog_enabled = enabled;
-            self.layout_version = self.layout_version.wrapping_add(1);
-        }
+        self.settings_mut().fog_enabled = enabled;
+    }
+    
+    pub fn set_ibl_enabled(&mut self, enabled: bool) {
+        self.settings_mut().ibl_enabled = enabled;
     }
 
     pub fn update_lights(&mut self, gpu_lights: Vec<GpuLightStorage>) {

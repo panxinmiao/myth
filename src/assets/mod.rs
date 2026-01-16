@@ -1,10 +1,12 @@
 pub mod server;
+pub mod loaders;
 
 // 重新导出 AssetServer 及相关类型
 pub use server::{
     AssetServer,
     GeometryHandle, MaterialHandle, TextureHandle,
 };
+pub use loaders::GltfLoader;
 
 
 use image::{GenericImageView};

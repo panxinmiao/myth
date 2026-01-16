@@ -340,7 +340,7 @@ impl Scene {
         // }
         let mut features = SceneFeatures::empty();
 
-        if self.environment.bindings.env_map.is_some() {
+        if self.environment.bindings().env_map.is_some() {
             features |= SceneFeatures::USE_ENV_MAP;
         }
         features

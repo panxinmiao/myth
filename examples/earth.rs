@@ -29,17 +29,20 @@ fn main() -> anyhow::Result<()> {
     // let geometry = Geometry::new_box(2.0, 2.0, 2.0);
     let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
-    let earth_tex_handle = app.assets.load_texture_from_file("examples/planets/earth_atmos_4096.jpg", three::ColorSpace::Srgb)?;
-    let specular_tex_handle = app.assets.load_texture_from_file("examples/planets/earth_specular_2048.jpg", three::ColorSpace::Srgb)?;
-    let emssive_tex_handle = app.assets.load_texture_from_file("examples/planets/earth_lights_2048.png", three::ColorSpace::Srgb)?;
-    let normal_map_handle = app.assets.load_texture_from_file("examples/planets/earth_normal_2048.jpg", three::ColorSpace::Linear)?;
-    let clouds_tex_handle = app.assets.load_texture_from_file("examples/planets/earth_clouds_1024.png", three::ColorSpace::Srgb)?;
-
+    let earth_tex_handle = app.assets.load_texture_from_file("examples/assets/planets/earth_atmos_4096.jpg", three::ColorSpace::Srgb)?;
+    let specular_tex_handle = app.assets.load_texture_from_file("examples/assets/planets/earth_specular_2048.jpg", three::ColorSpace::Srgb)?;
+    let emssive_tex_handle = app.assets.load_texture_from_file("examples/assets/planets/earth_lights_2048.png", three::ColorSpace::Srgb)?;
+    let normal_map_handle = app.assets.load_texture_from_file("examples/assets/planets/earth_normal_2048.jpg", three::ColorSpace::Linear)?;
+    let clouds_tex_handle = app.assets.load_texture_from_file("examples/assets/planets/earth_clouds_1024.png", three::ColorSpace::Srgb)?;
     if let Some(phong) = mat.as_phong_mut() {
-        phong.bindings.map = Some(earth_tex_handle);
-        phong.bindings.specular_map = Some(specular_tex_handle);
-        phong.bindings.emissive_map = Some(emssive_tex_handle);
-        phong.bindings.normal_map = Some(normal_map_handle);
+
+        {
+            let mut bindings = phong.bindings_mut();
+            bindings.map = Some(earth_tex_handle);
+            bindings.specular_map = Some(specular_tex_handle);
+            bindings.emissive_map = Some(emssive_tex_handle);
+            bindings.normal_map = Some(normal_map_handle);
+        }
 
         let mut uniforms = phong.uniforms_mut();
         uniforms.normal_scale = Vec2::new(0.85, -0.85);
@@ -54,12 +57,15 @@ fn main() -> anyhow::Result<()> {
 
     let mut cloud_material = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
     if let Some(phong) = cloud_material.as_phong_mut() {
-        phong.bindings.map = Some(clouds_tex_handle);
+        phong.set_map(Some(clouds_tex_handle));
         phong.uniforms_mut().opacity = 0.8;
         
-        phong.settings.transparent = true;
-        phong.settings.depth_write = false;
-        phong.settings.cull_mode = Some(wgpu::Face::Back);
+        {
+            let mut settings = phong.settings_mut();
+            settings.transparent = true;
+            settings.depth_write = false;
+            settings.cull_mode = Some(wgpu::Face::Back);
+        }
     }
 
     let cloud_material_handle = app.assets.add_material(cloud_material.into());

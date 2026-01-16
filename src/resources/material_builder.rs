@@ -56,14 +56,17 @@ impl MeshBasicMaterialBuilder {
 
     pub fn build(self) -> Material {
         let mut basic = MeshBasicMaterial::new(self.color);
-        basic.bindings.map = self.map;
+        basic.bindings_mut().map = self.map;
         basic.uniforms_mut().opacity = self.opacity;
         
-        basic.settings.transparent = self.transparent;
-        basic.settings.depth_write = self.depth_write;
-        basic.settings.depth_test = self.depth_test;
-        basic.settings.cull_mode = self.cull_mode;
-        basic.settings.side = self.side;
+        {
+            let mut settings = basic.settings_mut();
+            settings.transparent = self.transparent;
+            settings.depth_write = self.depth_write;
+            settings.depth_test = self.depth_test;
+            settings.cull_mode = self.cull_mode;
+            settings.side = self.side;
+        }
 
         let mut mat = Material::new(MaterialData::Basic(basic));
         mat.name = self.name;
@@ -154,18 +157,24 @@ impl MeshStandardMaterialBuilder {
             uniforms.occlusion_strength = 1.0;
         }
 
-        standard.bindings.map = self.map;
-        standard.bindings.normal_map = self.normal_map;
-        standard.bindings.roughness_map = self.roughness_map;
-        standard.bindings.metalness_map = self.metalness_map;
-        standard.bindings.emissive_map = self.emissive_map;
-        standard.bindings.ao_map = self.ao_map;
+        {
+            let mut bindings = standard.bindings_mut();
+            bindings.map = self.map;
+            bindings.normal_map = self.normal_map;
+            bindings.roughness_map = self.roughness_map;
+            bindings.metalness_map = self.metalness_map;
+            bindings.emissive_map = self.emissive_map;
+            bindings.ao_map = self.ao_map;
+        }
 
-        standard.settings.transparent = self.transparent;
-        standard.settings.depth_write = self.depth_write;
-        standard.settings.depth_test = self.depth_test;
-        standard.settings.cull_mode = self.cull_mode;
-        standard.settings.side = self.side;
+        {
+            let mut settings = standard.settings_mut();
+            settings.transparent = self.transparent;
+            settings.depth_write = self.depth_write;
+            settings.depth_test = self.depth_test;
+            settings.cull_mode = self.cull_mode;
+            settings.side = self.side;
+        }
 
         let mut mat = Material::new(MaterialData::Standard(standard));
         mat.name = self.name;

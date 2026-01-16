@@ -21,7 +21,7 @@ fn main() -> anyhow::Result<()> {
 
 
     if let Some(phong) = mat.as_phong_mut() {
-        phong.bindings.map = Some(tex_handle);
+        phong.set_map(Some(tex_handle));
     }
     
     let geo_handle = app.assets.add_geometry(geometry);

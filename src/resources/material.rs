@@ -24,6 +24,75 @@ bitflags! {
 }
 
 // ============================================================================
+// Guard 结构体（自动版本管理）
+// ============================================================================
+
+pub struct BindingsGuard<'a> {
+    bindings: &'a mut MaterialBindings,
+    binding_version: &'a mut u64,
+    layout_version: &'a mut u64,
+    initial_layout: MaterialBindings,
+}
+
+impl<'a> std::ops::Deref for BindingsGuard<'a> {
+    type Target = MaterialBindings;
+    fn deref(&self) -> &Self::Target {
+        self.bindings
+    }
+}
+
+impl<'a> std::ops::DerefMut for BindingsGuard<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.bindings
+    }
+}
+
+impl<'a> Drop for BindingsGuard<'a> {
+    fn drop(&mut self) {
+        let layout_changed = 
+            (self.initial_layout.map.is_some() != self.bindings.map.is_some()) ||
+            (self.initial_layout.normal_map.is_some() != self.bindings.normal_map.is_some()) ||
+            (self.initial_layout.roughness_map.is_some() != self.bindings.roughness_map.is_some()) ||
+            (self.initial_layout.metalness_map.is_some() != self.bindings.metalness_map.is_some()) ||
+            (self.initial_layout.emissive_map.is_some() != self.bindings.emissive_map.is_some()) ||
+            (self.initial_layout.ao_map.is_some() != self.bindings.ao_map.is_some()) ||
+            (self.initial_layout.specular_map.is_some() != self.bindings.specular_map.is_some());
+        
+        if layout_changed {
+            *self.layout_version = self.layout_version.wrapping_add(1);
+        }
+        *self.binding_version = self.binding_version.wrapping_add(1);
+    }
+}
+
+pub struct SettingsGuard<'a> {
+    settings: &'a mut MaterialSettings,
+    layout_version: &'a mut u64,
+    initial_settings: MaterialSettings,
+}
+
+impl<'a> std::ops::Deref for SettingsGuard<'a> {
+    type Target = MaterialSettings;
+    fn deref(&self) -> &Self::Target {
+        self.settings
+    }
+}
+
+impl<'a> std::ops::DerefMut for SettingsGuard<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.settings
+    }
+}
+
+impl<'a> Drop for SettingsGuard<'a> {
+    fn drop(&mut self) {
+        if self.settings != &self.initial_settings {
+            *self.layout_version = self.layout_version.wrapping_add(1);
+        }
+    }
+}
+
+// ============================================================================
 // 具体材质定义 (Specific Materials)
 // ============================================================================
 
@@ -74,11 +143,11 @@ impl Default for MaterialSettings {
 #[derive(Debug)]
 pub struct MeshBasicMaterial {
     pub uniforms: CpuBuffer<MeshBasicUniforms>,
-    pub bindings: MaterialBindings,
-    pub settings: MaterialSettings,
+    bindings: MaterialBindings,
+    settings: MaterialSettings,
     
-    pub binding_version: u64,
-    pub layout_version: u64,
+    binding_version: u64,
+    layout_version: u64,
 }
 
 impl MeshBasicMaterial {
@@ -98,9 +167,41 @@ impl MeshBasicMaterial {
         }
     }
     
+    pub fn uniforms(&self) -> &MeshBasicUniforms {
+        self.uniforms.read()
+    }
+    
     pub fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, MeshBasicUniforms> {
         self.uniforms.write()
     }
+    
+    pub fn bindings(&self) -> &MaterialBindings {
+        &self.bindings
+    }
+    
+    pub fn bindings_mut(&mut self) -> BindingsGuard<'_> {
+        BindingsGuard {
+            initial_layout: self.bindings.clone(),
+            bindings: &mut self.bindings,
+            binding_version: &mut self.binding_version,
+            layout_version: &mut self.layout_version,
+        }
+    }
+    
+    pub fn settings(&self) -> &MaterialSettings {
+        &self.settings
+    }
+    
+    pub fn settings_mut(&mut self) -> SettingsGuard<'_> {
+        SettingsGuard {
+            initial_settings: self.settings.clone(),
+            settings: &mut self.settings,
+            layout_version: &mut self.layout_version,
+        }
+    }
+    
+    pub fn binding_version(&self) -> u64 { self.binding_version }
+    pub fn layout_version(&self) -> u64 { self.layout_version }
     
     pub fn set_color(&mut self, color: Vec4) {
         self.uniforms.write().color = color;
@@ -111,14 +212,7 @@ impl MeshBasicMaterial {
     }
     
     pub fn set_map(&mut self, texture: Option<TextureHandle>) {
-        let layout_changed = self.bindings.map.is_some() != texture.is_some();
-        self.bindings.map = texture;
-        if layout_changed {
-            self.layout_version = self.layout_version.wrapping_add(1);
-            self.binding_version = self.binding_version.wrapping_add(1);
-        } else {
-            self.binding_version = self.binding_version.wrapping_add(1);
-        }
+        self.bindings_mut().map = texture;
     }
 }
 
@@ -134,11 +228,11 @@ impl Default for MeshBasicMaterial {
 #[derive(Debug)]
 pub struct MeshPhongMaterial {
     pub uniforms: CpuBuffer<MeshPhongUniforms>,
-    pub bindings: MaterialBindings,
-    pub settings: MaterialSettings,
+    bindings: MaterialBindings,
+    settings: MaterialSettings,
     
-    pub binding_version: u64,
-    pub layout_version: u64,
+    binding_version: u64,
+    layout_version: u64,
 }
 
 impl MeshPhongMaterial {
@@ -158,34 +252,52 @@ impl MeshPhongMaterial {
         }
     }
     
+    pub fn uniforms(&self) -> &MeshPhongUniforms {
+        self.uniforms.read()
+    }
+    
     pub fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, MeshPhongUniforms> {
         self.uniforms.write()
     }
+    
+    pub fn bindings(&self) -> &MaterialBindings {
+        &self.bindings
+    }
+    
+    pub fn bindings_mut(&mut self) -> BindingsGuard<'_> {
+        BindingsGuard {
+            initial_layout: self.bindings.clone(),
+            bindings: &mut self.bindings,
+            binding_version: &mut self.binding_version,
+            layout_version: &mut self.layout_version,
+        }
+    }
+    
+    pub fn settings(&self) -> &MaterialSettings {
+        &self.settings
+    }
+    
+    pub fn settings_mut(&mut self) -> SettingsGuard<'_> {
+        SettingsGuard {
+            initial_settings: self.settings.clone(),
+            settings: &mut self.settings,
+            layout_version: &mut self.layout_version,
+        }
+    }
+    
+    pub fn binding_version(&self) -> u64 { self.binding_version }
+    pub fn layout_version(&self) -> u64 { self.layout_version }
     
     pub fn set_color(&mut self, color: Vec4) {
         self.uniforms.write().color = color;
     }
     
     pub fn set_map(&mut self, texture: Option<TextureHandle>) {
-        let layout_changed = self.bindings.map.is_some() != texture.is_some();
-        self.bindings.map = texture;
-        if layout_changed {
-            self.layout_version = self.layout_version.wrapping_add(1);
-            self.binding_version = self.binding_version.wrapping_add(1);
-        } else {
-            self.binding_version = self.binding_version.wrapping_add(1);
-        }
+        self.bindings_mut().map = texture;
     }
     
     pub fn set_normal_map(&mut self, texture: Option<TextureHandle>) {
-        let layout_changed = self.bindings.normal_map.is_some() != texture.is_some();
-        self.bindings.normal_map = texture;
-        if layout_changed {
-            self.layout_version = self.layout_version.wrapping_add(1);
-            self.binding_version = self.binding_version.wrapping_add(1);
-        } else {
-            self.binding_version = self.binding_version.wrapping_add(1);
-        }
+        self.bindings_mut().normal_map = texture;
     }
 }
 
@@ -201,11 +313,11 @@ impl Default for MeshPhongMaterial {
 #[derive(Debug)]
 pub struct MeshStandardMaterial {
     pub uniforms: CpuBuffer<MeshStandardUniforms>,
-    pub bindings: MaterialBindings,
-    pub settings: MaterialSettings,
+    bindings: MaterialBindings,
+    settings: MaterialSettings,
     
-    pub binding_version: u64,
-    pub layout_version: u64,
+    binding_version: u64,
+    layout_version: u64,
 }
 
 impl MeshStandardMaterial {
@@ -225,9 +337,41 @@ impl MeshStandardMaterial {
         }
     }
     
+    pub fn uniforms(&self) -> &MeshStandardUniforms {
+        self.uniforms.read()
+    }
+    
     pub fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, MeshStandardUniforms> {
         self.uniforms.write()
     }
+    
+    pub fn bindings(&self) -> &MaterialBindings {
+        &self.bindings
+    }
+    
+    pub fn bindings_mut(&mut self) -> BindingsGuard<'_> {
+        BindingsGuard {
+            initial_layout: self.bindings.clone(),
+            bindings: &mut self.bindings,
+            binding_version: &mut self.binding_version,
+            layout_version: &mut self.layout_version,
+        }
+    }
+    
+    pub fn settings(&self) -> &MaterialSettings {
+        &self.settings
+    }
+    
+    pub fn settings_mut(&mut self) -> SettingsGuard<'_> {
+        SettingsGuard {
+            initial_settings: self.settings.clone(),
+            settings: &mut self.settings,
+            layout_version: &mut self.layout_version,
+        }
+    }
+    
+    pub fn binding_version(&self) -> u64 { self.binding_version }
+    pub fn layout_version(&self) -> u64 { self.layout_version }
     
     pub fn set_color(&mut self, color: Vec4) {
         self.uniforms.write().color = color;
@@ -242,14 +386,19 @@ impl MeshStandardMaterial {
     }
     
     pub fn set_map(&mut self, texture: Option<TextureHandle>) {
-        let layout_changed = self.bindings.map.is_some() != texture.is_some();
-        self.bindings.map = texture;
-        if layout_changed {
-            self.layout_version = self.layout_version.wrapping_add(1);
-            self.binding_version = self.binding_version.wrapping_add(1);
-        } else {
-            self.binding_version = self.binding_version.wrapping_add(1);
-        }
+        self.bindings_mut().map = texture;
+    }
+    
+    pub fn set_normal_map(&mut self, texture: Option<TextureHandle>) {
+        self.bindings_mut().normal_map = texture;
+    }
+    
+    pub fn set_roughness_map(&mut self, texture: Option<TextureHandle>) {
+        self.bindings_mut().roughness_map = texture;
+    }
+    
+    pub fn set_metalness_map(&mut self, texture: Option<TextureHandle>) {
+        self.bindings_mut().metalness_map = texture;
     }
 }
 
@@ -283,22 +432,22 @@ impl MaterialData {
         let mut features = MaterialFeatures::empty();
         match self {
             Self::Basic(m) => {
-                if m.bindings.map.is_some() { features |= MaterialFeatures::USE_MAP; }
+                if m.bindings().map.is_some() { features |= MaterialFeatures::USE_MAP; }
             }
             Self::Phong(m) => {
-                if m.bindings.map.is_some() { features |= MaterialFeatures::USE_MAP; }
-                if m.bindings.normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
-                if m.bindings.specular_map.is_some() { features |= MaterialFeatures::USE_SPECULAR_MAP; }
-                if m.bindings.emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
+                if m.bindings().map.is_some() { features |= MaterialFeatures::USE_MAP; }
+                if m.bindings().normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
+                if m.bindings().specular_map.is_some() { features |= MaterialFeatures::USE_SPECULAR_MAP; }
+                if m.bindings().emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
             }
             Self::Standard(m) => {
                 features |= MaterialFeatures::USE_IBL;
-                if m.bindings.map.is_some() { features |= MaterialFeatures::USE_MAP; }
-                if m.bindings.normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
-                if m.bindings.roughness_map.is_some() { features |= MaterialFeatures::USE_ROUGHNESS_MAP; }
-                if m.bindings.metalness_map.is_some() { features |= MaterialFeatures::USE_METALNESS_MAP; }
-                if m.bindings.emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
-                if m.bindings.ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
+                if m.bindings().map.is_some() { features |= MaterialFeatures::USE_MAP; }
+                if m.bindings().normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
+                if m.bindings().roughness_map.is_some() { features |= MaterialFeatures::USE_ROUGHNESS_MAP; }
+                if m.bindings().metalness_map.is_some() { features |= MaterialFeatures::USE_METALNESS_MAP; }
+                if m.bindings().emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
+                if m.bindings().ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
             }
         }
         features
@@ -314,25 +463,25 @@ impl MaterialData {
     
     pub fn binding_version(&self) -> u64 {
         match self {
-            Self::Basic(m) => m.binding_version,
-            Self::Phong(m) => m.binding_version,
-            Self::Standard(m) => m.binding_version,
+            Self::Basic(m) => m.binding_version(),
+            Self::Phong(m) => m.binding_version(),
+            Self::Standard(m) => m.binding_version(),
         }
     }
     
     pub fn layout_version(&self) -> u64 {
         match self {
-            Self::Basic(m) => m.layout_version,
-            Self::Phong(m) => m.layout_version,
-            Self::Standard(m) => m.layout_version,
+            Self::Basic(m) => m.layout_version(),
+            Self::Phong(m) => m.layout_version(),
+            Self::Standard(m) => m.layout_version(),
         }
     }
     
     pub fn settings(&self) -> &MaterialSettings {
         match self {
-            Self::Basic(m) => &m.settings,
-            Self::Phong(m) => &m.settings,
-            Self::Standard(m) => &m.settings,
+            Self::Basic(m) => m.settings(),
+            Self::Phong(m) => m.settings(),
+            Self::Standard(m) => m.settings(),
         }
     }
 }

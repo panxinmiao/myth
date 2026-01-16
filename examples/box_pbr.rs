@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
 
 
     if let Some(standard) = mat.as_standard_mut() {
-        standard.bindings.map = Some(tex_handle);
+        standard.set_map(Some(tex_handle));
     }
     
     let geo_handle = app.assets.add_geometry(geometry);
@@ -43,12 +43,12 @@ fn main() -> anyhow::Result<()> {
     // 加载环境贴图
     let env_texture_handle = app.assets.load_cube_texture_from_files(
         [
-            "examples/envs/Park2/posx.jpg",
-            "examples/envs/Park2/negx.jpg",
-            "examples/envs/Park2/posy.jpg",
-            "examples/envs/Park2/negy.jpg",
-            "examples/envs/Park2/posz.jpg",
-            "examples/envs/Park2/negz.jpg",
+            "examples/assets/Park2/posx.jpg",
+            "examples/assets/Park2/negx.jpg",
+            "examples/assets/Park2/posy.jpg",
+            "examples/assets/Park2/negy.jpg",
+            "examples/assets/Park2/posz.jpg",
+            "examples/assets/Park2/negz.jpg",
         ],
         three::ColorSpace::Srgb
     )?;

@@ -299,7 +299,7 @@ impl ResourceManager {
 
         if needs_data_update {
             // 1. 统一处理 Vertex Buffers
-            for attr in geometry.attributes.values() {
+            for attr in geometry.attributes().values() {
                 let new_id = self.prepare_attribute_buffer(attr);
 
                 // 检查 ID 是否变化 (例如扩容导致了重建 Buffer)
@@ -312,7 +312,7 @@ impl ResourceManager {
             }
 
             // 2. 检查 Index Buffer
-            if let Some(indices) = &geometry.index_attribute {
+            if let Some(indices) = geometry.index_attribute() {
                 let new_id = self.prepare_attribute_buffer(indices);
                 if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
                     if let Some((_, _, _, old_id)) = gpu_geo.index_buffer {
@@ -363,7 +363,7 @@ impl ResourceManager {
             vertex_buffer_ids.push(gpu_buf.id);
         }
 
-        let index_buffer = if let Some(indices) = &geometry.index_attribute {
+        let index_buffer = if let Some(indices) = geometry.index_attribute() {
             let gpu_buf = self.gpu_buffers.get(&indices.buffer.id()).expect("Index buffer should be prepared");
             let format = match indices.format {
                 wgpu::VertexFormat::Uint16 => wgpu::IndexFormat::Uint16,
@@ -378,10 +378,10 @@ impl ResourceManager {
 
         let mut draw_range = geometry.draw_range.clone();
         if draw_range == (0..u32::MAX) {
-            if let Some(attr) = geometry.attributes.get("position") {
+            if let Some(attr) = geometry.attributes().get("position") {
                 // 优先使用 position 的数量
                 draw_range = draw_range.start..std::cmp::min(attr.count, draw_range.end);
-            } else if let Some(attr) = geometry.attributes.values().next() {
+            } else if let Some(attr) = geometry.attributes().values().next() {
                 // 否则使用任意一个属性的数量
                 draw_range = draw_range.start..std::cmp::min(attr.count, draw_range.end);
             } else {
@@ -919,11 +919,11 @@ impl ResourceManager {
         // =========================================================
         if let Some(gpu_env) = self.worlds.get_mut(&world_id) {
             // 检查版本号是否完全一致
-            let uniform_match = gpu_env.last_uniform_version == env.uniforms.buffer.version;
-            let binding_match = gpu_env.last_binding_version == env.binding_version;
-            let layout_match  = gpu_env.last_layout_version == env.layout_version;
+            let uniform_match = gpu_env.last_uniform_version == env.uniforms().buffer.version;
+            let binding_match = gpu_env.last_binding_version == env.binding_version();
+            let layout_match  = gpu_env.last_layout_version == env.layout_version();
 
-            let render_state_match = render_state.uniforms.buffer.version == gpu_env.last_render_state_version;
+            let render_state_match = render_state.uniforms().buffer.version == gpu_env.last_render_state_version;
 
             if uniform_match && binding_match && layout_match && render_state_match {
                 // 完全命中，无需任何操作
@@ -946,15 +946,15 @@ impl ResourceManager {
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
         
         let needs_new_bind_group = if let Some(gpu_env) = self.worlds.get(&world_id) {
-             gpu_env.layout_id != layout_id || gpu_env.last_binding_version != env.binding_version
+             gpu_env.layout_id != layout_id || gpu_env.last_binding_version != env.binding_version()
         } else {
             true
         };
 
         if !needs_new_bind_group {
              if let Some(gpu_env) = self.worlds.get_mut(&world_id) {
-                gpu_env.last_uniform_version = env.uniforms.buffer.version;
-                gpu_env.last_render_state_version = render_state.uniforms.buffer.version;
+                gpu_env.last_uniform_version = env.uniforms().buffer.version;
+                gpu_env.last_render_state_version = render_state.uniforms().buffer.version;
                 gpu_env.last_used_frame = self.frame_index;
             }
             return;
@@ -972,10 +972,10 @@ impl ResourceManager {
             layout,
             layout_id,
             binding_wgsl,
-            last_uniform_version: env.uniforms.buffer.version,
-            last_binding_version: env.binding_version,
-            last_layout_version: env.layout_version,
-            last_render_state_version: render_state.uniforms.buffer.version,
+            last_uniform_version: env.uniforms().buffer.version,
+            last_binding_version: env.binding_version(),
+            last_layout_version: env.layout_version(),
+            last_render_state_version: render_state.uniforms().buffer.version,
             last_used_frame: self.frame_index,
         };
         self.worlds.insert(world_id, gpu_world);

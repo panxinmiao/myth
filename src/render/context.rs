@@ -62,7 +62,7 @@ pub struct RenderCommand {
 
 pub struct RenderState {
     pub id: u32,
-    pub uniforms: CpuBuffer<RenderStateUniforms>,
+    uniforms: CpuBuffer<RenderStateUniforms>,
 }
 
 static NEXT_RENDER_STATE_ID: AtomicU32 = AtomicU32::new(0);
@@ -85,12 +85,20 @@ impl RenderState {
         }
     }
 
+    pub fn uniforms(&self) -> &CpuBuffer<RenderStateUniforms> {
+        &self.uniforms
+    }
+
+    pub fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, RenderStateUniforms> {
+        self.uniforms.write()
+    }
+
     fn update(&mut self, camera: &Camera, time: f32) {
         let view_matrix = camera.view_matrix;
         let vp_matrix = camera.view_projection_matrix;
         let camera_position = camera.world_matrix.translation.to_vec3();
 
-        let mut u = self.uniforms.write();
+        let mut u = self.uniforms_mut();
         u.view_projection = vp_matrix;
         u.view_projection_inverse = vp_matrix.inverse();
         u.view_matrix = view_matrix;
@@ -319,7 +327,7 @@ impl RenderContext {
                 geometry_handle: item.geo_handle,
                 geometry_version: geometry.layout_version(),
                 scene_id: scene.environment.id,
-                scene_version: scene.environment.layout_version,
+                scene_version: scene.environment.layout_version(),
                 render_state_id: self.render_state.id,
             };
 

@@ -1,12 +1,12 @@
 var metalness_factor: f32 = u_material.metalness;
 $$ if use_metalness_map is defined
-    metalness_factor *= textureSample( t_metalness_map, s_metalness_map, metalness_map_uv ).b;
+    metalness_factor *= textureSample( t_metalness_map, s_metalness_map, varyings.metalness_map_uv ).b;
 $$ endif
 
 // Roughness
 var roughness_factor: f32 = u_material.roughness;
 $$ if use_roughness_map is defined
-    roughness_factor *= textureSample( t_roughness_map, s_roughness_map, roughness_map_uv ).g;
+    roughness_factor *= textureSample( t_roughness_map, s_roughness_map, varyings.roughness_map_uv ).g;
 $$ endif
 
 
@@ -28,10 +28,10 @@ $$ if USE_IOR is defined
 
     $$ if USE_SPECULAR
         var specular_intensity = u_material.specular_intensity;
-        var specular_color = srgb2physical(u_material.specular_color.rgb);
+        var specular_color = u_material.specular_color.rgb;
         
         $$ if use_specular_map is defined
-            specular_color *= srgb2physical(textureSample( t_specular_map, s_specular_map, specular_map_uv ).rgb);
+            specular_color *= textureSample( t_specular_map, s_specular_map, specular_map_uv ).rgb;
         $$ endif
 
         $$ if use_specular_intensity_map is defined
@@ -112,7 +112,7 @@ $$ endif
 
 $$ if USE_SHEEN is defined
 
-    material.sheen_color = srgb2physical(u_material.sheen_color.rgb) * u_material.sheen;
+    material.sheen_color = u_material.sheen_color.rgb * u_material.sheen;
 
     $$ if use_sheen_color_map is defined
         material.sheen_color *= textureSample( t_sheen_color_map, s_sheen_color_map, varyings.texcoord{{sheen_color_map_uv or ''}} ).rgb;

@@ -127,18 +127,17 @@ impl Image {
         if old_w != width || old_h != height {
             self.0.width.store(width, Ordering::Relaxed);
             self.0.height.store(height, Ordering::Relaxed);
-            // 触发结构版本更新
             self.0.generation_id.fetch_add(1, Ordering::Relaxed);
         }
     }
 
-    // pub fn set_format(&self, format: wgpu::TextureFormat) {
-    //     let mut desc = self.0.descriptor.write().expect("Image descriptor lock poisoned");
-    //     if desc.format != format {
-    //         desc.format = format;
-    //         self.0.generation_id.fetch_add(1, Ordering::Relaxed);
-    //     }
-    // }
+    pub fn set_format(&self, format: wgpu::TextureFormat) {
+        let mut desc = self.0.description.write().expect("Image descriptor lock poisoned");
+        if desc.format != format {
+            desc.format = format;
+            self.0.generation_id.fetch_add(1, Ordering::Relaxed);
+        }
+    }
 }
 
 // Deref 方便直接访问内部数据 (只读)

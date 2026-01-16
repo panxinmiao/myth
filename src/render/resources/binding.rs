@@ -42,7 +42,7 @@ impl Bindings for MaterialData {
                     wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
                 );
                 
-                if let Some(map) = &m.bindings.map {
+                if let Some(map) = &m.bindings().map {
                     builder.add_texture(
                         "map", 
                         *map, 
@@ -66,22 +66,22 @@ impl Bindings for MaterialData {
                     wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
                 );
 
-                if let Some(map) = &m.bindings.map {
+                if let Some(map) = &m.bindings().map {
                     builder.add_texture("map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
-                if let Some(map) = &m.bindings.normal_map {
+                if let Some(map) = &m.bindings().normal_map {
                     builder.add_texture("normal_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("normal_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
-                if let Some(map) = &m.bindings.specular_map {
+                if let Some(map) = &m.bindings().specular_map {
                     builder.add_texture("specular_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("specular_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
-                if let Some(map) = &m.bindings.emissive_map {
+                if let Some(map) = &m.bindings().emissive_map {
                     builder.add_texture("emissive_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("emissive_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
@@ -94,19 +94,34 @@ impl Bindings for MaterialData {
                     wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
                 );
                 
-                if let Some(map) = &m.bindings.map {
+                if let Some(map) = &m.bindings().map {
                     builder.add_texture("map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
-                if let Some(map) = &m.bindings.ao_map {
+                if let Some(map) = &m.bindings().normal_map {
+                    builder.add_texture("normal_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_sampler("normal_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+                }
+
+                if let Some(map) = &m.bindings().roughness_map {
+                    builder.add_texture("roughness_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_sampler("roughness_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+                }
+
+                if let Some(map) = &m.bindings().metalness_map {
+                    builder.add_texture("metalness_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_sampler("metalness_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+                }
+
+                if let Some(map) = &m.bindings().ao_map {
                     builder.add_texture("ao_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("ao_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
-                if let Some(map) = &m.bindings.normal_map {
-                    builder.add_texture("normal_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
-                    builder.add_sampler("normal_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+                if let Some(map) = &m.bindings().emissive_map {
+                    builder.add_texture("emissive_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_sampler("emissive_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
             }
         }
@@ -136,7 +151,7 @@ impl Bindings for Environment {
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
         builder.add_uniform::<EnvironmentUniforms>(
             "environment",
-            &self.uniforms,
+            self.uniforms(),
             wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
         );
         
@@ -151,7 +166,7 @@ impl Bindings for Environment {
             );
         }
 
-        if let Some(env_map) = &self.bindings.env_map {
+        if let Some(env_map) = &self.bindings().env_map {
             builder.add_texture(
                 "env_map", 
                 *env_map, 
@@ -173,7 +188,7 @@ impl Bindings for RenderState {
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
         builder.add_uniform::<RenderStateUniforms>(
             "render_state",
-            &self.uniforms,
+            self.uniforms(),
             wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT
         );
     }
