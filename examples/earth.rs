@@ -136,7 +136,7 @@ fn main() -> anyhow::Result<()> {
 
         // 3. 相机控制
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            controls.update(transform, input, camera.fov.to_degrees());
+            controls.update(transform, input, camera.fov.to_degrees(), dt);
         }
 
         if let Some(fps) = fps_counter.update() {

@@ -173,44 +173,6 @@ bitflags! {
     }
 }
 
-/// AttributesGuard for Geometry
-pub struct AttributesGuard<'a> {
-    attributes: &'a mut FxHashMap<String, Attribute>,
-    layout_version: &'a mut u64,
-    structure_version: &'a mut u64,
-    data_version: &'a mut u64,
-    initial_keys: Vec<String>,
-}
-
-impl<'a> std::ops::Deref for AttributesGuard<'a> {
-    type Target = FxHashMap<String, Attribute>;
-    fn deref(&self) -> &Self::Target {
-        self.attributes
-    }
-}
-
-impl<'a> std::ops::DerefMut for AttributesGuard<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.attributes
-    }
-}
-
-impl<'a> Drop for AttributesGuard<'a> {
-    fn drop(&mut self) {
-        let current_keys: Vec<String> = self.attributes.keys().cloned().collect();
-        let keys_changed = self.initial_keys != current_keys;
-        
-        if keys_changed {
-            *self.layout_version = self.layout_version.wrapping_add(1);
-            *self.structure_version = self.structure_version.wrapping_add(1);
-            *self.data_version = self.data_version.wrapping_add(1);
-        } else {
-            *self.structure_version = self.structure_version.wrapping_add(1);
-            *self.data_version = self.data_version.wrapping_add(1);
-        }
-    }
-}
-
 #[derive(Debug)]
 pub struct Geometry {
     pub uuid: Uuid,
@@ -274,17 +236,6 @@ impl Geometry {
         &self.attributes
     }
     
-    pub fn attributes_mut(&mut self) -> AttributesGuard<'_> {
-        let initial_keys = self.attributes.keys().cloned().collect();
-        AttributesGuard {
-            attributes: &mut self.attributes,
-            layout_version: &mut self.layout_version,
-            structure_version: &mut self.structure_version,
-            data_version: &mut self.data_version,
-            initial_keys,
-        }
-    }
-    
     // Index attribute accessors
     pub fn index_attribute(&self) -> Option<&Attribute> {
         self.index_attribute.as_ref()
@@ -310,6 +261,15 @@ impl Geometry {
         }
         self.structure_version = self.structure_version.wrapping_add(1);
         self.data_version = self.data_version.wrapping_add(1);
+    }
+
+    pub fn remove_attribute(&mut self, name: &str) -> Option<Attribute> {
+        let removed = self.attributes.remove(name);
+        if removed.is_some() {
+            self.layout_version = self.layout_version.wrapping_add(1);
+            self.structure_version = self.structure_version.wrapping_add(1);
+        }
+        removed
     }
 
     pub fn get_attribute(&self, name: &str) -> Option<&Attribute> {

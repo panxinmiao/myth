@@ -80,10 +80,10 @@ fn main() -> anyhow::Result<()> {
     let mut fps_counter = FpsCounter::new();
 
     // 8. 更新回调 (旋转模型或相机控制)
-    app.set_update_fn(move |window, scene, _assets, input, _time, _dt| {
+    app.set_update_fn(move |window, scene, _assets, input, _time, dt| {
         // 轨道控制器
         if let Some(cam_node) = scene.get_node_mut(cam_node_id) {
-            controls.update(&mut cam_node.transform, input, 45.0);
+            controls.update(&mut cam_node.transform, input, 45.0, dt);
         }
 
         // FPS 计数

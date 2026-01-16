@@ -61,7 +61,7 @@ fn main() -> anyhow::Result<()> {
 
     // 6. 设置 Update 回调 (处理旋转动画)
     // move 闭包捕获 cube_node_id
-    app.set_update_fn(move |_window,scene, _assets, input, _time, _dt| {
+    app.set_update_fn(move |_window,scene, _assets, input, _time, dt| {
         if let Some(node) = scene.get_node_mut(cube_node_id) {
             // 每帧旋转
             let rot_y = Quat::from_rotation_y(0.02);
@@ -73,7 +73,7 @@ fn main() -> anyhow::Result<()> {
 
         // 使用新的组件查询 API
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            controls.update(transform, input, camera.fov.to_degrees());
+            controls.update(transform, input, camera.fov.to_degrees(), dt);
         }
     });
 
