@@ -1,123 +1,201 @@
-use glam::{Vec2, Vec3};
+use glam::{Vec3};
 use winit::event::MouseButton;
 use crate::app::input::Input;
 use crate::scene::transform::Transform;
 
+#[derive(Clone, Copy, Debug)]
+struct Spherical {
+    pub radius: f32,
+    pub phi: f32,
+    pub theta: f32,
+}
+
+impl Spherical {
+    fn new(radius: f32, phi: f32, theta: f32) -> Self {
+        Self { radius, phi, theta }
+    }
+
+    fn set_from_vec3(&mut self, v: Vec3) {
+        self.radius = v.length();
+        if self.radius == 0.0 {
+            self.theta = 0.0;
+            self.phi = 0.0;
+        } else {
+            self.theta = v.x.atan2(v.z);
+            self.phi = (v.y / self.radius).clamp(-1.0, 1.0).acos();
+        }
+    }
+
+    fn make_safe(&mut self) {
+        const EPS: f32 = 0.000001;
+        self.phi = self.phi.clamp(EPS, std::f32::consts::PI - EPS);
+    }
+}
+
 pub struct OrbitControls {
 
-    pub rotate_speed: f32,
-    pub zoom_speed: f32,
-    pub pan_speed: f32,
-    pub damping_factor: f32,
     pub enable_damping: bool,
+    pub damping_factor: f32,
+    pub zoom_damping_factor: f32,
+
+    pub enable_zoom: bool,
+    pub zoom_speed: f32,
+    pub enable_rotate: bool,
+    pub rotate_speed: f32,
+    pub enable_pan: bool,
+    pub pan_speed: f32,
+
     pub min_distance: f32,
     pub max_distance: f32,
+    pub min_polar_angle: f32,
+    pub max_polar_angle: f32,
 
-    pub center: Vec3,
-    pub radius: f32,
-    pub theta: f32,
-    pub phi: f32,
+ 
+    target: Vec3,
+    spherical: Spherical,
 
-    rotate_delta: Vec2, 
+    spherical_delta: Spherical,
+    pan_offset: Vec3,   
+    
+    target_radius: f32,         
 }
 
 impl OrbitControls {
-    pub fn new(center: Vec3, radius: f32) -> Self {
-        Self {
-            rotate_speed: 1.0,
-            zoom_speed: 0.05,
-            pan_speed: 1.0,
-            damping_factor: 0.05,
-            enable_damping: true,
-            min_distance: 1.0,
-            max_distance: 1000.0,
+    pub fn new(camera_pos: Vec3, target: Vec3) -> Self {
+        let mut spherical = Spherical::new(1.0, 0.0, 0.0);
+        spherical.set_from_vec3(camera_pos - target);
 
-            center,
-            radius,
-            theta: 0.0,
-            phi: std::f32::consts::FRAC_PI_2,
+        Self {
+            enable_damping: true,
+            damping_factor: 0.05,
+            zoom_damping_factor: 0.1,
+
+            enable_zoom: true,
+            zoom_speed: 1.0,
+
+            enable_rotate: true,
+            rotate_speed: 0.1,
+
+            enable_pan: true,
+            pan_speed: 1.0,
+
+            min_distance: 0.0,
+            max_distance: f32::INFINITY,
+            min_polar_angle: 0.0,
+            max_polar_angle: std::f32::consts::PI,
+
+            target,
+            spherical,
+            spherical_delta: Spherical::new(0.0, 0.0, 0.0),
+            pan_offset: Vec3::ZERO,
             
-            rotate_delta: Vec2::ZERO,
+            // 初始化时，目标半径 = 当前半径
+            target_radius: spherical.radius, 
         }
     }
 
     pub fn update(&mut self, transform: &mut Transform, input: &Input, fov_degrees: f32, dt: f32) {
         let screen_height = input.screen_size.y.max(1.0);
-        
-        if input.is_button_pressed(MouseButton::Left) {
-            let rotate_per_pixel = 2.0 * std::f32::consts::PI / screen_height;
-            self.rotate_delta.x -= input.cursor_delta.x * rotate_per_pixel * self.rotate_speed;
-            self.rotate_delta.y -= input.cursor_delta.y * rotate_per_pixel * self.rotate_speed;
+
+        // ============================
+        // 1. 输入处理
+        // ============================
+
+        // --- 旋转 (保持惯性模型) ---
+        if self.enable_rotate && input.is_button_pressed(MouseButton::Left) {
+            let rotate_angle_x = 2.0 * std::f32::consts::PI * input.cursor_delta.x / screen_height;
+            let rotate_angle_y = 2.0 * std::f32::consts::PI * input.cursor_delta.y / screen_height;
+
+            self.spherical_delta.theta -= rotate_angle_x * self.rotate_speed;
+            self.spherical_delta.phi -= rotate_angle_y * self.rotate_speed;
         }
 
-        if self.enable_damping {
-            let target_fps = 60.0;
-    
-            let retention = (1.0 - self.damping_factor).powf(dt * target_fps);
-
-            let delta_apply = self.rotate_delta * (1.0 - retention);
+        if self.enable_zoom && input.scroll_delta.y != 0.0 {
+            let zoom_scale = 0.95f32.powf(self.zoom_speed);
             
-            self.theta += delta_apply.x;
-            self.phi += delta_apply.y;
-            
-            self.rotate_delta *= retention;
-        } else {
-            self.theta += self.rotate_delta.x;
-            self.phi += self.rotate_delta.y;
-            self.rotate_delta = Vec2::ZERO;
-        }
-
-        const EPS: f32 = 0.0001;
-        self.phi = self.phi.clamp(EPS, std::f32::consts::PI - EPS);
-
-        if input.scroll_delta.y != 0.0 {
-            let scale = (1.0 - self.zoom_speed).powf(input.scroll_delta.y.abs());
+            // [核心修改] 这里只修改 target_radius，不修改当前的 spherical.radius
             if input.scroll_delta.y > 0.0 {
-                self.radius *= scale;
+                self.target_radius *= zoom_scale;
             } else {
-                self.radius /= scale;
+                self.target_radius /= zoom_scale;
             }
-            self.radius = self.radius.clamp(self.min_distance, self.max_distance);
-        }
-
-        if input.is_button_pressed(MouseButton::Right) {
-            let half_fov = fov_degrees.to_radians() / 2.0;
-            let distance = self.radius;
-            let target_world_height = 2.0 * distance * half_fov.tan();
-            let pixels_to_world_ratio = target_world_height / screen_height;
-
-            let sin_phi = self.phi.sin();
-            let cos_phi = self.phi.cos();
-            let sin_theta = self.theta.sin();
-            let cos_theta = self.theta.cos();
-
-            let offset = Vec3::new(
-                sin_phi * sin_theta,
-                cos_phi,
-                sin_phi * cos_theta,
-            );
-            let forward = -offset.normalize();
-            let right = forward.cross(Vec3::Y).normalize();
-            let up = right.cross(forward).normalize();
-
-            let pan_delta_world = (right * -input.cursor_delta.x + up * input.cursor_delta.y) 
-                * pixels_to_world_ratio * self.pan_speed;
             
-            self.center += pan_delta_world;
+            self.target_radius = self.target_radius.clamp(self.min_distance, self.max_distance);
         }
 
-        let sin_phi = self.phi.sin();
-        let cos_phi = self.phi.cos();
-        let sin_theta = self.theta.sin();
-        let cos_theta = self.theta.cos();
+        if self.enable_pan && input.is_button_pressed(MouseButton::Right) {
+            let position = transform.position;
+            let offset_dir = position - self.target;
+            let target_distance = offset_dir.length();
+            let target_world_height = 2.0 * target_distance * (fov_degrees.to_radians() * 0.5).tan();
+            
+            let pan_x = -input.cursor_delta.x * (target_world_height / screen_height) * self.pan_speed;
+            let pan_y = input.cursor_delta.y * (target_world_height / screen_height) * self.pan_speed;
 
+            let (right, up, _) = transform.rotation_basis();
+            self.pan_offset += right * pan_x + up * pan_y;
+        }
+
+        // ============================
+        // 2. 状态更新
+        // ============================
+
+        let time_scale = dt * 60.0;
+
+        // 应用平移 (立即生效)
+        self.target += self.pan_offset;
+        self.pan_offset = Vec3::ZERO; // 清零，无惯性
+
+        // 应用旋转 (惯性累积)
+        self.spherical.theta += self.spherical_delta.theta * time_scale;
+        self.spherical.phi += self.spherical_delta.phi * time_scale;
+        self.spherical.phi = self.spherical.phi.clamp(self.min_polar_angle, self.max_polar_angle);
+        self.spherical.make_safe();
+
+        // 应用缩放 (插值平滑)
+        if self.enable_damping {
+            // 使用 lerp 平滑逼近目标半径
+            let lerp_factor = 1.0 - (1.0 - self.zoom_damping_factor).powf(time_scale);
+            
+            self.spherical.radius += (self.target_radius - self.spherical.radius) * lerp_factor;
+        } else {
+            self.spherical.radius = self.target_radius;
+        }
+
+        self.spherical.radius = self.spherical.radius.clamp(self.min_distance, self.max_distance);
+
+        // ============================
+        // 3. 计算 Transform
+        // ============================
+        let sin_phi_radius = self.spherical.phi.sin() * self.spherical.radius;
         let offset = Vec3::new(
-            self.radius * sin_phi * sin_theta,
-            self.radius * cos_phi,
-            self.radius * sin_phi * cos_theta,
+            sin_phi_radius * self.spherical.theta.sin(),
+            self.spherical.radius * self.spherical.phi.cos(),
+            sin_phi_radius * self.spherical.theta.cos(),
         );
 
-        transform.position = self.center + offset;
-        transform.look_at(self.center, Vec3::Y);
+        transform.position = self.target + offset;
+        transform.look_at(self.target, Vec3::Y);
+
+        // ============================
+        // 4. 旋转阻尼衰减
+        // ============================
+        if self.enable_damping {
+            let damping = (1.0 - self.damping_factor).powf(time_scale);
+            self.spherical_delta.theta *= damping;
+            self.spherical_delta.phi *= damping;
+        } else {
+            self.spherical_delta.theta = 0.0;
+            self.spherical_delta.phi = 0.0;
+        }
+    }
+}
+
+impl Transform {
+    pub fn rotation_basis(&self) -> (Vec3, Vec3, Vec3) {
+        let right = self.rotation * Vec3::X;
+        let up = self.rotation * Vec3::Y;
+        let forward = self.rotation * Vec3::Z;
+        (right, up, forward)
     }
 }

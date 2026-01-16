@@ -17,8 +17,6 @@ impl FpsCounter {
         }
     }
 
-    /// 在每一帧渲染结束时调用
-    /// 如果返回 Some(fps)，说明这一秒统计结束，需要更新显示
     pub fn update(&mut self) -> Option<f32> {
         self.frame_count += 1;
         let now = Instant::now();

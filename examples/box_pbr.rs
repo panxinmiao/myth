@@ -3,7 +3,6 @@ use three::app::App;
 use three::resources::{Geometry, Material, Mesh, Texture};
 use three::scene::{Camera};
 use three::scene::light;
-use three::OrbitControls;
 use three::utils::fps_counter::{FpsCounter};
 
 fn main() -> anyhow::Result<()> {
@@ -81,7 +80,7 @@ fn main() -> anyhow::Result<()> {
     // 5.4 激活相机
     app.scene.active_camera = Some(cam_node_id);
 
-    let mut controls = OrbitControls::new(Vec3::ZERO, 10.0);
+    let mut controls = three::OrbitControls::new(Vec3::new(0.0, 3.0, 10.0), Vec3::ZERO);
 
     let mut fps_counter = FpsCounter::new();
 

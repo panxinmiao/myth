@@ -118,7 +118,7 @@ fn main() -> anyhow::Result<()> {
     app.scene.active_camera = Some(cam_node_id);
 
 
-    let mut controls = OrbitControls::new(Vec3::ZERO, 250.0);
+    let mut controls = OrbitControls::new(Vec3::new(0.0, 0.0, 250.0), Vec3::ZERO);
 
     app.set_update_fn(move |window, scene, _assets, input, _time, dt| {
 

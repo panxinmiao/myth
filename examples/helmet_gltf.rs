@@ -76,7 +76,7 @@ fn main() -> anyhow::Result<()> {
     app.scene.active_camera = Some(cam_node_id);
 
     // 7. 轨道控制器
-    let mut controls = OrbitControls::new(Vec3::ZERO, 3.0);
+    let mut controls = OrbitControls::new(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO);
     let mut fps_counter = FpsCounter::new();
 
     // 8. 更新回调 (旋转模型或相机控制)

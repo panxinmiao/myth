@@ -3,7 +3,6 @@ use three::app::App;
 use three::resources::{Geometry, Material, Mesh, Texture};
 use three::scene::{Camera};
 use three::scene::light;
-use three::OrbitControls;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -57,7 +56,7 @@ fn main() -> anyhow::Result<()> {
     // 5.4 激活相机
     app.scene.active_camera = Some(cam_node_id);
 
-    let mut controls = OrbitControls::new(Vec3::ZERO, 10.0);
+    let mut controls = three::OrbitControls::new(Vec3::new(0.0, 3.0, 10.0), Vec3::ZERO);
 
     // 6. 设置 Update 回调 (处理旋转动画)
     // move 闭包捕获 cube_node_id
