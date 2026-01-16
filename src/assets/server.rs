@@ -90,8 +90,18 @@ impl AssetServer {
         self.textures.get(handle)
     }
 
+    pub fn get_texture_mut(&mut self, handle: TextureHandle) -> Option<&mut Texture> {
+        self.textures.get_mut(handle)
+    }
+
     pub fn load_texture_from_file(&mut self, path: impl AsRef<Path>, color_space: crate::assets::ColorSpace) -> anyhow::Result<TextureHandle> {
         let texture = crate::assets::load_texture_from_file(path, color_space)?;
+        let handle = self.add_texture(texture);
+        Ok(handle)
+    }
+
+    pub fn load_cube_texture_from_files(&mut self, paths: [impl AsRef<Path>; 6], color_space: crate::assets::ColorSpace) -> anyhow::Result<TextureHandle> {
+        let texture = crate::assets::load_cube_texture_from_files(paths, color_space)?;
         let handle = self.add_texture(texture);
         Ok(handle)
     }

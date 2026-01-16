@@ -40,9 +40,9 @@ pub struct FastPipelineKey {
     pub material_version: u64,
     pub geometry_handle: GeometryHandle, 
     pub geometry_version: u64, 
-
-    pub render_state_id: u32,
     pub scene_id: u32,
+    pub scene_version: u64,
+    pub render_state_id: u32,
 }
 
 pub struct PipelineCache {

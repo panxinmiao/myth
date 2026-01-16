@@ -44,3 +44,40 @@ pub fn load_texture_from_file(path: impl AsRef<Path>, color_space: ColorSpace) -
     
     Ok(texture)
 }
+
+pub fn load_cube_texture_from_files(paths: [impl AsRef<Path>; 6], color_space: ColorSpace) -> anyhow::Result<crate::resources::texture::Texture> {
+    let mut face_data = Vec::with_capacity(6);
+    let mut width = 0;
+    let mut height = 0;
+    
+    for path in paths.iter() {
+        let (data, w, h) = load_image_from_file(path)?;
+        if width == 0 && height == 0 {
+            width = w;
+            height = h;
+        } else {
+            if width != w || height != h {
+                return Err(anyhow::anyhow!("Cube texture faces must have the same dimensions"));
+            }
+        }
+        face_data.push(data);
+    }
+    
+    // 合并六个面的数据
+    let mut combined_data = Vec::with_capacity((width * height * 4 * 6) as usize);
+    for face in face_data.iter() {
+        combined_data.extend_from_slice(face);
+    }
+    
+    let texture = crate::resources::texture::Texture::new_cube(
+        None,
+        width,
+        Some(combined_data),
+        match color_space {
+            ColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+            ColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
+        }
+    );
+    
+    Ok(texture)
+}   

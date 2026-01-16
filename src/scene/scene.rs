@@ -16,8 +16,8 @@ use crate::scene::{NodeIndex, MeshKey, CameraKey, LightKey};
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
     pub struct SceneFeatures: u32 {
+        const USE_ENV_MAP  = 1 << 0;
         // const USE_SHADOW_MAP = 1 << 0;
-        // const USE_ENV_MAP    = 1 << 1;
     }
 }
 
@@ -338,7 +338,12 @@ impl Scene {
         // if self.lights.len() > 0 {
         //     features |= SceneFeatures::USE_SHADOW_MAP;
         // }
-        SceneFeatures::empty()
+        let mut features = SceneFeatures::empty();
+
+        if self.environment.bindings.env_map.is_some() {
+            features |= SceneFeatures::USE_ENV_MAP;
+        }
+        features
     }
 
     pub fn update(&mut self) {

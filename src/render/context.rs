@@ -315,11 +315,12 @@ impl RenderContext {
             
             let fast_key = FastPipelineKey {
                 material_handle: item.mat_handle,
-                material_version: material.version(),
+                material_version: material.layout_version(),
                 geometry_handle: item.geo_handle,
                 geometry_version: geometry.layout_version(),
-                render_state_id: self.render_state.id,
                 scene_id: scene.environment.id,
+                scene_version: scene.environment.layout_version,
+                render_state_id: self.render_state.id,
             };
 
             let (pipeline, pipeline_id) = self.pipeline_cache.get_or_create(

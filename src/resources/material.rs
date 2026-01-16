@@ -1,5 +1,6 @@
 use uuid::Uuid;
 use std::borrow::Cow;
+use std::ops::Deref;
 use glam::{Vec4};
 use bitflags::bitflags;
 
@@ -18,6 +19,7 @@ bitflags! {
         const USE_EMISSIVE_MAP  = 1 << 4;
         const USE_AO_MAP        = 1 << 5;
         const USE_SPECULAR_MAP  = 1 << 6;
+        const USE_IBL           = 1 << 7;
     }
 }
 
@@ -290,6 +292,7 @@ impl MaterialData {
                 if m.bindings.emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
             }
             Self::Standard(m) => {
+                features |= MaterialFeatures::USE_IBL;
                 if m.bindings.map.is_some() { features |= MaterialFeatures::USE_MAP; }
                 if m.bindings.normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
                 if m.bindings.roughness_map.is_some() { features |= MaterialFeatures::USE_ROUGHNESS_MAP; }
@@ -441,16 +444,15 @@ impl Material {
     }
     
     // 版本号（组合三级版本）
-    pub fn version(&self) -> u64 {
-        use std::hash::{Hash, Hasher};
-        use std::collections::hash_map::DefaultHasher;
+    // pub fn version(&self) -> u64 {
+    //     use std::hash::{Hash, Hasher};
+    //     use std::collections::hash_map::DefaultHasher;
         
-        let mut hasher = DefaultHasher::new();
-        self.data.layout_version().hash(&mut hasher);
-        self.data.binding_version().hash(&mut hasher);
-        self.data.uniform_version().hash(&mut hasher);
-        hasher.finish()
-    }
+    //     let mut hasher = DefaultHasher::new();
+    //     self.data.layout_version().hash(&mut hasher);
+    //     self.data.binding_version().hash(&mut hasher);
+    //     hasher.finish()
+    // }
 }
 
 // ============================================================================
@@ -472,5 +474,13 @@ impl From<MeshPhongMaterial> for Material {
 impl From<MeshStandardMaterial> for Material {
     fn from(data: MeshStandardMaterial) -> Self {
         Material::new(MaterialData::Standard(data))
+    }
+}
+
+impl Deref for Material {
+    type Target = MaterialData;
+
+    fn deref(&self) -> &Self::Target {
+        &self.data
     }
 }

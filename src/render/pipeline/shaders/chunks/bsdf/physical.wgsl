@@ -197,22 +197,22 @@ fn getMipLevel(maxMIPLevelScalar: f32, level: f32) -> f32 {
 }
 
 fn getIBLIrradiance( normal: vec3<f32> ) -> vec3<f32> {
-    let mip_level = getMipLevel(u_material.env_map_max_mip_level, 1.0);
+    let mip_level = getMipLevel(u_environment.env_map_max_mip_level, 1.0);
     let envMapColor_srgb = textureSampleLevel( t_env_map, s_env_map, vec3<f32>( -normal.x, normal.yz), mip_level );
-    return envMapColor_srgb.rgb * u_material.env_map_intensity * PI;
+    return envMapColor_srgb.rgb * u_environment.env_map_intensity * PI;
 }
 
 fn getIBLRadiance(view_dir: vec3<f32>, normal: vec3<f32>, roughness: f32) -> vec3<f32> {
-    $$ if env_mapping_mode == "CUBE-REFLECTION"
-        var reflectVec = reflect( -view_dir, normal );
-        let mip_level = getMipLevel(u_material.env_map_max_mip_level, roughness);
-    $$ elif env_mapping_mode == "CUBE-REFRACTION"
-        var reflectVec = refract( -view_dir, normal, u_material.refraction_ratio );
-        let mip_level = 1.0;
-    $$ endif
+    // $$ if env_mapping_mode == "CUBE-REFLECTION"
+    var reflectVec = reflect( -view_dir, normal );
+    let mip_level = getMipLevel(u_environment.env_map_max_mip_level, roughness);
+    // $$ elif env_mapping_mode == "CUBE-REFRACTION"
+    //     var reflectVec = refract( -view_dir, normal, u_material.refraction_ratio );
+    //     let mip_level = 1.0;
+    // $$ endif
     reflectVec = normalize(mix(reflectVec, normal, roughness*roughness));
     let envMapColor_srgb = textureSampleLevel( t_env_map, s_env_map, vec3<f32>( -reflectVec.x, reflectVec.yz), mip_level );
-    return envMapColor_srgb.rgb * u_material.env_map_intensity;
+    return envMapColor_srgb.rgb * u_environment.env_map_intensity;
 }
 
 

@@ -30,6 +30,9 @@ impl Serialize for ShaderCompilationOptions {
         if self.mat_features.contains(MaterialFeatures::USE_EMISSIVE_MAP) { map.serialize_entry("use_emissive_map", &true)?; }
         if self.mat_features.contains(MaterialFeatures::USE_AO_MAP) { map.serialize_entry("use_ao_map", &true)?; }
 
+        if self.mat_features.contains(MaterialFeatures::USE_SPECULAR_MAP) { map.serialize_entry("use_specular_map", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_IBL) { map.serialize_entry("USE_IBL", &true)?; }
+
 
         if self.geo_features.contains(GeometryFeatures::HAS_UV) { map.serialize_entry("has_uv", &true)?; }
         if self.geo_features.contains(GeometryFeatures::HAS_NORMAL) { map.serialize_entry("has_normal", &true)?; }
@@ -38,7 +41,7 @@ impl Serialize for ShaderCompilationOptions {
         if self.geo_features.contains(GeometryFeatures::USE_MORPHING) { map.serialize_entry("use_morphing", &true)?; }
         if self.geo_features.contains(GeometryFeatures::USE_SKINNING) { map.serialize_entry("use_skinning", &true)?; }
 
-
+        if self.scene_features.contains(SceneFeatures::USE_ENV_MAP) { map.serialize_entry("use_env_map", &true)?; }
         // other scene features can be added here
         
         map.end()

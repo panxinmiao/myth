@@ -4,6 +4,7 @@ use crate::resources::buffer::CpuBuffer;
 use crate::resources::uniforms::{GpuLightStorage, EnvironmentUniforms};
 use crate::assets::TextureHandle;
 use crate::scene::light::Light;
+use crate::resources::texture::Texture;
 
 static NEXT_WORLD_ID: AtomicU32 = AtomicU32::new(0);
 
@@ -68,10 +69,21 @@ impl Environment {
     pub fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, EnvironmentUniforms> {
         self.uniforms.write()
     }
+
+    pub fn bindings(&self) -> &EnvironmentBindings {
+        &self.bindings
+    }
     
-    pub fn set_env_map(&mut self, texture: Option<TextureHandle>) {
-        let layout_changed = self.bindings.env_map.is_some() != texture.is_some();
-        self.bindings.env_map = texture;
+    pub fn set_env_map(&mut self, texture_bundle: Option<(TextureHandle, &Texture)>) {
+        let layout_changed = self.bindings.env_map.is_some() != texture_bundle.is_some();
+        self.bindings.env_map = texture_bundle.map(|(handle, _)| handle);
+
+        let max_mip_count = texture_bundle
+            .map(|(_, texture)| texture.mip_level_count())
+            .unwrap_or(1);
+
+        self.uniforms_mut().env_map_max_mip_level = (max_mip_count - 1) as f32;
+
         if layout_changed {
             self.layout_version = self.layout_version.wrapping_add(1);
             self.binding_version = self.binding_version.wrapping_add(1);
