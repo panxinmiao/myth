@@ -3,6 +3,7 @@ use slotmap::SlotMap;
 use glam::{Affine3A, Vec4, Vec3}; 
 use bitflags::bitflags;
 use crate::scene::node::Node;
+use crate::scene::skeleton::{BindMode, Skeleton};
 use crate::scene::transform::Transform;
 use crate::resources::mesh::Mesh;
 use crate::scene::camera::Camera;
@@ -11,7 +12,7 @@ use crate::scene::environment::Environment;
 
 use crate::resources::uniforms::{GpuLightStorage};
 
-use crate::scene::{NodeIndex, MeshKey, CameraKey, LightKey};
+use crate::scene::{CameraKey, LightKey, MeshKey, NodeIndex, SkeletonKey};
 
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -29,6 +30,8 @@ pub struct Scene {
     pub meshes: SlotMap<MeshKey, Mesh>,
     pub cameras: SlotMap<CameraKey, Camera>,
     pub lights: SlotMap<LightKey, Light>,
+
+    pub skins: SlotMap<SkeletonKey, Skeleton>,
 
     // 环境和全局设置
     pub environment: Environment,
@@ -53,6 +56,8 @@ impl Scene {
             meshes: SlotMap::with_key(),
             cameras: SlotMap::with_key(),
             lights: SlotMap::with_key(),
+
+            skins: SlotMap::with_key(),
 
             environment: Environment::new(),
             background: Some(Vec4::new(0.0, 0.0, 0.0, 1.0)),
@@ -299,6 +304,10 @@ impl Scene {
         self.add_to_parent(node, parent)
     }
 
+    pub fn add_skeleton(&mut self, skeleton: Skeleton) -> SkeletonKey {
+        self.skins.insert(skeleton)
+    }
+
     pub fn add_camera(&mut self, camera: Camera) ->  NodeIndex {
         // 1. 创建 Node
         let mut node = Node::new("Camera");
@@ -348,8 +357,39 @@ impl Scene {
 
     pub fn update(&mut self) {
         self.update_matrix_world();
+        self.update_skeletons();
         let gpu_lights = self.collect_lights();
         self.environment.update_lights(gpu_lights);
+    }
+
+    pub fn update_skeletons(&mut self) {
+        // 步骤 1: 收集“任务” (我们需要更新哪些 Skeleton，以及用什么参数)
+        let mut tasks = Vec::new();
+
+        for (_, node) in &self.nodes {
+            if let Some(binding) = &node.skin {
+                // 根据 BindMode 决定 root_inverse
+                let root_inv = match binding.bind_mode {
+                    BindMode::Attached => node.world_matrix.inverse(),
+                    BindMode::Detached => binding.bind_matrix_inv,
+                };
+                
+                tasks.push((binding.skeleton, root_inv));
+            }
+        }
+
+        // 步骤 2: 执行“任务” (修改 Skeleton)
+        // 此时我们只需要只读访问 nodes，可变访问 skeletons
+        let nodes = &self.nodes; // Immutable borrow
+        
+        for (skeleton_id, root_inv) in tasks {
+            if let Some(skeleton) = self.skins.get_mut(skeleton_id) {
+                skeleton.compute_joint_matrices(nodes, root_inv);
+                
+                // TODO: 这里通常会触发 GPU Buffer 的上传
+                // render_queue.write_buffer(skeleton.gpu_buffer, &skeleton.joint_matrices);
+            }
+        }
     }
 
     fn collect_lights(&self) -> Vec<GpuLightStorage> {

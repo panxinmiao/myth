@@ -1,5 +1,6 @@
 pub mod server;
 pub mod loaders;
+pub mod skeleton_asset;
 
 // 重新导出 AssetServer 及相关类型
 pub use server::{

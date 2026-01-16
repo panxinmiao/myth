@@ -5,28 +5,44 @@
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
+    @location({{ loc.next() }}) world_position: vec3<f32>,
     $$ if has_uv
     @location({{ loc.next() }}) uv: vec2<f32>,
     $$ endif
     $$ if has_normal
     @location({{ loc.next() }}) normal: vec3<f32>,
+    @location({{ loc.next() }}) geometry_normal: vec3<f32>,
     $$ endif
+    $$ if use_vertex_color
+    @location({{ loc.next() }}) color: vec4<f32>,
+    $$ endif
+    {$ include 'uv_vetex_output' $}
 };
+
 
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
-    let model_matrix = u_model.world_matrix; 
-    let world_pos = model_matrix * vec4<f32>(in.position, 1.0);
-    
+
+    var local_pos = vec4<f32>(in.position, 1.0);
+    var local_normal = in.normal;
+
+    {$ include 'skin' $}
+
+    let world_pos = u_model.world_matrix * local_pos;
+
+
     out.position = u_render_state.view_projection * world_pos;
-    $$ if has_uv
-        out.uv = in.uv;
-    $$ endif 
-    $$ if has_normal
-        let normal_matrix = u_model.normal_matrix;
-        out.normal = normal_matrix * in.normal;
+    out.world_position = world_pos.xyz / world_pos.w;
+
+    $$ if use_vertex_color
+        out.color = in.color;
     $$ endif
+
+    out.uv = in.uv;
+    out.geometry_normal = local_normal;
+    out.normal = normalize(u_model.normal_matrix * local_normal);
+    {$ include 'uv' $}
     return out;
 }
 

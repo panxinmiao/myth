@@ -25,7 +25,14 @@ struct VertexOutput {
 fn vs_main(in: VertexInput) -> VertexOutput {
     var out: VertexOutput;
 
-    let world_pos = u_model.world_matrix * vec4<f32>(in.position, 1.0);
+    var local_pos = vec4<f32>(in.position, 1.0);
+    var local_normal = in.normal;
+
+    {$ include 'skin' $}
+
+    let world_pos = u_model.world_matrix * local_pos;
+
+
     out.position = u_render_state.view_projection * world_pos;
     out.world_position = world_pos.xyz / world_pos.w;
 
@@ -34,8 +41,8 @@ fn vs_main(in: VertexInput) -> VertexOutput {
     $$ endif
 
     out.uv = in.uv;
-    out.geometry_normal = in.normal;
-    out.normal = normalize(u_model.normal_matrix * in.normal);
+    out.geometry_normal = local_normal;
+    out.normal = normalize(u_model.normal_matrix * local_normal);
     {$ include 'uv' $}
     return out;
 }
