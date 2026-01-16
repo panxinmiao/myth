@@ -10,6 +10,7 @@ pub mod settings;
 use std::sync::Arc;
 use winit::window::Window;
 
+use crate::render::data::skeleton_manager;
 use crate::scene::Scene;
 use crate::scene::camera::Camera;
 use crate::assets::{AssetServer};
@@ -17,7 +18,7 @@ use crate::errors::{ThreeError, Result};
 
 use self::resources::ResourceManager;
 use self::pipeline::{PipelineCache};
-use self::data::{ModelBufferManager};
+use self::data::{ModelManager};
 use self::context::{RenderContext, RenderState};
 use self::settings::RenderSettings;
 
@@ -77,7 +78,9 @@ impl Renderer {
 
         // 初始化子系统
         let mut resource_manager = ResourceManager::new(device.clone(), queue.clone());
-        let model_buffer_manager = ModelBufferManager::new(&mut resource_manager);
+        let model_manager = ModelManager::new(&mut resource_manager);
+
+        let skeleton_manager = skeleton_manager::SkeletonManager::new();
         
         // 创建 RenderState
         let render_state = RenderState::new();
@@ -96,7 +99,8 @@ impl Renderer {
             clear_color: self.settings.clear_color,
             render_state,
             resource_manager,
-            model_buffer_manager,
+            model_manager,
+            skeleton_manager,
             pipeline_cache: PipelineCache::new(),
         });
         

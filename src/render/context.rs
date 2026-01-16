@@ -3,6 +3,10 @@ use glam::{Mat4, Mat3A};
 use slotmap::Key;
 use log::{warn, error};
 
+use crate::render::data::SkeletonManager;
+use crate::render::pipeline::cache::PipelineKey;
+use crate::resources::GeometryFeatures;
+use crate::scene::skeleton::SkinBinding;
 use crate::scene::{Scene};
 use crate::scene::camera::Camera;
 use crate::scene::environment::Environment;
@@ -12,7 +16,7 @@ use crate::resources::buffer::CpuBuffer;
 
 use super::resources::ResourceManager;
 use super::pipeline::{PipelineCache, FastPipelineKey};
-use super::data::{ModelBufferManager, ObjectBindingData};
+use super::data::{ModelManager, ObjectBindingData};
 use super::passes::TrackedRenderPass;
 
 /// 渲染排序键 (Pipeline ID + Material ID + Depth)
@@ -38,6 +42,7 @@ impl RenderKey {
 pub struct RenderItem {
     pub geo_handle: GeometryHandle,
     pub mat_handle: MaterialHandle,
+    pub skin_binding: Option<SkinBinding>,
     pub model_matrix: Mat4,
     pub distance_sq: f32,
 }
@@ -125,7 +130,8 @@ pub struct RenderContext {
     
     // 子系统
     pub resource_manager: ResourceManager,
-    pub model_buffer_manager: ModelBufferManager,
+    pub model_manager: ModelManager,
+    pub skeleton_manager: SkeletonManager,
     pub pipeline_cache: PipelineCache,
 }
 
@@ -262,6 +268,7 @@ impl RenderContext {
                     list.push(RenderItem {
                         geo_handle,
                         mat_handle,
+                        skin_binding: node.skin.clone(),
                         model_matrix: Mat4::from(node_world),
                         distance_sq,
                     });
@@ -296,10 +303,12 @@ impl RenderContext {
             self.resource_manager.prepare_geometry(assets, item.geo_handle);
             self.resource_manager.prepare_material(assets, item.mat_handle);
 
-            let object_data = self.model_buffer_manager.prepare_bind_group(
+            let object_data = self.model_manager.prepare_bind_group(
                 &mut self.resource_manager, 
+                &self.skeleton_manager,
                 item.geo_handle, 
-                geometry
+                geometry,
+                item.skin_binding.as_ref(),
             );
 
             let gpu_geometry = if let Some(g) = self.resource_manager.get_geometry(item.geo_handle){
@@ -320,6 +329,16 @@ impl RenderContext {
                 error!("Render Environment missing for render state {:?} and scene {:?}", self.render_state.id, scene.environment.id);
                 continue;
             };
+
+            let geo_features = geometry.get_features();
+
+            let mut effective_features = geo_features;
+        
+            if item.skin_binding.is_none(){
+                // 如果没有骨骼绑定，强行移除 SKINNING 特征，
+                // 这样 Shader Generator 就不会生成 USE_SKINNING 宏
+                effective_features.remove(GeometryFeatures::USE_SKINNING);
+            }
             
             let fast_key = FastPipelineKey {
                 material_handle: item.mat_handle,
@@ -331,19 +350,44 @@ impl RenderContext {
                 render_state_id: self.render_state.id,
             };
 
-            let (pipeline, pipeline_id) = self.pipeline_cache.get_or_create(
-                &self.device,
-                fast_key,
-                geometry,
-                material,
-                scene,
-                &gpu_geometry.layout_info,
-                gpu_material,
-                &object_data,
-                gpu_world,
-                self.config.format,
-                self.depth_format,
-            );
+            // 尝试 L1 缓存
+            let (pipeline, pipeline_id) = if let Some(p) = self.pipeline_cache.get_pipeline_fast(fast_key) {
+                p.clone()
+            } else {
+                // L1 未命中，计算 Canonical Key
+                let canonical_key = PipelineKey {
+                    mat_features: material.get_features(),
+                    geo_features: geometry.get_features(),
+                    scene_features: scene.get_features(),
+                    topology: geometry.topology,
+                    cull_mode: material.cull_mode(),
+                    depth_write: material.depth_write(),
+                    depth_compare: if material.depth_test() { wgpu::CompareFunction::Less } else { wgpu::CompareFunction::Always },
+                    blend_state: if material.transparent() {
+                        Some(wgpu::BlendState::ALPHA_BLENDING)
+                    } else {
+                        None
+                    },
+                    color_format: self.config.format,
+                    depth_format: self.depth_format,
+                    sample_count: 1, // 暂时写死
+                };
+
+                let (pipeline, pipeline_id) = self.pipeline_cache.get_pipeline(
+                    &self.device,
+                    material.shader_name(),
+                    canonical_key,
+                    &gpu_geometry.layout_info,
+                    gpu_material,
+                    &object_data,
+                    gpu_world,
+                );
+                // 存入 L1 缓存
+                self.pipeline_cache.insert_pipeline_fast(fast_key, (pipeline.clone(), pipeline_id));
+
+                (pipeline, pipeline_id)
+
+            };
 
             let mat_id = item.mat_handle.data().as_ffi() as u32; 
             let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq);
@@ -401,7 +445,7 @@ impl RenderContext {
         process_cmds(opaque, 0);
         process_cmds(transparent, opaque.len());
 
-        self.model_buffer_manager.write_uniforms(&mut self.resource_manager, data);
+        self.model_manager.write_uniforms(&mut self.resource_manager, data);
     }
 
     // 静态方法：不依赖 &self，只依赖明确传入的 resource_manager

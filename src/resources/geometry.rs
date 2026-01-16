@@ -474,6 +474,13 @@ impl Geometry {
             features |= GeometryFeatures::USE_MORPHING;
         }
 
+        let has_joints = self.attributes.contains_key("joints");
+        let has_weights = self.attributes.contains_key("weights");
+        
+        if has_joints && has_weights {
+            features |= GeometryFeatures::USE_SKINNING;
+        }
+
         features
     }
 

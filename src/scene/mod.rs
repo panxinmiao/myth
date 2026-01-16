@@ -13,6 +13,7 @@ pub mod scene;
 pub mod camera;
 pub mod light;
 pub mod environment;
+pub mod skeleton;
 
 // 重新导出常用类型
 pub use node::Node;
@@ -31,4 +32,5 @@ new_key_type! {
     pub struct MeshKey;
     pub struct CameraKey;
     pub struct LightKey;
+    pub struct SkeletonKey;
 }

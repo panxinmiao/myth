@@ -1,6 +1,8 @@
 use wgpu::ShaderStages;
 use rustc_hash::{FxHashMap};
 
+use crate::render::resources::builder::WgslStructName;
+use crate::render::data::skeleton_manager::{SkeletonManager};
 use crate::render::resources::manager::ResourceManager;
 use crate::resources::uniforms::DynamicModelUniforms;
 use crate::resources::geometry::{Geometry, GeometryFeatures};
@@ -8,15 +10,19 @@ use crate::render::resources::builder::ResourceBuilder;
 use crate::render::resources::binding::Bindings;
 use crate::assets::GeometryHandle;
 use crate::resources::buffer::CpuBuffer;
+use crate::scene::SkeletonKey;
+use crate::scene::skeleton::SkinBinding;
 
 // 缓存 Key：决定了 BindGroup 是否可以复用
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ObjectBindGroupKey {
     geo_id: Option<GeometryHandle>,
     model_buffer_id: u64,   // 全局 Model Buffer ID (区分扩容)
+
+    skeleton_id: Option<SkeletonKey>,
 }
 
-pub struct ModelBufferManager {
+pub struct ModelManager {
     // === 数据源 ===
     model_buffer: CpuBuffer<Vec<DynamicModelUniforms>>,
     
@@ -35,7 +41,7 @@ pub struct ObjectBindingData {
     pub binding_wgsl: String, 
 }
 
-impl ModelBufferManager {
+impl ModelManager {
     pub fn new(resource_manager: &mut ResourceManager) -> Self {
         let initial_capacity = 128;
         let initial_data = vec![DynamicModelUniforms::default(); initial_capacity];
@@ -97,8 +103,10 @@ impl ModelBufferManager {
     pub fn prepare_bind_group(
         &mut self,
         resource_manager: &mut ResourceManager,
+        skeleton_manager: &SkeletonManager,
         geometry_handle: GeometryHandle,
         geometry: &Geometry,
+        skin_binding: Option<&SkinBinding>,
     ) -> ObjectBindingData {
         
         // 1. 计算 Key
@@ -108,10 +116,23 @@ impl ModelBufferManager {
         // 如果是纯静态物体(无额外Bind)，我们可以让所有静态物体共享一个 Key，减少 Cache 大小
         let is_static = !features.intersects(GeometryFeatures::USE_MORPHING | GeometryFeatures::USE_SKINNING);
         
+        let has_skin_binding = skin_binding.is_some();
+        let geo_supports_skinning = features.contains(GeometryFeatures::USE_SKINNING);
+
+        let use_skinning = geo_supports_skinning && has_skin_binding;
+
+        let skeleton_id = if use_skinning {
+            skin_binding.map(|s| s.skeleton)
+        } else {
+            None
+        };
+    
         let key = ObjectBindGroupKey {
             geo_id: if is_static { None } else { Some(geometry_handle) },
             // 直接使用 CpuBuffer 的 ID
             model_buffer_id: self.model_buffer.handle().id,
+
+            skeleton_id,
         };
 
         // 2. 查缓存
@@ -136,6 +157,21 @@ impl ModelBufferManager {
         // Binding 1..N: Geometry 贡献的 (Morph/Skin)
         // 我们需要 Geometry 的特定逻辑来填充 builder
         geometry.define_bindings(&mut builder);
+
+
+        if use_skinning {
+            if let Some(skel_id) = skeleton_id {
+                if let Some(buffer) = skeleton_manager.get_buffer(skel_id) {
+                    builder.add_buffer(
+                        "skins",
+                        buffer.handle(), 
+                        Some(buffer.as_bytes()),
+                        ShaderStages::VERTEX,
+                        Some(WgslStructName::Name("array<mat4x4<f32>, 64>".into()))
+                    );
+                }
+            }
+        }
 
 
         let binding_wgsl = builder.generate_wgsl(2); // Group 2

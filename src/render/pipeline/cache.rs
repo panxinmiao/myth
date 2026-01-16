@@ -1,9 +1,9 @@
 use rustc_hash::{FxHashMap};
 use xxhash_rust::xxh3::xxh3_128;
 
-use crate::resources::geometry::{Geometry, GeometryFeatures};
-use crate::resources::material::{Material, MaterialFeatures};
-use crate::scene::scene::{Scene, SceneFeatures};
+use crate::resources::geometry::GeometryFeatures;
+use crate::resources::material::MaterialFeatures;
+use crate::scene::scene::SceneFeatures;
 use crate::assets::{GeometryHandle, MaterialHandle};
 
 use crate::render::pipeline::shader_gen::ShaderGenerator;
@@ -71,83 +71,52 @@ impl PipelineCache {
         }
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn get_or_create(
+
+    pub fn get_pipeline_fast(
+        &self,
+        fast_key: FastPipelineKey,
+    ) -> Option<&(wgpu::RenderPipeline, u16)> {
+        self.fast_cache.get(&fast_key)
+    }
+
+    pub fn insert_pipeline_fast(
+        &mut self,
+        fast_key: FastPipelineKey,
+        pipeline: (wgpu::RenderPipeline, u16),
+    ) {
+        self.fast_cache.insert(fast_key, pipeline);
+    }
+
+
+    pub fn get_pipeline(
         &mut self,
         device: &wgpu::Device,
 
-        fast_key: FastPipelineKey,
-
-        geometry: &Geometry,
-        material: &Material,
-        scene: &Scene,
+        template_name: &str,
+        canonical_key: PipelineKey,
 
         vertex_layout: &GeneratedVertexLayout, 
         gpu_material: &GpuMaterial, 
         object_data: &ObjectBindingData,
         gpu_environment: &GpuEnvironment,
-
-        color_format: wgpu::TextureFormat,
-        depth_format: wgpu::TextureFormat, 
     ) -> (wgpu::RenderPipeline, u16) {
 
-        // =========================================================
-        // 1. L1 Cache: 快速路径 (Fast Path)
-        // =========================================================
 
-        // 如果命中 L1 缓存，直接返回 (零堆内存分配)
-        if let Some(cached) = self.fast_cache.get(&fast_key) {
-            return cached.clone();
-        }
-
-        // =========================================================
-        // 2. L2 Cache: 规范路径 (Canonical Path)
-        // =========================================================
-
-        // 2.1 收集 Features (极快，位运算)
-        let mat_features = material.get_features();
-        let geo_features = geometry.get_features();
-        let scene_features = scene.get_features();
-        let topology = geometry.topology;
-
-        // 2.2 构建 Canonical Key (无堆分配，如果 bitflags 和 enum 都是 copy)
-        let canonical_key = PipelineKey {
-            mat_features,
-            geo_features,
-            scene_features,
-            topology,
-            cull_mode: material.cull_mode(),
-            depth_write: material.depth_write(),
-            depth_compare: if material.depth_test() { wgpu::CompareFunction::Less } else { wgpu::CompareFunction::Always },
-            blend_state: if material.transparent() {
-                Some(wgpu::BlendState::ALPHA_BLENDING)
-            } else {
-                None
-            },
-            color_format,
-            depth_format,
-            sample_count: 1, // 暂时写死
-        };
-
-        // 2.3 查 L2 缓存
+        // L2 命中！直接返回
         if let Some(cached) = self.canonical_cache.get(&canonical_key) {
-            // L2 命中！更新 L1 并返回
-            self.fast_cache.insert(fast_key, cached.clone());
             return cached.clone();
         }
 
         // =========================================================
-        // 3. Cache Miss - 生成 Shader 代码并编译 (慢路径)
+        // Cache Miss - 生成 Shader 代码并编译 (慢路径)
         // =========================================================
 
-        // 0. 收集编译选项 (Material + Geometry)
+        // 3.1 收集编译选项
         let options = ShaderCompilationOptions {
-            mat_features,
-            geo_features,
-            scene_features,
+            mat_features: canonical_key.mat_features,
+            geo_features: canonical_key.geo_features,
+            scene_features: canonical_key.scene_features,
         };
-
-        let template_name = material.shader_name();
 
         // 2. Generate Code
         let shader_source = ShaderGenerator::generate_shader(
@@ -201,7 +170,7 @@ impl PipelineCache {
                 module: shader_module,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: color_format,
+                    format: canonical_key.color_format,
                     blend: canonical_key.blend_state,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -213,7 +182,7 @@ impl PipelineCache {
                 ..Default::default()
             },
             depth_stencil: Some(wgpu::DepthStencilState {
-                format: depth_format,
+                format: canonical_key.depth_format,
                 depth_write_enabled: canonical_key.depth_write,
                 depth_compare: canonical_key.depth_compare,
                 stencil: wgpu::StencilState::default(),
@@ -229,13 +198,89 @@ impl PipelineCache {
         // 注意：RenderKey 只分配了 14 位 (16384)，超过这个值会导致排序 key 冲突，但不影响渲染正确性
         self.next_id = self.next_id.wrapping_add(1);
 
-        let result = (pipeline, id);
+        // 存入L2缓存
+        self.canonical_cache.insert(canonical_key, (pipeline.clone(), id));
 
-        // 4. 同时存入 L1 和 L2 缓存
-        self.canonical_cache.insert(canonical_key, result.clone());
-        self.fast_cache.insert(fast_key, result.clone());
+        (pipeline, id)
 
-        result
     }
+
+    // #[allow(clippy::too_many_arguments)]
+    // pub fn get_or_create(
+    //     &mut self,
+    //     device: &wgpu::Device,
+
+    //     fast_key: FastPipelineKey,
+
+    //     geometry: &Geometry,
+    //     material: &Material,
+    //     scene: &Scene,
+
+    //     vertex_layout: &GeneratedVertexLayout, 
+    //     gpu_material: &GpuMaterial, 
+    //     object_data: &ObjectBindingData,
+    //     gpu_environment: &GpuEnvironment,
+
+    //     color_format: wgpu::TextureFormat,
+    //     depth_format: wgpu::TextureFormat, 
+    // ) -> (wgpu::RenderPipeline, u16) {
+
+    //     // =========================================================
+    //     // 1. L1 Cache: 快速路径 (Fast Path)
+    //     // =========================================================
+
+    //     // 如果命中 L1 缓存，直接返回 (零堆内存分配)
+    //     if let Some(cached) = self.fast_cache.get(&fast_key) {
+    //         return cached.clone();
+    //     }
+
+    //     // =========================================================
+    //     // 2. L2 Cache: 规范路径 (Canonical Path)
+    //     // =========================================================
+
+    //     // 2.1 收集 Features (极快，位运算)
+    //     let mat_features = material.get_features();
+    //     let geo_features = geometry.get_features();
+    //     let scene_features = scene.get_features();
+    //     let topology = geometry.topology;
+
+    //     // 2.2 构建 Canonical Key (无堆分配，如果 bitflags 和 enum 都是 copy)
+    //     let canonical_key = PipelineKey {
+    //         mat_features,
+    //         geo_features,
+    //         scene_features,
+    //         topology,
+    //         cull_mode: material.cull_mode(),
+    //         depth_write: material.depth_write(),
+    //         depth_compare: if material.depth_test() { wgpu::CompareFunction::Less } else { wgpu::CompareFunction::Always },
+    //         blend_state: if material.transparent() {
+    //             Some(wgpu::BlendState::ALPHA_BLENDING)
+    //         } else {
+    //             None
+    //         },
+    //         color_format,
+    //         depth_format,
+    //         sample_count: 1, // 暂时写死
+    //     };
+
+    //     // 2.3 查 L2 缓存
+    //     if let Some(cached) = self.canonical_cache.get(&canonical_key) {
+    //         // L2 命中！更新 L1 并返回
+    //         self.fast_cache.insert(fast_key, cached.clone());
+    //         return cached.clone();
+    //     }
+
+    //     // =========================================================
+    //     // 3. Cache Miss - 生成 Shader 代码并编译 (慢路径)
+    //     // =========================================================
+
+    //     // 0. 收集编译选项 (Material + Geometry)
+        
+    //     // 4. 同时存入 L1 和 L2 缓存
+    //     self.canonical_cache.insert(canonical_key, result.clone());
+    //     self.fast_cache.insert(fast_key, result.clone());
+
+    //     result
+    // }
 
 }

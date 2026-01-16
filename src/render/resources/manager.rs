@@ -22,7 +22,7 @@ use crate::render::resources::image::GpuImage;
 use crate::render::RenderState;
 
 // 全局资源 ID 生成器
-static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(0);
 
 pub fn generate_resource_id() -> u64 {
     NEXT_RESOURCE_ID.fetch_add(1, Ordering::Relaxed)
@@ -961,7 +961,6 @@ impl ResourceManager {
         }
 
         // 6. 重建 BindGroup (Create)
-        // log::debug!("Rebuilding Global BindGroup. Layout: {}, ResHash: {}", layout_id, resource_hash);
 
         let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
         let binding_wgsl = builder.generate_wgsl(0); 

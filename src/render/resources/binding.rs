@@ -143,7 +143,7 @@ impl Bindings for Geometry {
     fn define_bindings<'a>(&'a self, _builder: &mut ResourceBuilder<'a>) {
         // 需要根据 morph_attributes 来自动生成 morph texture 资源（或 storage buffer）
         // 然后绑定到 Group 2 中
-       
+
     }
 }
 
