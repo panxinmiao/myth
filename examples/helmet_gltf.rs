@@ -41,7 +41,7 @@ fn main() -> anyhow::Result<()> {
     
     println!("Loading glTF model from: {}", gltf_path.display());
     
-    let loaded_nodes = GltfLoader::load(
+    let (loaded_nodes, _animations) = GltfLoader::load(
         gltf_path,
         &mut app.assets,
         &mut app.scene

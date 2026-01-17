@@ -84,7 +84,7 @@ pub trait WgslStruct: Pod + Zeroable {
 // 2. 宏定义 (Single Source of Truth)
 // ============================================================================
 
-macro_rules! define_uniform_struct {
+macro_rules! define_gpu_data_struct {
     // --------------------------------------------------------
     // 入口模式
     // --------------------------------------------------------
@@ -96,25 +96,31 @@ macro_rules! define_uniform_struct {
         }
     ) => {
         // 1. 生成 Rust Struct
-        define_uniform_struct!(@def_struct 
+        define_gpu_data_struct!(@def_struct 
             $(#[$meta])* struct $name { 
                 $( $vis $field_name : $field_type ),* }
         );
 
         // 2. 生成 Default 实现
-        define_uniform_struct!(@impl_default 
+        define_gpu_data_struct!(@impl_default 
             $name { 
                 $( $field_name : $field_type $(= $default_val)? ),* }
         );
 
         // 3. 生成 WgslType 实现 (支持作为嵌套字段)
-        define_uniform_struct!(@impl_wgsl_type 
+        define_gpu_data_struct!(@impl_wgsl_type 
             $name { 
                 $( $field_name : $field_type ),* }
         );
 
         // 4. 生成 UniformBlock 实现 (顶层入口)
-        define_uniform_struct!(@impl_uniform_block 
+        define_gpu_data_struct!(@impl_uniform_block 
+            $name { 
+                $( $field_name : $field_type ),* }
+        );
+
+        // 5. 生成GpuData实现
+        define_gpu_data_struct!(@impl_gpu_data 
             $name { 
                 $( $field_name : $field_type ),* }
         );
@@ -133,7 +139,7 @@ macro_rules! define_uniform_struct {
         impl Default for $name {
             fn default() -> Self {
                 Self {
-                    $( $field_name: define_uniform_struct!(@val_or_default $field_type $(, $default_val)?), )*
+                    $( $field_name: define_gpu_data_struct!(@val_or_default $field_type $(, $default_val)?), )*
                 }
             }
         }
@@ -178,7 +184,7 @@ macro_rules! define_uniform_struct {
                 // 2. 生成自身的定义
                 let my_name = stringify!($name);
                 if !inserted.contains(my_name) {
-                    let my_def = define_uniform_struct!(@gen_body my_name, { $( $field_name : $field_type ),* });
+                    let my_def = define_gpu_data_struct!(@gen_body my_name, { $( $field_name : $field_type ),* });
                     defs.push(my_def);
                     inserted.insert(my_name.to_string());
                 }
@@ -201,7 +207,7 @@ macro_rules! define_uniform_struct {
                 )*
 
                 // 2. 生成顶层结构体 (使用传入的 struct_name，可能被重命名)
-                let top_def = define_uniform_struct!(@gen_body struct_name, { $( $vis $field_name : $field_type ),* });
+                let top_def = define_gpu_data_struct!(@gen_body struct_name, { $( $vis $field_name : $field_type ),* });
                 
                 // 3. 拼接所有内容
                 defs.push(top_def);
@@ -209,12 +215,29 @@ macro_rules! define_uniform_struct {
             }
         }
     };
+
+    // impl_gpu_data_for_pod
+    (@impl_gpu_data $name:ident { $( $vis:vis $field_name:ident : $field_type:ty ),* }) => {
+        impl $crate::resources::buffer::GpuData for $name {
+            fn as_bytes(&self) -> &[u8] {
+                bytemuck::bytes_of(self)
+            }
+            
+            fn byte_size(&self) -> usize {
+                std::mem::size_of::<Self>()
+            }
+        }
+    };
+
+
+
+
 }
 // ============================================================================
-// 3. Uniform 定义 (在此处修改，两端自动同步)
+// 3. Gpu Data Struct 定义 (std140)  (在此处修改，两端自动同步)
 // ============================================================================
 
-define_uniform_struct!(
+define_gpu_data_struct!(
     /// 动态模型 Uniforms (每个对象更新)
     struct DynamicModelUniforms {
         pub world_matrix: Mat4,       //64
@@ -226,7 +249,7 @@ define_uniform_struct!(
 );
 
 
-define_uniform_struct!(
+define_gpu_data_struct!(
     /// 全局 Uniforms (每个 Frame 更新)
     struct RenderStateUniforms {
         pub view_projection: Mat4 = Mat4::IDENTITY,
@@ -238,7 +261,7 @@ define_uniform_struct!(
 );
 
 
-define_uniform_struct!(
+define_gpu_data_struct!(
     /// 全局 Uniforms (每个 Frame 更新)
     struct EnvironmentUniforms {
         pub ambient_light: Vec3 = Vec3::ZERO,
@@ -252,7 +275,7 @@ define_uniform_struct!(
 
 
 // Basic Material
-define_uniform_struct!(
+define_gpu_data_struct!(
     struct MeshBasicUniforms {
         pub color: Vec4 = Vec4::ONE,           // 16
         pub opacity: f32 = 1.0,          // 4
@@ -262,7 +285,7 @@ define_uniform_struct!(
 );
 
 // Phong Material
-define_uniform_struct!(
+define_gpu_data_struct!(
     struct MeshPhongUniforms {
         pub color: Vec4 = Vec4::ONE,
 
@@ -285,7 +308,7 @@ define_uniform_struct!(
 );
 
 // Standard PBR Material
-define_uniform_struct!(
+define_gpu_data_struct!(
     struct MeshStandardUniforms {
         pub color: Vec4 = Vec4::ONE,           // 16
 
@@ -310,7 +333,7 @@ define_uniform_struct!(
     }
 );
 
-define_uniform_struct!(
+define_gpu_data_struct!(
     struct GpuLightStorage {
         // 16 bytes chunk 0
         pub color: Vec3,
@@ -330,6 +353,20 @@ define_uniform_struct!(
         pub light_type: u32,
         pub(crate) _padding1: f32,
     }
+);
+
+define_gpu_data_struct!(
+    struct MorphUniforms {
+        pub count: u32,
+        pub vertex_count: u32,
+        pub flags: u32,
+        pub _pad: u32,
+        
+        // 32 个目标形态的权重和索引
+        pub weights: UniformArray<f32, 32>, 
+        pub indices: UniformArray<u32, 32>, 
+    }
+
 );
 
 
@@ -363,13 +400,3 @@ mod tests {
         println!("{}", wgsl);
     }
 }
-
-crate::impl_gpu_data_for_pod!(
-    DynamicModelUniforms,
-    RenderStateUniforms,
-    EnvironmentUniforms,
-    MeshBasicUniforms,
-    MeshPhongUniforms,
-    MeshStandardUniforms,
-    GpuLightStorage
-);

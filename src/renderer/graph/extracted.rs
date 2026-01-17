@@ -11,6 +11,7 @@
 
 use glam::Mat4;
 
+use crate::scene::scene::SceneFeatures;
 use crate::scene::{NodeIndex, Scene, SkeletonKey, MeshKey};
 use crate::scene::skeleton::SkinBinding;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
@@ -65,7 +66,7 @@ pub struct ExtractedScene {
     /// 环境布局版本
     pub environment_layout_version: u64,
     /// 场景特性标志
-    pub scene_features: crate::scene::scene::SceneFeatures,
+    pub scene_features: SceneFeatures,
 }
 
 impl ExtractedScene {
@@ -77,7 +78,7 @@ impl ExtractedScene {
             background: None,
             environment_id: 0,
             environment_layout_version: 0,
-            scene_features: crate::scene::scene::SceneFeatures::empty(),
+            scene_features: SceneFeatures::empty(),
         }
     }
 
@@ -89,7 +90,7 @@ impl ExtractedScene {
             background: None,
             environment_id: 0,
             environment_layout_version: 0,
-            scene_features: crate::scene::scene::SceneFeatures::empty(),
+            scene_features: SceneFeatures::empty(),
         }
     }
 
@@ -98,28 +99,6 @@ impl ExtractedScene {
         self.render_items.clear();
         self.skeletons.clear();
     }
-
-    /// 从 Scene 中提取当前帧的渲染数据（创建新实例）
-    /// 
-    /// # 参数
-    /// * `scene` - 场景引用
-    /// * `camera` - 相机（用于视锥剔除）
-    /// * `assets` - 资源服务器（用于验证资源存在性）
-    /// 
-    /// # 返回
-    /// 填充后的 ExtractedScene
-    // pub fn extract(scene: &Scene, camera: &Camera, assets: &AssetServer) -> Self {
-    //     let mut extracted = Self::with_capacity(
-    //         scene.nodes.len(), // 预估最大数量
-    //         scene.skins.len(),
-    //     );
-
-    //     extracted.extract_render_items(scene, camera, assets);
-    //     extracted.extract_skeletons(scene);
-    //     extracted.extract_environment(scene);
-
-    //     extracted
-    // }
 
     /// 复用当前实例的内存，从 Scene 中提取数据
     /// 

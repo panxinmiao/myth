@@ -2,13 +2,14 @@
 //!
 //! 定义 BindGroup 的资源类型和绑定 Trait
 
+use crate::Mesh;
 use crate::resources::buffer::BufferRef;
 use crate::assets::TextureHandle;
 use crate::resources::material::{Material, MaterialData};
 use crate::resources::geometry::Geometry;
 use crate::scene::environment::Environment;
 use crate::resources::uniforms::*;
-use crate::renderer::core::builder::ResourceBuilder;
+use crate::renderer::core::builder::{ResourceBuilder};
 use crate::renderer::graph::RenderState;
 
 /// 实际的绑定资源数据 (用于生成 BindGroup)
@@ -122,7 +123,15 @@ impl Bindings for Material {
 
 impl Bindings for Geometry {
     fn define_bindings<'a>(&'a self, _builder: &mut ResourceBuilder<'a>) {
-        // Geometry 绑定（如 morph targets）暂留空
+        // for (morph_name, data) in &self.morph_attributes {
+
+        // }
+    }
+}
+
+impl Bindings for Mesh {
+    fn define_bindings<'a>(&'a self, _builder: &mut ResourceBuilder<'a>) {
+        // 
     }
 }
 

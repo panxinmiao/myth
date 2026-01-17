@@ -10,16 +10,17 @@
 use wgpu::ShaderStages;
 use rustc_hash::FxHashMap;
 
+use crate::Mesh;
 use crate::renderer::core::builder::WgslStructName;
 use crate::renderer::managers::skeleton::SkeletonManager;
 use crate::renderer::core::resources::ResourceManager;
-use crate::resources::uniforms::DynamicModelUniforms;
+use crate::resources::uniforms::{DynamicModelUniforms, MorphUniforms};
 use crate::resources::geometry::{Geometry, GeometryFeatures};
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::renderer::core::binding::Bindings;
 use crate::assets::GeometryHandle;
 use crate::resources::buffer::CpuBuffer;
-use crate::scene::SkeletonKey;
+use crate::scene::{SkeletonKey};
 use crate::scene::skeleton::SkinBinding;
 
 /// 紧凑的 BindGroup 缓存键
@@ -141,6 +142,7 @@ impl ModelManager {
         skeleton_manager: &SkeletonManager,
         geometry_handle: GeometryHandle,
         geometry: &Geometry,
+        mesh: &Mesh,
         skin_binding: Option<&SkinBinding>,
     ) -> ObjectBindingData {
         let features = geometry.get_features();
@@ -174,6 +176,18 @@ impl ModelManager {
             std::mem::size_of::<DynamicModelUniforms>() as u64,
             ShaderStages::VERTEX
         );
+
+        mesh.define_bindings(&mut builder);
+        
+        let use_morphing = features.contains(GeometryFeatures::USE_MORPHING);
+
+        if use_morphing {
+            builder.add_uniform::<MorphUniforms>(
+                "morph_targets",
+                &mesh.morph_uniforms,
+                ShaderStages::VERTEX
+            );
+        }
 
         geometry.define_bindings(&mut builder);
 

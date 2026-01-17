@@ -28,7 +28,7 @@ pub struct Attribute {
     pub step_mode: VertexStepMode,
 }
 
-static NEXT_ATTR_VERSION: AtomicU64 = AtomicU64::new(1);
+static NEXT_ATTR_VERSION: AtomicU64 = AtomicU64::new(0);
 
 impl Attribute {
     /// 创建 Planar (非交错) 属性
@@ -177,14 +177,17 @@ bitflags! {
 pub struct Geometry {
     pub uuid: Uuid,
     
+    // vertex lay out versioning
     layout_version: u64,
+    // vertex buffers versioning
     structure_version: u64,
     data_version: u64,
 
     attributes: FxHashMap<String, Attribute>,
     index_attribute: Option<Attribute>,
-    
+
     pub morph_attributes: FxHashMap<String, Vec<Attribute>>,
+
     pub morph_target_names: Vec<String>,
 
     pub topology: PrimitiveTopology,
@@ -279,6 +282,12 @@ impl Geometry {
     pub fn get_attribute_mut(&mut self, name: &str) -> Option<&mut Attribute> {
         self.data_version += 1;
         self.attributes.get_mut(name)
+    }
+
+    pub fn add_morph_attribute(&mut self, morph_name: &str, attr: Attribute) {
+        let entry = self.morph_attributes.entry(morph_name.to_string()).or_insert_with(Vec::new);
+        entry.push(attr);
+        self.data_version = self.data_version.wrapping_add(1);
     }
 
     pub fn set_indices(&mut self, indices: &[u16]) {

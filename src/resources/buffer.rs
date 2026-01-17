@@ -20,23 +20,6 @@ impl<T: Pod> GpuData for Vec<T> {
     }
 }
 
-#[macro_export]
-macro_rules! impl_gpu_data_for_pod {
-    ($($t:ty),*) => {
-        $(
-            impl $crate::resources::buffer::GpuData for $t {
-                fn as_bytes(&self) -> &[u8] {
-                    bytemuck::bytes_of(self)
-                }
-                
-                fn byte_size(&self) -> usize {
-                    std::mem::size_of::<Self>()
-                }
-            }
-        )*
-    };
-}
-
 /// BufferRef: lightweight handle (id, label, usage, size). No CPU data owned.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BufferRef {
@@ -138,6 +121,24 @@ impl<T: GpuData> CpuBuffer<T> {
         let mut buffer = BufferRef::new(size, usage, label);
         buffer.version = 0;
         Self { data, buffer }
+    }
+
+    pub fn default() -> Self 
+    where T: Default 
+    {
+        Self::new(T::default(), wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, None)
+    }
+
+    pub fn new_uniform(label: Option<&str>) -> Self 
+    where T: Default 
+    {
+        Self::new(T::default(), wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, label)
+    }
+
+    pub fn new_storage(label: Option<&str>) -> Self 
+    where T: Default 
+    {
+        Self::new(T::default(), wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, label)
     }
 
     pub fn read(&self) -> &T {

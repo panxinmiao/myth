@@ -256,6 +256,12 @@ impl RenderFrame {
                 continue;
             };
 
+            // 回写缓存到 Mesh
+            let Some(mesh) = scene.meshes.get_mut(item.mesh_key) else {
+                warn!("Mesh {:?} missing during render prepare", item.mesh_key);
+                continue;
+            };
+
             resource_manager.prepare_geometry(assets, item.geometry);
             resource_manager.prepare_material(assets, item.material);
 
@@ -274,6 +280,7 @@ impl RenderFrame {
                             skeleton_manager,
                             item.geometry,
                             geometry,
+                            mesh,
                             skin_binding,
                         )
                     }
@@ -284,6 +291,7 @@ impl RenderFrame {
                         skeleton_manager,
                         item.geometry,
                         geometry,
+                        mesh,
                         skin_binding,
                     )
                 }
@@ -294,14 +302,14 @@ impl RenderFrame {
                     skeleton_manager,
                     item.geometry,
                     geometry,
+                    mesh,
                     skin_binding,
                 )
             };
 
             // 回写缓存到 Mesh
-            if let Some(mesh) = scene.meshes.get_mut(item.mesh_key) {
-                mesh.render_cache.bind_group_id = Some(object_data.cached_id);
-            }
+            mesh.render_cache.bind_group_id = Some(object_data.cached_id);
+            
 
             let Some(gpu_geometry) = resource_manager.get_geometry(item.geometry) else {
                 error!("CRITICAL: GpuGeometry missing for {:?}", item.geometry);
@@ -324,7 +332,7 @@ impl RenderFrame {
                 instance_variants |= 1 << 0;
             }
 
-            // ========== 修复：使用 SceneFeatures 而非 scene_id ==========
+            // ========== 使用 SceneFeatures 而非 scene_id? ==========
             let fast_key = FastPipelineKey {
                 material_handle: item.material,
                 material_version: material.layout_version(),

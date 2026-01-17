@@ -1,6 +1,8 @@
 use thunderdome::Index;
 use crate::assets::{GeometryHandle, MaterialHandle};
 use crate::renderer::managers::CachedBindGroupId;
+use crate::resources::buffer::CpuBuffer;
+use crate::resources::uniforms::MorphUniforms;
 
 pub type MeshHandle = Index;
 
@@ -42,6 +44,8 @@ pub struct Mesh {
     
     // 绘制顺序 (Render Order)
     pub render_order: i32,
+
+    pub(crate) morph_uniforms: CpuBuffer<MorphUniforms>,
     
     // === 渲染缓存 ===
     /// 渲染代理缓存，避免每帧重复查找
@@ -60,8 +64,17 @@ impl Mesh {
             material,
             visible: true,
             render_order: 0,
+            morph_uniforms: CpuBuffer::new_uniform( Some("Mesh Morph Uniforms")),
             render_cache: RenderCache::default(),
         }
+    }
+
+    pub fn morph_uniforms(&self) -> &MorphUniforms {
+        self.morph_uniforms.read()
+    }
+
+    pub fn morph_uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, MorphUniforms> {
+        self.morph_uniforms.write()
     }
     
     /// 使渲染缓存失效（当 geometry 或 material 改变时调用）
