@@ -6,8 +6,7 @@ use log::{warn, error};
 use crate::render::data::SkeletonManager;
 use crate::render::pipeline::cache::PipelineKey;
 use crate::resources::GeometryFeatures;
-use crate::scene::skeleton::SkinBinding;
-use crate::scene::{Scene};
+use crate::scene::{NodeIndex, Scene};
 use crate::scene::camera::Camera;
 use crate::scene::environment::Environment;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
@@ -42,7 +41,8 @@ impl RenderKey {
 pub struct RenderItem {
     pub geo_handle: GeometryHandle,
     pub mat_handle: MaterialHandle,
-    pub skin_binding: Option<SkinBinding>,
+    // pub skin_binding: Option<SkinBinding>,
+    pub node_index: NodeIndex,
     pub model_matrix: Mat4,
     pub distance_sq: f32,
 }
@@ -285,7 +285,7 @@ impl RenderContext {
                     list.push(RenderItem {
                         geo_handle,
                         mat_handle,
-                        skin_binding: node.skin.clone(),
+                        node_index: node_id,
                         model_matrix: Mat4::from(node_world),
                         distance_sq,
                     });
@@ -320,12 +320,18 @@ impl RenderContext {
             self.resource_manager.prepare_geometry(assets, item.geo_handle);
             self.resource_manager.prepare_material(assets, item.mat_handle);
 
+            let skin_binding = if let Some(node) = scene.get_node(item.node_index) {
+                node.skin.as_ref()
+            } else {
+                None
+            };
+
             let object_data = self.model_manager.prepare_bind_group(
                 &mut self.resource_manager, 
                 &self.skeleton_manager,
                 item.geo_handle, 
                 geometry,
-                item.skin_binding.as_ref(),
+                skin_binding,
             );
 
             let gpu_geometry = if let Some(g) = self.resource_manager.get_geometry(item.geo_handle){
@@ -352,7 +358,7 @@ impl RenderContext {
             let mut geo_features = geometry.get_features();
             let mut instance_variants = 0;
         
-            if item.skin_binding.is_none(){
+            if skin_binding.is_none(){
                 // 如果没有骨骼绑定，强行移除 SKINNING 特征，
                 // 这样 Shader Generator 就不会生成 USE_SKINNING 宏
                 geo_features.remove(GeometryFeatures::USE_SKINNING);

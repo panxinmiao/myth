@@ -4,10 +4,10 @@ $$ if use_skinning
     let skin_weight = in.weights;
 
     let bone_mat = 
-        skin_weight.x * u_skins[skin_index.x] +
-        skin_weight.y * u_skins[skin_index.y] +
-        skin_weight.z * u_skins[skin_index.z] +
-        skin_weight.w * u_skins[skin_index.w];
+        skin_weight.x * st_skins[skin_index.x] +
+        skin_weight.y * st_skins[skin_index.y] +
+        skin_weight.z * st_skins[skin_index.z] +
+        skin_weight.w * st_skins[skin_index.w];
 
     local_pos = bone_mat * local_pos;
 

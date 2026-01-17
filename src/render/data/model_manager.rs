@@ -161,12 +161,13 @@ impl ModelManager {
         if use_skinning {
             if let Some(skel_id) = skeleton_id {
                 if let Some(buffer) = skeleton_manager.get_buffer(skel_id) {
-                    builder.add_buffer(
+                    builder.add_storage_buffer(
                         "skins",
                         buffer.handle(), 
-                        Some(buffer.as_bytes()),
+                        buffer.as_bytes(),
+                        true,
                         ShaderStages::VERTEX,
-                        Some(WgslStructName::Name("array<mat4x4<f32>, 64>".into()))
+                        Some(WgslStructName::Name("mat4x4<f32>".into()))
                     );
                 }
             }
