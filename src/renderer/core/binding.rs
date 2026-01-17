@@ -1,36 +1,34 @@
-use crate::resources::buffer::{BufferRef}; 
+//! GPU 绑定资源
+//!
+//! 定义 BindGroup 的资源类型和绑定 Trait
+
+use crate::resources::buffer::BufferRef;
 use crate::assets::TextureHandle;
 use crate::resources::material::{Material, MaterialData};
 use crate::resources::geometry::Geometry;
 use crate::scene::environment::Environment;
 use crate::resources::uniforms::*;
-use crate::render::resources::builder::ResourceBuilder;
-use crate::render::RenderState;
+use crate::renderer::core::builder::ResourceBuilder;
+use crate::renderer::graph::RenderState;
 
 /// 实际的绑定资源数据 (用于生成 BindGroup)
-/// 层只持有 ID 或 数据引用，不持有 GPU 句柄
 #[derive(Debug, Clone)]
 pub enum BindingResource<'a> {
-    /// BufferRef（用于Storage/Vertex/Dynamic Uniform）
     Buffer {
         buffer: BufferRef,
-        offset: u64,        // 偏移量 (默认为 0)
-        size: Option<u64>,  // 绑定窗口大小 (None 表示整个 Buffer)
-
-        data: Option<&'a [u8]>,   // 直接持有数据引用
+        offset: u64,
+        size: Option<u64>,
+        data: Option<&'a [u8]>,
     },
-
     Texture(Option<TextureHandle>),
     Sampler(Option<TextureHandle>),
-    
-    // 使用 PhantomData 来标记生命周期（对于不使用引用的 variant）
     _Phantom(std::marker::PhantomData<&'a ()>),
 }
 
+/// 绑定资源 Trait
 pub trait Bindings {
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>);
 }
-
 
 impl Bindings for MaterialData {
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
@@ -43,20 +41,8 @@ impl Bindings for MaterialData {
                 );
                 
                 if let Some(map) = &m.bindings().map {
-                    builder.add_texture(
-                        "map", 
-                        *map, 
-                        wgpu::TextureSampleType::Float { filterable: true }, 
-                        wgpu::TextureViewDimension::D2, 
-                        wgpu::ShaderStages::FRAGMENT
-                    );
-                    
-                    builder.add_sampler(
-                        "map", 
-                        *map, 
-                        wgpu::SamplerBindingType::Filtering, 
-                        wgpu::ShaderStages::FRAGMENT
-                    );
+                    builder.add_texture("map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_sampler("map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
             },
             Self::Phong(m) => {
@@ -128,22 +114,15 @@ impl Bindings for MaterialData {
     }
 }
 
-
-
 impl Bindings for Material {
-    // ...
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
         self.data.define_bindings(builder);
     }
 }
 
-
-
 impl Bindings for Geometry {
     fn define_bindings<'a>(&'a self, _builder: &mut ResourceBuilder<'a>) {
-        // 需要根据 morph_attributes 来自动生成 morph texture 资源（或 storage buffer）
-        // 然后绑定到 Group 2 中
-
+        // Geometry 绑定（如 morph targets）暂留空
     }
 }
 
@@ -155,7 +134,6 @@ impl Bindings for Environment {
             wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
         );
         
-        // 只在有灯光时添加 storage buffer
         if !self.light_storage.read().is_empty() {
             builder.add_storage::<GpuLightStorage>(
                 "lights",

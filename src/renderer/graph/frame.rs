@@ -1,22 +1,23 @@
-use std::sync::atomic::{AtomicU32, Ordering};
-use glam::{Mat4, Mat3A};
+//! 渲染帧管理
+//!
+//! RenderFrame 负责：cull_scene, prepare_commands, 执行渲染
+//! 每一帧创建一个新的，或者重置它
+
+use glam::{Mat3A, Mat4};
 use slotmap::Key;
 use log::{warn, error};
 
-use crate::render::data::SkeletonManager;
-use crate::render::pipeline::cache::PipelineKey;
-use crate::resources::GeometryFeatures;
 use crate::scene::{NodeIndex, Scene};
 use crate::scene::camera::Camera;
 use crate::scene::environment::Environment;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
-use crate::resources::uniforms::{DynamicModelUniforms, RenderStateUniforms};
-use crate::resources::buffer::CpuBuffer;
+use crate::resources::GeometryFeatures;
+use crate::resources::uniforms::DynamicModelUniforms;
 
-use super::resources::ResourceManager;
-use super::pipeline::{PipelineCache, FastPipelineKey};
-use super::data::{ModelManager, ObjectBindingData};
-use super::passes::TrackedRenderPass;
+use crate::renderer::core::{WgpuContext, ResourceManager};
+use crate::renderer::graph::{TrackedRenderPass, RenderState};
+use crate::renderer::managers::{ModelManager, SkeletonManager, ObjectBindingData};
+use crate::renderer::pipeline::{PipelineCache, PipelineKey, FastPipelineKey};
 
 /// 渲染排序键 (Pipeline ID + Material ID + Depth)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -26,11 +27,7 @@ impl RenderKey {
     pub fn new(pipeline_id: u16, material_index: u32, depth: f32) -> Self {
         let p_bits = ((pipeline_id & 0x3FFF) as u64) << 50;
         let m_bits = ((material_index & 0xFFFFF) as u64) << 30;
-        let d_u32 = if depth.is_sign_negative() { 
-            0 
-        } else { 
-            depth.to_bits() >> 2
-        };
+        let d_u32 = if depth.is_sign_negative() { 0 } else { depth.to_bits() >> 2 };
         let d_bits = (d_u32 as u64) & 0x3FFF_FFFF;
         Self(p_bits | m_bits | d_bits)
     }
@@ -41,7 +38,6 @@ impl RenderKey {
 pub struct RenderItem {
     pub geo_handle: GeometryHandle,
     pub mat_handle: MaterialHandle,
-    // pub skin_binding: Option<SkinBinding>,
     pub node_index: NodeIndex,
     pub model_matrix: Mat4,
     pub distance_sq: f32,
@@ -50,98 +46,55 @@ pub struct RenderItem {
 /// 准备好提交给 GPU 的指令
 pub struct RenderCommand {
     pub object_data: ObjectBindingData,
-    pub geometry_handle: GeometryHandle, 
+    pub geometry_handle: GeometryHandle,
     pub material_handle: MaterialHandle,
-
     pub render_state_id: u32,
     pub env_id: u32,
-
     pub pipeline_id: u16,
     pub pipeline: wgpu::RenderPipeline,
-
-    pub model_matrix: Mat4, 
-
+    pub model_matrix: Mat4,
     pub sort_key: RenderKey,
     pub dynamic_offset: u32,
 }
 
-pub struct RenderState {
-    pub id: u32,
-    uniforms: CpuBuffer<RenderStateUniforms>,
+/// 渲染帧管理器
+pub struct RenderFrame {
+    render_state: RenderState,
+    clear_color: wgpu::Color,
 }
 
-static NEXT_RENDER_STATE_ID: AtomicU32 = AtomicU32::new(0);
-
-impl Default for RenderState {
+impl Default for RenderFrame {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl RenderState {
+impl RenderFrame {
     pub fn new() -> Self {
         Self {
-            id: NEXT_RENDER_STATE_ID.fetch_add(1, Ordering::Relaxed),
-            uniforms: CpuBuffer::new(
-                RenderStateUniforms::default(),
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("RenderState Uniforms")
-            ),
+            render_state: RenderState::new(),
+            clear_color: wgpu::Color::BLACK,
         }
     }
 
-    pub fn uniforms(&self) -> &CpuBuffer<RenderStateUniforms> {
-        &self.uniforms
-    }
+    #[allow(clippy::too_many_arguments)]
+    pub fn render(
+        &mut self,
+        wgpu_ctx: &mut WgpuContext,
+        resource_manager: &mut ResourceManager,
+        model_manager: &mut ModelManager,
+        skeleton_manager: &mut SkeletonManager,
+        pipeline_cache: &mut PipelineCache,
+        scene: &Scene,
+        camera: &Camera,
+        assets: &AssetServer,
+        time: f32,
+    ) {
+        resource_manager.next_frame();
 
-    pub fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, RenderStateUniforms> {
-        self.uniforms.write()
-    }
-
-    fn update(&mut self, camera: &Camera, time: f32) {
-        let view_matrix = camera.view_matrix;
-        let vp_matrix = camera.view_projection_matrix;
-        let camera_position = camera.world_matrix.translation.to_vec3();
-
-        let mut u = self.uniforms_mut();
-        u.view_projection = vp_matrix;
-        u.view_projection_inverse = vp_matrix.inverse();
-        u.view_matrix = view_matrix;
-        u.camera_position = camera_position;
-        u.time = time;
-    }
-}
-
-// ============================================================================
-//  Render Context
-// ============================================================================
-
-pub struct RenderContext {
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    pub surface: wgpu::Surface<'static>,
-    pub config: wgpu::SurfaceConfiguration,
-    
-    pub depth_format: wgpu::TextureFormat,
-    pub depth_texture_view: wgpu::TextureView,  
-    pub clear_color: wgpu::Color, // from settings
-
-    pub render_state: RenderState,
-    
-    // 子系统
-    pub resource_manager: ResourceManager,
-    pub model_manager: ModelManager,
-    pub skeleton_manager: SkeletonManager,
-    pub pipeline_cache: PipelineCache,
-}
-
-impl RenderContext {
-    pub fn render_frame(&mut self, scene: &Scene, camera: &Camera, assets: &AssetServer, time: f32) {
-        self.resource_manager.next_frame();
-
-        let output = match self.surface.get_current_texture() {
+        let output = match wgpu_ctx.surface.get_current_texture() {
             Ok(output) => output,
-            Err(wgpu::SurfaceError::Lost) => return, // Resize should be handled by event loop
+            Err(wgpu::SurfaceError::Lost) => return,
             Err(e) => {
                 eprintln!("Render error: {:?}", e);
                 return;
@@ -149,16 +102,25 @@ impl RenderContext {
         };
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        self.prepare_global_resources(assets, &scene.environment, camera, time);
-
-        self.upload_skeletons(scene);
+        self.prepare_global_resources(resource_manager, assets, &scene.environment, camera, time);
+        self.upload_skeletons(resource_manager, skeleton_manager, scene);
 
         let render_items = self.cull_scene(scene, assets, camera);
+        let (mut opaque_cmds, mut transparent_cmds) = self.prepare_and_sort_commands(
+            wgpu_ctx,
+            resource_manager,
+            model_manager,
+            skeleton_manager,
+            pipeline_cache,
+            scene,
+            assets,
+            &render_items,
+        );
+        self.upload_dynamic_uniforms(resource_manager, model_manager, &mut opaque_cmds, &mut transparent_cmds);
 
-        let (mut opaque_cmds, mut transparent_cmds) = self.prepare_and_sort_commands(scene, assets, &render_items);
-        self.upload_dynamic_uniforms(&mut opaque_cmds, &mut transparent_cmds);
-
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Render Encoder") });
+        let mut encoder = wgpu_ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Render Encoder"),
+        });
 
         {
             let pass_desc = wgpu::RenderPassDescriptor {
@@ -173,7 +135,7 @@ impl RenderContext {
                     depth_slice: None,
                 })],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &self.depth_texture_view, // <--- 借用发生在这里
+                    view: &wgpu_ctx.depth_texture_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -188,64 +150,38 @@ impl RenderContext {
             let pass = encoder.begin_render_pass(&pass_desc);
             let mut tracked = TrackedRenderPass::new(pass);
 
-            Self::draw_list(&self.resource_manager, &mut tracked, &opaque_cmds, scene.environment.id, self.render_state.id);
-            Self::draw_list(&self.resource_manager, &mut tracked, &transparent_cmds, scene.environment.id, self.render_state.id);
+            Self::draw_list(resource_manager, &mut tracked, &opaque_cmds, scene.environment.id, self.render_state.id);
+            Self::draw_list(resource_manager, &mut tracked, &transparent_cmds, scene.environment.id, self.render_state.id);
         }
 
-        self.queue.submit(std::iter::once(encoder.finish()));
+        wgpu_ctx.queue.submit(std::iter::once(encoder.finish()));
         output.present();
 
-        if self.resource_manager.frame_index().is_multiple_of(60) {
-            self.resource_manager.prune(600);
+        if resource_manager.frame_index().is_multiple_of(60) {
+            resource_manager.prune(600);
         }
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
-        if width > 0 && height > 0 {
-            self.config.width = width;
-            self.config.height = height;
-            self.surface.configure(&self.device, &self.config);
-            self.depth_texture_view = Self::create_depth_texture(&self.device, &self.config, self.depth_format);
-        }
-    }
-
-    pub(crate) fn create_depth_texture(device: &wgpu::Device, config: &wgpu::SurfaceConfiguration, format: wgpu::TextureFormat) -> wgpu::TextureView {
-        let size = wgpu::Extent3d {
-            width: config.width,
-            height: config.height,
-            depth_or_array_layers: 1,
-        };
-        let desc = wgpu::TextureDescriptor {
-            label: Some("Depth Texture"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        };
-        let texture = device.create_texture(&desc);
-        texture.create_view(&wgpu::TextureViewDescriptor::default())
-    }
-
-    // --- Internal Logic ---
-
-    fn prepare_global_resources(&mut self, assets: &AssetServer, environment: &Environment, camera: &Camera, time: f32) {
+    fn prepare_global_resources(
+        &mut self,
+        resource_manager: &mut ResourceManager,
+        assets: &AssetServer,
+        environment: &Environment,
+        camera: &Camera,
+        time: f32,
+    ) {
         self.render_state.update(camera, time);
-        self.resource_manager.prepare_global(assets, environment, &self.render_state);
+        resource_manager.prepare_global(assets, environment, &self.render_state);
     }
 
-    fn upload_skeletons(&mut self, scene: &Scene) {
-        // 遍历场景中所有的 Skeleton
+    fn upload_skeletons(
+        &self,
+        resource_manager: &mut ResourceManager,
+        skeleton_manager: &mut SkeletonManager,
+        scene: &Scene,
+    ) {
         for (skel_key, skeleton) in &scene.skins {
-            // 将 CPU 计算好的 joint_matrices 上传到 GPU
-            // 注意：SkeletonManager::update 会自动创建或更新 Buffer
-            self.skeleton_manager.update(
-                &mut self.resource_manager, 
-                skel_key, 
-                &skeleton.joint_matrices
-            );
+            skeleton_manager.update(resource_manager, skel_key, &skeleton.joint_matrices);
         }
     }
 
@@ -265,13 +201,12 @@ impl RenderContext {
                     let geometry = match assets.get_geometry(geo_handle) {
                         Some(geo) => geo,
                         None => {
-                            // 频率限制日志：实际项目中可以用 lazy_static 或 atomic 限制每秒打印次数，防止刷屏
                             warn!("Node {:?} refers to missing Geometry {:?}", node_id, geo_handle);
                             continue;
                         }
                     };
                     let node_world = *node.world_matrix();
-                    
+
                     if let Some(bs) = &geometry.bounding_sphere {
                         let scale = node.scale.max_element();
                         let center = node_world.transform_point3(bs.center);
@@ -294,14 +229,19 @@ impl RenderContext {
         list
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn prepare_and_sort_commands(
-        &mut self, 
-        scene: &Scene, 
-        assets: &AssetServer, 
-        items: &[RenderItem]
+        &mut self,
+        wgpu_ctx: &WgpuContext,
+        resource_manager: &mut ResourceManager,
+        model_manager: &mut ModelManager,
+        skeleton_manager: &SkeletonManager,
+        pipeline_cache: &mut PipelineCache,
+        scene: &Scene,
+        assets: &AssetServer,
+        items: &[RenderItem],
     ) -> (Vec<RenderCommand>, Vec<RenderCommand>) {
         if let Some(bg_color) = scene.background {
-
             self.clear_color = wgpu::Color {
                 r: bg_color.x as f64,
                 g: bg_color.y as f64,
@@ -317,8 +257,8 @@ impl RenderContext {
             let geometry = assets.get_geometry(item.geo_handle).expect("Geometry asset missing");
             let material = assets.get_material(item.mat_handle).expect("Material asset missing");
 
-            self.resource_manager.prepare_geometry(assets, item.geo_handle);
-            self.resource_manager.prepare_material(assets, item.mat_handle);
+            resource_manager.prepare_geometry(assets, item.geo_handle);
+            resource_manager.prepare_material(assets, item.mat_handle);
 
             let skin_binding = if let Some(node) = scene.get_node(item.node_index) {
                 node.skin.as_ref()
@@ -326,81 +266,65 @@ impl RenderContext {
                 None
             };
 
-            let object_data = self.model_manager.prepare_bind_group(
-                &mut self.resource_manager, 
-                &self.skeleton_manager,
-                item.geo_handle, 
+            let object_data = model_manager.prepare_bind_group(
+                resource_manager,
+                skeleton_manager,
+                item.geo_handle,
                 geometry,
                 skin_binding,
             );
 
-            let gpu_geometry = if let Some(g) = self.resource_manager.get_geometry(item.geo_handle){
-                g
-            } else {
-                error!("CRITICAL: GpuGeometry missing immediately after prepare! Handle: {:?}", item.geo_handle);
+            let gpu_geometry = if let Some(g) = resource_manager.get_geometry(item.geo_handle) { g } else {
+                error!("CRITICAL: GpuGeometry missing for {:?}", item.geo_handle);
                 continue;
             };
-            let gpu_material = if let Some(m) = self.resource_manager.get_material(item.mat_handle) {
-                m
-            } else {
-                error!("CRITICAL: GPU Material missing immediately after prepare! Handle: {:?}", item.mat_handle);
+            let gpu_material = if let Some(m) = resource_manager.get_material(item.mat_handle) { m } else {
+                error!("CRITICAL: GpuMaterial missing for {:?}", item.mat_handle);
                 continue;
             };
-            let gpu_world = if let Some(w) = self.resource_manager.get_world(self.render_state.id, scene.environment.id) {
-                w
-            } else {
+            let gpu_world = if let Some(w) = resource_manager.get_world(self.render_state.id, scene.environment.id) { w } else {
                 error!("Render Environment missing for render state {:?} and scene {:?}", self.render_state.id, scene.environment.id);
                 continue;
             };
 
-            // let geo_features = geometry.get_features();
-
             let mut geo_features = geometry.get_features();
             let mut instance_variants = 0;
-        
-            if skin_binding.is_none(){
-                // 如果没有骨骼绑定，强行移除 SKINNING 特征，
-                // 这样 Shader Generator 就不会生成 USE_SKINNING 宏
+
+            if skin_binding.is_none() {
                 geo_features.remove(GeometryFeatures::USE_SKINNING);
                 instance_variants |= 1 << 0;
             }
-            
+
             let fast_key = FastPipelineKey {
                 material_handle: item.mat_handle,
                 material_version: material.layout_version(),
                 geometry_handle: item.geo_handle,
                 geometry_version: geometry.layout_version(),
-                instance_variants: instance_variants,
+                instance_variants,
                 scene_id: scene.environment.id,
                 scene_version: scene.environment.layout_version(),
                 render_state_id: self.render_state.id,
             };
 
-            // 尝试 L1 缓存
-            let (pipeline, pipeline_id) = if let Some(p) = self.pipeline_cache.get_pipeline_fast(fast_key) {
+            let (pipeline, pipeline_id) = if let Some(p) = pipeline_cache.get_pipeline_fast(fast_key) {
                 p.clone()
             } else {
-                // L1 未命中，计算 Canonical Key
                 let canonical_key = PipelineKey {
                     mat_features: material.get_features(),
-                    geo_features: geo_features,
+                    geo_features,
                     scene_features: scene.get_features(),
                     topology: geometry.topology,
                     cull_mode: material.cull_mode(),
                     depth_write: material.depth_write(),
                     depth_compare: if material.depth_test() { wgpu::CompareFunction::Less } else { wgpu::CompareFunction::Always },
-                    blend_state: if material.transparent() {
-                        Some(wgpu::BlendState::ALPHA_BLENDING)
-                    } else {
-                        None
-                    },
-                    color_format: self.config.format,
-                    depth_format: self.depth_format,
-                    sample_count: 1, // 暂时写死
+                    blend_state: if material.transparent() { Some(wgpu::BlendState::ALPHA_BLENDING) } else { None },
+                    color_format: wgpu_ctx.config.format,
+                    depth_format: wgpu_ctx.depth_format,
+                    sample_count: 1,
                 };
 
-                let (pipeline, pipeline_id) = self.pipeline_cache.get_pipeline(
-                    &self.device,
+                let (pipeline, pipeline_id) = pipeline_cache.get_pipeline(
+                    &wgpu_ctx.device,
                     material.shader_name(),
                     canonical_key,
                     &gpu_geometry.layout_info,
@@ -408,14 +332,12 @@ impl RenderContext {
                     &object_data,
                     gpu_world,
                 );
-                // 存入 L1 缓存
-                self.pipeline_cache.insert_pipeline_fast(fast_key, (pipeline.clone(), pipeline_id));
 
+                pipeline_cache.insert_pipeline_fast(fast_key, (pipeline.clone(), pipeline_id));
                 (pipeline, pipeline_id)
-
             };
 
-            let mat_id = item.mat_handle.data().as_ffi() as u32; 
+            let mat_id = item.mat_handle.data().as_ffi() as u32;
             let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq);
 
             let cmd = RenderCommand {
@@ -424,7 +346,6 @@ impl RenderContext {
                 material_handle: item.mat_handle,
                 render_state_id: self.render_state.id,
                 env_id: scene.environment.id,
-
                 pipeline_id,
                 pipeline,
                 model_matrix: item.model_matrix,
@@ -440,12 +361,18 @@ impl RenderContext {
         }
 
         opaque.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
-        transparent.sort_unstable_by(|a, b| b.sort_key.cmp(&a.sort_key)); 
+        transparent.sort_unstable_by(|a, b| b.sort_key.cmp(&a.sort_key));
 
         (opaque, transparent)
     }
 
-    fn upload_dynamic_uniforms(&mut self, opaque: &mut [RenderCommand], transparent: &mut [RenderCommand]) {
+    fn upload_dynamic_uniforms(
+        &self,
+        resource_manager: &mut ResourceManager,
+        model_manager: &mut ModelManager,
+        opaque: &mut [RenderCommand],
+        transparent: &mut [RenderCommand],
+    ) {
         let total_count = opaque.len() + transparent.len();
         if total_count == 0 { return; }
 
@@ -455,7 +382,7 @@ impl RenderContext {
                 let global_idx = start_idx + i;
                 let world_matrix_inverse = cmd.model_matrix.inverse();
                 let normal_matrix = Mat3A::from_mat4(world_matrix_inverse.transpose());
-                
+
                 data.push(DynamicModelUniforms {
                     world_matrix: cmd.model_matrix,
                     world_matrix_inverse,
@@ -471,16 +398,15 @@ impl RenderContext {
         process_cmds(opaque, 0);
         process_cmds(transparent, opaque.len());
 
-        self.model_manager.write_uniforms(&mut self.resource_manager, data);
+        model_manager.write_uniforms(resource_manager, data);
     }
 
-    // 静态方法：不依赖 &self，只依赖明确传入的 resource_manager
     fn draw_list<'pass>(
         resource_manager: &'pass ResourceManager,
-        pass: &mut TrackedRenderPass<'pass>, 
-        cmds: &'pass [RenderCommand], 
+        pass: &mut TrackedRenderPass<'pass>,
+        cmds: &'pass [RenderCommand],
         env_id: u32,
-        render_state_id: u32
+        render_state_id: u32,
     ) {
         if cmds.is_empty() { return; }
 
@@ -498,18 +424,18 @@ impl RenderContext {
             }
 
             pass.set_bind_group(
-                2, 
-                cmd.object_data.bind_group_id, 
-                &cmd.object_data.bind_group, 
-                &[cmd.dynamic_offset]
+                2,
+                cmd.object_data.bind_group_id,
+                &cmd.object_data.bind_group,
+                &[cmd.dynamic_offset],
             );
 
             if let Some(gpu_geometry) = resource_manager.get_geometry(cmd.geometry_handle) {
                 for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
                     pass.set_vertex_buffer(
-                        slot as u32, 
-                        gpu_geometry.vertex_buffer_ids[slot], 
-                        buffer.slice(..)
+                        slot as u32,
+                        gpu_geometry.vertex_buffer_ids[slot],
+                        buffer.slice(..),
                     );
                 }
 

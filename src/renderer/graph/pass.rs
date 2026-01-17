@@ -1,19 +1,12 @@
+//! 带状态追踪的渲染通道
+//!
+//! 避免冗余的状态切换调用
+
 pub struct TrackedRenderPass<'a> {
     pass: wgpu::RenderPass<'a>,
-
-    // --- 状态缓存 ---
-    // Pipeline
     current_pipeline_id: Option<u16>,
-
-    // BindGroups: 存储 (ID, 动态偏移列表)
-    // 通常 WGPU 支持 4 个 BindGroup Slots
     current_bind_groups: [Option<(u64, Vec<u32>)>; 4],
-
-    // Vertex Buffers: 存储 Buffer ID
-    // 假设最大 8 个 Slot
     current_vertex_buffers: [Option<u64>; 8],
-
-    // Index Buffer: 存储 Buffer ID
     current_index_buffer: Option<u64>,
 }
 
@@ -28,9 +21,6 @@ impl<'a> TrackedRenderPass<'a> {
         }
     }
 
-    // === Pipeline ===
-    
-    // 这里传入一个 id (可以是 PipelineKey 的 hash，或者指针地址)
     pub fn set_pipeline(&mut self, pipeline_resource_id: u16, pipeline: &'a wgpu::RenderPipeline) {
         if self.current_pipeline_id != Some(pipeline_resource_id) {
             self.pass.set_pipeline(pipeline);
@@ -38,18 +28,15 @@ impl<'a> TrackedRenderPass<'a> {
         }
     }
 
-    // === Bind Groups ===
-
     pub fn set_bind_group(
         &mut self,
         index: u32,
-        bind_group_resource_id: u64, // BindGroup 的唯一 ID (如 Material ID)
+        bind_group_resource_id: u64,
         bind_group: &'a wgpu::BindGroup,
         offsets: &[u32],
     ) {
         let slot = index as usize;
         let needs_update = if let Some((current_id, current_offsets)) = &self.current_bind_groups[slot] {
-            // 必须 ID 不同 OR 动态偏移不同
             *current_id != bind_group_resource_id || current_offsets != offsets
         } else {
             true
@@ -57,12 +44,9 @@ impl<'a> TrackedRenderPass<'a> {
 
         if needs_update {
             self.pass.set_bind_group(index, bind_group, offsets);
-            // 缓存状态
             self.current_bind_groups[slot] = Some((bind_group_resource_id, offsets.to_vec()));
         }
     }
-
-    // === Vertex Buffers ===
 
     pub fn set_vertex_buffer(
         &mut self,
@@ -77,11 +61,9 @@ impl<'a> TrackedRenderPass<'a> {
         }
     }
 
-    // === Index Buffer ===
-
     pub fn set_index_buffer(
         &mut self,
-        buffer_resource_id: u64, 
+        buffer_resource_id: u64,
         buffer_slice: wgpu::BufferSlice<'a>,
         format: wgpu::IndexFormat,
     ) {
@@ -90,8 +72,6 @@ impl<'a> TrackedRenderPass<'a> {
             self.current_index_buffer = Some(buffer_resource_id);
         }
     }
-
-    // === Draw Calls (直接透传) ===
 
     pub fn draw(&mut self, vertices: std::ops::Range<u32>, instances: std::ops::Range<u32>) {
         self.pass.draw(vertices, instances);

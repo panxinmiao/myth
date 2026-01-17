@@ -1,13 +1,17 @@
+//! 资源构建器
+//!
+//! 用于构建 BindGroup Layout 和收集绑定资源
+
 use wgpu::ShaderStages;
 use crate::resources::buffer::BufferRef;
 use crate::resources::uniforms::WgslStruct;
-use crate::render::resources::binding::BindingResource;
+use crate::renderer::core::binding::BindingResource;
 use crate::assets::TextureHandle;
-use crate::resources::buffer::{CpuBuffer,GpuData};
+use crate::resources::buffer::{CpuBuffer, GpuData};
 
 type WgslStructGenerator = fn(&str) -> String;
 
-pub enum WgslStructName{
+pub enum WgslStructName {
     Generator(WgslStructGenerator),
     Name(String),
 }
@@ -17,7 +21,6 @@ pub struct ResourceBuilder<'a> {
     pub resources: Vec<BindingResource<'a>>,
     pub names: Vec<String>,
     pub struct_generators: Vec<Option<WgslStructName>>,
-    // 自动维护 binding index
     next_binding_index: u32,
 }
 
@@ -69,37 +72,28 @@ impl<'a> ResourceBuilder<'a> {
         self.next_binding_index += 1;
     }
 
-    pub fn add_uniform<T: WgslStruct + GpuData>(&mut self, name: &str, cpu_buffer: &'a CpuBuffer<T>, visibility: ShaderStages) {
-        self.add_buffer(name, cpu_buffer.handle(), Some(cpu_buffer.as_bytes()), visibility, Some(WgslStructName::Generator(T::wgsl_struct_def)));
+    pub fn add_uniform<T: WgslStruct + GpuData>(
+        &mut self, 
+        name: &str, 
+        cpu_buffer: &'a CpuBuffer<T>, 
+        visibility: ShaderStages
+    ) {
+        self.add_buffer(
+            name, 
+            cpu_buffer.handle(), 
+            Some(cpu_buffer.as_bytes()), 
+            visibility, 
+            Some(WgslStructName::Generator(T::wgsl_struct_def))
+        );
     }
 
-    // pub fn add_uniform_buffer<T: WgslStruct + GpuData>(&mut self, name: &str, cpu_buffer: &'a CpuBuffer<T>, visibility: ShaderStages, struct_name: Option<WgslStructName>) {
-    //     self.layout_entries.push(wgpu::BindGroupLayoutEntry {
-    //         binding: self.next_binding_index,
-    //         visibility,
-    //         ty: wgpu::BindingType::Buffer {
-    //             ty: wgpu::BufferBindingType::Uniform,
-    //             has_dynamic_offset: false,
-    //             min_binding_size: None,
-    //         },
-    //         count: None,
-    //     });
-
-    //     self.resources.push(BindingResource::Buffer {
-    //         buffer: cpu_buffer.handle().clone(),
-    //         offset: 0,
-    //         size: None,
-    //         data: Some(cpu_buffer.as_bytes()),
-    //     });
-
-    //     self.names.push(name.to_string());
-    //     self.struct_generators.push(struct_name); 
-    //     self.next_binding_index += 1;
-    // }
-
-     /// 添加 Dynamic Uniform Buffer
-
-    pub fn add_dynamic_uniform<T: WgslStruct>(&mut self, name: &str, cpu_buffer: &'a CpuBuffer<Vec<T>>, min_binding_size: u64, visibility: ShaderStages) {
+    pub fn add_dynamic_uniform<T: WgslStruct>(
+        &mut self, 
+        name: &str, 
+        cpu_buffer: &'a CpuBuffer<Vec<T>>, 
+        min_binding_size: u64, 
+        visibility: ShaderStages
+    ) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -123,7 +117,14 @@ impl<'a> ResourceBuilder<'a> {
         self.next_binding_index += 1;
     }
 
-    pub fn add_texture(&mut self, name: &str, texture: TextureHandle, sample_type: wgpu::TextureSampleType, view_dimension: wgpu::TextureViewDimension, visibility: ShaderStages) {
+    pub fn add_texture(
+        &mut self, 
+        name: &str, 
+        texture: TextureHandle, 
+        sample_type: wgpu::TextureSampleType, 
+        view_dimension: wgpu::TextureViewDimension, 
+        visibility: ShaderStages
+    ) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -141,7 +142,13 @@ impl<'a> ResourceBuilder<'a> {
         self.next_binding_index += 1;
     }
 
-    pub fn add_sampler(&mut self, name: &str, texture: TextureHandle, sampler_type: wgpu::SamplerBindingType, visibility: ShaderStages) {
+    pub fn add_sampler(
+        &mut self, 
+        name: &str, 
+        texture: TextureHandle, 
+        sampler_type: wgpu::SamplerBindingType, 
+        visibility: ShaderStages
+    ) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -155,8 +162,15 @@ impl<'a> ResourceBuilder<'a> {
         self.next_binding_index += 1;
     }
 
-    pub fn add_storage_buffer(&mut self, name: &str, buffer: &BufferRef, data: &'a [u8], read_only: bool, visibility: ShaderStages, struct_name: Option<WgslStructName>) {
-        // 1. Layout Entry
+    pub fn add_storage_buffer(
+        &mut self, 
+        name: &str, 
+        buffer: &BufferRef, 
+        data: &'a [u8], 
+        read_only: bool, 
+        visibility: ShaderStages, 
+        struct_name: Option<WgslStructName>
+    ) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
             binding: self.next_binding_index,
             visibility,
@@ -167,14 +181,13 @@ impl<'a> ResourceBuilder<'a> {
                     wgpu::BufferBindingType::Storage { read_only: false }
                 },
                 has_dynamic_offset: false,
-                min_binding_size: None, // 或者根据 buffer.size 推断
+                min_binding_size: None,
             },
             count: None,
         });
 
-        // 2. Resource Data (保存 BufferRef，稍后解析)
         self.resources.push(BindingResource::Buffer {
-            buffer: buffer.clone(), // Arc 克隆，开销很小
+            buffer: buffer.clone(),
             offset: 0,
             size: None,
             data: Some(data),
@@ -193,7 +206,14 @@ impl<'a> ResourceBuilder<'a> {
         read_only: bool,
         visibility: ShaderStages
     ) {
-        self.add_storage_buffer(name, buffer, data, read_only, visibility, Some(WgslStructName::Generator(T::wgsl_struct_def)));
+        self.add_storage_buffer(
+            name, 
+            buffer, 
+            data, 
+            read_only, 
+            visibility, 
+            Some(WgslStructName::Generator(T::wgsl_struct_def))
+        );
     }
 
     pub fn generate_wgsl(&self, group_index: u32) -> String {
@@ -204,8 +224,6 @@ impl<'a> ResourceBuilder<'a> {
             let name = &self.names[i];
             let binding_index = entry.binding; 
 
-            // 如果有生成器，先生成结构体定义
-            // 自动生成结构体名称：Struct_{变量名}
             let struct_type_name = if let Some(generator) = &self.struct_generators[i] {
                 let stuct_name = match generator {
                     WgslStructName::Generator(generator) => {
@@ -218,24 +236,29 @@ impl<'a> ResourceBuilder<'a> {
                         name_str.clone()
                     },
                 };  
-
                 Some(stuct_name)
             } else {
                 None
             };
 
-            // 生成 Binding 声明
             let decl = match entry.ty {
                 wgpu::BindingType::Buffer { ty, .. } => {
                     match ty {
                         wgpu::BufferBindingType::Uniform => {
-                            format!("@group({}) @binding({}) var<uniform> u_{}: {};", group_index, binding_index, name, struct_type_name.expect("need a struct name"))
+                            format!(
+                                "@group({}) @binding({}) var<uniform> u_{}: {};", 
+                                group_index, binding_index, name, 
+                                struct_type_name.expect("need a struct name")
+                            )
                         },
                         wgpu::BufferBindingType::Storage { read_only } => {
                             let access = if read_only { "read" } else { "read_write" };
-
                             let struct_type_name = struct_type_name.expect("need a struct name");
-                            format!("@group({}) @binding({}) var<storage, {}> st_{}: {};", group_index, binding_index, access, name,  format!("array<{}>", struct_type_name))
+                            format!(
+                                "@group({}) @binding({}) var<storage, {}> st_{}: {};", 
+                                group_index, binding_index, access, name, 
+                                format!("array<{}>", struct_type_name)
+                            )
                         },
                     }
                 },

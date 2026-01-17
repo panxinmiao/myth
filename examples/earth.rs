@@ -6,7 +6,7 @@ use three::scene::{Camera};
 use three::scene::light;
 use three::OrbitControls;
 use three::utils::fps_counter::{FpsCounter};
-use three::render::settings::RenderSettings;
+use three::renderer::settings::RenderSettings;
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();

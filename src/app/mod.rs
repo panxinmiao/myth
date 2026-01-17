@@ -10,7 +10,7 @@ use winit::window::{Window, WindowId};
 
 use crate::assets::AssetServer;
 use crate::scene::Scene;
-use crate::render::{Renderer, settings::RenderSettings};
+use crate::renderer::{Renderer, settings::RenderSettings};
 
 pub type UpdateFn = Box<dyn FnMut(&winit::window::Window, &mut Scene, &AssetServer, &Input, f32, f32)>;
 

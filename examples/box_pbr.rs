@@ -9,7 +9,7 @@ fn main() -> anyhow::Result<()> {
     env_logger::init();
 
     // 1. 初始化引擎 App
-    let mut app = App::new().with_settings(three::render::settings::RenderSettings {
+    let mut app = App::new().with_settings(three::renderer::settings::RenderSettings {
         vsync: false,
         ..Default::default()
     });
