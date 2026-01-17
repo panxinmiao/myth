@@ -1,10 +1,11 @@
 use thunderdome::{Arena};
 use slotmap::SlotMap;
-use glam::{Affine3A, Vec4, Vec3}; 
+use glam::{Vec4, Vec3}; 
 use bitflags::bitflags;
 use crate::scene::node::Node;
 use crate::scene::skeleton::{BindMode, Skeleton};
 use crate::scene::transform::Transform;
+use crate::scene::transform_system;
 use crate::resources::mesh::Mesh;
 use crate::scene::camera::Camera;
 use crate::scene::light::{Light, LightKind};
@@ -228,66 +229,25 @@ impl Scene {
 
     /// 更新整个场景的世界矩阵
     /// 这是每帧渲染前必须调用的
+    /// 
+    /// 使用解耦的变换系统，只借用必要的数据结构
     pub fn update_matrix_world(&mut self) {
-        let roots = self.root_nodes.clone();
-        for root_idx in roots {
-            // 根节点的父矩阵是 Identity (Affine3A::IDENTITY)
-            self.update_transform_recursive(root_idx, Affine3A::IDENTITY, false);
-        }
+        // 使用迭代版本避免深层级场景的栈溢出
+        transform_system::update_hierarchy_iterative(
+            &mut self.nodes,
+            &mut self.cameras,
+            &self.root_nodes,
+        );
     }
 
-    fn update_transform_recursive(
-        &mut self, 
-        node_idx: NodeIndex, 
-        parent_world_matrix: Affine3A, // 注意类型变化
-        parent_changed: bool
-    ) {
-        // ========================================================================
-        // 阶段 1: 处理当前节点 (持有 &mut self)
-        // ========================================================================
-        let (current_world_matrix, children_len, world_needs_update) = if let Some(node) = self.nodes.get_mut(node_idx) {
-            
-            // 1. 智能更新局部矩阵
-            let local_changed = node.transform.update_local_matrix();
-
-            // 2. 决定是否更新世界矩阵
-            let world_needs_update = local_changed || parent_changed;
-
-            if world_needs_update {
-                // 计算新的世界矩阵
-                let new_world = parent_world_matrix * *node.transform.local_matrix();
-                node.transform.set_world_matrix(new_world);
-
-                // --- 同步更新组件 (Camera / Light) ---
-                if let Some(camera_idx) = node.camera
-                    && let Some(camera) = self.cameras.get_mut(camera_idx) {
-                        camera.update_view_projection(&new_world);
-                    }
-                // (Light 通常只需要位置数据，在 collect_lights 中读取，这里可以不处理，或者做标记)
-            }
-
-            (
-                node.transform.world_matrix, 
-                node.children.len(), 
-                world_needs_update
-            )
-        } else {
-            return;
-        }; 
-
-        // ========================================================================
-        // 阶段 2: 递归子节点 (避免 Clone)
-        // ========================================================================
-        
-        for i in 0..children_len {
-            let child_idx = self.nodes
-                .get(node_idx)
-                .and_then(|n| n.children.get(i).copied()); 
-            
-            if let Some(child_idx) = child_idx {
-                self.update_transform_recursive(child_idx, current_world_matrix, world_needs_update);
-            }
-        }
+    /// 更新指定子树的世界矩阵
+    /// 用于局部更新场景图的一部分
+    pub fn update_subtree(&mut self, root_idx: NodeIndex) {
+        transform_system::update_subtree(
+            &mut self.nodes,
+            &mut self.cameras,
+            root_idx,
+        );
     }
 
 

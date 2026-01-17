@@ -6,9 +6,11 @@
 //! - Scene: 场景容器
 //! - Camera: 相机组件
 //! - Light: 光源组件
+//! - TransformSystem: 解耦的变换更新系统
 
 pub mod node;
 pub mod transform;
+pub mod transform_system;
 pub mod scene;
 pub mod camera;
 pub mod light;

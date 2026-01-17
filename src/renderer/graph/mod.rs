@@ -5,11 +5,14 @@
 //! - RenderState: 渲染状态（相机、时间等）
 //! - TrackedRenderPass: 带状态追踪的渲染通道
 //! - RenderItem/RenderCommand: 渲染数据结构
+//! - ExtractedScene: 提取阶段的场景数据
 
 pub mod frame;
 pub mod pass;
 pub mod render_state;
+pub mod extracted;
 
 pub use frame::RenderFrame;
 pub use pass::TrackedRenderPass;
 pub use render_state::RenderState;
+pub use extracted::{ExtractedScene, ExtractedRenderItem, ExtractedSkeleton};

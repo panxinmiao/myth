@@ -1,6 +1,7 @@
 pub mod server;
 pub mod loaders;
 pub mod skeleton_asset;
+pub mod handle;
 
 // 重新导出 AssetServer 及相关类型
 pub use server::{
@@ -8,6 +9,7 @@ pub use server::{
     GeometryHandle, MaterialHandle, TextureHandle,
 };
 pub use loaders::GltfLoader;
+pub use handle::{AssetTracker, StrongHandle, WeakHandle, TrackedAsset};
 
 
 use image::{GenericImageView};
