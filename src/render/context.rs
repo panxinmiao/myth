@@ -150,7 +150,11 @@ impl RenderContext {
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         self.prepare_global_resources(assets, &scene.environment, camera, time);
+
+        self.upload_skeletons(scene);
+
         let render_items = self.cull_scene(scene, assets, camera);
+
         let (mut opaque_cmds, mut transparent_cmds) = self.prepare_and_sort_commands(scene, assets, &render_items);
         self.upload_dynamic_uniforms(&mut opaque_cmds, &mut transparent_cmds);
 
@@ -230,6 +234,19 @@ impl RenderContext {
     fn prepare_global_resources(&mut self, assets: &AssetServer, environment: &Environment, camera: &Camera, time: f32) {
         self.render_state.update(camera, time);
         self.resource_manager.prepare_global(assets, environment, &self.render_state);
+    }
+
+    fn upload_skeletons(&mut self, scene: &Scene) {
+        // 遍历场景中所有的 Skeleton
+        for (skel_key, skeleton) in &scene.skins {
+            // 将 CPU 计算好的 joint_matrices 上传到 GPU
+            // 注意：SkeletonManager::update 会自动创建或更新 Buffer
+            self.skeleton_manager.update(
+                &mut self.resource_manager, 
+                skel_key, 
+                &skeleton.joint_matrices
+            );
+        }
     }
 
     fn cull_scene(&self, scene: &Scene, assets: &AssetServer, camera: &Camera) -> Vec<RenderItem> {

@@ -20,14 +20,19 @@ impl SkeletonManager {
         // 1. 查找或创建 Buffer
         let buffer = self.buffers.entry(skeleton_id).or_insert_with(|| {
             CpuBuffer::new(
-                matrices.to_vec(),
+                vec![Mat4::IDENTITY; 64],
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 Some(&format!("Skeleton"))
             )
         });
 
         // 2. 更新数据 (如果发生变化)
-        *buffer.write() = matrices.to_vec();
+        // 确保始终保持64个矩阵的大小，未使用的部分保持单位矩阵
+        let mut data = buffer.write();
+        let len = matrices.len().min(64);
+        data[..len].copy_from_slice(&matrices[..len]);
+        // 剩余部分保持单位矩阵 (已经初始化为IDENTITY)
+        drop(data);
 
         // 3. 上传到 GPU
         resource_manager.write_buffer(buffer.handle(), buffer.as_bytes());

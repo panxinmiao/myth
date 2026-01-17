@@ -97,46 +97,18 @@ fn main() -> anyhow::Result<()> {
 
 
     // 4. 创建 Mesh 节点并绑定
-    let mut mesh_node = Node::new("Cylinder_Skinned");
-
     let mesh = Mesh::new(geo_handle, mat_handle);
 
-    app.scene.add_mesh(mesh);
+    let mesh_idx = app.scene.add_mesh(mesh);
+
+    let mesh_node = app.scene.get_node_mut(mesh_idx).unwrap();
 
     mesh_node.bind_skeleton(skel_id, BindMode::Attached);
 
-    // mesh_node.mesh = Some(resources.register_mesh(Mesh { 
-    //     geometry: geo_handle, 
-    //     material: mat_handle 
-    // }));
 
-
-    // 4. 创建 Mesh 并加入场景
-
-    // let cube_node_id = app.scene.add_mesh(mesh);
 
     let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 0.0);
     app.scene.add_light(light);
-
-
-    // 加载环境贴图
-    // let env_texture_handle = app.assets.load_cube_texture_from_files(
-    //     [
-    //         "examples/assets/Park2/posx.jpg",
-    //         "examples/assets/Park2/negx.jpg",
-    //         "examples/assets/Park2/posy.jpg",
-    //         "examples/assets/Park2/negy.jpg",
-    //         "examples/assets/Park2/posz.jpg",
-    //         "examples/assets/Park2/negz.jpg",
-    //     ],
-    //     three::ColorSpace::Srgb
-    // )?;
-
-    // let env_texture = app.assets.get_texture_mut(env_texture_handle).unwrap();
-
-    // env_texture.generate_mipmaps = true;
-
-    // app.scene.environment.set_env_map(Some((env_texture_handle, &env_texture)));
 
     // 5. 设置相机
     // 5.1 创建相机组件 (纯投影数据)

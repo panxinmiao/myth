@@ -158,7 +158,6 @@ impl ModelManager {
         // 我们需要 Geometry 的特定逻辑来填充 builder
         geometry.define_bindings(&mut builder);
 
-
         if use_skinning {
             if let Some(skel_id) = skeleton_id {
                 if let Some(buffer) = skeleton_manager.get_buffer(skel_id) {
