@@ -69,8 +69,8 @@ fn main() -> anyhow::Result<()> {
     let cam_node_id = app.scene.add_camera(camera);
 
     if let Some(node) = app.scene.get_node_mut(cam_node_id) {
-        node.position = Vec3::new(0.0, 0.0, 3.0);
-        node.look_at(Vec3::ZERO, Vec3::Y);
+        node.transform.position = Vec3::new(0.0, 0.0, 3.0);
+        node.transform.look_at(Vec3::ZERO, Vec3::Y);
     }
 
     app.scene.active_camera = Some(cam_node_id);

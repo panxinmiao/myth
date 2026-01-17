@@ -124,9 +124,9 @@ fn main() -> anyhow::Result<()> {
     
     // 5.3 设置相机节点的位置和朝向
     if let Some(node) = app.scene.get_node_mut(cam_node_id) {
-        node.position = Vec3::new(0.0, 3.0, 10.0);
+        node.transform.position = Vec3::new(0.0, 3.0, 10.0);
         // 使用我们刚实现的 look_at 方法
-        node.look_at(Vec3::ZERO, Vec3::Y);
+        node.transform.look_at(Vec3::ZERO, Vec3::Y);
     }
     
     // 5.4 激活相机

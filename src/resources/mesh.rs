@@ -1,4 +1,3 @@
-use uuid::Uuid;
 use thunderdome::Index;
 use crate::assets::{GeometryHandle, MaterialHandle};
 
@@ -6,8 +5,6 @@ pub type MeshHandle = Index;
 
 #[derive(Debug, Clone)]
 pub struct Mesh {
-    // === 标识 ===
-    pub uuid: Uuid,
     pub name: String,
     
     // === 场景图节点 ===
@@ -30,7 +27,6 @@ impl Mesh {
         material: MaterialHandle
     ) -> Self {
         Self {
-            uuid: Uuid::new_v4(),
             name: "Mesh".to_string(),
             node_id : None,
             geometry,

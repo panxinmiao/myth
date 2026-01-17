@@ -173,7 +173,7 @@ impl Scene {
         // 3. Update child
         if let Some(c) = self.nodes.get_mut(child_idx) {
             c.parent = Some(parent_idx);
-            c.mark_dirty(); // 强制标记脏，确保矩阵更新
+            c.transform.mark_dirty(); // 强制标记脏，确保矩阵更新
         }
     }
 
@@ -248,15 +248,15 @@ impl Scene {
         let (current_world_matrix, children_len, world_needs_update) = if let Some(node) = self.nodes.get_mut(node_idx) {
             
             // 1. 智能更新局部矩阵
-            let local_changed = node.update_local_matrix();
+            let local_changed = node.transform.update_local_matrix();
 
             // 2. 决定是否更新世界矩阵
             let world_needs_update = local_changed || parent_changed;
 
             if world_needs_update {
                 // 计算新的世界矩阵
-                let new_world = parent_world_matrix * *node.local_matrix();
-                node.set_world_matrix(new_world);
+                let new_world = parent_world_matrix * *node.transform.local_matrix();
+                node.transform.set_world_matrix(new_world);
 
                 // --- 同步更新组件 (Camera / Light) ---
                 if let Some(camera_idx) = node.camera
@@ -267,7 +267,7 @@ impl Scene {
             }
 
             (
-                *node.world_matrix(), 
+                node.transform.world_matrix, 
                 node.children.len(), 
                 world_needs_update
             )
@@ -370,7 +370,7 @@ impl Scene {
             if let Some(binding) = &node.skin {
                 // 根据 BindMode 决定 root_inverse
                 let root_inv = match binding.bind_mode {
-                    BindMode::Attached => node.world_matrix.inverse(),
+                    BindMode::Attached => node.transform.world_matrix.inverse(),
                     BindMode::Detached => binding.bind_matrix_inv,
                 };
                 
@@ -401,7 +401,7 @@ impl Scene {
                 && let Some(light) = self.lights.get(light_idx) {
                     
                     // 获取灯光的世界变换
-                    let world_mat = node.world_matrix(); 
+                    let world_mat = node.transform.world_matrix; 
                     let pos= world_mat.translation.to_vec3();
                     // 从旋转中提取方向 (-Z)
                     let dir = world_mat.transform_vector3(-Vec3::Z).normalize();
@@ -473,12 +473,12 @@ impl<'a> NodeBuilder<'a> {
     // === 链式配置方法 ===
 
     pub fn with_position(mut self, x: f32, y: f32, z: f32) -> Self {
-        self.node.position = glam::Vec3::new(x, y, z);
+        self.node.transform.position = glam::Vec3::new(x, y, z);
         self
     }
 
     pub fn with_scale(mut self, s: f32) -> Self {
-        self.node.scale = glam::Vec3::splat(s);
+        self.node.transform.scale = glam::Vec3::splat(s);
         self
     }
 

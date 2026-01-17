@@ -77,13 +77,13 @@ fn main() -> anyhow::Result<()> {
     let earth_node_id = app.scene.add_mesh(mesh);
 
     if let Some(earth) = app.scene.get_node_mut(earth_node_id) {
-        earth.rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.0, -1.0, 0.0);
+        earth.transform.rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.0, -1.0, 0.0);
     }
 
     let cloud_node_id = app.scene.add_mesh(cloud_mesh);
     if let Some(clouds) = app.scene.get_node_mut(cloud_node_id) {
-        clouds.scale = Vec3::splat(1.005);
-        clouds.rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.0, 0.41);
+        clouds.transform.scale = Vec3::splat(1.005);
+        clouds.transform.rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.0, 0.41);
     }
 
     let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
@@ -93,8 +93,8 @@ fn main() -> anyhow::Result<()> {
     app.scene.environment.uniforms_mut().ambient_light = Vec3::new(0.0001, 0.0001, 0.0001);
 
     if let Some(light_node) = app.scene.get_node_mut(light_index) {
-        light_node.position = Vec3::new(3.0, 0.0, 1.0);
-        light_node.look_at(Vec3::ZERO, Vec3::Y);
+        light_node.transform.position = Vec3::new(3.0, 0.0, 1.0);
+        light_node.transform.look_at(Vec3::ZERO, Vec3::Y);
     }
 
     // 5. 设置相机
@@ -110,8 +110,8 @@ fn main() -> anyhow::Result<()> {
     
     // 5.3 设置相机节点的位置和朝向
     if let Some(node) = app.scene.get_node_mut(cam_node_id) {
-        node.position = Vec3::new(0.0, 0.0, 250.0);
-        node.look_at(Vec3::ZERO, Vec3::Y);
+        node.transform.position = Vec3::new(0.0, 0.0, 250.0);
+        node.transform.look_at(Vec3::ZERO, Vec3::Y);
     }
     
     // 5.4 激活相机
@@ -127,11 +127,11 @@ fn main() -> anyhow::Result<()> {
 
         // 1. 地球自转
         if let Some(node) = scene.get_node_mut(earth_node_id) {
-            node.rotation = rot * node.rotation;
+            node.transform.rotation = rot * node.transform.rotation;
         }
         // 2. 云层自转
         if let Some(clouds) = scene.get_node_mut(cloud_node_id) {
-            clouds.rotation = rot_clouds * clouds.rotation;
+            clouds.transform.rotation = rot_clouds * clouds.transform.rotation;
         }
 
         // 3. 相机控制

@@ -72,9 +72,9 @@ fn main() -> anyhow::Result<()> {
     
     // 5.3 设置相机节点的位置和朝向
     if let Some(node) = app.scene.get_node_mut(cam_node_id) {
-        node.position = Vec3::new(0.0, 3.0, 10.0);
+        node.transform.position = Vec3::new(0.0, 3.0, 10.0);
         // 使用我们刚实现的 look_at 方法
-        node.look_at(Vec3::ZERO, Vec3::Y);
+        node.transform.look_at(Vec3::ZERO, Vec3::Y);
     }
     
     // 5.4 激活相机
@@ -93,7 +93,7 @@ fn main() -> anyhow::Result<()> {
             let rot_x = Quat::from_rotation_x(0.01 * 60.0 * dt);
             
             // 累加旋转，update_matrix_world 会自动处理矩阵更新
-            node.rotation = node.rotation * rot_y * rot_x;
+            node.transform.rotation = node.transform.rotation * rot_y * rot_x;
         }
 
         // 使用新的组件查询 API

@@ -54,8 +54,8 @@ fn main() -> anyhow::Result<()> {
 
     // 设置位置
     if let Some(node) = app.scene.get_node_mut(cam_node_id) {
-        node.position = Vec3::new(0.0, 0.0, 3.0);
-        node.look_at(Vec3::ZERO, Vec3::Y);
+        node.transform.position = Vec3::new(0.0, 0.0, 3.0);
+        node.transform.look_at(Vec3::ZERO, Vec3::Y);
     }
     
     // 激活相机

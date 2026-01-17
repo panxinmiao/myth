@@ -30,8 +30,8 @@ fn main() -> anyhow::Result<()> {
     
     // 通过节点设置相机位置
     if let Some(cam_node) = app.scene.get_node_mut(camera_node_id) {
-        cam_node.position = Vec3::new(0.0, 3.0, 20.0);
-        cam_node.look_at(Vec3::ZERO, Vec3::Y);
+        cam_node.transform.position = Vec3::new(0.0, 3.0, 20.0);
+        cam_node.transform.look_at(Vec3::ZERO, Vec3::Y);
     }
     
     app.scene.active_camera = Some(camera_node_id);
@@ -44,7 +44,7 @@ fn main() -> anyhow::Result<()> {
             // 绕 Y 轴和 X 轴旋转
             let rotation_y = Quat::from_rotation_y(time * 0.5); // 每秒 0.5 弧度
             let rotation_x = Quat::from_rotation_x(time * 0.3);
-            cube_node.rotation = rotation_y * rotation_x;
+            cube_node.transform.rotation = rotation_y * rotation_x;
         }
     });
 

@@ -205,10 +205,10 @@ impl RenderFrame {
                             continue;
                         }
                     };
-                    let node_world = *node.world_matrix();
+                    let node_world = node.transform.world_matrix;
 
                     if let Some(bs) = &geometry.bounding_sphere {
-                        let scale = node.scale.max_element();
+                        let scale = node.transform.scale.max_element();
                         let center = node_world.transform_point3(bs.center);
                         if !frustum.intersects_sphere(center, bs.radius * scale) {
                             continue;
@@ -221,7 +221,7 @@ impl RenderFrame {
                         geo_handle,
                         mat_handle,
                         node_index: node_id,
-                        model_matrix: Mat4::from(node_world),
+                        model_matrix: Mat4::from(node.transform.world_matrix),
                         distance_sq,
                     });
                 }
