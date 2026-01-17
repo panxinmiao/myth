@@ -1,7 +1,7 @@
 //! 渲染帧管理
 //!
 //! RenderFrame 负责：cull_scene, prepare_commands, 执行渲染
-//! 每一帧创建一个新的，或者重置它
+//! 每一帧重置它
 
 use glam::{Mat3A, Mat4};
 use slotmap::Key;

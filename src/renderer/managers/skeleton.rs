@@ -33,7 +33,7 @@ impl SkeletonManager {
             )
         });
 
-        *buffer.write() = matrices.to_vec();
+        buffer.write()[..matrices.len()].copy_from_slice(matrices);
         resource_manager.write_buffer(buffer.handle(), buffer.as_bytes());
     }
 
