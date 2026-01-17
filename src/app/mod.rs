@@ -99,14 +99,16 @@ impl App {
     fn render(&mut self) {
         if self.window.is_some()
             && let Some(cam_id) = self.scene.active_camera {
-                let scene_ref = &self.scene;
-                if let Some(node) = scene_ref.get_node(cam_id)
+                // 需要先获取 camera 的引用，然后用 &mut self.scene
+                if let Some(node) = self.scene.get_node(cam_id)
                     && let Some(camera_idx) = node.camera
                         && let Some(camera) = self.scene.cameras.get(camera_idx) {
                             let time_seconds = self.last_loop_time
                                 .duration_since(self.start_time)
                                 .as_secs_f32();
-                            self.renderer.render(&self.scene, camera, &self.assets, time_seconds);
+                            // 克隆 camera 以避免借用冲突
+                            let camera_clone = camera.clone();
+                            self.renderer.render(&mut self.scene, &camera_clone, &self.assets, time_seconds);
                         }
             }
     }

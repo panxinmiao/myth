@@ -7,13 +7,15 @@
 //! - 只复制渲染所需的"精简数据"，不复制实际的 Mesh/Material 资源
 //! - 视锥剔除前置，只提取可见物体
 //! - 使用 Copy 类型尽可能减少开销
+//! - 携带缓存 ID 以避免每帧重复查找
 
 use glam::Mat4;
 
-use crate::scene::{NodeIndex, Scene, SkeletonKey};
+use crate::scene::{NodeIndex, Scene, SkeletonKey, MeshKey};
 use crate::scene::skeleton::SkinBinding;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::scene::camera::Camera;
+use crate::renderer::managers::CachedBindGroupId;
 
 /// 精简的渲染项，只包含 GPU 需要的数据
 /// 
@@ -22,6 +24,8 @@ use crate::scene::camera::Camera;
 pub struct ExtractedRenderItem {
     /// 节点索引（用于调试和回溯）
     pub node_index: NodeIndex,
+    /// Mesh 的 Key（用于回写缓存）
+    pub mesh_key: MeshKey,
     /// 世界变换矩阵 (64 bytes)
     pub world_matrix: Mat4,
     /// 几何体句柄 (8 bytes)
@@ -32,6 +36,10 @@ pub struct ExtractedRenderItem {
     pub skin_binding: Option<SkinBinding>,
     /// 到相机的距离平方（用于排序）
     pub distance_sq: f32,
+    /// 缓存的 BindGroup ID（快速路径）
+    pub cached_bind_group_id: Option<CachedBindGroupId>,
+    /// 缓存的 Pipeline ID（快速路径）
+    pub cached_pipeline_id: Option<u16>,
 }
 
 /// 提取的骨骼数据
@@ -91,7 +99,7 @@ impl ExtractedScene {
         self.skeletons.clear();
     }
 
-    /// 从 Scene 中提取当前帧的渲染数据
+    /// 从 Scene 中提取当前帧的渲染数据（创建新实例）
     /// 
     /// # 参数
     /// * `scene` - 场景引用
@@ -100,17 +108,26 @@ impl ExtractedScene {
     /// 
     /// # 返回
     /// 填充后的 ExtractedScene
-    pub fn extract(scene: &Scene, camera: &Camera, assets: &AssetServer) -> Self {
-        let mut extracted = Self::with_capacity(
-            scene.nodes.len(), // 预估最大数量
-            scene.skins.len(),
-        );
+    // pub fn extract(scene: &Scene, camera: &Camera, assets: &AssetServer) -> Self {
+    //     let mut extracted = Self::with_capacity(
+    //         scene.nodes.len(), // 预估最大数量
+    //         scene.skins.len(),
+    //     );
 
-        extracted.extract_render_items(scene, camera, assets);
-        extracted.extract_skeletons(scene);
-        extracted.extract_environment(scene);
+    //     extracted.extract_render_items(scene, camera, assets);
+    //     extracted.extract_skeletons(scene);
+    //     extracted.extract_environment(scene);
 
-        extracted
+    //     extracted
+    // }
+
+    /// 复用当前实例的内存，从 Scene 中提取数据
+    /// 
+    /// 这是性能优化的关键：避免每帧分配新内存
+    pub fn extract_into(&mut self, scene: &Scene, camera: &Camera, assets: &AssetServer) {
+        self.extract_render_items(scene, camera, assets);
+        self.extract_skeletons(scene);
+        self.extract_environment(scene);
     }
 
     /// 提取可见的渲染项
@@ -167,13 +184,20 @@ impl ExtractedScene {
             // 计算到相机的距离（用于排序）
             let distance_sq = camera_pos.distance_squared(node_world.translation);
 
+            // 从 Mesh 的渲染缓存中获取缓存的 ID
+            let cached_bind_group_id = mesh.render_cache.bind_group_id;
+            let cached_pipeline_id = mesh.render_cache.pipeline_id;
+
             self.render_items.push(ExtractedRenderItem {
                 node_index: node_id,
+                mesh_key,
                 world_matrix,
                 geometry: geo_handle,
                 material: mat_handle,
                 skin_binding: node.skin.clone(),
                 distance_sq,
+                cached_bind_group_id,
+                cached_pipeline_id,
             });
         }
     }

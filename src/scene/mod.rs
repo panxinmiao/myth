@@ -23,6 +23,7 @@ pub use transform::Transform;
 pub use scene::Scene;
 pub use camera::{Camera, ProjectionType};
 pub use light::{Light, LightKind};
+pub use transform_system::{LevelOrderBatches, build_level_order_batches, update_hierarchy_batched};
 
 
 use thunderdome::Index;

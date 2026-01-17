@@ -95,7 +95,7 @@ impl Renderer {
         }
     }
 
-    pub fn render(&mut self, scene: &Scene, camera: &Camera, assets: &AssetServer, time: f32) {
+    pub fn render(&mut self, scene: &mut Scene, camera: &Camera, assets: &AssetServer, time: f32) {
         if self._size.width == 0 || self._size.height == 0 {
             return;
         }

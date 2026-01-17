@@ -7,5 +7,5 @@
 pub mod model;
 pub mod skeleton;
 
-pub use model::{ModelManager, ObjectBindingData};
+pub use model::{ModelManager, ObjectBindingData, CachedBindGroupId};
 pub use skeleton::SkeletonManager;
