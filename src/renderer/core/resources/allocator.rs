@@ -13,7 +13,7 @@ use crate::resources::uniforms::DynamicModelUniforms;
 /// 负责管理 DynamicModelUniforms 的 CPU 端缓存和分配
 pub struct ModelBufferAllocator {
     /// CPU 端数据缓存
-    // host_data: Vec<DynamicModelUniforms>,
+    host_data: Vec<DynamicModelUniforms>,
     /// 当前帧写到的位置
     cursor: usize,
     /// Buffer 容量
@@ -36,7 +36,7 @@ impl ModelBufferAllocator {
         );
 
         Self {
-            // host_data: Vec::with_capacity(initial_capacity),
+            host_data: Vec::with_capacity(initial_capacity),
             cursor: 0,
             capacity: initial_capacity,
             buffer,
@@ -47,7 +47,7 @@ impl ModelBufferAllocator {
     /// 每帧开始时重置
     pub fn reset(&mut self) {
         self.cursor = 0;
-        // self.host_data.clear();
+        self.host_data.clear();
         self.needs_recreate = false;
     }
 
@@ -62,10 +62,26 @@ impl ModelBufferAllocator {
         }
 
         // self.host_data.push(data);
-        self.buffer.write()[index] = data;
+        // self.buffer.write()[index] = data;
+        self.host_data.push(data);
         
         // 返回字节偏移量
         (index * std::mem::size_of::<DynamicModelUniforms>()) as u32
+    }
+
+    /// 将 host_data 同步到 CpuBuffer
+    pub fn flush_to_buffer(&mut self) {
+        if self.host_data.is_empty() { return; }
+        
+        // 这一帧只获取一次锁/借用，进行批量拷贝
+        let mut buffer_write = self.buffer.write();
+        let len = self.host_data.len();
+        // 确保 buffer 足够大 (expand_capacity 应该已经处理了，但为了安全)
+        if buffer_write.len() < len {
+            // 理论上不应发生，因为 allocate 会扩容，但 CpuBuffer 内部可能需要 resize
+            // 这里因为我们重建了 CpuBuffer，所以它是同步的
+        }
+        buffer_write[..len].copy_from_slice(&self.host_data);
     }
 
     /// 扩容

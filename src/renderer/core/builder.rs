@@ -65,7 +65,7 @@ impl<'a> ResourceBuilder<'a> {
         self.resources.push(BindingResource::Buffer {
             buffer: buffer.clone(),
             offset: 0,
-            size: None,
+            size: min_binding_size.as_ref().map(|s| s.get()),
             data,
         });
 

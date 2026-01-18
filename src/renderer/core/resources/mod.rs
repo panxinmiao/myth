@@ -342,7 +342,10 @@ impl ResourceManager {
             return;
         }
 
+        self.model_allocator.flush_to_buffer();
+
         let allocator = &self.model_allocator;
+
         let buffer_ref = allocator.buffer_handle();
         let data = allocator.cpu_buffer().as_bytes();
 
