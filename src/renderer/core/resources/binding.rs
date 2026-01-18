@@ -6,9 +6,9 @@ use glam::Mat4;
 use wgpu::ShaderStages;
 
 use crate::Mesh;
-use crate::assets::{AssetServer, GeometryHandle, TextureHandle};
+use crate::assets::{AssetServer, TextureHandle};
 use crate::resources::buffer::CpuBuffer;
-use crate::resources::geometry::{Geometry, GeometryFeatures};
+use crate::resources::geometry::Geometry;
 use crate::resources::uniforms::{DynamicModelUniforms};
 use crate::scene::SkeletonKey;
 use crate::scene::skeleton::{Skeleton};
@@ -20,7 +20,7 @@ use crate::renderer::graph::RenderState;
 
 use super::{
     ResourceManager, GpuBuffer, GpuEnvironment, 
-    ObjectBindGroupKey, ObjectBindingData, CachedBindGroupId,
+    ObjectBindGroupKey, ObjectBindingData,
     generate_resource_id, ModelBufferAllocator,
 };
 
@@ -54,74 +54,113 @@ impl ResourceManager {
     // ========================================================================
 
     /// 准备 Mesh 的基础资源（几何体、材质、Morph Uniform Buffer）
-    pub fn prepare_mesh(&mut self, assets: &AssetServer, mesh: &mut Mesh) {
+    pub fn prepare_mesh(&mut self, assets: &AssetServer, mesh: &mut Mesh, skeleton: Option<&Skeleton>) -> ObjectBindingData {
 
+        // 1. 数据同步 (Morph) - 必须每帧检查
         mesh.update_morph_uniforms();
+        self.write_buffer(mesh.morph_uniforms.handle(), mesh.morph_uniforms.as_bytes());
 
-        // 处理 morph uniform buffer
-        // let buf_id = mesh.morph_uniforms.handle().id;
-        // if let Some(gpu_buffer) = self.gpu_buffers.get_mut(&buf_id) {
-        //     self.queue.write_buffer(&gpu_buffer.buffer, 0, mesh.morph_uniforms.as_bytes());
-        //     gpu_buffer.last_used_frame = self.frame_index;
-        // } else {
-        //     let mut gpu_buf = GpuBuffer::new(&self.device, mesh.morph_uniforms.as_bytes(), mesh.morph_uniforms.handle().usage(), mesh.morph_uniforms.handle().label());
-        //     gpu_buf.last_uploaded_version = mesh.morph_uniforms.handle().version;
-        //     gpu_buf.last_used_frame = self.frame_index;
-        //     self.gpu_buffers.insert(buf_id, gpu_buf);
-        // }
-
+        // 2. 准备子资源
         self.prepare_geometry(assets, mesh.geometry);
         self.prepare_material(assets, mesh.material);
-    }
 
-    /// 准备 Object BindGroup (Group 2)
-    pub fn prepare_object_bind_group(
-        &mut self,
-        assets: &AssetServer,
-        geometry_handle: GeometryHandle,
-        geometry: &Geometry,
-        mesh: &Mesh,
-        skeleton: Option<&Skeleton>,
-    ) -> ObjectBindingData {
 
-        let features = geometry.get_features();
-        let is_static = !features.intersects(GeometryFeatures::USE_MORPHING | GeometryFeatures::USE_SKINNING);
+        // 3. 获取用于校验的 Version 信息
+        let geometry = assets.get_geometry(mesh.geometry).expect("Geometry should exist.");
+        let material = assets.get_material(mesh.material).expect("Material should exist.");
 
-        let has_skeleton = skeleton.is_some();
-        let geo_supports_skinning = features.contains(GeometryFeatures::USE_SKINNING);
-        let use_skinning = geo_supports_skinning && has_skeleton;
+        let geo_version = geometry.structure_version();
+        let mat_version = material.binding_version();
+        let current_model_buffer_id = self.model_allocator.buffer_id();
+
+
+        let skeleton_buffer_id = skeleton.as_ref().map(|skel| skel.joint_matrices.handle().id);
+
+        // =========================================================
+        // [Fast Path] 快速路径：校验缓存
+        // =========================================================
+        if let Some(cached_bind_group_id) = mesh.render_cache.bind_group_id {
+            if mesh.render_cache.is_valid(
+                mesh.geometry, 
+                geo_version, 
+                mesh.material, 
+                mat_version, 
+                current_model_buffer_id,
+                skeleton_buffer_id
+            ) {
+                if let Some(data) =  self.get_cached_bind_group(cached_bind_group_id){
+                    return data.clone();
+                }
+            }
+        }
+
+        // ======- 重建 BindGroup 路径 -======
 
 
         let model_buffer_id = self.model_allocator.buffer_id();
         let morph_buffer_id = Some(mesh.morph_uniforms.handle().id);
 
-        let skeleton_buffer_id = if use_skinning {
-            skeleton.as_ref().map(|skel| skel.joint_matrices.handle().id)
-        } else {
-            None
-        };
+
+
+        // let features = geometry.get_features();
+        // let has_skeleton = skeleton.is_some();
+        // let geo_supports_skinning = features.contains(GeometryFeatures::USE_SKINNING);
+        // let use_skinning = geo_supports_skinning && has_skeleton;
+        // let skeleton_buffer_id= if use_skinning {
+        //     skeleton_buffer_id
+        // } else {
+        //     None
+        // };
 
         let key = ObjectBindGroupKey {
-            geo_id: if is_static { None } else { Some(geometry_handle) },
             model_buffer_id,
             skeleton_buffer_id,
             morph_buffer_id,
         };
 
+
+        // --- 3. 缓存命中检查 ---
+
+        mesh.render_cache.geometry_id = Some(mesh.geometry);
+        mesh.render_cache.geometry_version = geo_version;
+        mesh.render_cache.material_id = Some(mesh.material);
+        mesh.render_cache.material_version = mat_version;
+        mesh.render_cache.model_buffer_id = current_model_buffer_id;
+        mesh.render_cache.skeleton_id = skeleton_buffer_id;
+    
+        // Pipeline ID 也应该在这里被清理，因为 BindGroup 变了，Pipeline 可能也需要变
+        mesh.render_cache.pipeline_id = None;
+        
+        // 检查全局缓存中是否已有对应的 BindGroup
         if let Some(binding_data) = self.object_bind_group_cache.get(&key) {
+            mesh.render_cache.bind_group_id = Some(binding_data.bind_group_id);
             return binding_data.clone();
         }
 
+        // --- 4. 创建新 BindGroup (缓存未命中) ---
+        let binding_data = self.create_object_bind_group_internal(assets, geometry, mesh, skeleton, key);
+        mesh.render_cache.bind_group_id = Some(binding_data.bind_group_id);
+        binding_data.clone()
 
-        // 提前提取需要的数据，避免借用冲突
+    }
+
+
+    /// 内部方法：创建 Object BindGroup 并写入缓存
+    fn create_object_bind_group_internal(
+        &mut self,
+        assets: &AssetServer,
+        geometry: &Geometry,
+        mesh: &Mesh,
+        skeleton: Option<&Skeleton>,
+        key: ObjectBindGroupKey,
+    ) -> ObjectBindingData {
+        
         let min_binding_size = ModelBufferAllocator::uniform_stride();
         let model_buffer_ref = self.model_allocator.cpu_buffer().handle().clone();
 
-
-        // 现在构建 ResourceBuilder - 不再借用 self
         let mut builder = ResourceBuilder::new();
 
-        // 添加 Model Uniform Buffer reference, 数据由 ModelBufferAllocator 管理
+        // 1. Model Uniform
         builder.add_dynamic_uniform::<DynamicModelUniforms>(
             "model", 
             &model_buffer_ref, 
@@ -130,11 +169,13 @@ impl ResourceManager {
             ShaderStages::VERTEX
         );
 
+        // 2. Mesh Bindings (Morph)
         mesh.define_bindings(&mut builder);
 
+        // 3. Geometry Bindings
         geometry.define_bindings(&mut builder);
 
-        // 添加 Skeleton Buffer reference（数据由 ResourceManager prepare skeleton 管理）
+        // 4. Skeleton Bindings
         if let Some(skeleton) = &skeleton {
             builder.add_storage_buffer(
                 "skins", 
@@ -152,27 +193,21 @@ impl ResourceManager {
         
         let (layout, _layout_id) = self.get_or_create_layout(&layout_entries);
         
-        // 先上传 buffer 数据到 GPU，再创建 bind group
+        // 确保所有依赖的 GPU 资源已就绪 (Double check)
         self.prepare_binding_resources(assets, &resources);
+        
         let (bind_group, bind_group_id) = self.create_bind_group(&layout, &resources);
-
-        let cached_id = CachedBindGroupId {
-            bind_group_id,
-            model_buffer_id,
-        };
 
         let data = ObjectBindingData {
             layout,
             bind_group,
             bind_group_id,
             binding_wgsl,
-            cached_id,
         };
 
-        // 同时更新两个缓存
+        // 写入全局缓存
         self.object_bind_group_cache.insert(key, data.clone());
         self.bind_group_id_lookup.insert(bind_group_id, data.clone());
-        
         data
     }
 

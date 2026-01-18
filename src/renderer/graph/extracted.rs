@@ -15,7 +15,6 @@ use crate::scene::scene::SceneFeatures;
 use crate::scene::{NodeIndex, Scene, SkeletonKey, MeshKey};
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::scene::camera::Camera;
-use crate::renderer::core::CachedBindGroupId;
 
 /// 精简的渲染项，只包含 GPU 需要的数据
 /// 
@@ -37,7 +36,7 @@ pub struct ExtractedRenderItem {
     /// 到相机的距离平方（用于排序）
     pub distance_sq: f32,
     /// 缓存的 BindGroup ID（快速路径）
-    pub cached_bind_group_id: Option<CachedBindGroupId>,
+    pub cached_bind_group_id: Option<u64>,
     /// 缓存的 Pipeline ID（快速路径）
     pub cached_pipeline_id: Option<u16>,
 }

@@ -246,8 +246,6 @@ impl RenderFrame {
     ) {
         self.opaque_commands.clear();
         self.transparent_commands.clear();
-
-        let model_buffer_id = resource_manager.model_buffer_id();
         
         // 遍历提取的渲染项
         for item_idx in 0..self.extracted_scene.render_items.len() {
@@ -270,56 +268,15 @@ impl RenderFrame {
                 continue;
             };
 
-            resource_manager.prepare_mesh(assets, mesh);
-
             // let skeleton_key = item.skeleton;
-
+            
             let skeleton = if let Some(skel_key) = item.skeleton {
                 scene.skins.get(skel_key)
             } else {
                 None
             };
-
-            // ========== 快速路径：尝试使用缓存的 BindGroup ==========
-            let object_data = if let Some(cached_id) = item.cached_bind_group_id {
-                if cached_id.is_valid(model_buffer_id) {
-                    // 快速路径成功！直接使用缓存
-                    if let Some(data) = resource_manager.get_cached_bind_group(cached_id) {
-                        data.clone()
-                    } else {
-                        // 缓存失效，走慢路径
-                        resource_manager.prepare_object_bind_group(
-                            assets,
-                            item.geometry,
-                            geometry,
-                            mesh,
-                            skeleton,
-                        )
-                    }
-                } else {
-                    // Model buffer 已重建，缓存失效
-                    resource_manager.prepare_object_bind_group(
-                        assets,
-                        item.geometry,
-                        geometry,
-                        mesh,
-                        skeleton,
-                    )
-                }
-            } else {
-                // 没有缓存，走慢路径
-                resource_manager.prepare_object_bind_group(
-                    assets,
-                    item.geometry,
-                    geometry,
-                    mesh,
-                    skeleton,
-                )
-            };
-
-            // 回写缓存到 Mesh
-            mesh.render_cache.bind_group_id = Some(object_data.cached_id);
-            
+    
+            let object_data = resource_manager.prepare_mesh(assets, mesh, skeleton);            
 
             let Some(gpu_geometry) = resource_manager.get_geometry(item.geometry) else {
                 error!("CRITICAL: GpuGeometry missing for {:?}", item.geometry);

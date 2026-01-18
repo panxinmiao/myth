@@ -1,6 +1,5 @@
 use thunderdome::Index;
 use crate::assets::{GeometryHandle, MaterialHandle};
-use crate::renderer::core::CachedBindGroupId;
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::uniforms::MorphUniforms;
 
@@ -18,19 +17,44 @@ pub type MeshHandle = Index;
 #[derive(Debug, Clone, Default)]
 pub struct RenderCache {
     /// 缓存的 BindGroup ID（用于快速路径）
-    pub bind_group_id: Option<CachedBindGroupId>,
+    pub bind_group_id: Option<u64>,
     /// 缓存的 Pipeline ID
     pub pipeline_id: Option<u16>,
+
     /// 缓存版本号（用于失效检测）
-    pub cache_version: u64,
+    pub(crate) geometry_id: Option<GeometryHandle>,
+    pub(crate) geometry_version: u64, // 结构版本
+    pub(crate) material_id: Option<MaterialHandle>,
+    pub(crate) material_version: u64, // 绑定版本 (binding_version)
+    pub(crate) model_buffer_id: u64,  // 检查 Allocator 是否重置/Resize
+    pub(crate) skeleton_id: Option<u64>, // joint_matrices buffer id
 }
 
 impl RenderCache {
     /// 使缓存失效
-    #[inline]
-    pub fn invalidate(&mut self) {
-        self.bind_group_id = None;
-        self.pipeline_id = None;
+    // #[inline]
+    // pub fn invalidate(&mut self) {
+    //     self.bind_group_id = None;
+    //     self.pipeline_id = None;
+    // }
+
+    // 检查缓存是否依然有效
+    pub fn is_valid(
+        &self, 
+        geo_handle: GeometryHandle,
+        geo_version: u64,
+        mat_handle: MaterialHandle,
+        mat_version: u64,
+        current_model_buffer_id: u64,
+        skeleton_buffer_id: Option<u64>
+    ) -> bool {
+        self.bind_group_id.is_some()
+            && self.geometry_id == Some(geo_handle)
+            && self.geometry_version == geo_version
+            && self.material_id == Some(mat_handle)
+            && self.material_version == mat_version
+            && self.model_buffer_id == current_model_buffer_id
+            && self.skeleton_id == skeleton_buffer_id
     }
 }
 
@@ -153,8 +177,8 @@ impl Mesh {
         }
     }
     
-    /// 使渲染缓存失效（当 geometry 或 material 改变时调用）
-    pub fn invalidate_cache(&mut self) {
-        self.render_cache.invalidate();
-    }
+    // 使渲染缓存失效（当 geometry 或 material 改变时调用）
+    // pub fn invalidate_cache(&mut self) {
+    //     self.render_cache.invalidate();
+    // }
 }

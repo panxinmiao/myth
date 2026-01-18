@@ -203,24 +203,9 @@ pub struct GpuEnvironment {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub(crate) struct ObjectBindGroupKey {
-    pub geo_id: Option<GeometryHandle>,
     pub model_buffer_id: u64,
     pub skeleton_buffer_id: Option<u64>,
     pub morph_buffer_id: Option<u64>,
-}
-
-/// 预缓存的 BindGroup 查找键
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct CachedBindGroupId {
-    pub bind_group_id: u64,
-    pub model_buffer_id: u64,
-}
-
-impl CachedBindGroupId {
-    #[inline]
-    pub fn is_valid(&self, current_model_buffer_id: u64) -> bool {
-        self.model_buffer_id == current_model_buffer_id
-    }
 }
 
 #[derive(Clone)]
@@ -229,7 +214,6 @@ pub struct ObjectBindingData {
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
     pub binding_wgsl: String,
-    pub cached_id: CachedBindGroupId,
 }
 
 // ============================================================================
@@ -426,12 +410,8 @@ impl ResourceManager {
 
     /// 通过缓存的 ID 快速获取 BindGroup 数据
     #[inline]
-    pub fn get_cached_bind_group(&self, cached_id: CachedBindGroupId) -> Option<&ObjectBindingData> {
-        if cached_id.is_valid(self.model_buffer_id()) {
-            self.bind_group_id_lookup.get(&cached_id.bind_group_id)
-        } else {
-            None
-        }
+    pub fn get_cached_bind_group(&self, cached_bind_group_id: u64) -> Option<&ObjectBindingData> {
+        self.bind_group_id_lookup.get(&cached_bind_group_id)
     }
 
     pub fn prune(&mut self, ttl_frames: u64) {

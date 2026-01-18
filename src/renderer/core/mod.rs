@@ -11,6 +11,6 @@ pub mod binding;
 pub mod builder;
 
 pub use context::WgpuContext;
-pub use resources::{ResourceManager, ObjectBindingData, CachedBindGroupId};
+pub use resources::{ResourceManager, ObjectBindingData};
 pub use binding::{BindingResource, Bindings};
 pub use builder::ResourceBuilder;
