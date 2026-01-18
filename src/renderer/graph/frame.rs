@@ -7,6 +7,7 @@ use glam::{Mat3A, Mat4};
 use slotmap::{Key, SlotMap};
 use log::{warn, error};
 
+use crate::resources::material::Side;
 use crate::scene::skeleton::{Skeleton};
 use crate::scene::{NodeIndex, Scene, SkeletonKey};
 use crate::scene::camera::Camera;
@@ -279,13 +280,6 @@ impl RenderFrame {
                 None
             };
 
-            // let skeleton_buffer = if let Some(skel_key) = skeleton_key {
-            //     let skeleton = scene.skins.get(skel_key);
-            //     skeleton.map(|skel| skel.joint_matrices)
-            // } else {
-            //     None
-            // };
-
             // ========== 快速路径：尝试使用缓存的 BindGroup ==========
             let object_data = if let Some(cached_id) = item.cached_bind_group_id {
                 if cached_id.is_valid(model_buffer_id) {
@@ -368,7 +362,11 @@ impl RenderFrame {
                     geo_features,
                     scene_features: self.extracted_scene.scene_features,
                     topology: geometry.topology,
-                    cull_mode: material.cull_mode(),
+                    cull_mode: match material.side() {
+                        Side::Front => Some(wgpu::Face::Back),
+                        Side::Back => Some(wgpu::Face::Front),
+                        Side::Double => None,
+                    },
                     depth_write: material.depth_write(),
                     depth_compare: if material.depth_test() { wgpu::CompareFunction::Less } else { wgpu::CompareFunction::Always },
                     blend_state: if material.transparent() { Some(wgpu::BlendState::ALPHA_BLENDING) } else { None },

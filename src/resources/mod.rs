@@ -23,7 +23,7 @@ pub mod version_tracker;
 pub use mesh::{Mesh, MeshHandle};
 pub use material::{
     Material, MaterialData, MaterialFeatures,
-    MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial,
+    MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, Side,
 };
 pub use material_builder::{MeshBasicMaterialBuilder, MeshStandardMaterialBuilder};
 pub use texture::{Texture, TextureSampler};

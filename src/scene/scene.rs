@@ -380,7 +380,6 @@ impl Scene {
                     gpu_light_storage.intensity = light.intensity;
                     gpu_light_storage.position = pos;
                     gpu_light_storage.direction = dir;
-                    
 
                     match &light.kind {
                         LightKind::Point(light) => {

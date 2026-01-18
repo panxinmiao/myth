@@ -112,14 +112,20 @@ pub struct MaterialBindings {
     pub specular_map: Option<TextureHandle>,
 }
 
+#[derive(PartialEq, Eq, Clone, Debug)]
+pub enum Side {
+    Front,
+    Back,
+    Double,
+}
+
 /// 材质设置 - 对应 Pipeline 变化
 #[derive(PartialEq, Eq, Clone, Debug)]
 pub struct MaterialSettings {
     pub transparent: bool,
     pub depth_write: bool,
     pub depth_test: bool,
-    pub cull_mode: Option<wgpu::Face>,
-    pub side: u32,
+    pub side: Side,
 }
 
 impl Default for MaterialSettings {
@@ -128,8 +134,7 @@ impl Default for MaterialSettings {
             transparent: false,
             depth_write: true, 
             depth_test: true,  
-            cull_mode: Some(wgpu::Face::Back), 
-            side: 0,
+            side: Side::Double,
         }
     }
 }
@@ -588,20 +593,11 @@ impl Material {
         self.get_settings().depth_test
     }
     
-    pub fn cull_mode(&self) -> Option<wgpu::Face> {
-        self.get_settings().cull_mode
+    pub fn side(&self) -> &Side {
+        &self.get_settings().side
     }
     
-    // 版本号（组合三级版本）
-    // pub fn version(&self) -> u64 {
-    //     use std::hash::{Hash, Hasher};
-    //     use std::collections::hash_map::DefaultHasher;
-        
-    //     let mut hasher = DefaultHasher::new();
-    //     self.data.layout_version().hash(&mut hasher);
-    //     self.data.binding_version().hash(&mut hasher);
-    //     hasher.finish()
-    // }
+    
 }
 
 // ============================================================================

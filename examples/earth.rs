@@ -1,5 +1,4 @@
 use glam::{Vec2, Vec3, Vec4, Quat};
-use wgpu;
 use three::app::App;
 use three::resources::{Material, Mesh};
 use three::scene::{Camera};
@@ -64,7 +63,7 @@ fn main() -> anyhow::Result<()> {
             let mut settings = phong.settings_mut();
             settings.transparent = true;
             settings.depth_write = false;
-            settings.cull_mode = Some(wgpu::Face::Back);
+            settings.side = three::Side::Front;
         }
     }
 

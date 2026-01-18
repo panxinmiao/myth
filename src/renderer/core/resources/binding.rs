@@ -6,10 +6,10 @@ use glam::Mat4;
 use wgpu::ShaderStages;
 
 use crate::Mesh;
-use crate::assets::{AssetServer, GeometryHandle};
+use crate::assets::{AssetServer, GeometryHandle, TextureHandle};
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::geometry::{Geometry, GeometryFeatures};
-use crate::resources::uniforms::{DynamicModelUniforms, MorphUniforms};
+use crate::resources::uniforms::{DynamicModelUniforms};
 use crate::scene::SkeletonKey;
 use crate::scene::skeleton::{Skeleton};
 use crate::scene::environment::Environment;
@@ -59,16 +59,16 @@ impl ResourceManager {
         mesh.update_morph_uniforms();
 
         // 处理 morph uniform buffer
-        let buf_id = mesh.morph_uniforms.handle().id;
-        if let Some(gpu_buffer) = self.gpu_buffers.get_mut(&buf_id) {
-            self.queue.write_buffer(&gpu_buffer.buffer, 0, mesh.morph_uniforms.as_bytes());
-            gpu_buffer.last_used_frame = self.frame_index;
-        } else {
-            let mut gpu_buf = GpuBuffer::new(&self.device, mesh.morph_uniforms.as_bytes(), mesh.morph_uniforms.handle().usage(), mesh.morph_uniforms.handle().label());
-            gpu_buf.last_uploaded_version = mesh.morph_uniforms.handle().version;
-            gpu_buf.last_used_frame = self.frame_index;
-            self.gpu_buffers.insert(buf_id, gpu_buf);
-        }
+        // let buf_id = mesh.morph_uniforms.handle().id;
+        // if let Some(gpu_buffer) = self.gpu_buffers.get_mut(&buf_id) {
+        //     self.queue.write_buffer(&gpu_buffer.buffer, 0, mesh.morph_uniforms.as_bytes());
+        //     gpu_buffer.last_used_frame = self.frame_index;
+        // } else {
+        //     let mut gpu_buf = GpuBuffer::new(&self.device, mesh.morph_uniforms.as_bytes(), mesh.morph_uniforms.handle().usage(), mesh.morph_uniforms.handle().label());
+        //     gpu_buf.last_uploaded_version = mesh.morph_uniforms.handle().version;
+        //     gpu_buf.last_used_frame = self.frame_index;
+        //     self.gpu_buffers.insert(buf_id, gpu_buf);
+        // }
 
         self.prepare_geometry(assets, mesh.geometry);
         self.prepare_material(assets, mesh.material);
@@ -122,18 +122,16 @@ impl ResourceManager {
         let mut builder = ResourceBuilder::new();
 
         // 添加 Model Uniform Buffer reference, 数据由 ModelBufferAllocator 管理
-        builder.add_dynamic_uniform::<DynamicModelUniforms>("model", &model_buffer_ref, None, min_binding_size, ShaderStages::VERTEX);
+        builder.add_dynamic_uniform::<DynamicModelUniforms>(
+            "model", 
+            &model_buffer_ref, 
+            None, 
+            min_binding_size, 
+            ShaderStages::VERTEX
+        );
 
         mesh.define_bindings(&mut builder);
 
-        let use_morphing = features.contains(GeometryFeatures::USE_MORPHING);
-        if use_morphing {
-            builder.add_uniform::<MorphUniforms>(
-                "morph_targets",
-                &mesh.morph_uniforms,
-                ShaderStages::VERTEX
-            );
-        }
         geometry.define_bindings(&mut builder);
 
         // 添加 Skeleton Buffer reference（数据由 ResourceManager prepare skeleton 管理）
@@ -257,7 +255,11 @@ impl ResourceManager {
                 },
                 BindingResource::Texture(handle_opt) => {
                     let gpu_tex = if let Some(handle) = handle_opt {
-                        self.gpu_textures.get(*handle).unwrap_or(&self.dummy_texture)
+                        if *handle == TextureHandle::dummy_env_map() {
+                            &self.dummy_env_texture
+                        } else {
+                            self.gpu_textures.get(*handle).unwrap_or(&self.dummy_texture)
+                        }
                     } else { &self.dummy_texture };
                     wgpu::BindingResource::TextureView(&gpu_tex.view)
                 },

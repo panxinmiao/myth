@@ -1,26 +1,12 @@
 {{ vertex_input_code }} 
-
 {{ binding_code }}
+{$ include 'vertex_output_def' $}
 
-{$ include 'light_common' $}
+{$ include 'morph_pars' $}
+{$ include 'light_common_pars' $}
+{$ include 'light_punctual_pars' $}
 {$ include 'bsdf/phong' $}
-{$ include 'morph' $}
 
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location({{ loc.next() }}) world_position: vec3<f32>,
-    $$ if has_uv
-    @location({{ loc.next() }}) uv: vec2<f32>,
-    $$ endif
-    $$ if has_normal
-    @location({{ loc.next() }}) normal: vec3<f32>,
-    @location({{ loc.next() }}) geometry_normal: vec3<f32>,
-    $$ endif
-    $$ if use_vertex_color
-    @location({{ loc.next() }}) color: vec4<f32>,
-    $$ endif
-    {$ include 'uv_vetex_output' $}
-};
 
 @vertex
 fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
@@ -29,17 +15,10 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     var local_pos = vec4<f32>(in.position, 1.0);
     var local_normal = in.normal;
 
-    $$ if use_morphing
-    // 应用 Morph Target 变形
-    let morph_result = apply_morph_targets(vertex_index, in.position, in.normal);
-    local_pos = vec4<f32>(morph_result.position, 1.0);
-    local_normal = morph_result.normal;
-    $$ endif
-
-    {$ include 'skin' $}
+    {$ include 'morph_vertex' $}
+    {$ include 'skin_vertex' $}
 
     let world_pos = u_model.world_matrix * local_pos;
-
 
     out.position = u_render_state.view_projection * world_pos;
     out.world_position = world_pos.xyz / world_pos.w;
@@ -48,10 +27,13 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
         out.color = in.color;
     $$ endif
 
+    $$ if has_uv
     out.uv = in.uv;
+    $$ endif
+
     out.geometry_normal = local_normal;
     out.normal = normalize(u_model.normal_matrix * local_normal);
-    {$ include 'uv' $}
+    {$ include 'uv_vertex' $}
     return out;
 }
 
@@ -118,13 +100,9 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     geometry.normal = normal;
     geometry.view_dir = view;
 
-    var material: BlinnPhongMaterial;
-    material.diffuse_color = diffuse_color.rgb;
-    material.specular_color = u_material.specular.rgb;
-    material.specular_shininess = u_material.shininess;
-    material.specular_strength = specular_strength;
+    {$ include 'light_phong_fragment' $}
 
-    {$ include 'light_punctual' $}
+    {$ include 'light_punctual_fragment' $}
 
     // Indirect Diffuse Light
     let ambient_color = u_environment.ambient_light.rgb;

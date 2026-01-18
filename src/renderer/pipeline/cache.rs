@@ -5,6 +5,7 @@
 use rustc_hash::FxHashMap;
 use xxhash_rust::xxh3::xxh3_128;
 
+use crate::renderer::core::ObjectBindingData;
 use crate::resources::geometry::GeometryFeatures;
 use crate::resources::material::MaterialFeatures;
 use crate::scene::scene::SceneFeatures;
@@ -13,7 +14,6 @@ use crate::assets::{GeometryHandle, MaterialHandle};
 use crate::renderer::pipeline::shader_gen::{ShaderGenerator, ShaderCompilationOptions};
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 use crate::renderer::core::resources::{GpuMaterial, GpuEnvironment};
-use crate::renderer::managers::ObjectBindingData;
 
 /// L2 缓存 Key: 完整描述 Pipeline 的所有特征
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]

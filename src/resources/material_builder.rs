@@ -16,7 +16,7 @@ pub struct MeshBasicMaterialBuilder {
     depth_write: bool,
     depth_test: bool,
     cull_mode: Option<wgpu::Face>,
-    side: u32,
+    side: Side,
 }
 
 impl Default for MeshBasicMaterialBuilder {
@@ -37,7 +37,7 @@ impl MeshBasicMaterialBuilder {
             depth_write: true,
             depth_test: true,
             cull_mode: Some(wgpu::Face::Back),
-            side: 0,
+            side: Side::Double,
         }
     }
 
@@ -52,7 +52,7 @@ impl MeshBasicMaterialBuilder {
     pub fn depth_write(mut self, enabled: bool) -> Self { self.depth_write = enabled; self }
     pub fn depth_test(mut self, enabled: bool) -> Self { self.depth_test = enabled; self }
     pub fn cull_mode(mut self, mode: Option<wgpu::Face>) -> Self { self.cull_mode = mode; self }
-    pub fn side(mut self, side: u32) -> Self { self.side = side; self }
+    pub fn side(mut self, side: Side) -> Self { self.side = side; self }
 
     pub fn build(self) -> Material {
         let mut basic = MeshBasicMaterial::new(self.color);
@@ -64,7 +64,6 @@ impl MeshBasicMaterialBuilder {
             settings.transparent = self.transparent;
             settings.depth_write = self.depth_write;
             settings.depth_test = self.depth_test;
-            settings.cull_mode = self.cull_mode;
             settings.side = self.side;
         }
 
@@ -94,8 +93,7 @@ pub struct MeshStandardMaterialBuilder {
     opacity: f32,
     depth_write: bool,
     depth_test: bool,
-    cull_mode: Option<wgpu::Face>,
-    side: u32,
+    side: Side,
 }
 
 impl Default for MeshStandardMaterialBuilder {
@@ -118,8 +116,7 @@ impl MeshStandardMaterialBuilder {
             opacity: 1.0,
             depth_write: true,
             depth_test: true,
-            cull_mode: Some(wgpu::Face::Back),
-            side: 0,
+            side: Side::Double,
         }
     }
 
@@ -142,8 +139,7 @@ impl MeshStandardMaterialBuilder {
     pub fn opacity(mut self, opacity: f32) -> Self { self.opacity = opacity; self }
     pub fn depth_write(mut self, enabled: bool) -> Self { self.depth_write = enabled; self }
     pub fn depth_test(mut self, enabled: bool) -> Self { self.depth_test = enabled; self }
-    pub fn cull_mode(mut self, mode: Option<wgpu::Face>) -> Self { self.cull_mode = mode; self }
-    pub fn side(mut self, side: u32) -> Self { self.side = side; self }
+    pub fn side(mut self, side: Side) -> Self { self.side = side; self }
     
     pub fn build(self) -> Material {
         let mut standard = MeshStandardMaterial::new(self.color);
@@ -172,7 +168,6 @@ impl MeshStandardMaterialBuilder {
             settings.transparent = self.transparent;
             settings.depth_write = self.depth_write;
             settings.depth_test = self.depth_test;
-            settings.cull_mode = self.cull_mode;
             settings.side = self.side;
         }
 

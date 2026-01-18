@@ -31,7 +31,7 @@ impl ResourceManager {
         }
 
         if binding_ver != gpu_mat.last_binding_version {
-            self.rebuild_bind_group(assets, handle, material);
+            self.rebuild_material_bind_group(assets, handle, material);
             return;
         }
 
@@ -69,7 +69,7 @@ impl ResourceManager {
         self.gpu_materials.get(handle).expect("Just inserted")
     }
 
-    pub(crate) fn rebuild_bind_group(&mut self, assets: &AssetServer, handle: MaterialHandle, material: &Material) -> &GpuMaterial {
+    pub(crate) fn rebuild_material_bind_group(&mut self, assets: &AssetServer, handle: MaterialHandle, material: &Material) -> &GpuMaterial {
         let mut builder = ResourceBuilder::new();
         material.define_bindings(&mut builder);
 

@@ -27,7 +27,7 @@ pub struct EnvironmentSettings {
 pub struct EnvBindingsGuard<'a> {
     bindings: &'a mut EnvironmentBindings,
     binding_version: &'a mut u64,
-    layout_version: &'a mut u64,
+    _layout_version: &'a mut u64,
     old_bindings: EnvironmentBindings,
 }
 
@@ -49,16 +49,12 @@ impl<'a> Drop for EnvBindingsGuard<'a> {
         let old = &self.old_bindings;
         let new = &*self.bindings;
         
-        let layout_changed = 
-            (old.env_map.is_some() != new.env_map.is_some()) ||
-            (old.brdf_lut.is_some() != new.brdf_lut.is_some());
-        
-        if layout_changed {
-            *self.layout_version = self.layout_version.wrapping_add(1);
-            *self.binding_version = self.binding_version.wrapping_add(1);
-        } else if old != new {
+        if old.env_map != new.env_map || old.brdf_lut != new.brdf_lut {
             *self.binding_version = self.binding_version.wrapping_add(1);
         }
+
+        // *self.layout_version;
+        
     }
 }
 
@@ -112,6 +108,9 @@ impl Default for Environment {
 
 impl Environment {
     pub fn new() -> Self {
+        // 初始化时预分配一定数量的灯光存储空间(16 个)
+        let initial_light_data = vec![GpuLightStorage::default(); 16];
+
         Self {
             id: NEXT_WORLD_ID.fetch_add(1, Ordering::Relaxed),
             uniforms: CpuBuffer::new(
@@ -123,7 +122,7 @@ impl Environment {
             settings: EnvironmentSettings::default(),
             lights: Vec::new(),
             light_storage: CpuBuffer::new(
-                Vec::new(),
+                initial_light_data,
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
                 Some("Light Storage Buffer")
             ),
@@ -151,7 +150,7 @@ impl Environment {
             old_bindings: self.bindings.clone(),
             bindings: &mut self.bindings,
             binding_version: &mut self.binding_version,
-            layout_version: &mut self.layout_version,
+            _layout_version: &mut self.layout_version,
         }
     }
 
@@ -208,14 +207,12 @@ impl Environment {
 
     pub fn update_lights(&mut self, gpu_lights: Vec<GpuLightStorage>) {
         if gpu_lights.is_empty() {
-            if !self.light_storage.read().is_empty() {
-                *self.light_storage.write() = Vec::new();
-                self.uniforms.write().num_lights = 0;
-            }
+            self.uniforms.write().num_lights = 0;
             return;
         }
 
         let old_count = self.light_storage.read().len();
+
         *self.light_storage.write() = gpu_lights;
         
         if old_count != self.light_storage.read().len() {

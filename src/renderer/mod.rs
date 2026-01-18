@@ -7,7 +7,6 @@
 
 pub mod core;
 pub mod graph;
-pub mod managers;
 pub mod pipeline;
 pub mod settings;
 

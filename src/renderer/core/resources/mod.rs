@@ -254,6 +254,7 @@ pub struct ResourceManager {
     pub(crate) layout_cache: FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
 
     pub(crate) dummy_texture: GpuTexture,
+    pub(crate) dummy_env_texture: GpuTexture,
     pub(crate) dummy_sampler: wgpu::Sampler,
     pub(crate) mipmap_generator: MipmapGenerator,
 
@@ -270,9 +271,60 @@ pub struct ResourceManager {
 
 impl ResourceManager {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+
         let dummy_tex = Texture::new_2d(Some("dummy"), 1, 1, Some(vec![255, 255, 255, 255]), wgpu::TextureFormat::Rgba8Unorm);
         let dummy_gpu_image = GpuImage::new(&device, &queue, &dummy_tex.image, 1, wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
         let dummy_gpu_tex = GpuTexture::new(&dummy_tex, &dummy_gpu_image);
+
+        // 创建 dummy env texture (cube map)
+        let dummy_env_tex = {
+            // 手动创建 WGPU Texture
+            let size = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 6 };
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Dummy EnvMap Black"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+
+            // 填充黑色数据 (1x1 pixel * 4 bytes * 6 layers = 24 bytes)
+            let black_pixel = [0u8; 24];
+   
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &black_pixel,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4),
+                    rows_per_image: Some(1),
+                },
+                wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 6 },
+            );
+            
+
+            let view = texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::Cube),
+                ..Default::default()
+            });
+
+            GpuTexture {
+                view,
+                image_id: Default::default(),
+                version: 0,
+                image_generation_id: 0,
+                image_data_version: 0,
+                last_used_frame: u64::MAX,
+            }
+        };
 
         let dummy_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Dummy Sampler"),
@@ -301,11 +353,12 @@ impl ResourceManager {
             gpu_textures: SecondaryMap::new(),
             gpu_samplers: SecondaryMap::new(),
             worlds: FxHashMap::default(),
-            gpu_buffers: gpu_buffers,
+            gpu_buffers,
             gpu_images: FxHashMap::default(),
             layout_cache: FxHashMap::default(),
             sampler_cache: FxHashMap::default(),
             dummy_texture: dummy_gpu_tex,
+            dummy_env_texture: dummy_env_tex,
             dummy_sampler,
             mipmap_generator,
             model_allocator,

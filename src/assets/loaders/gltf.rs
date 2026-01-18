@@ -269,7 +269,6 @@ impl<'a> GltfLoader<'a> {
                 let tex_handle = self.texture_map[info.texture().index()];
                 mat.set_map(Some(tex_handle));
                 
-                // 修正 sRGB 格式
                 if let Some(texture) = self.assets.get_texture(tex_handle) {
                     texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
                 }

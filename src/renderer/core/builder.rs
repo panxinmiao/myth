@@ -108,60 +108,7 @@ impl<'a> ResourceBuilder<'a> {
             Some(min_binding_size),
             Some(WgslStructName::Generator(T::wgsl_struct_def)),
         );
-        // self.layout_entries.push(wgpu::BindGroupLayoutEntry {
-        //     binding: self.next_binding_index,
-        //     visibility,
-        //     ty: wgpu::BindingType::Buffer {
-        //         ty: wgpu::BufferBindingType::Uniform,
-        //         has_dynamic_offset: true,
-        //         min_binding_size: std::num::NonZeroU64::new(min_binding_size),
-        //     },
-        //     count: None,
-        // });
-
-        // self.resources.push(BindingResource::Buffer {
-        //     buffer: buffer_ref.clone(),
-        //     offset: 0,
-        //     size: Some(min_binding_size),
-        //     data,
-        // });
-
-        // self.names.push(name.to_string());
-        // self.struct_generators.push(Some(WgslStructName::Generator(T::wgsl_struct_def)));
-        // self.next_binding_index += 1;
     }
-
-    /// 使用已克隆的 BufferRef 和数据添加动态 uniform（避免借用冲突）
-    // pub fn add_dynamic_uniform_raw<T: WgslStruct>(
-    //     &mut self, 
-    //     name: &str, 
-    //     buffer_ref: &BufferRef, 
-    //     data: Option<&'a [u8]>,
-    //     min_binding_size: u64, 
-    //     visibility: ShaderStages
-    // ) {
-    //     self.layout_entries.push(wgpu::BindGroupLayoutEntry {
-    //         binding: self.next_binding_index,
-    //         visibility,
-    //         ty: wgpu::BindingType::Buffer {
-    //             ty: wgpu::BufferBindingType::Uniform,
-    //             has_dynamic_offset: true,
-    //             min_binding_size: std::num::NonZeroU64::new(min_binding_size),
-    //         },
-    //         count: None,
-    //     });
-
-    //     self.resources.push(BindingResource::Buffer {
-    //         buffer: buffer_ref.clone(),
-    //         offset: 0,
-    //         size: Some(min_binding_size),
-    //         data,
-    //     });
-
-    //     self.names.push(name.to_string());
-    //     self.struct_generators.push(Some(WgslStructName::Generator(T::wgsl_struct_def)));
-    //     self.next_binding_index += 1;
-    // }
 
     pub fn add_texture(
         &mut self, 

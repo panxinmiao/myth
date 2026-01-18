@@ -15,7 +15,7 @@ pub mod app;
 pub mod errors;
 pub mod utils;
 
-pub use resources::{Mesh, Material, Texture, Image, Geometry};
+pub use resources::{Mesh, Material, Texture, Image, Geometry, Side};
 pub use assets::{AssetServer, ColorSpace};
 pub use scene::{Node, Scene, Camera, Light};
 pub use resources::primitives::*;

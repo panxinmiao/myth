@@ -165,8 +165,13 @@ impl Bindings for Geometry {
 }
 
 impl Bindings for Mesh {
-    fn define_bindings<'a>(&'a self, _builder: &mut ResourceBuilder<'a>) {
-        // 
+    fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
+        // todo: 是否需要检查 geometry features 包含 USE_MORPHING？
+        builder.add_uniform::<MorphUniforms>(
+            "morph_targets",
+            &self.morph_uniforms,
+            wgpu::ShaderStages::VERTEX
+        );
     }
 }
 
@@ -177,32 +182,30 @@ impl Bindings for Environment {
             self.uniforms(),
             wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
         );
-        
-        if !self.light_storage.read().is_empty() {
-            builder.add_storage::<GpuLightStorage>(
-                "lights",
-                self.light_storage.handle(),
-                Some(self.light_storage.as_bytes()),
-                true,
-                wgpu::ShaderStages::FRAGMENT
-            );
-        }
 
-        if let Some(env_map) = &self.bindings().env_map {
-            builder.add_texture(
-                "env_map", 
-                *env_map, 
-                wgpu::TextureSampleType::Float { filterable: true }, 
-                wgpu::TextureViewDimension::Cube, 
-                wgpu::ShaderStages::FRAGMENT
-            );
-            builder.add_sampler(
-                "env_map", 
-                *env_map, 
-                wgpu::SamplerBindingType::Filtering, 
-                wgpu::ShaderStages::FRAGMENT
-            );
-        }
+        builder.add_storage::<GpuLightStorage>(
+            "lights",
+            self.light_storage.handle(),
+            Some(self.light_storage.as_bytes()),
+            true,
+            wgpu::ShaderStages::FRAGMENT
+        );
+
+        // if let Some(env_map) = &self.bindings().env_map {
+        builder.add_texture(
+            "env_map", 
+            self.bindings().env_map.unwrap_or(TextureHandle::dummy_env_map()), 
+            wgpu::TextureSampleType::Float { filterable: true }, 
+            wgpu::TextureViewDimension::Cube, 
+            wgpu::ShaderStages::FRAGMENT
+        );
+        builder.add_sampler(
+            "env_map", 
+            self.bindings().env_map.unwrap_or(TextureHandle::dummy_env_map()), 
+            wgpu::SamplerBindingType::Filtering, 
+            wgpu::ShaderStages::FRAGMENT
+        );
+        // }
     }
 }
 

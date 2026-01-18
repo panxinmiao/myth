@@ -1,4 +1,4 @@
-use slotmap::{new_key_type, SlotMap};
+use slotmap::{KeyData, SlotMap, new_key_type};
 use rustc_hash::FxHashMap;
 use uuid::Uuid;
 use std::path::Path;
@@ -12,6 +12,27 @@ new_key_type! {
     pub struct GeometryHandle;
     pub struct MaterialHandle;
     pub struct TextureHandle;
+}
+
+const DUMMY_ENV_MAP_ID: u64 = 0xFFFFFFFF_FFFFFFFF; 
+// const DUMMY_SAMPLER_ID: u64 = 0xFFFFFFFF_FFFFFFFE;
+
+impl TextureHandle {
+    /// 创建一个系统内部使用的保留 Handle
+    /// index: 必须是一个极大的数，避免与 SlotMap 正常分配的 ID 冲突
+    #[inline]
+    pub fn system_reserved(index: u64) -> Self {
+        let data = KeyData::from_ffi(index); 
+        Self::from(data)
+    }
+
+    #[inline]
+    pub fn dummy_env_map() -> Self {
+        // 构造一个指向特定 ID 的 Handle
+        // 注意：这里假设你的 Handle 是基于 slotmap 的 new_key_type!
+        let data = KeyData::from_ffi(DUMMY_ENV_MAP_ID);
+        Self::from(data)
+    }
 }
 
 // 2. 资产服务器 (AssetServer)

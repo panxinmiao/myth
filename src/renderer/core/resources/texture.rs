@@ -142,6 +142,12 @@ impl ResourceManager {
     }
 
     pub fn prepare_texture(&mut self, assets: &AssetServer, handle: TextureHandle) {
+
+        if handle == TextureHandle::dummy_env_map(){
+            return; 
+        }
+
+
         let Some(texture_asset) = assets.get_texture(handle) else {
             log::warn!("Texture asset not found for handle: {:?}", handle);
             return;

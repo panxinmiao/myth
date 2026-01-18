@@ -107,13 +107,13 @@ fn main() -> anyhow::Result<()> {
 
     let cam_node_id = app.scene.add_camera(camera);
     if let Some(node) = app.scene.get_node_mut(cam_node_id) {
-        node.transform.position = Vec3::new(0.0, 0.0, 2.0);
+        node.transform.position = Vec3::new(0.0, 0.0, 4.0);
         node.transform.look_at(Vec3::ZERO, Vec3::Y);
     }
     app.scene.active_camera = Some(cam_node_id);
 
     // 7. 轨道控制器
-    let mut controls = OrbitControls::new(Vec3::new(0.0, 0.0, 2.0), Vec3::ZERO);
+    let mut controls = OrbitControls::new(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO);
     let mut fps_counter = FpsCounter::new();
 
     // 8. 更新回调
