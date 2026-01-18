@@ -1,0 +1,560 @@
+//! GPU 资源管理器
+//!
+//! 负责 GPU 端资源的创建、更新和管理
+//! 
+//! 采用模块化设计，将不同职责拆分到独立文件中：
+//! - buffer.rs: Buffer 相关操作
+//! - texture.rs: Texture 和 Image 相关操作  
+//! - geometry.rs: Geometry 相关操作
+//! - material.rs: Material 相关操作
+//! - binding.rs: BindGroup 相关操作
+//! - allocator.rs: ModelBufferAllocator
+
+mod allocator;
+mod buffer;
+mod texture;
+mod geometry;
+mod material;
+mod binding;
+
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::borrow::Cow;
+
+use glam::Mat4;
+use slotmap::SecondaryMap;
+use core::ops::Range;
+use rustc_hash::FxHashMap;
+
+use crate::resources::texture::{Texture, TextureSampler};
+
+use crate::scene::SkeletonKey;
+use crate::resources::buffer::CpuBuffer;
+use crate::assets::{GeometryHandle, MaterialHandle, TextureHandle};
+
+use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
+
+pub use allocator::ModelBufferAllocator;
+
+static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(0);
+
+pub fn generate_resource_id() -> u64 {
+    NEXT_RESOURCE_ID.fetch_add(1, Ordering::Relaxed)
+}
+
+// ============================================================================
+// GPU 资源包装器
+// ============================================================================
+
+pub struct GpuBuffer {
+    pub id: u64,
+    pub buffer: wgpu::Buffer,
+    pub size: u64,
+    pub usage: wgpu::BufferUsages,
+    pub label: String,
+    pub last_used_frame: u64,
+    pub version: u64,
+    pub last_uploaded_version: u64,
+    shadow_data: Option<Vec<u8>>,
+}
+
+impl GpuBuffer {
+    pub fn new(device: &wgpu::Device, data: &[u8], usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
+        use wgpu::util::DeviceExt;
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label,
+            contents: data,
+            usage,
+        });
+        let id = generate_resource_id();
+
+        Self {
+            id,
+            buffer,
+            size: data.len() as u64,
+            usage,
+            label: label.unwrap_or("Buffer").to_string(),
+            last_used_frame: 0,
+            version: 0,
+            last_uploaded_version: 0,
+            shadow_data: None,
+        }
+    }
+
+    pub fn enable_shadow_copy(&mut self) {
+        if self.shadow_data.is_none() {
+            self.shadow_data = Some(Vec::new());
+        }
+    }
+
+    pub fn update_with_data(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) -> bool {
+        if let Some(prev) = &mut self.shadow_data {
+            if prev == data {
+                return false;
+            }
+            if prev.len() != data.len() {
+                *prev = vec![0u8; data.len()];
+            }
+            prev.copy_from_slice(data);
+        }
+        self.write_to_gpu(device, queue, data)
+    }
+
+    pub fn update_with_version(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8], new_version: u64) -> bool {
+        if new_version <= self.version {
+            return false;
+        }
+        self.version = new_version;
+        self.write_to_gpu(device, queue, data)
+    }
+
+    fn write_to_gpu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) -> bool {
+        let new_size = data.len() as u64;
+        if new_size > self.size {
+            self.resize(device, new_size);
+            queue.write_buffer(&self.buffer, 0, data);
+            return true;
+        }
+        queue.write_buffer(&self.buffer, 0, data);
+        false
+    }
+
+    fn resize(&mut self, device: &wgpu::Device, new_size: u64) {
+        self.buffer.destroy();
+        self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(&self.label),
+            size: new_size,
+            usage: self.usage,
+            mapped_at_creation: false,
+        });
+        self.size = new_size;
+        self.id = generate_resource_id();
+    }
+}
+
+pub struct GpuTexture {
+    pub view: wgpu::TextureView,
+    pub image_id: u64,
+    pub image_generation_id: u64,
+    pub version: u64,
+    pub image_data_version: u64,
+    pub last_used_frame: u64,
+}
+
+pub struct GpuImage {
+    pub texture: wgpu::Texture,
+    pub id: u64,
+    pub version: u64,
+    pub generation_id: u64,
+    pub width: u32,
+    pub height: u32,
+    pub depth: u32,
+    pub format: wgpu::TextureFormat,
+    pub mip_level_count: u32,
+    pub usage: wgpu::TextureUsages,
+    pub mipmaps_generated: bool,
+    pub last_used_frame: u64,
+}
+
+pub struct GpuGeometry {
+    pub layout_info: Arc<GeneratedVertexLayout>,
+    pub vertex_buffers: Vec<wgpu::Buffer>,
+    pub vertex_buffer_ids: Vec<u64>,
+    pub index_buffer: Option<(wgpu::Buffer, wgpu::IndexFormat, u32, u64)>,
+    pub draw_range: Range<u32>,
+    pub instance_range: Range<u32>,
+    pub version: u64,
+    pub last_data_version: u64,
+    pub last_used_frame: u64,
+}
+
+pub struct GpuMaterial {
+    pub bind_group: wgpu::BindGroup,
+    pub bind_group_id: u64,
+    pub layout: wgpu::BindGroupLayout,
+    pub layout_id: u64,
+    pub binding_wgsl: String,
+    pub uniform_buffers: Vec<u64>,
+    pub last_data_version: u64,
+    pub last_binding_version: u64,
+    pub last_layout_version: u64,
+    pub last_used_frame: u64,
+}
+
+pub struct GpuEnvironment {
+    pub bind_group: wgpu::BindGroup,
+    pub bind_group_id: u64,
+    pub layout: wgpu::BindGroupLayout,
+    pub layout_id: u64,
+    pub binding_wgsl: String,
+    pub last_uniform_version: u64,
+    pub last_binding_version: u64,
+    pub last_layout_version: u64,
+    pub last_render_state_version: u64,
+    pub last_used_frame: u64,
+}
+
+// ============================================================================
+// Mipmap Generator
+// ============================================================================
+
+const BLIT_WGSL: &str = r#"
+struct VertexOutput {
+    @builtin(position) position : vec4<f32>,
+    @location(0) uv : vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertexIndex : u32) -> VertexOutput {
+    var pos = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 3.0, -1.0),
+        vec2<f32>(-1.0,  3.0)
+    );
+    var output : VertexOutput;
+    output.position = vec4<f32>(pos[vertexIndex], 0.0, 1.0);
+    output.uv = pos[vertexIndex] * 0.5 + 0.5;
+    output.uv.y = 1.0 - output.uv.y;
+    return output;
+}
+
+@group(0) @binding(0) var t_diffuse : texture_2d<f32>;
+@group(0) @binding(1) var s_diffuse : sampler;
+
+@fragment
+fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
+    return textureSample(t_diffuse, s_diffuse, in.uv);
+}
+"#;
+
+pub struct MipmapGenerator {
+    layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    shader: wgpu::ShaderModule,
+    pipelines: FxHashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+}
+
+impl MipmapGenerator {
+    pub fn new(device: &wgpu::Device) -> Self {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Mipmap Blit Shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(BLIT_WGSL)),
+        });
+
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Mipmap Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Mipmap Sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+
+        Self {
+            layout,
+            sampler,
+            shader,
+            pipelines: FxHashMap::default(),
+        }
+    }
+
+    fn get_pipeline(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
+        self.pipelines.entry(format).or_insert_with(|| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some(&format!("Mipmap Pipeline {:?}", format)),
+                layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Mipmap Pipeline Layout"),
+                    bind_group_layouts: &[&self.layout],
+                    immediate_size: 0,
+                })),
+                vertex: wgpu::VertexState {
+                    module: &self.shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: Default::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: Default::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: None,
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        }).clone()
+    }
+
+    pub fn generate(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, texture: &wgpu::Texture, mip_count: u32) {
+        if mip_count < 2 { return; }
+
+        let format = texture.format();
+        let pipeline = self.get_pipeline(device, format);
+        let layer_count = texture.depth_or_array_layers();
+
+        for layer in 0..layer_count {
+            for i in 0..mip_count - 1 {
+                let src_view = texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("Mipmap Src"),
+                    format: None,
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    aspect: wgpu::TextureAspect::All,
+                    base_mip_level: i,
+                    mip_level_count: Some(1),
+                    base_array_layer: layer,
+                    array_layer_count: Some(1),
+                    usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
+                });
+
+                let dst_view = texture.create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("Mipmap Dst"),
+                    format: None,
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    aspect: wgpu::TextureAspect::All,
+                    base_mip_level: i + 1,
+                    mip_level_count: Some(1),
+                    base_array_layer: layer,
+                    array_layer_count: Some(1),
+                    usage: Some(wgpu::TextureUsages::RENDER_ATTACHMENT),
+                });
+
+                let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Mipmap BG"),
+                    layout: &self.layout,
+                    entries: &[
+                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&src_view) },
+                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                    ],
+                });
+
+                let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("Mipmap Pass"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &dst_view,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                            store: wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
+                rpass.set_pipeline(&pipeline);
+                rpass.set_bind_group(0, &bind_group, &[]);
+                rpass.draw(0..3, 0..1);
+            }
+        }
+    }
+}
+
+// ============================================================================
+// 紧凑的 BindGroup 缓存键
+// ============================================================================
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct ObjectBindGroupKey {
+    pub geo_id: Option<GeometryHandle>,
+    pub model_buffer_id: u64,
+    pub skeleton_id: Option<SkeletonKey>,
+    pub morph_buffer_id: Option<u64>,
+}
+
+/// 预缓存的 BindGroup 查找键
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CachedBindGroupId {
+    pub bind_group_id: u64,
+    pub model_buffer_id: u64,
+}
+
+impl CachedBindGroupId {
+    #[inline]
+    pub fn is_valid(&self, current_model_buffer_id: u64) -> bool {
+        self.model_buffer_id == current_model_buffer_id
+    }
+}
+
+#[derive(Clone)]
+pub struct ObjectBindingData {
+    pub layout: wgpu::BindGroupLayout,
+    pub bind_group: wgpu::BindGroup,
+    pub bind_group_id: u64,
+    pub binding_wgsl: String,
+    pub cached_id: CachedBindGroupId,
+}
+
+// ============================================================================
+// Resource Manager 主结构
+// ============================================================================
+
+pub struct ResourceManager {
+    pub(crate) device: wgpu::Device,
+    pub(crate) queue: wgpu::Queue,
+    pub(crate) frame_index: u64,
+
+    pub(crate) gpu_geometries: SecondaryMap<GeometryHandle, GpuGeometry>,
+    pub(crate) gpu_materials: SecondaryMap<MaterialHandle, GpuMaterial>,
+    pub(crate) gpu_textures: SecondaryMap<TextureHandle, GpuTexture>,
+    pub(crate) gpu_samplers: SecondaryMap<TextureHandle, wgpu::Sampler>,
+
+    pub(crate) worlds: FxHashMap<u64, GpuEnvironment>,
+    pub(crate) gpu_buffers: FxHashMap<u64, GpuBuffer>,
+    pub(crate) gpu_images: FxHashMap<u64, GpuImage>,
+
+    pub(crate) sampler_cache: FxHashMap<TextureSampler, wgpu::Sampler>,
+    pub(crate) layout_cache: FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
+
+    pub(crate) dummy_texture: GpuTexture,
+    pub(crate) dummy_sampler: wgpu::Sampler,
+    pub(crate) mipmap_generator: MipmapGenerator,
+
+    // === Model Buffer Allocator ===
+    pub(crate) model_allocator: ModelBufferAllocator,
+
+    // === Object BindGroup 缓存 ===
+    pub(crate) object_bind_group_cache: FxHashMap<ObjectBindGroupKey, ObjectBindingData>,
+    pub(crate) bind_group_id_lookup: FxHashMap<u64, ObjectBindingData>,
+
+    // === 骨骼 Buffer ===
+    pub(crate) skeleton_buffers: FxHashMap<SkeletonKey, CpuBuffer<Vec<Mat4>>>,
+}
+
+impl ResourceManager {
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        let dummy_tex = Texture::new_2d(Some("dummy"), 1, 1, Some(vec![255, 255, 255, 255]), wgpu::TextureFormat::Rgba8Unorm);
+        let dummy_gpu_image = GpuImage::new(&device, &queue, &dummy_tex.image, 1, wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
+        let dummy_gpu_tex = GpuTexture::new(&dummy_tex, &dummy_gpu_image);
+
+        let dummy_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Dummy Sampler"),
+            ..Default::default()
+        });
+
+        let mipmap_generator = MipmapGenerator::new(&device);
+        let model_allocator = ModelBufferAllocator::new();
+
+        Self {
+            device,
+            queue,
+            frame_index: 0,
+            gpu_geometries: SecondaryMap::new(),
+            gpu_materials: SecondaryMap::new(),
+            gpu_textures: SecondaryMap::new(),
+            gpu_samplers: SecondaryMap::new(),
+            worlds: FxHashMap::default(),
+            gpu_buffers: FxHashMap::default(),
+            gpu_images: FxHashMap::default(),
+            layout_cache: FxHashMap::default(),
+            sampler_cache: FxHashMap::default(),
+            dummy_texture: dummy_gpu_tex,
+            dummy_sampler,
+            mipmap_generator,
+            model_allocator,
+            object_bind_group_cache: FxHashMap::default(),
+            bind_group_id_lookup: FxHashMap::default(),
+            skeleton_buffers: FxHashMap::default(),
+        }
+    }
+
+    pub fn next_frame(&mut self) {
+        self.frame_index += 1;
+    }
+
+    pub fn frame_index(&self) -> u64 {
+        self.frame_index
+    }
+
+    /// 每帧开始时重置 Model Buffer Allocator
+    pub fn reset_model_buffer(&mut self) {
+        self.model_allocator.reset();
+    }
+
+    /// 分配一个 Model Uniform，返回字节偏移量
+    #[inline]
+    pub fn allocate_model_uniform(&mut self, data: crate::resources::uniforms::DynamicModelUniforms) -> u32 {
+        self.model_allocator.allocate(data)
+    }
+
+    /// 每帧结束前上传 Model Buffer 到 GPU
+    pub fn upload_model_buffer(&mut self) {
+        if self.model_allocator.is_empty() {
+            return;
+        }
+
+        let (needs_recreate, data_bytes) = self.model_allocator.prepare_upload();
+        
+        if needs_recreate {
+            // Buffer 重建后，所有缓存都失效
+            self.object_bind_group_cache.clear();
+            self.bind_group_id_lookup.clear();
+        }
+
+        let handle = self.model_allocator.buffer_handle().clone();
+        self.write_buffer(&handle, &data_bytes);
+    }
+
+    /// 获取当前 Model Buffer 的 ID，用于缓存验证
+    #[inline]
+    pub fn model_buffer_id(&self) -> u64 {
+        self.model_allocator.buffer_id()
+    }
+
+    /// 通过缓存的 ID 快速获取 BindGroup 数据
+    #[inline]
+    pub fn get_cached_bind_group(&self, cached_id: CachedBindGroupId) -> Option<&ObjectBindingData> {
+        if cached_id.is_valid(self.model_buffer_id()) {
+            self.bind_group_id_lookup.get(&cached_id.bind_group_id)
+        } else {
+            None
+        }
+    }
+
+    pub fn prune(&mut self, ttl_frames: u64) {
+        if self.frame_index < ttl_frames { return; }
+        let cutoff = self.frame_index - ttl_frames;
+
+        self.gpu_geometries.retain(|_, v| v.last_used_frame >= cutoff);
+        self.gpu_materials.retain(|_, v| v.last_used_frame >= cutoff);
+        self.gpu_textures.retain(|_, v| v.last_used_frame >= cutoff);
+        self.gpu_samplers.retain(|k, _| self.gpu_textures.contains_key(k));
+        self.gpu_buffers.retain(|_, v| v.last_used_frame >= cutoff);
+        self.gpu_images.retain(|_, v| v.last_used_frame >= cutoff);
+        self.worlds.retain(|_, v| v.last_used_frame >= cutoff);
+    }
+}

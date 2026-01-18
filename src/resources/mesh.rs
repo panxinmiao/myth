@@ -1,6 +1,6 @@
 use thunderdome::Index;
 use crate::assets::{GeometryHandle, MaterialHandle};
-use crate::renderer::managers::CachedBindGroupId;
+use crate::renderer::core::CachedBindGroupId;
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::uniforms::MorphUniforms;
 

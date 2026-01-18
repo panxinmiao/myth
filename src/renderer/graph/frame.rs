@@ -14,10 +14,9 @@ use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::resources::GeometryFeatures;
 use crate::resources::uniforms::DynamicModelUniforms;
 
-use crate::renderer::core::{WgpuContext, ResourceManager};
+use crate::renderer::core::{WgpuContext, ResourceManager, ObjectBindingData};
 use crate::renderer::graph::{TrackedRenderPass, RenderState};
 use crate::renderer::graph::extracted::ExtractedScene;
-use crate::renderer::managers::{ModelManager, SkeletonManager, ObjectBindingData};
 use crate::renderer::pipeline::{PipelineCache, PipelineKey, FastPipelineKey};
 
 /// 渲染排序键 (Pipeline ID + Material ID + Depth)
@@ -93,10 +92,8 @@ impl RenderFrame {
         &mut self,
         wgpu_ctx: &mut WgpuContext,
         resource_manager: &mut ResourceManager,
-        model_manager: &mut ModelManager,
-        skeleton_manager: &mut SkeletonManager,
         pipeline_cache: &mut PipelineCache,
-        scene: &mut Scene,  // 改为可变引用以支持回写缓存
+        scene: &mut Scene,
         camera: &Camera,
         assets: &AssetServer,
         time: f32,
@@ -133,7 +130,7 @@ impl RenderFrame {
         // Prepare 阶段：准备 GPU 资源，使用快速路径
         // ========================================================================
         self.prepare_global_resources(resource_manager, assets, &scene.environment, camera, time);
-        self.upload_skeletons_extracted(resource_manager, skeleton_manager, &self.extracted_scene);
+        self.upload_skeletons_extracted(resource_manager, &self.extracted_scene);
 
         // 复用命令列表内存
         self.opaque_commands.clear();
@@ -142,14 +139,12 @@ impl RenderFrame {
         self.prepare_and_sort_commands_fast(
             wgpu_ctx,
             resource_manager,
-            model_manager,
-            skeleton_manager,
             pipeline_cache,
             assets,
-            scene, // 传入可变引用以便回写缓存
+            scene,
         );
         
-        self.upload_dynamic_uniforms_reuse(resource_manager, model_manager);
+        self.upload_dynamic_uniforms_reuse(resource_manager);
 
         // ========================================================================
         // Render 阶段：执行实际的渲染命令
@@ -214,11 +209,10 @@ impl RenderFrame {
     fn upload_skeletons_extracted(
         &self,
         resource_manager: &mut ResourceManager,
-        skeleton_manager: &mut SkeletonManager,
         extracted: &ExtractedScene,
     ) {
         for skel in &extracted.skeletons {
-            skeleton_manager.update(resource_manager, skel.skeleton_key, &skel.joint_matrices);
+            resource_manager.prepare_skeleton(skel.skeleton_key, &skel.joint_matrices);
         }
     }
 
@@ -233,13 +227,11 @@ impl RenderFrame {
         &mut self,
         wgpu_ctx: &WgpuContext,
         resource_manager: &mut ResourceManager,
-        model_manager: &mut ModelManager,
-        skeleton_manager: &SkeletonManager,
         pipeline_cache: &mut PipelineCache,
         assets: &AssetServer,
         scene: &mut Scene,
     ) {
-        let model_buffer_id = model_manager.model_buffer_id();
+        let model_buffer_id = resource_manager.model_buffer_id();
         
         // 遍历提取的渲染项
         for item_idx in 0..self.extracted_scene.render_items.len() {
@@ -272,14 +264,12 @@ impl RenderFrame {
             let object_data = if let Some(cached_id) = item.cached_bind_group_id {
                 if cached_id.is_valid(model_buffer_id) {
                     // 快速路径成功！直接使用缓存
-                    if let Some(data) = model_manager.get_cached_bind_group(cached_id) {
+                    if let Some(data) = resource_manager.get_cached_bind_group(cached_id) {
                         data.clone()
                     } else {
                         // 缓存失效，走慢路径
-                        model_manager.prepare_bind_group(
-                            resource_manager,
+                        resource_manager.prepare_object_bind_group(
                             assets,
-                            skeleton_manager,
                             item.geometry,
                             geometry,
                             mesh,
@@ -288,10 +278,8 @@ impl RenderFrame {
                     }
                 } else {
                     // Model buffer 已重建，缓存失效
-                    model_manager.prepare_bind_group(
-                        resource_manager,
+                    resource_manager.prepare_object_bind_group(
                         assets,
-                        skeleton_manager,
                         item.geometry,
                         geometry,
                         mesh,
@@ -300,10 +288,8 @@ impl RenderFrame {
                 }
             } else {
                 // 没有缓存，走慢路径
-                model_manager.prepare_bind_group(
-                    resource_manager,
+                resource_manager.prepare_object_bind_group(
                     assets,
-                    skeleton_manager,
                     item.geometry,
                     geometry,
                     mesh,
@@ -415,46 +401,45 @@ impl RenderFrame {
     fn upload_dynamic_uniforms_reuse(
         &mut self,
         resource_manager: &mut ResourceManager,
-        model_manager: &mut ModelManager,
     ) {
         let total_count = self.opaque_commands.len() + self.transparent_commands.len();
         if total_count == 0 { return; }
 
-        let mut data = Vec::with_capacity(total_count);
-        let dynamic_stride = std::mem::size_of::<DynamicModelUniforms>() as u32;
-        
-        // 处理不透明命令
-        for (i, cmd) in self.opaque_commands.iter_mut().enumerate() {
+        // 重置 allocator 开始新的一帧
+        resource_manager.reset_model_buffer();
+
+        // 处理不透明命令 - 使用 allocator 分配
+        for cmd in self.opaque_commands.iter_mut() {
             let world_matrix_inverse = cmd.model_matrix.inverse();
             let normal_matrix = Mat3A::from_mat4(world_matrix_inverse.transpose());
 
-            data.push(DynamicModelUniforms {
+            let offset = resource_manager.allocate_model_uniform(DynamicModelUniforms {
                 world_matrix: cmd.model_matrix,
                 world_matrix_inverse,
                 normal_matrix,
                 ..Default::default()
             });
 
-            cmd.dynamic_offset = i as u32 * dynamic_stride;
+            cmd.dynamic_offset = offset;
         }
 
-        // 处理透明命令
-        let opaque_len = self.opaque_commands.len();
-        for (i, cmd) in self.transparent_commands.iter_mut().enumerate() {
+        // 处理透明命令 - 使用 allocator 分配
+        for cmd in self.transparent_commands.iter_mut() {
             let world_matrix_inverse = cmd.model_matrix.inverse();
             let normal_matrix = Mat3A::from_mat4(world_matrix_inverse.transpose());
 
-            data.push(DynamicModelUniforms {
+            let offset = resource_manager.allocate_model_uniform(DynamicModelUniforms {
                 world_matrix: cmd.model_matrix,
                 world_matrix_inverse,
                 normal_matrix,
                 ..Default::default()
             });
 
-            cmd.dynamic_offset = (opaque_len + i) as u32 * dynamic_stride;
+            cmd.dynamic_offset = offset;
         }
 
-        model_manager.write_uniforms(resource_manager, data);
+        // 上传到 GPU
+        resource_manager.upload_model_buffer();
     }
 
     fn draw_list<'pass>(

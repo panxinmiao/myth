@@ -1,9 +1,8 @@
 //! 渲染器模块
 //!
-//! 负责将 Scene 绘制到屏幕，采用 Core - Graph - Managers - Pipeline 分层架构：
+//! 负责将 Scene 绘制到屏幕，采用 Core - Graph - Pipeline 分层架构：
 //! - core: WGPU 上下文封装（Device, Queue, Surface, ResourceManager）
 //! - graph: 渲染管线组织（RenderFrame, Pass, Sort）
-//! - managers: 各类数据的 GPU 映射管理器（Model, Skeleton, Light）
 //! - pipeline: PSO 缓存与构建
 
 pub mod core;
@@ -22,7 +21,6 @@ use crate::errors::Result;
 
 use self::core::{WgpuContext, ResourceManager};
 use self::graph::RenderFrame;
-use self::managers::{ModelManager, SkeletonManager};
 use self::pipeline::PipelineCache;
 use self::settings::RenderSettings;
 
@@ -37,8 +35,6 @@ pub struct Renderer {
 struct RendererState {
     wgpu_ctx: WgpuContext,
     resource_manager: ResourceManager,
-    model_manager: ModelManager,
-    skeleton_manager: SkeletonManager,
     pipeline_cache: PipelineCache,
     render_frame: RenderFrame,
 }
@@ -63,13 +59,11 @@ impl Renderer {
         // 1. 创建 WGPU 上下文
         let wgpu_ctx = WgpuContext::new(window, &self.settings).await?;
 
-        // 2. 初始化子系统
-        let mut resource_manager = ResourceManager::new(
+        // 2. 初始化资源管理器
+        let resource_manager = ResourceManager::new(
             wgpu_ctx.device.clone(), 
             wgpu_ctx.queue.clone()
         );
-        let model_manager = ModelManager::new(&mut resource_manager);
-        let skeleton_manager = SkeletonManager::new();
 
         // 3. 创建渲染帧管理器
         let render_frame = RenderFrame::new();
@@ -78,8 +72,6 @@ impl Renderer {
         self.context = Some(RendererState {
             wgpu_ctx,
             resource_manager,
-            model_manager,
-            skeleton_manager,
             pipeline_cache: PipelineCache::new(),
             render_frame,
         });
@@ -103,8 +95,6 @@ impl Renderer {
             state.render_frame.render(
                 &mut state.wgpu_ctx,
                 &mut state.resource_manager,
-                &mut state.model_manager,
-                &mut state.skeleton_manager,
                 &mut state.pipeline_cache,
                 scene,
                 camera,

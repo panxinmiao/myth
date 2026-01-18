@@ -16,7 +16,7 @@ use crate::scene::{NodeIndex, Scene, SkeletonKey, MeshKey};
 use crate::scene::skeleton::SkinBinding;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::scene::camera::Camera;
-use crate::renderer::managers::CachedBindGroupId;
+use crate::renderer::core::CachedBindGroupId;
 
 /// 精简的渲染项，只包含 GPU 需要的数据
 /// 
