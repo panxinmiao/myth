@@ -130,7 +130,7 @@ impl Bindings for Geometry {
                 builder.add_storage_buffer(
                     "morph_positions",
                     buffer,
-                    data,
+                    Some(data),
                     true,
                     wgpu::ShaderStages::VERTEX,
                     Some(crate::renderer::core::builder::WgslStructName::Name("f32".into()))
@@ -142,7 +142,7 @@ impl Bindings for Geometry {
                 builder.add_storage_buffer(
                     "morph_normals",
                     buffer,
-                    data,
+                    Some(data),
                     true,
                     wgpu::ShaderStages::VERTEX,
                     Some(crate::renderer::core::builder::WgslStructName::Name("f32".into()))
@@ -154,7 +154,7 @@ impl Bindings for Geometry {
                 builder.add_storage_buffer(
                     "morph_tangents",
                     buffer,
-                    data,
+                    Some(data),
                     true,
                     wgpu::ShaderStages::VERTEX,
                     Some(crate::renderer::core::builder::WgslStructName::Name("f32".into()))
@@ -182,7 +182,7 @@ impl Bindings for Environment {
             builder.add_storage::<GpuLightStorage>(
                 "lights",
                 self.light_storage.handle(),
-                self.light_storage.as_bytes(),
+                Some(self.light_storage.as_bytes()),
                 true,
                 wgpu::ShaderStages::FRAGMENT
             );

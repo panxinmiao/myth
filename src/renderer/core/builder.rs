@@ -41,12 +41,14 @@ impl<'a> ResourceBuilder<'a> {
         }
     }
 
-    pub fn add_buffer(
+    pub fn add_uniform_buffer(
         &mut self, 
         name: &str, 
         buffer: &BufferRef, 
         data: Option<&'a [u8]>,
         visibility: ShaderStages,
+        has_dynamic_offset: bool,
+        min_binding_size: Option<std::num::NonZeroU64>,
         struct_name: Option<WgslStructName>
     ) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
@@ -54,8 +56,8 @@ impl<'a> ResourceBuilder<'a> {
             visibility,
             ty: wgpu::BindingType::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: false,
-                min_binding_size: None,
+                has_dynamic_offset,
+                min_binding_size: min_binding_size,
             },
             count: None,
         });
@@ -78,11 +80,13 @@ impl<'a> ResourceBuilder<'a> {
         cpu_buffer: &'a CpuBuffer<T>, 
         visibility: ShaderStages
     ) {
-        self.add_buffer(
+        self.add_uniform_buffer(
             name, 
             cpu_buffer.handle(), 
             Some(cpu_buffer.as_bytes()), 
             visibility, 
+            false,
+            None,
             Some(WgslStructName::Generator(T::wgsl_struct_def))
         );
     }
@@ -90,64 +94,74 @@ impl<'a> ResourceBuilder<'a> {
     pub fn add_dynamic_uniform<T: WgslStruct>(
         &mut self, 
         name: &str, 
-        cpu_buffer: &'a CpuBuffer<Vec<T>>, 
-        min_binding_size: u64, 
+        buffer_ref: &BufferRef, 
+        data: Option<&'a [u8]>,
+        min_binding_size: std::num::NonZeroU64, 
         visibility: ShaderStages
     ) {
-        self.layout_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: self.next_binding_index,
+        self.add_uniform_buffer(
+            name, 
+            buffer_ref, 
+            data,
             visibility,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: true,
-                min_binding_size: std::num::NonZeroU64::new(min_binding_size),
-            },
-            count: None,
-        });
+            true,
+            Some(min_binding_size),
+            Some(WgslStructName::Generator(T::wgsl_struct_def)),
+        );
+        // self.layout_entries.push(wgpu::BindGroupLayoutEntry {
+        //     binding: self.next_binding_index,
+        //     visibility,
+        //     ty: wgpu::BindingType::Buffer {
+        //         ty: wgpu::BufferBindingType::Uniform,
+        //         has_dynamic_offset: true,
+        //         min_binding_size: std::num::NonZeroU64::new(min_binding_size),
+        //     },
+        //     count: None,
+        // });
 
-        self.resources.push(BindingResource::Buffer {
-            buffer: cpu_buffer.handle().clone(),
-            offset: 0,
-            size: Some(min_binding_size),
-            data: Some(cpu_buffer.as_bytes()),
-        });
+        // self.resources.push(BindingResource::Buffer {
+        //     buffer: buffer_ref.clone(),
+        //     offset: 0,
+        //     size: Some(min_binding_size),
+        //     data,
+        // });
 
-        self.names.push(name.to_string());
-        self.struct_generators.push(Some(WgslStructName::Generator(T::wgsl_struct_def)));
-        self.next_binding_index += 1;
+        // self.names.push(name.to_string());
+        // self.struct_generators.push(Some(WgslStructName::Generator(T::wgsl_struct_def)));
+        // self.next_binding_index += 1;
     }
 
     /// 使用已克隆的 BufferRef 和数据添加动态 uniform（避免借用冲突）
-    pub fn add_dynamic_uniform_raw<T: WgslStruct>(
-        &mut self, 
-        name: &str, 
-        buffer_ref: &BufferRef, 
-        data: &'a [u8],
-        min_binding_size: u64, 
-        visibility: ShaderStages
-    ) {
-        self.layout_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: self.next_binding_index,
-            visibility,
-            ty: wgpu::BindingType::Buffer {
-                ty: wgpu::BufferBindingType::Uniform,
-                has_dynamic_offset: true,
-                min_binding_size: std::num::NonZeroU64::new(min_binding_size),
-            },
-            count: None,
-        });
+    // pub fn add_dynamic_uniform_raw<T: WgslStruct>(
+    //     &mut self, 
+    //     name: &str, 
+    //     buffer_ref: &BufferRef, 
+    //     data: Option<&'a [u8]>,
+    //     min_binding_size: u64, 
+    //     visibility: ShaderStages
+    // ) {
+    //     self.layout_entries.push(wgpu::BindGroupLayoutEntry {
+    //         binding: self.next_binding_index,
+    //         visibility,
+    //         ty: wgpu::BindingType::Buffer {
+    //             ty: wgpu::BufferBindingType::Uniform,
+    //             has_dynamic_offset: true,
+    //             min_binding_size: std::num::NonZeroU64::new(min_binding_size),
+    //         },
+    //         count: None,
+    //     });
 
-        self.resources.push(BindingResource::Buffer {
-            buffer: buffer_ref.clone(),
-            offset: 0,
-            size: Some(min_binding_size),
-            data: Some(data),
-        });
+    //     self.resources.push(BindingResource::Buffer {
+    //         buffer: buffer_ref.clone(),
+    //         offset: 0,
+    //         size: Some(min_binding_size),
+    //         data,
+    //     });
 
-        self.names.push(name.to_string());
-        self.struct_generators.push(Some(WgslStructName::Generator(T::wgsl_struct_def)));
-        self.next_binding_index += 1;
-    }
+    //     self.names.push(name.to_string());
+    //     self.struct_generators.push(Some(WgslStructName::Generator(T::wgsl_struct_def)));
+    //     self.next_binding_index += 1;
+    // }
 
     pub fn add_texture(
         &mut self, 
@@ -198,7 +212,7 @@ impl<'a> ResourceBuilder<'a> {
         &mut self, 
         name: &str, 
         buffer: &BufferRef, 
-        data: &'a [u8], 
+        data: Option<&'a [u8]>, 
         read_only: bool, 
         visibility: ShaderStages, 
         struct_name: Option<WgslStructName>
@@ -222,7 +236,7 @@ impl<'a> ResourceBuilder<'a> {
             buffer: buffer.clone(),
             offset: 0,
             size: None,
-            data: Some(data),
+            data,
         });
 
         self.names.push(name.to_string());
@@ -230,24 +244,11 @@ impl<'a> ResourceBuilder<'a> {
         self.next_binding_index += 1;
     }
 
-    /// 使用已克隆的 BufferRef 和数据添加存储缓冲区（避免借用冲突）
-    pub fn add_storage_buffer_raw(
-        &mut self, 
-        name: &str, 
-        buffer: &BufferRef, 
-        data: &'a [u8], 
-        read_only: bool, 
-        visibility: ShaderStages, 
-        struct_name: Option<WgslStructName>
-    ) {
-        self.add_storage_buffer(name, buffer, data, read_only, visibility, struct_name);
-    }
-
     pub fn add_storage<T: WgslStruct>(
         &mut self,
         name: &str,
         buffer: &BufferRef,
-        data: &'a [u8],
+        data: Option<&'a [u8]>,
         read_only: bool,
         visibility: ShaderStages
     ) {

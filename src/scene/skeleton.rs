@@ -2,7 +2,7 @@ use glam::{Affine3A, Mat4};
 use uuid::Uuid;
 use thunderdome::Arena;
 
-use crate::scene::{Node, NodeIndex, SkeletonKey};
+use crate::{resources::buffer::CpuBuffer, scene::{Node, NodeIndex, SkeletonKey}};
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -41,14 +41,20 @@ pub struct Skeleton {
     // === 运行时数据 ===
     // 最终计算出的矩阵数组，每一帧都会更新
     // 数据流向：这里的 data -> copy to GPU Uniform Buffer
-    pub joint_matrices: Vec<Mat4>,
+    // pub joint_matrices: Vec<Mat4>,
+
+    pub joint_matrices: CpuBuffer<Vec<Mat4>>,
 }
 
 impl Skeleton {
     pub fn new(name: &str, bones: Vec<NodeIndex>, inverse_bind_matrices: Vec<Affine3A>) -> Self {
         let count = bones.len();
 
-        let joint_matrices = vec![Mat4::IDENTITY; count];
+        let joint_matrices = CpuBuffer::new(
+            vec![Mat4::IDENTITY; count],
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            Some(&format!("SkeletonJointMatrices_{}", name)),
+        );
         
         Self {
             id: Uuid::new_v4(),
@@ -80,7 +86,8 @@ impl Skeleton {
 
             // 3. 计算最终的 Joint Matrix
             // 顺序很重要：先应用 IBM (变回骨骼局部)，再应用当前骨骼世界变换，最后(可选)抵消 Mesh 自身变换
-            self.joint_matrices[i] = (root_matrix_inv * bone_world_matrix * ibm).into();
+            // self.joint_matrices[i] = (root_matrix_inv * bone_world_matrix * ibm).into();
+            self.joint_matrices.write()[i] = (root_matrix_inv * bone_world_matrix * ibm).into();
         }
     }
 }

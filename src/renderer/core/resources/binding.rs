@@ -11,7 +11,7 @@ use crate::resources::buffer::CpuBuffer;
 use crate::resources::geometry::{Geometry, GeometryFeatures};
 use crate::resources::uniforms::{DynamicModelUniforms, MorphUniforms};
 use crate::scene::SkeletonKey;
-use crate::scene::skeleton::SkinBinding;
+use crate::scene::skeleton::{Skeleton};
 use crate::scene::environment::Environment;
 
 use crate::renderer::core::binding::{BindingResource, Bindings};
@@ -30,24 +30,18 @@ impl ResourceManager {
     // ========================================================================
 
     /// 更新骨骼数据到 GPU
-    pub fn prepare_skeleton(&mut self, skeleton_id: SkeletonKey, matrices: &[Mat4]) {
-        // 先检查是否存在，如果不存在则插入
-        if !self.skeleton_buffers.contains_key(&skeleton_id) {
-            self.skeleton_buffers.insert(skeleton_id, CpuBuffer::new(
-                matrices.to_vec(),
-                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                Some("Skeleton")
-            ));
-        }
+    pub fn prepare_skeleton(&mut self, _skeleton_id: SkeletonKey, skeleton: &Skeleton) {
+        // 每帧强制上传 joint matrices 到 GPU
+        let buffer_ref = skeleton.joint_matrices.handle();
 
-        // 现在安全地更新数据
-        let buffer = self.skeleton_buffers.get_mut(&skeleton_id).unwrap();
-        buffer.write()[..matrices.len()].copy_from_slice(matrices);
-        
-        // 获取需要的信息后再调用 write_buffer
-        let handle = buffer.handle().clone();
-        let bytes_vec: Vec<u8> = buffer.as_bytes().to_vec();
-        self.write_buffer(&handle, &bytes_vec);
+        Self::write_buffer_internal(
+            &self.device,
+            &self.queue,
+            &mut self.gpu_buffers,
+            self.frame_index,
+            buffer_ref,
+            bytemuck::cast_slice(skeleton.joint_matrices.as_slice())
+        );
     }
 
     /// 获取骨骼 Buffer
@@ -60,7 +54,10 @@ impl ResourceManager {
     // ========================================================================
 
     /// 准备 Mesh 的基础资源（几何体、材质、Morph Uniform Buffer）
-    pub fn prepare_mesh(&mut self, assets: &AssetServer, mesh: &Mesh) {
+    pub fn prepare_mesh(&mut self, assets: &AssetServer, mesh: &mut Mesh) {
+
+        mesh.update_morph_uniforms();
+
         // 处理 morph uniform buffer
         let buf_id = mesh.morph_uniforms.handle().id;
         if let Some(gpu_buffer) = self.gpu_buffers.get_mut(&buf_id) {
@@ -84,28 +81,30 @@ impl ResourceManager {
         geometry_handle: GeometryHandle,
         geometry: &Geometry,
         mesh: &Mesh,
-        skin_binding: Option<&SkinBinding>,
+        skeleton: Option<&Skeleton>,
     ) -> ObjectBindingData {
+
         let features = geometry.get_features();
         let is_static = !features.intersects(GeometryFeatures::USE_MORPHING | GeometryFeatures::USE_SKINNING);
 
-        let has_skin_binding = skin_binding.is_some();
+        let has_skeleton = skeleton.is_some();
         let geo_supports_skinning = features.contains(GeometryFeatures::USE_SKINNING);
-        let use_skinning = geo_supports_skinning && has_skin_binding;
+        let use_skinning = geo_supports_skinning && has_skeleton;
 
-        let skeleton_id = if use_skinning {
-            skin_binding.map(|s| s.skeleton)
-        } else {
-            None
-        };
 
         let model_buffer_id = self.model_allocator.buffer_id();
         let morph_buffer_id = Some(mesh.morph_uniforms.handle().id);
 
+        let skeleton_buffer_id = if use_skinning {
+            skeleton.as_ref().map(|skel| skel.joint_matrices.handle().id)
+        } else {
+            None
+        };
+
         let key = ObjectBindGroupKey {
             geo_id: if is_static { None } else { Some(geometry_handle) },
             model_buffer_id,
-            skeleton_id,
+            skeleton_buffer_id,
             morph_buffer_id,
         };
 
@@ -113,31 +112,17 @@ impl ResourceManager {
             return binding_data.clone();
         }
 
-        // 提取 skeleton buffer 信息（如果需要）
-        let skeleton_buffer_info = if use_skinning {
-            if let Some(skel_id) = skeleton_id {
-                self.skeleton_buffers.get(&skel_id)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
 
         // 提前提取需要的数据，避免借用冲突
         let min_binding_size = ModelBufferAllocator::uniform_stride();
         let model_buffer_ref = self.model_allocator.cpu_buffer().handle().clone();
-        let model_buffer_bytes = self.model_allocator.cpu_buffer().as_bytes().to_vec();
 
-        // 提取 skeleton buffer 的数据（如果需要）
-        let skeleton_data = skeleton_buffer_info.map(|cpu_buffer| {
-            (cpu_buffer.handle().clone(), cpu_buffer.as_bytes().to_vec())
-        });
 
         // 现在构建 ResourceBuilder - 不再借用 self
         let mut builder = ResourceBuilder::new();
 
-        builder.add_dynamic_uniform_raw::<DynamicModelUniforms>("model", &model_buffer_ref, &model_buffer_bytes, min_binding_size, ShaderStages::VERTEX);
+        // 添加 Model Uniform Buffer reference, 数据由 ModelBufferAllocator 管理
+        builder.add_dynamic_uniform::<DynamicModelUniforms>("model", &model_buffer_ref, None, min_binding_size, ShaderStages::VERTEX);
 
         mesh.define_bindings(&mut builder);
 
@@ -151,11 +136,12 @@ impl ResourceManager {
         }
         geometry.define_bindings(&mut builder);
 
-        if let Some((skel_handle, skel_bytes)) = &skeleton_data {
-            builder.add_storage_buffer_raw(
+        // 添加 Skeleton Buffer reference（数据由 ResourceManager prepare skeleton 管理）
+        if let Some(skeleton) = &skeleton {
+            builder.add_storage_buffer(
                 "skins", 
-                skel_handle, 
-                skel_bytes, 
+                skeleton.joint_matrices.handle(), 
+                None, 
                 true, 
                 ShaderStages::VERTEX,
                 Some(WgslStructName::Name("mat4x4<f32>".into()))
@@ -304,10 +290,10 @@ impl ResourceManager {
         let world_id = Self::compose_env_render_state_id(render_state.id, env.id);
 
         if let Some(gpu_env) = self.worlds.get_mut(&world_id) {
-            let uniform_match = gpu_env.last_uniform_version == env.uniforms().buffer.version;
+            let uniform_match = gpu_env.last_uniform_version == env.uniforms().version();
             let binding_match = gpu_env.last_binding_version == env.binding_version();
             let layout_match = gpu_env.last_layout_version == env.layout_version();
-            let render_state_match = render_state.uniforms().buffer.version == gpu_env.last_render_state_version;
+            let render_state_match = render_state.uniforms().version() == gpu_env.last_render_state_version;
 
             if uniform_match && binding_match && layout_match && render_state_match {
                 gpu_env.last_used_frame = self.frame_index;
@@ -328,8 +314,8 @@ impl ResourceManager {
 
         if !needs_new_bind_group {
             if let Some(gpu_env) = self.worlds.get_mut(&world_id) {
-                gpu_env.last_uniform_version = env.uniforms().buffer.version;
-                gpu_env.last_render_state_version = render_state.uniforms().buffer.version;
+                gpu_env.last_uniform_version = env.uniforms().version();
+                gpu_env.last_render_state_version = render_state.uniforms().version();
                 gpu_env.last_used_frame = self.frame_index;
             }
             return;
@@ -344,10 +330,10 @@ impl ResourceManager {
             layout,
             layout_id,
             binding_wgsl,
-            last_uniform_version: env.uniforms().buffer.version,
+            last_uniform_version: env.uniforms().version(),
             last_binding_version: env.binding_version(),
             last_layout_version: env.layout_version(),
-            last_render_state_version: render_state.uniforms().buffer.version,
+            last_render_state_version: render_state.uniforms().version(),
             last_used_frame: self.frame_index,
         };
         self.worlds.insert(world_id, gpu_world);

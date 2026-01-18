@@ -455,9 +455,9 @@ impl MaterialData {
     
     pub fn uniform_version(&self) -> u64 {
         match self {
-            Self::Basic(m) => m.uniforms.buffer.version,
-            Self::Phong(m) => m.uniforms.buffer.version,
-            Self::Standard(m) => m.uniforms.buffer.version,
+            Self::Basic(m) => m.uniforms.handle().version,
+            Self::Phong(m) => m.uniforms.handle().version,
+            Self::Standard(m) => m.uniforms.handle().version,
         }
     }
     

@@ -112,7 +112,7 @@ impl<'a, T: GpuData> Drop for BufferGuard<'a, T> {
 #[derive(Debug, Clone)]
 pub struct CpuBuffer<T: GpuData> {
     data: T,
-    pub buffer: BufferRef,
+    buffer: BufferRef,
 }
 
 impl<T: GpuData> CpuBuffer<T> {
@@ -151,6 +151,26 @@ impl<T: GpuData> CpuBuffer<T> {
     
     pub fn handle(&self) -> &BufferRef {
         &self.buffer
+    }
+
+    pub fn id(&self) -> u64 {
+        self.buffer.id
+    }
+
+    pub fn usage(&self) -> wgpu::BufferUsages {
+        self.buffer.usage
+    }
+
+    pub fn label(&self) -> Option<&str> {
+        self.buffer.label()
+    }
+
+    pub fn size(&self) -> usize {
+        self.buffer.size
+    }
+
+    pub fn version(&self) -> u64 {
+        self.buffer.version
     }
 
     pub fn as_bytes(&self) -> &[u8] {

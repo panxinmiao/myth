@@ -4,10 +4,11 @@
 //! 每一帧重置它
 
 use glam::{Mat3A, Mat4};
-use slotmap::Key;
+use slotmap::{Key, SlotMap};
 use log::{warn, error};
 
-use crate::scene::{NodeIndex, Scene};
+use crate::scene::skeleton::{Skeleton};
+use crate::scene::{NodeIndex, Scene, SkeletonKey};
 use crate::scene::camera::Camera;
 use crate::scene::environment::Environment;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
@@ -98,6 +99,7 @@ impl RenderFrame {
         assets: &AssetServer,
         time: f32,
     ) {
+
         resource_manager.next_frame();
 
         let output = match wgpu_ctx.surface.get_current_texture() {
@@ -110,12 +112,6 @@ impl RenderFrame {
         };
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // ========================================================================
-        // Extract 阶段：复用内存，避免每帧分配
-        // ========================================================================
-        self.extracted_scene.clear();
-        self.extracted_scene.extract_into(scene, camera, assets);
-        
         // 设置背景颜色
         if let Some(bg_color) = self.extracted_scene.background {
             self.clear_color = wgpu::Color {
@@ -127,16 +123,18 @@ impl RenderFrame {
         }
 
         // ========================================================================
+        // Extract 阶段：复用内存，避免每帧分配
+        // ========================================================================
+        self.extracted_scene.extract_into(scene, camera, assets);
+
+        // ========================================================================
         // Prepare 阶段：准备 GPU 资源，使用快速路径
         // ========================================================================
         self.prepare_global_resources(resource_manager, assets, &scene.environment, camera, time);
-        self.upload_skeletons_extracted(resource_manager, &self.extracted_scene);
 
-        // 复用命令列表内存
-        self.opaque_commands.clear();
-        self.transparent_commands.clear();
-        
-        self.prepare_and_sort_commands_fast(
+        self.upload_skeletons_extracted(resource_manager, &scene.skins, &self.extracted_scene);
+
+        self.prepare_and_sort_commands(
             wgpu_ctx,
             resource_manager,
             pipeline_cache,
@@ -144,7 +142,7 @@ impl RenderFrame {
             scene,
         );
         
-        self.upload_dynamic_uniforms_reuse(resource_manager);
+        self.upload_dynamic_uniforms(resource_manager);
 
         // ========================================================================
         // Render 阶段：执行实际的渲染命令
@@ -189,7 +187,7 @@ impl RenderFrame {
         output.present();
 
         if resource_manager.frame_index().is_multiple_of(60) {
-            resource_manager.prune(600);
+            resource_manager.prune(6000);
         }
     }
 
@@ -209,21 +207,35 @@ impl RenderFrame {
     fn upload_skeletons_extracted(
         &self,
         resource_manager: &mut ResourceManager,
+        skins: &SlotMap<SkeletonKey, Skeleton>,
         extracted: &ExtractedScene,
     ) {
+        let mut processed_skeletons = rustc_hash::FxHashSet::default();
+
         for skel in &extracted.skeletons {
-            resource_manager.prepare_skeleton(skel.skeleton_key, &skel.joint_matrices);
+            if processed_skeletons.contains(&skel.skeleton_key) {
+                continue;
+            }
+
+            let skeleton = match skins.get(skel.skeleton_key) {
+                Some(s) => s,
+                None => {
+                    warn!("Skeleton {:?} missing during upload", skel.skeleton_key);
+                    continue;
+                }
+            };
+            resource_manager.prepare_skeleton(skel.skeleton_key, skeleton);
+            processed_skeletons.insert(skel.skeleton_key);
         }
     }
 
-    /// 快速路径的渲染命令准备
+    /// 渲染命令准备
     /// 
     /// 优化点：
     /// 1. 使用缓存的 BindGroup ID 跳过 HashMap 查找
     /// 2. 复用命令列表内存
     /// 3. 回写缓存到 Mesh
-    #[allow(clippy::too_many_arguments)]
-    fn prepare_and_sort_commands_fast(
+    fn prepare_and_sort_commands(
         &mut self,
         wgpu_ctx: &WgpuContext,
         resource_manager: &mut ResourceManager,
@@ -231,6 +243,9 @@ impl RenderFrame {
         assets: &AssetServer,
         scene: &mut Scene,
     ) {
+        self.opaque_commands.clear();
+        self.transparent_commands.clear();
+
         let model_buffer_id = resource_manager.model_buffer_id();
         
         // 遍历提取的渲染项
@@ -254,11 +269,22 @@ impl RenderFrame {
                 continue;
             };
 
-            mesh.update_morph_uniforms();
-
             resource_manager.prepare_mesh(assets, mesh);
 
-            let skin_binding = item.skin_binding.as_ref();
+            // let skeleton_key = item.skeleton;
+
+            let skeleton = if let Some(skel_key) = item.skeleton {
+                scene.skins.get(skel_key)
+            } else {
+                None
+            };
+
+            // let skeleton_buffer = if let Some(skel_key) = skeleton_key {
+            //     let skeleton = scene.skins.get(skel_key);
+            //     skeleton.map(|skel| skel.joint_matrices)
+            // } else {
+            //     None
+            // };
 
             // ========== 快速路径：尝试使用缓存的 BindGroup ==========
             let object_data = if let Some(cached_id) = item.cached_bind_group_id {
@@ -273,7 +299,7 @@ impl RenderFrame {
                             item.geometry,
                             geometry,
                             mesh,
-                            skin_binding,
+                            skeleton,
                         )
                     }
                 } else {
@@ -283,7 +309,7 @@ impl RenderFrame {
                         item.geometry,
                         geometry,
                         mesh,
-                        skin_binding,
+                        skeleton,
                     )
                 }
             } else {
@@ -293,7 +319,7 @@ impl RenderFrame {
                     item.geometry,
                     geometry,
                     mesh,
-                    skin_binding,
+                    skeleton,
                 )
             };
 
@@ -317,7 +343,7 @@ impl RenderFrame {
             let mut geo_features = geometry.get_features();
             let mut instance_variants = 0;
 
-            if skin_binding.is_none() {
+            if skeleton.is_none() {
                 geo_features.remove(GeometryFeatures::USE_SKINNING);
                 instance_variants |= 1 << 0;
             }
@@ -398,15 +424,12 @@ impl RenderFrame {
     }
 
     /// 复用内存版本的 uniform 上传
-    fn upload_dynamic_uniforms_reuse(
+    fn upload_dynamic_uniforms(
         &mut self,
         resource_manager: &mut ResourceManager,
     ) {
         let total_count = self.opaque_commands.len() + self.transparent_commands.len();
         if total_count == 0 { return; }
-
-        // 重置 allocator 开始新的一帧
-        resource_manager.reset_model_buffer();
 
         // 处理不透明命令 - 使用 allocator 分配
         for cmd in self.opaque_commands.iter_mut() {

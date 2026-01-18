@@ -13,7 +13,6 @@ use glam::Mat4;
 
 use crate::scene::scene::SceneFeatures;
 use crate::scene::{NodeIndex, Scene, SkeletonKey, MeshKey};
-use crate::scene::skeleton::SkinBinding;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::scene::camera::Camera;
 use crate::renderer::core::CachedBindGroupId;
@@ -34,7 +33,7 @@ pub struct ExtractedRenderItem {
     /// 材质句柄 (8 bytes)
     pub material: MaterialHandle,
     /// 蒙皮绑定信息（可选）
-    pub skin_binding: Option<SkinBinding>,
+    pub skeleton: Option<SkeletonKey>,
     /// 到相机的距离平方（用于排序）
     pub distance_sq: f32,
     /// 缓存的 BindGroup ID（快速路径）
@@ -47,7 +46,7 @@ pub struct ExtractedRenderItem {
 #[derive(Clone)]
 pub struct ExtractedSkeleton {
     pub skeleton_key: SkeletonKey,
-    pub joint_matrices: Vec<Mat4>,
+    // pub joint_matrices: Vec<Mat4>,
 }
 
 /// 提取的场景数据
@@ -104,6 +103,7 @@ impl ExtractedScene {
     /// 
     /// 这是性能优化的关键：避免每帧分配新内存
     pub fn extract_into(&mut self, scene: &Scene, camera: &Camera, assets: &AssetServer) {
+        self.clear();
         self.extract_render_items(scene, camera, assets);
         self.extract_skeletons(scene);
         self.extract_environment(scene);
@@ -173,7 +173,7 @@ impl ExtractedScene {
                 world_matrix,
                 geometry: geo_handle,
                 material: mat_handle,
-                skin_binding: node.skin.clone(),
+                skeleton: node.skin.as_ref().map(|skin| skin.skeleton),
                 distance_sq,
                 cached_bind_group_id,
                 cached_pipeline_id,
@@ -183,10 +183,10 @@ impl ExtractedScene {
 
     /// 提取骨骼数据
     fn extract_skeletons(&mut self, scene: &Scene) {
-        for (skel_key, skeleton) in &scene.skins {
+        for (skel_key, _skeleton) in &scene.skins {
             self.skeletons.push(ExtractedSkeleton {
                 skeleton_key: skel_key,
-                joint_matrices: skeleton.joint_matrices.clone(),
+                // joint_matrices: skeleton.joint_matrices.clone(),
             });
         }
     }

@@ -3,6 +3,8 @@
 //! 纯逻辑结构，不持有 wgpu 资源，只管理字节和索引
 //! 每帧动态分配 Model Uniform 的 Offset
 
+use std::num::NonZero;
+
 use crate::resources::buffer::{BufferRef, CpuBuffer};
 use crate::resources::uniforms::DynamicModelUniforms;
 
@@ -11,7 +13,7 @@ use crate::resources::uniforms::DynamicModelUniforms;
 /// 负责管理 DynamicModelUniforms 的 CPU 端缓存和分配
 pub struct ModelBufferAllocator {
     /// CPU 端数据缓存
-    host_data: Vec<DynamicModelUniforms>,
+    // host_data: Vec<DynamicModelUniforms>,
     /// 当前帧写到的位置
     cursor: usize,
     /// Buffer 容量
@@ -34,7 +36,7 @@ impl ModelBufferAllocator {
         );
 
         Self {
-            host_data: Vec::with_capacity(initial_capacity),
+            // host_data: Vec::with_capacity(initial_capacity),
             cursor: 0,
             capacity: initial_capacity,
             buffer,
@@ -45,7 +47,7 @@ impl ModelBufferAllocator {
     /// 每帧开始时重置
     pub fn reset(&mut self) {
         self.cursor = 0;
-        self.host_data.clear();
+        // self.host_data.clear();
         self.needs_recreate = false;
     }
 
@@ -59,7 +61,8 @@ impl ModelBufferAllocator {
             self.expand_capacity();
         }
 
-        self.host_data.push(data);
+        // self.host_data.push(data);
+        self.buffer.write()[index] = data;
         
         // 返回字节偏移量
         (index * std::mem::size_of::<DynamicModelUniforms>()) as u32
@@ -82,20 +85,24 @@ impl ModelBufferAllocator {
         );
     }
 
-    /// 准备上传数据，返回 (是否需要重建, 数据字节)
-    pub fn prepare_upload(&mut self) -> (bool, Vec<u8>) {
-        // 将 host_data 写入 buffer
-        let mut buffer_data = self.buffer.write();
-        let len = self.host_data.len().min(buffer_data.len());
-        buffer_data[..len].copy_from_slice(&self.host_data[..len]);
-        drop(buffer_data);
-
-        let bytes = self.buffer.as_bytes().to_vec();
-        let needs_recreate = self.needs_recreate;
-        self.needs_recreate = false;
-
-        (needs_recreate, bytes)
+    pub fn need_recreate_buffer(&self) -> bool {
+        self.needs_recreate
     }
+
+    /// 准备上传数据，返回 (是否需要重建, 数据字节)
+    // pub fn prepare_upload(&mut self) -> (bool, Vec<u8>) {
+    //     // 将 host_data 写入 buffer
+    //     let mut buffer_data = self.buffer.write();
+    //     let len = self.host_data.len().min(buffer_data.len());
+    //     buffer_data[..len].copy_from_slice(&self.host_data[..len]);
+    //     drop(buffer_data);
+
+    //     let bytes = self.buffer.as_bytes().to_vec();
+    //     let needs_recreate = self.needs_recreate;
+    //     self.needs_recreate = false;
+
+    //     (needs_recreate, bytes)
+    // }
 
     /// 获取 Buffer 句柄
     pub fn buffer_handle(&self) -> &BufferRef {
@@ -123,8 +130,12 @@ impl ModelBufferAllocator {
     }
 
     /// 获取动态 uniform 的字节大小
-    pub fn uniform_stride() -> u64 {
-        std::mem::size_of::<DynamicModelUniforms>() as u64
+    pub fn uniform_stride() -> NonZero<u64> {
+        std::mem::size_of::<DynamicModelUniforms>()
+            .try_into()
+            .ok()
+            .and_then(NonZero::new)
+            .expect("DynamicModelUniforms size should be non-zero")
     }
 }
 
