@@ -170,6 +170,8 @@ bitflags! {
         const USE_TANGENT       = 1 << 3;
         const USE_MORPHING      = 1 << 4; // 变形
         const USE_SKINNING      = 1 << 5; // 骨骼
+        const USE_MORPH_NORMALS = 1 << 6; // Morph Normal 数据
+        const USE_MORPH_TANGENTS = 1 << 7; // Morph Tangent 数据
     }
 }
 
@@ -189,6 +191,23 @@ pub struct Geometry {
     pub morph_attributes: FxHashMap<String, Vec<Attribute>>,
 
     pub morph_target_names: Vec<String>,
+
+    /// Morph Target Storage Buffers (紧凑 f32 存储)
+    /// 布局: [ Target 0 所有顶点 | Target 1 所有顶点 | ... ]
+    /// 每个顶点存储 3 个 f32 (Position/Normal/Tangent displacement)
+    pub morph_position_buffer: Option<BufferRef>,
+    pub morph_normal_buffer: Option<BufferRef>,
+    pub morph_tangent_buffer: Option<BufferRef>,
+    
+    /// Morph Target 数据 (CPU 端保持以支持上传)
+    morph_position_data: Option<Vec<f32>>,
+    morph_normal_data: Option<Vec<f32>>,
+    morph_tangent_data: Option<Vec<f32>>,
+    
+    /// 每个 Target 的顶点数
+    pub morph_vertex_count: u32,
+    /// Morph Target 数量
+    pub morph_target_count: u32,
 
     pub topology: PrimitiveTopology,
     pub draw_range: Range<u32>,
@@ -214,6 +233,14 @@ impl Geometry {
             index_attribute: None,
             morph_attributes: FxHashMap::default(),
             morph_target_names: Vec::new(),
+            morph_position_buffer: None,
+            morph_normal_buffer: None,
+            morph_tangent_buffer: None,
+            morph_position_data: None,
+            morph_normal_data: None,
+            morph_tangent_data: None,
+            morph_vertex_count: 0,
+            morph_target_count: 0,
             topology: PrimitiveTopology::TriangleList,
             draw_range: 0..u32::MAX,
             bounding_box: None,
@@ -288,6 +315,126 @@ impl Geometry {
         let entry = self.morph_attributes.entry(morph_name.to_string()).or_insert_with(Vec::new);
         entry.push(attr);
         self.data_version = self.data_version.wrapping_add(1);
+    }
+
+    /// 从 morph_attributes 构建紧凑的 Storage Buffers
+    /// 布局: [ Target 0 所有顶点 | Target 1 所有顶点 | ... ]
+    /// 每个顶点存储 3 个 f32 (compact Vec3)
+    pub fn build_morph_storage_buffers(&mut self) {
+        // 获取 position morph targets
+        let position_attrs = self.morph_attributes.get("position");
+        
+        if position_attrs.is_none() || position_attrs.unwrap().is_empty() {
+            return;
+        }
+        
+        let position_attrs = position_attrs.unwrap();
+        let target_count = position_attrs.len();
+        
+        // 获取每个 target 的顶点数 (假设所有 target 顶点数相同)
+        let vertex_count = position_attrs.first()
+            .map(|attr| attr.count)
+            .unwrap_or(0);
+        
+        if vertex_count == 0 {
+            return;
+        }
+        
+        self.morph_target_count = target_count as u32;
+        self.morph_vertex_count = vertex_count;
+        
+        // 构建 position storage buffer (Target-Major 布局)
+        // 总大小 = target_count * vertex_count * 3 floats
+        let total_floats = target_count * vertex_count as usize * 3;
+        let mut position_data: Vec<f32> = Vec::with_capacity(total_floats);
+        
+        for attr in position_attrs {
+            if let Some(data) = &attr.data {
+                // 将 [u8] 转换为 [f32]
+                let floats: &[f32] = bytemuck::cast_slice(data.as_slice());
+                position_data.extend_from_slice(floats);
+            }
+        }
+        
+        if !position_data.is_empty() {
+            let buffer_size = position_data.len() * std::mem::size_of::<f32>();
+            self.morph_position_buffer = Some(BufferRef::new(
+                buffer_size,
+                BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                Some("MorphPositionStorage")
+            ));
+            self.morph_position_data = Some(position_data);
+        }
+        
+        // 构建 normal storage buffer (如果有)
+        if let Some(normal_attrs) = self.morph_attributes.get("normal") {
+            if !normal_attrs.is_empty() {
+                let mut normal_data: Vec<f32> = Vec::with_capacity(total_floats);
+                
+                for attr in normal_attrs {
+                    if let Some(data) = &attr.data {
+                        let floats: &[f32] = bytemuck::cast_slice(data.as_slice());
+                        normal_data.extend_from_slice(floats);
+                    }
+                }
+                
+                if !normal_data.is_empty() {
+                    let buffer_size = normal_data.len() * std::mem::size_of::<f32>();
+                    self.morph_normal_buffer = Some(BufferRef::new(
+                        buffer_size,
+                        BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                        Some("MorphNormalStorage")
+                    ));
+                    self.morph_normal_data = Some(normal_data);
+                }
+            }
+        }
+        
+        // 构建 tangent storage buffer (如果有)
+        if let Some(tangent_attrs) = self.morph_attributes.get("tangent") {
+            if !tangent_attrs.is_empty() {
+                let mut tangent_data: Vec<f32> = Vec::with_capacity(total_floats);
+                
+                for attr in tangent_attrs {
+                    if let Some(data) = &attr.data {
+                        let floats: &[f32] = bytemuck::cast_slice(data.as_slice());
+                        tangent_data.extend_from_slice(floats);
+                    }
+                }
+                
+                if !tangent_data.is_empty() {
+                    let buffer_size = tangent_data.len() * std::mem::size_of::<f32>();
+                    self.morph_tangent_buffer = Some(BufferRef::new(
+                        buffer_size,
+                        BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                        Some("MorphTangentStorage")
+                    ));
+                    self.morph_tangent_data = Some(tangent_data);
+                }
+            }
+        }
+        
+        self.data_version = self.data_version.wrapping_add(1);
+    }
+    
+    /// 获取 morph position 数据的字节切片
+    pub fn morph_position_bytes(&self) -> Option<&[u8]> {
+        self.morph_position_data.as_ref().map(|d| bytemuck::cast_slice(d.as_slice()))
+    }
+    
+    /// 获取 morph normal 数据的字节切片
+    pub fn morph_normal_bytes(&self) -> Option<&[u8]> {
+        self.morph_normal_data.as_ref().map(|d| bytemuck::cast_slice(d.as_slice()))
+    }
+    
+    /// 获取 morph tangent 数据的字节切片
+    pub fn morph_tangent_bytes(&self) -> Option<&[u8]> {
+        self.morph_tangent_data.as_ref().map(|d| bytemuck::cast_slice(d.as_slice()))
+    }
+    
+    /// 检查是否有 morph targets
+    pub fn has_morph_targets(&self) -> bool {
+        self.morph_target_count > 0 && self.morph_position_buffer.is_some()
     }
 
     pub fn set_indices(&mut self, indices: &[u16]) {
@@ -479,8 +626,17 @@ impl Geometry {
         if self.attributes.contains_key("tangent") {
             features |= GeometryFeatures::USE_TANGENT;
         }
-        if !self.morph_attributes.is_empty() {
+        
+        // Morph Target 特性检测
+        if self.has_morph_targets() {
             features |= GeometryFeatures::USE_MORPHING;
+            
+            if self.morph_normal_buffer.is_some() {
+                features |= GeometryFeatures::USE_MORPH_NORMALS;
+            }
+            if self.morph_tangent_buffer.is_some() {
+                features |= GeometryFeatures::USE_MORPH_TANGENTS;
+            }
         }
 
         let has_joints = self.attributes.contains_key("joints");

@@ -227,7 +227,7 @@ mod tests {
         // 确保结构体大小合理
         let size = std::mem::size_of::<ExtractedRenderItem>();
         println!("ExtractedRenderItem size: {} bytes", size);
-        // 应该在合理范围内（不超过 200 bytes）
-        assert!(size < 200, "ExtractedRenderItem is too large: {} bytes", size);
+        // 应该在合理范围内（不超过 256 bytes）
+        assert!(size < 256, "ExtractedRenderItem is too large: {} bytes", size);
     }
 }

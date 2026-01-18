@@ -390,7 +390,18 @@ impl<'a> GltfLoader<'a> {
                     self.assets.add_material(Material::new_standard(Vec4::ONE))
                 };
 
-                let engine_mesh = crate::resources::mesh::Mesh::new(geo_handle, mat_handle);
+                let mut engine_mesh = crate::resources::mesh::Mesh::new(geo_handle, mat_handle);
+                
+                // 如果 geometry 有 morph targets，初始化 mesh 的 morph target influences
+                if let Some(geometry) = self.assets.get_geometry(geo_handle) {
+                    if geometry.has_morph_targets() {
+                        engine_mesh.init_morph_targets(
+                            geometry.morph_target_count,
+                            geometry.morph_vertex_count
+                        );
+                    }
+                }
+                
                 let mesh_key = self.scene.meshes.insert(engine_mesh);
 
                 // 简化处理：目前只支持将第一个 primitive 挂载到节点
@@ -512,6 +523,9 @@ impl<'a> GltfLoader<'a> {
                 }
             }
         }
+
+        // === 3. 构建 Morph Storage Buffers ===
+        geometry.build_morph_storage_buffers();
 
         geometry.compute_bounding_volume();
 

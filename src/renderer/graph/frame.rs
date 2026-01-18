@@ -262,8 +262,9 @@ impl RenderFrame {
                 continue;
             };
 
-            resource_manager.prepare_geometry(assets, item.geometry);
-            resource_manager.prepare_material(assets, item.material);
+            mesh.update_morph_uniforms();
+
+            resource_manager.prepare_mesh(assets, mesh);
 
             let skin_binding = item.skin_binding.as_ref();
 
@@ -277,6 +278,7 @@ impl RenderFrame {
                         // 缓存失效，走慢路径
                         model_manager.prepare_bind_group(
                             resource_manager,
+                            assets,
                             skeleton_manager,
                             item.geometry,
                             geometry,
@@ -288,6 +290,7 @@ impl RenderFrame {
                     // Model buffer 已重建，缓存失效
                     model_manager.prepare_bind_group(
                         resource_manager,
+                        assets,
                         skeleton_manager,
                         item.geometry,
                         geometry,
@@ -299,6 +302,7 @@ impl RenderFrame {
                 // 没有缓存，走慢路径
                 model_manager.prepare_bind_group(
                     resource_manager,
+                    assets,
                     skeleton_manager,
                     item.geometry,
                     geometry,

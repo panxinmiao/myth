@@ -122,10 +122,45 @@ impl Bindings for Material {
 }
 
 impl Bindings for Geometry {
-    fn define_bindings<'a>(&'a self, _builder: &mut ResourceBuilder<'a>) {
-        // for (morph_name, data) in &self.morph_attributes {
-
-        // }
+    fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
+        // Morph Target Storage Buffers
+        if self.has_morph_targets() {
+            // Position morph storage
+            if let (Some(buffer), Some(data)) = (&self.morph_position_buffer, self.morph_position_bytes()) {
+                builder.add_storage_buffer(
+                    "morph_positions",
+                    buffer,
+                    data,
+                    true,
+                    wgpu::ShaderStages::VERTEX,
+                    Some(crate::renderer::core::builder::WgslStructName::Name("f32".into()))
+                );
+            }
+            
+            // Normal morph storage (optional)
+            if let (Some(buffer), Some(data)) = (&self.morph_normal_buffer, self.morph_normal_bytes()) {
+                builder.add_storage_buffer(
+                    "morph_normals",
+                    buffer,
+                    data,
+                    true,
+                    wgpu::ShaderStages::VERTEX,
+                    Some(crate::renderer::core::builder::WgslStructName::Name("f32".into()))
+                );
+            }
+            
+            // Tangent morph storage (optional)
+            if let (Some(buffer), Some(data)) = (&self.morph_tangent_buffer, self.morph_tangent_bytes()) {
+                builder.add_storage_buffer(
+                    "morph_tangents",
+                    buffer,
+                    data,
+                    true,
+                    wgpu::ShaderStages::VERTEX,
+                    Some(crate::renderer::core::builder::WgslStructName::Name("f32".into()))
+                );
+            }
+        }
     }
 }
 

@@ -11,6 +11,7 @@ use slotmap::SecondaryMap;
 use core::ops::Range;
 use rustc_hash::FxHashMap;
 
+use crate::Mesh;
 use crate::resources::geometry::Geometry;
 use crate::resources::texture::{Texture, TextureSampler};
 use crate::scene::environment::Environment;
@@ -614,7 +615,7 @@ impl ResourceManager {
         gpu_buf.id
     }
 
-    pub fn prepare_geometry(&mut self, assets: &AssetServer, handle: GeometryHandle) {
+    fn prepare_geometry(&mut self, assets: &AssetServer, handle: GeometryHandle) {
         let geometry = if let Some(geo) = assets.get_geometry(handle) { geo } else {
             log::warn!("Geometry {:?} not found in AssetServer.", handle);
             return;
@@ -720,7 +721,24 @@ impl ResourceManager {
         self.gpu_geometries.get(handle)
     }
 
-    pub fn prepare_material(&mut self, assets: &AssetServer, handle: MaterialHandle) {
+    pub fn prepare_mesh(&mut self, assets: &AssetServer, mesh: &Mesh) {
+        // 目前硬编码只处理 morph uniform buffer， toto: 重构这里!!!!!!!!!!!!!
+        let buf_id = mesh.morph_uniforms.handle().id;
+        if let Some(gpu_buffer) = self.gpu_buffers.get_mut(&buf_id) {
+            self.queue.write_buffer(&gpu_buffer.buffer, 0, mesh.morph_uniforms.as_bytes());
+            gpu_buffer.last_used_frame = self.frame_index;
+        }else{
+            let mut gpu_buf = GpuBuffer::new(&self.device, mesh.morph_uniforms.as_bytes(), mesh.morph_uniforms.handle().usage(), mesh.morph_uniforms.handle().label());
+            gpu_buf.last_uploaded_version = mesh.morph_uniforms.handle().version;
+            gpu_buf.last_used_frame = self.frame_index;
+            self.gpu_buffers.insert(buf_id, gpu_buf);
+        }
+
+        self.prepare_geometry(assets, mesh.geometry);
+        self.prepare_material(assets, mesh.material);
+    }
+
+    fn prepare_material(&mut self, assets: &AssetServer, handle: MaterialHandle) {
         let Some(material) = assets.get_material(handle) else {
             log::warn!("Material {:?} not found in AssetServer.", handle);
             return;
@@ -754,7 +772,7 @@ impl ResourceManager {
         gpu_mat.last_used_frame = self.frame_index;
     }
 
-    fn prepare_binding_resources(&mut self, assets: &AssetServer, resources: &[BindingResource]) -> Vec<u64> {
+    pub fn prepare_binding_resources(&mut self, assets: &AssetServer, resources: &[BindingResource]) -> Vec<u64> {
         let mut uniform_buffers = Vec::new();
 
         for resource in resources {

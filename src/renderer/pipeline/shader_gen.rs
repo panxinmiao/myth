@@ -40,6 +40,8 @@ impl Serialize for ShaderCompilationOptions {
         if self.geo_features.contains(GeometryFeatures::USE_TANGENT) { map.serialize_entry("use_tangent", &true)?; }
         if self.geo_features.contains(GeometryFeatures::USE_MORPHING) { map.serialize_entry("use_morphing", &true)?; }
         if self.geo_features.contains(GeometryFeatures::USE_SKINNING) { map.serialize_entry("use_skinning", &true)?; }
+        if self.geo_features.contains(GeometryFeatures::USE_MORPH_NORMALS) { map.serialize_entry("use_morph_normals", &true)?; }
+        if self.geo_features.contains(GeometryFeatures::USE_MORPH_TANGENTS) { map.serialize_entry("use_morph_tangents", &true)?; }
 
         if self.scene_features.contains(SceneFeatures::USE_ENV_MAP) { map.serialize_entry("use_env_map", &true)?; }
 

@@ -4,6 +4,7 @@
 
 {$ include 'light_common' $}
 {$ include 'bsdf/phong' $}
+{$ include 'morph' $}
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -22,11 +23,18 @@ struct VertexOutput {
 };
 
 @vertex
-fn vs_main(in: VertexInput) -> VertexOutput {
+fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var out: VertexOutput;
 
     var local_pos = vec4<f32>(in.position, 1.0);
     var local_normal = in.normal;
+
+    $$ if use_morphing
+    // 应用 Morph Target 变形
+    let morph_result = apply_morph_targets(vertex_index, in.position, in.normal);
+    local_pos = vec4<f32>(morph_result.position, 1.0);
+    local_normal = morph_result.normal;
+    $$ endif
 
     {$ include 'skin' $}
 

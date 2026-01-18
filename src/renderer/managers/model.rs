@@ -18,7 +18,7 @@ use crate::resources::uniforms::{DynamicModelUniforms, MorphUniforms};
 use crate::resources::geometry::{Geometry, GeometryFeatures};
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::renderer::core::binding::Bindings;
-use crate::assets::GeometryHandle;
+use crate::assets::{AssetServer, GeometryHandle};
 use crate::resources::buffer::CpuBuffer;
 use crate::scene::{SkeletonKey};
 use crate::scene::skeleton::SkinBinding;
@@ -134,11 +134,13 @@ impl ModelManager {
         }
 
         resource_manager.write_buffer(self.model_buffer.handle(), self.model_buffer.as_bytes());
+
     }
 
     pub fn prepare_bind_group(
         &mut self,
         resource_manager: &mut ResourceManager,
+        assets: &AssetServer,
         skeleton_manager: &SkeletonManager,
         geometry_handle: GeometryHandle,
         geometry: &Geometry,
@@ -208,6 +210,9 @@ impl ModelManager {
 
         let binding_wgsl = builder.generate_wgsl(2);
         let (layout, _layout_id) = resource_manager.get_or_create_layout(&builder.layout_entries);
+        
+        // 先上传 buffer 数据到 GPU，再创建 bind group
+        resource_manager.prepare_binding_resources(assets, &builder.resources);
         let (bind_group, bind_group_id) = resource_manager.create_bind_group(&layout, &builder.resources);
 
         let cached_id = CachedBindGroupId {

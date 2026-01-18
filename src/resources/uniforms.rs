@@ -1,4 +1,4 @@
-use glam::{Vec2, Vec3, Vec4, Mat3A, Mat4};
+use glam::{Vec2, Vec3, Vec4, Mat3A, Mat4, UVec4};
 use bytemuck::{Pod, Zeroable};
 use std::borrow::Cow;
 use std::ops::{Deref, DerefMut};
@@ -24,6 +24,7 @@ impl WgslType for Vec3 { fn wgsl_type_name() -> Cow<'static, str> { "vec3<f32>".
 impl WgslType for Vec4 { fn wgsl_type_name() -> Cow<'static, str> { "vec4<f32>".into() } }
 impl WgslType for Mat4 { fn wgsl_type_name() -> Cow<'static, str> { "mat4x4<f32>".into() } }
 impl WgslType for Mat3A { fn wgsl_type_name() -> Cow<'static, str> { "mat3x3<f32>".into() } }
+impl WgslType for UVec4 { fn wgsl_type_name() -> Cow<'static, str> { "vec4<u32>".into() } }
 
 
 /// 专门用于 Uniform Buffer 的数组包装器
@@ -362,9 +363,10 @@ define_gpu_data_struct!(
         pub flags: u32,
         pub _pad: u32,
         
-        // 32 个目标形态的权重和索引
-        pub weights: UniformArray<f32, 32>, 
-        pub indices: UniformArray<u32, 32>, 
+        // 32 个目标形态的权重和索引，打包到 Vec4 中以满足 Uniform buffer 16 字节对齐要求
+        // weights[0] = Vec4(w0, w1, w2, w3), weights[1] = Vec4(w4, w5, w6, w7), ...
+        pub weights: UniformArray<Vec4, 8>, 
+        pub indices: UniformArray<UVec4, 8>, 
     }
 
 );
