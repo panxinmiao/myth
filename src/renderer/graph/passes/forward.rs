@@ -1,0 +1,343 @@
+//! Forward 渲染 Pass
+//!
+//! 实现前向渲染管线的主要绘制逻辑。
+
+use glam::Mat3A;
+use log::{warn, error};
+use slotmap::Key;
+
+use crate::renderer::graph::{RenderNode, RenderContext, TrackedRenderPass};
+use crate::renderer::graph::frame::{RenderKey, RenderCommand};
+use crate::renderer::pipeline::{PipelineKey, FastPipelineKey};
+use crate::resources::material::Side;
+use crate::resources::GeometryFeatures;
+use crate::resources::uniforms::DynamicModelUniforms;
+
+/// Forward 渲染 Pass
+/// 
+/// 执行标准的前向渲染流程：
+/// 1. 准备并排序渲染命令
+/// 2. 开始渲染通道
+/// 3. 绘制不透明物体（前向后排序）
+/// 4. 绘制透明物体（后向前排序）
+/// 
+/// # 性能考虑
+/// - 命令列表预分配并复用内存
+/// - 使用 TrackedRenderPass 避免冗余状态切换
+/// - Pipeline 和 BindGroup 缓存减少 GPU 状态变更
+pub struct ForwardRenderPass {
+    /// 清屏颜色
+    pub clear_color: wgpu::Color,
+    /// 复用的不透明命令列表
+    opaque_commands: Vec<RenderCommand>,
+    /// 复用的透明命令列表
+    transparent_commands: Vec<RenderCommand>,
+}
+
+impl ForwardRenderPass {
+    pub fn new(clear_color: wgpu::Color) -> Self {
+        Self {
+            clear_color,
+            opaque_commands: Vec::with_capacity(512),
+            transparent_commands: Vec::with_capacity(128),
+        }
+    }
+
+    /// 准备并排序渲染命令
+    fn prepare_and_sort_commands(&mut self, ctx: &mut RenderContext) {
+        self.opaque_commands.clear();
+        self.transparent_commands.clear();
+        
+        for item_idx in 0..ctx.extracted_scene.render_items.len() {
+            let item = &ctx.extracted_scene.render_items[item_idx];
+            
+            let Some(geometry) = ctx.assets.get_geometry(item.geometry) else {
+                warn!("Geometry {:?} missing during render prepare", item.geometry);
+                continue;
+            };
+            let Some(material) = ctx.assets.get_material(item.material) else {
+                warn!("Material {:?} missing during render prepare", item.material);
+                continue;
+            };
+
+            let Some(mesh) = ctx.scene.meshes.get_mut(item.mesh_key) else {
+                warn!("Mesh {:?} missing during render prepare", item.mesh_key);
+                continue;
+            };
+
+            let skeleton = if let Some(skel_key) = item.skeleton {
+                ctx.scene.skins.get(skel_key)
+            } else {
+                None
+            };
+    
+            let object_data = ctx.resource_manager.prepare_mesh(ctx.assets, mesh, skeleton);
+
+            let Some(object_data) = object_data else {
+                warn!("Failed to prepare ObjectBindingData for Mesh {:?}", item.mesh_key);
+                continue;
+            };
+
+            let Some(gpu_geometry) = ctx.resource_manager.get_geometry(item.geometry) else {
+                error!("CRITICAL: GpuGeometry missing for {:?}", item.geometry);
+                continue;
+            };
+            let Some(gpu_material) = ctx.resource_manager.get_material(item.material) else {
+                error!("CRITICAL: GpuMaterial missing for {:?}", item.material);
+                continue;
+            };
+            let Some(gpu_world) = ctx.resource_manager.get_world(ctx.render_state.id, ctx.extracted_scene.environment_id) else {
+                error!("Render Environment missing");
+                continue;
+            };
+
+            let mut geo_features = geometry.get_features();
+            let mut instance_variants = 0;
+
+            if skeleton.is_none() {
+                geo_features.remove(GeometryFeatures::USE_SKINNING);
+                instance_variants |= 1 << 0;
+            }
+
+            let fast_key = FastPipelineKey {
+                material_handle: item.material,
+                material_version: material.layout_version(),
+                geometry_handle: item.geometry,
+                geometry_version: geometry.layout_version(),
+                instance_variants,
+                scene_id: ctx.extracted_scene.scene_features.bits(),
+                scene_version: ctx.extracted_scene.environment_layout_version,
+                render_state_id: ctx.render_state.id,
+            };
+
+            let (pipeline, pipeline_id) = if let Some(p) = ctx.pipeline_cache.get_pipeline_fast(fast_key) {
+                p.clone()
+            } else {
+                let canonical_key = PipelineKey {
+                    mat_features: material.get_features(),
+                    geo_features,
+                    scene_features: ctx.extracted_scene.scene_features,
+                    topology: geometry.topology,
+                    cull_mode: match material.side() {
+                        Side::Front => Some(wgpu::Face::Back),
+                        Side::Back => Some(wgpu::Face::Front),
+                        Side::Double => None,
+                    },
+                    depth_write: material.depth_write(),
+                    depth_compare: if material.depth_test() { wgpu::CompareFunction::Less } else { wgpu::CompareFunction::Always },
+                    blend_state: if material.transparent() { Some(wgpu::BlendState::ALPHA_BLENDING) } else { None },
+                    color_format: ctx.wgpu_ctx.config.format,
+                    depth_format: ctx.wgpu_ctx.depth_format,
+                    sample_count: 1,
+                };
+
+                let (pipeline, pipeline_id) = ctx.pipeline_cache.get_pipeline(
+                    &ctx.wgpu_ctx.device,
+                    material.shader_name(),
+                    canonical_key,
+                    &gpu_geometry.layout_info,
+                    gpu_material,
+                    &object_data,
+                    gpu_world,
+                );
+
+                ctx.pipeline_cache.insert_pipeline_fast(fast_key, (pipeline.clone(), pipeline_id));
+                (pipeline, pipeline_id)
+            };
+
+            if let Some(mesh) = ctx.scene.meshes.get_mut(item.mesh_key) {
+                mesh.render_cache.pipeline_id = Some(pipeline_id);
+            }
+
+            let mat_id = item.material.data().as_ffi() as u32;
+            let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq);
+
+            let cmd = RenderCommand {
+                object_data,
+                geometry_handle: item.geometry,
+                material_handle: item.material,
+                render_state_id: ctx.render_state.id,
+                env_id: ctx.extracted_scene.environment_id,
+                pipeline_id,
+                pipeline,
+                model_matrix: item.world_matrix,
+                sort_key,
+                dynamic_offset: 0,
+            };
+
+            if material.transparent() {
+                self.transparent_commands.push(cmd);
+            } else {
+                self.opaque_commands.push(cmd);
+            }
+        }
+
+        self.opaque_commands.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
+        self.transparent_commands.sort_unstable_by(|a, b| b.sort_key.cmp(&a.sort_key));
+    }
+
+    /// 上传动态 Uniform 数据
+    fn upload_dynamic_uniforms(&mut self, ctx: &mut RenderContext) {
+        let total_count = self.opaque_commands.len() + self.transparent_commands.len();
+        if total_count == 0 { return; }
+
+        for cmd in self.opaque_commands.iter_mut() {
+            let world_matrix_inverse = cmd.model_matrix.inverse();
+            let normal_matrix = Mat3A::from_mat4(world_matrix_inverse.transpose());
+
+            let offset = ctx.resource_manager.allocate_model_uniform(DynamicModelUniforms {
+                world_matrix: cmd.model_matrix,
+                world_matrix_inverse,
+                normal_matrix,
+                ..Default::default()
+            });
+
+            cmd.dynamic_offset = offset;
+        }
+
+        for cmd in self.transparent_commands.iter_mut() {
+            let world_matrix_inverse = cmd.model_matrix.inverse();
+            let normal_matrix = Mat3A::from_mat4(world_matrix_inverse.transpose());
+
+            let offset = ctx.resource_manager.allocate_model_uniform(DynamicModelUniforms {
+                world_matrix: cmd.model_matrix,
+                world_matrix_inverse,
+                normal_matrix,
+                ..Default::default()
+            });
+
+            cmd.dynamic_offset = offset;
+        }
+
+        ctx.resource_manager.upload_model_buffer();
+    }
+
+    /// 执行绘制列表
+    fn draw_list<'pass>(
+        resource_manager: &'pass crate::renderer::core::ResourceManager,
+        pass: &mut TrackedRenderPass<'pass>,
+        cmds: &'pass [RenderCommand],
+        env_id: u32,
+        render_state_id: u32,
+    ) {
+        if cmds.is_empty() { return; }
+
+        if let Some(gpu_global) = resource_manager.get_world(render_state_id, env_id) {
+            pass.set_bind_group(0, gpu_global.bind_group_id, &gpu_global.bind_group, &[]);
+        } else {
+            return;
+        }
+
+        for cmd in cmds {
+            pass.set_pipeline(cmd.pipeline_id, &cmd.pipeline);
+
+            if let Some(gpu_material) = resource_manager.get_material(cmd.material_handle) {
+                pass.set_bind_group(1, gpu_material.bind_group_id, &gpu_material.bind_group, &[]);
+            }
+
+            pass.set_bind_group(
+                2,
+                cmd.object_data.bind_group_id,
+                &cmd.object_data.bind_group,
+                &[cmd.dynamic_offset],
+            );
+
+            if let Some(gpu_geometry) = resource_manager.get_geometry(cmd.geometry_handle) {
+                for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
+                    pass.set_vertex_buffer(
+                        slot as u32,
+                        gpu_geometry.vertex_buffer_ids[slot],
+                        buffer.slice(..),
+                    );
+                }
+
+                if let Some((index_buffer, index_format, count, id)) = &gpu_geometry.index_buffer {
+                    pass.set_index_buffer(*id, index_buffer.slice(..), *index_format);
+                    pass.draw_indexed(0..*count, 0, gpu_geometry.instance_range.clone());
+                } else {
+                    pass.draw(gpu_geometry.draw_range.clone(), gpu_geometry.instance_range.clone());
+                }
+            }
+        }
+    }
+}
+
+impl RenderNode for ForwardRenderPass {
+    fn name(&self) -> &str {
+        "Forward Pass"
+    }
+
+    fn run(&self, _ctx: &mut RenderContext, _encoder: &mut wgpu::CommandEncoder) {
+        // ForwardRenderPass 需要修改内部状态（命令列表），
+        // 因此通过 execute() 方法直接调用，而非通过 RenderGraph。
+        // 后续可使用 RefCell 或将命令列表移至 RenderContext 来支持 RenderGraph 调度。
+        unimplemented!("Use ForwardRenderPass::execute() for mutable operations");
+    }
+}
+
+/// 可变版本的 Forward 渲染 Pass
+/// 
+/// 由于 `RenderNode::run` 接收 `&self`，但 Forward Pass 需要修改内部命令列表，
+/// 我们提供一个直接方法来执行渲染。
+/// 
+/// # 后续优化
+/// - 可以考虑使用 `RefCell` 或其他内部可变性模式
+/// - 或者将命令列表移到 `RenderContext` 中作为临时存储
+impl ForwardRenderPass {
+    /// 直接执行渲染（可变版本）
+    pub fn execute(&mut self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+        // 1. 准备渲染命令
+        self.prepare_and_sort_commands(ctx);
+        
+        // 2. 上传动态 Uniform
+        self.upload_dynamic_uniforms(ctx);
+
+        // 3. 获取深度视图
+        let depth_view = ctx.wgpu_ctx.get_depth_view();
+
+        // 4. 开始渲染通道
+        {
+            let pass_desc = wgpu::RenderPassDescriptor {
+                label: Some("Forward Render Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: ctx.surface_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(self.clear_color),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                    view: depth_view,
+                    depth_ops: Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(1.0),
+                        store: wgpu::StoreOp::Store,
+                    }),
+                    stencil_ops: None,
+                }),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            };
+
+            let pass = encoder.begin_render_pass(&pass_desc);
+            let mut tracked = TrackedRenderPass::new(pass);
+
+            Self::draw_list(
+                ctx.resource_manager,
+                &mut tracked,
+                &self.opaque_commands,
+                ctx.extracted_scene.environment_id,
+                ctx.render_state.id,
+            );
+            Self::draw_list(
+                ctx.resource_manager,
+                &mut tracked,
+                &self.transparent_commands,
+                ctx.extracted_scene.environment_id,
+                ctx.render_state.id,
+            );
+        }
+    }
+}

@@ -105,4 +105,18 @@ impl WgpuContext {
     pub fn color_format(&self) -> wgpu::TextureFormat {
         self.config.format
     }
+
+    /// 获取深度纹理视图
+    /// 
+    /// 深度纹理在 resize 时自动重建，此方法直接返回当前视图引用。
+    #[inline]
+    pub fn get_depth_view(&self) -> &wgpu::TextureView {
+        &self.depth_texture_view
+    }
+
+    /// 获取当前 Surface 尺寸
+    #[inline]
+    pub fn size(&self) -> (u32, u32) {
+        (self.config.width, self.config.height)
+    }
 }
