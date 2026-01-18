@@ -2,6 +2,7 @@
 //!
 //! 实现前向渲染管线的主要绘制逻辑。
 
+use std::cell::RefCell;
 use glam::Mat3A;
 use log::{warn, error};
 use slotmap::Key;
@@ -21,32 +22,40 @@ use crate::resources::uniforms::DynamicModelUniforms;
 /// 3. 绘制不透明物体（前向后排序）
 /// 4. 绘制透明物体（后向前排序）
 /// 
+/// # 设计说明
+/// 使用 `RefCell` 提供内部可变性，使得 `RenderNode::run(&self, ...)` 
+/// 能够修改内部命令列表。这是 Rust 中常见的内部可变性模式。
+/// 
 /// # 性能考虑
-/// - 命令列表预分配并复用内存
-/// - 使用 TrackedRenderPass 避免冗余状态切换
+/// - 命令列表预分配并复用内存，避免每帧分配
+/// - `RefCell` 的运行时借用检查开销极小（单线程场景下约等于一次原子操作）
+/// - 使用 `TrackedRenderPass` 避免冗余状态切换
 /// - Pipeline 和 BindGroup 缓存减少 GPU 状态变更
 pub struct ForwardRenderPass {
     /// 清屏颜色
     pub clear_color: wgpu::Color,
-    /// 复用的不透明命令列表
-    opaque_commands: Vec<RenderCommand>,
-    /// 复用的透明命令列表
-    transparent_commands: Vec<RenderCommand>,
+    /// 复用的不透明命令列表（使用 RefCell 提供内部可变性）
+    opaque_commands: RefCell<Vec<RenderCommand>>,
+    /// 复用的透明命令列表（使用 RefCell 提供内部可变性）
+    transparent_commands: RefCell<Vec<RenderCommand>>,
 }
 
 impl ForwardRenderPass {
     pub fn new(clear_color: wgpu::Color) -> Self {
         Self {
             clear_color,
-            opaque_commands: Vec::with_capacity(512),
-            transparent_commands: Vec::with_capacity(128),
+            opaque_commands: RefCell::new(Vec::with_capacity(512)),
+            transparent_commands: RefCell::new(Vec::with_capacity(128)),
         }
     }
 
     /// 准备并排序渲染命令
-    fn prepare_and_sort_commands(&mut self, ctx: &mut RenderContext) {
-        self.opaque_commands.clear();
-        self.transparent_commands.clear();
+    fn prepare_and_sort_commands(&self, ctx: &mut RenderContext) {
+        let mut opaque = self.opaque_commands.borrow_mut();
+        let mut transparent = self.transparent_commands.borrow_mut();
+        
+        opaque.clear();
+        transparent.clear();
         
         for item_idx in 0..ctx.extracted_scene.render_items.len() {
             let item = &ctx.extracted_scene.render_items[item_idx];
@@ -166,22 +175,25 @@ impl ForwardRenderPass {
             };
 
             if material.transparent() {
-                self.transparent_commands.push(cmd);
+                transparent.push(cmd);
             } else {
-                self.opaque_commands.push(cmd);
+                opaque.push(cmd);
             }
         }
 
-        self.opaque_commands.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
-        self.transparent_commands.sort_unstable_by(|a, b| b.sort_key.cmp(&a.sort_key));
+        opaque.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
+        transparent.sort_unstable_by(|a, b| b.sort_key.cmp(&a.sort_key));
     }
 
     /// 上传动态 Uniform 数据
-    fn upload_dynamic_uniforms(&mut self, ctx: &mut RenderContext) {
-        let total_count = self.opaque_commands.len() + self.transparent_commands.len();
+    fn upload_dynamic_uniforms(&self, ctx: &mut RenderContext) {
+        let mut opaque = self.opaque_commands.borrow_mut();
+        let mut transparent = self.transparent_commands.borrow_mut();
+        
+        let total_count = opaque.len() + transparent.len();
         if total_count == 0 { return; }
 
-        for cmd in self.opaque_commands.iter_mut() {
+        for cmd in opaque.iter_mut() {
             let world_matrix_inverse = cmd.model_matrix.inverse();
             let normal_matrix = Mat3A::from_mat4(world_matrix_inverse.transpose());
 
@@ -195,7 +207,7 @@ impl ForwardRenderPass {
             cmd.dynamic_offset = offset;
         }
 
-        for cmd in self.transparent_commands.iter_mut() {
+        for cmd in transparent.iter_mut() {
             let world_matrix_inverse = cmd.model_matrix.inverse();
             let normal_matrix = Mat3A::from_mat4(world_matrix_inverse.transpose());
 
@@ -267,26 +279,8 @@ impl RenderNode for ForwardRenderPass {
         "Forward Pass"
     }
 
-    fn run(&self, _ctx: &mut RenderContext, _encoder: &mut wgpu::CommandEncoder) {
-        // ForwardRenderPass 需要修改内部状态（命令列表），
-        // 因此通过 execute() 方法直接调用，而非通过 RenderGraph。
-        // 后续可使用 RefCell 或将命令列表移至 RenderContext 来支持 RenderGraph 调度。
-        unimplemented!("Use ForwardRenderPass::execute() for mutable operations");
-    }
-}
-
-/// 可变版本的 Forward 渲染 Pass
-/// 
-/// 由于 `RenderNode::run` 接收 `&self`，但 Forward Pass 需要修改内部命令列表，
-/// 我们提供一个直接方法来执行渲染。
-/// 
-/// # 后续优化
-/// - 可以考虑使用 `RefCell` 或其他内部可变性模式
-/// - 或者将命令列表移到 `RenderContext` 中作为临时存储
-impl ForwardRenderPass {
-    /// 直接执行渲染（可变版本）
-    pub fn execute(&mut self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-        // 1. 准备渲染命令
+    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+        // 1. 准备渲染命令（通过 RefCell 获取内部可变性）
         self.prepare_and_sort_commands(ctx);
         
         // 2. 上传动态 Uniform
@@ -295,8 +289,12 @@ impl ForwardRenderPass {
         // 3. 获取深度视图
         let depth_view = ctx.wgpu_ctx.get_depth_view();
 
-        // 4. 开始渲染通道
+        // 4. 开始渲染通道并执行绘制
         {
+            // 获取不可变借用（必须在 TrackedRenderPass 之前声明以保证生命周期）
+            let opaque = self.opaque_commands.borrow();
+            let transparent = self.transparent_commands.borrow();
+
             let pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Forward Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -327,14 +325,14 @@ impl ForwardRenderPass {
             Self::draw_list(
                 ctx.resource_manager,
                 &mut tracked,
-                &self.opaque_commands,
+                &opaque,
                 ctx.extracted_scene.environment_id,
                 ctx.render_state.id,
             );
             Self::draw_list(
                 ctx.resource_manager,
                 &mut tracked,
-                &self.transparent_commands,
+                &transparent,
                 ctx.extracted_scene.environment_id,
                 ctx.render_state.id,
             );

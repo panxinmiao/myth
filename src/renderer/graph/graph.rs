@@ -1,59 +1,53 @@
 //! 渲染图执行器
 //!
 //! `RenderGraph` 管理渲染节点的执行顺序。
-//! 当前采用简单的线性执行模型，后续可扩展为 DAG 结构以支持并行执行。
+//! 采用瞬态图设计，每帧创建新的图实例，只存储节点引用。
 
 use super::node::RenderNode;
 use super::context::RenderContext;
 
-/// 渲染图
+/// 渲染图（瞬态引用容器）
 /// 
-/// 管理和执行渲染节点列表。
+/// 管理和执行渲染节点列表。采用瞬态设计，每帧创建新实例。
 /// 
-/// # 当前实现
-/// - 线性顺序执行所有节点
-/// - 单个 CommandEncoder 贯穿整个图
-/// - 支持 Debug Group 用于 GPU 调试
+/// # 设计说明
+/// - 使用生命周期参数 `'a` 存储节点引用，避免所有权转移
+/// - 每帧创建新的 Graph 实例，开销极低（仅 Vec 指针操作）
+/// - 节点本身持久化存储在 RenderFrame 中，复用内存
 /// 
-/// # 后续优化方向
-/// - **图缓存**: 当渲染配置不变时，可缓存整个 RenderGraph 避免每帧重建
-/// - **并行执行**: 分析节点依赖关系，将无依赖的节点并行编码
-/// - **资源屏障**: 自动插入必要的资源屏障
-/// - **条件执行**: 支持根据条件跳过某些节点
-pub struct RenderGraph {
-    nodes: Vec<Box<dyn RenderNode>>,
+/// # 性能考虑
+/// - 瞬态图避免了复杂的缓存失效逻辑
+/// - 每帧重建图的开销约等于几次指针 push，可忽略不计
+/// - 后续可扩展为 DAG 结构以支持并行编码
+pub struct RenderGraph<'a> {
+    nodes: Vec<&'a dyn RenderNode>,
 }
 
-impl Default for RenderGraph {
+impl<'a> Default for RenderGraph<'a> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl RenderGraph {
+impl<'a> RenderGraph<'a> {
     /// 创建空的渲染图
+    #[inline]
     pub fn new() -> Self {
         Self { nodes: Vec::new() }
     }
 
     /// 预分配节点容量
+    #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Self { nodes: Vec::with_capacity(capacity) }
     }
 
-    /// 添加渲染节点
+    /// 添加渲染节点引用
     /// 
     /// 节点按添加顺序执行。
     #[inline]
-    pub fn add_node(&mut self, node: Box<dyn RenderNode>) {
+    pub fn add_node(&mut self, node: &'a dyn RenderNode) {
         self.nodes.push(node);
-    }
-
-    /// 添加渲染节点（链式调用）
-    #[inline]
-    pub fn with_node(mut self, node: Box<dyn RenderNode>) -> Self {
-        self.nodes.push(node);
-        self
     }
 
     /// 执行渲染图
@@ -62,7 +56,7 @@ impl RenderGraph {
     /// 
     /// # 性能注意
     /// - 所有节点共享同一个 CommandEncoder，减少提交次数
-    /// - Debug Group 仅在调试模式下有开销
+    /// - Debug Group 用于 GPU 调试，Release 模式下开销极小
     pub fn execute(&self, ctx: &mut RenderContext) {
         let mut encoder = ctx.wgpu_ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Graph Encoder"),
@@ -81,11 +75,5 @@ impl RenderGraph {
     #[inline]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
-    }
-
-    /// 清空所有节点
-    #[inline]
-    pub fn clear(&mut self) {
-        self.nodes.clear();
     }
 }

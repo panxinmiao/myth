@@ -17,8 +17,11 @@ use super::context::RenderContext;
 /// # 性能考虑
 /// - 避免在 `run` 中进行内存分配
 /// - 利用 `encoder.push_debug_group` 进行 GPU 调试
-/// - 后续可扩展为支持并行执行的图结构
-pub trait RenderNode: Send + Sync {
+/// 
+/// # 线程安全说明
+/// 当前渲染系统为单线程设计，因此不要求 `Send + Sync`。
+/// 后续如需多线程渲染，可考虑使用 `RwLock` 替代 `RefCell`。
+pub trait RenderNode {
     /// 返回节点名称，用于调试和性能分析
     fn name(&self) -> &str;
     

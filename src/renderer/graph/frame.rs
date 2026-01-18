@@ -3,18 +3,17 @@
 //! RenderFrame 负责：extract, prepare, 执行渲染图
 //! 采用 Render Graph 架构，将渲染逻辑拆分到独立的 Pass 中
 
-use glam::Mat4;
 use slotmap::SlotMap;
 use log::warn;
 
 use crate::scene::skeleton::Skeleton;
-use crate::scene::{NodeIndex, Scene, SkeletonKey};
+use crate::scene::{Scene, SkeletonKey};
 use crate::scene::camera::Camera;
 use crate::scene::environment::Environment;
-use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
+use crate::assets::AssetServer;
 
-use crate::renderer::core::{WgpuContext, ResourceManager, ObjectBindingData};
-use crate::renderer::graph::{RenderState, RenderContext};
+use crate::renderer::core::{WgpuContext, ResourceManager};
+use crate::renderer::graph::{RenderState, RenderContext, RenderGraph};
 use crate::renderer::graph::extracted::ExtractedScene;
 use crate::renderer::graph::passes::ForwardRenderPass;
 use crate::renderer::pipeline::PipelineCache;
@@ -33,26 +32,16 @@ impl RenderKey {
     }
 }
 
-/// 内部使用的渲染项
-#[derive(Clone)]
-pub struct RenderItem {
-    pub geo_handle: GeometryHandle,
-    pub mat_handle: MaterialHandle,
-    pub node_index: NodeIndex,
-    pub model_matrix: Mat4,
-    pub distance_sq: f32,
-}
-
 /// 准备好提交给 GPU 的指令
 pub struct RenderCommand {
-    pub object_data: ObjectBindingData,
-    pub geometry_handle: GeometryHandle,
-    pub material_handle: MaterialHandle,
+    pub object_data: crate::renderer::core::ObjectBindingData,
+    pub geometry_handle: crate::assets::GeometryHandle,
+    pub material_handle: crate::assets::MaterialHandle,
     pub render_state_id: u32,
     pub env_id: u32,
     pub pipeline_id: u16,
     pub pipeline: wgpu::RenderPipeline,
-    pub model_matrix: Mat4,
+    pub model_matrix: glam::Mat4,
     pub sort_key: RenderKey,
     pub dynamic_offset: u32,
 }
@@ -145,7 +134,7 @@ impl RenderFrame {
         self.upload_skeletons_extracted(resource_manager, &scene.skins, &self.extracted_scene);
 
         // ========================================================================
-        // 4. 构建 RenderContext 并执行渲染图
+        // 4. 构建瞬态 RenderGraph 并执行
         // ========================================================================
         {
             let mut ctx = RenderContext {
@@ -161,16 +150,16 @@ impl RenderFrame {
                 time,
             };
 
-            // 创建 CommandEncoder 并执行 Forward Pass
-            let mut encoder = ctx.wgpu_ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Render Graph Encoder"),
-            });
-
-            encoder.push_debug_group("Forward Pass");
-            self.forward_pass.execute(&mut ctx, &mut encoder);
-            encoder.pop_debug_group();
-
-            ctx.wgpu_ctx.queue.submit(std::iter::once(encoder.finish()));
+            // 构建瞬态 Render Graph（每帧重建，开销极低）
+            let mut graph = RenderGraph::new();
+            
+            // Pass 编排：未来可在此添加更多 Pass
+            // 例如: graph.add_node(&self.shadow_pass);
+            //       graph.add_node(&self.ibl_pass);
+            graph.add_node(&self.forward_pass);
+            
+            // 执行渲染图
+            graph.execute(&mut ctx);
         }
 
         // ========================================================================
