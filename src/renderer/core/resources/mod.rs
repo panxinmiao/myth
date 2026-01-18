@@ -213,7 +213,7 @@ pub struct ObjectBindingData {
     pub layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
-    pub binding_wgsl: String,
+    pub binding_wgsl: Arc<str>,
 }
 
 // ============================================================================

@@ -54,7 +54,7 @@ impl ResourceManager {
     // ========================================================================
 
     /// 准备 Mesh 的基础资源（几何体、材质、Morph Uniform Buffer）
-    pub fn prepare_mesh(&mut self, assets: &AssetServer, mesh: &mut Mesh, skeleton: Option<&Skeleton>) -> ObjectBindingData {
+    pub fn prepare_mesh(&mut self, assets: &AssetServer, mesh: &mut Mesh, skeleton: Option<&Skeleton>) -> Option<ObjectBindingData> {
 
         // 1. 数据同步 (Morph) - 必须每帧检查
         mesh.update_morph_uniforms();
@@ -66,8 +66,8 @@ impl ResourceManager {
 
 
         // 3. 获取用于校验的 Version 信息
-        let geometry = assets.get_geometry(mesh.geometry).expect("Geometry should exist.");
-        let material = assets.get_material(mesh.material).expect("Material should exist.");
+        let geometry = assets.get_geometry(mesh.geometry)?;
+        let material = assets.get_material(mesh.material)?;
 
         let geo_version = geometry.structure_version();
         let mat_version = material.binding_version();
@@ -89,28 +89,15 @@ impl ResourceManager {
                 skeleton_buffer_id
             ) {
                 if let Some(data) =  self.get_cached_bind_group(cached_bind_group_id){
-                    return data.clone();
+                    return Some(data.clone());
                 }
             }
         }
 
         // ======- 重建 BindGroup 路径 -======
 
-
         let model_buffer_id = self.model_allocator.buffer_id();
         let morph_buffer_id = Some(mesh.morph_uniforms.handle().id);
-
-
-
-        // let features = geometry.get_features();
-        // let has_skeleton = skeleton.is_some();
-        // let geo_supports_skinning = features.contains(GeometryFeatures::USE_SKINNING);
-        // let use_skinning = geo_supports_skinning && has_skeleton;
-        // let skeleton_buffer_id= if use_skinning {
-        //     skeleton_buffer_id
-        // } else {
-        //     None
-        // };
 
         let key = ObjectBindGroupKey {
             model_buffer_id,
@@ -134,13 +121,13 @@ impl ResourceManager {
         // 检查全局缓存中是否已有对应的 BindGroup
         if let Some(binding_data) = self.object_bind_group_cache.get(&key) {
             mesh.render_cache.bind_group_id = Some(binding_data.bind_group_id);
-            return binding_data.clone();
+            return Some(binding_data.clone());
         }
 
         // --- 4. 创建新 BindGroup (缓存未命中) ---
         let binding_data = self.create_object_bind_group_internal(assets, geometry, mesh, skeleton, key);
         mesh.render_cache.bind_group_id = Some(binding_data.bind_group_id);
-        binding_data.clone()
+        Some(binding_data)
 
     }
 
@@ -202,7 +189,7 @@ impl ResourceManager {
             layout,
             bind_group,
             bind_group_id,
-            binding_wgsl,
+            binding_wgsl: binding_wgsl.into(),
         };
 
         // 写入全局缓存

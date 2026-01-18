@@ -276,7 +276,12 @@ impl RenderFrame {
                 None
             };
     
-            let object_data = resource_manager.prepare_mesh(assets, mesh, skeleton);            
+            let object_data = resource_manager.prepare_mesh(assets, mesh, skeleton);
+
+            let Some(object_data) = object_data else {
+                warn!("Failed to prepare ObjectBindingData for Mesh {:?}", item.mesh_key);
+                continue;
+            };
 
             let Some(gpu_geometry) = resource_manager.get_geometry(item.geometry) else {
                 error!("CRITICAL: GpuGeometry missing for {:?}", item.geometry);
