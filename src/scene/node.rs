@@ -46,12 +46,11 @@ impl Node {
         }
     }
 
-    pub fn set_morph_weights_from_pod(&mut self, data: &MorphWeightData, count: usize) {
-        if self.morph_weights.len() < count {
-            self.morph_weights.resize(count, 0.0);
+    pub fn set_morph_weights_from_pod(&mut self, data: &MorphWeightData) {
+        if self.morph_weights.len() < MAX_MORPH_TARGETS {
+            self.morph_weights.resize(MAX_MORPH_TARGETS, 0.0);
         }
-        let valid_count = count.min(MAX_MORPH_TARGETS);
-        self.morph_weights[..valid_count].copy_from_slice(&data.weights[..valid_count]);
+        self.morph_weights.copy_from_slice(&data.weights);
     }
 
     pub fn bind_skeleton(&mut self, skeleton: SkeletonKey, bind_mode: BindMode) {
