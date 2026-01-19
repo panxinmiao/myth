@@ -61,3 +61,13 @@ web-sys = { version = "0.3.85", features = [
     "Window",
     "Element",
 ]}
+
+# === 示例配置 ===
+
+[[example]]
+name = "gltf_viewer"
+path = "examples/gltf_viewer/main.rs"
+
+[[example]]
+name = "gltf_viewer_lowlevel"
+path = "examples/gltf_viewer/main_lowlevel.rs"

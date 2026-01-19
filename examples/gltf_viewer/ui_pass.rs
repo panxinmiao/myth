@@ -10,7 +10,6 @@
 //! - GPU 侧逻辑（绘制）由 RenderGraph 自动调用
 
 use std::cell::RefCell;
-use std::sync::Arc;
 
 use winit::window::Window;
 use winit::event::WindowEvent;
@@ -56,7 +55,7 @@ impl UiPass {
     pub fn new(
         device: &Device,
         output_format: TextureFormat,
-        window: &Arc<Window>,
+        window: &Window,
     ) -> Self {
         let size = window.inner_size();
         let egui_ctx = egui::Context::default();
@@ -66,7 +65,7 @@ impl UiPass {
         let state = egui_winit::State::new(
             egui_ctx.clone(),
             id,
-            window.as_ref(),
+            window,
             None,
             None,
             None,
@@ -148,11 +147,13 @@ impl UiPass {
     }
 
     /// 检查 UI 是否想要捕获键盘输入
+    #[allow(dead_code)]
     pub fn wants_keyboard_input(&self) -> bool {
         self.egui_ctx.wants_keyboard_input()
     }
 
     /// 检查 UI 是否想要捕获鼠标输入
+    #[allow(dead_code)]
     pub fn wants_pointer_input(&self) -> bool {
         self.egui_ctx.wants_pointer_input()
     }

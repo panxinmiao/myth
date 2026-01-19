@@ -102,7 +102,7 @@ impl OrbitControls {
         // ============================
 
         // --- 旋转 (保持惯性模型) ---
-        if self.enable_rotate && input.is_button_pressed(MouseButton::Left) {
+        if self.enable_rotate && input.is_mouse_pressed(MouseButton::Left) {
             let rotate_angle_x = 2.0 * std::f32::consts::PI * input.cursor_delta.x / screen_height;
             let rotate_angle_y = 2.0 * std::f32::consts::PI * input.cursor_delta.y / screen_height;
 
@@ -123,7 +123,7 @@ impl OrbitControls {
             self.target_radius = self.target_radius.clamp(self.min_distance, self.max_distance);
         }
 
-        if self.enable_pan && input.is_button_pressed(MouseButton::Right) {
+        if self.enable_pan && input.is_mouse_pressed(MouseButton::Right) {
             let position = transform.position;
             let offset_dir = position - self.target;
             let target_distance = offset_dir.length();

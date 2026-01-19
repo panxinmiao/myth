@@ -138,4 +138,12 @@ impl Renderer {
     pub fn surface_format(&self) -> Option<wgpu::TextureFormat> {
         self.context.as_ref().map(|s| s.wgpu_ctx.config.format)
     }
+
+    /// 获取 WgpuContext 的引用
+    /// 
+    /// 用于外部插件访问底层 GPU 资源（Device, Queue, Surface 等）
+    /// 注意：仅在 Renderer 初始化后可用
+    pub fn wgpu_ctx(&self) -> Option<&WgpuContext> {
+        self.context.as_ref().map(|s| &s.wgpu_ctx)
+    }
 }

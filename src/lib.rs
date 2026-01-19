@@ -21,6 +21,7 @@ pub use assets::{AssetServer, ColorSpace};
 pub use scene::{Node, Scene, Camera, Light};
 pub use resources::primitives::*;
 pub use renderer::Renderer;
+pub use renderer::core::WgpuContext;
 pub use app::App;
 pub use errors::ThreeError;
 pub use utils::orbit_control::OrbitControls;
