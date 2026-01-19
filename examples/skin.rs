@@ -138,21 +138,21 @@ fn main() -> anyhow::Result<()> {
 
     // 6. 设置 Update 回调 (处理旋转动画)
     // move 闭包捕获 bone1_id
-    app.set_update_fn(move |window, scene, _assets, input, time, dt| {
+    app.set_update_fn(move |ctx| {
 
-        if let Some(node) = scene.get_node_mut(bone1_id) {
-            let angle = time.sin() * 1.0; // +/- 1 radian
+        if let Some(node) = ctx.scene.get_node_mut(bone1_id) {
+            let angle = ctx.time.sin() * 1.0; // +/- 1 radian
             node.transform.rotation = Quat::from_rotation_z(angle);
         }
 
         // 使用新的组件查询 API
-        if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            controls.update(transform, input, camera.fov.to_degrees(), dt);
+        if let Some((transform, camera)) = ctx.scene.query_main_camera_bundle() {
+            controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
         }
 
         if let Some(fps) = fps_counter.update() {
             let title = format!("Box PBR | FPS: {:.2}", fps);
-            window.set_title(&title);
+            ctx.window.set_title(&title);
         }
     });
 

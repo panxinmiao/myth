@@ -35,7 +35,7 @@ fn main() -> anyhow::Result<()> {
     let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
     app.scene.add_light(light);
 
-    let gltf_path = std::path::Path::new("examples/assets/adele.glb");
+    let gltf_path = std::path::Path::new("D:\\glTF\\girl\\tifa_piss.glb");
     println!("Loading glTF model from: {}", gltf_path.display());
     
     let (loaded_nodes, animations) = GltfLoader::load(
@@ -75,16 +75,16 @@ fn main() -> anyhow::Result<()> {
     let mut controls = OrbitControls::new(Vec3::new(0.0, 1.0, 3.0), Vec3::new(0.0, 1.0, 0.0));
     let mut fps_counter = FpsCounter::new();
 
-    app.set_update_fn(move |window, scene, _assets, input, _time, dt| {
-        mixer.update(dt, scene);
+    app.set_update_fn(move |ctx| {
+        mixer.update(ctx.dt, ctx.scene);
 
-        if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            controls.update(transform, input, camera.fov.to_degrees(), dt);
+        if let Some((transform, camera)) = ctx.scene.query_main_camera_bundle() {
+            controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
         }
 
         if let Some(fps) = fps_counter.update() {
             let title = format!("Skinning Animation | FPS: {:.2}", fps);
-            window.set_title(&title);
+            ctx.window.set_title(&title);
         }
     });
 

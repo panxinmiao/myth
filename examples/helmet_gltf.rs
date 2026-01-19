@@ -80,15 +80,15 @@ fn main() -> anyhow::Result<()> {
     let mut fps_counter = FpsCounter::new();
 
     // 8. 更新回调 (旋转模型或相机控制)
-    app.set_update_fn(move |window, scene, _assets, input, _time, dt| {
+    app.set_update_fn(move |ctx| {
         // 轨道控制器
-        if let Some(cam_node) = scene.get_node_mut(cam_node_id) {
-            controls.update(&mut cam_node.transform, input, 45.0, dt);
+        if let Some(cam_node) = ctx.scene.get_node_mut(cam_node_id) {
+            controls.update(&mut cam_node.transform, ctx.input, 45.0, ctx.dt);
         }
 
         // FPS 计数
         if let Some(fps) = fps_counter.update() {
-            window.set_title(&format!("glTF PBR Demo - FPS: {:.0}", fps));
+            ctx.window.set_title(&format!("glTF PBR Demo - FPS: {:.0}", fps));
         }
     });
 

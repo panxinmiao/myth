@@ -29,11 +29,10 @@ base64 = "0.22"
 rust-embed = "8.11.0"
 
 pollster = "0.4" 
-# 日志处理
 env_logger = "0.11"
 log = "0.4"
 anyhow = "1.0"
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 uuid = { version = "1.19.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
 md5 = "0.8.0"
 
@@ -42,6 +41,13 @@ rustc-hash = "2.1.1"
 [features]
 default = []
 debug_shader = []
+
+# 开发依赖 (用于 examples)
+[dev-dependencies]
+egui = "0.33"
+egui-winit = "0.33"
+egui-wgpu = "0.33"
+rfd = "0.17.2"
 
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

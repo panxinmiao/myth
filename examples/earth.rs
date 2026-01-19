@@ -119,28 +119,28 @@ fn main() -> anyhow::Result<()> {
 
     let mut controls = OrbitControls::new(Vec3::new(0.0, 0.0, 250.0), Vec3::ZERO);
 
-    app.set_update_fn(move |window, scene, _assets, input, _time, dt| {
+    app.set_update_fn(move |ctx| {
 
-        let rot = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.001 * 60.0 * dt, 0.0);
-        let rot_clouds = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.00125 * 60.0 * dt, 0.0);
+        let rot = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.001 * 60.0 * ctx.dt, 0.0);
+        let rot_clouds = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.00125 * 60.0 * ctx.dt, 0.0);
 
         // 1. 地球自转
-        if let Some(node) = scene.get_node_mut(earth_node_id) {
+        if let Some(node) = ctx.scene.get_node_mut(earth_node_id) {
             node.transform.rotation = rot * node.transform.rotation;
         }
         // 2. 云层自转
-        if let Some(clouds) = scene.get_node_mut(cloud_node_id) {
+        if let Some(clouds) = ctx.scene.get_node_mut(cloud_node_id) {
             clouds.transform.rotation = rot_clouds * clouds.transform.rotation;
         }
 
         // 3. 相机控制
-        if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            controls.update(transform, input, camera.fov.to_degrees(), dt);
+        if let Some((transform, camera)) = ctx.scene.query_main_camera_bundle() {
+            controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
         }
 
         if let Some(fps) = fps_counter.update() {
             let title = format!("Earth | FPS: {:.2}", fps);
-            window.set_title(&title);
+            ctx.window.set_title(&title);
         }
     });
 

@@ -12,7 +12,7 @@ use crate::scene::camera::Camera;
 use crate::assets::AssetServer;
 
 use crate::renderer::core::{WgpuContext, ResourceManager};
-use crate::renderer::graph::{RenderState, RenderContext, RenderGraph};
+use crate::renderer::graph::{RenderState, RenderContext, RenderGraph, RenderNode};
 use crate::renderer::graph::extracted::ExtractedScene;
 use crate::renderer::graph::passes::ForwardRenderPass;
 use crate::renderer::pipeline::PipelineCache;
@@ -84,6 +84,9 @@ impl RenderFrame {
     /// 3. Prepare 阶段
     /// 4. 构建 RenderContext
     /// 5. 执行 RenderGraph
+    /// 
+    /// # 参数
+    /// - `extra_nodes`: 额外的渲染节点（如 UI Pass），将在内置 Pass 之后执行
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -94,6 +97,7 @@ impl RenderFrame {
         camera: &Camera,
         assets: &AssetServer,
         time: f32,
+        extra_nodes: &[&dyn RenderNode],
     ) {
         resource_manager.next_frame();
 
@@ -154,17 +158,22 @@ impl RenderFrame {
             // 构建瞬态 Render Graph（每帧重建，开销极低）
             let mut graph = RenderGraph::new();
             
-            // Pass 编排：未来可在此添加更多 Pass
+            // 1. 内置 Pass
             // 例如: graph.add_node(&self.shadow_pass);
             //       graph.add_node(&self.ibl_pass);
             graph.add_node(&self.forward_pass);
             
-            // 执行渲染图
+            // 2. 外部注入的 Pass（如 UI、后处理等）
+            for node in extra_nodes {
+                graph.add_node(*node);
+            }
+            
+            // 执行渲染图（内部创建 encoder 并提交）
             graph.execute(&mut ctx);
         }
 
         // ========================================================================
-        // 5. Present 并清理
+        // 5. Present
         // ========================================================================
         output.present();
 

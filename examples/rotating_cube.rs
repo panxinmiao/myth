@@ -38,12 +38,12 @@ fn main() -> anyhow::Result<()> {
 
 
     // === 5. 设置更新回调 - 让立方体旋转 ===
-    app.set_update_fn(move |_window, scene, _assets, _input, time, _dt| {
+    app.set_update_fn(move |ctx| {
         // 通过 node_id 获取立方体节点
-        if let Some(cube_node) = scene.get_node_mut(cube_node_id) {
+        if let Some(cube_node) = ctx.scene.get_node_mut(cube_node_id) {
             // 绕 Y 轴和 X 轴旋转
-            let rotation_y = Quat::from_rotation_y(time * 0.5); // 每秒 0.5 弧度
-            let rotation_x = Quat::from_rotation_x(time * 0.3);
+            let rotation_y = Quat::from_rotation_y(ctx.time * 0.5); // 每秒 0.5 弧度
+            let rotation_x = Quat::from_rotation_x(ctx.time * 0.3);
             cube_node.transform.rotation = rotation_y * rotation_x;
         }
     });

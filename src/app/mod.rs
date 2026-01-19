@@ -12,7 +12,25 @@ use crate::assets::AssetServer;
 use crate::scene::Scene;
 use crate::renderer::{Renderer, settings::RenderSettings};
 
-pub type UpdateFn = Box<dyn FnMut(&winit::window::Window, &mut Scene, &AssetServer, &Input, f32, f32)>;
+/// 应用程序更新上下文
+/// 包含了这一帧逻辑更新所需的所有数据
+pub struct AppUpdateContext<'a> {
+    // === 基础系统 ===
+    pub window: &'a winit::window::Window,
+    pub input: &'a Input,
+    pub assets: &'a AssetServer,
+    
+    // === 可变数据 (用户主要修改这里) ===
+    pub scene: &'a mut Scene,
+    
+    // === 时间信息 ===
+    pub time: f32,      // 从启动开始的总秒数
+    pub dt: f32,        // 上一帧的间隔秒数
+    pub frame_count: u64, // 帧数计数器
+}
+
+// 新的回调定义：只接受一个参数
+pub type UpdateFn = Box<dyn FnMut(&mut AppUpdateContext)>;
 
 pub struct App {
     window: Option<Arc<Window>>,
@@ -24,6 +42,7 @@ pub struct App {
     update_fn: Option<UpdateFn>,
     start_time: std::time::Instant,
     last_loop_time: std::time::Instant,
+    frame_count: u64,
 
     input: Input,
 }
@@ -45,6 +64,7 @@ impl App {
             update_fn: None,
             start_time: now,
             last_loop_time: now,
+            frame_count: 0,
             input: Input::new(),
         }
     }
@@ -67,7 +87,7 @@ impl App {
 
     pub fn set_update_fn<F>(&mut self, f: F) -> &mut Self 
     where
-        F: FnMut(&winit::window::Window, &mut Scene, &AssetServer, &Input, f32, f32) + 'static,
+        F: FnMut(&mut AppUpdateContext) + 'static,
     {
         self.update_fn = Some(Box::new(f));
         self
@@ -85,10 +105,23 @@ impl App {
         let total_time = now.duration_since(self.start_time).as_secs_f32();
         let dt = now.duration_since(self.last_loop_time).as_secs_f32();
         self.last_loop_time = now;
+        self.frame_count += 1;
 
         if let Some(ref mut update_fn) = self.update_fn {
             if let Some(window) = &self.window {
-                update_fn(window, &mut self.scene, &self.assets, &self.input, total_time, dt );
+                // 组装 Context
+                let mut ctx = AppUpdateContext {
+                    window,
+                    input: &self.input,
+                    assets: &self.assets,
+                    scene: &mut self.scene,
+                    time: total_time,
+                    dt,
+                    frame_count: self.frame_count,
+                };
+
+                // 调用用户回调
+                update_fn(&mut ctx);
             }
         }
 
@@ -108,7 +141,13 @@ impl App {
                                 .as_secs_f32();
                             // 克隆 camera 以避免借用冲突
                             let camera_clone = camera.clone();
-                            self.renderer.render(&mut self.scene, &camera_clone, &self.assets, time_seconds);
+                            self.renderer.render(
+                                &mut self.scene, 
+                                &camera_clone, 
+                                &self.assets, 
+                                time_seconds,
+                                &[], // 无额外渲染节点
+                            );
                         }
             }
     }
@@ -146,7 +185,8 @@ impl ApplicationHandler for App {
                 event_loop.exit();
             }
             WindowEvent::Resized(physical_size) => {
-                self.renderer.resize(physical_size.width, physical_size.height);
+                let scale_factor = self.window.as_ref().map(|w| w.scale_factor() as f32).unwrap_or(1.0);
+                self.renderer.resize(physical_size.width, physical_size.height, scale_factor);
 
                 self.input.handle_resize(physical_size.width, physical_size.height);
 

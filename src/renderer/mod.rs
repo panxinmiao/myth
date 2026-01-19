@@ -22,6 +22,7 @@ use self::core::{WgpuContext, ResourceManager};
 use self::graph::RenderFrame;
 use self::pipeline::PipelineCache;
 use self::settings::RenderSettings;
+use self::graph::RenderNode;
 
 /// 主渲染器
 pub struct Renderer {
@@ -56,7 +57,7 @@ impl Renderer {
         self._size = size;
 
         // 1. 创建 WGPU 上下文
-        let wgpu_ctx = WgpuContext::new(window, &self.settings).await?;
+        let wgpu_ctx = WgpuContext::new(window.clone(), &self.settings).await?;
 
         // 2. 初始化资源管理器
         let resource_manager = ResourceManager::new(
@@ -79,14 +80,25 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn resize(&mut self, width: u32, height: u32) {
+    pub fn resize(&mut self, width: u32, height: u32, _scale_factor: f32) {
         self._size = winit::dpi::PhysicalSize::new(width, height);
         if let Some(state) = &mut self.context {
             state.wgpu_ctx.resize(width, height);
         }
     }
 
-    pub fn render(&mut self, scene: &mut Scene, camera: &Camera, assets: &AssetServer, time: f32) {
+    /// 渲染场景
+    /// 
+    /// # 参数
+    /// - `extra_nodes`: 额外的渲染节点（如 UI Pass），将在内置 Pass 之后执行
+    pub fn render(
+        &mut self, 
+        scene: &mut Scene, 
+        camera: &Camera, 
+        assets: &AssetServer, 
+        time: f32,
+        extra_nodes: &[&dyn RenderNode],
+    ) {
         if self._size.width == 0 || self._size.height == 0 {
             return;
         }
@@ -99,7 +111,31 @@ impl Renderer {
                 camera,
                 assets,
                 time,
+                extra_nodes,
             );
         }
+    }
+
+    // === 公开方法：用于外部插件 (如 UI Pass) ===
+
+    /// 获取 wgpu Device 引用
+    /// 
+    /// 用于外部插件初始化 GPU 资源
+    pub fn device(&self) -> Option<&wgpu::Device> {
+        self.context.as_ref().map(|s| &s.wgpu_ctx.device)
+    }
+
+    /// 获取 wgpu Queue 引用
+    /// 
+    /// 用于外部插件提交命令
+    pub fn queue(&self) -> Option<&wgpu::Queue> {
+        self.context.as_ref().map(|s| &s.wgpu_ctx.queue)
+    }
+
+    /// 获取 Surface 纹理格式
+    /// 
+    /// 用于外部插件配置渲染管线
+    pub fn surface_format(&self) -> Option<wgpu::TextureFormat> {
+        self.context.as_ref().map(|s| s.wgpu_ctx.config.format)
     }
 }

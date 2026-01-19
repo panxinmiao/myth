@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use crate::animation::{binding::PropertyBinding, clip::{AnimationClip, TrackData}, tracks::KeyframeCursor};
+use crate::animation::{MorphWeightData, binding::PropertyBinding, clip::{AnimationClip, TrackData}, tracks::KeyframeCursor};
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -103,7 +103,7 @@ impl AnimationAction {
             TrackData::Vector3(t) => TrackValue::Vector3(t.sample_with_cursor(self.time, cursor)),
             TrackData::Quaternion(t) => TrackValue::Quaternion(t.sample_with_cursor(self.time, cursor)),
             TrackData::Scalar(t) => TrackValue::Scalar(t.sample_with_cursor(self.time, cursor)),
-            TrackData::MorphWeights(_) => return None,
+            TrackData::MorphWeights(t) => TrackValue::MorphWeight(t.sample_with_cursor(self.time, cursor)),
         })
     }
 }
@@ -112,4 +112,5 @@ pub enum TrackValue {
     Vector3(glam::Vec3),
     Quaternion(glam::Quat),
     Scalar(f32),
+    MorphWeight(MorphWeightData)
 }

@@ -100,17 +100,17 @@ fn main() -> anyhow::Result<()> {
     let mut controls = OrbitControls::new(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO);
     let mut fps_counter = FpsCounter::new();
 
-    app.set_update_fn(move |window, scene, _assets, input, _time, dt| {
-        mixer.update(dt, scene);
+    app.set_update_fn(move |ctx| {
+        mixer.update(ctx.dt, ctx.scene);
 
-        if let Some(cam_idx) = scene.active_camera {
-            if let Some(cam_node) = scene.get_node_mut(cam_idx) {
-                controls.update(&mut cam_node.transform, input, 45.0, dt);
+        if let Some(cam_idx) = ctx.scene.active_camera {
+            if let Some(cam_node) = ctx.scene.get_node_mut(cam_idx) {
+                controls.update(&mut cam_node.transform, ctx.input, 45.0, ctx.dt);
             }
         }
 
         if let Some(fps) = fps_counter.update() {
-            window.set_title(&format!("Morph Target Demo - FPS: {:.1}", fps));
+            ctx.window.set_title(&format!("Morph Target Demo - FPS: {:.1}", fps));
         }
     });
 
