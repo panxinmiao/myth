@@ -1,3 +1,5 @@
+use std::cell::RefCell;
+
 use thunderdome::{Arena};
 use slotmap::SlotMap;
 use glam::{Vec3, Vec4, Affine3A}; 
@@ -53,6 +55,8 @@ pub struct Scene {
     pub(crate) light_storage_buffer: CpuBuffer<Vec<GpuLightStorage>>,
     /// 环境 Uniform Buffer
     pub(crate) uniforms_buffer: CpuBuffer<EnvironmentUniforms>,
+
+    light_data_cache: RefCell<Vec<GpuLightStorage>>,
 }
 
 impl Default for Scene {
@@ -87,25 +91,23 @@ impl Scene {
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 Some("SceneEnvironmentUniforms"),
             ),
+
+            light_data_cache: RefCell::new(Vec::with_capacity(16)),
         }
     }
 
     /// 迭代场景中所有活跃的灯光
-    /// 
-    /// 返回 (Light, WorldMatrix) 的迭代器，供渲染层收集 GPU 数据。
-    /// 
-    /// # 性能说明
-    /// 当前实现遍历所有节点。对于大量节点的场景，可以考虑：
-    /// 1. 维护一个 light_nodes 缓存列表
-    /// 2. 使用 Entity-Component 架构的稀疏集合
-    /// 
-    /// # 返回
-    /// 迭代器，每个元素包含灯光引用和其世界变换矩阵
     pub fn iter_active_lights(&self) -> impl Iterator<Item = (&Light, &Affine3A)> {
-        self.nodes.iter().filter_map(|(_, node)| {
-            let light_key = node.light?;
-            let light = self.lights.get(light_key)?;
-            Some((light, &node.transform.world_matrix))
+        self.lights.iter().filter_map(move |(light_key, light)| {
+            // 查找关联该 Light 的 Node
+            let node_opt = self.nodes.iter().find_map(|(_, node)| {
+                if node.light == Some(light_key) {
+                    Some(node)
+                } else {
+                    None
+                }
+            });
+            node_opt.map(|node| (light, &node.transform.world_matrix))
         })
     }
 
@@ -377,9 +379,12 @@ impl Scene {
     
     /// 同步灯光数据到 GPU Buffer
     fn sync_light_buffer(&mut self) {
-        // 收集当前帧的灯光数据
-        let mut light_data: Vec<GpuLightStorage> = self.iter_active_lights()
-            .map(|(light, world_matrix)| {
+
+        {
+            let mut cache = self.light_data_cache.borrow_mut();
+            cache.clear();
+
+            for (light, world_matrix) in self.iter_active_lights() {
                 let pos = world_matrix.translation.to_vec3();
                 let dir = world_matrix.transform_vector3(-Vec3::Z).normalize();
                 
@@ -402,21 +407,23 @@ impl Scene {
                     }
                     LightKind::Directional(_) => {}
                 }
-                
-                gpu_light
-            })
-            .collect();
-        
-        // 确保至少有一个占位灯光（Shader 要求）
-        if light_data.is_empty() {
-            light_data.push(GpuLightStorage::default());
+
+                cache.push(gpu_light);
+            }
+
+            // 确保至少有一个占位灯光（Shader 要求）
+            if cache.is_empty() {
+                cache.push(GpuLightStorage::default());
+            }
         }
-        
-        // 使用 CpuBuffer 的 write() 方法，自动追踪版本
+
         let current_data = self.light_storage_buffer.read();
-        if current_data != &light_data {
-            *self.light_storage_buffer.write() = light_data;
+        let cache_ref = self.light_data_cache.borrow();
+        // 比较
+        if current_data.as_slice() != cache_ref.as_slice() {
+            self.light_storage_buffer.write().clone_from(&cache_ref);
         }
+
     }
     
     /// 同步环境数据到 GPU Buffer
