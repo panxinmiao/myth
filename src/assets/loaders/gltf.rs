@@ -8,7 +8,7 @@ use crate::resources::texture::Texture;
 use crate::scene::{Scene, Node, NodeIndex, SkeletonKey};
 use crate::scene::skeleton::{Skeleton, BindMode};
 use crate::assets::{AssetServer, TextureHandle, MaterialHandle, GeometryHandle};
-use crate::animation::clip::{AnimationClip, Track, TrackMeta, TrackData};
+use crate::animation::clip::{AnimationClip, Track, TrackMeta, TrackData, MorphWeightsTrack};
 use crate::animation::tracks::{KeyframeTrack, InterpolationMode};
 use crate::animation::binding::TargetPath;
 use wgpu::{VertexFormat, TextureFormat};
@@ -583,11 +583,18 @@ impl<'a> GltfLoader<'a> {
                         }
                     },
                     gltf::animation::Property::MorphTargetWeights => {
-                        let outputs = match reader.read_outputs().unwrap() {
+                        let outputs: Vec<f32> = match reader.read_outputs().unwrap() {
                             gltf::animation::util::ReadOutputs::MorphTargetWeights(iter) => {
-                                iter.into_f32().collect::<Vec<_>>()
+                                iter.into_f32().collect()
                             },
                             _ => continue,
+                        };
+                        
+                        // 计算每帧的权重数量
+                        let weights_per_frame = if !times.is_empty() {
+                            outputs.len() / times.len()
+                        } else {
+                            0
                         };
                         
                         Track {
@@ -595,7 +602,7 @@ impl<'a> GltfLoader<'a> {
                                 node_name,
                                 target: TargetPath::Weights,
                             },
-                            data: TrackData::Scalar(KeyframeTrack::new(times, outputs, interpolation)),
+                            data: TrackData::MorphWeights(MorphWeightsTrack::new(times, outputs, weights_per_frame)),
                         }
                     },
                 };

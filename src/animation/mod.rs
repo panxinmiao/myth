@@ -6,7 +6,7 @@ pub mod binding;
 pub mod binder;
 pub mod mixer;
 
-pub use clip::{AnimationClip, Track, TrackData, TrackMeta};
+pub use clip::{AnimationClip, Track, TrackData, TrackMeta, MorphWeightsTrack};
 pub use action::{AnimationAction, LoopMode};
 pub use mixer::AnimationMixer;
 pub use binder::Binder;

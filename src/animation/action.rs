@@ -103,6 +103,7 @@ impl AnimationAction {
             TrackData::Vector3(t) => TrackValue::Vector3(t.sample_with_cursor(self.time, cursor)),
             TrackData::Quaternion(t) => TrackValue::Quaternion(t.sample_with_cursor(self.time, cursor)),
             TrackData::Scalar(t) => TrackValue::Scalar(t.sample_with_cursor(self.time, cursor)),
+            TrackData::MorphWeights(_) => return None,
         })
     }
 }
