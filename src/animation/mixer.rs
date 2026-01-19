@@ -5,14 +5,12 @@ use crate::animation::clip::TrackData;
 
 pub struct AnimationMixer {
     actions: Vec<AnimationAction>,
-    morph_weight_buffer: Vec<f32>,
 }
 
 impl AnimationMixer {
     pub fn new() -> Self {
         Self { 
             actions: Vec::new(),
-            morph_weight_buffer: vec![0.0; 64],
         }
     }
 
@@ -57,22 +55,17 @@ impl AnimationMixer {
                         }
                     },  
                     (TrackData::MorphWeights(t), TargetPath::Weights) => {
-                        let mesh_key = if let Some(node) = scene.get_node(binding.node_id) {
-                            node.mesh
-                        } else {
-                            None
-                        };
+                        let weights_pod = t.sample_with_cursor(action.time, cursor);
                         
-                        if let Some(mesh_key) = mesh_key {
-                            if let Some(mesh) = scene.meshes.get_mut(mesh_key) {
-                                let num_targets = mesh.morph_target_influences.len();
-                                if num_targets > 0 {
-                                    if self.morph_weight_buffer.len() < num_targets {
-                                        self.morph_weight_buffer.resize(num_targets, 0.0);
-                                    }
-                                    t.sample(action.time, &mut self.morph_weight_buffer[..num_targets]);
-                                    mesh.set_morph_target_influences(&self.morph_weight_buffer[..num_targets]);
-                                }
+                        let mesh_key = scene.get_node(binding.node_id).and_then(|n| n.mesh);
+                        let target_count = mesh_key
+                            .and_then(|key| scene.meshes.get(key))
+                            .map(|mesh| mesh.morph_target_influences.len())
+                            .unwrap_or(0);
+                        
+                        if target_count > 0 {
+                            if let Some(node) = scene.get_node_mut(binding.node_id) {
+                                node.set_morph_weights_from_pod(&weights_pod, target_count);
                             }
                         }
                     },

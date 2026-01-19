@@ -487,6 +487,25 @@ impl Scene {
         }
     }
 
+    pub fn sync_morph_weights(&mut self) {
+        let mut updates = Vec::new();
+        
+        for node in self.nodes.iter().map(|(_, n)| n) {
+            if let Some(mesh_key) = node.mesh {
+                if !node.morph_weights.is_empty() {
+                    updates.push((mesh_key, node.morph_weights.clone()));
+                }
+            }
+        }
+        
+        for (mesh_key, weights) in updates {
+            if let Some(mesh) = self.meshes.get_mut(mesh_key) {
+                mesh.set_morph_target_influences(&weights);
+                mesh.update_morph_uniforms();
+            }
+        }
+    }
+
     pub fn main_camera_node_mut(&mut self) -> Option<&mut Node> {
         let id = self.active_camera?; 
         self.get_node_mut(id)

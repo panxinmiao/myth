@@ -110,6 +110,9 @@ impl RenderFrame {
         };
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
+
+        scene.sync_morph_weights();
+
         // ========================================================================
         // 2. Extract 阶段：复用内存，避免每帧分配
         // ========================================================================

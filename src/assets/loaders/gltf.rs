@@ -8,9 +8,11 @@ use crate::resources::texture::Texture;
 use crate::scene::{Scene, Node, NodeIndex, SkeletonKey};
 use crate::scene::skeleton::{Skeleton, BindMode};
 use crate::assets::{AssetServer, TextureHandle, MaterialHandle, GeometryHandle};
-use crate::animation::clip::{AnimationClip, Track, TrackMeta, TrackData, MorphWeightsTrack};
+use crate::animation::clip::{AnimationClip, Track, TrackMeta, TrackData};
 use crate::animation::tracks::{KeyframeTrack, InterpolationMode};
 use crate::animation::binding::TargetPath;
+use crate::animation::values::MorphWeightData;
+use crate::resources::mesh::MAX_MORPH_TARGETS;
 use wgpu::{VertexFormat, TextureFormat};
 use anyhow::Context;
 use serde_json::Value;
@@ -590,19 +592,27 @@ impl<'a> GltfLoader<'a> {
                             _ => continue,
                         };
                         
-                        // 计算每帧的权重数量
                         let weights_per_frame = if !times.is_empty() {
                             outputs.len() / times.len()
                         } else {
                             0
                         };
                         
+                        let mut pod_outputs = Vec::with_capacity(times.len());
+                        for i in 0..times.len() {
+                            let mut pod = MorphWeightData::default();
+                            let start = i * weights_per_frame;
+                            let count = weights_per_frame.min(MAX_MORPH_TARGETS);
+                            pod.weights[..count].copy_from_slice(&outputs[start..start + count]);
+                            pod_outputs.push(pod);
+                        }
+                        
                         Track {
                             meta: TrackMeta {
                                 node_name,
                                 target: TargetPath::Weights,
                             },
-                            data: TrackData::MorphWeights(MorphWeightsTrack::new(times, outputs, weights_per_frame)),
+                            data: TrackData::MorphWeights(KeyframeTrack::new(times, pod_outputs, interpolation)),
                         }
                     },
                 };
