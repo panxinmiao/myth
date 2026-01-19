@@ -188,7 +188,17 @@ pub struct GpuMaterial {
 /// GPU 全局状态 (Group 0)
 /// 
 /// 包含 Camera Uniforms、Light Storage Buffer、Environment Maps 等
-/// 通过版本号追踪 Scene 持有的 Buffer 变化
+/// 
+/// # 缓存策略
+/// 
+/// BindGroup 重建条件（结构指纹变化）：
+/// - `render_state_buffer_id` 变化（Camera Buffer 重建）
+/// - `global_structure_version` 变化（Light Buffer 扩容）
+/// - `env_map` 变化（环境贴图切换）
+/// 
+/// 仅数据上传条件（数据版本变化）：
+/// - `render_state_data_version` 变化 → 上传 Camera 数据
+/// - `global_data_version` 变化 → 上传 Light/Env 数据
 pub struct GpuGlobalState {
     pub id: u32,
     pub bind_group: wgpu::BindGroup,
@@ -197,11 +207,24 @@ pub struct GpuGlobalState {
     pub layout_id: u64,
     pub binding_wgsl: String,
     
-    // 版本追踪
-    pub last_render_state_version: u64,
-    pub last_env_uniforms_version: u64,
-    pub last_light_storage_version: u64,
-    pub last_env_map: Option<crate::assets::TextureHandle>,
+    // === 结构指纹（变化时需重建 BindGroup）===
+    /// RenderState 的 Buffer ID
+    pub render_state_buffer_id: u64,
+    /// GlobalResources 的结构版本
+    pub global_structure_version: u64,
+    /// 环境贴图 Handle
+    pub env_map: Option<crate::assets::TextureHandle>,
+    /// Environment Buffer ID
+    pub env_buffer_id: u64,
+    /// Light Buffer ID
+    pub light_buffer_id: u64,
+    
+    // === 数据版本（变化时只需 write_buffer）===
+    /// RenderState 数据版本
+    pub last_render_state_data_version: u64,
+    /// GlobalResources 数据版本
+    pub last_global_data_version: u64,
+    
     pub last_used_frame: u64,
 }
 

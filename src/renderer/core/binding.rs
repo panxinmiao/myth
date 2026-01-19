@@ -2,7 +2,7 @@
 //!
 //! 定义 BindGroup 的资源类型和绑定 Trait
 
-use crate::Mesh;
+use crate::{Mesh, Scene};
 use crate::resources::buffer::BufferRef;
 use crate::assets::TextureHandle;
 use crate::resources::material::{Material, MaterialData};
@@ -181,5 +181,51 @@ impl Bindings for RenderState {
             self.uniforms(),
             wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT
         );
+    }
+}
+
+impl Bindings for Scene {
+    fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
+         // Binding 1: Environment Uniforms
+        // builder.add_uniform_buffer(
+        //     "environment",
+        //     &env_buffer_ref,
+        //     None,
+        //     wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
+        //     false,
+        //     None,
+        //     Some(crate::renderer::core::builder::WgslStructName::Generator(
+        //         crate::resources::uniforms::EnvironmentUniforms::wgsl_struct_def
+        //     ))
+        // );
+        
+        // // Binding 2: Light Storage Buffer
+        // builder.add_storage_buffer(
+        //     "lights",
+        //     &light_buffer_ref,
+        //     None,
+        //     true,
+        //     wgpu::ShaderStages::FRAGMENT,
+        //     Some(crate::renderer::core::builder::WgslStructName::Generator(
+        //         crate::resources::uniforms::GpuLightStorage::wgsl_struct_def
+        //     ))
+        // );
+
+        // Binding 3-4: Environment Map (Cube) and Sampler
+        let env_map_handle = self.environment.env_map.unwrap_or(TextureHandle::dummy_env_map());
+        builder.add_texture(
+            "env_map",
+            env_map_handle,
+            wgpu::TextureSampleType::Float { filterable: true },
+            wgpu::TextureViewDimension::Cube,
+            wgpu::ShaderStages::FRAGMENT
+        );
+        builder.add_sampler(
+            "env_map",
+            env_map_handle,
+            wgpu::SamplerBindingType::Filtering,
+            wgpu::ShaderStages::FRAGMENT
+        );
+            
     }
 }
