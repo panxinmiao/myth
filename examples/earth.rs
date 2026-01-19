@@ -89,7 +89,7 @@ fn main() -> anyhow::Result<()> {
 
     let light_index = app.scene.add_light(light);
 
-    app.scene.environment.uniforms_mut().ambient_light = Vec3::new(0.0001, 0.0001, 0.0001);
+    app.scene.environment.set_ambient_color(Vec3::new(0.0001, 0.0001, 0.0001));
 
     if let Some(light_node) = app.scene.get_node_mut(light_index) {
         light_node.transform.position = Vec3::new(3.0, 0.0, 1.0);

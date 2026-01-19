@@ -95,7 +95,7 @@ impl ForwardRenderPass {
                 error!("CRITICAL: GpuMaterial missing for {:?}", item.material);
                 continue;
             };
-            let Some(gpu_world) = ctx.resource_manager.get_world(ctx.render_state.id, ctx.extracted_scene.environment_id) else {
+            let Some(gpu_world) = ctx.resource_manager.get_global_state(ctx.render_state.id) else {
                 error!("Render Environment missing");
                 continue;
             };
@@ -115,7 +115,6 @@ impl ForwardRenderPass {
                 geometry_version: geometry.layout_version(),
                 instance_variants,
                 scene_id: ctx.extracted_scene.scene_features.bits(),
-                scene_version: ctx.extracted_scene.environment_layout_version,
                 render_state_id: ctx.render_state.id,
             };
 
@@ -147,7 +146,8 @@ impl ForwardRenderPass {
                     &gpu_geometry.layout_info,
                     gpu_material,
                     &object_data,
-                    gpu_world,
+                    &gpu_world.binding_wgsl,
+                    &gpu_world.layout,
                 );
 
                 ctx.pipeline_cache.insert_pipeline_fast(fast_key, (pipeline.clone(), pipeline_id));
@@ -166,7 +166,6 @@ impl ForwardRenderPass {
                 geometry_handle: item.geometry,
                 material_handle: item.material,
                 render_state_id: ctx.render_state.id,
-                env_id: ctx.extracted_scene.environment_id,
                 pipeline_id,
                 pipeline,
                 model_matrix: item.world_matrix,
@@ -229,12 +228,11 @@ impl ForwardRenderPass {
         resource_manager: &'pass crate::renderer::core::ResourceManager,
         pass: &mut TrackedRenderPass<'pass>,
         cmds: &'pass [RenderCommand],
-        env_id: u32,
         render_state_id: u32,
     ) {
         if cmds.is_empty() { return; }
 
-        if let Some(gpu_global) = resource_manager.get_world(render_state_id, env_id) {
+        if let Some(gpu_global) = resource_manager.get_global_state(render_state_id) {
             pass.set_bind_group(0, gpu_global.bind_group_id, &gpu_global.bind_group, &[]);
         } else {
             return;
@@ -326,14 +324,12 @@ impl RenderNode for ForwardRenderPass {
                 ctx.resource_manager,
                 &mut tracked,
                 &opaque,
-                ctx.extracted_scene.environment_id,
                 ctx.render_state.id,
             );
             Self::draw_list(
                 ctx.resource_manager,
                 &mut tracked,
                 &transparent,
-                ctx.extracted_scene.environment_id,
                 ctx.render_state.id,
             );
         }

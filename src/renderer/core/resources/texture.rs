@@ -240,4 +240,12 @@ impl ResourceManager {
         self.sampler_cache.insert(*config, sampler.clone());
         sampler
     }
+
+    pub fn get_texture(&self, handle: TextureHandle) -> Option<&GpuTexture> {
+        self.gpu_textures.get(handle)
+    }
+
+    pub fn get_image(&self, id: u64) -> Option<&GpuImage> {
+        self.gpu_images.get(&id)
+    }
 }

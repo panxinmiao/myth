@@ -13,7 +13,7 @@ use crate::assets::{GeometryHandle, MaterialHandle};
 
 use crate::renderer::pipeline::shader_gen::{ShaderGenerator, ShaderCompilationOptions};
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
-use crate::renderer::core::resources::{GpuMaterial, GpuEnvironment};
+use crate::renderer::core::resources::GpuMaterial;
 
 /// L2 缓存 Key: 完整描述 Pipeline 的所有特征
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -40,7 +40,6 @@ pub struct FastPipelineKey {
     pub geometry_version: u64,
     pub instance_variants: u32,
     pub scene_id: u32,
-    pub scene_version: u64,
     pub render_state_id: u32,
 }
 
@@ -83,7 +82,8 @@ impl PipelineCache {
         vertex_layout: &GeneratedVertexLayout,
         gpu_material: &GpuMaterial,
         object_data: &ObjectBindingData,
-        gpu_environment: &GpuEnvironment,
+        global_binding_wgsl: &str,
+        global_layout: &wgpu::BindGroupLayout,
     ) -> (wgpu::RenderPipeline, u16) {
         if let Some(cached) = self.canonical_cache.get(&canonical_key) {
             return cached.clone();
@@ -97,7 +97,7 @@ impl PipelineCache {
 
         let shader_source = ShaderGenerator::generate_shader(
             vertex_layout,
-            &gpu_environment.binding_wgsl,
+            global_binding_wgsl,
             &gpu_material.binding_wgsl,
             &object_data.binding_wgsl,
             template_name,
@@ -120,7 +120,7 @@ impl PipelineCache {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[
-                &gpu_environment.layout,
+                global_layout,
                 &gpu_material.layout,
                 &object_data.layout
             ],

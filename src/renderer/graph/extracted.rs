@@ -59,10 +59,6 @@ pub struct ExtractedScene {
     pub skeletons: Vec<ExtractedSkeleton>,
     /// 背景颜色
     pub background: Option<glam::Vec4>,
-    /// 环境 ID
-    pub environment_id: u32,
-    /// 环境布局版本
-    pub environment_layout_version: u64,
     /// 场景特性标志
     pub scene_features: SceneFeatures,
 }
@@ -74,8 +70,6 @@ impl ExtractedScene {
             render_items: Vec::new(),
             skeletons: Vec::new(),
             background: None,
-            environment_id: 0,
-            environment_layout_version: 0,
             scene_features: SceneFeatures::empty(),
         }
     }
@@ -86,8 +80,6 @@ impl ExtractedScene {
             render_items: Vec::with_capacity(item_capacity),
             skeletons: Vec::with_capacity(skeleton_capacity),
             background: None,
-            environment_id: 0,
-            environment_layout_version: 0,
             scene_features: SceneFeatures::empty(),
         }
     }
@@ -193,8 +185,6 @@ impl ExtractedScene {
     /// 提取环境数据
     fn extract_environment(&mut self, scene: &Scene) {
         self.background = scene.background;
-        self.environment_id = scene.environment.id;
-        self.environment_layout_version = scene.environment.layout_version();
         self.scene_features = scene.get_features();
     }
 

@@ -7,7 +7,6 @@ use crate::resources::buffer::BufferRef;
 use crate::assets::TextureHandle;
 use crate::resources::material::{Material, MaterialData};
 use crate::resources::geometry::Geometry;
-use crate::scene::environment::Environment;
 use crate::resources::uniforms::*;
 use crate::renderer::core::builder::{ResourceBuilder};
 use crate::renderer::graph::RenderState;
@@ -175,46 +174,48 @@ impl Bindings for Mesh {
     }
 }
 
-impl Bindings for Environment {
-    fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
-        builder.add_uniform::<EnvironmentUniforms>(
-            "environment",
-            self.uniforms(),
-            wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
-        );
-
-        builder.add_storage::<GpuLightStorage>(
-            "lights",
-            self.light_storage.handle(),
-            Some(self.light_storage.as_bytes()),
-            true,
-            wgpu::ShaderStages::FRAGMENT
-        );
-
-        // if let Some(env_map) = &self.bindings().env_map {
-        builder.add_texture(
-            "env_map", 
-            self.bindings().env_map.unwrap_or(TextureHandle::dummy_env_map()), 
-            wgpu::TextureSampleType::Float { filterable: true }, 
-            wgpu::TextureViewDimension::Cube, 
-            wgpu::ShaderStages::FRAGMENT
-        );
-        builder.add_sampler(
-            "env_map", 
-            self.bindings().env_map.unwrap_or(TextureHandle::dummy_env_map()), 
-            wgpu::SamplerBindingType::Filtering, 
-            wgpu::ShaderStages::FRAGMENT
-        );
-        // }
-    }
-}
-
 impl Bindings for RenderState {
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
         builder.add_uniform::<RenderStateUniforms>(
             "render_state",
             self.uniforms(),
             wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT
+        );
+    }
+}
+
+impl Bindings for crate::scene::Scene {
+    fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
+        // Binding: Environment Uniforms
+        builder.add_uniform::<EnvironmentUniforms>(
+            "environment",
+            self.environment_uniforms(),
+            wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
+        );
+
+        // Binding: Light Storage Buffer
+        builder.add_storage::<GpuLightStorage>(
+            "lights",
+            self.light_storage().handle(),
+            Some(self.light_storage().as_bytes()),
+            true,
+            wgpu::ShaderStages::FRAGMENT
+        );
+
+        // Binding: Environment Map (Cube)
+        let env_map_handle = self.environment.env_map.unwrap_or(crate::assets::TextureHandle::dummy_env_map());
+        builder.add_texture(
+            "env_map",
+            env_map_handle,
+            wgpu::TextureSampleType::Float { filterable: true },
+            wgpu::TextureViewDimension::Cube,
+            wgpu::ShaderStages::FRAGMENT
+        );
+        builder.add_sampler(
+            "env_map",
+            env_map_handle,
+            wgpu::SamplerBindingType::Filtering,
+            wgpu::ShaderStages::FRAGMENT
         );
     }
 }

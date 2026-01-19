@@ -10,8 +10,8 @@ use crate::resources::mesh::Mesh;
 use crate::scene::camera::Camera;
 use crate::scene::light::{Light, LightKind};
 use crate::scene::environment::Environment;
-
-use crate::resources::uniforms::{GpuLightStorage};
+use crate::resources::buffer::CpuBuffer;
+use crate::resources::uniforms::{GpuLightStorage, EnvironmentUniforms};
 
 use crate::scene::{CameraKey, LightKey, MeshKey, NodeIndex, SkeletonKey};
 
@@ -41,6 +41,10 @@ pub struct Scene {
     pub background: Option<Vec4>,
 
     pub active_camera: Option<NodeIndex>,
+    
+    // ====GPU Buffer (由 ResourceManager 通过版本追踪管理)====
+    pub(crate) environment_uniforms: CpuBuffer<EnvironmentUniforms>,
+    pub(crate) light_storage: CpuBuffer<Vec<GpuLightStorage>>,
 }
 
 impl Default for Scene {
@@ -51,6 +55,9 @@ impl Default for Scene {
 
 impl Scene {
     pub fn new() -> Self {
+        // 初始化时预分配一定数量的灯光存储空间(16 个)
+        let initial_light_data = vec![GpuLightStorage::default(); 16];
+        
         Self {
             nodes: Arena::new(),
             root_nodes: Vec::new(),
@@ -64,6 +71,17 @@ impl Scene {
             background: Some(Vec4::new(0.0, 0.0, 0.0, 1.0)),
 
             active_camera: None,
+            
+            environment_uniforms: CpuBuffer::new(
+                EnvironmentUniforms::default(),
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some("Environment Uniforms")
+            ),
+            light_storage: CpuBuffer::new(
+                initial_light_data,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                Some("Light Storage Buffer")
+            ),
         }
     }
 
@@ -309,17 +327,55 @@ impl Scene {
         // }
         let mut features = SceneFeatures::empty();
 
-        if self.environment.bindings().env_map.is_some() {
+        if self.environment.has_env_map() {
             features |= SceneFeatures::USE_ENV_MAP;
         }
         features
     }
 
+    /// 收集场景中所有灯光的 GPU 数据
+    pub fn collect_gpu_lights(&self) -> Vec<GpuLightStorage> {
+        self.collect_lights()
+    }
+
     pub fn update(&mut self) {
         self.update_matrix_world();
         self.update_skeletons();
+        self.sync_gpu_buffers();
+    }
+    
+    /// 同步 GPU Buffer 数据
+    fn sync_gpu_buffers(&mut self) {
+        // 1. 收集灯光数据并更新 light_storage
         let gpu_lights = self.collect_lights();
-        self.environment.update_lights(gpu_lights);
+        let light_count = gpu_lights.len();
+        
+        if gpu_lights.is_empty() {
+            // 保留至少一个占位元素
+            if self.light_storage.read().len() != 1 {
+                *self.light_storage.write() = vec![GpuLightStorage::default()];
+            }
+        } else {
+            *self.light_storage.write() = gpu_lights;
+        }
+        
+        // 2. 更新 environment_uniforms
+        let env = &self.environment;
+        let mut uniforms = self.environment_uniforms.write();
+        uniforms.ambient_light = env.ambient_color;
+        uniforms.num_lights = light_count as u32;
+        uniforms.env_map_intensity = env.intensity;
+        uniforms.env_map_max_mip_level = env.env_map_max_mip_level;
+    }
+    
+    /// 获取环境 Uniforms 的 Buffer 引用
+    pub fn environment_uniforms(&self) -> &CpuBuffer<EnvironmentUniforms> {
+        &self.environment_uniforms
+    }
+    
+    /// 获取灯光存储 Buffer 引用
+    pub fn light_storage(&self) -> &CpuBuffer<Vec<GpuLightStorage>> {
+        &self.light_storage
     }
 
     pub fn update_skeletons(&mut self) {

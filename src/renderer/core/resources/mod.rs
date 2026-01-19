@@ -182,19 +182,25 @@ pub struct GpuMaterial {
     pub last_used_frame: u64,
 }
 
-pub struct GpuEnvironment {
+/// GPU 全局状态 (Group 0)
+/// 
+/// 包含 Camera Uniforms、Light Storage Buffer、Environment Maps 等
+/// 通过版本号追踪 Scene 持有的 Buffer 变化
+pub struct GpuGlobalState {
+    pub id: u32,
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
     pub layout: wgpu::BindGroupLayout,
     pub layout_id: u64,
     pub binding_wgsl: String,
-    pub last_uniform_version: u64,
-    pub last_binding_version: u64,
-    pub last_layout_version: u64,
+    
+    // 版本追踪
     pub last_render_state_version: u64,
+    pub last_env_uniforms_version: u64,
+    pub last_light_storage_version: u64,
+    pub last_env_map: Option<crate::assets::TextureHandle>,
     pub last_used_frame: u64,
 }
-
 
 
 // ============================================================================
@@ -230,7 +236,7 @@ pub struct ResourceManager {
     pub(crate) gpu_textures: SecondaryMap<TextureHandle, GpuTexture>,
     pub(crate) gpu_samplers: SecondaryMap<TextureHandle, wgpu::Sampler>,
 
-    pub(crate) worlds: FxHashMap<u64, GpuEnvironment>,
+    pub(crate) global_states: FxHashMap<u64, GpuGlobalState>,
     pub(crate) gpu_buffers: FxHashMap<u64, GpuBuffer>,
     pub(crate) gpu_images: FxHashMap<u64, GpuImage>,
 
@@ -336,7 +342,7 @@ impl ResourceManager {
             gpu_materials: SecondaryMap::new(),
             gpu_textures: SecondaryMap::new(),
             gpu_samplers: SecondaryMap::new(),
-            worlds: FxHashMap::default(),
+            global_states: FxHashMap::default(),
             gpu_buffers,
             gpu_images: FxHashMap::default(),
             layout_cache: FxHashMap::default(),
@@ -424,6 +430,6 @@ impl ResourceManager {
         self.gpu_samplers.retain(|k, _| self.gpu_textures.contains_key(k));
         self.gpu_buffers.retain(|_, v| v.last_used_frame >= cutoff);
         self.gpu_images.retain(|_, v| v.last_used_frame >= cutoff);
-        self.worlds.retain(|_, v| v.last_used_frame >= cutoff);
+        self.global_states.retain(|_, v| v.last_used_frame >= cutoff);
     }
 }

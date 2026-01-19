@@ -25,7 +25,7 @@ fn main() -> anyhow::Result<()> {
     app.scene.add_light(light);
     
     // 添加环境光
-    app.scene.environment.uniforms_mut().ambient_light = Vec3::splat(0.3);
+    app.scene.environment.set_ambient_color(Vec3::splat(0.3));
 
     // 加载环境贴图
     let env_texture_handle = app.assets.load_cube_texture_from_files(

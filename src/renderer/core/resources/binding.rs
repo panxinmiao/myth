@@ -1,6 +1,8 @@
 //! BindGroup 相关操作
 //!
-//! 包括 Object BindGroup (Group 2)、骨骼管理和环境绑定
+//! 包括 Object BindGroup (Group 2)、骨骼管理和全局绑定 (Group 0)
+
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use glam::Mat4;
 use wgpu::ShaderStages;
@@ -9,20 +11,22 @@ use crate::Mesh;
 use crate::assets::{AssetServer, TextureHandle};
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::geometry::Geometry;
-use crate::resources::uniforms::{DynamicModelUniforms};
+use crate::resources::uniforms::DynamicModelUniforms;
 use crate::scene::SkeletonKey;
 use crate::scene::skeleton::{Skeleton};
-use crate::scene::environment::Environment;
+use crate::scene::Scene;
 
 use crate::renderer::core::binding::{BindingResource, Bindings};
 use crate::renderer::core::builder::{ResourceBuilder, WgslStructName};
 use crate::renderer::graph::RenderState;
 
 use super::{
-    ResourceManager, GpuBuffer, GpuEnvironment, 
+    ResourceManager, GpuBuffer, GpuGlobalState, 
     ObjectBindGroupKey, ObjectBindingData,
     generate_resource_id, ModelBufferAllocator,
 };
+
+static NEXT_GLOBAL_STATE_ID: AtomicU32 = AtomicU32::new(0);
 
 impl ResourceManager {
     // ========================================================================
@@ -307,68 +311,104 @@ impl ResourceManager {
     }
 
     // ========================================================================
-    // 环境绑定
+    // 全局绑定 (Group 0)
     // ========================================================================
 
-    pub fn prepare_global(&mut self, assets: &AssetServer, env: &Environment, render_state: &RenderState) {
-        let world_id = Self::compose_env_render_state_id(render_state.id, env.id);
-
-        if let Some(gpu_env) = self.worlds.get_mut(&world_id) {
-            let uniform_match = gpu_env.last_uniform_version == env.uniforms().version();
-            let binding_match = gpu_env.last_binding_version == env.binding_version();
-            let layout_match = gpu_env.last_layout_version == env.layout_version();
-            let render_state_match = render_state.uniforms().version() == gpu_env.last_render_state_version;
-
-            if uniform_match && binding_match && layout_match && render_state_match {
-                gpu_env.last_used_frame = self.frame_index;
-                return;
+    /// 准备全局绑定资源
+    /// 
+    /// 从 Scene 收集 Camera、Lights、Environment 数据，创建 BindGroup 0
+    /// 通过 Buffer 版本号追踪变化，避免每帧重复创建
+    pub fn prepare_global(
+        &mut self, 
+        assets: &AssetServer, 
+        scene: &Scene,
+        render_state: &RenderState
+    ) -> u32 {
+        // 使用 render_state.id 作为缓存键
+        let state_id = render_state.id as u64;
+        
+        // 获取当前版本信息
+        let render_state_version = render_state.uniforms().version();
+        let env_uniforms_version = scene.environment_uniforms().version();
+        let light_storage_version = scene.light_storage().version();
+        let env_map = scene.environment.env_map;
+        
+        // 检查是否需要更新
+        if let Some(gpu_state) = self.global_states.get_mut(&state_id) {
+            let render_state_match = render_state_version == gpu_state.last_render_state_version;
+            let env_uniforms_match = env_uniforms_version == gpu_state.last_env_uniforms_version;
+            let light_storage_match = light_storage_version == gpu_state.last_light_storage_version;
+            let env_map_match = env_map == gpu_state.last_env_map;
+            
+            if render_state_match && env_uniforms_match && light_storage_match && env_map_match {
+                gpu_state.last_used_frame = self.frame_index;
+                return gpu_state.id;
             }
         }
-
+        
+        // 创建或更新 GpuGlobalState
+        self.create_or_update_global_state(
+            assets,
+            state_id,
+            render_state,
+            scene,
+        )
+    }
+    
+    fn create_or_update_global_state(
+        &mut self,
+        assets: &AssetServer,
+        state_id: u64,
+        render_state: &RenderState,
+        scene: &Scene,
+    ) -> u32 {
+        // 准备环境贴图
+        if let Some(env_map) = scene.environment.env_map {
+            self.prepare_texture(assets, env_map);
+        }
+        
+        // 构建 BindGroup
         let mut builder = ResourceBuilder::new();
+        
+        // Binding 0: RenderState Uniforms (Camera)
         render_state.define_bindings(&mut builder);
-        env.define_bindings(&mut builder);
-
+        
+        // Binding 1-4: Scene Bindings (Environment Uniforms, Lights, EnvMap)
+        scene.define_bindings(&mut builder);
+        
+        // 准备资源并创建 BindGroup
         self.prepare_binding_resources(assets, &builder.resources);
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
-
-        let needs_new_bind_group = if let Some(gpu_env) = self.worlds.get(&world_id) {
-            gpu_env.layout_id != layout_id || gpu_env.last_binding_version != env.binding_version()
-        } else { true };
-
-        if !needs_new_bind_group {
-            if let Some(gpu_env) = self.worlds.get_mut(&world_id) {
-                gpu_env.last_uniform_version = env.uniforms().version();
-                gpu_env.last_render_state_version = render_state.uniforms().version();
-                gpu_env.last_used_frame = self.frame_index;
-            }
-            return;
-        }
-
-        let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
+        let (bind_group, bind_group_id) = self.create_bind_group(&layout, &builder.resources);
         let binding_wgsl = builder.generate_wgsl(0);
-
-        let gpu_world = GpuEnvironment {
+        
+        // 获取或创建新 ID
+        let new_id = if let Some(existing) = self.global_states.get(&state_id) {
+            existing.id
+        } else {
+            NEXT_GLOBAL_STATE_ID.fetch_add(1, Ordering::Relaxed)
+        };
+        
+        let gpu_state = GpuGlobalState {
+            id: new_id,
             bind_group,
-            bind_group_id: bg_id,
+            bind_group_id,
             layout,
             layout_id,
             binding_wgsl,
-            last_uniform_version: env.uniforms().version(),
-            last_binding_version: env.binding_version(),
-            last_layout_version: env.layout_version(),
             last_render_state_version: render_state.uniforms().version(),
+            last_env_uniforms_version: scene.environment_uniforms().version(),
+            last_light_storage_version: scene.light_storage().version(),
+            last_env_map: scene.environment.env_map,
             last_used_frame: self.frame_index,
         };
-        self.worlds.insert(world_id, gpu_world);
+        
+        self.global_states.insert(state_id, gpu_state);
+        new_id
     }
 
-    fn compose_env_render_state_id(render_state_id: u32, env_id: u32) -> u64 {
-        ((render_state_id as u64) << 32) | (env_id as u64)
-    }
-
-    pub fn get_world(&self, render_state_id: u32, env_id: u32) -> Option<&GpuEnvironment> {
-        let world_id = Self::compose_env_render_state_id(render_state_id, env_id);
-        self.worlds.get(&world_id)
+    /// 获取全局状态
+    pub fn get_global_state(&self, render_state_id: u32) -> Option<&GpuGlobalState> {
+        self.global_states.get(&(render_state_id as u64))
     }
 }

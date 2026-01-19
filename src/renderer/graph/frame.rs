@@ -9,7 +9,6 @@ use log::warn;
 use crate::scene::skeleton::Skeleton;
 use crate::scene::{Scene, SkeletonKey};
 use crate::scene::camera::Camera;
-use crate::scene::environment::Environment;
 use crate::assets::AssetServer;
 
 use crate::renderer::core::{WgpuContext, ResourceManager};
@@ -38,7 +37,6 @@ pub struct RenderCommand {
     pub geometry_handle: crate::assets::GeometryHandle,
     pub material_handle: crate::assets::MaterialHandle,
     pub render_state_id: u32,
-    pub env_id: u32,
     pub pipeline_id: u16,
     pub pipeline: wgpu::RenderPipeline,
     pub model_matrix: glam::Mat4,
@@ -130,7 +128,7 @@ impl RenderFrame {
         // ========================================================================
         // 3. Prepare 阶段：准备 GPU 资源
         // ========================================================================
-        self.prepare_global_resources(resource_manager, assets, &scene.environment, camera, time);
+        self.prepare_global_resources(resource_manager, assets, scene, camera, time);
         self.upload_skeletons_extracted(resource_manager, &scene.skins, &self.extracted_scene);
 
         // ========================================================================
@@ -176,12 +174,12 @@ impl RenderFrame {
         &mut self,
         resource_manager: &mut ResourceManager,
         assets: &AssetServer,
-        environment: &Environment,
+        scene: &Scene,
         camera: &Camera,
         time: f32,
     ) {
         self.render_state.update(camera, time);
-        resource_manager.prepare_global(assets, environment, &self.render_state);
+        resource_manager.prepare_global(assets, scene, &self.render_state);
     }
 
     fn upload_skeletons_extracted(
