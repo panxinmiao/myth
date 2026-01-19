@@ -1,6 +1,6 @@
 use thunderdome::{Arena};
 use slotmap::SlotMap;
-use glam::{Vec4, Vec3}; 
+use glam::{Vec4, Affine3A}; 
 use bitflags::bitflags;
 use crate::scene::node::Node;
 use crate::scene::skeleton::{BindMode, Skeleton};
@@ -8,10 +8,8 @@ use crate::scene::transform::Transform;
 use crate::scene::transform_system;
 use crate::resources::mesh::Mesh;
 use crate::scene::camera::Camera;
-use crate::scene::light::{Light, LightKind};
+use crate::scene::light::Light;
 use crate::scene::environment::Environment;
-use crate::resources::buffer::CpuBuffer;
-use crate::resources::uniforms::{GpuLightStorage, EnvironmentUniforms};
 
 use crate::scene::{CameraKey, LightKey, MeshKey, NodeIndex, SkeletonKey};
 
@@ -23,6 +21,15 @@ bitflags! {
     }
 }
 
+/// 场景图结构
+/// 
+/// Scene 是纯数据层，只负责存储场景图逻辑和组件数据。
+/// 所有 GPU 资源管理由 ResourceManager 和 GlobalResources 负责。
+/// 
+/// # 设计理念 (Render-Logic Separation)
+/// - Scene 只包含纯粹的数据（节点、灯光参数、环境配置）
+/// - 不持有任何 wgpu、CpuBuffer、BindGroup 等 GPU 相关资源
+/// - 通过 `iter_active_lights()` 等方法提供高效的数据访问接口
 pub struct Scene {
     pub nodes: Arena<Node>,
     pub root_nodes: Vec<NodeIndex>,
@@ -41,10 +48,6 @@ pub struct Scene {
     pub background: Option<Vec4>,
 
     pub active_camera: Option<NodeIndex>,
-    
-    // ====GPU Buffer (由 ResourceManager 通过版本追踪管理)====
-    pub(crate) environment_uniforms: CpuBuffer<EnvironmentUniforms>,
-    pub(crate) light_storage: CpuBuffer<Vec<GpuLightStorage>>,
 }
 
 impl Default for Scene {
@@ -55,9 +58,6 @@ impl Default for Scene {
 
 impl Scene {
     pub fn new() -> Self {
-        // 初始化时预分配一定数量的灯光存储空间(16 个)
-        let initial_light_data = vec![GpuLightStorage::default(); 16];
-        
         Self {
             nodes: Arena::new(),
             root_nodes: Vec::new(),
@@ -71,18 +71,26 @@ impl Scene {
             background: Some(Vec4::new(0.0, 0.0, 0.0, 1.0)),
 
             active_camera: None,
-            
-            environment_uniforms: CpuBuffer::new(
-                EnvironmentUniforms::default(),
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("Environment Uniforms")
-            ),
-            light_storage: CpuBuffer::new(
-                initial_light_data,
-                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
-                Some("Light Storage Buffer")
-            ),
         }
+    }
+
+    /// 迭代场景中所有活跃的灯光
+    /// 
+    /// 返回 (Light, WorldMatrix) 的迭代器，供渲染层收集 GPU 数据。
+    /// 
+    /// # 性能说明
+    /// 当前实现遍历所有节点。对于大量节点的场景，可以考虑：
+    /// 1. 维护一个 light_nodes 缓存列表
+    /// 2. 使用 Entity-Component 架构的稀疏集合
+    /// 
+    /// # 返回
+    /// 迭代器，每个元素包含灯光引用和其世界变换矩阵
+    pub fn iter_active_lights(&self) -> impl Iterator<Item = (&Light, &Affine3A)> {
+        self.nodes.iter().filter_map(|(_, node)| {
+            let light_key = node.light?;
+            let light = self.lights.get(light_key)?;
+            Some((light, &node.transform.world_matrix))
+        })
     }
 
     /// 开始构建一个节点
@@ -333,49 +341,12 @@ impl Scene {
         features
     }
 
-    /// 收集场景中所有灯光的 GPU 数据
-    pub fn collect_gpu_lights(&self) -> Vec<GpuLightStorage> {
-        self.collect_lights()
-    }
-
+    /// 更新场景状态（每帧调用）
+    /// 
+    /// 只更新逻辑层数据，GPU 数据同步由 ResourceManager 负责
     pub fn update(&mut self) {
         self.update_matrix_world();
         self.update_skeletons();
-        self.sync_gpu_buffers();
-    }
-    
-    /// 同步 GPU Buffer 数据
-    fn sync_gpu_buffers(&mut self) {
-        // 1. 收集灯光数据并更新 light_storage
-        let gpu_lights = self.collect_lights();
-        let light_count = gpu_lights.len();
-        
-        if gpu_lights.is_empty() {
-            // 保留至少一个占位元素
-            if self.light_storage.read().len() != 1 {
-                *self.light_storage.write() = vec![GpuLightStorage::default()];
-            }
-        } else {
-            *self.light_storage.write() = gpu_lights;
-        }
-        
-        // 2. 更新 environment_uniforms
-        let env = &self.environment;
-        let mut uniforms = self.environment_uniforms.write();
-        uniforms.ambient_light = env.ambient_color;
-        uniforms.num_lights = light_count as u32;
-        uniforms.env_map_intensity = env.intensity;
-        uniforms.env_map_max_mip_level = env.env_map_max_mip_level;
-    }
-    
-    /// 获取环境 Uniforms 的 Buffer 引用
-    pub fn environment_uniforms(&self) -> &CpuBuffer<EnvironmentUniforms> {
-        &self.environment_uniforms
-    }
-    
-    /// 获取灯光存储 Buffer 引用
-    pub fn light_storage(&self) -> &CpuBuffer<Vec<GpuLightStorage>> {
-        &self.light_storage
     }
 
     pub fn update_skeletons(&mut self) {
@@ -401,60 +372,8 @@ impl Scene {
         for (skeleton_id, root_inv) in tasks {
             if let Some(skeleton) = self.skins.get_mut(skeleton_id) {
                 skeleton.compute_joint_matrices(nodes, root_inv);
-                
-                // TODO: 这里通常会触发 GPU Buffer 的上传
-                // render_queue.write_buffer(skeleton.gpu_buffer, &skeleton.joint_matrices);
             }
         }
-    }
-
-    fn collect_lights(&self) -> Vec<GpuLightStorage> {
-            
-        let mut light_storages = vec![];
-
-        for (_id, node) in self.nodes.iter() {
-            if let Some(light_idx) = node.light
-                && let Some(light) = self.lights.get(light_idx) {
-                    
-                    // 获取灯光的世界变换
-                    let world_mat = node.transform.world_matrix; 
-                    let pos= world_mat.translation.to_vec3();
-                    // 从旋转中提取方向 (-Z)
-                    let dir = world_mat.transform_vector3(-Vec3::Z).normalize();
-
-                    // todo shadows:
-                    // shadow = light.shadow,
-                    let mut gpu_light_storage = GpuLightStorage{
-                        color: light.color,
-                        intensity: light.intensity,
-                        position: pos,
-                        direction: dir,
-                        ..Default::default()
-                    };
-
-                    gpu_light_storage.color = light.color;
-                    gpu_light_storage.intensity = light.intensity;
-                    gpu_light_storage.position = pos;
-                    gpu_light_storage.direction = dir;
-
-                    match &light.kind {
-                        LightKind::Point(light) => {
-                            gpu_light_storage.range = light.range;
-                        },
-                        LightKind::Spot(light) => {
-                            gpu_light_storage.range = light.range;
-                            gpu_light_storage.inner_cone_cos = light.inner_cone.cos();
-                            gpu_light_storage.outer_cone_cos = light.outer_cone.cos();
-                        },
-                        __ => {}
-                    }
-
-                    light_storages.push(gpu_light_storage);
-
-                }
-        }
-
-        light_storages
     }
 
     pub fn main_camera_node_mut(&mut self) -> Option<&mut Node> {

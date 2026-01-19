@@ -66,6 +66,23 @@ impl BufferRef {
         Self::new(capacity, usage, label)
     }
 
+    /// 创建具有指定 ID 的句柄（用于全局资源管理）
+    /// 
+    /// 注意：此方法允许指定固定的 ID，用于需要稳定引用的全局资源。
+    /// 普通使用场景应使用 `new()` 方法让系统自动分配 ID。
+    pub fn with_fixed_id(id: u64, size: usize, usage: wgpu::BufferUsages, version: u64, _label: Option<&str>) -> Self {
+        Self {
+            id,
+            #[cfg(debug_assertions)]
+            label: _label
+                .map(|s| Cow::Owned(s.to_string()))
+                .unwrap_or(Cow::Borrowed("Unnamed Buffer")),
+            usage,
+            size,
+            version,
+        }
+    }
+
     pub fn id(&self) -> u64 { self.id }
     pub fn usage(&self) -> wgpu::BufferUsages { self.usage }
     pub fn label(&self) -> Option<&str> {

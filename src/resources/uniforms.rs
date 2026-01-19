@@ -129,7 +129,7 @@ macro_rules! define_gpu_data_struct {
 
     (@def_struct $(#[$meta:meta])* struct $name:ident { $( $vis:vis $field_name:ident : $field_type:ty ),* }) => {
         #[repr(C)]
-        #[derive(Clone, Copy, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+        #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
         $(#[$meta])*
         pub struct $name {
             $( $vis $field_name : $field_type, )*

@@ -9,9 +9,9 @@ use wgpu::ShaderStages;
 
 use crate::Mesh;
 use crate::assets::{AssetServer, TextureHandle};
-use crate::resources::buffer::CpuBuffer;
+use crate::resources::buffer::{BufferRef, CpuBuffer};
 use crate::resources::geometry::Geometry;
-use crate::resources::uniforms::DynamicModelUniforms;
+use crate::resources::uniforms::{DynamicModelUniforms, WgslStruct};
 use crate::scene::SkeletonKey;
 use crate::scene::skeleton::{Skeleton};
 use crate::scene::Scene;
@@ -317,30 +317,39 @@ impl ResourceManager {
     /// 准备全局绑定资源
     /// 
     /// 从 Scene 收集 Camera、Lights、Environment 数据，创建 BindGroup 0
-    /// 通过 Buffer 版本号追踪变化，避免每帧重复创建
+    /// 
+    /// # 重构说明 (Render-Logic Separation)
+    /// 现在使用 GlobalResources 来管理 Light/Environment 的 GPU 数据，
+    /// 而不是从 Scene 直接获取 CpuBuffer。这实现了数据层和渲染层的分离。
+    /// 
+    /// # 性能说明
+    /// - 通过版本号追踪变化，避免每帧重复创建 BindGroup
+    /// - GlobalResources 内部实现了 Dirty Check，只在数据变化时上传
     pub fn prepare_global(
         &mut self, 
         assets: &AssetServer, 
         scene: &Scene,
         render_state: &RenderState
     ) -> u32 {
+        // 1. 从 Scene 同步全局资源数据到 GlobalResources
+        self.global_resources.sync_from_scene(scene);
+        
         // 使用 render_state.id 作为缓存键
         let state_id = render_state.id as u64;
         
         // 获取当前版本信息
         let render_state_version = render_state.uniforms().version();
-        let env_uniforms_version = scene.environment_uniforms().version();
-        let light_storage_version = scene.light_storage().version();
+        let global_resources_version = self.global_resources.generation();
         let env_map = scene.environment.env_map;
         
         // 检查是否需要更新
         if let Some(gpu_state) = self.global_states.get_mut(&state_id) {
             let render_state_match = render_state_version == gpu_state.last_render_state_version;
-            let env_uniforms_match = env_uniforms_version == gpu_state.last_env_uniforms_version;
-            let light_storage_match = light_storage_version == gpu_state.last_light_storage_version;
+            let global_resources_match = global_resources_version == gpu_state.last_env_uniforms_version 
+                && global_resources_version == gpu_state.last_light_storage_version;
             let env_map_match = env_map == gpu_state.last_env_map;
             
-            if render_state_match && env_uniforms_match && light_storage_match && env_map_match {
+            if render_state_match && global_resources_match && env_map_match {
                 gpu_state.last_used_frame = self.frame_index;
                 return gpu_state.id;
             }
@@ -362,25 +371,77 @@ impl ResourceManager {
         render_state: &RenderState,
         scene: &Scene,
     ) -> u32 {
+        println!("Creating/Updating GlobalState for state_id {}", state_id);
         // 准备环境贴图
         if let Some(env_map) = scene.environment.env_map {
             self.prepare_texture(assets, env_map);
         }
         
-        // 构建 BindGroup
-        let mut builder = ResourceBuilder::new();
+        // 1. 先确保 Buffer 存在
+        let env_buffer_ref = self.ensure_global_env_buffer();
+        let light_buffer_ref = self.ensure_global_light_buffer();
         
-        // Binding 0: RenderState Uniforms (Camera)
-        render_state.define_bindings(&mut builder);
+        // 2. 构建 BindGroup
+        let layout_entries;
+        let resources;
+        let binding_wgsl;
         
-        // Binding 1-4: Scene Bindings (Environment Uniforms, Lights, EnvMap)
-        scene.define_bindings(&mut builder);
+        {
+            let mut builder = ResourceBuilder::new();
+            
+            // Binding 0: RenderState Uniforms (Camera)
+            render_state.define_bindings(&mut builder);
+            
+            // Binding 1: Environment Uniforms
+            builder.add_uniform_buffer(
+                "environment",
+                &env_buffer_ref,
+                None, // 数据已在 ensure_global_env_buffer 中上传
+                wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
+                false,
+                None,
+                Some(crate::renderer::core::builder::WgslStructName::Generator(
+                    crate::resources::uniforms::EnvironmentUniforms::wgsl_struct_def
+                ))
+            );
+            
+            // Binding 2: Light Storage Buffer
+            builder.add_storage_buffer(
+                "lights",
+                &light_buffer_ref,
+                None, // 数据已在 ensure_global_light_buffer 中上传
+                true,
+                wgpu::ShaderStages::FRAGMENT,
+                Some(crate::renderer::core::builder::WgslStructName::Generator(
+                    crate::resources::uniforms::GpuLightStorage::wgsl_struct_def
+                ))
+            );
+
+            // Binding 3-4: Environment Map (Cube) and Sampler
+            let env_map_handle = scene.environment.env_map.unwrap_or(TextureHandle::dummy_env_map());
+            builder.add_texture(
+                "env_map",
+                env_map_handle,
+                wgpu::TextureSampleType::Float { filterable: true },
+                wgpu::TextureViewDimension::Cube,
+                wgpu::ShaderStages::FRAGMENT
+            );
+            builder.add_sampler(
+                "env_map",
+                env_map_handle,
+                wgpu::SamplerBindingType::Filtering,
+                wgpu::ShaderStages::FRAGMENT
+            );
+            
+            layout_entries = builder.layout_entries.clone();
+            resources = std::mem::take(&mut builder.resources);
+            binding_wgsl = builder.generate_wgsl(0);
+        }
         
-        // 准备资源并创建 BindGroup
-        self.prepare_binding_resources(assets, &builder.resources);
-        let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
-        let (bind_group, bind_group_id) = self.create_bind_group(&layout, &builder.resources);
-        let binding_wgsl = builder.generate_wgsl(0);
+        // 4. 准备资源并创建 BindGroup
+        self.prepare_binding_resources(assets, &resources);
+        let (layout, layout_id) = self.get_or_create_layout(&layout_entries);
+        let (bind_group, bind_group_id) = self.create_bind_group(&layout, &resources);
         
         // 获取或创建新 ID
         let new_id = if let Some(existing) = self.global_states.get(&state_id) {
@@ -388,6 +449,8 @@ impl ResourceManager {
         } else {
             NEXT_GLOBAL_STATE_ID.fetch_add(1, Ordering::Relaxed)
         };
+        
+        let global_version = self.global_resources.generation();
         
         let gpu_state = GpuGlobalState {
             id: new_id,
@@ -397,8 +460,8 @@ impl ResourceManager {
             layout_id,
             binding_wgsl,
             last_render_state_version: render_state.uniforms().version(),
-            last_env_uniforms_version: scene.environment_uniforms().version(),
-            last_light_storage_version: scene.light_storage().version(),
+            last_env_uniforms_version: global_version,
+            last_light_storage_version: global_version,
             last_env_map: scene.environment.env_map,
             last_used_frame: self.frame_index,
         };
@@ -410,5 +473,71 @@ impl ResourceManager {
     /// 获取全局状态
     pub fn get_global_state(&self, render_state_id: u32) -> Option<&GpuGlobalState> {
         self.global_states.get(&(render_state_id as u64))
+    }
+    
+    // ========================================================================
+    // 全局资源 Buffer 管理
+    // ========================================================================
+    
+    /// 确保 Environment Uniform Buffer 存在并返回其引用
+    fn ensure_global_env_buffer(&mut self) -> BufferRef {
+        const ENV_BUFFER_ID: u64 = u64::MAX - 1; // 使用固定 ID
+        
+        let env_bytes = self.global_resources.environment_uniforms_bytes();
+        
+        if !self.gpu_buffers.contains_key(&ENV_BUFFER_ID) {
+            // 创建新的 GPU Buffer
+            let gpu_buffer = GpuBuffer::new(
+                &self.device,
+                env_bytes,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some("Global Environment Uniforms")
+            );
+            self.gpu_buffers.insert(ENV_BUFFER_ID, gpu_buffer);
+        } else {
+            // 更新现有 Buffer
+            let gpu_buffer = self.gpu_buffers.get_mut(&ENV_BUFFER_ID).unwrap();
+            gpu_buffer.update_with_data(&self.device, &self.queue, env_bytes);
+            gpu_buffer.last_used_frame = self.frame_index;
+        }
+        
+        BufferRef::with_fixed_id(
+            ENV_BUFFER_ID,
+            env_bytes.len(),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            self.global_resources.generation(),
+            Some("Global Environment Uniforms")
+        )
+    }
+    
+    /// 确保 Light Storage Buffer 存在并返回其引用
+    fn ensure_global_light_buffer(&mut self) -> BufferRef {
+        const LIGHT_BUFFER_ID: u64 = u64::MAX - 2; // 使用固定 ID
+        
+        let light_bytes = self.global_resources.light_data_bytes();
+        
+        if !self.gpu_buffers.contains_key(&LIGHT_BUFFER_ID) {
+            // 创建新的 GPU Buffer
+            let gpu_buffer = GpuBuffer::new(
+                &self.device,
+                light_bytes,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                Some("Global Light Storage")
+            );
+            self.gpu_buffers.insert(LIGHT_BUFFER_ID, gpu_buffer);
+        } else {
+            // 更新现有 Buffer
+            let gpu_buffer = self.gpu_buffers.get_mut(&LIGHT_BUFFER_ID).unwrap();
+            gpu_buffer.update_with_data(&self.device, &self.queue, light_bytes);
+            gpu_buffer.last_used_frame = self.frame_index;
+        }
+        
+        BufferRef::with_fixed_id(
+            LIGHT_BUFFER_ID,
+            light_bytes.len(),
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            self.global_resources.generation(),
+            Some("Global Light Storage")
+        )
     }
 }
