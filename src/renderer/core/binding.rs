@@ -186,30 +186,30 @@ impl Bindings for RenderState {
 
 impl Bindings for Scene {
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
-         // Binding 1: Environment Uniforms
-        // builder.add_uniform_buffer(
-        //     "environment",
-        //     &env_buffer_ref,
-        //     None,
-        //     wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
-        //     false,
-        //     None,
-        //     Some(crate::renderer::core::builder::WgslStructName::Generator(
-        //         crate::resources::uniforms::EnvironmentUniforms::wgsl_struct_def
-        //     ))
-        // );
+        // Binding 1: Environment Uniforms
+        builder.add_uniform_buffer(
+            "environment",
+            self.uniforms_buffer.handle(),
+            Some(self.uniforms_buffer.as_bytes()),
+            wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
+            false,
+            None,
+            Some(crate::renderer::core::builder::WgslStructName::Generator(
+                crate::resources::uniforms::EnvironmentUniforms::wgsl_struct_def
+            ))
+        );
         
-        // // Binding 2: Light Storage Buffer
-        // builder.add_storage_buffer(
-        //     "lights",
-        //     &light_buffer_ref,
-        //     None,
-        //     true,
-        //     wgpu::ShaderStages::FRAGMENT,
-        //     Some(crate::renderer::core::builder::WgslStructName::Generator(
-        //         crate::resources::uniforms::GpuLightStorage::wgsl_struct_def
-        //     ))
-        // );
+        // Binding 2: Light Storage Buffer
+        builder.add_storage_buffer(
+            "lights",
+            self.light_storage_buffer.handle(),
+            Some(self.light_storage_buffer.as_bytes()),
+            true,
+            wgpu::ShaderStages::FRAGMENT,
+            Some(crate::renderer::core::builder::WgslStructName::Generator(
+                crate::resources::uniforms::GpuLightStorage::wgsl_struct_def
+            ))
+        );
 
         // Binding 3-4: Environment Map (Cube) and Sampler
         let env_map_handle = self.environment.env_map.unwrap_or(TextureHandle::dummy_env_map());

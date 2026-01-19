@@ -1,11 +1,14 @@
 use thunderdome::{Arena};
 use slotmap::SlotMap;
-use glam::{Vec4, Affine3A}; 
+use glam::{Vec3, Vec4, Affine3A}; 
 use bitflags::bitflags;
+use crate::resources::buffer::CpuBuffer;
+use crate::resources::uniforms::{EnvironmentUniforms, GpuLightStorage};
 use crate::scene::node::Node;
 use crate::scene::skeleton::{BindMode, Skeleton};
 use crate::scene::transform::Transform;
 use crate::scene::transform_system;
+use crate::scene::light::LightKind;
 use crate::resources::mesh::Mesh;
 use crate::scene::camera::Camera;
 use crate::scene::light::Light;
@@ -23,13 +26,9 @@ bitflags! {
 
 /// 场景图结构
 /// 
-/// Scene 是纯数据层，只负责存储场景图逻辑和组件数据。
-/// 所有 GPU 资源管理由 ResourceManager 和 GlobalResources 负责。
+/// Scene 是纯数据层，存储场景图逻辑和组件数据。
+/// 同时维护自身的 GPU 资源描述（CpuBuffer），可被 ResourceManager 统一管理。
 /// 
-/// # 设计理念 (Render-Logic Separation)
-/// - Scene 只包含纯粹的数据（节点、灯光参数、环境配置）
-/// - 不持有任何 wgpu、CpuBuffer、BindGroup 等 GPU 相关资源
-/// - 通过 `iter_active_lights()` 等方法提供高效的数据访问接口
 pub struct Scene {
     pub nodes: Arena<Node>,
     pub root_nodes: Vec<NodeIndex>,
@@ -48,6 +47,12 @@ pub struct Scene {
     pub background: Option<Vec4>,
 
     pub active_camera: Option<NodeIndex>,
+
+    // ====GPU 资源描述（自管理）====
+    /// 灯光存储 Buffer（Storage Buffer）
+    pub(crate) light_storage_buffer: CpuBuffer<Vec<GpuLightStorage>>,
+    /// 环境 Uniform Buffer
+    pub(crate) uniforms_buffer: CpuBuffer<EnvironmentUniforms>,
 }
 
 impl Default for Scene {
@@ -71,6 +76,17 @@ impl Scene {
             background: Some(Vec4::new(0.0, 0.0, 0.0, 1.0)),
 
             active_camera: None,
+
+            light_storage_buffer: CpuBuffer::new(
+                [GpuLightStorage::default(); 16].to_vec(),
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                Some("SceneLightStorageBuffer"),
+            ),
+            uniforms_buffer: CpuBuffer::new(
+                EnvironmentUniforms::default(),
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some("SceneEnvironmentUniforms"),
+            ),
         }
     }
 
@@ -347,6 +363,94 @@ impl Scene {
     pub fn update(&mut self) {
         self.update_matrix_world();
         self.update_skeletons();
+        self.sync_gpu_buffers();
+    }
+
+    /// 同步 GPU Buffer 数据
+    /// 
+    /// 将灯光和环境数据同步到 CpuBuffer，等待 ResourceManager 上传到 GPU。
+    /// 使用 CpuBuffer 的版本追踪机制，只有数据变化时才会触发上传。
+    pub fn sync_gpu_buffers(&mut self) {
+        self.sync_light_buffer();
+        self.sync_environment_buffer();
+    }
+    
+    /// 同步灯光数据到 GPU Buffer
+    fn sync_light_buffer(&mut self) {
+        // 收集当前帧的灯光数据
+        let mut light_data: Vec<GpuLightStorage> = self.iter_active_lights()
+            .map(|(light, world_matrix)| {
+                let pos = world_matrix.translation.to_vec3();
+                let dir = world_matrix.transform_vector3(-Vec3::Z).normalize();
+                
+                let mut gpu_light = GpuLightStorage {
+                    color: light.color,
+                    intensity: light.intensity,
+                    position: pos,
+                    direction: dir,
+                    ..Default::default()
+                };
+                
+                match &light.kind {
+                    LightKind::Point(point) => {
+                        gpu_light.range = point.range;
+                    }
+                    LightKind::Spot(spot) => {
+                        gpu_light.range = spot.range;
+                        gpu_light.inner_cone_cos = spot.inner_cone.cos();
+                        gpu_light.outer_cone_cos = spot.outer_cone.cos();
+                    }
+                    LightKind::Directional(_) => {}
+                }
+                
+                gpu_light
+            })
+            .collect();
+        
+        // 确保至少有一个占位灯光（Shader 要求）
+        if light_data.is_empty() {
+            light_data.push(GpuLightStorage::default());
+        }
+        
+        // 使用 CpuBuffer 的 write() 方法，自动追踪版本
+        let current_data = self.light_storage_buffer.read();
+        if current_data != &light_data {
+            *self.light_storage_buffer.write() = light_data;
+        }
+    }
+    
+    /// 同步环境数据到 GPU Buffer
+    fn sync_environment_buffer(&mut self) {
+        let env = &self.environment;
+        let light_count = self.lights.len();
+        
+        let new_uniforms = EnvironmentUniforms {
+            ambient_light: env.ambient_color,
+            num_lights: light_count as u32,
+            env_map_intensity: env.intensity,
+            env_map_max_mip_level: env.env_map_max_mip_level,
+            ..Default::default()
+        };
+        
+        // 使用 CpuBuffer 的 write() 方法，自动追踪版本
+        let current = self.uniforms_buffer.read();
+        if current != &new_uniforms {
+            *self.uniforms_buffer.write() = new_uniforms;
+        }
+    }
+    
+    // ========================================================================
+    // GPU 资源访问接口
+    // ========================================================================
+    
+    /// 获取灯光存储 Buffer 的引用
+    pub fn light_storage(&self) -> &CpuBuffer<Vec<GpuLightStorage>> {
+        &self.light_storage_buffer
+    }
+    
+    /// 获取环境 Uniform Buffer 的引用
+    pub fn environment_uniforms(&self) -> &CpuBuffer<EnvironmentUniforms> {
+        &self.uniforms_buffer
     }
 
     pub fn update_skeletons(&mut self) {

@@ -18,7 +18,6 @@ mod geometry;
 mod material;
 mod binding;
 mod mipmap;
-mod global;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -38,7 +37,6 @@ use crate::assets::{GeometryHandle, MaterialHandle, TextureHandle};
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 
 pub use allocator::ModelBufferAllocator;
-pub use global::GlobalResources;
 
 static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -210,8 +208,7 @@ pub struct GpuGlobalState {
     // === 结构指纹（变化时需重建 BindGroup）===
     /// RenderState 的 Buffer ID
     pub render_state_buffer_id: u64,
-    /// GlobalResources 的结构版本
-    pub global_structure_version: u64,
+
     /// 环境贴图 Handle
     pub env_map: Option<crate::assets::TextureHandle>,
     /// Environment Buffer ID
@@ -283,9 +280,6 @@ pub struct ResourceManager {
 
     // === 骨骼 Buffer ===
     pub(crate) skeleton_buffers: FxHashMap<SkeletonKey, CpuBuffer<Vec<Mat4>>>,
-
-    // === 全局渲染资源 (Light/Environment) ===
-    pub(crate) global_resources: GlobalResources,
 }
 
 impl ResourceManager {
@@ -384,7 +378,6 @@ impl ResourceManager {
             object_bind_group_cache: FxHashMap::default(),
             bind_group_id_lookup: FxHashMap::default(),
             skeleton_buffers: FxHashMap::default(),
-            global_resources: GlobalResources::new(),
         }
     }
 
