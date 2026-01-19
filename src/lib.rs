@@ -14,6 +14,7 @@ pub mod renderer;
 pub mod app;
 pub mod errors;
 pub mod utils;
+pub mod animation;
 
 pub use resources::{Mesh, Material, Texture, Image, Geometry, Side};
 pub use assets::{AssetServer, ColorSpace};
@@ -23,3 +24,4 @@ pub use renderer::Renderer;
 pub use app::App;
 pub use errors::ThreeError;
 pub use utils::orbit_control::OrbitControls;
+pub use animation::{AnimationClip, AnimationAction, AnimationMixer, Binder, LoopMode};

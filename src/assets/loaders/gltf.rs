@@ -8,6 +8,9 @@ use crate::resources::texture::Texture;
 use crate::scene::{Scene, Node, NodeIndex, SkeletonKey};
 use crate::scene::skeleton::{Skeleton, BindMode};
 use crate::assets::{AssetServer, TextureHandle, MaterialHandle, GeometryHandle};
+use crate::animation::clip::{AnimationClip, Track, TrackMeta, TrackData};
+use crate::animation::tracks::{KeyframeTrack, InterpolationMode};
+use crate::animation::binding::TargetPath;
 use wgpu::{VertexFormat, TextureFormat};
 use anyhow::Context;
 use serde_json::Value;
@@ -47,35 +50,7 @@ pub trait GltfExtensionParser {
 }
 
 // ============================================================================
-// 2. 临时动画数据结构 (用于开发阶段手动测试)
-// ============================================================================
-
-#[derive(Debug, Clone)]
-pub struct RawAnimation {
-    pub name: String,
-    pub channels: Vec<RawChannel>,
-}
-
-#[derive(Debug, Clone)]
-pub struct RawChannel {
-    pub node_index: NodeIndex,
-    pub property: AnimationProperty, 
-    pub inputs: Vec<f32>,     // 时间轴
-    pub outputs: Vec<f32>,    // 关键帧数据 (flat array)
-    pub interpolation: String, // "LINEAR", "STEP", "CUBICSPLINE"
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum AnimationProperty {
-    Translation,
-    Rotation,
-    Scale,
-    MorphTargetWeights,
-    Unknown,
-}
-
-// ============================================================================
-// 3. GltfLoader 实现
+// 2. GltfLoader 实现
 // ============================================================================
 
 pub struct GltfLoader<'a> {
@@ -99,7 +74,7 @@ impl<'a> GltfLoader<'a> {
         path: &Path,
         assets: &'a mut AssetServer,
         scene: &'a mut Scene
-    ) -> anyhow::Result<(Vec<NodeIndex>, Vec<RawAnimation>)> {
+    ) -> anyhow::Result<(Vec<NodeIndex>, Vec<AnimationClip>)> {
         
         // 1. 读取文件和 Buffer
         let file = fs::File::open(path)
@@ -535,65 +510,104 @@ impl<'a> GltfLoader<'a> {
         &self, 
         gltf: &gltf::Gltf, 
         buffers: &[Vec<u8>]
-    ) -> anyhow::Result<Vec<RawAnimation>> {
+    ) -> anyhow::Result<Vec<AnimationClip>> {
         let mut animations = Vec::new();
 
         for anim in gltf.animations() {
-            let mut channels = Vec::new();
+            let mut tracks = Vec::new();
 
             for channel in anim.channels() {
                 let reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
                 let target = channel.target();
-                let gltf_node = target.node(); 
+                let gltf_node = target.node();
+                
+                // 获取节点名称用于绑定
+                let node_name = gltf_node.name().unwrap_or("Node").to_string();
          
-                let inputs: Vec<f32> = reader.read_inputs().unwrap().collect();
+                let times: Vec<f32> = reader.read_inputs().unwrap().collect();
                 
-                let outputs: Vec<f32> = match reader.read_outputs().unwrap() {
-                    gltf::animation::util::ReadOutputs::Translations(iter) => {
-                        iter.flat_map(|t| t.into_iter()).collect()
-                    },
-                    gltf::animation::util::ReadOutputs::Rotations(iter) => {
-                        iter.into_f32().flat_map(|r| r.into_iter()).collect()
-                    },
-                    gltf::animation::util::ReadOutputs::Scales(iter) => {
-                        iter.flat_map(|s| s.into_iter()).collect()
-                    },
-                    gltf::animation::util::ReadOutputs::MorphTargetWeights(iter) => {
-                        iter.into_f32().collect()
-                    },
-                };
-
-                let property = match target.property() {
-                    gltf::animation::Property::Translation => AnimationProperty::Translation,
-                    gltf::animation::Property::Rotation => AnimationProperty::Rotation,
-                    gltf::animation::Property::Scale => AnimationProperty::Scale,
-                    gltf::animation::Property::MorphTargetWeights => AnimationProperty::MorphTargetWeights,
-                };
-                
-                if property == AnimationProperty::Unknown {
-                    continue;
-                }
-
                 let interpolation = match channel.sampler().interpolation() {
-                    gltf::animation::Interpolation::Linear => "LINEAR",
-                    gltf::animation::Interpolation::Step => "STEP",
-                    gltf::animation::Interpolation::CubicSpline => "CUBICSPLINE",
-                }.to_string();
+                    gltf::animation::Interpolation::Linear => InterpolationMode::Linear,
+                    gltf::animation::Interpolation::Step => InterpolationMode::Step,
+                    gltf::animation::Interpolation::CubicSpline => InterpolationMode::CubicSpline,
+                };
 
-                channels.push(RawChannel {
-                    node_index: self.node_mapping[gltf_node.index()],
-                    property,
-                    inputs,
-                    outputs,
-                    interpolation,
-                });
+                // 根据属性类型创建不同的 Track
+                let track = match target.property() {
+                    gltf::animation::Property::Translation => {
+                        let outputs = match reader.read_outputs().unwrap() {
+                            gltf::animation::util::ReadOutputs::Translations(iter) => {
+                                iter.map(|t| Vec3::from_array(t)).collect::<Vec<_>>()
+                            },
+                            _ => continue,
+                        };
+                        
+                        Track {
+                            meta: TrackMeta {
+                                node_name,
+                                target: TargetPath::Translation,
+                            },
+                            data: TrackData::Vector3(KeyframeTrack::new(times, outputs, interpolation)),
+                        }
+                    },
+                    gltf::animation::Property::Rotation => {
+                        let outputs = match reader.read_outputs().unwrap() {
+                            gltf::animation::util::ReadOutputs::Rotations(iter) => {
+                                iter.into_f32().map(|r| Quat::from_array(r)).collect::<Vec<_>>()
+                            },
+                            _ => continue,
+                        };
+                        
+                        Track {
+                            meta: TrackMeta {
+                                node_name,
+                                target: TargetPath::Rotation,
+                            },
+                            data: TrackData::Quaternion(KeyframeTrack::new(times, outputs, interpolation)),
+                        }
+                    },
+                    gltf::animation::Property::Scale => {
+                        let outputs = match reader.read_outputs().unwrap() {
+                            gltf::animation::util::ReadOutputs::Scales(iter) => {
+                                iter.map(|s| Vec3::from_array(s)).collect::<Vec<_>>()
+                            },
+                            _ => continue,
+                        };
+                        
+                        Track {
+                            meta: TrackMeta {
+                                node_name,
+                                target: TargetPath::Scale,
+                            },
+                            data: TrackData::Vector3(KeyframeTrack::new(times, outputs, interpolation)),
+                        }
+                    },
+                    gltf::animation::Property::MorphTargetWeights => {
+                        let outputs = match reader.read_outputs().unwrap() {
+                            gltf::animation::util::ReadOutputs::MorphTargetWeights(iter) => {
+                                iter.into_f32().collect::<Vec<_>>()
+                            },
+                            _ => continue,
+                        };
+                        
+                        Track {
+                            meta: TrackMeta {
+                                node_name,
+                                target: TargetPath::Weights,
+                            },
+                            data: TrackData::Scalar(KeyframeTrack::new(times, outputs, interpolation)),
+                        }
+                    },
+                };
                 
+                tracks.push(track);
             }
             
-            animations.push(RawAnimation {
-                name: anim.name().unwrap_or("anim").to_string(),
-                channels,
-            });
+            let clip = AnimationClip::new(
+                anim.name().unwrap_or("anim").to_string(),
+                tracks,
+            );
+            animations.push(clip);
         }
         
         Ok(animations)
