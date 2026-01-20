@@ -51,7 +51,7 @@ impl EnsureResult {
 #[derive(Debug, Clone, Default)]
 pub struct ResourceIdSet {
     /// 按添加顺序存储的资源 ID
-    ids: SmallVec<[ResourceId; 8]>,
+    ids: SmallVec<[ResourceId; 16]>,
     /// 预计算的哈希值（用于快速比较）
     cached_hash: u64,
     /// 标记哈希是否需要重新计算

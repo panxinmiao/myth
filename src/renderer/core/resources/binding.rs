@@ -370,10 +370,5 @@ impl ResourceManager {
         let state_id = Self::compute_global_state_key(render_state_id, scene_id);
         self.global_states.get(&state_id)
     }
-    
-    // 根据 render_state_id 和 scene 获取全局状态
-    // pub fn get_global_state_for_scene(&self, render_state_id: u32, scene: &Scene) -> Option<&GpuGlobalState> {
-    //     let state_id = Self::compute_global_state_key(render_state_id, scene.light_storage_buffer.handle().id);
-    //     self.global_states.get(&state_id)
-    // }
+
 }

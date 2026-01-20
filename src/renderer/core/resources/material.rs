@@ -5,6 +5,8 @@
 //! 2. 比较物理资源 ID 是否变化
 //! 3. 如需重建，比较 LayoutEntries 决定是否需要新 Layout
 
+use smallvec::{SmallVec, smallvec};
+
 use crate::assets::{AssetServer, MaterialHandle};
 use crate::resources::material::Material;
 use crate::resources::material::MaterialData;
@@ -23,9 +25,9 @@ pub struct MaterialPrepareResult {
     /// Uniform Buffer 的物理 ID
     pub uniform_buffer_id: u64,
     /// 所有 GpuImage 的物理 ID（对应纹理像素数据）
-    pub image_ids: Vec<u64>,
+    pub image_ids: SmallVec<[u64; 8]>,
     /// 所有 GpuSampler 的物理 ID（对应采样参数）
-    pub sampler_ids: Vec<u64>,
+    pub sampler_ids: SmallVec<[u64; 8]>,
     /// Layout ID
     pub layout_id: u64,
     /// BindGroup ID
@@ -39,6 +41,25 @@ impl ResourceManager {
     /// 
     /// 使用新的资源 ID 追踪机制，自动检测变化并按需重建
     pub(crate) fn prepare_material(&mut self, assets: &AssetServer, handle: MaterialHandle) -> Option<MaterialPrepareResult> {
+
+        // [Fast Path] 1. 检查帧缓存
+        if let Some(gpu_mat) = self.gpu_materials.get(handle) {
+            // 如果本帧已经验证过，直接返回结果！
+            // 这一点对于大量物体共享材质的场景是巨大的性能提升
+            if gpu_mat.last_verified_frame == self.frame_index {
+                return Some(MaterialPrepareResult {
+                    uniform_buffer_id: gpu_mat.uniform_buffer_id,
+                    // 下面这些 vector 在 prepare_mesh 中并未使用，返回空即可
+                    image_ids: smallvec![0; 0],
+                    sampler_ids: smallvec![0; 0],
+                    layout_id: gpu_mat.layout_id,
+                    bind_group_id: gpu_mat.bind_group_id,
+                    any_recreated: false,
+                });
+            }
+        }
+
+
         let material = assets.get_material(handle)?;
 
         // 1. Ensure 阶段：确保所有资源存在且数据最新，收集物理资源 ID
@@ -65,7 +86,7 @@ impl ResourceManager {
 
         if needs_rebuild {
             // 4. Rebuild 阶段
-            self.rebuild_material_with_ids(assets, handle, material, current_resource_ids);
+            self.rebuild_material_with_ids(assets, handle, material, current_resource_ids, uniform_result.resource_id);
         } else {
             // 仅更新帧计数
             if let Some(gpu_mat) = self.gpu_materials.get_mut(handle) {
@@ -87,7 +108,7 @@ impl ResourceManager {
     /// 确保 Material 资源并返回物理 ID
     /// 
     /// 返回: (uniform_result, image_ids, sampler_ids)
-    fn ensure_material_resources_with_ids(&mut self, assets: &AssetServer, material: &Material) -> (super::EnsureResult, Vec<u64>, Vec<u64>) {
+    fn ensure_material_resources_with_ids(&mut self, assets: &AssetServer, material: &Material) -> (super::EnsureResult, SmallVec<[u64; 8]>, SmallVec<[u64; 8]>) {
         let uniform_result = match &material.data {
             MaterialData::Basic(m) => self.ensure_buffer(&m.uniforms),
             MaterialData::Phong(m) => self.ensure_buffer(&m.uniforms),
@@ -95,8 +116,8 @@ impl ResourceManager {
         };
 
         // 分别收集 Image ID 和 Sampler ID
-        let mut image_ids = Vec::new();
-        let mut sampler_ids = Vec::new();
+        let mut image_ids = SmallVec::new();
+        let mut sampler_ids = SmallVec::new();
         let bindings = material.data.bindings();
         
         for tex_handle in [
@@ -125,6 +146,7 @@ impl ResourceManager {
         handle: MaterialHandle, 
         material: &Material,
         resource_ids: ResourceIdSet,
+        uniform_buffer_id: u64,
     ) {
         let mut builder = ResourceBuilder::new();
         material.define_bindings(&mut builder);
@@ -159,6 +181,8 @@ impl ResourceManager {
             binding_wgsl,
             resource_ids,
             last_used_frame: self.frame_index,
+            uniform_buffer_id,
+            last_verified_frame: self.frame_index,
         };
 
         self.gpu_materials.insert(handle, gpu_mat);

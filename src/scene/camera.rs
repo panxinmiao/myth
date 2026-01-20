@@ -30,7 +30,7 @@ pub enum ProjectionType {
 }
 
 impl Camera {
-    pub fn new_perspective(fov: f32, aspect: f32, near: f32, far: f32) -> Self {
+    pub fn new_perspective(fov: f32, aspect: f32, near: f32) -> Self {
         let mut cam = Self {
             uuid: Uuid::new_v4(),
             name: Cow::Owned("Camera".to_string()),
@@ -38,7 +38,7 @@ impl Camera {
             fov: fov.to_radians(),
             aspect,
             near,
-            far,
+            far: f32::INFINITY,
             ortho_size: 10.0,
 
             world_matrix: Affine3A::IDENTITY,
@@ -56,12 +56,13 @@ impl Camera {
         self.projection_matrix =  match self.projection_type {
             ProjectionType::Perspective => {
                 // glam 的 perspective_rh 默认是为了 WGPU/Vulkan 设计的 (0 to 1)
-                Mat4::perspective_rh(self.fov, self.aspect, self.near, self.far)
+                Mat4::perspective_infinite_reverse_rh(self.fov, self.aspect, self.near)
             }
             ProjectionType::Orthographic => {
                 let w = self.ortho_size * self.aspect;
                 let h = self.ortho_size;
-                Mat4::orthographic_rh(-w, w, -h, h, self.near, self.far)
+                // Reverse Z, swap near and far
+                Mat4::orthographic_rh(-w, w, -h, h, self.far, self.near)
             }
         };
 

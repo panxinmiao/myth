@@ -105,20 +105,29 @@ impl ModelBufferAllocator {
         self.needs_recreate
     }
 
-    /// 准备上传数据，返回 (是否需要重建, 数据字节)
-    // pub fn prepare_upload(&mut self) -> (bool, Vec<u8>) {
-    //     // 将 host_data 写入 buffer
-    //     let mut buffer_data = self.buffer.write();
-    //     let len = self.host_data.len().min(buffer_data.len());
-    //     buffer_data[..len].copy_from_slice(&self.host_data[..len]);
-    //     drop(buffer_data);
+    // 预先确保容量
+    pub fn ensure_capacity(&mut self, required_count: usize) {
+        if required_count > self.capacity {
+            let mut new_cap = self.capacity;
+            while new_cap < required_count {
+                new_cap *= 2;
+            }
+            new_cap = new_cap.max(128);
+            
+            log::info!("Model Buffer resizing to fit {} items: {} -> {}", required_count, self.capacity, new_cap);
+            
+            self.capacity = new_cap;
+            self.needs_recreate = true;
 
-    //     let bytes = self.buffer.as_bytes().to_vec();
-    //     let needs_recreate = self.needs_recreate;
-    //     self.needs_recreate = false;
-
-    //     (needs_recreate, bytes)
-    // }
+            // 重建 CpuBuffer
+            let new_data = vec![DynamicModelUniforms::default(); new_cap];
+            self.buffer = CpuBuffer::new(
+                new_data,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some("GlobalModelBuffer")
+            );
+        }
+    }
 
     /// 获取 Buffer 句柄
     pub fn buffer_handle(&self) -> &BufferRef {

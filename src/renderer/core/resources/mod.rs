@@ -286,6 +286,9 @@ pub struct GpuMaterial {
     /// 所有依赖资源的物理 ID 集合
     pub resource_ids: ResourceIdSet,
     pub last_used_frame: u64,
+
+    pub uniform_buffer_id: u64,
+    pub last_verified_frame: u64,
 }
 
 /// GPU 全局状态 (Group 0)
@@ -522,34 +525,34 @@ impl ResourceManager {
         self.frame_index
     }
 
-    // pub fn ensure_buffer<T>(&self, cpu_buffer: &CpuBuffer<T>) where T: GpuData {
+    // 确保 Model Buffer 容量并同步 GPU 资源
+    pub fn ensure_model_buffer_capacity(&mut self, count: usize) {
+        let old_id = self.model_allocator.buffer_id();
         
-    //     let buffer_handle = cpu_buffer.handle();
-    //     let data = cpu_buffer.as_bytes();
-
-
+        self.model_allocator.ensure_capacity(count);
         
+        // 如果发生了扩容 (ID 变了)，我们需要立即创建对应的 GPU Buffer
+        // 否则后续的 prepare_mesh 会找不到 Buffer 或者绑定到旧 Buffer
+        let new_id = self.model_allocator.buffer_id();
+        if new_id != old_id {
+            // 清理旧的缓存（这一步很重要，防止 BindGroup 指向旧 Buffer）
+            self.object_bind_group_cache.clear();
+            self.bind_group_id_lookup.clear();
 
-    //     // let update_buffer = |buffer_handle: &BufferRef , data: &[u8]| {
-    //     if let Some(gpu_buf) = self.gpu_buffers.get(&buffer_handle.id) {
-    //         // 只有在版本不同时才更新
-    //         if gpu_buf.last_uploaded_version < buffer_handle.version{
-    //             self.queue.write_buffer(&gpu_buf.buffer, 0, data);
-    //         }
-    //         self.write_buffer(buffer_ref, data);
-    //     }
-
-    //     if 
-    //         gpu_buf.last_used_frame = self.frame_index;
-    //         gpu_buf.version = buffer_handle.version;
-
-    //     //};
-    // }
-
-    /// 每帧开始时重置 Model Buffer Allocator
-    // pub fn reset_model_buffer(&mut self) {
-    //     self.model_allocator.reset();
-    // }
+            let cpu_buf = self.model_allocator.cpu_buffer();
+            // 立即创建新的 GpuBuffer (虽然数据还没填，但 wgpu::Buffer 对象需要存在)
+            // 注意：这里我们创建一个未初始化的 Buffer 即可，因为后面 upload_model_buffer 会填充数据
+            // 但为了安全，我们可以用 CpuBuffer 的默认数据初始化
+            let gpu_buf = GpuBuffer::new(
+                &self.device, 
+                cpu_buf.as_bytes(), 
+                cpu_buf.usage(), 
+                cpu_buf.label()
+            );
+            
+            self.gpu_buffers.insert(new_id, gpu_buf);
+        }
+    }
 
     /// 分配一个 Model Uniform，返回字节偏移量
     #[inline]
@@ -571,11 +574,11 @@ impl ResourceManager {
         let buffer_ref = allocator.buffer_handle();
         let data = allocator.cpu_buffer().as_bytes();
 
-        if allocator.need_recreate_buffer() {
-            // Buffer 重建后，所有缓存都失效
-            self.object_bind_group_cache.clear();
-            self.bind_group_id_lookup.clear();
-        }
+        // if allocator.need_recreate_buffer() {
+        //     // Buffer 重建后，所有缓存都失效
+        //     self.object_bind_group_cache.clear();
+        //     self.bind_group_id_lookup.clear();
+        // }
 
         Self::write_buffer_internal(
             &self.device,

@@ -98,7 +98,7 @@ impl AppHandler for MorphTargetDemo {
         }
 
         // 4. 设置相机
-        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1, 100.0);
+        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = ctx.scene.add_camera(camera);
         if let Some(node) = ctx.scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 0.0, 4.0);

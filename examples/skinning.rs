@@ -106,7 +106,7 @@ impl AppHandler for SkinningDemo {
         // === 6. 设置相机 ===
         // TODO: 真正的 Viewer 通常会根据模型包围盒(AABB)自动计算相机位置
         // 这里暂时用固定位置
-        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1, 100.0);
+        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = ctx.scene.add_camera(camera);
         
         if let Some(node) = ctx.scene.get_node_mut(cam_node_id) {

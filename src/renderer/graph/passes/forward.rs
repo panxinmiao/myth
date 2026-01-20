@@ -56,6 +56,8 @@ impl ForwardRenderPass {
         
         opaque.clear();
         transparent.clear();
+
+        ctx.resource_manager.ensure_model_buffer_capacity(ctx.extracted_scene.render_items.len());
         
         for item_idx in 0..ctx.extracted_scene.render_items.len() {
             let item = &ctx.extracted_scene.render_items[item_idx];
@@ -134,7 +136,8 @@ impl ForwardRenderPass {
                         Side::Double => None,
                     },
                     depth_write: material.depth_write(),
-                    depth_compare: if material.depth_test() { wgpu::CompareFunction::Less } else { wgpu::CompareFunction::Always },
+                    // Reverse Z: Greater for depth test
+                    depth_compare: if material.depth_test() { wgpu::CompareFunction::Greater } else { wgpu::CompareFunction::Always },
                     blend_state: if material.transparent() { Some(wgpu::BlendState::ALPHA_BLENDING) } else { None },
                     color_format: ctx.wgpu_ctx.config.format,
                     depth_format: ctx.wgpu_ctx.depth_format,
@@ -310,7 +313,8 @@ impl RenderNode for ForwardRenderPass {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
                     depth_ops: Some(wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(1.0),
+                        // Reverse Z 清除为 0.0（远裁剪面）
+                        load: wgpu::LoadOp::Clear(0.0),
                         store: wgpu::StoreOp::Store,
                     }),
                     stencil_ops: None,
