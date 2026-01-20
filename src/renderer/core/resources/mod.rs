@@ -48,10 +48,10 @@ use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 pub use allocator::ModelBufferAllocator;
 pub use resource_ids::{EnsureResult, ResourceIdSet, BindGroupFingerprint, hash_layout_entries, ResourceId};
 
-static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(0);
+static NEXT_GPU_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
 
-pub fn generate_resource_id() -> u64 {
-    NEXT_RESOURCE_ID.fetch_add(1, Ordering::Relaxed)
+pub fn generate_gpu_resource_id() -> u64 {
+    NEXT_GPU_RESOURCE_ID.fetch_add(1, Ordering::Relaxed)
 }
 
 // ============================================================================
@@ -78,10 +78,9 @@ impl GpuBuffer {
             contents: data,
             usage,
         });
-        let id = generate_resource_id();
 
         Self {
-            id,
+            id: generate_gpu_resource_id(),
             buffer,
             size: data.len() as u64,
             usage,
@@ -140,11 +139,12 @@ impl GpuBuffer {
             mapped_at_creation: false,
         });
         self.size = new_size;
-        self.id = generate_resource_id();
+        self.id = generate_gpu_resource_id();
     }
 }
 
 pub struct GpuTexture {
+    pub id: u64,
     pub view: wgpu::TextureView,
     pub image_id: u64,
     pub image_generation_id: u64,
@@ -154,8 +154,8 @@ pub struct GpuTexture {
 }
 
 pub struct GpuImage {
-    pub texture: wgpu::Texture,
     pub id: u64,
+    pub texture: wgpu::Texture,
     pub version: u64,
     pub generation_id: u64,
     pub width: u32,
@@ -317,8 +317,9 @@ impl ResourceManager {
             });
 
             GpuTexture {
+                id: generate_gpu_resource_id(),
                 view,
-                image_id: Default::default(),
+                image_id: 0,
                 version: 0,
                 image_generation_id: 0,
                 image_data_version: 0,

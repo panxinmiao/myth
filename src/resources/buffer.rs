@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::borrow::Cow;
 use bytemuck::Pod;
 
-static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(0);
+static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
 
 pub trait GpuData {
     fn as_bytes(&self) -> &[u8];

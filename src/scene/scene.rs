@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use thunderdome::{Arena};
 use slotmap::SlotMap;
@@ -28,12 +29,16 @@ bitflags! {
     }
 }
 
+static NEXT_SCENE_ID: AtomicU32 = AtomicU32::new(1);
+
 /// 场景图结构
 /// 
 /// Scene 是纯数据层，存储场景图逻辑和组件数据。
 /// 同时维护自身的 GPU 资源描述（CpuBuffer），可被 ResourceManager 统一管理。
 /// 
 pub struct Scene {
+    pub id: u32,
+
     pub nodes: Arena<Node>,
     pub root_nodes: Vec<NodeIndex>,
 
@@ -70,6 +75,8 @@ impl Default for Scene {
 impl Scene {
     pub fn new() -> Self {
         Self {
+            id: NEXT_SCENE_ID.fetch_add(1, Ordering::Relaxed),
+
             nodes: Arena::new(),
             root_nodes: Vec::new(),
             meshes: SlotMap::with_key(),

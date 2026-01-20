@@ -3,6 +3,7 @@
 use std::sync::atomic::Ordering;
 
 use crate::assets::{AssetServer, TextureHandle};
+use crate::renderer::core::resources::generate_gpu_resource_id;
 use crate::resources::image::{Image, ImageInner};
 use crate::resources::texture::{Texture, TextureSampler};
 
@@ -18,11 +19,12 @@ impl GpuTexture {
         });
 
         Self {
+            id: generate_gpu_resource_id(),
             view,
-            image_id: gpu_image.id,
-            image_generation_id: gpu_image.generation_id,
+            image_id: texture.image.id(),
+            image_generation_id: texture.image.generation_id(),
             version: texture.version(),
-            image_data_version: gpu_image.version,
+            image_data_version: texture.image.version(),
             last_used_frame: 0,
         }
     }
@@ -57,7 +59,7 @@ impl GpuImage {
         let mipmaps_generated = mip_level_count <= 1;
         Self {
             texture,
-            id: image.id,
+            id: generate_gpu_resource_id(),
             version: image.version.load(Ordering::Relaxed),
             generation_id: image.generation_id.load(Ordering::Relaxed),
             width,
@@ -129,6 +131,8 @@ impl ResourceManager {
         } else {
             needs_recreate = true;
         }
+
+        println!("Preparing image id {}: needs_recreate = {}", id, needs_recreate);
 
         if needs_recreate {
             self.gpu_images.remove(&id);

@@ -95,8 +95,8 @@ impl ForwardRenderPass {
                 error!("CRITICAL: GpuMaterial missing for {:?}", item.material);
                 continue;
             };
-            let Some(gpu_world) = ctx.resource_manager.get_global_state(ctx.render_state.id, ctx.extracted_scene.scene_hash) else {
-                // error!("Render Environment missing for render_state_id {}, scene_hash {}", ctx.render_state.id, ctx.extracted_scene.scene_hash);
+            let Some(gpu_world) = ctx.resource_manager.get_global_state(ctx.render_state.id, ctx.extracted_scene.scene_id) else {
+                error!("Render Environment missing for render_state_id {}, scene_id {}", ctx.render_state.id, ctx.extracted_scene.scene_id);
                 continue;
             };
 
@@ -227,15 +227,15 @@ impl ForwardRenderPass {
 
     /// 执行绘制列表
     fn draw_list<'pass>(
-        resource_manager: &'pass crate::renderer::core::ResourceManager,
+        ctx: &'pass RenderContext,
         pass: &mut TrackedRenderPass<'pass>,
         cmds: &'pass [RenderCommand],
-        render_state_id: u32,
-        scene_hash: u64,
+        // render_state_id: u32,
+        // scene_id: u64,
     ) {
         if cmds.is_empty() { return; }
 
-        if let Some(gpu_global) = resource_manager.get_global_state(render_state_id, scene_hash) {
+        if let Some(gpu_global) = ctx.resource_manager.get_global_state(ctx.render_state.id, ctx.extracted_scene.scene_id) {
             pass.set_bind_group(0, gpu_global.bind_group_id, &gpu_global.bind_group, &[]);
         } else {
             return;
@@ -244,7 +244,7 @@ impl ForwardRenderPass {
         for cmd in cmds {
             pass.set_pipeline(cmd.pipeline_id, &cmd.pipeline);
 
-            if let Some(gpu_material) = resource_manager.get_material(cmd.material_handle) {
+            if let Some(gpu_material) = ctx.resource_manager.get_material(cmd.material_handle) {
                 pass.set_bind_group(1, gpu_material.bind_group_id, &gpu_material.bind_group, &[]);
             }
 
@@ -255,7 +255,7 @@ impl ForwardRenderPass {
                 &[cmd.dynamic_offset],
             );
 
-            if let Some(gpu_geometry) = resource_manager.get_geometry(cmd.geometry_handle) {
+            if let Some(gpu_geometry) = ctx.resource_manager.get_geometry(cmd.geometry_handle) {
                 for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
                     pass.set_vertex_buffer(
                         slot as u32,
@@ -325,18 +325,14 @@ impl RenderNode for ForwardRenderPass {
 
 
             Self::draw_list(
-                ctx.resource_manager,
+                ctx,
                 &mut tracked,
                 &opaque,
-                ctx.render_state.id,
-                ctx.scene.light_storage_buffer.id(),
             );
             Self::draw_list(
-                ctx.resource_manager,
+                ctx,
                 &mut tracked,
                 &transparent,
-                ctx.render_state.id,
-                ctx.scene.light_storage_buffer.id(),
             );
         }
     }

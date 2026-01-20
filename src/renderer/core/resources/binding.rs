@@ -23,7 +23,7 @@ use crate::renderer::graph::RenderState;
 use super::{
     ResourceManager, GpuBuffer, GpuGlobalState, 
     ObjectBindGroupKey, ObjectBindingData,
-    generate_resource_id, ModelBufferAllocator,
+    generate_gpu_resource_id, ModelBufferAllocator,
 };
 
 static NEXT_GLOBAL_STATE_ID: AtomicU32 = AtomicU32::new(0);
@@ -215,7 +215,7 @@ impl ResourceManager {
             entries,
         });
 
-        let id = generate_resource_id();
+        let id = generate_gpu_resource_id();
         self.layout_cache.insert(entries.to_vec(), (layout.clone(), id));
         (layout, id)
     }
@@ -262,7 +262,7 @@ impl ResourceManager {
             entries: &entries,
         });
 
-        (bind_group, generate_resource_id())
+        (bind_group, generate_gpu_resource_id())
     }
 
     // ========================================================================
@@ -282,7 +282,7 @@ impl ResourceManager {
         let camera_result = self.ensure_buffer(render_state.uniforms());
         let env_result = self.ensure_buffer(&scene.uniforms_buffer);
         let light_result = self.ensure_buffer(&scene.light_storage_buffer);
-        
+
         // 环境贴图 ID
         let env_map_id = scene.environment.env_map.map(|h| {
             self.prepare_texture(assets, h);
@@ -297,7 +297,7 @@ impl ResourceManager {
         current_ids.push(env_map_id);
         
         // 使用 (render_state.id, light_buffer_id) 组合作为缓存键，支持多场景并发渲染
-        let state_id = Self::compute_global_state_key(render_state.id, light_result.resource_id);
+        let state_id = Self::compute_global_state_key(render_state.id, scene.id);
         
         // === Check 阶段: 快速指纹比较 ===
         if let Some(gpu_state) = self.global_states.get_mut(&state_id) {
@@ -312,8 +312,8 @@ impl ResourceManager {
     }
     
     #[inline]
-    fn compute_global_state_key(render_state_id: u32, light_buffer_id: u64) -> u64 {
-        ((light_buffer_id & 0xFFFF_FFFF) << 32) | (render_state_id as u64)
+    fn compute_global_state_key(render_state_id: u32, scene_id: u32) -> u64 {
+        ((scene_id as u64) << 32) | (render_state_id as u64)
     }
     
     fn create_global_state(
@@ -354,8 +354,8 @@ impl ResourceManager {
     }
 
     /// 获取全局状态
-    pub fn get_global_state(&self, render_state_id: u32, scene_hash: u64) -> Option<&GpuGlobalState> {
-        let state_id = Self::compute_global_state_key(render_state_id, scene_hash);
+    pub fn get_global_state(&self, render_state_id: u32, scene_id: u32) -> Option<&GpuGlobalState> {
+        let state_id = Self::compute_global_state_key(render_state_id, scene_id);
         self.global_states.get(&state_id)
     }
     

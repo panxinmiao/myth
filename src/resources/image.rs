@@ -5,7 +5,7 @@ use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
 use uuid::Uuid;
 
 // 全局 Image ID 生成器 (为了高性能 Map 查找，使用 u64)
-static NEXT_IMAGE_ID: AtomicU64 = AtomicU64::new(0);
+static NEXT_IMAGE_ID: AtomicU64 = AtomicU64::new(1);
 
 
 // 把所有可能触发 Re-creation 的元数据打包

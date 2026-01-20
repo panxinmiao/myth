@@ -29,7 +29,7 @@ pub struct Attribute {
     pub step_mode: VertexStepMode,
 }
 
-static NEXT_ATTR_VERSION: AtomicU64 = AtomicU64::new(0);
+static NEXT_ATTR_VERSION: AtomicU64 = AtomicU64::new(1);
 
 impl Attribute {
     /// 创建 Planar (非交错) 属性
