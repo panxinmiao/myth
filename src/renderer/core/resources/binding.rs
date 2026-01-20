@@ -235,19 +235,31 @@ impl ResourceManager {
                     })
                 },
                 BindingResource::Texture(handle_opt) => {
-                    let gpu_tex = if let Some(handle) = handle_opt {
+                    let view = if let Some(handle) = handle_opt {
                         if *handle == TextureHandle::dummy_env_map() {
-                            &self.dummy_env_texture
+                            &self.dummy_env_image.default_view
+                        } else if let Some(binding) = self.texture_bindings.get(*handle) {
+                            self.gpu_images.values()
+                                .find(|img| img.id == binding.image_id)
+                                .map(|img| &img.default_view)
+                                .unwrap_or(&self.dummy_image.default_view)
                         } else {
-                            self.gpu_textures.get(*handle).unwrap_or(&self.dummy_texture)
+                            &self.dummy_image.default_view
                         }
-                    } else { &self.dummy_texture };
-                    wgpu::BindingResource::TextureView(&gpu_tex.view)
+                    } else { &self.dummy_image.default_view };
+                    wgpu::BindingResource::TextureView(view)
                 },
                 BindingResource::Sampler(handle_opt) => {
+                    // 从 TextureBinding 获取 sampler_id，然后从 sampler_id_lookup 快速查找
                     let sampler = if let Some(handle) = handle_opt {
-                        self.gpu_samplers.get(*handle).unwrap_or(&self.dummy_sampler)
-                    } else { &self.dummy_sampler };
+                        if let Some(binding) = self.texture_bindings.get(*handle) {
+                            self.sampler_id_lookup
+                                .get(&binding.sampler_id)
+                                .unwrap_or(&self.dummy_sampler.sampler)
+                        } else {
+                            &self.dummy_sampler.sampler
+                        }
+                    } else { &self.dummy_sampler.sampler };
                     wgpu::BindingResource::Sampler(sampler)
                 },
                 BindingResource::_Phantom(_) => unreachable!("_Phantom should never be used"),
@@ -286,7 +298,7 @@ impl ResourceManager {
         // 环境贴图 ID
         let env_map_id = scene.environment.env_map.map(|h| {
             self.prepare_texture(assets, h);
-            self.gpu_textures.get(h).map(|t| t.image_id).unwrap_or(0)
+            self.texture_bindings.get(h).map(|b| b.image_id).unwrap_or(0)
         }).unwrap_or(0);
         
         // === Collect 阶段: 收集所有资源 ID ===

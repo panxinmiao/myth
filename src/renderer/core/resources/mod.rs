@@ -37,7 +37,7 @@ use core::ops::Range;
 use rustc_hash::FxHashMap;
 
 use crate::renderer::core::resources::mipmap::MipmapGenerator;
-use crate::resources::texture::{Texture, TextureSampler};
+use crate::resources::texture::TextureSampler;
 
 use crate::scene::SkeletonKey;
 use crate::resources::buffer::{CpuBuffer, GpuData};
@@ -143,29 +143,118 @@ impl GpuBuffer {
     }
 }
 
-pub struct GpuTexture {
-    pub id: u64,
-    pub view: wgpu::TextureView,
+/// 纹理资源映射
+///
+/// 将 TextureHandle 映射到对应的 GpuImage ID、View ID 和 GpuSampler ID
+#[derive(Debug, Clone, Copy)]
+pub struct TextureBinding {
     pub image_id: u64,
-    pub image_generation_id: u64,
-    pub version: u64,
-    pub image_data_version: u64,
-    pub last_used_frame: u64,
+    pub view_id: u64,
+    pub sampler_id: u64,
+    /// CPU 端 Texture 版本（用于检测采样参数变化）
+    pub texture_version: u64,
 }
 
+/// 纹理视图缓存键
+///
+/// 用于按需创建和缓存不同配置的 TextureView。
+/// Key 包含 image_id，确保底层 Image 重建时自动失效。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TextureViewKey {
+    pub image_id: u64,
+    pub format: Option<wgpu::TextureFormat>,
+    pub dimension: Option<wgpu::TextureViewDimension>,
+    pub base_mip_level: u32,
+    pub mip_level_count: Option<u32>,
+    pub base_array_layer: u32,
+    pub array_layer_count: Option<u32>,
+    pub aspect: wgpu::TextureAspect,
+}
+
+impl TextureViewKey {
+    #[inline]
+    pub fn new(image_id: u64, desc: &wgpu::TextureViewDescriptor) -> Self {
+        Self {
+            image_id,
+            format: desc.format,
+            dimension: desc.dimension,
+            base_mip_level: desc.base_mip_level,
+            mip_level_count: desc.mip_level_count,
+            base_array_layer: desc.base_array_layer,
+            array_layer_count: desc.array_layer_count,
+            aspect: desc.aspect,
+        }
+    }
+
+    #[inline]
+    pub fn default_for_image(image_id: u64) -> Self {
+        Self {
+            image_id,
+            format: None,
+            dimension: None,
+            base_mip_level: 0,
+            mip_level_count: None,
+            base_array_layer: 0,
+            array_layer_count: None,
+            aspect: wgpu::TextureAspect::All,
+        }
+    }
+}
+
+/// GPU 端图像资源
+///
+/// 包含物理纹理和默认视图，不包含采样器
 pub struct GpuImage {
     pub id: u64,
     pub texture: wgpu::Texture,
-    pub version: u64,
-    pub generation_id: u64,
-    pub width: u32,
-    pub height: u32,
-    pub depth: u32,
+    pub default_view: wgpu::TextureView,
+    pub default_view_dimension: wgpu::TextureViewDimension,
+    pub size: wgpu::Extent3d,
     pub format: wgpu::TextureFormat,
     pub mip_level_count: u32,
     pub usage: wgpu::TextureUsages,
+    pub version: u64,
+    pub generation_id: u64,
     pub mipmaps_generated: bool,
     pub last_used_frame: u64,
+}
+
+/// 采样器缓存键
+/// 
+/// 用于基于参数去重的 Sampler 缓存
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct SamplerKey {
+    pub address_mode_u: wgpu::AddressMode,
+    pub address_mode_v: wgpu::AddressMode,
+    pub address_mode_w: wgpu::AddressMode,
+    pub mag_filter: wgpu::FilterMode,
+    pub min_filter: wgpu::FilterMode,
+    pub mipmap_filter: wgpu::MipmapFilterMode,
+    pub compare: Option<wgpu::CompareFunction>,
+    pub anisotropy_clamp: u16,
+}
+
+impl From<&TextureSampler> for SamplerKey {
+    fn from(sampler: &TextureSampler) -> Self {
+        Self {
+            address_mode_u: sampler.address_mode_u,
+            address_mode_v: sampler.address_mode_v,
+            address_mode_w: sampler.address_mode_w,
+            mag_filter: sampler.mag_filter,
+            min_filter: sampler.min_filter,
+            mipmap_filter: sampler.mipmap_filter,
+            compare: sampler.compare,
+            anisotropy_clamp: sampler.anisotropy_clamp,
+        }
+    }
+}
+
+/// GPU 端采样器资源
+/// 
+/// 与 GpuImage 分离，实现全局缓存和复用
+pub struct GpuSampler {
+    pub id: u64,
+    pub sampler: wgpu::Sampler,
 }
 
 /// GPU 端几何体资源
@@ -243,19 +332,22 @@ pub struct ResourceManager {
 
     pub(crate) gpu_geometries: SecondaryMap<GeometryHandle, GpuGeometry>,
     pub(crate) gpu_materials: SecondaryMap<MaterialHandle, GpuMaterial>,
-    pub(crate) gpu_textures: SecondaryMap<TextureHandle, GpuTexture>,
-    pub(crate) gpu_samplers: SecondaryMap<TextureHandle, wgpu::Sampler>,
+    /// TextureHandle 到 (ImageId, SamplerId) 的映射
+    pub(crate) texture_bindings: SecondaryMap<TextureHandle, TextureBinding>,
 
     pub(crate) global_states: FxHashMap<u64, GpuGlobalState>,
     pub(crate) gpu_buffers: FxHashMap<u64, GpuBuffer>,
+    /// 所有 GpuImage，Key 是 CPU Image 的 ID
     pub(crate) gpu_images: FxHashMap<u64, GpuImage>,
 
-    pub(crate) sampler_cache: FxHashMap<TextureSampler, wgpu::Sampler>,
+    pub(crate) sampler_cache: FxHashMap<SamplerKey, GpuSampler>,
+    pub(crate) sampler_id_lookup: FxHashMap<u64, wgpu::Sampler>,
+    pub(crate) view_cache: FxHashMap<TextureViewKey, (wgpu::TextureView, u64)>,
     pub(crate) layout_cache: FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
 
-    pub(crate) dummy_texture: GpuTexture,
-    pub(crate) dummy_env_texture: GpuTexture,
-    pub(crate) dummy_sampler: wgpu::Sampler,
+    pub(crate) dummy_image: GpuImage,
+    pub(crate) dummy_env_image: GpuImage,
+    pub(crate) dummy_sampler: GpuSampler,
     pub(crate) mipmap_generator: MipmapGenerator,
 
     // === Model Buffer Allocator ===
@@ -271,14 +363,56 @@ pub struct ResourceManager {
 
 impl ResourceManager {
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+        // 创建 dummy 2D image
+        let dummy_image = {
+            let size = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Dummy Image"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            
+            queue.write_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                &[255u8, 255, 255, 255],
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(4),
+                    rows_per_image: Some(1),
+                },
+                size,
+            );
+            
+            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            
+            GpuImage {
+                id: generate_gpu_resource_id(),
+                texture,
+                default_view: view,
+                default_view_dimension: wgpu::TextureViewDimension::D2,
+                size,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                mip_level_count: 1,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                version: 0,
+                generation_id: 0,
+                mipmaps_generated: true,
+                last_used_frame: u64::MAX,
+            }
+        };
 
-        let dummy_tex = Texture::new_2d(Some("dummy"), 1, 1, Some(vec![255, 255, 255, 255]), wgpu::TextureFormat::Rgba8Unorm);
-        let dummy_gpu_image = GpuImage::new(&device, &queue, &dummy_tex.image, 1, wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST);
-        let dummy_gpu_tex = GpuTexture::new(&dummy_tex, &dummy_gpu_image);
-
-        // 创建 dummy env texture (cube map)
-        let dummy_env_tex = {
-            // 手动创建 WGPU Texture
+        // 创建 dummy env image (cube map)
+        let dummy_env_image = {
             let size = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 6 };
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Dummy EnvMap Black"),
@@ -292,45 +426,50 @@ impl ResourceManager {
             });
 
             // 填充黑色数据 (1x1 pixel * 4 bytes * 6 layers = 24 bytes)
-            let black_pixel = [0u8; 24];
-   
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &texture,
                     mip_level: 0,
-                    origin: wgpu::Origin3d { x: 0, y: 0, z: 0 },
+                    origin: wgpu::Origin3d::ZERO,
                     aspect: wgpu::TextureAspect::All,
                 },
-                &black_pixel,
+                &[0u8; 24],
                 wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(4),
                     rows_per_image: Some(1),
                 },
-                wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 6 },
+                size,
             );
-            
 
             let view = texture.create_view(&wgpu::TextureViewDescriptor {
                 dimension: Some(wgpu::TextureViewDimension::Cube),
                 ..Default::default()
             });
 
-            GpuTexture {
+            GpuImage {
                 id: generate_gpu_resource_id(),
-                view,
-                image_id: 0,
+                texture,
+                default_view: view,
+                default_view_dimension: wgpu::TextureViewDimension::Cube,
+                size,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                mip_level_count: 1,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 version: 0,
-                image_generation_id: 0,
-                image_data_version: 0,
+                generation_id: 0,
+                mipmaps_generated: true,
                 last_used_frame: u64::MAX,
             }
         };
 
-        let dummy_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Dummy Sampler"),
-            ..Default::default()
-        });
+        let dummy_sampler = GpuSampler {
+            id: generate_gpu_resource_id(),
+            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("Dummy Sampler"),
+                ..Default::default()
+            }),
+        };
 
         let mipmap_generator = MipmapGenerator::new(&device);
         let model_allocator = ModelBufferAllocator::new();
@@ -345,21 +484,26 @@ impl ResourceManager {
             map
         };
 
+        // 初始化 sampler_id_lookup 并添加 dummy_sampler
+        let mut sampler_id_lookup = FxHashMap::default();
+        sampler_id_lookup.insert(dummy_sampler.id, dummy_sampler.sampler.clone());
+
         Self {
             device,
             queue,
             frame_index: 0,
             gpu_geometries: SecondaryMap::new(),
             gpu_materials: SecondaryMap::new(),
-            gpu_textures: SecondaryMap::new(),
-            gpu_samplers: SecondaryMap::new(),
+            texture_bindings: SecondaryMap::new(),
             global_states: FxHashMap::default(),
             gpu_buffers,
             gpu_images: FxHashMap::default(),
             layout_cache: FxHashMap::default(),
             sampler_cache: FxHashMap::default(),
-            dummy_texture: dummy_gpu_tex,
-            dummy_env_texture: dummy_env_tex,
+            sampler_id_lookup,
+            view_cache: FxHashMap::default(),
+            dummy_image,
+            dummy_env_image,
             dummy_sampler,
             mipmap_generator,
             model_allocator,
@@ -461,10 +605,11 @@ impl ResourceManager {
 
         self.gpu_geometries.retain(|_, v| v.last_used_frame >= cutoff);
         self.gpu_materials.retain(|_, v| v.last_used_frame >= cutoff);
-        self.gpu_textures.retain(|_, v| v.last_used_frame >= cutoff);
-        self.gpu_samplers.retain(|k, _| self.gpu_textures.contains_key(k));
+        // Sampler 缓存使用全局缓存，不需要按 Texture 清理
         self.gpu_buffers.retain(|_, v| v.last_used_frame >= cutoff);
         self.gpu_images.retain(|_, v| v.last_used_frame >= cutoff);
         self.global_states.retain(|_, v| v.last_used_frame >= cutoff);
+        // texture_bindings 跟随 gpu_images 清理
+        self.texture_bindings.retain(|_, b| self.gpu_images.contains_key(&b.image_id));
     }
 }

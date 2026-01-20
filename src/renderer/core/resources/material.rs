@@ -22,8 +22,10 @@ use super::{ResourceManager, GpuMaterial, ResourceIdSet, hash_layout_entries};
 pub struct MaterialPrepareResult {
     /// Uniform Buffer 的物理 ID
     pub uniform_buffer_id: u64,
-    /// 所有纹理的物理 ID
-    pub texture_ids: Vec<u64>,
+    /// 所有 GpuImage 的物理 ID（对应纹理像素数据）
+    pub image_ids: Vec<u64>,
+    /// 所有 GpuSampler 的物理 ID（对应采样参数）
+    pub sampler_ids: Vec<u64>,
     /// Layout ID
     pub layout_id: u64,
     /// BindGroup ID
@@ -40,13 +42,16 @@ impl ResourceManager {
         let material = assets.get_material(handle)?;
 
         // 1. Ensure 阶段：确保所有资源存在且数据最新，收集物理资源 ID
-        let (uniform_result, texture_ids) = self.ensure_material_resources_with_ids(assets, material);
+        let (uniform_result, image_ids, sampler_ids) = self.ensure_material_resources_with_ids(assets, material);
         
-        // 2. 构建当前资源 ID 集合
-        let mut current_resource_ids = ResourceIdSet::with_capacity(1 + texture_ids.len());
+        // 2. 构建当前资源 ID 集合（包含 image_ids 和 sampler_ids）
+        let mut current_resource_ids = ResourceIdSet::with_capacity(1 + image_ids.len() + sampler_ids.len());
         current_resource_ids.push(uniform_result.resource_id);
-        for tid in &texture_ids {
-            current_resource_ids.push(*tid);
+        for id in &image_ids {
+            current_resource_ids.push(*id);
+        }
+        for id in &sampler_ids {
+            current_resource_ids.push(*id);
         }
 
         // 3. Check 阶段：检查是否需要重建 BindGroup
@@ -71,7 +76,8 @@ impl ResourceManager {
         let gpu_mat = self.gpu_materials.get(handle)?;
         Some(MaterialPrepareResult {
             uniform_buffer_id: uniform_result.resource_id,
-            texture_ids,
+            image_ids,
+            sampler_ids,
             layout_id: gpu_mat.layout_id,
             bind_group_id: gpu_mat.bind_group_id,
             any_recreated: needs_rebuild,
@@ -79,15 +85,18 @@ impl ResourceManager {
     }
 
     /// 确保 Material 资源并返回物理 ID
-    fn ensure_material_resources_with_ids(&mut self, assets: &AssetServer, material: &Material) -> (super::EnsureResult, Vec<u64>) {
+    /// 
+    /// 返回: (uniform_result, image_ids, sampler_ids)
+    fn ensure_material_resources_with_ids(&mut self, assets: &AssetServer, material: &Material) -> (super::EnsureResult, Vec<u64>, Vec<u64>) {
         let uniform_result = match &material.data {
             MaterialData::Basic(m) => self.ensure_buffer(&m.uniforms),
             MaterialData::Phong(m) => self.ensure_buffer(&m.uniforms),
             MaterialData::Standard(m) => self.ensure_buffer(&m.uniforms),
         };
 
-        // 收集纹理 ID
-        let mut texture_ids = Vec::new();
+        // 分别收集 Image ID 和 Sampler ID
+        let mut image_ids = Vec::new();
+        let mut sampler_ids = Vec::new();
         let bindings = material.data.bindings();
         
         for tex_handle in [
@@ -100,12 +109,13 @@ impl ResourceManager {
             bindings.specular_map,
         ].into_iter().flatten() {
             self.prepare_texture(assets, tex_handle);
-            if let Some(gpu_tex) = self.gpu_textures.get(tex_handle) {
-                texture_ids.push(gpu_tex.image_id);
+            if let Some(binding) = self.texture_bindings.get(tex_handle) {
+                image_ids.push(binding.image_id);
+                sampler_ids.push(binding.sampler_id);
             }
         }
 
-        (uniform_result, texture_ids)
+        (uniform_result, image_ids, sampler_ids)
     }
 
     /// 重建 Material 的 BindGroup（可能包括 Layout）
