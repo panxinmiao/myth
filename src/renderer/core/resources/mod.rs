@@ -9,7 +9,15 @@
 //! - material.rs: Material 相关操作
 //! - binding.rs: BindGroup 相关操作
 //! - allocator.rs: ModelBufferAllocator
-//! - global.rs: 全局渲染资源 (Light/Environment Buffer)
+//! - resource_ids.rs: 资源 ID 追踪和变化检测
+//!
+//! # 资源管理架构
+//!
+//! 采用 "Ensure -> Check -> Rebuild" 模式：
+//! 
+//! 1. **Ensure 阶段**: 确保 GPU 资源存在且数据最新，返回物理资源 ID
+//! 2. **Check 阶段**: 比较资源 ID 是否变化，决定是否需要重建 BindGroup
+//! 3. **Rebuild 阶段**: 如需重建，收集 LayoutEntries 并比较是否需要新 Layout
 
 mod allocator;
 mod buffer;
@@ -18,6 +26,7 @@ mod geometry;
 mod material;
 mod binding;
 mod mipmap;
+mod resource_ids;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -37,6 +46,7 @@ use crate::assets::{GeometryHandle, MaterialHandle, TextureHandle};
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 
 pub use allocator::ModelBufferAllocator;
+pub use resource_ids::{EnsureResult, ResourceIdSet, BindGroupFingerprint, hash_layout_entries, ResourceId};
 
 static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(0);
 
@@ -170,15 +180,19 @@ pub struct GpuGeometry {
     pub last_used_frame: u64,
 }
 
+/// GPU 端材质资源
+/// 
+/// 使用资源 ID 追踪机制自动检测变化
 pub struct GpuMaterial {
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
     pub layout: wgpu::BindGroupLayout,
     pub layout_id: u64,
+    /// Layout entries 的哈希值（用于快速比较是否需要重建 Layout）
+    pub layout_hash: u64,
     pub binding_wgsl: String,
-    pub last_data_version: u64,
-    pub last_binding_version: u64,
-    pub last_layout_version: u64,
+    /// 所有依赖资源的物理 ID 集合
+    pub resource_ids: ResourceIdSet,
     pub last_used_frame: u64,
 }
 

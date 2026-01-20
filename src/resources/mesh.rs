@@ -25,7 +25,8 @@ pub struct RenderCache {
     pub(crate) geometry_id: Option<GeometryHandle>,
     pub(crate) geometry_version: u64, // 结构版本
     pub(crate) material_id: Option<MaterialHandle>,
-    pub(crate) material_version: u64, // 绑定版本 (binding_version)
+    /// Material 的 BindGroupLayout ID（GPU 物理资源 ID）
+    pub(crate) material_layout_id: u64,
     pub(crate) model_buffer_id: u64,  // 检查 Allocator 是否重置/Resize
     pub(crate) skeleton_id: Option<u64>, // joint_matrices buffer id
 }
@@ -44,7 +45,7 @@ impl RenderCache {
         geo_handle: GeometryHandle,
         geo_version: u64,
         mat_handle: MaterialHandle,
-        mat_version: u64,
+        mat_layout_id: u64,
         current_model_buffer_id: u64,
         skeleton_buffer_id: Option<u64>
     ) -> bool {
@@ -52,7 +53,7 @@ impl RenderCache {
             && self.geometry_id == Some(geo_handle)
             && self.geometry_version == geo_version
             && self.material_id == Some(mat_handle)
-            && self.material_version == mat_version
+            && self.material_layout_id == mat_layout_id
             && self.model_buffer_id == current_model_buffer_id
             && self.skeleton_id == skeleton_buffer_id
     }

@@ -108,11 +108,13 @@ impl ForwardRenderPass {
                 instance_variants |= 1 << 0;
             }
 
+            // 使用 GPU 端的 layout_id 构建快速缓存 Key
+            // 这比 CPU 端的 version 更精确地反映 Pipeline 兼容性
             let fast_key = FastPipelineKey {
                 material_handle: item.material,
-                material_version: material.layout_version(),
+                material_layout_id: gpu_material.layout_id,
                 geometry_handle: item.geometry,
-                geometry_version: geometry.layout_version(),
+                geometry_layout_version: geometry.layout_version(),
                 instance_variants,
                 scene_id: ctx.extracted_scene.scene_features.bits(),
                 render_state_id: ctx.render_state.id,

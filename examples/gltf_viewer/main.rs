@@ -139,6 +139,15 @@ impl AppHandler for GltfViewer {
         // 1. 更新 FPS
         if let Some(fps) = self.fps_counter.update() {
             self.current_fps = fps;
+
+            let title = if let Some(path) = &self.model_path {
+                format!("glTF Viewer - {} | FPS: {:.0}", 
+                    path.file_name().unwrap_or_default().to_string_lossy(),
+                    self.current_fps)
+            } else {
+                format!("glTF Viewer | FPS: {:.0}", self.current_fps)
+            };
+            ctx.window.set_title(&title);
         }
 
         // 2. 更新动画
@@ -161,15 +170,7 @@ impl AppHandler for GltfViewer {
             self.load_model(&path, ctx);
         }
 
-        // 6. 更新窗口标题
-        let title = if let Some(path) = &self.model_path {
-            format!("glTF Viewer - {} | FPS: {:.0}", 
-                path.file_name().unwrap_or_default().to_string_lossy(),
-                self.current_fps)
-        } else {
-            format!("glTF Viewer | FPS: {:.0}", self.current_fps)
-        };
-        ctx.window.set_title(&title);
+
     }
 
     fn extra_render_nodes(&self) -> Vec<&dyn RenderNode> {

@@ -1,4 +1,9 @@
 //! Material 相关操作
+//!
+//! 采用 "Ensure -> Check -> Rebuild" 模式：
+//! 1. 确保所有 GPU 资源存在且数据最新
+//! 2. 比较物理资源 ID 是否变化
+//! 3. 如需重建，比较 LayoutEntries 决定是否需要新 Layout
 
 use crate::assets::{AssetServer, MaterialHandle};
 use crate::resources::material::Material;
@@ -7,47 +12,131 @@ use crate::resources::material::MaterialData;
 use crate::renderer::core::binding::Bindings;
 use crate::renderer::core::builder::ResourceBuilder;
 
-use super::{ResourceManager, GpuMaterial};
+use super::{ResourceManager, GpuMaterial, ResourceIdSet, hash_layout_entries};
+
+/// Material 准备结果
+/// 
+/// 预留的 API，用于未来更精细的 Pipeline 缓存控制
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct MaterialPrepareResult {
+    /// Uniform Buffer 的物理 ID
+    pub uniform_buffer_id: u64,
+    /// 所有纹理的物理 ID
+    pub texture_ids: Vec<u64>,
+    /// Layout ID
+    pub layout_id: u64,
+    /// BindGroup ID
+    pub bind_group_id: u64,
+    /// 是否有资源被重建
+    pub any_recreated: bool,
+}
 
 impl ResourceManager {
-    pub(crate) fn prepare_material(&mut self, assets: &AssetServer, handle: MaterialHandle) {
-        let Some(material) = assets.get_material(handle) else {
-            log::warn!("Material {:?} not found in AssetServer.", handle);
-            return;
+    /// 准备 Material 的 GPU 资源
+    /// 
+    /// 使用新的资源 ID 追踪机制，自动检测变化并按需重建
+    pub(crate) fn prepare_material(&mut self, assets: &AssetServer, handle: MaterialHandle) -> Option<MaterialPrepareResult> {
+        let material = assets.get_material(handle)?;
+
+        // 1. Ensure 阶段：确保所有资源存在且数据最新，收集物理资源 ID
+        let (uniform_result, texture_ids) = self.ensure_material_resources_with_ids(assets, material);
+        
+        // 2. 构建当前资源 ID 集合
+        let mut current_resource_ids = ResourceIdSet::with_capacity(1 + texture_ids.len());
+        current_resource_ids.push(uniform_result.resource_id);
+        for tid in &texture_ids {
+            current_resource_ids.push(*tid);
+        }
+
+        // 3. Check 阶段：检查是否需要重建 BindGroup
+        let needs_rebuild = if let Some(gpu_mat) = self.gpu_materials.get(handle) {
+            // 比较资源 ID 是否变化
+            let mut cached_ids = gpu_mat.resource_ids.clone();
+            !current_resource_ids.matches(&mut cached_ids) || uniform_result.was_recreated
+        } else {
+            true
         };
 
-        // let uniform_ver = material.data.uniform_version();
-        let binding_ver = material.data.binding_version();
-        let layout_ver = material.data.layout_version();
-
-        self.ensure_material_resources(material);
-
-        if !self.gpu_materials.contains_key(handle) {
-            self.build_full_material(assets, handle, material);
+        if needs_rebuild {
+            // 4. Rebuild 阶段
+            self.rebuild_material_with_ids(assets, handle, material, current_resource_ids);
+        } else {
+            // 仅更新帧计数
+            if let Some(gpu_mat) = self.gpu_materials.get_mut(handle) {
+                gpu_mat.last_used_frame = self.frame_index;
+            }
         }
 
-        let gpu_mat = self.gpu_materials.get(handle).expect("gpu material should exist.");
-
-        if layout_ver != gpu_mat.last_layout_version {
-            self.build_full_material(assets, handle, material);
-            return;
-        }
-
-        if binding_ver != gpu_mat.last_binding_version {
-            self.rebuild_material_bind_group(assets, handle, material);
-            return;
-        }
-
-        let gpu_mat = self.gpu_materials.get_mut(handle).expect("gpu material should exist.");
-        gpu_mat.last_used_frame = self.frame_index;
+        let gpu_mat = self.gpu_materials.get(handle)?;
+        Some(MaterialPrepareResult {
+            uniform_buffer_id: uniform_result.resource_id,
+            texture_ids,
+            layout_id: gpu_mat.layout_id,
+            bind_group_id: gpu_mat.bind_group_id,
+            any_recreated: needs_rebuild,
+        })
     }
 
-    pub(crate) fn build_full_material(&mut self, assets: &AssetServer, handle: MaterialHandle, material: &Material) -> &GpuMaterial {
+    /// 确保 Material 资源并返回物理 ID
+    fn ensure_material_resources_with_ids(&mut self, assets: &AssetServer, material: &Material) -> (super::EnsureResult, Vec<u64>) {
+        let uniform_result = match &material.data {
+            MaterialData::Basic(m) => self.ensure_buffer(&m.uniforms),
+            MaterialData::Phong(m) => self.ensure_buffer(&m.uniforms),
+            MaterialData::Standard(m) => self.ensure_buffer(&m.uniforms),
+        };
+
+        // 收集纹理 ID
+        let mut texture_ids = Vec::new();
+        let bindings = material.data.bindings();
+        
+        for tex_handle in [
+            bindings.map,
+            bindings.normal_map,
+            bindings.roughness_map,
+            bindings.metalness_map,
+            bindings.emissive_map,
+            bindings.ao_map,
+            bindings.specular_map,
+        ].into_iter().flatten() {
+            self.prepare_texture(assets, tex_handle);
+            if let Some(gpu_tex) = self.gpu_textures.get(tex_handle) {
+                texture_ids.push(gpu_tex.image_id);
+            }
+        }
+
+        (uniform_result, texture_ids)
+    }
+
+    /// 重建 Material 的 BindGroup（可能包括 Layout）
+    fn rebuild_material_with_ids(
+        &mut self, 
+        assets: &AssetServer, 
+        handle: MaterialHandle, 
+        material: &Material,
+        resource_ids: ResourceIdSet,
+    ) {
         let mut builder = ResourceBuilder::new();
         material.define_bindings(&mut builder);
 
         self.prepare_binding_resources(assets, &builder.resources);
-        let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
+        
+        // 计算 layout entries 的哈希值
+        let layout_hash = hash_layout_entries(&builder.layout_entries);
+        
+        // 检查是否需要新的 Layout
+        let (layout, layout_id) = if let Some(gpu_mat) = self.gpu_materials.get(handle) {
+            if gpu_mat.layout_hash == layout_hash {
+                // Layout 未变化，复用
+                (gpu_mat.layout.clone(), gpu_mat.layout_id)
+            } else {
+                // Layout 变化，重建
+                self.get_or_create_layout(&builder.layout_entries)
+            }
+        } else {
+            self.get_or_create_layout(&builder.layout_entries)
+        };
+
         let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
         let binding_wgsl = builder.generate_wgsl(1);
 
@@ -56,54 +145,13 @@ impl ResourceManager {
             bind_group_id: bg_id,
             layout,
             layout_id,
+            layout_hash,
             binding_wgsl,
-            last_data_version: material.data.uniform_version(),
-            last_binding_version: material.data.binding_version(),
-            last_layout_version: material.data.layout_version(),
+            resource_ids,
             last_used_frame: self.frame_index,
         };
 
         self.gpu_materials.insert(handle, gpu_mat);
-        self.gpu_materials.get(handle).expect("Just inserted")
-    }
-
-    pub(crate) fn rebuild_material_bind_group(&mut self, assets: &AssetServer, handle: MaterialHandle, material: &Material) -> &GpuMaterial {
-        let mut builder = ResourceBuilder::new();
-        material.define_bindings(&mut builder);
-
-        self.prepare_binding_resources(assets, &builder.resources);
-        let layout = {
-            let gpu_mat = self.gpu_materials.get(handle).expect("gpu material should exist.");
-            gpu_mat.layout.clone()
-        };
-
-        let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
-
-        {
-            let gpu_mat = self.gpu_materials.get_mut(handle).expect("gpu material should exist.");
-            gpu_mat.bind_group = bind_group;
-            gpu_mat.bind_group_id = bg_id;
-            gpu_mat.last_binding_version = material.data.binding_version();
-            gpu_mat.last_used_frame = self.frame_index;
-        }
-
-        self.gpu_materials.get(handle).expect("gpu material should exist.")
-    }
-
-    pub(crate) fn ensure_material_resources(&mut self, material: &Material) {
-
-        // todo 优化：要ensure所有资源，不光是主 uniform buffer
-        match &material.data {  
-            MaterialData::Basic(m) => {
-                self.ensure_buffer(&m.uniforms);
-            },
-            MaterialData::Phong(m) => {
-                self.ensure_buffer(&m.uniforms);
-            },
-            MaterialData::Standard(m) => {
-                self.ensure_buffer(&m.uniforms);
-            },
-        }
     }
 
     pub fn get_material(&self, handle: MaterialHandle) -> Option<&GpuMaterial> {

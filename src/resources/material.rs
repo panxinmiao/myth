@@ -489,6 +489,15 @@ impl MaterialData {
             Self::Standard(m) => m.settings(),
         }
     }
+
+    /// 获取材质绑定资源的只读引用
+    pub fn bindings(&self) -> &MaterialBindings {
+        match self {
+            Self::Basic(m) => m.bindings(),
+            Self::Phong(m) => m.bindings(),
+            Self::Standard(m) => m.bindings(),
+        }
+    }
 }
 
 // ============================================================================

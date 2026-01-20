@@ -3,12 +3,14 @@
 use rustc_hash::FxHashMap;
 
 use crate::resources::buffer::BufferRef;
-use super::{ResourceManager, GpuBuffer};
+use super::{ResourceManager, GpuBuffer, EnsureResult};
 
 impl ResourceManager {
 
     /// 静态辅助方法：只借用必要的字段，解决 borrow checker 冲突
     /// 可以在持有 ResourceManager 其他字段引用的同时调用此方法
+    /// 
+    /// 返回 EnsureResult，包含物理资源 ID 和是否重建的标志
     pub fn write_buffer_internal(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -16,23 +18,30 @@ impl ResourceManager {
         frame_index: u64,
         buffer_ref: &BufferRef,
         data: &[u8],
-    ) -> u64 {
-        let id = buffer_ref.id();
+    ) -> EnsureResult {
+        let cpu_id = buffer_ref.id();
+        let mut was_recreated = false;
         
-        // 1. 获取或创建 GpuBuffer
-        let gpu_buf = gpu_buffers.entry(id).or_insert_with(|| {
+        // 1. 检查是否存在
+        let existed = gpu_buffers.contains_key(&cpu_id);
+        
+        // 2. 获取或创建 GpuBuffer
+        let gpu_buf = gpu_buffers.entry(cpu_id).or_insert_with(|| {
+            was_recreated = true;
             let mut buf = GpuBuffer::new(device, data, buffer_ref.usage, buffer_ref.label());
-            buf.last_uploaded_version = 0; // 强制新 buffer 必须上传
+            buf.last_uploaded_version = buffer_ref.version;
             buf
         });
 
-        // 2. 检查版本并上传
-        // 注意：这里不需要再 clone data 了，直接用 slice
-        if buffer_ref.version > gpu_buf.last_uploaded_version {
+        // 3. 检查版本并上传（仅当已存在时）
+        if existed && buffer_ref.version > gpu_buf.last_uploaded_version {
             // 如果 GPU buffer 太小，需要 resize (会销毁重建)
             if (data.len() as u64) > gpu_buf.size {
                 log::debug!("Resizing buffer {:?} from {} to {}", buffer_ref.label(), gpu_buf.size, data.len());
+                let old_id = gpu_buf.id;
                 *gpu_buf = GpuBuffer::new(device, data, buffer_ref.usage, buffer_ref.label());
+                // ID 变化意味着重建
+                was_recreated = gpu_buf.id != old_id;
             } else {
                 queue.write_buffer(&gpu_buf.buffer, 0, data);
             }
@@ -40,12 +49,14 @@ impl ResourceManager {
         }
         
         gpu_buf.last_used_frame = frame_index;
-        gpu_buf.id
+        EnsureResult::new(gpu_buf.id, was_recreated)
     }
 
 
     /// 确保 CpuBuffer 对应的 GpuBuffer 已经创建并上传最新数据
-    pub fn ensure_buffer<T: super::GpuData>(&mut self, cpu_buffer: &super::CpuBuffer<T>) -> u64 {
+    /// 
+    /// 返回 EnsureResult，包含物理资源 ID 和是否重建的标志
+    pub fn ensure_buffer<T: super::GpuData>(&mut self, cpu_buffer: &super::CpuBuffer<T>) -> EnsureResult {
         Self::write_buffer_internal(
             &self.device,
             &self.queue,
@@ -56,18 +67,35 @@ impl ResourceManager {
         )
     }
 
-    pub fn prepare_attribute_buffer(&mut self, attr: &crate::resources::geometry::Attribute) -> u64 {
-        let id = attr.buffer.id();
+    /// 确保 CpuBuffer 对应的 GpuBuffer 已经创建并上传最新数据
+    /// 
+    /// 仅返回物理资源 ID（兼容旧代码）
+    #[inline]
+    pub fn ensure_buffer_id<T: super::GpuData>(&mut self, cpu_buffer: &super::CpuBuffer<T>) -> u64 {
+        self.ensure_buffer(cpu_buffer).resource_id
+    }
 
-        if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
+    pub fn prepare_attribute_buffer(&mut self, attr: &crate::resources::geometry::Attribute) -> EnsureResult {
+        let cpu_id = attr.buffer.id();
+        let mut was_recreated = false;
+
+        if let Some(gpu_buf) = self.gpu_buffers.get_mut(&cpu_id) {
             if attr.version > gpu_buf.last_uploaded_version
                 && let Some(data) = &attr.data {
                     let bytes: &[u8] = data.as_ref();
-                    self.queue.write_buffer(&gpu_buf.buffer, 0, bytes);
+                    
+                    // 检查是否需要扩容
+                    if (bytes.len() as u64) > gpu_buf.size {
+                        let old_id = gpu_buf.id;
+                        *gpu_buf = GpuBuffer::new(&self.device, bytes, attr.buffer.usage(), attr.buffer.label());
+                        was_recreated = gpu_buf.id != old_id;
+                    } else {
+                        self.queue.write_buffer(&gpu_buf.buffer, 0, bytes);
+                    }
                     gpu_buf.last_uploaded_version = attr.version;
                 }
             gpu_buf.last_used_frame = self.frame_index;
-            return gpu_buf.id;
+            return EnsureResult::new(gpu_buf.id, was_recreated);
         }
 
         if let Some(data) = &attr.data {
@@ -76,29 +104,40 @@ impl ResourceManager {
             gpu_buf.last_uploaded_version = attr.version;
             gpu_buf.last_used_frame = self.frame_index;
             let buf_id = gpu_buf.id;
-            self.gpu_buffers.insert(id, gpu_buf);
-            buf_id
+            self.gpu_buffers.insert(cpu_id, gpu_buf);
+            EnsureResult::created(buf_id)
         } else {
             log::error!("Geometry attribute buffer {:?} missing CPU data!", attr.buffer.label());
-            if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
-                return gpu_buf.id;
+            if let Some(gpu_buf) = self.gpu_buffers.get_mut(&cpu_id) {
+                return EnsureResult::existing(gpu_buf.id);
             }
             let dummy_data = [0u8; 1];
             let gpu_buf = GpuBuffer::new(&self.device, &dummy_data, attr.buffer.usage(), Some("Dummy Fallback Buffer"));
             let buf_id = gpu_buf.id;
-            self.gpu_buffers.insert(id, gpu_buf);
-            buf_id
+            self.gpu_buffers.insert(cpu_id, gpu_buf);
+            EnsureResult::created(buf_id)
         }
     }
 
-    pub fn prepare_uniform_slot_data(&mut self, slot_id: u64, data: &[u8], label: &str) -> u64 {
+    pub fn prepare_uniform_slot_data(&mut self, slot_id: u64, data: &[u8], label: &str) -> EnsureResult {
+        let mut was_recreated = false;
+        let existed = self.gpu_buffers.contains_key(&slot_id);
+        
         let gpu_buf = self.gpu_buffers.entry(slot_id).or_insert_with(|| {
+            was_recreated = true;
             let mut buf = GpuBuffer::new(&self.device, data, wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, Some(label));
             buf.enable_shadow_copy();
             buf
         });
-        gpu_buf.update_with_data(&self.device, &self.queue, data);
+        
+        if existed {
+            let size_changed = gpu_buf.update_with_data(&self.device, &self.queue, data);
+            if size_changed {
+                was_recreated = true;
+            }
+        }
+        
         gpu_buf.last_used_frame = self.frame_index;
-        gpu_buf.id
+        EnsureResult::new(gpu_buf.id, was_recreated)
     }
 }

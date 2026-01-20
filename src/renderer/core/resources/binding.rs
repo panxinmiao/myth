@@ -69,15 +69,14 @@ impl ResourceManager {
         self.prepare_geometry(assets, mesh.geometry);
         self.prepare_material(assets, mesh.material);
 
-
-        // 3. 获取用于校验的 Version 信息
+        // 3. 获取 GPU 资源信息用于校验
         let geometry = assets.get_geometry(mesh.geometry)?;
-        let material = assets.get_material(mesh.material)?;
+        let gpu_material = self.get_material(mesh.material)?;
 
         let geo_version = geometry.structure_version();
-        let mat_version = material.binding_version();
+        // 使用 GPU 端的 layout_id 代替 CPU 端的 binding_version
+        let mat_layout_id = gpu_material.layout_id;
         let current_model_buffer_id = self.model_allocator.buffer_id();
-
 
         let skeleton_buffer_id = skeleton.as_ref().map(|skel| skel.joint_matrices.handle().id);
 
@@ -89,7 +88,7 @@ impl ResourceManager {
                 mesh.geometry, 
                 geo_version, 
                 mesh.material, 
-                mat_version, 
+                mat_layout_id, 
                 current_model_buffer_id,
                 skeleton_buffer_id
             ) {
@@ -116,7 +115,7 @@ impl ResourceManager {
         mesh.render_cache.geometry_id = Some(mesh.geometry);
         mesh.render_cache.geometry_version = geo_version;
         mesh.render_cache.material_id = Some(mesh.material);
-        mesh.render_cache.material_version = mat_version;
+        mesh.render_cache.material_layout_id = mat_layout_id;
         mesh.render_cache.model_buffer_id = current_model_buffer_id;
         mesh.render_cache.skeleton_id = skeleton_buffer_id;
     

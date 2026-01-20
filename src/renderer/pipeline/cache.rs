@@ -1,6 +1,11 @@
 //! 管线缓存
 //!
 //! L1 快速缓存 + L2 规范缓存
+//!
+//! # 缓存策略
+//! 
+//! - **L1 快速缓存**: 基于资源 Handle 和 Layout ID 的极快路径
+//! - **L2 规范缓存**: 基于完整 Pipeline 特征的规范化缓存
 
 use rustc_hash::FxHashMap;
 use xxhash_rust::xxh3::xxh3_128;
@@ -31,15 +36,22 @@ pub struct PipelineKey {
     pub sample_count: u32,
 }
 
-/// L1 缓存 Key: 基于 ID 和版本号 (极快)
+/// L1 缓存 Key: 基于资源 Handle 和物理 Layout ID (极快)
+/// 
+/// 使用 GPU 端的 layout_id 而非 CPU 端的 version，更精确地反映 Pipeline 兼容性
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub struct FastPipelineKey {
     pub material_handle: MaterialHandle,
-    pub material_version: u64,
+    /// Material 的 BindGroupLayout ID（物理资源 ID）
+    pub material_layout_id: u64,
     pub geometry_handle: GeometryHandle,
-    pub geometry_version: u64,
+    /// Geometry 的结构版本（影响 VertexLayout）
+    pub geometry_layout_version: u64,
+    /// 实例变体标志（如是否有骨骼）
     pub instance_variants: u32,
+    /// 场景特性 ID
     pub scene_id: u32,
+    /// 渲染状态 ID
     pub render_state_id: u32,
 }
 
