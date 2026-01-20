@@ -556,7 +556,7 @@ impl Scene {
                 return None;
             }
 
-            let approximate_radius = 1.25;
+            let approximate_radius = 0.15;
             
             Some(BoundingBox { min, max }.inflate(approximate_radius))
 

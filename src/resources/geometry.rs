@@ -241,8 +241,8 @@ impl BoundingBox {
     // 简单的膨胀方法
     pub fn inflate(&self, amount: f32) -> Self {
         Self {
-            min: self.min - Vec3::splat(amount),
-            max: self.max + Vec3::splat(amount),
+            min: self.min * Vec3::splat(1.0 - amount),
+            max: self.max * Vec3::splat(1.0 + amount),
         }
     }
 }

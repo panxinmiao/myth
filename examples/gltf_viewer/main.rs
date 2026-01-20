@@ -206,16 +206,15 @@ impl GltfViewer {
                 }
 
                 if let Some(root_node) = nodes.first() {
+                    ctx.scene.update_subtree(*root_node);
                     if let Some(bbox) = ctx.scene.get_bbox_of_node(*root_node, ctx.assets) {
                         let center = bbox.center();
-                        println!("模型中心: {:?}, 大小: {:?}", center, bbox.size());
                         let radius = bbox.size().length() * 0.5;
                         if let Some((_transform, camera)) = ctx.scene.query_main_camera_bundle() {
                             // self.controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
                             camera.near = radius * 0.01;
                             camera.far = radius * 10.0;
                             camera.update_projection_matrix();
-                            println!("设置相机位置，center: {:?}, radius: {:.2}", center, radius);
                             self.controls.set_target(center);
                             self.controls.set_position(center + Vec3::new(0.0, radius, radius * 2.5));
                         }
