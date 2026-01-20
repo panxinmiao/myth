@@ -25,7 +25,7 @@ pub struct RenderCache {
 impl RenderCache {
     #[inline]
     pub fn fingerprint_matches(&self, current_ids: &ResourceIdSet) -> bool {
-        self.bind_group_id.is_some() && self.resource_ids == *current_ids
+        self.bind_group_id.is_some() && self.resource_ids.matches_slice(current_ids.as_slice())
     }
 }
 

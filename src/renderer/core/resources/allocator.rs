@@ -22,12 +22,14 @@ pub struct ModelBufferAllocator {
     buffer: CpuBuffer<Vec<DynamicModelUniforms>>,
     /// 标记是否需要重建 GPU Buffer
     needs_recreate: bool,
+
+    pub(crate) last_ensure_frame: u64,
 }
 
 impl ModelBufferAllocator {
     /// 创建新的分配器
     pub fn new() -> Self {
-        let initial_capacity = 128;
+        let initial_capacity = 4096;
         let initial_data = vec![DynamicModelUniforms::default(); initial_capacity];
         let buffer = CpuBuffer::new(
             initial_data.clone(),
@@ -41,6 +43,7 @@ impl ModelBufferAllocator {
             capacity: initial_capacity,
             buffer,
             needs_recreate: false,
+            last_ensure_frame: 0,
         }
     }
 

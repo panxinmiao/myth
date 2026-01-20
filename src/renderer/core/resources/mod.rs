@@ -570,9 +570,17 @@ impl ResourceManager {
         self.model_allocator.flush_to_buffer();
 
         let allocator = &self.model_allocator;
-
         let buffer_ref = allocator.buffer_handle();
-        let data = allocator.cpu_buffer().as_bytes();
+
+
+        let full_slice = allocator.cpu_buffer().as_bytes();
+
+        let stride = std::mem::size_of::<crate::resources::uniforms::DynamicModelUniforms>();
+
+        // 只上传有效的数据部分 (cursor * stride)
+        let used_bytes = allocator.len() * stride;
+
+        let data_to_upload = &full_slice[0..used_bytes];
 
         // if allocator.need_recreate_buffer() {
         //     // Buffer 重建后，所有缓存都失效
@@ -586,7 +594,7 @@ impl ResourceManager {
             &mut self.gpu_buffers,
             self.frame_index,
             buffer_ref,
-            data
+            data_to_upload
         );
     }
 

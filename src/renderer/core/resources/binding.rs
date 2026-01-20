@@ -62,6 +62,24 @@ impl ResourceManager {
     /// 采用 "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" 模式
     pub fn prepare_mesh(&mut self, assets: &AssetServer, mesh: &mut Mesh, skeleton: Option<&Skeleton>) -> Option<ObjectBindingData> {
         // === Ensure 阶段: 确保所有资源已上传 ===
+        // 如果 Allocator 本帧发生了扩容，ID 会改变，必须在此处注册新 ID
+        
+        if self.model_allocator.last_ensure_frame != self.frame_index {
+            // self.ensure_buffer(self.model_allocator.cpu_buffer());
+            let buffer_ref = self.model_allocator.buffer_handle();
+            let data = self.model_allocator.cpu_buffer().as_slice();
+            
+            Self::write_buffer_internal(
+                &self.device,
+                &self.queue,
+                &mut self.gpu_buffers,
+                self.frame_index,
+                buffer_ref,
+                bytemuck::cast_slice(data)
+            );
+            self.model_allocator.last_ensure_frame = self.frame_index;
+        }
+
         mesh.update_morph_uniforms();
         let morph_result = self.ensure_buffer(&mesh.morph_uniforms);
         self.prepare_geometry(assets, mesh.geometry);
@@ -313,7 +331,7 @@ impl ResourceManager {
         
         // === Check 阶段: 快速指纹比较 ===
         if let Some(gpu_state) = self.global_states.get_mut(&state_id) {
-            if gpu_state.resource_ids == current_ids {
+            if gpu_state.resource_ids.matches_slice(current_ids.as_slice()) {
                 gpu_state.last_used_frame = self.frame_index;
                 return gpu_state.id;
             }

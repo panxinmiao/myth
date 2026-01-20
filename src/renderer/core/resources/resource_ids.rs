@@ -16,7 +16,7 @@ use smallvec::SmallVec;
 /// 
 /// 当 GPU 资源被重建（如 Buffer 扩容、Texture 重新创建）时，ID 会变化
 pub type ResourceId = u64;
-
+const INVALID_RESOURCE_ID: u64 = u64::MAX;
 /// Ensure 操作的结果
 /// 
 /// 包含资源的物理 ID，调用者可以用来判断资源是否发生变化
@@ -86,7 +86,7 @@ impl ResourceIdSet {
     #[inline]
     pub fn push_optional(&mut self, id: Option<ResourceId>) {
         // 使用特殊值表示 None
-        self.ids.push(id.unwrap_or(u64::MAX));
+        self.ids.push(id.unwrap_or(INVALID_RESOURCE_ID));
         self.hash_dirty = true;
     }
 
@@ -113,6 +113,11 @@ impl ResourceIdSet {
     #[inline]
     pub fn as_slice(&self) -> &[ResourceId] {
         &self.ids
+    }
+
+    #[inline]
+    pub fn matches_slice(&self, other_ids: &[ResourceId]) -> bool {
+        self.ids.as_slice() == other_ids
     }
 
     /// 计算并缓存哈希值
