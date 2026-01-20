@@ -217,14 +217,14 @@ impl GltfViewer {
         let egui_ctx = self.ui_pass.context().clone();
 
         // 主控制面板
-        egui::Window::new("控制面板")
+        egui::Window::new("Control Panel")
             .default_pos([10.0, 10.0])
             .default_width(280.0)
             .show(&egui_ctx, |ui| {
                 // 文件加载部分
-                ui.heading("📁 文件");
+                ui.heading("📁 File");
                 ui.horizontal(|ui| {
-                    if ui.button("打开 glTF/glb 文件...").clicked() {
+                    if ui.button("Open glTF/glb File...").clicked() {
                         if let Some(path) = rfd::FileDialog::new()
                             .add_filter("glTF", &["gltf", "glb"])
                             .pick_file()
@@ -235,30 +235,30 @@ impl GltfViewer {
                 });
 
                 if let Some(path) = &self.model_path {
-                    ui.label(format!("当前文件: {}", 
+                    ui.label(format!("Current File: {}", 
                         path.file_name().unwrap_or_default().to_string_lossy()));
                 } else {
-                    ui.label("未加载模型");
+                    ui.label("No model loaded");
                 }
 
                 ui.separator();
 
-                // 动画控制部分
-                ui.heading("🎬 动画");
+                // Animation Control Section
+                ui.heading("🎬 Animation");
                 
                 if self.animations.is_empty() {
-                    ui.label("无可用动画");
+                    ui.label("No animations available");
                 } else {
-                    // 动画选择
+                    // Animation selection
                     let current_anim = self.current_animation;
                     let anim_name = if current_anim < self.animations.len() {
                         self.animations[current_anim].name.clone()
                     } else {
-                        "选择动画".to_string()
+                        "Select Animation".to_string()
                     };
                     
                     ui.horizontal(|ui| {
-                        ui.label("动画:");
+                        ui.label("Animation:");
                         egui::ComboBox::from_id_salt("animation_selector")
                             .selected_text(&anim_name)
                             .show_ui(ui, |ui| {
@@ -278,11 +278,11 @@ impl GltfViewer {
 
                     // 播放控制
                     ui.horizontal(|ui| {
-                        if ui.button(if self.is_playing { "⏸ 暂停" } else { "▶ 播放" }).clicked() {
+                        if ui.button(if self.is_playing { "⏸ Pause" } else { "▶ Play" }).clicked() {
                             self.is_playing = !self.is_playing;
                         }
                         
-                        if ui.button("⏹ 停止").clicked() {
+                        if ui.button("⏹ Stop").clicked() {
                             self.is_playing = false;
                             self.mixer = AnimationMixer::new();
                         }
@@ -290,7 +290,7 @@ impl GltfViewer {
 
                     // 播放速度
                     ui.horizontal(|ui| {
-                        ui.label("速度:");
+                        ui.label("Speed:");
                         ui.add(egui::Slider::new(&mut self.playback_speed, 0.0..=2.0)
                             .step_by(0.1)
                             .suffix("x"));
@@ -299,32 +299,32 @@ impl GltfViewer {
                     // 显示动画信息
                     if current_anim < self.animations.len() {
                         let clip = &self.animations[current_anim];
-                        ui.label(format!("时长: {:.2}s | 轨道数: {}", clip.duration, clip.tracks.len()));
+                        ui.label(format!("Duration: {:.2}s | Tracks: {}", clip.duration, clip.tracks.len()));
                     }
                 }
 
                 ui.separator();
 
                 // 信息显示
-                ui.heading("ℹ️ 信息");
+                ui.heading("ℹ️ Information");
                 ui.label(format!("FPS: {:.1}", self.current_fps));
-                ui.label(format!("节点数: {}", self.loaded_nodes.len()));
+                ui.label(format!("Nodes: {}", self.loaded_nodes.len()));
             });
 
-        // 帮助提示
-        egui::Window::new("帮助")
+        // Help Window
+        egui::Window::new("Help")
             .default_pos([10.0, 400.0])
             .default_width(200.0)
             .collapsible(true)
             .default_open(false)
             .show(&egui_ctx, |ui| {
-                ui.label("🖱️ 鼠标控制:");
-                ui.label("  左键拖动: 旋转视角");
-                ui.label("  右键拖动: 平移");
-                ui.label("  滚轮: 缩放");
+                ui.label("🖱️ Mouse Controls:");
+                ui.label("  Left Drag: Rotate View");
+                ui.label("  Right Drag: Pan");
+                ui.label("  Scroll: Zoom");
                 ui.separator();
-                ui.label("⌨️ 快捷键:");
-                ui.label("  空格: 播放/暂停");
+                ui.label("⌨️ Keyboard Shortcuts:");
+                ui.label("  Space: Play/Pause");
             });
     }
 }

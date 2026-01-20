@@ -95,8 +95,8 @@ impl ForwardRenderPass {
                 error!("CRITICAL: GpuMaterial missing for {:?}", item.material);
                 continue;
             };
-            let Some(gpu_world) = ctx.resource_manager.get_global_state(ctx.render_state.id) else {
-                error!("Render Environment missing");
+            let Some(gpu_world) = ctx.resource_manager.get_global_state(ctx.render_state.id, ctx.extracted_scene.scene_hash) else {
+                // error!("Render Environment missing for render_state_id {}, scene_hash {}", ctx.render_state.id, ctx.extracted_scene.scene_hash);
                 continue;
             };
 
@@ -229,10 +229,11 @@ impl ForwardRenderPass {
         pass: &mut TrackedRenderPass<'pass>,
         cmds: &'pass [RenderCommand],
         render_state_id: u32,
+        scene_hash: u64,
     ) {
         if cmds.is_empty() { return; }
 
-        if let Some(gpu_global) = resource_manager.get_global_state(render_state_id) {
+        if let Some(gpu_global) = resource_manager.get_global_state(render_state_id, scene_hash) {
             pass.set_bind_group(0, gpu_global.bind_group_id, &gpu_global.bind_group, &[]);
         } else {
             return;
@@ -320,17 +321,20 @@ impl RenderNode for ForwardRenderPass {
             let pass = encoder.begin_render_pass(&pass_desc);
             let mut tracked = TrackedRenderPass::new(pass);
 
+
             Self::draw_list(
                 ctx.resource_manager,
                 &mut tracked,
                 &opaque,
                 ctx.render_state.id,
+                ctx.scene.light_storage_buffer.id(),
             );
             Self::draw_list(
                 ctx.resource_manager,
                 &mut tracked,
                 &transparent,
                 ctx.render_state.id,
+                ctx.scene.light_storage_buffer.id(),
             );
         }
     }

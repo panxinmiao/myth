@@ -62,7 +62,8 @@ impl ResourceManager {
 
         // 1. 数据同步 (Morph) - 必须每帧检查
         mesh.update_morph_uniforms();
-        self.write_buffer(mesh.morph_uniforms.handle(), mesh.morph_uniforms.as_bytes());
+
+        self.ensure_buffer(&mesh.morph_uniforms);
 
         // 2. 准备子资源
         self.prepare_geometry(assets, mesh.geometry);
@@ -206,9 +207,7 @@ impl ResourceManager {
     // BindGroup 通用操作
     // ========================================================================
 
-    pub(crate) fn prepare_binding_resources(&mut self, assets: &AssetServer, resources: &[BindingResource]) -> Vec<u64> {
-        let mut uniform_buffers = Vec::new();
-
+    pub(crate) fn prepare_binding_resources(&mut self, assets: &AssetServer, resources: &[BindingResource]) {
         for resource in resources {
             match resource {
                 BindingResource::Buffer { buffer: buffer_ref, offset: _, size: _, data } => {
@@ -237,7 +236,6 @@ impl ResourceManager {
                             panic!("ResourceManager: Trying to bind buffer {:?} (ID: {}) but it is not initialized!", buffer_ref.label(), id);
                         }
                     }
-                    uniform_buffers.push(id);
                 },
                 BindingResource::Texture(handle_opt) => {
                     if let Some(handle) = handle_opt {
@@ -247,7 +245,6 @@ impl ResourceManager {
                 _ => {}
             }
         }
-        uniform_buffers
     }
 
     pub fn get_or_create_layout(&mut self, entries: &[wgpu::BindGroupLayoutEntry]) -> (wgpu::BindGroupLayout, u64) {
@@ -317,31 +314,22 @@ impl ResourceManager {
     /// 准备全局绑定资源
     /// 
     /// 从 Scene 收集 Camera、Lights、Environment 数据，管理 BindGroup 0
-    /// 
-    /// # 缓存策略
-    /// 
-    /// 1. **结构指纹匹配** → 复用现有 BindGroup，只上传数据变化
-    /// 2. **结构指纹不匹配** → 重建 BindGroup
-    /// 
-    /// 结构指纹包括：
-    /// - RenderState Buffer ID
-    /// - Scene Light Buffer ID (支持 Buffer 扩容检测)
-    /// - Scene Env Buffer ID
-    /// - Environment Map Handle
-    /// 
-    /// # 性能说明
-    /// - 数据变化（灯光移动、相机变换）只触发 `write_buffer`
-    /// - 结构变化（Buffer 扩容、贴图切换）才触发 BindGroup 重建
     pub fn prepare_global(
         &mut self, 
         assets: &AssetServer, 
         scene: &Scene,
         render_state: &RenderState
     ) -> u32 {
+        self.ensure_buffer(render_state.uniforms());
+        self.ensure_buffer(&scene.uniforms_buffer);
+        self.ensure_buffer(&scene.light_storage_buffer);
+        
         // 1. 计算当前结构指纹
         let render_state_buffer_id = render_state.uniforms().handle().id;
         let env_buffer_id = scene.uniforms_buffer.handle().id;
         let light_buffer_id = scene.light_storage_buffer.handle().id;
+
+
         let env_map = scene.environment.env_map;
         
         // 使用 (render_state.id, scene_light_buffer_id) 组合作为缓存键
@@ -357,33 +345,22 @@ impl ResourceManager {
                 gpu_state.env_buffer_id == env_buffer_id &&
                 gpu_state.light_buffer_id == light_buffer_id &&
                 gpu_state.env_map == env_map;
-            
+
             (
                 gpu_state.id,
                 structure_match,
-                gpu_state.last_render_state_data_version,
-                gpu_state.last_global_data_version,
             )
         });
+
         
-        if let Some((id, structure_match, last_rs_ver, last_scene_ver)) = cached_info {
+        if let Some((id, structure_match)) = cached_info {
             if structure_match {
-                // 结构未变，只上传数据变化
-                self.upload_scene_global_data(
-                    scene,
-                    render_state, 
-                    state_id,
-                    last_rs_ver, 
-                    last_scene_ver,
-                );
-                
                 if let Some(gpu_state) = self.global_states.get_mut(&state_id) {
                     gpu_state.last_used_frame = self.frame_index;
                 }
                 return id;
             }
         }
-
         // 3. 结构变化或首次创建，需要重建 BindGroup
         self.create_global_state(assets, state_id, render_state, scene)
     }
@@ -397,40 +374,6 @@ impl ResourceManager {
         ((scene_light_buffer_id & 0xFFFF_FFFF) << 32) | (render_state_id as u64)
     }
     
-    /// 仅上传数据变化（不重建 BindGroup）
-    fn upload_scene_global_data(
-        &mut self, 
-        scene: &Scene,
-        render_state: &RenderState,
-        state_id: u64,
-        last_render_state_data_version: u64,
-        last_scene_data_version: u64,
-    ) {
-        // 上传 RenderState 数据（Camera）
-        let render_state_data_version = render_state.uniforms().version();
-        if render_state_data_version != last_render_state_data_version {
-            self.write_buffer(render_state.uniforms().handle(), render_state.uniforms().as_bytes());
-            if let Some(gpu_state) = self.global_states.get_mut(&state_id) {
-                gpu_state.last_render_state_data_version = render_state_data_version;
-            }
-        }
-        
-        // 使用 Scene 的 Buffer 版本作为数据版本
-        // env_buffer 和 light_buffer 的版本应该同步变化（在 Scene::sync_gpu_buffers 中）
-        let scene_data_version = scene.uniforms_buffer.version();
-        if scene_data_version != last_scene_data_version {
-            // 上传 Environment Uniforms
-            self.write_buffer(scene.uniforms_buffer.handle(), scene.uniforms_buffer.as_bytes());
-            
-            // 上传 Light Storage
-            self.write_buffer(scene.light_storage_buffer.handle(), scene.light_storage_buffer.as_bytes());
-            
-            if let Some(gpu_state) = self.global_states.get_mut(&state_id) {
-                gpu_state.last_global_data_version = scene_data_version;
-            }
-        }
-    }
-    
     /// 创建新的 GpuGlobalState（重建 BindGroup）
     fn create_global_state(
         &mut self,
@@ -439,7 +382,6 @@ impl ResourceManager {
         render_state: &RenderState,
         scene: &Scene,
     ) -> u32 {
-        log::debug!("prepare_global: cache miss, rebuilding BindGroup");
         
         // 准备环境贴图
         if let Some(env_map) = scene.environment.env_map {
@@ -479,9 +421,7 @@ impl ResourceManager {
             env_map: scene.environment.env_map,
             env_buffer_id: scene.uniforms_buffer.handle().id,
             light_buffer_id: scene.light_storage_buffer.handle().id,
-            // 数据版本
-            last_render_state_data_version: render_state.uniforms().version(),
-            last_global_data_version: scene.uniforms_buffer.version(),
+
             last_used_frame: self.frame_index,
         };
         
@@ -490,13 +430,14 @@ impl ResourceManager {
     }
 
     /// 获取全局状态
-    pub fn get_global_state(&self, render_state_id: u32) -> Option<&GpuGlobalState> {
-        self.global_states.get(&(render_state_id as u64))
-    }
-    
-    /// 根据 render_state_id 和 scene 获取全局状态
-    pub fn get_global_state_for_scene(&self, render_state_id: u32, scene: &Scene) -> Option<&GpuGlobalState> {
-        let state_id = Self::compute_global_state_key(render_state_id, scene.light_storage_buffer.handle().id);
+    pub fn get_global_state(&self, render_state_id: u32, scene_hash: u64) -> Option<&GpuGlobalState> {
+        let state_id = Self::compute_global_state_key(render_state_id, scene_hash);
         self.global_states.get(&state_id)
     }
+    
+    // 根据 render_state_id 和 scene 获取全局状态
+    // pub fn get_global_state_for_scene(&self, render_state_id: u32, scene: &Scene) -> Option<&GpuGlobalState> {
+    //     let state_id = Self::compute_global_state_key(render_state_id, scene.light_storage_buffer.handle().id);
+    //     self.global_states.get(&state_id)
+    // }
 }

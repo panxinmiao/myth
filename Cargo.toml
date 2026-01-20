@@ -44,9 +44,12 @@ debug_shader = []
 
 # 开发依赖 (用于 examples)
 [dev-dependencies]
-egui = "0.33"
-egui-winit = "0.33"
-egui-wgpu = "0.33"
+# egui = "0.33"
+# egui-winit = "0.33"
+# egui-wgpu = "0.33"
+egui = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67" }
+egui-wgpu = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67", features = ["winit"] }
+egui-winit = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67" }
 rfd = "0.17.2"
 
 

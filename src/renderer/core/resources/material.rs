@@ -2,6 +2,7 @@
 
 use crate::assets::{AssetServer, MaterialHandle};
 use crate::resources::material::Material;
+use crate::resources::material::MaterialData;
 
 use crate::renderer::core::binding::Bindings;
 use crate::renderer::core::builder::ResourceBuilder;
@@ -15,9 +16,11 @@ impl ResourceManager {
             return;
         };
 
-        let uniform_ver = material.data.uniform_version();
+        // let uniform_ver = material.data.uniform_version();
         let binding_ver = material.data.binding_version();
         let layout_ver = material.data.layout_version();
+
+        self.ensure_material_resources(material);
 
         if !self.gpu_materials.contains_key(handle) {
             self.build_full_material(assets, handle, material);
@@ -35,10 +38,6 @@ impl ResourceManager {
             return;
         }
 
-        if uniform_ver != gpu_mat.last_data_version {
-            self.update_material_uniforms(handle, material);
-        }
-
         let gpu_mat = self.gpu_materials.get_mut(handle).expect("gpu material should exist.");
         gpu_mat.last_used_frame = self.frame_index;
     }
@@ -47,7 +46,7 @@ impl ResourceManager {
         let mut builder = ResourceBuilder::new();
         material.define_bindings(&mut builder);
 
-        let uniform_buffers = self.prepare_binding_resources(assets, &builder.resources);
+        self.prepare_binding_resources(assets, &builder.resources);
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
         let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
         let binding_wgsl = builder.generate_wgsl(1);
@@ -58,7 +57,6 @@ impl ResourceManager {
             layout,
             layout_id,
             binding_wgsl,
-            uniform_buffers,
             last_data_version: material.data.uniform_version(),
             last_binding_version: material.data.binding_version(),
             last_layout_version: material.data.layout_version(),
@@ -73,7 +71,7 @@ impl ResourceManager {
         let mut builder = ResourceBuilder::new();
         material.define_bindings(&mut builder);
 
-        let uniform_buffers = self.prepare_binding_resources(assets, &builder.resources);
+        self.prepare_binding_resources(assets, &builder.resources);
         let layout = {
             let gpu_mat = self.gpu_materials.get(handle).expect("gpu material should exist.");
             gpu_mat.layout.clone()
@@ -85,7 +83,6 @@ impl ResourceManager {
             let gpu_mat = self.gpu_materials.get_mut(handle).expect("gpu material should exist.");
             gpu_mat.bind_group = bind_group;
             gpu_mat.bind_group_id = bg_id;
-            gpu_mat.uniform_buffers = uniform_buffers;
             gpu_mat.last_binding_version = material.data.binding_version();
             gpu_mat.last_used_frame = self.frame_index;
         }
@@ -93,35 +90,19 @@ impl ResourceManager {
         self.gpu_materials.get(handle).expect("gpu material should exist.")
     }
 
-    pub(crate) fn update_material_uniforms(&mut self, handle: MaterialHandle, material: &Material) {
-        use crate::resources::material::MaterialData;
+    pub(crate) fn ensure_material_resources(&mut self, material: &Material) {
 
-        match &material.data {
+        // todo 优化：要ensure所有资源，不光是主 uniform buffer
+        match &material.data {  
             MaterialData::Basic(m) => {
-                if let Some(gpu_mat) = self.gpu_materials.get(handle)
-                    && let Some(&buf_id) = gpu_mat.uniform_buffers.first()
-                    && let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
-                        self.queue.write_buffer(&gpu_buf.buffer, 0, m.uniforms.as_bytes());
-                    }
+                self.ensure_buffer(&m.uniforms);
             },
             MaterialData::Phong(m) => {
-                if let Some(gpu_mat) = self.gpu_materials.get(handle)
-                    && let Some(&buf_id) = gpu_mat.uniform_buffers.first()
-                    && let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
-                        self.queue.write_buffer(&gpu_buf.buffer, 0, m.uniforms.as_bytes());
-                    }
+                self.ensure_buffer(&m.uniforms);
             },
             MaterialData::Standard(m) => {
-                if let Some(gpu_mat) = self.gpu_materials.get(handle)
-                    && let Some(&buf_id) = gpu_mat.uniform_buffers.first()
-                    && let Some(gpu_buf) = self.gpu_buffers.get(&buf_id) {
-                        self.queue.write_buffer(&gpu_buf.buffer, 0, m.uniforms.as_bytes());
-                    }
+                self.ensure_buffer(&m.uniforms);
             },
-        }
-
-        if let Some(gpu_mat) = self.gpu_materials.get_mut(handle) {
-            gpu_mat.last_data_version = material.data.uniform_version();
         }
     }
 

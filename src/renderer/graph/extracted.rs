@@ -61,6 +61,8 @@ pub struct ExtractedScene {
     pub background: Option<glam::Vec4>,
     /// 场景特性标志
     pub scene_features: SceneFeatures,
+
+    pub scene_hash: u64,
 }
 
 impl ExtractedScene {
@@ -71,6 +73,7 @@ impl ExtractedScene {
             skeletons: Vec::new(),
             background: None,
             scene_features: SceneFeatures::empty(),
+            scene_hash: 0,
         }
     }
 
@@ -81,6 +84,7 @@ impl ExtractedScene {
             skeletons: Vec::with_capacity(skeleton_capacity),
             background: None,
             scene_features: SceneFeatures::empty(),
+            scene_hash: 0,
         }
     }
 
@@ -88,6 +92,7 @@ impl ExtractedScene {
     pub fn clear(&mut self) {
         self.render_items.clear();
         self.skeletons.clear();
+        self.scene_hash = 0;
     }
 
     /// 复用当前实例的内存，从 Scene 中提取数据
@@ -186,6 +191,8 @@ impl ExtractedScene {
     fn extract_environment(&mut self, scene: &Scene) {
         self.background = scene.background;
         self.scene_features = scene.get_features();
+        self.scene_hash = scene.light_storage_buffer.id();
+        // todo envmap
     }
 
     /// 获取渲染项数量

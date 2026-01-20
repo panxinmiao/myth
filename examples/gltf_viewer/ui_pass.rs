@@ -149,13 +149,13 @@ impl UiPass {
     /// 检查 UI 是否想要捕获键盘输入
     #[allow(dead_code)]
     pub fn wants_keyboard_input(&self) -> bool {
-        self.egui_ctx.wants_keyboard_input()
+        self.egui_ctx.egui_wants_keyboard_input()
     }
 
     /// 检查 UI 是否想要捕获鼠标输入
     #[allow(dead_code)]
     pub fn wants_pointer_input(&self) -> bool {
-        self.egui_ctx.wants_pointer_input()
+        self.egui_ctx.egui_wants_pointer_input()
     }
 }
 
@@ -213,6 +213,7 @@ impl RenderNode for UiPass {
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,
+                multiview_mask: None,
             });
 
             renderer.render(&mut rpass, &paint_jobs, &screen_desc);

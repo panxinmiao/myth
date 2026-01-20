@@ -177,7 +177,7 @@ impl RenderFrame {
         // ========================================================================
         output.present();
 
-        if resource_manager.frame_index().is_multiple_of(60) {
+        if resource_manager.frame_index().is_multiple_of(600) {
             resource_manager.prune(6000);
         }
     }

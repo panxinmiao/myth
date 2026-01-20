@@ -44,14 +44,15 @@ impl ResourceManager {
     }
 
 
-    pub fn write_buffer(&mut self, buffer_ref: &BufferRef, data: &[u8]) -> u64 {
+    /// 确保 CpuBuffer 对应的 GpuBuffer 已经创建并上传最新数据
+    pub fn ensure_buffer<T: super::GpuData>(&mut self, cpu_buffer: &super::CpuBuffer<T>) -> u64 {
         Self::write_buffer_internal(
             &self.device,
             &self.queue,
             &mut self.gpu_buffers,
             self.frame_index,
-            buffer_ref,
-            data,
+            cpu_buffer.handle(),
+            cpu_buffer.as_bytes(),
         )
     }
 

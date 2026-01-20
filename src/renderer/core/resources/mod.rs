@@ -31,7 +31,7 @@ use crate::renderer::core::resources::mipmap::MipmapGenerator;
 use crate::resources::texture::{Texture, TextureSampler};
 
 use crate::scene::SkeletonKey;
-use crate::resources::buffer::CpuBuffer;
+use crate::resources::buffer::{CpuBuffer, GpuData};
 use crate::assets::{GeometryHandle, MaterialHandle, TextureHandle};
 
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
@@ -176,7 +176,6 @@ pub struct GpuMaterial {
     pub layout: wgpu::BindGroupLayout,
     pub layout_id: u64,
     pub binding_wgsl: String,
-    pub uniform_buffers: Vec<u64>,
     pub last_data_version: u64,
     pub last_binding_version: u64,
     pub last_layout_version: u64,
@@ -215,12 +214,6 @@ pub struct GpuGlobalState {
     pub env_buffer_id: u64,
     /// Light Buffer ID
     pub light_buffer_id: u64,
-    
-    // === 数据版本（变化时只需 write_buffer）===
-    /// RenderState 数据版本
-    pub last_render_state_data_version: u64,
-    /// GlobalResources 数据版本
-    pub last_global_data_version: u64,
     
     pub last_used_frame: u64,
 }
@@ -389,6 +382,30 @@ impl ResourceManager {
     pub fn frame_index(&self) -> u64 {
         self.frame_index
     }
+
+    // pub fn ensure_buffer<T>(&self, cpu_buffer: &CpuBuffer<T>) where T: GpuData {
+        
+    //     let buffer_handle = cpu_buffer.handle();
+    //     let data = cpu_buffer.as_bytes();
+
+
+        
+
+    //     // let update_buffer = |buffer_handle: &BufferRef , data: &[u8]| {
+    //     if let Some(gpu_buf) = self.gpu_buffers.get(&buffer_handle.id) {
+    //         // 只有在版本不同时才更新
+    //         if gpu_buf.last_uploaded_version < buffer_handle.version{
+    //             self.queue.write_buffer(&gpu_buf.buffer, 0, data);
+    //         }
+    //         self.write_buffer(buffer_ref, data);
+    //     }
+
+    //     if 
+    //         gpu_buf.last_used_frame = self.frame_index;
+    //         gpu_buf.version = buffer_handle.version;
+
+    //     //};
+    // }
 
     /// 每帧开始时重置 Model Buffer Allocator
     // pub fn reset_model_buffer(&mut self) {
