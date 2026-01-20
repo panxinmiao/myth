@@ -10,6 +10,7 @@
 
 use std::hash::{Hash, Hasher};
 use rustc_hash::FxHasher;
+use smallvec::SmallVec;
 
 /// GPU 资源的唯一标识符
 /// 
@@ -50,7 +51,7 @@ impl EnsureResult {
 #[derive(Debug, Clone, Default)]
 pub struct ResourceIdSet {
     /// 按添加顺序存储的资源 ID
-    ids: Vec<ResourceId>,
+    ids: SmallVec<[ResourceId; 8]>,
     /// 预计算的哈希值（用于快速比较）
     cached_hash: u64,
     /// 标记哈希是否需要重新计算
@@ -60,7 +61,7 @@ pub struct ResourceIdSet {
 impl ResourceIdSet {
     pub fn new() -> Self {
         Self {
-            ids: Vec::new(),
+            ids: SmallVec::new(),
             cached_hash: 0,
             hash_dirty: true,
         }
@@ -68,7 +69,7 @@ impl ResourceIdSet {
 
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            ids: Vec::with_capacity(capacity),
+            ids: SmallVec::with_capacity(capacity),
             cached_hash: 0,
             hash_dirty: true,
         }

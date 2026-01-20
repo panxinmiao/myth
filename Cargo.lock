@@ -3174,6 +3174,7 @@ dependencies = [
  "serde",
  "serde_json",
  "slotmap",
+ "smallvec",
  "thiserror 2.0.18",
  "thunderdome",
  "uuid",

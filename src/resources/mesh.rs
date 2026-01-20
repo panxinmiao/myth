@@ -2,60 +2,30 @@ use thunderdome::Index;
 use crate::assets::{GeometryHandle, MaterialHandle};
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::uniforms::MorphUniforms;
+use crate::renderer::core::resources::ResourceIdSet;
 
-/// 最大激活的 Morph Target 数量
 pub const MAX_MORPH_TARGETS: usize = 32;
-
-/// 权重阈值，低于此值的权重将被忽略
 pub const MORPH_WEIGHT_THRESHOLD: f32 = 0.001;
 
 pub type MeshHandle = Index;
 
 /// 渲染代理缓存
 /// 
-/// 存储 Mesh 实例的渲染缓存数据，避免每帧重复查找
+/// 采用 "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" 模式
 #[derive(Debug, Clone, Default)]
 pub struct RenderCache {
-    /// 缓存的 BindGroup ID（用于快速路径）
     pub bind_group_id: Option<u64>,
-    /// 缓存的 Pipeline ID
     pub pipeline_id: Option<u16>,
-
-    /// 缓存版本号（用于失效检测）
+    /// 缓存的资源 ID 集合（用于指纹比较）
+    pub(crate) resource_ids: ResourceIdSet,
     pub(crate) geometry_id: Option<GeometryHandle>,
-    pub(crate) geometry_version: u64, // 结构版本
     pub(crate) material_id: Option<MaterialHandle>,
-    /// Material 的 BindGroupLayout ID（GPU 物理资源 ID）
-    pub(crate) material_layout_id: u64,
-    pub(crate) model_buffer_id: u64,  // 检查 Allocator 是否重置/Resize
-    pub(crate) skeleton_id: Option<u64>, // joint_matrices buffer id
 }
 
 impl RenderCache {
-    /// 使缓存失效
-    // #[inline]
-    // pub fn invalidate(&mut self) {
-    //     self.bind_group_id = None;
-    //     self.pipeline_id = None;
-    // }
-
-    // 检查缓存是否依然有效
-    pub fn is_valid(
-        &self, 
-        geo_handle: GeometryHandle,
-        geo_version: u64,
-        mat_handle: MaterialHandle,
-        mat_layout_id: u64,
-        current_model_buffer_id: u64,
-        skeleton_buffer_id: Option<u64>
-    ) -> bool {
-        self.bind_group_id.is_some()
-            && self.geometry_id == Some(geo_handle)
-            && self.geometry_version == geo_version
-            && self.material_id == Some(mat_handle)
-            && self.material_layout_id == mat_layout_id
-            && self.model_buffer_id == current_model_buffer_id
-            && self.skeleton_id == skeleton_buffer_id
+    #[inline]
+    pub fn fingerprint_matches(&self, current_ids: &ResourceIdSet) -> bool {
+        self.bind_group_id.is_some() && self.resource_ids == *current_ids
     }
 }
 

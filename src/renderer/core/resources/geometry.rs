@@ -9,15 +9,12 @@ use super::{ResourceManager, GpuGeometry};
 
 /// Geometry 准备结果
 /// 
-/// 预留的 API，用于未来更精细的 Pipeline 缓存控制
+/// Vertex Buffer IDs 用于 Pipeline 缓存验证，不影响 Object BindGroup
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct GeometryPrepareResult {
-    /// 所有顶点缓冲区的物理 ID
     pub vertex_buffer_ids: Vec<u64>,
-    /// 索引缓冲区的物理 ID（如果有）
     pub index_buffer_id: Option<u64>,
-    /// 是否有任何缓冲区被重建
     pub any_recreated: bool,
 }
 

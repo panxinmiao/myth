@@ -168,6 +168,9 @@ pub struct GpuImage {
     pub last_used_frame: u64,
 }
 
+/// GPU 端几何体资源
+/// 
+/// Vertex Buffer IDs 用于 Pipeline 缓存验证，不影响 BindGroup
 pub struct GpuGeometry {
     pub layout_info: Arc<GeneratedVertexLayout>,
     pub vertex_buffers: Vec<wgpu::Buffer>,
@@ -200,16 +203,7 @@ pub struct GpuMaterial {
 /// 
 /// 包含 Camera Uniforms、Light Storage Buffer、Environment Maps 等
 /// 
-/// # 缓存策略
-/// 
-/// BindGroup 重建条件（结构指纹变化）：
-/// - `render_state_buffer_id` 变化（Camera Buffer 重建）
-/// - `global_structure_version` 变化（Light Buffer 扩容）
-/// - `env_map` 变化（环境贴图切换）
-/// 
-/// 仅数据上传条件（数据版本变化）：
-/// - `render_state_data_version` 变化 → 上传 Camera 数据
-/// - `global_data_version` 变化 → 上传 Light/Env 数据
+/// 采用 "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" 模式
 pub struct GpuGlobalState {
     pub id: u32,
     pub bind_group: wgpu::BindGroup,
@@ -217,18 +211,8 @@ pub struct GpuGlobalState {
     pub layout: wgpu::BindGroupLayout,
     pub layout_id: u64,
     pub binding_wgsl: String,
-    
-    // === 结构指纹（变化时需重建 BindGroup）===
-    /// RenderState 的 Buffer ID
-    pub render_state_buffer_id: u64,
-
-    /// 环境贴图 Handle
-    pub env_map: Option<crate::assets::TextureHandle>,
-    /// Environment Buffer ID
-    pub env_buffer_id: u64,
-    /// Light Buffer ID
-    pub light_buffer_id: u64,
-    
+    /// 所有依赖资源的物理 ID 集合（用于自动检测变化）
+    pub resource_ids: ResourceIdSet,
     pub last_used_frame: u64,
 }
 
@@ -237,12 +221,8 @@ pub struct GpuGlobalState {
 // 紧凑的 BindGroup 缓存键
 // ============================================================================
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct ObjectBindGroupKey {
-    pub model_buffer_id: u64,
-    pub skeleton_buffer_id: Option<u64>,
-    pub morph_buffer_id: Option<u64>,
-}
+// Object BindGroup 缓存键（使用 ResourceIdSet 的哈希值）
+pub(crate) type ObjectBindGroupKey = u64;
 
 #[derive(Clone)]
 pub struct ObjectBindingData {

@@ -21,35 +21,36 @@ impl ResourceManager {
     ) -> EnsureResult {
         let cpu_id = buffer_ref.id();
         let mut was_recreated = false;
-        
-        // 1. 检查是否存在
-        let existed = gpu_buffers.contains_key(&cpu_id);
-        
-        // 2. 获取或创建 GpuBuffer
-        let gpu_buf = gpu_buffers.entry(cpu_id).or_insert_with(|| {
-            was_recreated = true;
-            let mut buf = GpuBuffer::new(device, data, buffer_ref.usage, buffer_ref.label());
-            buf.last_uploaded_version = buffer_ref.version;
-            buf
-        });
 
-        // 3. 检查版本并上传（仅当已存在时）
-        if existed && buffer_ref.version > gpu_buf.last_uploaded_version {
-            // 如果 GPU buffer 太小，需要 resize (会销毁重建)
-            if (data.len() as u64) > gpu_buf.size {
-                log::debug!("Resizing buffer {:?} from {} to {}", buffer_ref.label(), gpu_buf.size, data.len());
-                let old_id = gpu_buf.id;
-                *gpu_buf = GpuBuffer::new(device, data, buffer_ref.usage, buffer_ref.label());
-                // ID 变化意味着重建
-                was_recreated = gpu_buf.id != old_id;
-            } else {
-                queue.write_buffer(&gpu_buf.buffer, 0, data);
+        match gpu_buffers.entry(cpu_id) {
+            std::collections::hash_map::Entry::Occupied(mut entry) => {
+                let gpu_buf = entry.get_mut();
+                
+                // 检查版本并上传
+                if buffer_ref.version > gpu_buf.last_uploaded_version {
+                    if (data.len() as u64) > gpu_buf.size {
+                        log::debug!("Resizing buffer {:?}...", buffer_ref.label());
+                        let old_id = gpu_buf.id;
+                        // 原地替换
+                        *gpu_buf = GpuBuffer::new(device, data, buffer_ref.usage, buffer_ref.label());
+                        was_recreated = gpu_buf.id != old_id;
+                    } else {
+                        queue.write_buffer(&gpu_buf.buffer, 0, data);
+                    }
+                    gpu_buf.last_uploaded_version = buffer_ref.version;
+                }
+                gpu_buf.last_used_frame = frame_index;
+                EnsureResult::new(gpu_buf.id, was_recreated)
+            },
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let mut buf = GpuBuffer::new(device, data, buffer_ref.usage, buffer_ref.label());
+                buf.last_uploaded_version = buffer_ref.version;
+                buf.last_used_frame = frame_index;
+                let id = buf.id;
+                entry.insert(buf);
+                EnsureResult::created(id)
             }
-            gpu_buf.last_uploaded_version = buffer_ref.version;
         }
-        
-        gpu_buf.last_used_frame = frame_index;
-        EnsureResult::new(gpu_buf.id, was_recreated)
     }
 
 

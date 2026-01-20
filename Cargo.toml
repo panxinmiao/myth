@@ -37,6 +37,7 @@ uuid = { version = "1.19.0", features = ["v4", "fast-rng", "macro-diagnostics", 
 md5 = "0.8.0"
 
 rustc-hash = "2.1.1"
+smallvec = "1.15"
 
 [features]
 default = []

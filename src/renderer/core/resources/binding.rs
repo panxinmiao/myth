@@ -57,101 +57,69 @@ impl ResourceManager {
     // 统一的 prepare_mesh 入口
     // ========================================================================
 
-    /// 准备 Mesh 的基础资源（几何体、材质、Morph Uniform Buffer）
+    /// 准备 Mesh 的基础资源
+    /// 
+    /// 采用 "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" 模式
     pub fn prepare_mesh(&mut self, assets: &AssetServer, mesh: &mut Mesh, skeleton: Option<&Skeleton>) -> Option<ObjectBindingData> {
-
-        // 1. 数据同步 (Morph) - 必须每帧检查
+        // === Ensure 阶段: 确保所有资源已上传 ===
         mesh.update_morph_uniforms();
-
-        self.ensure_buffer(&mesh.morph_uniforms);
-
-        // 2. 准备子资源
+        let morph_result = self.ensure_buffer(&mesh.morph_uniforms);
         self.prepare_geometry(assets, mesh.geometry);
-        self.prepare_material(assets, mesh.material);
-
-        // 3. 获取 GPU 资源信息用于校验
+        let mat_prep_result = self.prepare_material(assets, mesh.material)?;
+        
         let geometry = assets.get_geometry(mesh.geometry)?;
-        let gpu_material = self.get_material(mesh.material)?;
-
-        let geo_version = geometry.structure_version();
-        // 使用 GPU 端的 layout_id 代替 CPU 端的 binding_version
-        let mat_layout_id = gpu_material.layout_id;
-        let current_model_buffer_id = self.model_allocator.buffer_id();
-
-        let skeleton_buffer_id = skeleton.as_ref().map(|skel| skel.joint_matrices.handle().id);
-
-        // =========================================================
-        // [Fast Path] 快速路径：校验缓存
-        // =========================================================
-        if let Some(cached_bind_group_id) = mesh.render_cache.bind_group_id {
-            if mesh.render_cache.is_valid(
-                mesh.geometry, 
-                geo_version, 
-                mesh.material, 
-                mat_layout_id, 
-                current_model_buffer_id,
-                skeleton_buffer_id
-            ) {
-                if let Some(data) =  self.get_cached_bind_group(cached_bind_group_id){
+        
+        // === Collect 阶段: 收集所有资源 ID ===
+        let mut current_ids = super::ResourceIdSet::with_capacity(4);
+        current_ids.push(self.model_allocator.buffer_id());
+        current_ids.push(morph_result.resource_id);
+        current_ids.push_optional(skeleton.map(|s| s.joint_matrices.handle().id));
+        current_ids.push(mat_prep_result.layout_id);
+        
+        // === Check 阶段: 快速指纹比较 ===
+        if mesh.render_cache.fingerprint_matches(&current_ids) {
+            if let Some(cached_id) = mesh.render_cache.bind_group_id {
+                if let Some(data) = self.get_cached_bind_group(cached_id) {
                     return Some(data.clone());
                 }
             }
         }
-
-        // ======- 重建 BindGroup 路径 -======
-
-        let model_buffer_id = self.model_allocator.buffer_id();
-        let morph_buffer_id = Some(mesh.morph_uniforms.handle().id);
-
-        let key = ObjectBindGroupKey {
-            model_buffer_id,
-            skeleton_buffer_id,
-            morph_buffer_id,
-        };
-
-
-        // --- 3. 缓存命中检查 ---
-
-        mesh.render_cache.geometry_id = Some(mesh.geometry);
-        mesh.render_cache.geometry_version = geo_version;
-        mesh.render_cache.material_id = Some(mesh.material);
-        mesh.render_cache.material_layout_id = mat_layout_id;
-        mesh.render_cache.model_buffer_id = current_model_buffer_id;
-        mesh.render_cache.skeleton_id = skeleton_buffer_id;
-    
-        // Pipeline ID 也应该在这里被清理，因为 BindGroup 变了，Pipeline 可能也需要变
-        mesh.render_cache.pipeline_id = None;
         
-        // 检查全局缓存中是否已有对应的 BindGroup
-        if let Some(binding_data) = self.object_bind_group_cache.get(&key) {
+        // === Rebind 阶段: 指纹不匹配，重建 BindGroup ===
+        let cache_key = current_ids.hash_value();
+        
+        // 检查全局缓存
+        if let Some(binding_data) = self.object_bind_group_cache.get(&cache_key) {
             mesh.render_cache.bind_group_id = Some(binding_data.bind_group_id);
+            mesh.render_cache.resource_ids = current_ids;
+            mesh.render_cache.geometry_id = Some(mesh.geometry);
+            mesh.render_cache.material_id = Some(mesh.material);
+            mesh.render_cache.pipeline_id = None;
             return Some(binding_data.clone());
         }
-
-        // --- 4. 创建新 BindGroup (缓存未命中) ---
-        let binding_data = self.create_object_bind_group_internal(assets, geometry, mesh, skeleton, key);
+        
+        // 创建新 BindGroup
+        let binding_data = self.create_object_bind_group_internal(assets, geometry, mesh, skeleton, cache_key);
         mesh.render_cache.bind_group_id = Some(binding_data.bind_group_id);
+        mesh.render_cache.resource_ids = current_ids;
+        mesh.render_cache.geometry_id = Some(mesh.geometry);
+        mesh.render_cache.material_id = Some(mesh.material);
+        mesh.render_cache.pipeline_id = None;
         Some(binding_data)
-
     }
 
-
-    /// 内部方法：创建 Object BindGroup 并写入缓存
     fn create_object_bind_group_internal(
         &mut self,
         assets: &AssetServer,
         geometry: &Geometry,
         mesh: &Mesh,
         skeleton: Option<&Skeleton>,
-        key: ObjectBindGroupKey,
+        cache_key: ObjectBindGroupKey,
     ) -> ObjectBindingData {
-        
         let min_binding_size = ModelBufferAllocator::uniform_stride();
         let model_buffer_ref = self.model_allocator.cpu_buffer().handle().clone();
 
         let mut builder = ResourceBuilder::new();
-
-        // 1. Model Uniform
         builder.add_dynamic_uniform::<DynamicModelUniforms>(
             "model", 
             &model_buffer_ref, 
@@ -159,14 +127,9 @@ impl ResourceManager {
             min_binding_size, 
             ShaderStages::VERTEX
         );
-
-        // 2. Mesh Bindings (Morph)
         mesh.define_bindings(&mut builder);
-
-        // 3. Geometry Bindings
         geometry.define_bindings(&mut builder);
-
-        // 4. Skeleton Bindings
+        
         if let Some(skeleton) = &skeleton {
             builder.add_storage_buffer(
                 "skins", 
@@ -182,11 +145,8 @@ impl ResourceManager {
         let layout_entries = builder.layout_entries.clone();
         let resources = std::mem::take(&mut builder.resources);
         
-        let (layout, _layout_id) = self.get_or_create_layout(&layout_entries);
-        
-        // 确保所有依赖的 GPU 资源已就绪 (Double check)
+        let (layout, _) = self.get_or_create_layout(&layout_entries);
         self.prepare_binding_resources(assets, &resources);
-        
         let (bind_group, bind_group_id) = self.create_bind_group(&layout, &resources);
 
         let data = ObjectBindingData {
@@ -196,8 +156,7 @@ impl ResourceManager {
             binding_wgsl: binding_wgsl.into(),
         };
 
-        // 写入全局缓存
-        self.object_bind_group_cache.insert(key, data.clone());
+        self.object_bind_group_cache.insert(cache_key, data.clone());
         self.bind_group_id_lookup.insert(bind_group_id, data.clone());
         data
     }
@@ -312,96 +271,67 @@ impl ResourceManager {
 
     /// 准备全局绑定资源
     /// 
-    /// 从 Scene 收集 Camera、Lights、Environment 数据，管理 BindGroup 0
+    /// 采用 "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" 模式
     pub fn prepare_global(
         &mut self, 
         assets: &AssetServer, 
         scene: &Scene,
         render_state: &RenderState
     ) -> u32 {
-        self.ensure_buffer(render_state.uniforms());
-        self.ensure_buffer(&scene.uniforms_buffer);
-        self.ensure_buffer(&scene.light_storage_buffer);
+        // === Ensure 阶段: 确保所有 Buffer 已上传，获取物理资源 ID ===
+        let camera_result = self.ensure_buffer(render_state.uniforms());
+        let env_result = self.ensure_buffer(&scene.uniforms_buffer);
+        let light_result = self.ensure_buffer(&scene.light_storage_buffer);
         
-        // 1. 计算当前结构指纹
-        let render_state_buffer_id = render_state.uniforms().handle().id;
-        let env_buffer_id = scene.uniforms_buffer.handle().id;
-        let light_buffer_id = scene.light_storage_buffer.handle().id;
-
-
-        let env_map = scene.environment.env_map;
+        // 环境贴图 ID
+        let env_map_id = scene.environment.env_map.map(|h| {
+            self.prepare_texture(assets, h);
+            self.gpu_textures.get(h).map(|t| t.image_id).unwrap_or(0)
+        }).unwrap_or(0);
         
-        // 使用 (render_state.id, scene_light_buffer_id) 组合作为缓存键
-        // 这样支持多场景并发渲染
-        let state_id = Self::compute_global_state_key(render_state.id, light_buffer_id);
+        // === Collect 阶段: 收集所有资源 ID ===
+        let mut current_ids = super::ResourceIdSet::with_capacity(4);
+        current_ids.push(camera_result.resource_id);
+        current_ids.push(env_result.resource_id);
+        current_ids.push(light_result.resource_id);
+        current_ids.push(env_map_id);
         
-        // 2. 检查是否有缓存的 GpuGlobalState，并判断是否需要重建
-        let cached_info = self.global_states.get(&state_id).map(|gpu_state| {
-            // 检查结构指纹是否匹配
-            // Buffer ID 匹配 + env_map 匹配 = 结构未变
-            let structure_match = 
-                gpu_state.render_state_buffer_id == render_state_buffer_id &&
-                gpu_state.env_buffer_id == env_buffer_id &&
-                gpu_state.light_buffer_id == light_buffer_id &&
-                gpu_state.env_map == env_map;
-
-            (
-                gpu_state.id,
-                structure_match,
-            )
-        });
-
+        // 使用 (render_state.id, light_buffer_id) 组合作为缓存键，支持多场景并发渲染
+        let state_id = Self::compute_global_state_key(render_state.id, light_result.resource_id);
         
-        if let Some((id, structure_match)) = cached_info {
-            if structure_match {
-                if let Some(gpu_state) = self.global_states.get_mut(&state_id) {
-                    gpu_state.last_used_frame = self.frame_index;
-                }
-                return id;
+        // === Check 阶段: 快速指纹比较 ===
+        if let Some(gpu_state) = self.global_states.get_mut(&state_id) {
+            if gpu_state.resource_ids == current_ids {
+                gpu_state.last_used_frame = self.frame_index;
+                return gpu_state.id;
             }
         }
-        // 3. 结构变化或首次创建，需要重建 BindGroup
-        self.create_global_state(assets, state_id, render_state, scene)
+        
+        // === Rebind 阶段: 指纹不匹配，重建 BindGroup ===
+        self.create_global_state(assets, state_id, render_state, scene, current_ids)
     }
     
-    /// 计算全局状态缓存键
-    /// 
-    /// 使用 render_state_id 和 scene_light_buffer_id 组合，支持多场景
     #[inline]
-    fn compute_global_state_key(render_state_id: u32, scene_light_buffer_id: u64) -> u64 {
-        // 高32位: scene buffer id, 低32位: render_state_id
-        ((scene_light_buffer_id & 0xFFFF_FFFF) << 32) | (render_state_id as u64)
+    fn compute_global_state_key(render_state_id: u32, light_buffer_id: u64) -> u64 {
+        ((light_buffer_id & 0xFFFF_FFFF) << 32) | (render_state_id as u64)
     }
     
-    /// 创建新的 GpuGlobalState（重建 BindGroup）
     fn create_global_state(
         &mut self,
         assets: &AssetServer,
         state_id: u64,
         render_state: &RenderState,
         scene: &Scene,
+        resource_ids: super::ResourceIdSet,
     ) -> u32 {
-        
-        // 准备环境贴图
-        if let Some(env_map) = scene.environment.env_map {
-            self.prepare_texture(assets, env_map);
-        }
-        
-        // 构建 BindGroup（使用 Scene 的 Bindings trait）
         let mut builder = ResourceBuilder::new();
-        
-        // Binding 0: RenderState Uniforms (Camera)
         render_state.define_bindings(&mut builder);
-        
-        // Binding 1-4: Scene Bindings (Environment, Lights, EnvMap)
         scene.define_bindings(&mut builder);
 
-        // 准备资源并创建 BindGroup
         self.prepare_binding_resources(assets, &builder.resources);
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
         let (bind_group, bind_group_id) = self.create_bind_group(&layout, &builder.resources);
         
-        // 获取或创建新 ID
         let new_id = if let Some(existing) = self.global_states.get(&state_id) {
             existing.id
         } else {
@@ -415,12 +345,7 @@ impl ResourceManager {
             layout,
             layout_id,
             binding_wgsl: builder.generate_wgsl(0),
-            // 结构指纹
-            render_state_buffer_id: render_state.uniforms().handle().id,
-            env_map: scene.environment.env_map,
-            env_buffer_id: scene.uniforms_buffer.handle().id,
-            light_buffer_id: scene.light_storage_buffer.handle().id,
-
+            resource_ids,
             last_used_frame: self.frame_index,
         };
         
