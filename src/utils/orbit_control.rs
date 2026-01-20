@@ -189,6 +189,16 @@ impl OrbitControls {
             self.spherical_delta.phi = 0.0;
         }
     }
+
+    pub fn set_target(&mut self, target: Vec3) {
+        self.target = target;
+    }
+
+    pub fn set_position(&mut self, position: Vec3) {
+        let offset = position - self.target;
+        self.spherical.set_from_vec3(offset);
+        self.target_radius = self.spherical.radius;
+    }
 }
 
 impl Transform {

@@ -148,7 +148,7 @@ impl ExtractedScene {
             let world_matrix = Mat4::from(node_world);
 
             // 视锥剔除
-            if let Some(bs) = &geometry.bounding_sphere {
+            if let Some(bs) = geometry.bounding_sphere.borrow().as_ref() {
                 let scale = node.transform.scale.max_element();
                 let center = node_world.transform_point3(bs.center);
                 if !frustum.intersects_sphere(center, bs.radius * scale) {

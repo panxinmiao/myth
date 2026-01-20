@@ -80,6 +80,8 @@ pub struct Mesh {
     
     /// Morph Uniform Buffer (GPU 用，每帧更新)
     pub(crate) morph_uniforms: CpuBuffer<MorphUniforms>,
+
+    // pub(crate) active_joint_indices: Vec<u16>,
     
     // === 渲染缓存 ===
     /// 渲染代理缓存，避免每帧重复查找
@@ -100,6 +102,7 @@ impl Mesh {
             render_order: 0,
             morph_target_influences: Vec::new(),
             morph_uniforms: CpuBuffer::new_uniform( Some("Mesh Morph Uniforms")),
+            // active_joint_indices: Vec::new(),
             render_cache: RenderCache::default(),
         }
     }

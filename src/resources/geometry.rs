@@ -1,9 +1,10 @@
+use std::cell::RefCell;
 use std::sync::Arc;
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
 use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages};
-use glam::Vec3;
+use glam::{Affine3A, Vec3, Vec4};
 use core::ops::Range;
 use bitflags::bitflags;
 
@@ -142,6 +143,58 @@ impl Attribute {
             }
         }
     }
+
+    pub fn read_vec3(&self, i: u32) -> Option<Vec3> {
+        if self.format != VertexFormat::Float32x3 {
+            return None;
+        }
+        let stride = self.stride as usize;
+        let offset = self.offset as usize + (i as usize) * stride;
+        
+        if let Some(data) = &self.data {
+            let slice = data.as_ref();
+            if offset + 12 <= slice.len() {
+                let bytes: &[u8; 12] = slice[offset..offset + 12].try_into().ok()?;
+                let vals: &[f32; 3] = bytemuck::cast_ref(bytes);
+                return Some(Vec3::from_array(*vals));
+            }
+        }
+        None
+    }
+
+    pub fn read_vec4(&self, i: u32) -> Option<Vec4> {
+        if self.format != VertexFormat::Float32x4 {
+            return None;
+        }
+        let stride = self.stride as usize;
+        let offset = self.offset as usize + (i as usize) * stride;
+        
+        if let Some(data) = &self.data {
+            let slice = data.as_ref();
+            if offset + 16 <= slice.len() {
+                let bytes: &[u8; 16] = slice[offset..offset + 16].try_into().ok()?;
+                let vals: &[f32; 4] = bytemuck::cast_ref(bytes);
+                return Some(Vec4::from_array(*vals));
+            }
+        }
+        None
+    }
+
+    pub fn read<T>(&self, i: u32) -> Option<T> where T: bytemuck::Pod {
+        let stride = self.stride as usize;
+        let offset = self.offset as usize + (i as usize) * stride;
+        let size = std::mem::size_of::<T>();
+        
+        if let Some(data) = &self.data {
+            let slice = data.as_ref();
+            if offset + size <= slice.len() {
+                let bytes: &[u8] = &slice[offset..offset + size];
+                let val: &T = bytemuck::from_bytes(bytes);
+                return Some(*val);
+            }
+        }
+        None
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -153,6 +206,45 @@ pub struct BoundingBox {
 impl BoundingBox {
     pub fn center(&self) -> Vec3 { (self.min + self.max) * 0.5 }
     pub fn size(&self) -> Vec3 { self.max - self.min }
+    pub fn union(&self, other: &BoundingBox) -> BoundingBox {
+        BoundingBox {
+            min: self.min.min(other.min),
+            max: self.max.max(other.max),
+        }
+    }
+
+    pub fn transform(&self, matrix: &Affine3A) -> Self {
+        let corners = [
+            Vec3::new(self.min.x, self.min.y, self.min.z),
+            Vec3::new(self.min.x, self.min.y, self.max.z),
+            Vec3::new(self.min.x, self.max.y, self.min.z),
+            Vec3::new(self.min.x, self.max.y, self.max.z),
+            Vec3::new(self.max.x, self.min.y, self.min.z),
+            Vec3::new(self.max.x, self.min.y, self.max.z),
+            Vec3::new(self.max.x, self.max.y, self.min.z),
+            Vec3::new(self.max.x, self.max.y, self.max.z),
+        ];
+
+        let mut new_min = Vec3::splat(f32::INFINITY);
+        let mut new_max = Vec3::splat(f32::NEG_INFINITY);
+
+        for point in corners {
+            // 假设 Affine3A 可以直接 transform_point3
+            let transformed = matrix.transform_point3(point);
+            new_min = new_min.min(transformed);
+            new_max = new_max.max(transformed);
+        }
+
+        Self { min: new_min, max: new_max }
+    }
+    
+    // 简单的膨胀方法
+    pub fn inflate(&self, amount: f32) -> Self {
+        Self {
+            min: self.min - Vec3::splat(amount),
+            max: self.max + Vec3::splat(amount),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -212,8 +304,8 @@ pub struct Geometry {
     pub topology: PrimitiveTopology,
     pub draw_range: Range<u32>,
 
-    pub bounding_box: Option<BoundingBox>,
-    pub bounding_sphere: Option<BoundingSphere>,
+    pub bounding_box: RefCell<Option<BoundingBox>>,
+    pub bounding_sphere: RefCell<Option<BoundingSphere>>,
 }
 
 impl Default for Geometry {
@@ -243,8 +335,8 @@ impl Geometry {
             morph_target_count: 0,
             topology: PrimitiveTopology::TriangleList,
             draw_range: 0..u32::MAX,
-            bounding_box: None,
-            bounding_sphere: None,
+            bounding_box: RefCell::new(None),
+            bounding_sphere: RefCell::new(None),
         }
     }
 
@@ -485,7 +577,7 @@ impl Geometry {
         self.data_version = self.data_version.wrapping_add(1);
     }
 
-    pub fn compute_bounding_volume(&mut self) {
+    pub fn compute_bounding_volume(&self) {
         let pos_attr = match self.attributes.get("position") {
             Some(attr) => attr,
             None => return,
@@ -531,7 +623,7 @@ impl Geometry {
 
         if valid_points_count == 0 { return; }
 
-        self.bounding_box = Some(BoundingBox { min, max });
+        *self.bounding_box.borrow_mut() = Some(BoundingBox { min, max });
 
         let centroid = sum_pos / (valid_points_count as f32);
         
@@ -556,7 +648,7 @@ impl Geometry {
             
         }
 
-        self.bounding_sphere = Some(BoundingSphere {
+        *self.bounding_sphere.borrow_mut() = Some(BoundingSphere {
             center: centroid,
             radius: max_dist_sq.sqrt(),
         });

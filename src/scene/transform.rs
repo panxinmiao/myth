@@ -91,6 +91,11 @@ impl Transform {
         self.world_matrix = mat;
     }
 
+    pub fn set_position(&mut self, pos: Vec3) {
+        self.position = pos;
+        self.mark_dirty();
+    }
+
     /// 直接设置局部矩阵（例如来自 glTF 或物理引擎）
     /// 会分解为 TRS 并同步状态
     pub fn apply_local_matrix(&mut self, mat: Affine3A) {

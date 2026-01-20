@@ -2,8 +2,10 @@ use std::cell::RefCell;
 
 use thunderdome::{Arena};
 use slotmap::SlotMap;
-use glam::{Vec3, Vec4, Affine3A}; 
+use glam::{Affine3A, Vec3, Vec4}; 
 use bitflags::bitflags;
+use crate::AssetServer;
+use crate::resources::BoundingBox;
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::uniforms::{EnvironmentUniforms, GpuLightStorage};
 use crate::scene::node::Node;
@@ -237,14 +239,14 @@ impl Scene {
     // ========================================================================
 
     /// 获取主相机的 (Transform, Camera) 组合
-    pub fn query_main_camera_bundle(&mut self) -> Option<(&mut Transform, &Camera)> {
+    pub fn query_main_camera_bundle(&mut self) -> Option<(&mut Transform, &mut Camera)> {
         let node_id = self.active_camera?;
         self.query_camera_bundle(node_id)
     }
 
-    pub fn query_camera_bundle(&mut self, node_id: NodeIndex) -> Option<(&mut Transform, &Camera)> {
+    pub fn query_camera_bundle(&mut self, node_id: NodeIndex) -> Option<(&mut Transform, &mut Camera)> {
         let camera_key = self.nodes.get(node_id)?.camera?;
-        let camera = self.cameras.get(camera_key)?;
+        let camera = self.cameras.get_mut(camera_key)?;
         let transform = &mut self.nodes.get_mut(node_id)?.transform;
 
         Some((transform, camera))
@@ -514,6 +516,74 @@ impl Scene {
     pub fn main_camera_node(&self) -> Option<&Node> {
         let id = self.active_camera?;
         self.get_node(id)
+    }
+
+    fn get_bbox_of_one_node(&self, node_id: NodeIndex, assets: &AssetServer) -> Option<BoundingBox> {
+
+        let node = self.get_node(node_id)?;
+
+        let mesh_key = node.mesh?;
+        let mesh = self.meshes.get(mesh_key)?;  
+        let geometry = assets.get_geometry(mesh.geometry)?;
+
+        let local_bbox = if let Some(bbox) = geometry.bounding_box.borrow().as_ref() {
+            bbox.clone()
+        } else {
+            geometry.compute_bounding_volume(); 
+            geometry.bounding_box.borrow().as_ref()?.clone()
+        };
+
+
+        if let Some(skeleton_binding) = &node.skin 
+            && let Some(skeleton) = self.skins.get(skeleton_binding.skeleton) {
+            // 如果骨骼存在
+
+            let mut min = Vec3::splat(f32::INFINITY);
+            let mut max = Vec3::splat(f32::NEG_INFINITY);
+            let mut bone_found = false;
+
+            for &bone_idx in &skeleton.bones {
+                if let Some(bone_node) = self.get_node(bone_idx) {
+                    // 这里的 translation 必须是 World Position
+                    let pos = bone_node.transform.world_matrix.translation.to_vec3();
+                    min = min.min(pos);
+                    max = max.max(pos);
+                    bone_found = true;
+                }
+            }
+
+            if !bone_found {
+                return None;
+            }
+
+            let approximate_radius = 1.25;
+            
+            Some(BoundingBox { min, max }.inflate(approximate_radius))
+
+        }else{
+            // 如果没有骨骼，直接使用 Mesh 的几何体
+            let world_matrix = &node.transform.world_matrix;
+            Some(local_bbox.transform(world_matrix))
+        }
+
+    }
+
+    pub fn get_bbox_of_node(&self, node_id: NodeIndex, assets: &AssetServer) -> Option<BoundingBox> {
+        //let mut combined_bbox: Option<BoundingBox> = None;
+        let mut combined_bbox = self.get_bbox_of_one_node(node_id, assets);        
+
+        let node = self.get_node(node_id)?;
+        // 递归检查子节点
+        for &child_id in &node.children {
+            if let Some(child_bbox) = self.get_bbox_of_node(child_id, assets) {
+                combined_bbox = match combined_bbox {
+                    Some(existing_bbox) => Some(existing_bbox.union(&child_bbox)),
+                    None => Some(child_bbox),
+                };
+            }
+        }
+
+        combined_bbox
     }
 
 }
