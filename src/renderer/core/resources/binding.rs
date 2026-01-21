@@ -229,7 +229,7 @@ impl ResourceManager {
         
         let (layout, _) = self.get_or_create_layout(&layout_entries);
         self.prepare_binding_resources(assets, &resources);
-        let (bind_group, bind_group_id) = self.create_bind_group(&layout, &resources);
+        let (bind_group, bind_group_id) = self.create_bind_group(&layout, &builder);
 
         let data = ObjectBindingData {
             layout,
@@ -312,8 +312,12 @@ impl ResourceManager {
         (layout, id)
     }
 
-    pub fn create_bind_group(&self, layout: &wgpu::BindGroupLayout, resources: &[BindingResource]) -> (wgpu::BindGroup, u64) {
+    pub fn create_bind_group(&self, layout: &wgpu::BindGroupLayout, builder:&ResourceBuilder) -> (wgpu::BindGroup, u64) {
         let mut entries = Vec::new();
+
+        let resources = &builder.resources;
+        let layout_entries = &builder.layout_entries;
+        println!("============Creating BindGroup with {} entries. {} layout entries.", resources.len(), layout_entries.len());
 
         for (i, resource_data) in resources.iter().enumerate() {
             let binding_resource = match resource_data {
@@ -330,7 +334,19 @@ impl ResourceManager {
                     let view = if let Some(source) = source_opt {
                         self.get_texture_view(source)
                     } else { 
-                        &self.dummy_image.default_view 
+                        match layout_entries[i].ty {
+                            wgpu::BindingType::Texture { view_dimension, sample_type: _, multisampled: _} =>{
+                                match view_dimension {
+                                    wgpu::TextureViewDimension::D2 => &self.dummy_image.default_view,
+                                    wgpu::TextureViewDimension::Cube => &self.dummy_env_image.default_view,
+                                    // Todo: 支持更多维度
+                                    _ => &self.dummy_image.default_view,
+                                }
+                            }
+                                
+                            // wgpu::BindingType::StorageTexture { .. } => &self.dummy_storage_image.default_view,
+                            _ => unreachable!("Unexpected binding type for Texture without source"),
+                        }
                     };
                     wgpu::BindingResource::TextureView(view)
                 },
@@ -414,14 +430,26 @@ impl ResourceManager {
             }
 
         }).unwrap_or(0);
+
+        let brdf_lut_id = scene.environment.brdf_lut.map(|h| {
+            match h {
+                TextureSource::Asset(handle) => {
+                    self.prepare_texture(assets, handle);
+                    self.texture_bindings.get(handle).map(|b| b.image_id).unwrap_or(0)
+                },
+                TextureSource::Attachment(id) => id,
+            }
+        }).unwrap_or(0);
         
         // === Collect 阶段: 收集所有资源 ID ===
-        let mut current_ids = super::ResourceIdSet::with_capacity(5);
+        let mut current_ids = super::ResourceIdSet::with_capacity(6);
         current_ids.push(camera_result.resource_id);
         current_ids.push(env_result.resource_id);
         current_ids.push(light_result.resource_id);
         current_ids.push(scene_uniform_result.resource_id);
         current_ids.push(env_map_id);
+
+        current_ids.push(brdf_lut_id);
         
         // 使用 (render_state.id, light_buffer_id) 组合作为缓存键，支持多场景并发渲染
         let state_id = Self::compute_global_state_key(render_state.id, scene.id);
@@ -457,7 +485,7 @@ impl ResourceManager {
 
         self.prepare_binding_resources(assets, &builder.resources);
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
-        let (bind_group, bind_group_id) = self.create_bind_group(&layout, &builder.resources);
+        let (bind_group, bind_group_id) = self.create_bind_group(&layout, &builder);
         
         let new_id = if let Some(existing) = self.global_states.get(&state_id) {
             existing.id

@@ -113,7 +113,7 @@ impl<'a> ResourceBuilder<'a> {
     fn add_texture_internal(
         &mut self,
         name: &str,
-        source: TextureSource,
+        source: Option<TextureSource>,
         sample_type: wgpu::TextureSampleType,
         view_dimension: wgpu::TextureViewDimension,
         visibility: ShaderStages
@@ -129,7 +129,7 @@ impl<'a> ResourceBuilder<'a> {
             count: None,
         });
 
-        self.resources.push(BindingResource::Texture(Some(source)));
+        self.resources.push(BindingResource::Texture(source));
         self.names.push(name.to_string());
         self.struct_generators.push(None);
         self.next_binding_index += 1;
@@ -138,14 +138,14 @@ impl<'a> ResourceBuilder<'a> {
     pub fn add_texture(
         &mut self, 
         name: &str, 
-        source: impl Into<TextureSource>,
+        source: Option<impl Into<TextureSource>>,
         sample_type: wgpu::TextureSampleType, 
         view_dimension: wgpu::TextureViewDimension, 
         visibility: ShaderStages
     ) {
         self.add_texture_internal(
             name, 
-            source.into(), 
+            source.map(|s| s.into()), 
             sample_type, 
             view_dimension, 
             visibility

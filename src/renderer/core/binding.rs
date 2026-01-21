@@ -2,10 +2,10 @@
 //!
 //! 定义 BindGroup 的资源类型和绑定 Trait
 
+use crate::assets::TextureHandle;
 use crate::resources::texture::{SamplerSource, TextureSource};
 use crate::{Mesh, Scene};
 use crate::resources::buffer::BufferRef;
-use crate::assets::TextureHandle;
 use crate::resources::material::{Material, MaterialData};
 use crate::resources::geometry::Geometry;
 use crate::resources::uniforms::*;
@@ -43,7 +43,7 @@ impl Bindings for MaterialData {
                 );
                 
                 if let Some(map) = &m.bindings().map {
-                    builder.add_texture("map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_texture("map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
             },
@@ -55,22 +55,22 @@ impl Bindings for MaterialData {
                 );
 
                 if let Some(map) = &m.bindings().map {
-                    builder.add_texture("map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_texture("map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
                 if let Some(map) = &m.bindings().normal_map {
-                    builder.add_texture("normal_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_texture("normal_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("normal_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
                 if let Some(map) = &m.bindings().specular_map {
-                    builder.add_texture("specular_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_texture("specular_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("specular_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
                 if let Some(map) = &m.bindings().emissive_map {
-                    builder.add_texture("emissive_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_texture("emissive_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("emissive_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
             },
@@ -83,32 +83,32 @@ impl Bindings for MaterialData {
                 );
                 
                 if let Some(map) = &m.bindings().map {
-                    builder.add_texture("map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_texture("map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
                 if let Some(map) = &m.bindings().normal_map {
-                    builder.add_texture("normal_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_texture("normal_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("normal_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
                 if let Some(map) = &m.bindings().roughness_map {
-                    builder.add_texture("roughness_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_texture("roughness_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("roughness_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
                 if let Some(map) = &m.bindings().metalness_map {
-                    builder.add_texture("metalness_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_texture("metalness_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("metalness_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
                 if let Some(map) = &m.bindings().ao_map {
-                    builder.add_texture("ao_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_texture("ao_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("ao_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
                 if let Some(map) = &m.bindings().emissive_map {
-                    builder.add_texture("emissive_map", *map, wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_texture("emissive_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("emissive_map", *map, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
             }
@@ -217,14 +217,28 @@ impl Bindings for Scene {
         let env_map_handle = self.environment.pmrem_map.unwrap_or(TextureHandle::dummy_env_map().into());
         builder.add_texture(
             "env_map",
-            env_map_handle,
+            Some(env_map_handle),
             wgpu::TextureSampleType::Float { filterable: true },
             wgpu::TextureViewDimension::Cube,
             wgpu::ShaderStages::FRAGMENT
         );
         builder.add_sampler(
             "env_map",
-            env_map_handle,
+            SamplerSource::Default,
+            wgpu::SamplerBindingType::Filtering,
+            wgpu::ShaderStages::FRAGMENT
+        );
+
+        builder.add_texture(
+            "brdf_lut",
+            self.environment.brdf_lut,
+            wgpu::TextureSampleType::Float { filterable: true },
+            wgpu::TextureViewDimension::D2,
+            wgpu::ShaderStages::FRAGMENT
+        );
+        builder.add_sampler(
+            "brdf_lut",
+            SamplerSource::Default,
             wgpu::SamplerBindingType::Filtering,
             wgpu::ShaderStages::FRAGMENT
         );

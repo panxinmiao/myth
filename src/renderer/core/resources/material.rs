@@ -187,7 +187,7 @@ impl ResourceManager {
             self.get_or_create_layout(&builder.layout_entries)
         };
 
-        let (bind_group, bg_id) = self.create_bind_group(&layout, &builder.resources);
+        let (bind_group, bg_id) = self.create_bind_group(&layout, &builder);
         let binding_wgsl = builder.generate_wgsl(1);
 
         let gpu_mat = GpuMaterial {
