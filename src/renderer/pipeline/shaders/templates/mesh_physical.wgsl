@@ -224,5 +224,20 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
         out_color = out_color * (1.0 - material.clearcoat * fcc) + (clearcoat_specular_direct + clearcoat_specular_indirect) * material.clearcoat;
     $$ endif
 
+    // === DEBUG 模式 (取消注释其中一行来检查) ===
+    
+    // 1. 检查粗糙度 (玻璃应该是黑色的，金属头盔部分有灰度变化)
+    // return vec4<f32>(vec3f(material.roughness), 1.0);
+
+    // 2. 检查金属度 (玻璃应该是黑色的，头盔金属部分是白色的)
+    // return vec4<f32>(vec3f(metalness_factor), 1.0);
+
+    // 3. 检查法线 (应该是五颜六色的)
+    // return vec4<f32>(geometry.normal * 0.5 + 0.5, 1.0);
+
+    // 4. 检查 IBL 采样 (强制显示最清晰的环境反射)
+    // let debug_reflect = reflect(-view, normal);
+    // return textureSampleLevel(t_env_map, s_env_map, debug_reflect, 0.0);
+
     return vec4<f32>(out_color, diffuse_color.a);
 }

@@ -9,7 +9,7 @@ pub struct IBLComputePass {
     bind_group_layout_dest: wgpu::BindGroupLayout,
     
     // 追踪上一次处理的源环境图，用于检测变化
-    last_processed_source: RefCell<Option<TextureSource>>,
+    last_processed_source: RefCell<Option<(TextureSource, u64)>>,
 }
 
 impl IBLComputePass {
@@ -108,10 +108,21 @@ impl RenderNode for IBLComputePass {
             None => return, // 没有源，无法生成
         };
 
+        // 2. [关键修复] 获取内容版本号
+        let mut current_version = 0;
+        
+        // 尝试获取版本号。如果 Asset 还在加载中，这里的 version 可能是 0 或初始值。
+        // 当 Asset 加载完成，AssetServer 会调用 texture.needs_update()，version 会增加。
+        if let TextureSource::Asset(handle) = &current_source {
+            if let Some(tex) = ctx.assets.get_texture(*handle) {
+                current_version = tex.version();
+            }
+        }
+
         // 2. 检查是否需要更新 (Source 变了)
         // 注意：我们通过比较 TextureSource Enum 的相等性来判断
-        let needs_update = if let Some(last) = &*self.last_processed_source.borrow() {
-            *last != current_source
+        let needs_update = if let Some((last_src, last_ver)) = &*self.last_processed_source.borrow() {
+            *last_src != current_source || *last_ver != current_version
         } else {
             true // 第一次运行
         };
@@ -127,6 +138,7 @@ impl RenderNode for IBLComputePass {
             TextureSource::Asset(handle) => {
                 // 显式准备资源
                 ctx.resource_manager.prepare_texture(ctx.assets, *handle);
+                println!("Using asset texture for IBL source: {:?}", handle);
 
                 // 获取 Asset 以拿到 CPU ID
                 // 显式处理 Option::None
@@ -174,22 +186,29 @@ impl RenderNode for IBLComputePass {
             view_formats: &[],
         });
 
-        let param_buffer = ctx.wgpu_ctx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("IBL Params Buffer"),
-            size: std::mem::size_of::<[f32; 4]>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
         // 5. 逐级生成
         for mip in 0..mip_levels {
             let mip_size = (size >> mip).max(1);
             let roughness = mip as f32 / (mip_levels - 1) as f32;
 
-            // Uniforms
             let params = [roughness, mip_size as f32, 0.0, 0.0];
+            let param_buffer = ctx.wgpu_ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("IBL Params Buffer"),
+                size: std::mem::size_of::<[f32; 4]>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: true,
+            });
+
+            // 写入数据
+            {
+                let mut view = param_buffer.slice(..).get_mapped_range_mut();
+                view.copy_from_slice(bytemuck::cast_slice(&params));
+            }
+            param_buffer.unmap();
+
+            // Uniforms
             // let param_buffer = ctx.resource_manager.create_temp_uniform_buffer(&params);
-            ctx.wgpu_ctx.queue.write_buffer(&param_buffer, 0, bytemuck::cast_slice(&params));
+            // ctx.wgpu_ctx.queue.write_buffer(&param_buffer, 0, bytemuck::cast_slice(&params));
 
             // BindGroups
             let bg_src = ctx.wgpu_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -247,7 +266,7 @@ impl RenderNode for IBLComputePass {
         // 7. 更新状态
         ctx.scene.environment.pmrem_map = Some(TextureSource::Attachment(id));
         ctx.scene.environment.env_map_max_mip_level = (mip_levels - 1) as f32;
-        *self.last_processed_source.borrow_mut() = Some(current_source);
+        *self.last_processed_source.borrow_mut() = Some((current_source, current_version));
 
         log::info!("IBL PMREM generated and registered. Source updated.");
         println!("IBL PMREM generated and registered. Source updated.");

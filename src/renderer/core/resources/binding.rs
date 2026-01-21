@@ -225,10 +225,9 @@ impl ResourceManager {
 
         let binding_wgsl = builder.generate_wgsl(2);
         let layout_entries = builder.layout_entries.clone();
-        let resources = std::mem::take(&mut builder.resources);
         
         let (layout, _) = self.get_or_create_layout(&layout_entries);
-        self.prepare_binding_resources(assets, &resources);
+        self.prepare_binding_resources(assets, &builder.resources);
         let (bind_group, bind_group_id) = self.create_bind_group(&layout, &builder);
 
         let data = ObjectBindingData {
