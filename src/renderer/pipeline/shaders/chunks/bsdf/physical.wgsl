@@ -250,60 +250,36 @@ $$ endif
 }
 
 
-
 fn RE_IndirectSpecular(
-    radiance: vec3<f32>, 
-    irradiance: vec3<f32>, 
+    radiance: vec3<f32>,
+    irradiance: vec3<f32>,
     clearcoat_radiance: vec3<f32>,
-    geometry: GeometricContext, 
-    material: PhysicalMaterial, 
+    geometry: GeometricContext,
+    material: PhysicalMaterial,
     reflected_light: ptr<function, ReflectedLight>
 ) {
     let NdotV = saturate( dot( geometry.normal, geometry.view_dir ) );
     let roughness = material.roughness;
 
-    // --- Split-Sum Part 2: Integration (BRDF LUT) ---
-    // 采样 LUT 纹理
-    // x = Scale (F0 的系数), y = Bias (F90 的系数)
-    // 注意：LUT 通常是 [0,1] 的 uv，x 对应 NdotV, y 对应 Roughness
     let brdf = textureSample( t_brdf_lut, s_brdf_lut, vec2f( NdotV, roughness ) ).rg;
-
-    // 计算菲涅尔项
-    // Split-Sum 公式: Specular = Radiance * ( F0 * brdf.x + F90 * brdf.y )
     let FssEss = material.specular_color * brdf.x + material.specular_f90 * brdf.y;
-
-    // 累加镜面反射结果
     (*reflected_light).indirect_specular += radiance * FssEss;
 }
-
  //end of USE_IBL
 $$ endif
 
 
 fn RE_IndirectDiffuse(
-    irradiance: vec3<f32>, 
-    geometry: GeometricContext, 
-    material: PhysicalMaterial, 
+    irradiance: vec3<f32>,
+    geometry: GeometricContext,
+    material: PhysicalMaterial,
     reflected_light: ptr<function, ReflectedLight>
 ) {
+
     let NdotV = saturate( dot( geometry.normal, geometry.view_dir ) );
-    
-    // 计算 Diffuse 的菲涅尔阻尼
-    // 金属(metalness=1)没有漫反射，非金属(metalness=0)有漫反射
-    // F_Schlick 只是一个近似，更精确的做法是使用 LUT 的结果来推导 kD
-    
-    // 简单能量守恒：kD = (1 - F) * (1 - Metalness)
-    // 但在 material.diffuse_color 计算时，通常已经预乘了 (1 - metalness)
-    // 所以这里主要关注菲涅尔导致的能量反射损失
-    
     let F = F_Schlick( material.specular_color, material.specular_f90, NdotV );
-    
-    // 这里的 kD 近似为 (1.0 - F)
-    // 注意：为了与 RE_IndirectSpecular 中的 LUT 匹配，也可以使用 (1.0 - (brdf.x + brdf.y)) 近似
-    let kD = 1.0 - F; 
-    
+    let kD = 1.0 - F;
     let diffuse = irradiance * BRDF_Lambert( material.diffuse_color ) * kD;
-    
     (*reflected_light).indirect_diffuse += diffuse;
 }
 

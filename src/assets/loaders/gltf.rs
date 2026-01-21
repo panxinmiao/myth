@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::fs;
-use glam::{Vec3, Vec4, Quat, Mat4, Affine3A};
+use glam::{Affine3A, Mat4, Quat, Vec3, Vec4};
 use crate::resources::geometry::{Geometry, Attribute};
 use crate::resources::material::{Material, MeshStandardMaterial};
 use crate::resources::texture::Texture;
@@ -239,29 +239,45 @@ impl<'a> GltfLoader<'a> {
             let base_color_factor = Vec4::from_array(pbr.base_color_factor());
             let mut mat = MeshStandardMaterial::new(base_color_factor);
 
+            
             mat.set_metalness(pbr.metallic_factor());
             mat.set_roughness(pbr.roughness_factor());
+            mat.set_emissive(Vec3::from_array(material.emissive_factor()));
+            
+            {
+                let mut bindings= mat.bindings_mut();
+                if let Some(info) = pbr.base_color_texture() {
+                    let tex_handle = self.texture_map[info.texture().index()];
+                    // mat.set_map(Some(tex_handle.into()));
+                    bindings.map = Some(tex_handle.into());
+                    
+                    if let Some(texture) = self.assets.get_texture(tex_handle) {
+                        texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
+                    }
+                }
 
-            if let Some(info) = pbr.base_color_texture() {
-                let tex_handle = self.texture_map[info.texture().index()];
-                mat.set_map(Some(tex_handle.into()));
-                
-                if let Some(texture) = self.assets.get_texture(tex_handle) {
-                    texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
+                if let Some(info) = pbr.metallic_roughness_texture() {
+                    let tex_handle = self.texture_map[info.texture().index()];
+                    bindings.roughness_map = Some(tex_handle.into());
+                    bindings.metalness_map = Some(tex_handle.into());
+                }
+
+                if let Some(info) = material.normal_texture() {
+                    let tex_handle = self.texture_map[info.texture().index()];
+                    bindings.normal_map = Some(tex_handle.into());
+                }
+
+                if let Some(info) = material.occlusion_texture() {
+                    let tex_handle = self.texture_map[info.texture().index()];
+                    bindings.ao_map = Some(tex_handle.into());
+                }
+
+                if let Some(info) = material.emissive_texture() {
+                    let tex_handle = self.texture_map[info.texture().index()];
+                    bindings.emissive_map = Some(tex_handle.into());
                 }
             }
-
-            if let Some(info) = pbr.metallic_roughness_texture() {
-                let tex_handle = self.texture_map[info.texture().index()];
-                mat.set_roughness_map(Some(tex_handle.into()));
-                mat.set_metalness_map(Some(tex_handle.into()));
-            }
-
-            if let Some(info) = material.normal_texture() {
-                let tex_handle = self.texture_map[info.texture().index()];
-                mat.set_normal_map(Some(tex_handle.into()));
-            }
-
+            
             // 转换为通用 Material 枚举
             let mut engine_mat = Material::from(mat);
 

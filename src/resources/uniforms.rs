@@ -322,7 +322,8 @@ define_gpu_data_struct!(
         pub occlusion_strength: f32 = 1.0,     // 4 
 
         pub normal_scale: Vec2 = Vec2::ONE,    // 8
-        pub(crate) __padding: UniformArray<f32, 2>, // 8 (8+8=16)
+        pub ao_map_intensity: f32 = 1.0,     // 4
+        pub(crate) __padding: f32,              // 4 (8+4+4=16)
 
         // 使用优化后的 Mat3A (48 bytes)
         pub map_transform: Mat3A = Mat3A::IDENTITY,         
@@ -331,6 +332,7 @@ define_gpu_data_struct!(
         pub metalness_map_transform: Mat3A = Mat3A::IDENTITY,
         pub emissive_map_transform: Mat3A = Mat3A::IDENTITY, 
         pub occlusion_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub ao_map_transform: Mat3A = Mat3A::IDENTITY,
     }
 );
 

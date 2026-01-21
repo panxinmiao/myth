@@ -1,7 +1,7 @@
 use uuid::Uuid;
 use std::borrow::Cow;
 use std::ops::Deref;
-use glam::{Vec4};
+use glam::{Vec3, Vec4};
 use bitflags::bitflags;
 
 use crate::resources::buffer::CpuBuffer;
@@ -388,6 +388,10 @@ impl MeshStandardMaterial {
         self.uniforms.write().metalness = metalness;
     }
     
+    pub fn set_emissive(&mut self, emissive: Vec3) {
+        self.uniforms.write().emissive = emissive;
+    }
+
     pub fn set_map(&mut self, texture: impl Into<Option<TextureSource>>) {
         self.bindings_mut().map = texture.into();
     }
@@ -402,6 +406,14 @@ impl MeshStandardMaterial {
     
     pub fn set_metalness_map(&mut self, texture: impl Into<Option<TextureSource>>) {
         self.bindings_mut().metalness_map = texture.into();
+    }
+
+    pub fn set_emissive_map(&mut self, texture: impl Into<Option<TextureSource>>) {
+        self.bindings_mut().emissive_map = texture.into();
+    }
+    
+    pub fn set_ao_map(&mut self, texture: impl Into<Option<TextureSource>>) {
+        self.bindings_mut().ao_map = texture.into();
     }
 }
 

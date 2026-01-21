@@ -117,7 +117,26 @@ impl PipelineCache {
         );
 
         if cfg!(feature = "debug_shader") {
-            println!("================= Generated Shader Code {} ==================\n {}", template_name, shader_source);
+            fn normalize_newlines(s: &str) -> String {
+                let mut result = String::with_capacity(s.len());
+                let mut last_was_newline = false;
+
+                for c in s.chars() {
+                    if c == '\n' {
+                        if !last_was_newline {
+                            result.push('\n');
+                            last_was_newline = true;
+                        }
+                    } else {
+                        result.push(c);
+                        last_was_newline = false;
+                    }
+                }
+
+                result
+            }
+            
+            println!("================= Generated Shader Code {} ==================\n {}", template_name, normalize_newlines(&shader_source));
         }
 
         let code_hash = xxh3_128(shader_source.as_bytes());
