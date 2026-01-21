@@ -90,6 +90,9 @@ impl AppHandler for GltfViewer {
         let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
         ctx.scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
+        ctx.scene.environment.set_intensity(3.0);
+
+        ctx.scene.environment.set_ambient_color(Vec3::splat(0.3));
 
         // 3. 添加灯光
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
@@ -322,26 +325,26 @@ impl GltfViewer {
                 ui.separator();
 
                 // 信息显示
-                ui.heading("ℹ️ Information");
+                ui.heading("Information");
                 ui.label(format!("FPS: {:.1}", self.current_fps));
                 ui.label(format!("Nodes: {}", self.loaded_nodes.len()));
             });
 
         // Help Window
-        egui::Window::new("Help")
-            .default_pos([10.0, 400.0])
-            .default_width(200.0)
-            .collapsible(true)
-            .default_open(false)
-            .show(&egui_ctx, |ui| {
-                ui.label("🖱️ Mouse Controls:");
-                ui.label("  Left Drag: Rotate View");
-                ui.label("  Right Drag: Pan");
-                ui.label("  Scroll: Zoom");
-                ui.separator();
-                ui.label("⌨️ Keyboard Shortcuts:");
-                ui.label("  Space: Play/Pause");
-            });
+        // egui::Window::new("Help")
+        //     .default_pos([10.0, 400.0])
+        //     .default_width(200.0)
+        //     .collapsible(true)
+        //     .default_open(false)
+        //     .show(&egui_ctx, |ui| {
+        //         ui.label("🖱️ Mouse Controls:");
+        //         ui.label("  Left Drag: Rotate View");
+        //         ui.label("  Right Drag: Pan");
+        //         ui.label("  Scroll: Zoom");
+        //         ui.separator();
+        //         ui.label("⌨️ Keyboard Shortcuts:");
+        //         ui.label("  Space: Play/Pause");
+        //     });
     }
 }
 

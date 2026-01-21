@@ -184,7 +184,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
             clearcoat_ibl_radiance += getIBLRadiance( view, clearcoat_normal, material.clearcoat_roughness );
         $$ endif
 
-        RE_IndirectSpecular(ibl_radiance, ibl_irradiance, clearcoat_ibl_radiance, geometry, material, &reflected_light);
+        RE_IndirectSpecular(ibl_radiance * env_intensity, ibl_irradiance, clearcoat_ibl_radiance, geometry, material, &reflected_light);
     $$ endif
 
     // Ambient occlusion

@@ -261,7 +261,8 @@ fn RE_IndirectSpecular(
     let NdotV = saturate( dot( geometry.normal, geometry.view_dir ) );
     let roughness = material.roughness;
 
-    let brdf = textureSample( t_brdf_lut, s_brdf_lut, vec2f( NdotV, roughness ) ).rg;
+    let brdf = DFGApprox( geometry.normal, geometry.view_dir, roughness );
+    //let brdf = textureSampleLevel( t_brdf_lut, s_brdf_lut, vec2f( NdotV, roughness ) , 0.0).rg;
     let FssEss = material.specular_color * brdf.x + material.specular_f90 * brdf.y;
     (*reflected_light).indirect_specular += radiance * FssEss;
 }

@@ -162,7 +162,7 @@ impl MaterialData {
         match self {
             Self::Basic(_) => "mesh_basic",
             Self::Phong(_) => "mesh_phong",
-            Self::Standard(_) => "mesh_standard",
+            Self::Standard(_) => "mesh_physical",
             Self::Physical(_) => "mesh_physical",
         }
     }
@@ -238,6 +238,15 @@ impl MaterialData {
         }
     }
 
+    pub fn settings_mut(&mut self) -> SettingsGuard<'_> {
+        match self {
+            Self::Basic(m) => m.settings_mut(),
+            Self::Phong(m) => m.settings_mut(),
+            Self::Standard(m) => m.settings_mut(),
+            Self::Physical(m) => m.settings_mut(),
+        }
+    }
+
     /// 获取材质绑定资源的只读引用
     pub fn bindings(&self) -> &MaterialBindings {
         match self {
@@ -247,6 +256,16 @@ impl MaterialData {
             Self::Physical(m) => m.bindings(),
         }
     }
+
+    pub fn bindings_mut(&mut self) -> BindingsGuard<'_> {
+        match self {
+            Self::Basic(m) => m.bindings_mut(),
+            Self::Phong(m) => m.bindings_mut(),
+            Self::Standard(m) => m.bindings_mut(),
+            Self::Physical(m) => m.bindings_mut(),
+        }
+    }
+
 }
 
 // ============================================================================

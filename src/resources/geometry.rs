@@ -583,7 +583,6 @@ impl Geometry {
             None => return,
         };
 
-        // 从 Attribute 的 data 中获取数据
         let data = match &pos_attr.data {
             Some(arc_data) => arc_data.as_ref().clone(),
             None => return,
@@ -599,9 +598,11 @@ impl Geometry {
 
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
-        let mut sum_pos = Vec3::ZERO;
+        // 移除 sum_pos，不再需要计算平均值
+        // let mut sum_pos = Vec3::ZERO; 
         let mut valid_points_count = 0;
 
+        // Pass 1: 计算 AABB (Min/Max)
         for i in 0..count {
             let start = offset + i * stride;
             let end = start + 12;
@@ -613,7 +614,7 @@ impl Geometry {
 
                     min = min.min(vec);
                     max = max.max(vec);
-                    sum_pos += vec;
+                    // sum_pos += vec; 
                     valid_points_count += 1;
                 }
             } else {
@@ -623,12 +624,15 @@ impl Geometry {
 
         if valid_points_count == 0 { return; }
 
+        // 更新 BoundingBox
         *self.bounding_box.borrow_mut() = Some(BoundingBox { min, max });
 
-        let centroid = sum_pos / (valid_points_count as f32);
+        // 使用 AABB 的几何中心作为球心
+        let aabb_center = (min + max) * 0.5;
         
         let mut max_dist_sq = 0.0;
 
+        // Pass 2: 基于新的中心计算半径
         for i in 0..count {
             let start = offset + i * stride;
             let end = start + 12;
@@ -637,19 +641,20 @@ impl Geometry {
                 if let Ok(bytes) = slice.try_into() as Result<&[u8; 12], _>{
                     let vals: &[f32; 3] = bytemuck::cast_ref(bytes);
                     let vec = Vec3::from_array(*vals);
-                    let dist_sq = vec.distance_squared(centroid);
+                    
+                    // 计算到 AABB 中心的距离
+                    let dist_sq = vec.distance_squared(aabb_center);
                     if dist_sq > max_dist_sq {
                         max_dist_sq = dist_sq;
                     }
                 }
-            }else {
+            } else {
                 break; 
             }
-            
         }
 
         *self.bounding_sphere.borrow_mut() = Some(BoundingSphere {
-            center: centroid,
+            center: aabb_center,
             radius: max_dist_sq.sqrt(),
         });
     }

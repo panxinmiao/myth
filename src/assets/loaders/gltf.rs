@@ -277,6 +277,18 @@ impl<'a> GltfLoader<'a> {
                     bindings.emissive_map = Some(tex_handle.into());
                 }
             }
+
+            {
+                let mut settings = mat.settings_mut();
+
+                settings.side = if material.double_sided() { crate::resources::material::Side::Double } else { crate::resources::material::Side::Front };
+                settings.transparent = match material.alpha_mode() {
+                    gltf::material::AlphaMode::Opaque => false,
+                    gltf::material::AlphaMode::Mask => false,
+                    gltf::material::AlphaMode::Blend => true,
+                };
+            }
+
             
             // 转换为通用 Material 枚举
             let mut engine_mat = Material::from(mat);

@@ -83,26 +83,6 @@ impl Camera {
         self.frustum = Frustum::from_matrix(self.view_projection_matrix);
     }
 
-
-    // pub fn look_at(&mut self, target: Vec3, up: Vec3) {
-    //     let position = Vec3::from(self.transform.translation);        
-    //     let forward = (target - position).normalize();
-    //     let right = forward.cross(up).normalize();
-    //     let new_up = right.cross(forward); // 正交化
-
-    //     // 构建旋转矩阵 (列向量)
-    //     let rotation = Mat4::from_cols(
-    //         right.extend(0.0),
-    //         new_up.extend(0.0),
-    //         -forward.extend(0.0), // Camera looks down -Z
-    //         Vec3::ZERO.extend(1.0),
-    //     );
-        
-    //     // 重新组合 Affine3A
-    //     let mat = Mat4::from_translation(position) * rotation;
-    //     self.transform = Affine3A::from_mat4(mat);
-    // }
-
 }
 
 
@@ -130,17 +110,38 @@ impl Frustum {
         planes[2] = rows[3] + rows[1];
         // Top:    row4 - row2
         planes[3] = rows[3] - rows[1];
-        // Near:   row4 + row3 (for OpenGL/WGPU range [0,1] might differ, usually row3 for [0,1])
-        // WGPU NDC Z is [0, 1]. 
-        // Plane extraction depends on projection matrix implementation. 
-        // Assuming Standard:
-        planes[4] = rows[2]; // Near
-        planes[5] = rows[3] - rows[2]; // Far
+
+        // [Reverse-Z] Near Plane 对应 NDC z = 1.0
+        // 剔除条件: z_c / w_c > 1.0 (比近平面更近)
+        // 保留条件: z_c <= w_c => w_c - z_c >= 0
+        planes[4] = rows[3] - rows[2]; // Near
+
+        // 无限远
+        planes[5] = Vec4::new(0.0, 0.0, 0.0, 0.0);
 
         // Normalize
-        for plane in &mut planes {
+        // for plane in &mut planes {
+        //     let length = Vec3::new(plane.x, plane.y, plane.z).length();
+        //     if length > 0.0 {
+        //         *plane /= length;
+        //     }
+        // }
+
+        // Normalize with Safety Check
+        for (i, plane) in planes.iter_mut().enumerate() {
+            // 跳过 Far Plane 的归一化，防止 NaN
+            if i == 5 { continue; }
+
             let length = Vec3::new(plane.x, plane.y, plane.z).length();
-            *plane /= length;
+            // 增加 epsilon 检查防止除以 0
+            if length > 1e-6 {
+                *plane /= length;
+            } else {
+                // 如果法线长度为0（异常情况），让该平面失效（永远不剔除）
+                // 设置为 0,0,0,0，这样 dot(center) + 0 < -r 永远为 false (0 < negative) 吗？
+                // 不，0 < -r (r>0) 是 false。所以物体可见。安全。
+                *plane = Vec4::ZERO; 
+            }
         }
 
         Self { planes }
@@ -148,7 +149,15 @@ impl Frustum {
 
     // 简单的球体相交检测
     pub fn intersects_sphere(&self, center: Vec3, radius: f32) -> bool {
-        for plane in &self.planes {
+        for (i, plane) in self.planes.iter().enumerate() {
+            // [可选] 显式跳过 Far Plane (index 5)
+            if i == 5 { continue; }
+            
+            // 如果平面是零向量（无效平面），直接跳过
+            if plane.x == 0.0 && plane.y == 0.0 && plane.z == 0.0 {
+                continue;
+            }
+
             let dist = plane.x * center.x + plane.y * center.y + plane.z * center.z + plane.w;
             if dist < -radius {
                 return false;
