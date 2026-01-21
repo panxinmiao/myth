@@ -244,7 +244,7 @@ impl<'a> GltfLoader<'a> {
 
             if let Some(info) = pbr.base_color_texture() {
                 let tex_handle = self.texture_map[info.texture().index()];
-                mat.set_map(Some(tex_handle));
+                mat.set_map(Some(tex_handle.into()));
                 
                 if let Some(texture) = self.assets.get_texture(tex_handle) {
                     texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
@@ -253,13 +253,13 @@ impl<'a> GltfLoader<'a> {
 
             if let Some(info) = pbr.metallic_roughness_texture() {
                 let tex_handle = self.texture_map[info.texture().index()];
-                mat.set_roughness_map(Some(tex_handle));
-                mat.set_metalness_map(Some(tex_handle));
+                mat.set_roughness_map(Some(tex_handle.into()));
+                mat.set_metalness_map(Some(tex_handle.into()));
             }
 
             if let Some(info) = material.normal_texture() {
                 let tex_handle = self.texture_map[info.texture().index()];
-                mat.set_normal_map(Some(tex_handle));
+                mat.set_normal_map(Some(tex_handle.into()));
             }
 
             // 转换为通用 Material 枚举

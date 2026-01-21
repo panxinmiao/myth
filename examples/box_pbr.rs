@@ -23,7 +23,7 @@ impl AppHandler for PbrBox {
         let tex_handle = ctx.assets.add_texture(texture);
 
         if let Some(standard) = mat.as_standard_mut() {
-            standard.set_map(Some(tex_handle));
+            standard.set_map(Some(tex_handle.into()));
         }
         
         let geo_handle = ctx.assets.add_geometry(geometry);
@@ -52,7 +52,7 @@ impl AppHandler for PbrBox {
 
         let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
-        ctx.scene.environment.set_env_map(Some((env_texture_handle, &env_texture)));
+        ctx.scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
         // 5. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);

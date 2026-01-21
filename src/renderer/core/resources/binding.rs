@@ -11,6 +11,7 @@ use crate::Mesh;
 use crate::assets::{AssetServer, TextureHandle};
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::geometry::Geometry;
+use crate::resources::texture::{SamplerSource, TextureSource};
 use crate::resources::uniforms::DynamicModelUniforms;
 use crate::scene::SkeletonKey;
 use crate::scene::skeleton::{Skeleton};
@@ -47,6 +48,69 @@ impl ResourceManager {
             bytemuck::cast_slice(skeleton.joint_matrices.as_slice())
         );
     }
+
+    /// 注册一个内部生成的纹理（如 Render Target）
+    /// 
+    /// 这种纹理不需要从 CPU 上传，没有版本控制，由调用者保证其生命周期。
+    /// 通常在 RenderPass 执行前调用。
+    /// 
+    /// 适用于：Pass 内部私有的资源，Pass 自己持有并维护 id 的稳定性。
+    /// 性能最高，无哈希查找。
+    pub fn register_internal_texture_direct(&mut self, id: u64, view: wgpu::TextureView) {
+        self.internal_resources.insert(id, view);
+    }
+
+    /// 适用于：跨 Pass 共享的资源（如 "SceneColor"）。
+    /// 内部维护 Name -> ID 的映射。
+    pub fn register_internal_texture_by_name(&mut self, name: &str, view: wgpu::TextureView) -> u64 {
+        // 1. 查找或创建 ID (只在第一次遇到该名字时会有 String 分配)
+        let id = *self.internal_name_lookup
+            .entry(name.to_string())
+            .or_insert_with(|| generate_gpu_resource_id());
+
+        // 2. 注册
+        self.register_internal_texture_direct(id, view);
+        
+        id
+    }
+
+    pub fn register_internal_texture(&mut self, view: wgpu::TextureView) -> u64 {
+        let id = generate_gpu_resource_id();
+        self.internal_resources.insert(id, view);
+    
+        id
+    }
+    
+
+    /// 统一获取 TextureView 的辅助方法
+    /// 
+    /// 优先查找 Asset 转换的纹理，其次查找注册的内部纹理，最后返回 Dummy
+    pub fn get_texture_view<'a>(&'a self, source: &TextureSource) -> &'a wgpu::TextureView {
+        match source {
+            TextureSource::Asset(handle) => {
+                // 特殊处理 Dummy Env Map
+                if *handle == TextureHandle::dummy_env_map() {
+                    return &self.dummy_env_image.default_view;
+                }
+                
+                // 查找 Asset 对应的 GPU 资源
+                if let Some(binding) = self.texture_bindings.get(*handle) {
+                    if let Some(img) = self.gpu_images.values().find(|img| img.id == binding.image_id) {
+                        return &img.default_view;
+                    }
+                }
+                
+                // Fallback
+                &self.dummy_image.default_view
+            },
+            TextureSource::Attachment(id) => {
+                // 直接查找内部资源表
+                self.internal_resources.get(id)
+                    .unwrap_or(&self.dummy_image.default_view)
+            }
+        }
+    }
+    
 
     /// 获取骨骼 Buffer
     pub fn get_skeleton_buffer(&self, skeleton_id: SkeletonKey) -> Option<&CpuBuffer<Vec<Mat4>>> {
@@ -213,9 +277,19 @@ impl ResourceManager {
                         }
                     }
                 },
-                BindingResource::Texture(handle_opt) => {
-                    if let Some(handle) = handle_opt {
-                        self.prepare_texture(assets, *handle);
+                BindingResource::Texture(source_opt) => {
+
+                    if let Some(source) = source_opt {
+                        match source {
+                            // 只有 Asset 类型的纹理需要 Prepare (上传/更新)
+                            TextureSource::Asset(handle) => {
+                                self.prepare_texture(assets, *handle);
+                            },
+                            // Attachment 类型是 GPU 内部生成的，无需 CPU->GPU 上传
+                            TextureSource::Attachment(_) => {
+                                // Do nothing
+                            }
+                        }
                     }
                 },
                 _ => {}
@@ -252,31 +326,49 @@ impl ResourceManager {
                         size: size.and_then(wgpu::BufferSize::new),
                     })
                 },
-                BindingResource::Texture(handle_opt) => {
-                    let view = if let Some(handle) = handle_opt {
-                        if *handle == TextureHandle::dummy_env_map() {
-                            &self.dummy_env_image.default_view
-                        } else if let Some(binding) = self.texture_bindings.get(*handle) {
-                            self.gpu_images.values()
-                                .find(|img| img.id == binding.image_id)
-                                .map(|img| &img.default_view)
-                                .unwrap_or(&self.dummy_image.default_view)
-                        } else {
-                            &self.dummy_image.default_view
-                        }
-                    } else { &self.dummy_image.default_view };
+                BindingResource::Texture(source_opt) => {
+                    let view = if let Some(source) = source_opt {
+                        self.get_texture_view(source)
+                    } else { 
+                        &self.dummy_image.default_view 
+                    };
                     wgpu::BindingResource::TextureView(view)
                 },
-                BindingResource::Sampler(handle_opt) => {
+                BindingResource::Sampler(source_opt) => {
                     // 从 TextureBinding 获取 sampler_id，然后从 sampler_id_lookup 快速查找
-                    let sampler = if let Some(handle) = handle_opt {
-                        if let Some(binding) = self.texture_bindings.get(*handle) {
-                            self.sampler_id_lookup
-                                .get(&binding.sampler_id)
-                                .unwrap_or(&self.dummy_sampler.sampler)
-                        } else {
-                            &self.dummy_sampler.sampler
+                    let sampler = if let Some(source) = source_opt {
+                        match source {
+                            // 情况 1: 跟随 Texture Asset (旧逻辑)
+                            SamplerSource::FromTexture(handle) => {
+                                if let Some(binding) = self.texture_bindings.get(*handle) {
+                                    self.sampler_id_lookup
+                                        .get(&binding.sampler_id)
+                                        .unwrap_or(&self.dummy_sampler.sampler)
+                                } else {
+                                    &self.dummy_sampler.sampler
+                                }
+                            },
+                            // 情况 2: 显式 Sampler Asset
+                            SamplerSource::Asset(_handle) => {
+                                // 这里假设 Sampler Asset 的 ID 查找逻辑 (你可能需要实现 sampler_bindings 查找表)
+                                // 或者简单起见，如果 sampler 资源管理没那么复杂，暂且回退到 dummy
+                                // 实际项目中应当是: self.get_sampler_by_handle(handle)
+                                &self.dummy_sampler.sampler
+                            },
+                            // 情况 3: 默认采样器 (用于 Render Target)
+                            SamplerSource::Default => {
+                                &self.dummy_sampler.sampler
+                            }
                         }
+
+                        
+                        // if let Some(binding) = self.texture_bindings.get(*handle) {
+                        //     self.sampler_id_lookup
+                        //         .get(&binding.sampler_id)
+                        //         .unwrap_or(&self.dummy_sampler.sampler)
+                        // } else {
+                        //     &self.dummy_sampler.sampler
+                        // }
                     } else { &self.dummy_sampler.sampler };
                     wgpu::BindingResource::Sampler(sampler)
                 },
@@ -314,9 +406,15 @@ impl ResourceManager {
         let light_result = self.ensure_buffer(&scene.light_storage_buffer);
 
         // 环境贴图 ID
-        let env_map_id = scene.environment.env_map.map(|h| {
-            self.prepare_texture(assets, h);
-            self.texture_bindings.get(h).map(|b| b.image_id).unwrap_or(0)
+        let env_map_id = scene.environment.pmrem_map.map(|h| {
+            match h {
+                TextureSource::Asset(handle) => {
+                    self.prepare_texture(assets, handle);
+                    self.texture_bindings.get(handle).map(|b| b.image_id).unwrap_or(0)
+                },
+                TextureSource::Attachment(id) => id,
+            }
+
         }).unwrap_or(0);
         
         // === Collect 阶段: 收集所有资源 ID ===

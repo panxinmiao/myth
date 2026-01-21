@@ -6,7 +6,7 @@ pub mod handle;
 // 重新导出 AssetServer 及相关类型
 pub use server::{
     AssetServer,
-    GeometryHandle, MaterialHandle, TextureHandle,
+    GeometryHandle, MaterialHandle, TextureHandle, SamplerHandle,
 };
 pub use loaders::GltfLoader;
 pub use handle::{AssetTracker, StrongHandle, WeakHandle, TrackedAsset};

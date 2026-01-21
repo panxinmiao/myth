@@ -1,13 +1,12 @@
 use glam::{Vec4, Vec3};
 use std::borrow::Cow;
 
-use crate::assets::TextureHandle;
-use crate::resources::material::*;
+use crate::resources::{material::*, texture::TextureSource};
 
 pub struct MeshBasicMaterialBuilder {
     // Specific Properties
     color: Vec4,
-    map: Option<TextureHandle>,
+    map: Option<TextureSource>,
 
     // Common Properties (默认值)
     name: Option<Cow<'static, str>>,
@@ -43,7 +42,7 @@ impl MeshBasicMaterialBuilder {
 
     // --- Specific Setters ---
     pub fn color(mut self, color: Vec4) -> Self { self.color = color; self }
-    pub fn map(mut self, map: TextureHandle) -> Self { self.map = Some(map); self }
+    pub fn map(mut self, map: impl Into<Option<TextureSource>>) -> Self { self.map = map.into() ; self }
 
     // --- Common Setters ---
     pub fn name(mut self, name: &str) -> Self { self.name = Some(Cow::Owned(name.to_string())); self }
@@ -80,12 +79,12 @@ pub struct MeshStandardMaterialBuilder {
     roughness: f32,
     metalness: f32,
     emissive: Vec3,
-    map: Option<TextureHandle>,
-    normal_map: Option<TextureHandle>,
-    roughness_map: Option<TextureHandle>,
-    metalness_map: Option<TextureHandle>,
-    emissive_map: Option<TextureHandle>,
-    ao_map: Option<TextureHandle>,
+    map: Option<TextureSource>,
+    normal_map: Option<TextureSource>,
+    roughness_map: Option<TextureSource>,
+    metalness_map: Option<TextureSource>,
+    emissive_map: Option<TextureSource>,
+    ao_map: Option<TextureSource>,
 
     // Common
     name: Option<Cow<'static, str>>,
@@ -126,12 +125,12 @@ impl MeshStandardMaterialBuilder {
     pub fn metalness(mut self, value: f32) -> Self { self.metalness = value; self }
     pub fn emissive(mut self, value: Vec3) -> Self { self.emissive = value; self }
     
-    pub fn map(mut self, map: TextureHandle) -> Self { self.map = Some(map); self }
-    pub fn normal_map(mut self, map: TextureHandle) -> Self { self.normal_map = Some(map); self }
-    pub fn roughness_map(mut self, map: TextureHandle) -> Self { self.roughness_map = Some(map); self }
-    pub fn metalness_map(mut self, map: TextureHandle) -> Self { self.metalness_map = Some(map); self }
-    pub fn emissive_map(mut self, map: TextureHandle) -> Self { self.emissive_map = Some(map); self }
-    pub fn ao_map(mut self, map: TextureHandle) -> Self { self.ao_map = Some(map); self }
+    pub fn map(mut self, map: impl Into<Option<TextureSource>>) -> Self { self.map = map.into(); self }
+    pub fn normal_map(mut self, map: impl Into<Option<TextureSource>>) -> Self { self.normal_map = map.into(); self }
+    pub fn roughness_map(mut self, map: impl Into<Option<TextureSource>>) -> Self { self.roughness_map = map.into(); self }
+    pub fn metalness_map(mut self, map: impl Into<Option<TextureSource>>) -> Self { self.metalness_map = map.into(); self }
+    pub fn emissive_map(mut self, map: impl Into<Option<TextureSource>>) -> Self { self.emissive_map = map.into(); self }
+    pub fn ao_map(mut self, map: impl Into<Option<TextureSource>>) -> Self { self.ao_map = map.into(); self }
 
     // --- Common Setters ---
     pub fn name(mut self, name: &str) -> Self { self.name = Some(Cow::Owned(name.to_string())); self }

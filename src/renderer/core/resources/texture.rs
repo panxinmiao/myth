@@ -8,12 +8,13 @@
 
 use std::sync::atomic::Ordering;
 
+use crate::assets::server::SamplerHandle;
 use crate::assets::{AssetServer, TextureHandle};
 use crate::renderer::core::resources::generate_gpu_resource_id;
 use crate::resources::image::{Image, ImageInner};
-use crate::resources::texture::TextureSampler;
+use crate::resources::texture::{SamplerSource, TextureSampler};
 
-use super::{ResourceManager, GpuImage, GpuSampler, SamplerKey, TextureBinding, TextureViewKey};
+use super::{ResourceManager, GpuImage, GpuSampler, TextureBinding, TextureViewKey};
 
 impl GpuImage {
     pub fn new(
@@ -208,7 +209,7 @@ impl ResourceManager {
             }
         }
 
-        let sampler_id = self.get_or_create_sampler(&texture_asset.sampler, texture_asset.name()).id;
+        let sampler_id = self.get_or_create_sampler(texture_asset.sampler, texture_asset.name());
 
         let binding = TextureBinding {
             image_id: gpu_image_id,
@@ -219,12 +220,96 @@ impl ResourceManager {
         self.texture_bindings.insert(handle, binding);
     }
 
+
+    /// 准备 Sampler 资源
+    /// 
+    /// 逻辑：
+    /// 1. 从 AssetServer 获取 Sampler 数据
+    /// 2. 构建 SamplerKey
+    /// 3. 查 sampler_cache (去重)
+    ///    - 命中：直接复用 ID
+    ///    - 未命中：创建新 wgpu::Sampler，存入 cache 和 lookup
+    /// 4. 更新 sampler_bindings 映射
+    pub fn prepare_sampler(&mut self, assets: &AssetServer, handle: SamplerHandle) -> u64 {
+        // 1. 如果已经绑定且 Asset 版本没变，直接返回 (优化)
+        if let Some(&id) = self.sampler_bindings.get(handle) {
+             // 这里可以加版本检查逻辑，类似 prepare_texture
+             return id;
+        }
+
+        // 2. 获取 Asset 数据
+        let sampler_asset = assets.get_sampler(handle).expect("Sampler asset not found");
+        
+        // 3. 构建 Key
+        let key = sampler_asset.descriptor;
+
+        // 4. 查找或创建 GPU 资源 (Flyweight 模式)
+        let id = if let Some(gpu_sampler) = self.sampler_cache.get(&key) {
+            gpu_sampler.id
+        } else {
+            // 创建新的 wgpu::Sampler
+            let desc = wgpu::SamplerDescriptor {
+                label: Some("Cached Sampler"),
+                address_mode_u: key.address_mode_u,
+                address_mode_v: key.address_mode_v,
+                address_mode_w: key.address_mode_w,
+                mag_filter: key.mag_filter,
+                min_filter: key.min_filter,
+                mipmap_filter: key.mipmap_filter,
+                lod_min_clamp: 0.0, // 这些参数如果在 Key 里没有，就用默认值
+                lod_max_clamp: 32.0,
+                compare: key.compare,
+                anisotropy_clamp: key.anisotropy_clamp,
+                border_color: None,
+            };
+            let sampler = self.device.create_sampler(&desc);
+            let new_id = generate_gpu_resource_id();
+            
+            let gpu_sampler = GpuSampler {
+                id: new_id,
+                sampler: sampler.clone(),
+            };
+            
+            self.sampler_cache.insert(key, gpu_sampler);
+            self.sampler_id_lookup.insert(new_id, sampler);
+            new_id
+        };
+
+        // 5. 记录绑定关系
+        self.sampler_bindings.insert(handle, id);
+        
+        id
+    }
+
+
+
+    pub fn resolve_sampler_id(&mut self, assets: &AssetServer, source: SamplerSource) -> u64 {
+        match source {
+            SamplerSource::FromTexture(tex_handle) => {
+                if let Some(texture) = assets.get_texture(tex_handle) {
+                    // [修改] 不需要转换 Key，直接传 sampler
+                    self.get_or_create_sampler(texture.sampler, texture.name())
+                } else {
+                    self.dummy_sampler.id
+                }
+            },
+            
+            SamplerSource::Asset(sampler_handle) => {
+                self.prepare_sampler(assets, sampler_handle)
+            },
+            
+            SamplerSource::Default => self.dummy_sampler.id,
+        }
+    }
+
+
+
     /// 获取指定配置的 TextureView
     /// 
     /// 极速路径：如果 desc 为 None，直接返回默认视图
     /// 缓存路径：根据 TextureViewKey 查找/创建视图
     #[inline]
-    pub fn get_texture_view(
+    pub fn get_texture_view_desc(
         &mut self, 
         cpu_image_id: u64,
         desc: Option<&wgpu::TextureViewDescriptor>
@@ -270,31 +355,34 @@ impl ResourceManager {
         Some((view, *id))
     }
 
-    pub(crate) fn get_or_create_sampler(&mut self, config: &TextureSampler, label: Option<&str>) -> &GpuSampler {
-        let key = SamplerKey::from(config);
-        
-        if !self.sampler_cache.contains_key(&key) {
-            let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-                label,
-                address_mode_u: config.address_mode_u,
-                address_mode_v: config.address_mode_v,
-                address_mode_w: config.address_mode_w,
-                mag_filter: config.mag_filter,
-                min_filter: config.min_filter,
-                mipmap_filter: config.mipmap_filter,
-                compare: config.compare,
-                anisotropy_clamp: config.anisotropy_clamp,
-                ..Default::default()
-            });
+    pub(crate) fn get_or_create_sampler(&mut self, descriptor: TextureSampler, label: Option<&str>) -> u64 {
 
-            let id = generate_gpu_resource_id();
-            self.sampler_id_lookup.insert(id, sampler.clone());
-            
-            let gpu_sampler = GpuSampler { id, sampler };
-            self.sampler_cache.insert(key, gpu_sampler);
+        // 1. 直接用 descriptor 查表
+        if let Some(gpu_sampler) = self.sampler_cache.get(&descriptor) {
+            return gpu_sampler.id;
         }
+    
+    
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            label,
+            address_mode_u: descriptor.address_mode_u,
+            address_mode_v: descriptor.address_mode_v,
+            address_mode_w: descriptor.address_mode_w,
+            mag_filter: descriptor.mag_filter,
+            min_filter: descriptor.min_filter,
+            mipmap_filter: descriptor.mipmap_filter,
+            compare: descriptor.compare,
+            anisotropy_clamp: descriptor.anisotropy_clamp,
+            ..Default::default()
+        });
+
+        let id = generate_gpu_resource_id();
+        let gpu_sampler = GpuSampler { id, sampler: sampler.clone() };
+
+        self.sampler_cache.insert(descriptor, gpu_sampler);
+        self.sampler_id_lookup.insert(id, sampler);
         
-        self.sampler_cache.get(&key).unwrap()
+        id
     }
 
     #[inline]

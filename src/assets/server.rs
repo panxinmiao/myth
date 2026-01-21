@@ -5,14 +5,16 @@ use std::path::Path;
 
 use crate::resources::geometry::Geometry;
 use crate::resources::material::Material;
-use crate::resources::texture::Texture;
+use crate::resources::texture::{Sampler, Texture};
 
 // 强类型句柄 (Handle)
 new_key_type! {
     pub struct GeometryHandle;
     pub struct MaterialHandle;
     pub struct TextureHandle;
+    pub struct SamplerHandle;
 }
+
 
 const DUMMY_ENV_MAP_ID: u64 = 0xFFFFFFFF_FFFFFFFF; 
 // const DUMMY_SAMPLER_ID: u64 = 0xFFFFFFFF_FFFFFFFE;
@@ -41,12 +43,14 @@ pub struct AssetServer {
     pub geometries: SlotMap<GeometryHandle, Geometry>,
     pub materials: SlotMap<MaterialHandle, Material>,
     pub textures: SlotMap<TextureHandle, Texture>,
+    pub samplers: SlotMap<SamplerHandle, Sampler>,
 
     // UUID 映射：用于通过 UUID (通常来自文件加载) 反查运行时 Handle
     // 这是一个辅助索引，渲染循环中不应使用它
     pub(crate) lookup_geo: FxHashMap<Uuid, GeometryHandle>,
     pub(crate) lookup_mat: FxHashMap<Uuid, MaterialHandle>,
     pub(crate) lookup_tex: FxHashMap<Uuid, TextureHandle>,
+    pub(crate) lookup_sampler: FxHashMap<Uuid, SamplerHandle>,
 }
 
 impl Default for AssetServer {
@@ -61,9 +65,11 @@ impl AssetServer {
             geometries: SlotMap::with_key(),
             materials: SlotMap::with_key(),
             textures: SlotMap::with_key(),
+            samplers: SlotMap::with_key(),
             lookup_geo: FxHashMap::default(),
             lookup_mat: FxHashMap::default(),
             lookup_tex: FxHashMap::default(),
+            lookup_sampler: FxHashMap::default(),
         }
     }
 
@@ -113,6 +119,21 @@ impl AssetServer {
 
     pub fn get_texture_mut(&mut self, handle: TextureHandle) -> Option<&mut Texture> {
         self.textures.get_mut(handle)
+    }
+
+    pub fn add_sampler(&mut self, sampler: Sampler) -> SamplerHandle {
+        let uuid = sampler.uuid;
+        let handle = self.samplers.insert(sampler);
+        self.lookup_sampler.insert(uuid, handle);
+        handle
+    }
+
+    pub fn get_sampler(&self, handle: SamplerHandle) -> Option<&Sampler> {
+        self.samplers.get(handle)
+    }
+
+    pub fn get_sampler_mut(&mut self, handle: SamplerHandle) -> Option<&mut Sampler> {
+        self.samplers.get_mut(handle)
     }
 
     pub fn load_texture_from_file(&mut self, path: impl AsRef<Path>, color_space: crate::assets::ColorSpace) -> anyhow::Result<TextureHandle> {

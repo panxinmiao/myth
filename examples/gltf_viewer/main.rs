@@ -89,7 +89,7 @@ impl AppHandler for GltfViewer {
 
         let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
-        ctx.scene.environment.set_env_map(Some((env_texture_handle, &env_texture)));
+        ctx.scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
         // 3. 添加灯光
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);

@@ -13,6 +13,7 @@ use crate::resources::material::MaterialData;
 
 use crate::renderer::core::binding::Bindings;
 use crate::renderer::core::builder::ResourceBuilder;
+use crate::resources::texture::TextureSource;
 
 use super::{ResourceManager, GpuMaterial, ResourceIdSet, hash_layout_entries};
 
@@ -120,7 +121,7 @@ impl ResourceManager {
         let mut sampler_ids = SmallVec::new();
         let bindings = material.data.bindings();
         
-        for tex_handle in [
+        for tex_source in [
             bindings.map,
             bindings.normal_map,
             bindings.roughness_map,
@@ -129,11 +130,28 @@ impl ResourceManager {
             bindings.ao_map,
             bindings.specular_map,
         ].into_iter().flatten() {
-            self.prepare_texture(assets, tex_handle);
-            if let Some(binding) = self.texture_bindings.get(tex_handle) {
-                image_ids.push(binding.image_id);
-                sampler_ids.push(binding.sampler_id);
+            match tex_source {
+                TextureSource::Asset(tex_handle) => {
+                    self.prepare_texture(assets, tex_handle);
+                    if let Some(binding) = self.texture_bindings.get(tex_handle) {
+                        image_ids.push(binding.image_id);
+                        sampler_ids.push(binding.sampler_id);
+                    }else{
+                        image_ids.push(self.dummy_image.id);
+                        sampler_ids.push(self.dummy_sampler.id);
+                    }
+                },
+                // 内部附件附件
+                TextureSource::Attachment(id) => {
+                    image_ids.push(id);
+                    // 3. Sampler ID 处理
+                    // 由于 Attachment 通常没有绑定的 Sampler Asset，我们默认使用系统 Sampler
+                    // 或者，如果在 TextureSource 中包含了 Sampler 信息，可以在这里解析
+                    // 目前假设 Attachment 总是配对默认采样器 (Linear/Repeat)
+                    sampler_ids.push(self.dummy_sampler.id);
+                },
             }
+            
         }
 
         (uniform_result, image_ids, sampler_ids)

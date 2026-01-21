@@ -1,18 +1,18 @@
 //! Environment - 纯数据结构
 //! 
-//! 描述 IBL/天空盒配置，不持有 GPU Buffer，不管理灯光列表。
-//! GPU 资源由 ResourceManager 统一管理。
+//! 描述 IBL/天空盒配置
 
-use crate::assets::TextureHandle;
-use crate::resources::texture::Texture;
+use crate::resources::texture::{Texture, TextureSource};
 
 /// IBL 环境贴图配置
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct Environment {
-    /// 环境贴图 (PMREM cubemap)
-    pub env_map: Option<TextureHandle>,
+    /// 原始环境贴图 (Source Cubemap, 用于背景显示或重新生成 PMREM)
+    pub source_env_map: Option<TextureSource>,
+    /// 预过滤的环境贴图 (PMREM, 用于 PBR Specular IBL)
+    pub pmrem_map: Option<TextureSource>,
     /// BRDF LUT 贴图
-    pub brdf_lut: Option<TextureHandle>,
+    pub brdf_lut: Option<TextureSource>,
     /// 环境贴图的最大 mip 级别 (用于 roughness LOD)
     pub env_map_max_mip_level: f32,
     /// 环境光强度
@@ -26,7 +26,8 @@ pub struct Environment {
 impl Environment {
     pub fn new() -> Self {
         Self {
-            env_map: None,
+            source_env_map: None,
+            pmrem_map: None,
             brdf_lut: None,
             env_map_max_mip_level: 0.0,
             intensity: 1.0,
@@ -36,15 +37,26 @@ impl Environment {
     }
     
     /// 设置环境贴图
-    pub fn set_env_map(&mut self, texture_bundle: Option<(TextureHandle, &Texture)>) {
-        self.env_map = texture_bundle.map(|(handle, _)| handle);
+    pub fn set_env_map(&mut self, texture_bundle: Option<(TextureSource, &Texture)>) {
+        // let new_handle = texture_bundle.map(|(h, _)| h);
+
+        // if self.source_env_map != new_handle {
+        //     self.source_env_map = new_handle;
+        //     // 清空 PMREM 以触发重新生成
+        //     self.pmrem_map = None; 
+        //     self.env_map_max_mip_level = 0.0;
+        // }
+
+        self.source_env_map = texture_bundle.map(|(h, _)| h);
+        self.pmrem_map = self.source_env_map.clone();
+
         self.env_map_max_mip_level = texture_bundle
             .map(|(_, texture)| (texture.mip_level_count() - 1) as f32)
             .unwrap_or(0.0);
     }
     
     /// 设置 BRDF LUT
-    pub fn set_brdf_lut(&mut self, handle: Option<TextureHandle>) {
+    pub fn set_brdf_lut(&mut self, handle: Option<TextureSource>) {
         self.brdf_lut = handle;
     }
     
@@ -60,6 +72,6 @@ impl Environment {
     
     /// 是否有有效的环境贴图
     pub fn has_env_map(&self) -> bool {
-        self.env_map.is_some()
+        self.source_env_map.is_some()
     }
 }

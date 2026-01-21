@@ -21,7 +21,7 @@ impl AppHandler for TexturedBox {
         let tex_handle = ctx.assets.add_texture(texture);
 
         if let Some(basic) = basic_mat.as_basic_mut() {
-            basic.set_map(Some(tex_handle));
+            basic.set_map(Some(tex_handle.into()));
             basic.uniforms_mut().color = Vec4::new(1.0, 1.0, 1.0, 1.0);
         }
         

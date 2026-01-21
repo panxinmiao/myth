@@ -36,6 +36,7 @@ use slotmap::SecondaryMap;
 use core::ops::Range;
 use rustc_hash::FxHashMap;
 
+use crate::assets::server::SamplerHandle;
 use crate::renderer::core::resources::mipmap::MipmapGenerator;
 use crate::resources::texture::TextureSampler;
 
@@ -222,32 +223,32 @@ pub struct GpuImage {
 /// 采样器缓存键
 /// 
 /// 用于基于参数去重的 Sampler 缓存
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SamplerKey {
-    pub address_mode_u: wgpu::AddressMode,
-    pub address_mode_v: wgpu::AddressMode,
-    pub address_mode_w: wgpu::AddressMode,
-    pub mag_filter: wgpu::FilterMode,
-    pub min_filter: wgpu::FilterMode,
-    pub mipmap_filter: wgpu::MipmapFilterMode,
-    pub compare: Option<wgpu::CompareFunction>,
-    pub anisotropy_clamp: u16,
-}
+// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+// pub struct SamplerKey {
+//     pub address_mode_u: wgpu::AddressMode,
+//     pub address_mode_v: wgpu::AddressMode,
+//     pub address_mode_w: wgpu::AddressMode,
+//     pub mag_filter: wgpu::FilterMode,
+//     pub min_filter: wgpu::FilterMode,
+//     pub mipmap_filter: wgpu::MipmapFilterMode,
+//     pub compare: Option<wgpu::CompareFunction>,
+//     pub anisotropy_clamp: u16,
+// }
 
-impl From<&TextureSampler> for SamplerKey {
-    fn from(sampler: &TextureSampler) -> Self {
-        Self {
-            address_mode_u: sampler.address_mode_u,
-            address_mode_v: sampler.address_mode_v,
-            address_mode_w: sampler.address_mode_w,
-            mag_filter: sampler.mag_filter,
-            min_filter: sampler.min_filter,
-            mipmap_filter: sampler.mipmap_filter,
-            compare: sampler.compare,
-            anisotropy_clamp: sampler.anisotropy_clamp,
-        }
-    }
-}
+// impl From<&TextureSampler> for SamplerKey {
+//     fn from(sampler: &TextureSampler) -> Self {
+//         Self {
+//             address_mode_u: sampler.address_mode_u,
+//             address_mode_v: sampler.address_mode_v,
+//             address_mode_w: sampler.address_mode_w,
+//             mag_filter: sampler.mag_filter,
+//             min_filter: sampler.min_filter,
+//             mipmap_filter: sampler.mipmap_filter,
+//             compare: sampler.compare,
+//             anisotropy_clamp: sampler.anisotropy_clamp,
+//         }
+//     }
+// }
 
 /// GPU 端采样器资源
 /// 
@@ -337,13 +338,15 @@ pub struct ResourceManager {
     pub(crate) gpu_materials: SecondaryMap<MaterialHandle, GpuMaterial>,
     /// TextureHandle 到 (ImageId, SamplerId) 的映射
     pub(crate) texture_bindings: SecondaryMap<TextureHandle, TextureBinding>,
-
+    /// SamplerHandle 到 SamplerId 的映射
+    pub(crate) sampler_bindings: SecondaryMap<SamplerHandle, u64>,
+    
     pub(crate) global_states: FxHashMap<u64, GpuGlobalState>,
     pub(crate) gpu_buffers: FxHashMap<u64, GpuBuffer>,
     /// 所有 GpuImage，Key 是 CPU Image 的 ID
     pub(crate) gpu_images: FxHashMap<u64, GpuImage>,
 
-    pub(crate) sampler_cache: FxHashMap<SamplerKey, GpuSampler>,
+    pub(crate) sampler_cache: FxHashMap<TextureSampler, GpuSampler>,
     pub(crate) sampler_id_lookup: FxHashMap<u64, wgpu::Sampler>,
     pub(crate) view_cache: FxHashMap<TextureViewKey, (wgpu::TextureView, u64)>,
     pub(crate) layout_cache: FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
@@ -359,6 +362,15 @@ pub struct ResourceManager {
     // === Object BindGroup 缓存 ===
     pub(crate) object_bind_group_cache: FxHashMap<ObjectBindGroupKey, ObjectBindingData>,
     pub(crate) bind_group_id_lookup: FxHashMap<u64, ObjectBindingData>,
+
+
+    /// 存储内部生成的纹理视图 (Render Targets / Attachments)
+    /// Key: Resource ID (u64)
+    /// Value: wgpu::TextureView
+    pub(crate) internal_resources: FxHashMap<u64, wgpu::TextureView>,
+
+    /// 内部纹理的名称到 ID 的映射，保证 ID 跨帧稳定
+    pub(crate) internal_name_lookup: FxHashMap<String, u64>,
 
     // === 骨骼 Buffer ===
     pub(crate) skeleton_buffers: FxHashMap<SkeletonKey, CpuBuffer<Vec<Mat4>>>,
@@ -498,6 +510,7 @@ impl ResourceManager {
             gpu_geometries: SecondaryMap::new(),
             gpu_materials: SecondaryMap::new(),
             texture_bindings: SecondaryMap::new(),
+            sampler_bindings: SecondaryMap::new(),
             global_states: FxHashMap::default(),
             gpu_buffers,
             gpu_images: FxHashMap::default(),
@@ -512,6 +525,8 @@ impl ResourceManager {
             model_allocator,
             object_bind_group_cache: FxHashMap::default(),
             bind_group_id_lookup: FxHashMap::default(),
+            internal_resources: FxHashMap::default(),
+            internal_name_lookup: FxHashMap::default(),
             skeleton_buffers: FxHashMap::default(),
         }
     }

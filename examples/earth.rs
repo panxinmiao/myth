@@ -46,10 +46,10 @@ impl AppHandler for Earth {
         if let Some(phong) = mat.as_phong_mut() {
             {
                 let mut bindings = phong.bindings_mut();
-                bindings.map = Some(earth_tex_handle);
-                bindings.specular_map = Some(specular_tex_handle);
-                bindings.emissive_map = Some(emssive_tex_handle);
-                bindings.normal_map = Some(normal_map_handle);
+                bindings.map = Some(earth_tex_handle.into());
+                bindings.specular_map = Some(specular_tex_handle.into());
+                bindings.emissive_map = Some(emssive_tex_handle.into());
+                bindings.normal_map = Some(normal_map_handle.into());
             }
 
             let mut uniforms = phong.uniforms_mut();
@@ -65,7 +65,7 @@ impl AppHandler for Earth {
         // 云层材质
         let mut cloud_material = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
         if let Some(phong) = cloud_material.as_phong_mut() {
-            phong.set_map(Some(clouds_tex_handle));
+            phong.set_map(Some(clouds_tex_handle.into()));
             phong.uniforms_mut().opacity = 0.8;
             
             {

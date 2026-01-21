@@ -4,9 +4,9 @@
 
 use wgpu::ShaderStages;
 use crate::resources::buffer::BufferRef;
+use crate::resources::texture::{SamplerSource, TextureSource};
 use crate::resources::uniforms::WgslStruct;
-use crate::renderer::core::binding::BindingResource;
-use crate::assets::TextureHandle;
+use crate::renderer::core::binding::{BindingResource};
 use crate::resources::buffer::{CpuBuffer, GpuData};
 
 type WgslStructGenerator = fn(&str) -> String;
@@ -110,12 +110,12 @@ impl<'a> ResourceBuilder<'a> {
         );
     }
 
-    pub fn add_texture(
-        &mut self, 
-        name: &str, 
-        texture: TextureHandle, 
-        sample_type: wgpu::TextureSampleType, 
-        view_dimension: wgpu::TextureViewDimension, 
+    fn add_texture_internal(
+        &mut self,
+        name: &str,
+        source: TextureSource,
+        sample_type: wgpu::TextureSampleType,
+        view_dimension: wgpu::TextureViewDimension,
         visibility: ShaderStages
     ) {
         self.layout_entries.push(wgpu::BindGroupLayoutEntry {
@@ -129,16 +129,33 @@ impl<'a> ResourceBuilder<'a> {
             count: None,
         });
 
-        self.resources.push(BindingResource::Texture(Some(texture)));
+        self.resources.push(BindingResource::Texture(Some(source)));
         self.names.push(name.to_string());
         self.struct_generators.push(None);
         self.next_binding_index += 1;
     }
 
+    pub fn add_texture(
+        &mut self, 
+        name: &str, 
+        source: impl Into<TextureSource>,
+        sample_type: wgpu::TextureSampleType, 
+        view_dimension: wgpu::TextureViewDimension, 
+        visibility: ShaderStages
+    ) {
+        self.add_texture_internal(
+            name, 
+            source.into(), 
+            sample_type, 
+            view_dimension, 
+            visibility
+        );
+    }
+
     pub fn add_sampler(
         &mut self, 
         name: &str, 
-        texture: TextureHandle, 
+        source: impl Into<SamplerSource>,
         sampler_type: wgpu::SamplerBindingType, 
         visibility: ShaderStages
     ) {
@@ -149,7 +166,7 @@ impl<'a> ResourceBuilder<'a> {
             count: None,
         });
 
-        self.resources.push(BindingResource::Sampler(Some(texture)));
+        self.resources.push(BindingResource::Sampler(Some(source.into())));
         self.names.push(name.to_string());
         self.struct_generators.push(None);
         self.next_binding_index += 1;

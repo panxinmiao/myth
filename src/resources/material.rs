@@ -5,8 +5,8 @@ use glam::{Vec4};
 use bitflags::bitflags;
 
 use crate::resources::buffer::CpuBuffer;
+use crate::resources::texture::TextureSource;
 use crate::resources::uniforms::{MeshBasicUniforms, MeshStandardUniforms, MeshPhongUniforms};
-use crate::assets::TextureHandle;
 
 // Shader 编译选项
 bitflags! {
@@ -96,20 +96,16 @@ impl<'a> Drop for SettingsGuard<'a> {
 // 具体材质定义 (Specific Materials)
 // ============================================================================
 
-// ============================================================================
-// 材质纯数据结构 (POD - Plain Old Data)
-// ============================================================================
-
 /// 资源绑定数据 - 对应 BindGroup 变化
 #[derive(Default, Clone, Debug)]
 pub struct MaterialBindings {
-    pub map: Option<TextureHandle>,
-    pub normal_map: Option<TextureHandle>,
-    pub roughness_map: Option<TextureHandle>,
-    pub metalness_map: Option<TextureHandle>,
-    pub emissive_map: Option<TextureHandle>,
-    pub ao_map: Option<TextureHandle>,
-    pub specular_map: Option<TextureHandle>,
+    pub map: Option<TextureSource>,
+    pub normal_map: Option<TextureSource>,
+    pub roughness_map: Option<TextureSource>,
+    pub metalness_map: Option<TextureSource>,
+    pub emissive_map: Option<TextureSource>,
+    pub ao_map: Option<TextureSource>,
+    pub specular_map: Option<TextureSource>,
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -216,8 +212,8 @@ impl MeshBasicMaterial {
         self.uniforms.write().opacity = opacity;
     }
     
-    pub fn set_map(&mut self, texture: Option<TextureHandle>) {
-        self.bindings_mut().map = texture;
+    pub fn set_map(&mut self, texture: impl Into<Option<TextureSource>>) {
+        self.bindings_mut().map = texture.into();
     }
 }
 
@@ -297,12 +293,12 @@ impl MeshPhongMaterial {
         self.uniforms.write().color = color;
     }
     
-    pub fn set_map(&mut self, texture: Option<TextureHandle>) {
-        self.bindings_mut().map = texture;
+    pub fn set_map(&mut self, texture: impl Into<Option<TextureSource>>) {
+        self.bindings_mut().map = texture.into();
     }
     
-    pub fn set_normal_map(&mut self, texture: Option<TextureHandle>) {
-        self.bindings_mut().normal_map = texture;
+    pub fn set_normal_map(&mut self, texture: impl Into<Option<TextureSource>>) {
+        self.bindings_mut().normal_map = texture.into();
     }
 }
 
@@ -390,20 +386,20 @@ impl MeshStandardMaterial {
         self.uniforms.write().metalness = metalness;
     }
     
-    pub fn set_map(&mut self, texture: Option<TextureHandle>) {
-        self.bindings_mut().map = texture;
+    pub fn set_map(&mut self, texture: impl Into<Option<TextureSource>>) {
+        self.bindings_mut().map = texture.into();
     }
     
-    pub fn set_normal_map(&mut self, texture: Option<TextureHandle>) {
-        self.bindings_mut().normal_map = texture;
+    pub fn set_normal_map(&mut self, texture: impl Into<Option<TextureSource>>) {
+        self.bindings_mut().normal_map = texture.into();
     }
     
-    pub fn set_roughness_map(&mut self, texture: Option<TextureHandle>) {
-        self.bindings_mut().roughness_map = texture;
+    pub fn set_roughness_map(&mut self, texture: impl Into<Option<TextureSource>>) {
+        self.bindings_mut().roughness_map = texture.into();
     }
     
-    pub fn set_metalness_map(&mut self, texture: Option<TextureHandle>) {
-        self.bindings_mut().metalness_map = texture;
+    pub fn set_metalness_map(&mut self, texture: impl Into<Option<TextureSource>>) {
+        self.bindings_mut().metalness_map = texture.into();
     }
 }
 

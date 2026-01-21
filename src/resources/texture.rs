@@ -4,7 +4,67 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::borrow::Cow;
 use glam::{Vec2, Mat3};
 use wgpu::{TextureFormat, TextureDimension, TextureViewDimension, AddressMode};
-use crate::resources::image::Image;
+use crate::{assets::{TextureHandle, server::SamplerHandle}, resources::image::Image};
+
+
+/// 允许材质使用来自 AssetServer 的资源文件，
+/// 或者来自渲染管线生成的内部附件（Render Targets）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum TextureSource {
+    /// 来自 AssetServer 的资源，需要版本追踪和自动上传
+    Asset(TextureHandle),
+    /// 纯 GPU 资源（如 Render Target），直接使用其 Resource ID (image_id)
+    /// 这个 ID 通常由 RenderGraph 或 TexturePool 分配
+    Attachment(u64),
+}
+
+impl From<TextureHandle> for TextureSource {
+    fn from(handle: TextureHandle) -> Self {
+        Self::Asset(handle)
+    }
+}
+
+
+/// 描述纹理绑定时应使用的采样器策略。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SamplerSource {
+    /// 自动匹配：使用与特定 TextureAsset 关联的采样器设置
+    /// ResourceManager 会查找该 TextureHandle 对应的元数据中的采样器
+    FromTexture(TextureHandle),
+    
+    /// 显式指定：使用某个具体的 Sampler Asset
+    Asset(SamplerHandle),
+    
+    /// 系统默认：使用默认的 Filtering 采样器 (Linear + Repeat)
+    /// 适用于 Render Target / Attachment
+    Default,
+    
+    // 未来可扩展：
+    // Shadow, // 比较采样器
+}
+
+// 语法糖：允许直接从 TextureHandle 推导 SamplerSource (兼容旧习惯)
+impl From<TextureHandle> for SamplerSource {
+    fn from(handle: TextureHandle) -> Self {
+        Self::FromTexture(handle)
+    }
+}
+
+impl From<SamplerHandle> for SamplerSource {
+    fn from(handle: SamplerHandle) -> Self {
+        Self::Asset(handle)
+    }
+}
+
+impl From<TextureSource> for SamplerSource {
+    fn from(texture_source: TextureSource) -> Self {
+        match texture_source {
+            TextureSource::Asset(handle) => Self::FromTexture(handle),
+            TextureSource::Attachment(_) => Self::Default,
+        }
+    }
+}
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureSampler {
@@ -34,6 +94,58 @@ impl Default for TextureSampler {
             compare: None,
             anisotropy_clamp: 1,
         }
+    }
+}
+
+
+impl From<&Sampler> for TextureSampler {
+    fn from(asset: &Sampler) -> Self {
+        asset.descriptor
+    }
+}
+
+
+// ============================================================================
+// Sampler Asset (独立采样器资源)
+// ============================================================================
+
+#[derive(Debug, Clone)]
+pub struct Sampler {
+    pub uuid: Uuid,
+    
+    #[cfg(debug_assertions)]
+    pub name: Option<Cow<'static, str>>,
+    
+    /// 核心采样参数
+    pub descriptor: TextureSampler,
+}
+
+impl Sampler {
+    pub fn new(descriptor: TextureSampler) -> Self {
+        Self {
+            uuid: Uuid::new_v4(),
+            #[cfg(debug_assertions)]
+            name: None,
+            descriptor,
+        }
+    }
+
+    pub fn name(&self) -> Option<&str> {
+        #[cfg(debug_assertions)]
+        {
+            self.name.as_deref()
+        }
+        #[cfg(not(debug_assertions))]
+        {
+            None
+        }
+    }
+}
+
+// 既然 TextureSampler 实现了 Default，Sampler 也可以实现
+impl Default for Sampler {
+    fn default() -> Self {
+        Self::new(TextureSampler::default())
     }
 }
 

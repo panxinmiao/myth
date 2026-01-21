@@ -2,6 +2,7 @@
 //!
 //! 定义 BindGroup 的资源类型和绑定 Trait
 
+use crate::resources::texture::{SamplerSource, TextureSource};
 use crate::{Mesh, Scene};
 use crate::resources::buffer::BufferRef;
 use crate::assets::TextureHandle;
@@ -10,6 +11,7 @@ use crate::resources::geometry::Geometry;
 use crate::resources::uniforms::*;
 use crate::renderer::core::builder::{ResourceBuilder};
 use crate::renderer::graph::RenderState;
+
 
 /// 实际的绑定资源数据 (用于生成 BindGroup)
 #[derive(Debug, Clone)]
@@ -20,8 +22,8 @@ pub enum BindingResource<'a> {
         size: Option<u64>,
         data: Option<&'a [u8]>,
     },
-    Texture(Option<TextureHandle>),
-    Sampler(Option<TextureHandle>),
+    Texture(Option<TextureSource>),
+    Sampler(Option<SamplerSource>),
     _Phantom(std::marker::PhantomData<&'a ()>),
 }
 
@@ -212,7 +214,7 @@ impl Bindings for Scene {
         );
 
         // Binding 3-4: Environment Map (Cube) and Sampler
-        let env_map_handle = self.environment.env_map.unwrap_or(TextureHandle::dummy_env_map());
+        let env_map_handle = self.environment.pmrem_map.unwrap_or(TextureHandle::dummy_env_map().into());
         builder.add_texture(
             "env_map",
             env_map_handle,
