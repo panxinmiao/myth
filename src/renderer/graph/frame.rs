@@ -63,12 +63,6 @@ pub struct RenderFrame {
     ibl_pass: IBLComputePass,
 }
 
-// impl Default for RenderFrame {
-//     fn default() -> Self {
-//         Self::new()
-//     }
-// }
-
 impl RenderFrame {
     pub fn new(device: wgpu::Device) -> Self {
 

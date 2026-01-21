@@ -1,12 +1,19 @@
-use uuid::Uuid;
-use std::borrow::Cow;
-use std::ops::Deref;
-use glam::{Vec3, Vec4};
-use bitflags::bitflags;
+mod basic;
+mod phong;
+mod standard;
+mod physical;
 
-use crate::resources::buffer::CpuBuffer;
-use crate::resources::texture::TextureSource;
-use crate::resources::uniforms::{MeshBasicUniforms, MeshStandardUniforms, MeshPhongUniforms};
+pub use basic::MeshBasicMaterial;
+pub use phong::MeshPhongMaterial;
+pub use standard::MeshStandardMaterial;
+
+use std::{borrow::Cow, ops::Deref};
+
+use crate::resources::{material::physical::MeshPhysicalMaterial, texture::TextureSource};
+use bitflags::bitflags;
+use glam::Vec4;
+use uuid::Uuid;
+
 
 // Shader 编译选项
 bitflags! {
@@ -137,291 +144,6 @@ impl Default for MaterialSettings {
     }
 }
 
-// ============================================================================
-// 具体材质定义 (使用三级版本控制)
-// ============================================================================
-
-// MeshBasicMaterial
-// ----------------------------------------------------------------------------
-#[derive(Debug)]
-pub struct MeshBasicMaterial {
-    pub uniforms: CpuBuffer<MeshBasicUniforms>,
-    bindings: MaterialBindings,
-    settings: MaterialSettings,
-    
-    binding_version: u64,
-    layout_version: u64,
-}
-
-impl MeshBasicMaterial {
-    pub fn new(color: Vec4) -> Self {
-        let uniform_data = MeshBasicUniforms { color, ..Default::default() };
-        
-        Self {
-            uniforms: CpuBuffer::new(
-                uniform_data, 
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("MeshBasicUniforms")
-            ),
-            bindings: MaterialBindings::default(),
-            settings: MaterialSettings::default(),
-            binding_version: 0,
-            layout_version: 0,
-        }
-    }
-    
-    pub fn uniforms(&self) -> &MeshBasicUniforms {
-        self.uniforms.read()
-    }
-    
-    pub fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, MeshBasicUniforms> {
-        self.uniforms.write()
-    }
-    
-    pub fn bindings(&self) -> &MaterialBindings {
-        &self.bindings
-    }
-    
-    pub fn bindings_mut(&mut self) -> BindingsGuard<'_> {
-        BindingsGuard {
-            initial_layout: self.bindings.clone(),
-            bindings: &mut self.bindings,
-            binding_version: &mut self.binding_version,
-            layout_version: &mut self.layout_version,
-        }
-    }
-    
-    pub fn settings(&self) -> &MaterialSettings {
-        &self.settings
-    }
-    
-    pub fn settings_mut(&mut self) -> SettingsGuard<'_> {
-        SettingsGuard {
-            initial_settings: self.settings.clone(),
-            settings: &mut self.settings,
-            layout_version: &mut self.layout_version,
-        }
-    }
-    
-    pub fn binding_version(&self) -> u64 { self.binding_version }
-    pub fn layout_version(&self) -> u64 { self.layout_version }
-    
-    pub fn set_color(&mut self, color: Vec4) {
-        self.uniforms.write().color = color;
-    }
-    
-    pub fn set_opacity(&mut self, opacity: f32) {
-        self.uniforms.write().opacity = opacity;
-    }
-    
-    pub fn set_map(&mut self, texture: impl Into<Option<TextureSource>>) {
-        self.bindings_mut().map = texture.into();
-    }
-}
-
-impl Default for MeshBasicMaterial {
-    fn default() -> Self {
-        Self::new(Vec4::ONE)
-    }
-}
-
-
-// MeshPhongMaterial
-// ----------------------------------------------------------------------------
-#[derive(Debug)]
-pub struct MeshPhongMaterial {
-    pub uniforms: CpuBuffer<MeshPhongUniforms>,
-    bindings: MaterialBindings,
-    settings: MaterialSettings,
-    
-    binding_version: u64,
-    layout_version: u64,
-}
-
-impl MeshPhongMaterial {
-    pub fn new(color: Vec4) -> Self {
-        let uniform_data = MeshPhongUniforms { color, ..Default::default() };
-        
-        Self {
-            uniforms: CpuBuffer::new(
-                uniform_data,
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("MeshPhongUniforms")
-            ),
-            bindings: MaterialBindings::default(),
-            settings: MaterialSettings::default(),
-            binding_version: 0,
-            layout_version: 0,
-        }
-    }
-    
-    pub fn uniforms(&self) -> &MeshPhongUniforms {
-        self.uniforms.read()
-    }
-    
-    pub fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, MeshPhongUniforms> {
-        self.uniforms.write()
-    }
-    
-    pub fn bindings(&self) -> &MaterialBindings {
-        &self.bindings
-    }
-    
-    pub fn bindings_mut(&mut self) -> BindingsGuard<'_> {
-        BindingsGuard {
-            initial_layout: self.bindings.clone(),
-            bindings: &mut self.bindings,
-            binding_version: &mut self.binding_version,
-            layout_version: &mut self.layout_version,
-        }
-    }
-    
-    pub fn settings(&self) -> &MaterialSettings {
-        &self.settings
-    }
-    
-    pub fn settings_mut(&mut self) -> SettingsGuard<'_> {
-        SettingsGuard {
-            initial_settings: self.settings.clone(),
-            settings: &mut self.settings,
-            layout_version: &mut self.layout_version,
-        }
-    }
-    
-    pub fn binding_version(&self) -> u64 { self.binding_version }
-    pub fn layout_version(&self) -> u64 { self.layout_version }
-    
-    pub fn set_color(&mut self, color: Vec4) {
-        self.uniforms.write().color = color;
-    }
-    
-    pub fn set_map(&mut self, texture: impl Into<Option<TextureSource>>) {
-        self.bindings_mut().map = texture.into();
-    }
-    
-    pub fn set_normal_map(&mut self, texture: impl Into<Option<TextureSource>>) {
-        self.bindings_mut().normal_map = texture.into();
-    }
-}
-
-impl Default for MeshPhongMaterial {
-    fn default() -> Self {
-        Self::new(Vec4::ONE)
-    }
-}
-
-
-// MeshStandardMaterial
-// ----------------------------------------------------------------------------
-#[derive(Debug)]
-pub struct MeshStandardMaterial {
-    pub uniforms: CpuBuffer<MeshStandardUniforms>,
-    bindings: MaterialBindings,
-    settings: MaterialSettings,
-    
-    binding_version: u64,
-    layout_version: u64,
-}
-
-impl MeshStandardMaterial {
-    pub fn new(color: Vec4) -> Self {
-        let uniform_data = MeshStandardUniforms { color, ..Default::default() };
-        
-        Self {
-            uniforms: CpuBuffer::new(
-                uniform_data,
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("MeshStandardUniforms")
-            ),
-            bindings: MaterialBindings::default(),
-            settings: MaterialSettings::default(),
-            binding_version: 0,
-            layout_version: 0,
-        }
-    }
-    
-    pub fn uniforms(&self) -> &MeshStandardUniforms {
-        self.uniforms.read()
-    }
-    
-    pub fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, MeshStandardUniforms> {
-        self.uniforms.write()
-    }
-    
-    pub fn bindings(&self) -> &MaterialBindings {
-        &self.bindings
-    }
-    
-    pub fn bindings_mut(&mut self) -> BindingsGuard<'_> {
-        BindingsGuard {
-            initial_layout: self.bindings.clone(),
-            bindings: &mut self.bindings,
-            binding_version: &mut self.binding_version,
-            layout_version: &mut self.layout_version,
-        }
-    }
-    
-    pub fn settings(&self) -> &MaterialSettings {
-        &self.settings
-    }
-    
-    pub fn settings_mut(&mut self) -> SettingsGuard<'_> {
-        SettingsGuard {
-            initial_settings: self.settings.clone(),
-            settings: &mut self.settings,
-            layout_version: &mut self.layout_version,
-        }
-    }
-    
-    pub fn binding_version(&self) -> u64 { self.binding_version }
-    pub fn layout_version(&self) -> u64 { self.layout_version }
-    
-    pub fn set_color(&mut self, color: Vec4) {
-        self.uniforms.write().color = color;
-    }
-    
-    pub fn set_roughness(&mut self, roughness: f32) {
-        self.uniforms.write().roughness = roughness;
-    }
-    
-    pub fn set_metalness(&mut self, metalness: f32) {
-        self.uniforms.write().metalness = metalness;
-    }
-    
-    pub fn set_emissive(&mut self, emissive: Vec3) {
-        self.uniforms.write().emissive = emissive;
-    }
-
-    pub fn set_map(&mut self, texture: impl Into<Option<TextureSource>>) {
-        self.bindings_mut().map = texture.into();
-    }
-    
-    pub fn set_normal_map(&mut self, texture: impl Into<Option<TextureSource>>) {
-        self.bindings_mut().normal_map = texture.into();
-    }
-    
-    pub fn set_roughness_map(&mut self, texture: impl Into<Option<TextureSource>>) {
-        self.bindings_mut().roughness_map = texture.into();
-    }
-    
-    pub fn set_metalness_map(&mut self, texture: impl Into<Option<TextureSource>>) {
-        self.bindings_mut().metalness_map = texture.into();
-    }
-
-    pub fn set_emissive_map(&mut self, texture: impl Into<Option<TextureSource>>) {
-        self.bindings_mut().emissive_map = texture.into();
-    }
-    
-    pub fn set_ao_map(&mut self, texture: impl Into<Option<TextureSource>>) {
-        self.bindings_mut().ao_map = texture.into();
-    }
-}
-
-impl Default for MeshStandardMaterial {
-    fn default() -> Self {
-        Self::new(Vec4::ONE)
-    }
-}
 
 // ============================================================================
 // 核心材质枚举 (Material Data Enum)
@@ -432,6 +154,7 @@ pub enum MaterialData {
     Basic(MeshBasicMaterial),
     Phong(MeshPhongMaterial),
     Standard(MeshStandardMaterial),
+    Physical(MeshPhysicalMaterial),
 }
 
 impl MaterialData {
@@ -439,7 +162,8 @@ impl MaterialData {
         match self {
             Self::Basic(_) => "mesh_basic",
             Self::Phong(_) => "mesh_phong",
-            Self::Standard(_) => "mesh_physical",
+            Self::Standard(_) => "mesh_standard",
+            Self::Physical(_) => "mesh_physical",
         }
     }
 
@@ -464,6 +188,16 @@ impl MaterialData {
                 if m.bindings().emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
                 if m.bindings().ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
             }
+            Self::Physical(m) => {
+                features |= MaterialFeatures::USE_IBL;
+                if m.bindings().map.is_some() { features |= MaterialFeatures::USE_MAP; }
+                if m.bindings().normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
+                if m.bindings().roughness_map.is_some() { features |= MaterialFeatures::USE_ROUGHNESS_MAP; }
+                if m.bindings().metalness_map.is_some() { features |= MaterialFeatures::USE_METALNESS_MAP; }
+                if m.bindings().emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
+                if m.bindings().ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
+                if m.bindings().specular_map.is_some() { features |= MaterialFeatures::USE_SPECULAR_MAP; }
+            }
         }
         features
     }
@@ -473,6 +207,7 @@ impl MaterialData {
             Self::Basic(m) => m.uniforms.handle().version,
             Self::Phong(m) => m.uniforms.handle().version,
             Self::Standard(m) => m.uniforms.handle().version,
+            Self::Physical(m) => m.uniforms.handle().version,
         }
     }
     
@@ -481,6 +216,7 @@ impl MaterialData {
             Self::Basic(m) => m.binding_version(),
             Self::Phong(m) => m.binding_version(),
             Self::Standard(m) => m.binding_version(),
+            Self::Physical(m) => m.binding_version(),
         }
     }
     
@@ -489,6 +225,7 @@ impl MaterialData {
             Self::Basic(m) => m.layout_version(),
             Self::Phong(m) => m.layout_version(),
             Self::Standard(m) => m.layout_version(),
+            Self::Physical(m) => m.layout_version(),
         }
     }
     
@@ -497,6 +234,7 @@ impl MaterialData {
             Self::Basic(m) => m.settings(),
             Self::Phong(m) => m.settings(),
             Self::Standard(m) => m.settings(),
+            Self::Physical(m) => m.settings(),
         }
     }
 
@@ -506,6 +244,7 @@ impl MaterialData {
             Self::Basic(m) => m.bindings(),
             Self::Phong(m) => m.bindings(),
             Self::Standard(m) => m.bindings(),
+            Self::Physical(m) => m.bindings(),
         }
     }
 }
@@ -541,6 +280,10 @@ impl Material {
 
     pub fn new_standard(color: Vec4) -> Self {
         Self::from(MeshStandardMaterial::new(color))
+    }
+
+    pub fn new_physical(color: Vec4) -> Self {
+        Self::from(MeshPhysicalMaterial::new(color))
     }
 
     // 类型转换辅助方法
@@ -582,6 +325,20 @@ impl Material {
     pub fn as_standard_mut(&mut self) -> Option<&mut MeshStandardMaterial> {
         match &mut self.data {
             MaterialData::Standard(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn as_physical(&self) -> Option<&MeshPhysicalMaterial> {
+        match &self.data {
+            MaterialData::Physical(m) => Some(m),
+            _ => None,
+        }
+    }
+
+    pub fn as_physical_mut(&mut self) -> Option<&mut MeshPhysicalMaterial> {
+        match &mut self.data {
+            MaterialData::Physical(m) => Some(m),
             _ => None,
         }
     }
@@ -638,6 +395,12 @@ impl From<MeshPhongMaterial> for Material {
 impl From<MeshStandardMaterial> for Material {
     fn from(data: MeshStandardMaterial) -> Self {
         Material::new(MaterialData::Standard(data))
+    }
+}
+
+impl From<MeshPhysicalMaterial> for Material {
+    fn from(data: MeshPhysicalMaterial) -> Self {
+        Material::new(MaterialData::Physical(data))
     }
 }
 

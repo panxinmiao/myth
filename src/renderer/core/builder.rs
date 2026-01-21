@@ -155,7 +155,7 @@ impl<'a> ResourceBuilder<'a> {
     pub fn add_sampler(
         &mut self, 
         name: &str, 
-        source: impl Into<SamplerSource>,
+        source: Option<impl Into<SamplerSource>>,
         sampler_type: wgpu::SamplerBindingType, 
         visibility: ShaderStages
     ) {
@@ -166,7 +166,7 @@ impl<'a> ResourceBuilder<'a> {
             count: None,
         });
 
-        self.resources.push(BindingResource::Sampler(Some(source.into())));
+        self.resources.push(BindingResource::Sampler(source.map(|s| s.into())));
         self.names.push(name.to_string());
         self.struct_generators.push(None);
         self.next_binding_index += 1;

@@ -10,7 +10,6 @@
 //! - Uniforms: 着色器统一变量
 
 pub mod mesh;
-pub mod material;
 pub mod material_builder;
 pub mod texture;
 pub mod image;
@@ -19,6 +18,7 @@ pub mod primitives;
 pub mod buffer;
 pub mod uniforms;
 pub mod version_tracker;
+pub mod material;
 
 pub use mesh::{Mesh, MeshHandle};
 pub use material::{

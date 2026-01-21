@@ -189,25 +189,26 @@ fn EnvironmentBRDF(normal: vec3f, view_dir: vec3f, specular_color: vec3f, specul
 
 $$ if USE_IBL is defined
 
-fn getIBLRadiance( view_dir: vec3f, normal: vec3f, roughness: f32 ) -> vec3f {
-    // 1. 反射向量
-    let reflect_vec = reflect( -view_dir, normal );
-    
-    // 2. 混合 Mip 层级
-    // 粗糙度为 0 时采样 Level 0，粗糙度为 1 时采样 Max Level
-    let lod = roughness * u_environment.env_map_max_mip_level; 
-    
-    // 3. 采样 PMREM
-    // 注意：PMREM 已经是 Radiance，不需要再积分
-    let radiance = textureSampleLevel( t_pmrem_map, s_pmrem_map, reflect_vec, lod ).rgb;
-    
-    return radiance;
+fn getMipLevel(maxMIPLevelScalar: f32, level: f32) -> f32 {
+    let sigma = (3.141592653589793 * level * level) / (1.0 + level);
+    let desiredMIPLevel = maxMIPLevelScalar + log2(sigma);
+    let mip_level = clamp(desiredMIPLevel, 0.0, maxMIPLevelScalar);
+    return mip_level;
 }
 
-fn getIBLIrradiance( normal: vec3f ) -> vec3f {
-    // Diffuse 可以简单地采样 PMREM 的最高级 Mip (最模糊的那层)
-    // 更好的做法是使用 Spherical Harmonics，但为了从简，这里复用 PMREM
-    return textureSampleLevel( t_pmrem_map, s_pmrem_map, normal, u_environment.env_map_max_mip_level).rgb;
+fn getIBLIrradiance( normal: vec3<f32> ) -> vec3<f32> {
+    let mip_level = getMipLevel(u_environment.env_map_max_mip_level, 1.0);
+    let envMapColor_srgb = textureSampleLevel( t_env_map, s_env_map, vec3<f32>( -normal.x, normal.yz), mip_level );
+    return envMapColor_srgb.rgb * u_environment.env_map_intensity * PI;
+}
+
+fn getIBLRadiance(view_dir: vec3<f32>, normal: vec3<f32>, roughness: f32) -> vec3<f32> {
+    var reflectVec = reflect( -view_dir, normal );
+    let mip_level = getMipLevel(u_environment.env_map_max_mip_level, roughness);
+
+    reflectVec = normalize(mix(reflectVec, normal, roughness*roughness));
+    let envMapColor_srgb = textureSampleLevel( t_env_map, s_env_map, vec3<f32>( -reflectVec.x, reflectVec.yz), mip_level );
+    return envMapColor_srgb.rgb * u_environment.env_map_intensity;
 }
 
 
@@ -249,38 +250,36 @@ $$ endif
     *multi_scatter = Fms * Ems;
 }
 
+fn RE_IndirectSpecular(radiance: vec3<f32>, irradiance: vec3<f32>, clearcoat_radiance: vec3<f32>,
+        geometry: GeometricContext, material: PhysicalMaterial, reflected_light: ptr<function, ReflectedLight>){
 
-fn RE_IndirectSpecular(
-    radiance: vec3<f32>,
-    irradiance: vec3<f32>,
-    clearcoat_radiance: vec3<f32>,
-    geometry: GeometricContext,
-    material: PhysicalMaterial,
-    reflected_light: ptr<function, ReflectedLight>
-) {
-    let NdotV = saturate( dot( geometry.normal, geometry.view_dir ) );
-    let roughness = material.roughness;
+    $$ if USE_CLEARCOAT is defined
+        clearcoat_specular_indirect += clearcoat_radiance * EnvironmentBRDF( geometry.clearcoat_normal, geometry.view_dir, material.clearcoat_f0, material.clearcoat_f90, material.clearcoat_roughness );
+    $$ endif
 
-    let brdf = textureSample( t_brdf_lut, s_brdf_lut, vec2f( NdotV, roughness ) ).rg;
-    let FssEss = material.specular_color * brdf.x + material.specular_f90 * brdf.y;
-    (*reflected_light).indirect_specular += radiance * FssEss;
+    $$ if USE_SHEEN is defined
+        sheen_specular_indirect += irradiance * material.sheen_color * IBLSheenBRDF( geometry.normal, geometry.view_dir, material.sheen_roughness );
+    $$ endif
+
+    let cosine_weighted_irradiance: vec3<f32> = irradiance * RECIPROCAL_PI;
+    var single_scatter: vec3<f32>;
+    var multi_scatter: vec3<f32>;
+    $$ if USE_IRIDESCENCE is defined
+        computeMultiscatteringIridescence( geometry.normal, geometry.view_dir, material.specular_color, material.specular_f90, material.roughness, material.iridescence_f0, material.iridescence, &single_scatter, &multi_scatter );
+    $$ else
+        computeMultiscattering( geometry.normal, geometry.view_dir, material.specular_color, material.specular_f90, material.roughness, &single_scatter, &multi_scatter );
+    $$ endif
+    let total_scattering = single_scatter + multi_scatter;
+    let diffuse = material.diffuse_color * ( 1.0 - max( max( total_scattering.r, total_scattering.g ), total_scattering.b ) );
+    (*reflected_light).indirect_specular += (radiance * single_scatter + multi_scatter * cosine_weighted_irradiance);
+    (*reflected_light).indirect_diffuse += diffuse * cosine_weighted_irradiance;
 }
+
  //end of USE_IBL
 $$ endif
 
-
-fn RE_IndirectDiffuse(
-    irradiance: vec3<f32>,
-    geometry: GeometricContext,
-    material: PhysicalMaterial,
-    reflected_light: ptr<function, ReflectedLight>
-) {
-
-    let NdotV = saturate( dot( geometry.normal, geometry.view_dir ) );
-    let F = F_Schlick( material.specular_color, material.specular_f90, NdotV );
-    let kD = 1.0 - F;
-    let diffuse = irradiance * BRDF_Lambert( material.diffuse_color ) * kD;
-    (*reflected_light).indirect_diffuse += diffuse;
+fn RE_IndirectDiffuse(irradiance: vec3<f32>, geometry: GeometricContext, material: PhysicalMaterial, reflected_light: ptr<function, ReflectedLight>) {
+    (*reflected_light).indirect_diffuse += irradiance * BRDF_Lambert( material.diffuse_color );
 }
 
 fn RE_Direct(

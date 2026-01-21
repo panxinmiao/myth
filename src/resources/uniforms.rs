@@ -336,6 +336,35 @@ define_gpu_data_struct!(
     }
 );
 
+
+define_gpu_data_struct!(
+    struct MeshPhysicalUniforms {
+        pub color: Vec4 = Vec4::ONE,           // 16
+
+        pub emissive: Vec3 = Vec3::ZERO,        // 12
+        pub emissive_intensity: f32 = 1.0,    // 4
+
+        pub roughness: f32 = 1.0,            // 4  
+        pub metalness: f32 = 0.0,           // 4
+        pub opacity: f32 = 1.0,            // 4
+        pub occlusion_strength: f32 = 1.0,     // 4 
+
+        pub normal_scale: Vec2 = Vec2::ONE,    // 8
+        pub ao_map_intensity: f32 = 1.0,     // 4
+        pub(crate) __padding: f32,              // 4 (8+4+4=16)
+
+        // 使用优化后的 Mat3A (48 bytes)
+        pub map_transform: Mat3A = Mat3A::IDENTITY,         
+        pub normal_map_transform: Mat3A = Mat3A::IDENTITY,   
+        pub roughness_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub metalness_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub emissive_map_transform: Mat3A = Mat3A::IDENTITY, 
+        pub occlusion_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub ao_map_transform: Mat3A = Mat3A::IDENTITY,
+    }
+);
+
+
 define_gpu_data_struct!(
     struct GpuLightStorage {
         // 16 bytes chunk 0

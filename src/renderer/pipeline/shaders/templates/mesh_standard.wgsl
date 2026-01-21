@@ -5,7 +5,7 @@
 {$ include 'morph_pars' $}
 {$ include 'light_common_pars' $}
 {$ include 'light_punctual_pars' $}
-{$ include 'bsdf/physical' $}
+{$ include 'bsdf/standard' $}
 
 
 @vertex
@@ -163,12 +163,6 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
         irradiance += light_map_color * u_material.light_map_intensity;
     $$ endif
 
-    $$ if USE_IBL is defined
-        let env_intensity = u_environment.env_map_intensity;
-        var ibl_irradiance = getIBLIrradiance( geometry.normal );
-        irradiance += ibl_irradiance * env_intensity;
-    $$ endif
-
     // Process irradiance
     RE_IndirectDiffuse( irradiance, geometry, material, &reflected_light );
 
@@ -184,6 +178,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
             clearcoat_ibl_radiance += getIBLRadiance( view, clearcoat_normal, material.clearcoat_roughness );
         $$ endif
 
+        let ibl_irradiance = getIBLIrradiance( geometry.normal );
         RE_IndirectSpecular(ibl_radiance, ibl_irradiance, clearcoat_ibl_radiance, geometry, material, &reflected_light);
     $$ endif
 

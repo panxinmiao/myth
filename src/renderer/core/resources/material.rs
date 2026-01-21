@@ -114,6 +114,7 @@ impl ResourceManager {
             MaterialData::Basic(m) => self.ensure_buffer(&m.uniforms),
             MaterialData::Phong(m) => self.ensure_buffer(&m.uniforms),
             MaterialData::Standard(m) => self.ensure_buffer(&m.uniforms),
+            MaterialData::Physical(m) => self.ensure_buffer(&m.uniforms),
         };
 
         // 分别收集 Image ID 和 Sampler ID

@@ -22,8 +22,8 @@ impl AppHandler for PbrBox {
 
         let tex_handle = ctx.assets.add_texture(texture);
 
-        if let Some(standard) = mat.as_standard_mut() {
-            standard.set_map(Some(tex_handle.into()));
+        if let Some(physical) = mat.as_physical_mut() {
+            physical.set_map(Some(tex_handle.into()));
         }
         
         let geo_handle = ctx.assets.add_geometry(geometry);
