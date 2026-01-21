@@ -131,14 +131,12 @@ impl RenderNode for IBLComputePass {
             return;
         }
 
-
         // 3. 获取源纹理的 View
         // 这一步需要 RenderContext 不可变借用，所以我们在上面 match 之后做
         let source_view = match &current_source {
             TextureSource::Asset(handle) => {
                 // 显式准备资源
                 ctx.resource_manager.prepare_texture(ctx.assets, *handle);
-                println!("Using asset texture for IBL source: {:?}", handle);
 
                 // 获取 Asset 以拿到 CPU ID
                 // 显式处理 Option::None
@@ -269,6 +267,5 @@ impl RenderNode for IBLComputePass {
         *self.last_processed_source.borrow_mut() = Some((current_source, current_version));
 
         log::info!("IBL PMREM generated and registered. Source updated.");
-        println!("IBL PMREM generated and registered. Source updated.");
     }
 }

@@ -2,3 +2,4 @@
 .vscode/
 /docs
 *.glb
+/debug

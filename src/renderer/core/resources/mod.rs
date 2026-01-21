@@ -452,6 +452,12 @@ impl ResourceManager {
             id: generate_gpu_resource_id(),
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
                 label: Some("Dummy Sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Linear,
                 ..Default::default()
             }),
         };

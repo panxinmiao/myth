@@ -316,7 +316,6 @@ impl ResourceManager {
 
         let resources = &builder.resources;
         let layout_entries = &builder.layout_entries;
-        println!("============Creating BindGroup with {} entries. {} layout entries.", resources.len(), layout_entries.len());
 
         for (i, resource_data) in resources.iter().enumerate() {
             let binding_resource = match resource_data {
