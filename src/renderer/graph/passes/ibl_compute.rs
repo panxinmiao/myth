@@ -102,10 +102,20 @@ impl RenderNode for IBLComputePass {
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
         if !self.dirty.get() { return; }
 
-        // 获取环境图相关资源 (假设 EnvMap 已经加载在 ResourceManager)
-        // 这里需要你根据实际的 ResourceManager API 获取 GpuTexture
-        let env_map = ctx.scene.environment.bindings().env_map.expect("EnvMap not set"); 
-        let gpu_env_map = ctx.resource_manager.get_texture(env_map).expect("EnvMap not uploaded");
+        // 检查是否需要生成：
+        // 1. 有 source_env_map
+        // 2. 没有 pmrem_map (说明是刚加载或被重置了)
+        let env = &mut ctx.scene.environment;
+        if env.source_env_map.is_none() { return; } 
+        if env.pmrem_map.is_some() { return; }
+
+        let source_handle = env.source_env_map.unwrap();
+
+        // 获取 GPU 资源
+        let gpu_source = match ctx.resource_manager.get_texture(source_handle) {
+            Some(t) => t,
+            None => return, // 还没上传，下一帧再说
+        };
 
         // 关键：我们需要目标纹理 (PMREM Map)
         // 建议在 Scene.environment 中增加一个 pmrem_texture handle

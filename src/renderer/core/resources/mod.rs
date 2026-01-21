@@ -220,36 +220,6 @@ pub struct GpuImage {
     pub last_used_frame: u64,
 }
 
-/// 采样器缓存键
-/// 
-/// 用于基于参数去重的 Sampler 缓存
-// #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-// pub struct SamplerKey {
-//     pub address_mode_u: wgpu::AddressMode,
-//     pub address_mode_v: wgpu::AddressMode,
-//     pub address_mode_w: wgpu::AddressMode,
-//     pub mag_filter: wgpu::FilterMode,
-//     pub min_filter: wgpu::FilterMode,
-//     pub mipmap_filter: wgpu::MipmapFilterMode,
-//     pub compare: Option<wgpu::CompareFunction>,
-//     pub anisotropy_clamp: u16,
-// }
-
-// impl From<&TextureSampler> for SamplerKey {
-//     fn from(sampler: &TextureSampler) -> Self {
-//         Self {
-//             address_mode_u: sampler.address_mode_u,
-//             address_mode_v: sampler.address_mode_v,
-//             address_mode_w: sampler.address_mode_w,
-//             mag_filter: sampler.mag_filter,
-//             min_filter: sampler.min_filter,
-//             mipmap_filter: sampler.mipmap_filter,
-//             compare: sampler.compare,
-//             anisotropy_clamp: sampler.anisotropy_clamp,
-//         }
-//     }
-// }
-
 /// GPU 端采样器资源
 /// 
 /// 与 GpuImage 分离，实现全局缓存和复用

@@ -38,9 +38,7 @@ pub enum SamplerSource {
     /// 系统默认：使用默认的 Filtering 采样器 (Linear + Repeat)
     /// 适用于 Render Target / Attachment
     Default,
-    
-    // 未来可扩展：
-    // Shadow, // 比较采样器
+
 }
 
 // 语法糖：允许直接从 TextureHandle 推导 SamplerSource (兼容旧习惯)

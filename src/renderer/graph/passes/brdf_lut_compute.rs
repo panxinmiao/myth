@@ -1,5 +1,5 @@
 use std::borrow::Cow;
-use crate::renderer::graph::{RenderNode, RenderContext};
+use crate::{renderer::graph::{RenderContext, RenderNode}, resources::texture::TextureSource};
 
 pub struct BRDFLutComputePass {
     pipeline: wgpu::ComputePipeline,
@@ -105,8 +105,8 @@ impl RenderNode for BRDFLutComputePass {
         // 4. 将生成的纹理注册到 Asset 系统并保存 Handle 到 Environment
         // 这里需要你根据实际的 ResourceManager/AssetServer API 适配
         // 假设: ctx.resource_manager.register_internal_texture(texture) -> Handle
-        let handle = ctx.resource_manager.register_internal_texture(texture);
-        ctx.scene.environment.brdf_lut = Some(handle);
+        let handle = ctx.resource_manager.register_internal_texture(view);
+        ctx.scene.environment.brdf_lut = Some(TextureSource::Attachment(handle));
 
         self.initialized.set(true);
     }

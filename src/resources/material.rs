@@ -100,6 +100,8 @@ impl<'a> Drop for SettingsGuard<'a> {
 #[derive(Default, Clone, Debug)]
 pub struct MaterialBindings {
     pub map: Option<TextureSource>,
+    // Todo: 可独立设置的采样器Asset
+    // pub map_sampler: Option<SamplerSource>,
     pub normal_map: Option<TextureSource>,
     pub roughness_map: Option<TextureSource>,
     pub metalness_map: Option<TextureSource>,

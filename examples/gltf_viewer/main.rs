@@ -211,12 +211,10 @@ impl GltfViewer {
                     if let Some(bbox) = ctx.scene.get_bbox_of_node(*root_node, ctx.assets) {
                         let center = bbox.center();
                         let radius = bbox.size().length() * 0.5;
-                        if let Some((_transform, _camera)) = ctx.scene.query_main_camera_bundle() {
-                            // let auto_near = (radius / 100.0).max(0.1); 
-                            // let auto_far = (radius * 20.0).max(100.0);
-                            // camera.near = auto_near;
-                            // camera.far = auto_far;
-                            // camera.update_projection_matrix();
+                        if let Some((_transform, camera)) = ctx.scene.query_main_camera_bundle() {
+
+                            camera.near = (radius / 100.0).max(0.01);
+                            camera.update_projection_matrix();
                             self.controls.set_target(center);
                             self.controls.set_position(center + Vec3::new(0.0, radius, radius * 2.5));
                         }

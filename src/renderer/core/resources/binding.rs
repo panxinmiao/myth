@@ -338,7 +338,7 @@ impl ResourceManager {
                     // 从 TextureBinding 获取 sampler_id，然后从 sampler_id_lookup 快速查找
                     let sampler = if let Some(source) = source_opt {
                         match source {
-                            // 情况 1: 跟随 Texture Asset (旧逻辑)
+                            // 情况 1: 跟随 Texture Asset (默认)
                             SamplerSource::FromTexture(handle) => {
                                 if let Some(binding) = self.texture_bindings.get(*handle) {
                                     self.sampler_id_lookup
@@ -349,26 +349,23 @@ impl ResourceManager {
                                 }
                             },
                             // 情况 2: 显式 Sampler Asset
-                            SamplerSource::Asset(_handle) => {
-                                // 这里假设 Sampler Asset 的 ID 查找逻辑 (你可能需要实现 sampler_bindings 查找表)
-                                // 或者简单起见，如果 sampler 资源管理没那么复杂，暂且回退到 dummy
-                                // 实际项目中应当是: self.get_sampler_by_handle(handle)
-                                &self.dummy_sampler.sampler
+                            SamplerSource::Asset(handle) => {
+                                // 这里需要从 sampler_bindings 查找 GPU ID
+                                if let Some(id) = self.sampler_bindings.get(*handle) {
+                                    self.sampler_id_lookup
+                                        .get(id)
+                                        .unwrap_or(&self.dummy_sampler.sampler)
+                                } else {
+                                    // 如果尚未 prepare，理论上这不应该发生（前提是 prepare 阶段做好了），
+                                    // 但为了安全回退到 dummy
+                                    &self.dummy_sampler.sampler
+                                }
                             },
                             // 情况 3: 默认采样器 (用于 Render Target)
                             SamplerSource::Default => {
                                 &self.dummy_sampler.sampler
                             }
                         }
-
-                        
-                        // if let Some(binding) = self.texture_bindings.get(*handle) {
-                        //     self.sampler_id_lookup
-                        //         .get(&binding.sampler_id)
-                        //         .unwrap_or(&self.dummy_sampler.sampler)
-                        // } else {
-                        //     &self.dummy_sampler.sampler
-                        // }
                     } else { &self.dummy_sampler.sampler };
                     wgpu::BindingResource::Sampler(sampler)
                 },

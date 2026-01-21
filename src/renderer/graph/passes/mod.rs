@@ -3,7 +3,7 @@
 //! 包含各种具体的渲染 Pass 实现。
 
 mod forward;
-// mod brdf_lut_compute;
+mod brdf_lut_compute;
 // mod ibl_compute;
 
 pub use forward::ForwardRenderPass;

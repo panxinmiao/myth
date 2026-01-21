@@ -225,7 +225,7 @@ impl ResourceManager {
     /// 
     /// 逻辑：
     /// 1. 从 AssetServer 获取 Sampler 数据
-    /// 2. 构建 SamplerKey
+    /// 2. 构建 Descriptor Key
     /// 3. 查 sampler_cache (去重)
     ///    - 命中：直接复用 ID
     ///    - 未命中：创建新 wgpu::Sampler，存入 cache 和 lookup
