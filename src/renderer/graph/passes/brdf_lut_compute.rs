@@ -1,10 +1,10 @@
-use std::borrow::Cow;
+use std::{borrow::Cow, cell::RefCell};
 use crate::{renderer::graph::{RenderContext, RenderNode}, resources::texture::TextureSource};
 
 pub struct BRDFLutComputePass {
     pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
-    initialized: std::cell::Cell<bool>,
+    brdf_lut_texture_handle: RefCell<Option<u64>>,
 }
 
 impl BRDFLutComputePass {
@@ -48,7 +48,7 @@ impl BRDFLutComputePass {
         Self {
             pipeline,
             bind_group_layout,
-            initialized: std::cell::Cell::new(false),
+            brdf_lut_texture_handle: RefCell::new(None),
         }
     }
 }
@@ -57,8 +57,14 @@ impl RenderNode for BRDFLutComputePass {
     fn name(&self) -> &str { "BRDF LUT Gen" }
 
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-        // 如果已经生成过，直接返回
-        if self.initialized.get() && ctx.scene.environment.brdf_lut.is_some() {
+        // 检查是否已经生成过 BRDF LUT
+        if ctx.scene.environment.brdf_lut.is_some() {
+            return;
+        }
+        if self.brdf_lut_texture_handle.borrow().is_some() {
+            ctx.scene.environment.brdf_lut = Some(TextureSource::Attachment(
+                self.brdf_lut_texture_handle.borrow().unwrap()
+            ));
             return;
         }
 
@@ -103,11 +109,11 @@ impl RenderNode for BRDFLutComputePass {
         }
 
         // 4. 将生成的纹理注册到 Asset 系统并保存 Handle 到 Environment
-        // 这里需要你根据实际的 ResourceManager/AssetServer API 适配
-        // 假设: ctx.resource_manager.register_internal_texture(texture) -> Handle
-        let handle = ctx.resource_manager.register_internal_texture(view);
+        let handle = ctx.resource_manager.register_internal_texture_by_name("BRDF_LUT", view);
         ctx.scene.environment.brdf_lut = Some(TextureSource::Attachment(handle));
 
-        self.initialized.set(true);
+        self.brdf_lut_texture_handle.replace(Some(handle));
+
+        println!("BRDF LUT generated and registered with handle {}", handle);
     }
 }

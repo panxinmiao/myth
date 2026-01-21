@@ -401,6 +401,7 @@ impl ResourceManager {
         let camera_result = self.ensure_buffer(render_state.uniforms());
         let env_result = self.ensure_buffer(&scene.uniforms_buffer);
         let light_result = self.ensure_buffer(&scene.light_storage_buffer);
+        let scene_uniform_result = self.ensure_buffer(&scene.uniforms_buffer);
 
         // 环境贴图 ID
         let env_map_id = scene.environment.pmrem_map.map(|h| {
@@ -415,10 +416,11 @@ impl ResourceManager {
         }).unwrap_or(0);
         
         // === Collect 阶段: 收集所有资源 ID ===
-        let mut current_ids = super::ResourceIdSet::with_capacity(4);
+        let mut current_ids = super::ResourceIdSet::with_capacity(5);
         current_ids.push(camera_result.resource_id);
         current_ids.push(env_result.resource_id);
         current_ids.push(light_result.resource_id);
+        current_ids.push(scene_uniform_result.resource_id);
         current_ids.push(env_map_id);
         
         // 使用 (render_state.id, light_buffer_id) 组合作为缓存键，支持多场景并发渲染

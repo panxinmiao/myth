@@ -189,30 +189,52 @@ fn EnvironmentBRDF(normal: vec3f, view_dir: vec3f, specular_color: vec3f, specul
 
 $$ if USE_IBL is defined
 
-fn getMipLevel(maxMIPLevelScalar: f32, level: f32) -> f32 {
-    let sigma = (3.141592653589793 * level * level) / (1.0 + level);
-    let desiredMIPLevel = maxMIPLevelScalar + log2(sigma);
-    let mip_level = clamp(desiredMIPLevel, 0.0, maxMIPLevelScalar);
-    return mip_level;
+// fn getMipLevel(maxMIPLevelScalar: f32, level: f32) -> f32 {
+//     let sigma = (3.141592653589793 * level * level) / (1.0 + level);
+//     let desiredMIPLevel = maxMIPLevelScalar + log2(sigma);
+//     let mip_level = clamp(desiredMIPLevel, 0.0, maxMIPLevelScalar);
+//     return mip_level;
+// }
+
+// fn getIBLIrradiance( normal: vec3<f32> ) -> vec3<f32> {
+//     let mip_level = getMipLevel(u_environment.env_map_max_mip_level, 1.0);
+//     let envMapColor_srgb = textureSampleLevel( t_env_map, s_env_map, vec3<f32>( -normal.x, normal.yz), mip_level );
+//     return envMapColor_srgb.rgb * u_environment.env_map_intensity * PI;
+// }
+
+// fn getIBLRadiance(view_dir: vec3<f32>, normal: vec3<f32>, roughness: f32) -> vec3<f32> {
+//     // $$ if env_mapping_mode == "CUBE-REFLECTION"
+//     var reflectVec = reflect( -view_dir, normal );
+//     let mip_level = getMipLevel(u_environment.env_map_max_mip_level, roughness);
+//     // $$ elif env_mapping_mode == "CUBE-REFRACTION"
+//     //     var reflectVec = refract( -view_dir, normal, u_material.refraction_ratio );
+//     //     let mip_level = 1.0;
+//     // $$ endif
+//     reflectVec = normalize(mix(reflectVec, normal, roughness*roughness));
+//     let envMapColor_srgb = textureSampleLevel( t_env_map, s_env_map, vec3<f32>( -reflectVec.x, reflectVec.yz), mip_level );
+//     return envMapColor_srgb.rgb * u_environment.env_map_intensity;
+// }
+
+
+fn getIBLRadiance( view_dir: vec3f, normal: vec3f, roughness: f32 ) -> vec3f {
+    // 1. 反射向量
+    let reflect_vec = reflect( -view_dir, normal );
+    
+    // 2. 混合 Mip 层级
+    // 粗糙度为 0 时采样 Level 0，粗糙度为 1 时采样 Max Level
+    let lod = roughness * u_environment.env_map_max_mip_level; 
+    
+    // 3. 采样 PMREM
+    // 注意：PMREM 已经是 Radiance，不需要再积分
+    let radiance = textureSampleLevel( t_env_map, s_env_map, reflect_vec, lod ).rgb;
+    
+    return radiance;
 }
 
-fn getIBLIrradiance( normal: vec3<f32> ) -> vec3<f32> {
-    let mip_level = getMipLevel(u_environment.env_map_max_mip_level, 1.0);
-    let envMapColor_srgb = textureSampleLevel( t_env_map, s_env_map, vec3<f32>( -normal.x, normal.yz), mip_level );
-    return envMapColor_srgb.rgb * u_environment.env_map_intensity * PI;
-}
-
-fn getIBLRadiance(view_dir: vec3<f32>, normal: vec3<f32>, roughness: f32) -> vec3<f32> {
-    // $$ if env_mapping_mode == "CUBE-REFLECTION"
-    var reflectVec = reflect( -view_dir, normal );
-    let mip_level = getMipLevel(u_environment.env_map_max_mip_level, roughness);
-    // $$ elif env_mapping_mode == "CUBE-REFRACTION"
-    //     var reflectVec = refract( -view_dir, normal, u_material.refraction_ratio );
-    //     let mip_level = 1.0;
-    // $$ endif
-    reflectVec = normalize(mix(reflectVec, normal, roughness*roughness));
-    let envMapColor_srgb = textureSampleLevel( t_env_map, s_env_map, vec3<f32>( -reflectVec.x, reflectVec.yz), mip_level );
-    return envMapColor_srgb.rgb * u_environment.env_map_intensity;
+fn getIBLIrradiance( normal: vec3f ) -> vec3f {
+    // Diffuse 可以简单地采样 PMREM 的最高级 Mip (最模糊的那层)
+    // 更好的做法是使用 Spherical Harmonics，但为了从简，这里复用 PMREM
+    return textureSampleLevel( t_env_map, s_env_map, normal, u_environment.env_map_max_mip_level).rgb;
 }
 
 

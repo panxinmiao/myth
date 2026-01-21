@@ -14,7 +14,7 @@ use crate::assets::AssetServer;
 use crate::renderer::core::{WgpuContext, ResourceManager};
 use crate::renderer::graph::{RenderState, RenderContext, RenderGraph, RenderNode};
 use crate::renderer::graph::extracted::ExtractedScene;
-use crate::renderer::graph::passes::ForwardRenderPass;
+use crate::renderer::graph::passes::{ForwardRenderPass, BRDFLutComputePass, IBLComputePass};
 use crate::renderer::pipeline::PipelineCache;
 
 /// 渲染排序键 (Pipeline ID + Material ID + Depth)
@@ -59,20 +59,25 @@ pub struct RenderFrame {
     render_state: RenderState,
     extracted_scene: ExtractedScene,
     forward_pass: ForwardRenderPass,
+    brdf_pass: BRDFLutComputePass,
+    ibl_pass: IBLComputePass,
 }
 
-impl Default for RenderFrame {
-    fn default() -> Self {
-        Self::new()
-    }
-}
+// impl Default for RenderFrame {
+//     fn default() -> Self {
+//         Self::new()
+//     }
+// }
 
 impl RenderFrame {
-    pub fn new() -> Self {
+    pub fn new(device: wgpu::Device) -> Self {
+
         Self {
             render_state: RenderState::new(),
             extracted_scene: ExtractedScene::with_capacity(1024, 16),
             forward_pass: ForwardRenderPass::new(wgpu::Color::BLACK),
+            brdf_pass: BRDFLutComputePass::new(&device),
+            ibl_pass: IBLComputePass::new(&device),
         }
     }
 
@@ -161,6 +166,8 @@ impl RenderFrame {
             // 1. 内置 Pass
             // 例如: graph.add_node(&self.shadow_pass);
             //       graph.add_node(&self.ibl_pass);
+            graph.add_node(&self.brdf_pass);
+            graph.add_node(&self.ibl_pass);
             graph.add_node(&self.forward_pass);
             
             // 2. 外部注入的 Pass（如 UI、后处理等）

@@ -38,21 +38,21 @@ impl Environment {
     
     /// 设置环境贴图
     pub fn set_env_map(&mut self, texture_bundle: Option<(TextureSource, &Texture)>) {
-        // let new_handle = texture_bundle.map(|(h, _)| h);
+        let new_handle = texture_bundle.map(|(h, _)| h);
 
-        // if self.source_env_map != new_handle {
-        //     self.source_env_map = new_handle;
-        //     // 清空 PMREM 以触发重新生成
-        //     self.pmrem_map = None; 
-        //     self.env_map_max_mip_level = 0.0;
-        // }
+        if self.source_env_map != new_handle {
+            self.source_env_map = new_handle;
+            // 清空 PMREM 以触发重新生成
+            self.pmrem_map = None; 
+            self.env_map_max_mip_level = 0.0;
+        }
 
-        self.source_env_map = texture_bundle.map(|(h, _)| h);
-        self.pmrem_map = self.source_env_map.clone();
+        // self.source_env_map = texture_bundle.map(|(h, _)| h);
+        // self.pmrem_map = self.source_env_map.clone();
 
-        self.env_map_max_mip_level = texture_bundle
-            .map(|(_, texture)| (texture.mip_level_count() - 1) as f32)
-            .unwrap_or(0.0);
+        // self.env_map_max_mip_level = texture_bundle
+        //     .map(|(_, texture)| (texture.mip_level_count() - 1) as f32)
+        //     .unwrap_or(0.0);
     }
     
     /// 设置 BRDF LUT

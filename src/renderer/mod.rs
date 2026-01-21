@@ -66,7 +66,7 @@ impl Renderer {
         );
 
         // 3. 创建渲染帧管理器
-        let render_frame = RenderFrame::new();
+        let render_frame = RenderFrame::new(wgpu_ctx.device.clone());
 
         // 4. 组装状态
         self.context = Some(RendererState {
