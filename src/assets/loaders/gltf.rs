@@ -3,6 +3,7 @@ use std::path::Path;
 use std::fs;
 use std::sync::atomic::Ordering;
 use glam::{Affine3A, Mat4, Quat, Vec3, Vec4};
+use crate::resources::TextureSampler;
 use crate::resources::geometry::{Geometry, Attribute};
 use crate::resources::material::{Material, MeshStandardMaterial};
 use crate::resources::texture::Texture;
@@ -218,6 +219,40 @@ impl<'a> GltfLoader<'a> {
                 }
             };
 
+            let sampler = texture.sampler();
+
+            let engine_sampler = TextureSampler{
+                mag_filter: sampler.mag_filter().map(|f| match f {
+                    gltf::texture::MagFilter::Nearest => wgpu::FilterMode::Nearest,
+                    gltf::texture::MagFilter::Linear => wgpu::FilterMode::Linear,
+                }).unwrap_or(wgpu::FilterMode::Linear),
+                min_filter: sampler.min_filter().map(|f| match f {
+                    gltf::texture::MinFilter::Nearest => wgpu::FilterMode::Nearest,
+                    gltf::texture::MinFilter::Linear => wgpu::FilterMode::Linear,
+                    gltf::texture::MinFilter::NearestMipmapNearest => wgpu::FilterMode::Nearest,
+                    gltf::texture::MinFilter::LinearMipmapNearest => wgpu::FilterMode::Linear,
+                    gltf::texture::MinFilter::NearestMipmapLinear => wgpu::FilterMode::Nearest,
+                    gltf::texture::MinFilter::LinearMipmapLinear => wgpu::FilterMode::Linear,
+                }).unwrap_or(wgpu::FilterMode::Linear),
+                address_mode_u: match sampler.wrap_s() {
+                    gltf::texture::WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+                    gltf::texture::WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+                    gltf::texture::WrappingMode::Repeat => wgpu::AddressMode::Repeat,
+                },
+                address_mode_v: match sampler.wrap_t() {
+                    gltf::texture::WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+                    gltf::texture::WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+                    gltf::texture::WrappingMode::Repeat => wgpu::AddressMode::Repeat,
+                },
+                address_mode_w: wgpu::AddressMode::ClampToEdge, // glTF 不支持 3D 纹理，这里默认
+                mipmap_filter: match sampler.min_filter() {
+                    Some(gltf::texture::MinFilter::NearestMipmapNearest) | Some(gltf::texture::MinFilter::LinearMipmapNearest) => wgpu::MipmapFilterMode::Nearest,
+                    Some(gltf::texture::MinFilter::NearestMipmapLinear) | Some(gltf::texture::MinFilter::LinearMipmapLinear) => wgpu::MipmapFilterMode::Linear,
+                    _ => wgpu::MipmapFilterMode::Linear,
+                },
+                ..Default::default()
+            };
+
             let width = img_data.width();
             let height = img_data.height();
             let tex_name = texture.name().unwrap_or("gltf_texture");
@@ -229,6 +264,9 @@ impl<'a> GltfLoader<'a> {
                 Some(img_data.into_vec()),
                 TextureFormat::Rgba8Unorm
             );
+
+            engine_tex.sampler = engine_sampler;
+            engine_tex.generate_mipmaps = true;
 
             if let Some(extensions_map) = texture.extensions() {
                 let mut ctx = LoadContext {
@@ -399,8 +437,44 @@ impl<'a> GltfLoader<'a> {
                 .map(|node| self.node_mapping[node.index()]) 
                 .collect();
 
+            // =========================================================
+            // 计算真正的 root_bone_index
+            // =========================================================
+            let joints: Vec<_> = skin.joints().collect();
+            let joint_indices: std::collections::HashSet<usize> = joints.iter().map(|n| n.index()).collect();
+            
+            // 步骤 1: 找出所有"有父节点"的骨骼 (即被其他骨骼作为子节点引用的)
+            let mut child_joint_indices = std::collections::HashSet::new();
+            for node in &joints {
+                for child in node.children() {
+                    // 如果子节点也在 joints 列表中，将其标记为"有父节点"
+                    if joint_indices.contains(&child.index()) {
+                        child_joint_indices.insert(child.index());
+                    }
+                }
+            }
+
+            let root_bone_index = 'block: {
+                // A. 优先尝试 glTF 显式定义的 skeleton root
+                if let Some(skeleton_root) = skin.skeleton() {
+                    if let Some(index) = joints.iter().position(|n| n.index() == skeleton_root.index()) {
+                        break 'block index;
+                    }
+                }
+
+                // B. 自动查找：在 joints 列表中，没在 child_joint_indices 里的就是根
+                // (因为它在 joints 范围内没有父节点)
+                for (i, node) in joints.iter().enumerate() {
+                    if !child_joint_indices.contains(&node.index()) {
+                        break 'block i; 
+                    }
+                }
+                
+                // C. 实在找不到（比如环形结构异常），回退到 0
+                0 
+            };
             // 3. 创建资源
-            let skeleton = Skeleton::new(name, bones, ibms);
+            let skeleton = Skeleton::new(name, bones, ibms, root_bone_index);
     
             let key = self.scene.skeleton_pool.insert(skeleton); 
             skeleton_keys.push(key);

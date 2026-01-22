@@ -63,7 +63,7 @@ pub struct Scene {
     /// 形变权重
     pub morph_weights: SparseSecondaryMap<NodeHandle, Vec<f32>>,
 
-    morph_tartget_nodes: Vec<NodeHandle>,
+    morph_target_nodes: Vec<NodeHandle>,
 
     // === 资源池 (只保留真正需要共享的资源) ===
     /// Skeleton 是真正的共享资源，多个角色可能引用同一个骨架定义
@@ -103,7 +103,7 @@ impl Scene {
             lights: SparseSecondaryMap::new(),
             skins: SparseSecondaryMap::new(),
             morph_weights: SparseSecondaryMap::new(),
-            morph_tartget_nodes: Vec::with_capacity(16),
+            morph_target_nodes: Vec::with_capacity(16),
 
             // 资源池（仅保留真正共享的资源）
             skeleton_pool: SlotMap::with_key(),
@@ -602,15 +602,15 @@ impl Scene {
     }
 
     pub fn sync_morph_weights(&mut self) {
-        self.morph_tartget_nodes.clear();
+        self.morph_target_nodes.clear();
         
         for (handle, _) in &self.morph_weights {
             if self.meshes.contains_key(handle) {
-                self.morph_tartget_nodes.push(handle);
+                self.morph_target_nodes.push(handle);
             }
         }
 
-        for handle in &self.morph_tartget_nodes {            
+        for handle in &self.morph_target_nodes {            
             if let Some(weights) = self.morph_weights.get(*handle) {
                 if weights.is_empty() { continue; }
                 
@@ -648,7 +648,7 @@ impl Scene {
         // 有骨骼绑定时使用 Skeleton 的包围盒
         if let Some(skeleton_binding) = self.skins.get(node_handle) {
             if let Some(skeleton) = self.skeleton_pool.get(skeleton_binding.skeleton) {
-                return Some(skeleton.world_bounds(&self.nodes)?);
+                return skeleton.compute_tight_world_bounds(&self.nodes);
             }
         }
 

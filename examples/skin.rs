@@ -76,7 +76,8 @@ impl AppHandler for SkinDemo {
         let skeleton = Skeleton::new(
             "MySkeleton",
             vec![root_id, bone1_id],
-            vec![ibm0, ibm1]
+            vec![ibm0, ibm1],
+            0,
         );
         let skel_id = ctx.scene.add_skeleton(skeleton);
 

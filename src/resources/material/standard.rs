@@ -4,6 +4,7 @@ use glam::{Vec3, Vec4};
 
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::resources::buffer::BufferRef;
+use crate::resources::texture::SamplerSource;
 use crate::resources::{buffer::CpuBuffer, material::{MaterialBindings, MaterialFeatures, MaterialSettings, MaterialTrait, SettingsGuard}, texture::TextureSource, uniforms::MeshStandardUniforms};
 
 // MeshStandardMaterial
@@ -156,37 +157,80 @@ impl MaterialTrait for MeshStandardMaterial {
 
         if let Some(map) = &self.bindings.map {
             builder.add_texture("map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
-            builder.add_sampler("map", Some(*map), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+            
+            let sampler_source= &self.bindings.specular_map_sampler.or(
+                match map {
+                    TextureSource::Asset(handle) => Some(SamplerSource::FromTexture(*handle)),
+                    TextureSource::Attachment(_) => None,
+                }
+            );
+            builder.add_sampler("map", *sampler_source, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
         }
 
         if let Some(map) = &self.bindings.normal_map {
             builder.add_texture("normal_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
-            builder.add_sampler("normal_map", Some(*map), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+            let sampler_source= &self.bindings.normal_map_sampler.or(
+                match map {
+                    TextureSource::Asset(handle) => Some(SamplerSource::FromTexture(*handle)),
+                    TextureSource::Attachment(_) => None,
+                }
+            );
+            builder.add_sampler("normal_map", *sampler_source, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
         }
 
         if let Some(map) = &self.bindings.roughness_map {
             builder.add_texture("roughness_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
-            builder.add_sampler("roughness_map", Some(*map), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+            let sampler_source= &self.bindings.roughness_map_sampler.or(
+                match map {
+                    TextureSource::Asset(handle) => Some(SamplerSource::FromTexture(*handle)),
+                    TextureSource::Attachment(_) => None,
+                }
+            );
+            builder.add_sampler("roughness_map", *sampler_source, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
         }
 
         if let Some(map) = &self.bindings.metalness_map {
             builder.add_texture("metalness_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
-            builder.add_sampler("metalness_map", Some(*map), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+            let sampler_source= &self.bindings.metalness_map_sampler.or(
+                match map {
+                    TextureSource::Asset(handle) => Some(SamplerSource::FromTexture(*handle)),
+                    TextureSource::Attachment(_) => None,
+                }
+            );
+            builder.add_sampler("metalness_map", *sampler_source, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
         }
 
         if let Some(map) = &self.bindings.ao_map {
             builder.add_texture("ao_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
-            builder.add_sampler("ao_map", Some(*map), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+            let sampler_source= &self.bindings.ao_map_sampler.or(
+                match map {
+                    TextureSource::Asset(handle) => Some(SamplerSource::FromTexture(*handle)),
+                    TextureSource::Attachment(_) => None,
+                }
+            );
+            builder.add_sampler("ao_map", *sampler_source, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
         }
 
         if let Some(map) = &self.bindings.emissive_map {
             builder.add_texture("emissive_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
-            builder.add_sampler("emissive_map", Some(*map), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+            let sampler_source= &self.bindings.emissive_map_sampler.or(
+                match map {
+                    TextureSource::Asset(handle) => Some(SamplerSource::FromTexture(*handle)),
+                    TextureSource::Attachment(_) => None,
+                }
+            );
+            builder.add_sampler("emissive_map", *sampler_source, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
         }
 
         if let Some(map) = &self.bindings.specular_map {
             builder.add_texture("specular_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
-            builder.add_sampler("specular_map", Some(*map), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+            let sampler_source= &self.bindings.specular_map_sampler.or(
+                match map {
+                    TextureSource::Asset(handle) => Some(SamplerSource::FromTexture(*handle)),
+                    TextureSource::Attachment(_) => None,
+                }
+            );
+            builder.add_sampler("specular_map", *sampler_source, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
         }
     }
 

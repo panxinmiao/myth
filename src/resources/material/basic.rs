@@ -4,6 +4,7 @@ use glam::Vec4;
 
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::resources::buffer::BufferRef;
+use crate::resources::texture::SamplerSource;
 use crate::resources::{buffer::CpuBuffer, material::{MaterialBindings, MaterialFeatures, MaterialSettings, MaterialTrait, SettingsGuard}, texture::TextureSource, uniforms::MeshBasicUniforms};
 
 // MeshBasicMaterial
@@ -116,7 +117,15 @@ impl MaterialTrait for MeshBasicMaterial {
 
         if let Some(map) = &self.bindings.map {
             builder.add_texture("map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
-            builder.add_sampler("map", Some(*map), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+            
+            let sampler_source= &self.bindings.map_sampler.or(
+                match map {
+                    TextureSource::Asset(handle) => Some(SamplerSource::FromTexture(*handle)),
+                    TextureSource::Attachment(_) => None,
+                }
+            );
+
+            builder.add_sampler("map", *sampler_source, wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
         }
     }
 

@@ -291,6 +291,22 @@ impl ResourceManager {
                         }
                     }
                 },
+
+                BindingResource::Sampler(source) => {
+                    if let Some(source) = source {
+                        match source {
+                            SamplerSource::FromTexture(_handle) => {
+                                // 应该在 prepare_texture 阶段已经准备好了
+                            },
+                            SamplerSource::Asset(handle) => {
+                                self.prepare_sampler(assets, *handle);
+                            },
+                            SamplerSource::Default => {
+                                // Do nothing
+                            }
+                        }
+                    }
+                },
                 _ => {}
             }
         }

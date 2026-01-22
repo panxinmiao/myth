@@ -52,7 +52,7 @@ pub struct Skeleton {
 }
 
 impl Skeleton {
-    pub fn new(name: &str, bones: Vec<NodeHandle>, inverse_bind_matrices: Vec<Affine3A>) -> Self {
+    pub fn new(name: &str, bones: Vec<NodeHandle>, inverse_bind_matrices: Vec<Affine3A>, root_bone_index: usize) -> Self {
         let count = bones.len();
 
         let joint_matrices = CpuBuffer::new(
@@ -67,7 +67,7 @@ impl Skeleton {
             bones,
             inverse_bind_matrices,
             local_bounds: None,
-            root_bone_index: 0,
+            root_bone_index,
             joint_matrices,
         }
     }
@@ -121,6 +121,30 @@ impl Skeleton {
                 min: min - padding,
                 max: max + padding,
             });
+        }
+    }
+
+
+    /// 计算当前姿态下的精确世界包围盒 (不带 Padding，实时遍历所有骨骼)
+    /// 用于相机聚焦 (Frame Object)
+    pub fn compute_tight_world_bounds(&self, nodes: &SlotMap<NodeHandle, Node>) -> Option<BoundingBox> {
+        let mut min = Vec3::splat(f32::INFINITY);
+        let mut max = Vec3::splat(f32::NEG_INFINITY);
+        let mut valid = false;
+
+        for &bone_handle in &self.bones {
+            if let Some(bone_node) = nodes.get(bone_handle) {
+                let pos = bone_node.transform.world_matrix.translation.into();
+                min = min.min(pos);
+                max = max.max(pos);
+                valid = true;
+            }
+        }
+
+        if valid {
+            Some(BoundingBox { min, max })
+        } else {
+            None
         }
     }
 

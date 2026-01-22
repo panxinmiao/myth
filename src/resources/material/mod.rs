@@ -12,7 +12,7 @@ use std::{any::Any, borrow::Cow, ops::Deref};
 
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::resources::buffer::BufferRef;
-use crate::resources::texture::TextureSource;
+use crate::resources::texture::{SamplerSource, TextureSource};
 use bitflags::bitflags;
 use glam::Vec4;
 use uuid::Uuid;
@@ -133,14 +133,19 @@ impl<'a> Drop for SettingsGuard<'a> {
 #[derive(Default, Clone, Debug)]
 pub struct MaterialBindings {
     pub map: Option<TextureSource>,
-    // Todo: 可独立设置的采样器Asset
-    // pub map_sampler: Option<SamplerSource>,
+    pub map_sampler: Option<SamplerSource>,
     pub normal_map: Option<TextureSource>,
+    pub normal_map_sampler: Option<SamplerSource>,
     pub roughness_map: Option<TextureSource>,
+    pub roughness_map_sampler: Option<SamplerSource>,
     pub metalness_map: Option<TextureSource>,
+    pub metalness_map_sampler: Option<SamplerSource>,
     pub emissive_map: Option<TextureSource>,
+    pub emissive_map_sampler: Option<SamplerSource>,
     pub ao_map: Option<TextureSource>,
+    pub ao_map_sampler: Option<SamplerSource>,
     pub specular_map: Option<TextureSource>,
+    pub specular_map_sampler: Option<SamplerSource>,
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
