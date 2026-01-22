@@ -1,9 +1,8 @@
 use glam::{Affine3A, Quat, Vec3, Vec2, Vec4};
-use three::Node;
 use three::app::{App, AppContext, AppHandler};
 use three::resources::{Attribute, Geometry, Material, Mesh};
 use three::scene::skeleton::{BindMode, Skeleton};
-use three::scene::{Camera, NodeIndex, light};
+use three::scene::{Camera, NodeHandle, light};
 use three::utils::fps_counter::FpsCounter;
 use three::OrbitControls;
 use three::renderer::settings::RenderSettings;
@@ -13,7 +12,7 @@ use wgpu::VertexFormat;
 /// 
 /// 演示如何手动创建骨骼和蒙皮网格
 struct SkinDemo {
-    bone1_id: NodeIndex,
+    bone1_id: NodeHandle,
     controls: OrbitControls,
     fps_counter: FpsCounter,
 }
@@ -59,13 +58,16 @@ impl AppHandler for SkinDemo {
         let mat_handle = ctx.assets.add_material(Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0)));
 
         // 2. 创建骨骼节点结构 (Root -> Bone1)
-        let mut root_node = Node::new("Bone_Root");
-        root_node.transform.position = Vec3::new(0.0, 0.0, 0.0);
-        let root_id = ctx.scene.add_node(root_node);
+        let root_id = ctx.scene.create_node_with_name("Bone_Root");
+        if let Some(node) = ctx.scene.get_node_mut(root_id) {
+            node.transform.position = Vec3::new(0.0, 0.0, 0.0);
+        }
 
-        let mut bone1_node = Node::new("Bone_Top");
-        bone1_node.transform.position = Vec3::new(0.0, 2.0, 0.0);
-        let bone1_id = ctx.scene.add_to_parent(bone1_node, root_id);
+        let bone1_id = ctx.scene.create_node_with_name("Bone_Top");
+        if let Some(node) = ctx.scene.get_node_mut(bone1_id) {
+            node.transform.position = Vec3::new(0.0, 2.0, 0.0);
+        }
+        ctx.scene.attach(bone1_id, root_id);
         
         // 3. 创建 Skeleton 资源
         let ibm0 = Affine3A::IDENTITY;
@@ -80,9 +82,10 @@ impl AppHandler for SkinDemo {
 
         // 4. 创建 Mesh 节点并绑定骨骼
         let mesh = Mesh::new(geo_handle, mat_handle);
-        let mesh_idx = ctx.scene.add_mesh(mesh);
-        let mesh_node = ctx.scene.get_node_mut(mesh_idx).unwrap();
-        mesh_node.bind_skeleton(skel_id, BindMode::Attached);
+        let mesh_key = ctx.scene.mesh_pool.insert(mesh);
+        let mesh_node_id = ctx.scene.create_node_with_name("SkinnedMesh");
+        ctx.scene.set_mesh(mesh_node_id, mesh_key);
+        ctx.scene.bind_skeleton(mesh_node_id, skel_id, BindMode::Attached);
 
         // 5. 添加灯光
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 0.0);

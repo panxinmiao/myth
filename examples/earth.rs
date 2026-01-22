@@ -1,15 +1,15 @@
 use glam::{Vec2, Vec3, Vec4, Quat};
 use three::app::{App, AppContext, AppHandler};
 use three::resources::Material;
-use three::scene::{Camera, NodeIndex, light};
+use three::scene::{Camera, NodeHandle, light};
 use three::OrbitControls;
 use three::utils::fps_counter::FpsCounter;
 use three::renderer::settings::RenderSettings;
 
 /// 地球渲染示例
 struct Earth {
-    earth_node_id: NodeIndex,
-    cloud_node_id: NodeIndex,
+    earth_node_id: NodeHandle,
+    cloud_node_id: NodeHandle,
     controls: OrbitControls,
     fps_counter: FpsCounter,
 }

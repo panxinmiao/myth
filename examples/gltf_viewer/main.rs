@@ -25,7 +25,7 @@ use winit::event::WindowEvent;
 
 use three::app::{App, AppContext, AppHandler};
 use three::assets::GltfLoader;
-use three::scene::{Camera, NodeIndex, light};
+use three::scene::{Camera, NodeHandle, light};
 use three::renderer::graph::RenderNode;
 use three::renderer::settings::RenderSettings;
 use three::OrbitControls;
@@ -41,7 +41,7 @@ struct GltfViewer {
     ui_pass: UiPass,
     
     /// 当前加载的模型根节点
-    loaded_nodes: Vec<NodeIndex>,
+    loaded_nodes: Vec<NodeHandle>,
     /// 动画混合器
     mixer: AnimationMixer,
     /// 可用的动画列表

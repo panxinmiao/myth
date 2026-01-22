@@ -1,8 +1,8 @@
 use glam::{Affine3A, Mat4};
 use uuid::Uuid;
-use thunderdome::Arena;
+use slotmap::SlotMap;
 
-use crate::{resources::buffer::CpuBuffer, scene::{Node, NodeIndex, SkeletonKey}};
+use crate::{resources::buffer::CpuBuffer, scene::{Node, NodeHandle, SkeletonKey}};
 
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -31,7 +31,7 @@ pub struct Skeleton {
     // === 核心数据 ===
     // 骨骼列表：有序排列，对应 shader 中的 joint index
     // bones[i] 对应的就是 shader 中的 joints[i]
-    pub bones: Vec<NodeIndex>, 
+    pub bones: Vec<NodeHandle>, 
 
     // 逆绑定矩阵 (Inverse Bind Matrices)
     // 这是静态数据，从 glTF 加载后通常不会变
@@ -41,13 +41,11 @@ pub struct Skeleton {
     // === 运行时数据 ===
     // 最终计算出的矩阵数组，每一帧都会更新
     // 数据流向：这里的 data -> copy to GPU Uniform Buffer
-    // pub joint_matrices: Vec<Mat4>,
-
     pub joint_matrices: CpuBuffer<Vec<Mat4>>,
 }
 
 impl Skeleton {
-    pub fn new(name: &str, bones: Vec<NodeIndex>, inverse_bind_matrices: Vec<Affine3A>) -> Self {
+    pub fn new(name: &str, bones: Vec<NodeHandle>, inverse_bind_matrices: Vec<Affine3A>) -> Self {
         let count = bones.len();
 
         let joint_matrices = CpuBuffer::new(
@@ -73,20 +71,21 @@ impl Skeleton {
     ///                      (用于将骨骼变换转换回 Mesh 的局部空间)
     pub fn compute_joint_matrices(
         &mut self, 
-        nodes: &Arena<Node>,
+        nodes: &SlotMap<NodeHandle, Node>,
         root_matrix_inv: Affine3A
     ) {
-        for (i, &bone_idx) in self.bones.iter().enumerate() {
+        for (i, &bone_handle) in self.bones.iter().enumerate() {
             // 1. 获取当前骨骼在这一帧的世界变换 (由场景图系统计算好的)
-            // 注意：这里假设 nodes[bone_idx] 绝对存在，生产环境需要安全检查
-            let bone_world_matrix = nodes[bone_idx].transform.world_matrix;
+            let Some(bone_node) = nodes.get(bone_handle) else {
+                continue;
+            };
+            let bone_world_matrix = bone_node.transform.world_matrix;
 
             // 2. 获取对应的逆绑定矩阵
             let ibm = self.inverse_bind_matrices[i];
 
             // 3. 计算最终的 Joint Matrix
             // 顺序很重要：先应用 IBM (变回骨骼局部)，再应用当前骨骼世界变换，最后(可选)抵消 Mesh 自身变换
-            // self.joint_matrices[i] = (root_matrix_inv * bone_world_matrix * ibm).into();
             self.joint_matrices.write()[i] = (root_matrix_inv * bone_world_matrix * ibm).into();
         }
     }

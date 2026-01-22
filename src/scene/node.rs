@@ -1,66 +1,46 @@
-use std::borrow::Cow;
-use crate::scene::{NodeIndex, MeshKey, CameraKey, LightKey, SkeletonKey};
+use glam::Affine3A;
+use crate::scene::NodeHandle;
 use crate::scene::transform::Transform;
-use crate::scene::skeleton::{SkinBinding, BindMode};
-use crate::animation::values::MorphWeightData;
-use crate::resources::mesh::MAX_MORPH_TARGETS;
 
+/// 精简的场景节点 (只包含核心热数据)
+/// 
+/// 设计原则：
+/// - 只保留每帧必须遍历的数据（层级关系和变换）
+/// - 其他属性（Mesh, Camera, Light, Skin等）移至 Scene 的组件存储
+/// - 提高 CPU 缓存命中率
 #[derive(Debug, Clone)]
 pub struct Node {
-    pub name: Cow<'static, str>,
-    
-    pub(crate) parent: Option<NodeIndex>,
-    pub(crate) children: Vec<NodeIndex>,
+    // === 核心层级关系 (Hierarchy) ===
+    pub parent: Option<NodeHandle>,
+    pub children: Vec<NodeHandle>,
 
-    pub mesh: Option<MeshKey>, 
-    pub camera: Option<CameraKey>,
-    pub light: Option<LightKey>, 
-
-    pub skin: Option<SkinBinding>,
-
+    // === 核心空间数据 ===
+    // 这些是每帧必须访问的热数据 (Hot Data)
     pub transform: Transform,
-    
+
+    // === 核心状态 ===
     pub visible: bool,
-    
-    pub morph_weights: Vec<f32>,
 }
 
 impl Node {
-    pub fn new(name: &str) -> Self {
+    pub fn new() -> Self {
         Self {
-            name: Cow::Owned(name.to_string()),
             parent: None,
             children: Vec::new(),
-
-            mesh: None,
-            camera: None,
-            light: None,
-
-            skin: None,
-            
             transform: Transform::new(),
-            
             visible: true,
-            
-            morph_weights: Vec::new(),
         }
     }
 
-    pub fn set_morph_weights_from_pod(&mut self, data: &MorphWeightData) {
-        if self.morph_weights.len() < MAX_MORPH_TARGETS {
-            self.morph_weights.resize(MAX_MORPH_TARGETS, 0.0);
-        }
-        self.morph_weights.copy_from_slice(&data.weights);
+    /// 获取世界矩阵
+    #[inline]
+    pub fn world_matrix(&self) -> &Affine3A {
+        &self.transform.world_matrix
     }
+}
 
-    pub fn bind_skeleton(&mut self, skeleton: SkeletonKey, bind_mode: BindMode) {
-
-        let bind_matrix_inv = self.transform.world_matrix.inverse();
-
-        self.skin = Some(SkinBinding {
-            skeleton,
-            bind_mode,
-            bind_matrix_inv,
-        });
+impl Default for Node {
+    fn default() -> Self {
+        Self::new()
     }
 }

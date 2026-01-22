@@ -71,13 +71,13 @@ impl ForwardRenderPass {
                 continue;
             };
 
-            let Some(mesh) = ctx.scene.meshes.get_mut(item.mesh_key) else {
+            let Some(mesh) = ctx.scene.mesh_pool.get_mut(item.mesh_key) else {
                 warn!("Mesh {:?} missing during render prepare", item.mesh_key);
                 continue;
             };
 
             let skeleton = if let Some(skel_key) = item.skeleton {
-                ctx.scene.skins.get(skel_key)
+                ctx.scene.skeleton_pool.get(skel_key)
             } else {
                 None
             };
@@ -160,7 +160,7 @@ impl ForwardRenderPass {
                 (pipeline, pipeline_id)
             };
 
-            if let Some(mesh) = ctx.scene.meshes.get_mut(item.mesh_key) {
+            if let Some(mesh) = ctx.scene.mesh_pool.get_mut(item.mesh_key) {
                 mesh.render_cache.pipeline_id = Some(pipeline_id);
             }
 

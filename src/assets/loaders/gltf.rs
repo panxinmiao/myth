@@ -6,7 +6,7 @@ use glam::{Affine3A, Mat4, Quat, Vec3, Vec4};
 use crate::resources::geometry::{Geometry, Attribute};
 use crate::resources::material::{Material, MeshStandardMaterial};
 use crate::resources::texture::Texture;
-use crate::scene::{Scene, Node, NodeIndex, SkeletonKey};
+use crate::scene::{Scene, NodeHandle, SkeletonKey};
 use crate::scene::skeleton::{Skeleton, BindMode};
 use crate::assets::{AssetServer, TextureHandle, MaterialHandle, GeometryHandle};
 use crate::animation::clip::{AnimationClip, Track, TrackMeta, TrackData};
@@ -24,13 +24,11 @@ use serde_json::Value;
 
 /// glTF 加载扩展 Trait
 /// Plugin 机制，允许拦截加载过程的不同阶段
-/// 
 
 pub struct LoadContext<'a> {
     pub assets: &'a mut AssetServer,
     pub texture_map: &'a [TextureHandle],
     pub material_map: &'a [MaterialHandle],
-    // ...
 }
 
 pub trait GltfExtensionParser {
@@ -47,7 +45,7 @@ pub trait GltfExtensionParser {
     }
 
     /// 当节点被创建时调用 (可用于处理 KHR_lights_punctual 等挂载到节点的扩展)
-    fn on_load_node(&mut self, _ctx: &mut LoadContext, _gltf_node: &gltf::Node, _engine_node: &mut Node, _extension_value: &Value) -> anyhow::Result<()> {
+    fn on_load_node(&mut self, _ctx: &mut LoadContext, _gltf_node: &gltf::Node, _scene: &mut Scene, _node_handle: NodeHandle, _extension_value: &Value) -> anyhow::Result<()> {
         Ok(())
     }
 }
@@ -64,8 +62,8 @@ pub struct GltfLoader<'a> {
     // 资源映射表
     texture_map: Vec<TextureHandle>,
     material_map: Vec<MaterialHandle>,
-    // glTF Node Index -> Engine Node Index
-    node_mapping: Vec<NodeIndex>,
+    // glTF Node Index -> Engine NodeHandle
+    node_mapping: Vec<NodeHandle>,
 
     // 扩展列表
     extensions: HashMap<String, Box<dyn GltfExtensionParser>>,
@@ -77,7 +75,7 @@ impl<'a> GltfLoader<'a> {
         path: &Path,
         assets: &'a mut AssetServer,
         scene: &'a mut Scene
-    ) -> anyhow::Result<(Vec<NodeIndex>, Vec<AnimationClip>)> {
+    ) -> anyhow::Result<(Vec<NodeHandle>, Vec<AnimationClip>)> {
         
         // 1. 读取文件和 Buffer
         let file = fs::File::open(path)
@@ -100,9 +98,8 @@ impl<'a> GltfLoader<'a> {
             extensions: HashMap::new(),
         };
 
-        // 注册默认扩展 (可以在这里添加更多)
+        // 注册默认扩展
         loader._register_extension(Box::new(KhrMaterialsPbrSpecularGlossiness));
-
 
         let supported_ext = loader.extensions.keys().cloned().collect::<Vec<_>>();
 
@@ -130,19 +127,19 @@ impl<'a> GltfLoader<'a> {
         
         // Step 4.1: 创建所有节点 (Node & Transform)
         for node in gltf.nodes() {
-            let idx = loader.create_node_shallow(&node)?;
-            loader.node_mapping.push(idx);
+            let handle = loader.create_node_shallow(&node)?;
+            loader.node_mapping.push(handle);
         }
 
         // Step 4.2: 建立层级关系 (Hierarchy)
-        let mut root_indices = Vec::new();
+        let mut root_handles = Vec::new();
         for node in gltf.nodes() {
-            let parent_idx = loader.node_mapping[node.index()];
+            let parent_handle = loader.node_mapping[node.index()];
             
             if node.children().len() > 0 {
                 for child in node.children() {
-                    let child_idx = loader.node_mapping[child.index()];
-                    loader.scene.attach(child_idx, parent_idx);
+                    let child_handle = loader.node_mapping[child.index()];
+                    loader.scene.attach(child_handle, parent_handle);
                 }
             }
         }
@@ -150,11 +147,11 @@ impl<'a> GltfLoader<'a> {
         // 找出场景根节点
         if let Some(default_scene) = gltf.default_scene().or_else(|| gltf.scenes().next()) {
             for node in default_scene.nodes() {
-                root_indices.push(loader.node_mapping[node.index()]);
+                root_handles.push(loader.node_mapping[node.index()]);
             }
         }
 
-        // Step 4.3: 加载骨架 (Skins) - 此时所有 Node 已存在，可以安全引用的
+        // Step 4.3: 加载骨架 (Skins) - 此时所有 Node 已存在，可以安全引用
         let skeleton_keys = loader.load_skins(&gltf, &buffers)?;
 
         // Step 4.4: 绑定 Mesh 和 Skin
@@ -165,7 +162,7 @@ impl<'a> GltfLoader<'a> {
         // 5. 加载动画数据 (可选)
         let animations = loader.load_animations(&gltf, &buffers)?;
 
-        Ok((root_indices, animations))
+        Ok((root_handles, animations))
     }
 
     fn _register_extension(&mut self, ext: Box<dyn GltfExtensionParser>) {
@@ -231,7 +228,6 @@ impl<'a> GltfLoader<'a> {
             );
 
             if let Some(extensions_map) = texture.extensions() {
-
                 let mut ctx = LoadContext {
                     assets: &mut self.assets, 
                     texture_map: &self.texture_map, 
@@ -239,7 +235,6 @@ impl<'a> GltfLoader<'a> {
                 };
 
                 for (name, value) in extensions_map {
-                    // 只调用匹配的插件
                     if let Some(handler) = self.extensions.get_mut(name) {
                         handler.on_load_texture(&mut ctx, &texture, &mut engine_tex, value)?;
                     }
@@ -259,16 +254,14 @@ impl<'a> GltfLoader<'a> {
             let base_color_factor = Vec4::from_array(pbr.base_color_factor());
             let mut mat = MeshStandardMaterial::new(base_color_factor);
 
-            
             mat.set_metalness(pbr.metallic_factor());
             mat.set_roughness(pbr.roughness_factor());
             mat.set_emissive(Vec3::from_array(material.emissive_factor()));
             
             {
-                let bindings= mat.bindings_mut();
+                let bindings = mat.bindings_mut();
                 if let Some(info) = pbr.base_color_texture() {
                     let tex_handle = self.texture_map[info.texture().index()];
-                    // mat.set_map(Some(tex_handle.into()));
                     bindings.map = Some(tex_handle.into());
                     
                     if let Some(texture) = self.assets.get_texture(tex_handle) {
@@ -316,9 +309,8 @@ impl<'a> GltfLoader<'a> {
 
             // 转换为通用 Material 枚举
             let mut engine_mat = Material::from(mat);
-            // Material Extensions
 
-            // 处理 KHR_materials_pbrSpecularGlossiness (这是一个特殊的扩展，有专门的API)
+            // 处理 KHR_materials_pbrSpecularGlossiness
             if material.pbr_specular_glossiness().is_some() {
                 if let Some(handler) = self.extensions.get_mut("KHR_materials_pbrSpecularGlossiness") {
                     let mut ctx = LoadContext {
@@ -340,7 +332,6 @@ impl<'a> GltfLoader<'a> {
 
                 for (name, value) in extensions_map {
                     println!("Processing material extension: {}, {}", name, value);
-                    // 只调用匹配的插件
                     if let Some(handler) = self.extensions.get_mut(name) {
                         handler.on_load_material(&mut ctx, &material, &mut engine_mat, value)?;
                     }
@@ -353,30 +344,34 @@ impl<'a> GltfLoader<'a> {
         Ok(())
     }
 
-    // 仅创建节点和 Transform
-    fn create_node_shallow(&mut self, node: &gltf::Node) -> anyhow::Result<NodeIndex> {
-        let mut engine_node = Node::new(node.name().unwrap_or("Node"));
+    // 仅创建节点和 Transform，设置名称组件
+    fn create_node_shallow(&mut self, node: &gltf::Node) -> anyhow::Result<NodeHandle> {
+        let node_name = node.name().unwrap_or("Node");
+        let handle = self.scene.create_node_with_name(node_name);
 
-        let (t, r, s) = node.transform().decomposed();
-        engine_node.transform.position = Vec3::from_array(t);
-        engine_node.transform.rotation = Quat::from_array(r);
-        engine_node.transform.scale = Vec3::from_array(s);
+        // 设置变换
+        if let Some(engine_node) = self.scene.get_node_mut(handle) {
+            let (t, r, s) = node.transform().decomposed();
+            engine_node.transform.position = Vec3::from_array(t);
+            engine_node.transform.rotation = Quat::from_array(r);
+            engine_node.transform.scale = Vec3::from_array(s);
+        }
 
-
+        // 处理节点扩展
         if let Some(extensions_map) = node.extensions() {
             let mut ctx = LoadContext {
-                assets: &mut self.assets,       // 可变借用 assets
-                texture_map: &self.texture_map, // 不可变借用 texture_map
+                assets: &mut self.assets,
+                texture_map: &self.texture_map,
                 material_map: &self.material_map,
             };
-            // 只遍历该节点实际拥有的扩展
             for (name, value) in extensions_map {
                 if let Some(handler) = self.extensions.get_mut(name) {
-                    handler.on_load_node(&mut ctx, &node, &mut engine_node, value)?;
+                    handler.on_load_node(&mut ctx, &node, self.scene, handle, value)?;
                 }
             }
         }
-        Ok(self.scene.add_node(engine_node))
+        
+        Ok(handle)
     }
 
     fn load_skins(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<Vec<SkeletonKey>> {
@@ -393,19 +388,18 @@ impl<'a> GltfLoader<'a> {
                     Affine3A::from_mat4(mat)
                 }).collect()
             } else {
-                // 默认单位矩阵
                 vec![Affine3A::IDENTITY; skin.joints().count()]
             };
 
-            // 2. 映射 glTF joint indices 到 Engine Node Indices
-            let bones: Vec<NodeIndex> = skin.joints()
+            // 2. 映射 glTF joint indices 到 Engine NodeHandles
+            let bones: Vec<NodeHandle> = skin.joints()
                 .map(|node| self.node_mapping[node.index()]) 
                 .collect();
 
             // 3. 创建资源
             let skeleton = Skeleton::new(name, bones, ibms);
     
-            let key = self.scene.skins.insert(skeleton); 
+            let key = self.scene.skeleton_pool.insert(skeleton); 
             skeleton_keys.push(key);
         }
 
@@ -418,7 +412,7 @@ impl<'a> GltfLoader<'a> {
         buffers: &[Vec<u8>],
         skeleton_keys: &[SkeletonKey]
     ) -> anyhow::Result<()> {
-        let engine_node_idx = self.node_mapping[node.index()];
+        let engine_node_handle = self.node_mapping[node.index()];
 
         // 1. 加载 Mesh
         if let Some(mesh) = node.mesh() {
@@ -444,13 +438,11 @@ impl<'a> GltfLoader<'a> {
                     }
                 }
                 
-                let mesh_key = self.scene.meshes.insert(engine_mesh);
+                let mesh_key = self.scene.mesh_pool.insert(engine_mesh);
 
                 // 简化处理：目前只支持将第一个 primitive 挂载到节点
-                // 如果有多 primitive，标准做法是创建子节点挂载
                 if i == 0 {
-                    let engine_node = &mut self.scene.nodes[engine_node_idx];
-                    engine_node.mesh = Some(mesh_key);
+                    self.scene.set_mesh(engine_node_handle, mesh_key);
                 } else {
                     println!("Warning: Multi-primitive meshes not fully supported on single node yet.");
                 }
@@ -460,9 +452,8 @@ impl<'a> GltfLoader<'a> {
         // 2. 绑定 Skin
         if let Some(skin) = node.skin() {
             let skeleton_key = skeleton_keys[skin.index()];
-            let engine_node = &mut self.scene.nodes[engine_node_idx];
             // glTF 默认是 Attached 模式
-            engine_node.bind_skeleton(skeleton_key, BindMode::Attached);
+            self.scene.bind_skeleton(engine_node_handle, skeleton_key, BindMode::Attached);
         }
 
         Ok(())
@@ -502,7 +493,6 @@ impl<'a> GltfLoader<'a> {
 
         // Joints (Skinning)
         if let Some(iter) = reader.read_joints(0) {
-            // 将 u8/u16 统一转为 u16 以匹配 shader 常见的 Uint16x4
             let joints: Vec<[u16; 4]> = iter.into_u16().collect();
             geometry.set_attribute("joints", Attribute::new_planar(&joints, VertexFormat::Uint16x4));
         }
@@ -519,19 +509,15 @@ impl<'a> GltfLoader<'a> {
             geometry.set_indices_u32(&indices);
         }
 
-
         // 定义一个闭包，用于从 buffers 中获取数据切片
-        // 这是 gltf::accessor::Iter 所需要的
         let get_buffer_data = |buffer: gltf::Buffer| -> Option<&[u8]> {
             buffers.get(buffer.index()).map(|v| v.as_slice())
         };
 
         // === 2.加载 Morph Targets 数据 ===
         for target in primitive.morph_targets() {
-
             // 2.1 Morph Positions (Displacement) - Vec3
             if let Some(accessor) = target.positions() {
-                // 使用 gltf::accessor::Iter 直接读取
                 if let Some(iter) = gltf::accessor::Iter::<[f32; 3]>::new(accessor, get_buffer_data) {
                     let data: Vec<[f32; 3]> = iter.collect();
                     let attr = Attribute::new_planar(&data, VertexFormat::Float32x3);
@@ -553,11 +539,9 @@ impl<'a> GltfLoader<'a> {
             }
 
             // 2.3 Morph Tangents (Displacement) - Vec3
-            // Morph Target 的切线数据只有 XYZ 位移，没有 W 分量？
             if let Some(accessor) = target.tangents() {
                 if let Some(iter) = gltf::accessor::Iter::<[f32; 3]>::new(accessor, get_buffer_data) {
                     let data: Vec<[f32; 3]> = iter.collect();
-                    // 这里我们依然可以用 Float32x3 存储
                     let attr = Attribute::new_planar(&data, VertexFormat::Float32x3);
                     geometry.morph_attributes.entry("tangent".to_string())
                         .or_default()
@@ -705,9 +689,6 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
     }
 
     fn on_load_material(&mut self, _ctx: &mut LoadContext, _gltf_mat: &gltf::Material, engine_mat: &mut Material, _extension_value: &Value) -> anyhow::Result<()> {
-        // KHR_materials_pbrSpecularGlossiness 扩展：
-        // 将 Specular-Glossiness 工作流转换为 Metallic-Roughness 工作流
-        
         let sg = _gltf_mat.pbr_specular_glossiness()
             .ok_or_else(|| anyhow::anyhow!("Material missing pbr_specular_glossiness data"))?;
 
@@ -717,8 +698,8 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         // 1. 设置基础材质参数 (转换为非金属材质)
         {
             let mut uniforms = standard_mut.uniforms_mut();
-            uniforms.metalness = 0.0;  // Specular-Glossiness 工作流是非金属的
-            uniforms.roughness = 1.0;  // 默认粗糙度，如果没有贴图会被glossiness_factor覆盖
+            uniforms.metalness = 0.0;
+            uniforms.roughness = 1.0;
             uniforms.specular = Vec3::from_array(sg.specular_factor());
             uniforms.specular_intensity = 1.0;
             uniforms.color = Vec4::from_array(sg.diffuse_factor());
@@ -730,7 +711,6 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
             let bindings = standard_mut.bindings_mut();
             bindings.map = Some(tex_handle.into());
 
-            // diffuse 是 sRGB 颜色空间
             if let Some(texture) = _ctx.assets.get_texture(tex_handle) {
                 texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
             }
@@ -741,7 +721,6 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
             let tex_handle = _ctx.texture_map[sg_tex_info.texture().index()];
             let glossiness_factor = sg.glossiness_factor();
             
-            // 获取原始纹理数据并克隆（避免借用冲突）
             let (width, height, source_data) = if let Some(source_texture) = _ctx.assets.get_texture(tex_handle) {
                 let source_image = &source_texture.image;
                 let w = source_image.width.load(Ordering::Relaxed);
@@ -752,13 +731,10 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
                 (0, 0, None)
             };
             
-            // 处理图像数据
             if let Some(data) = source_data {
                 let pixel_count = (width * height) as usize;
                 
-                // 创建 specular map (RGB通道 = specular颜色, A通道 = 255)
                 let mut specular_data = Vec::with_capacity(pixel_count * 4);
-                // 创建 roughness map (G通道 = roughness, 其他通道填充)
                 let mut roughness_data = Vec::with_capacity(pixel_count * 4);
                 
                 for i in 0..pixel_count {
@@ -766,34 +742,29 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
                     let r = data[offset];
                     let g = data[offset + 1];
                     let b = data[offset + 2];
-                    let glossiness = data[offset + 3];  // Alpha通道存储glossiness
+                    let glossiness = data[offset + 3];
                     
-                    // Specular map: 保留RGB，设置A=255
                     specular_data.push(r);
                     specular_data.push(g);
                     specular_data.push(b);
                     specular_data.push(255);
                     
-                    // Roughness map: roughness = 1 - glossiness
-                    // glossiness_channel 已经是 [0-255]，需要转为 [0-1] 再应用factor
                     let glossiness_normalized = (glossiness as f32 / 255.0) * glossiness_factor;
                     let roughness_normalized = 1.0 - glossiness_normalized;
                     let roughness_byte = (roughness_normalized * 255.0) as u8;
                     
-                    // 标准做法：roughness存储在G通道
-                    roughness_data.push(0);              // R
-                    roughness_data.push(roughness_byte); // G = roughness
-                    roughness_data.push(0);              // B
-                    roughness_data.push(255);            // A
+                    roughness_data.push(0);
+                    roughness_data.push(roughness_byte);
+                    roughness_data.push(0);
+                    roughness_data.push(255);
                 }
                 
-                // 创建新的纹理资源
                 let specular_texture = Texture::new_2d(
                     Some("sg_specular"),
                     width,
                     height,
                     Some(specular_data),
-                    TextureFormat::Rgba8Unorm  // Specular是线性空间
+                    TextureFormat::Rgba8Unorm
                 );
                 
                 let roughness_texture = Texture::new_2d(
@@ -804,17 +775,15 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
                     TextureFormat::Rgba8Unorm
                 );
                 
-                // 添加到AssetServer并绑定到材质
                 let specular_handle = _ctx.assets.add_texture(specular_texture);
                 let roughness_handle = _ctx.assets.add_texture(roughness_texture);
                 
                 let bindings = standard_mut.bindings_mut();
                 bindings.specular_map = Some(specular_handle.into());
                 bindings.roughness_map = Some(roughness_handle.into());
-                bindings.metalness_map = Some(roughness_handle.into());  // 复用roughness map
+                bindings.metalness_map = Some(roughness_handle.into());
             }
         } else {
-            // 如果没有纹理，只用glossiness_factor设置粗糙度
             let glossiness_factor = sg.glossiness_factor();
             let mut uniforms = standard_mut.uniforms_mut();
             uniforms.roughness = 1.0 - glossiness_factor;
@@ -822,5 +791,4 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
 
         Ok(())
     }
-    
 }

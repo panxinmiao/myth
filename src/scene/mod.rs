@@ -25,15 +25,17 @@ pub use camera::{Camera, ProjectionType};
 pub use light::{Light, LightKind};
 pub use transform_system::{LevelOrderBatches, build_level_order_batches, update_hierarchy_batched};
 
-
-use thunderdome::Index;
-pub type NodeIndex = Index;
-
 use slotmap::new_key_type;
 
 new_key_type! {
+    /// 强类型的节点句柄 (SlotMap Key)
+    /// 替代原先的 thunderdome::Index
+    pub struct NodeHandle;
     pub struct MeshKey;
     pub struct CameraKey;
     pub struct LightKey;
     pub struct SkeletonKey;
 }
+
+// 为了兼容旧代码，保留 NodeIndex 作为别名
+pub type NodeIndex = NodeHandle;

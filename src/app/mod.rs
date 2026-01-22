@@ -178,13 +178,15 @@ impl<H: AppHandler> AppRunner<H> {
             
             // 获取当前激活相机的节点和组件
             let active_camera_data = self.scene.active_camera
-                .and_then(|node_id| self.scene.get_node(node_id))
-                .and_then(|node| node.camera.map(|cam_idx| (node, cam_idx)));
+                .and_then(|node_handle| {
+                    let camera_key = self.scene.cameras.get(node_handle).copied()?;
+                    Some(camera_key)
+                });
 
-            if let Some((_node, camera_idx)) = active_camera_data {
+            if let Some(camera_key) = active_camera_data {
                 // 暂时 Clone 出来，避免 Renderer 需要同时借用 Scene 和 Camera 的借用冲突
                 // 长期优化：Renderer::render 签名应该优化，只接受 Camera 的 Uniform 数据而不是引用
-                let camera = if let Some(cam) = self.scene.cameras.get(camera_idx) {
+                let camera = if let Some(cam) = self.scene.camera_pool.get(camera_key) {
                     cam.clone()
                 } else {
                     return;
@@ -302,13 +304,11 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                     if physical_size.height > 0 {
                         let new_aspect = physical_size.width as f32 / physical_size.height as f32;
                         // 查找 active camera 并更新
-                        if let Some(node_id) = self.scene.active_camera {
-                            if let Some(node) = self.scene.get_node(node_id) {
-                                if let Some(cam_idx) = node.camera {
-                                    if let Some(camera) = self.scene.cameras.get_mut(cam_idx) {
-                                        camera.aspect = new_aspect;
-                                        camera.update_projection_matrix();
-                                    }
+                        if let Some(node_handle) = self.scene.active_camera {
+                            if let Some(camera_key) = self.scene.cameras.get(node_handle).copied() {
+                                if let Some(camera) = self.scene.camera_pool.get_mut(camera_key) {
+                                    camera.aspect = new_aspect;
+                                    camera.update_projection_matrix();
                                 }
                             }
                         }

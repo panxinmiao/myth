@@ -29,7 +29,7 @@ use winit::window::{Window, WindowId};
 
 use three::app::input::Input;
 use three::assets::{AssetServer, GltfLoader};
-use three::scene::{Scene, Camera, light, NodeIndex};
+use three::scene::{Scene, Camera, light, NodeHandle};
 use three::renderer::{Renderer, settings::RenderSettings};
 use three::OrbitControls;
 use three::utils::fps_counter::FpsCounter;
@@ -41,7 +41,7 @@ use ui_pass::UiPass;
 /// 应用状态
 struct ViewerState {
     /// 当前加载的模型根节点
-    loaded_nodes: Vec<NodeIndex>,
+    loaded_nodes: Vec<NodeHandle>,
     /// 动画混合器
     mixer: AnimationMixer,
     /// 可用的动画列表
@@ -210,9 +210,8 @@ impl GltfViewer {
 
     fn render(&mut self) {
         if let Some(cam_id) = self.scene.active_camera {
-            if let Some(node) = self.scene.get_node(cam_id)
-                && let Some(camera_idx) = node.camera
-                && let Some(camera) = self.scene.cameras.get(camera_idx)
+            if let Some(&camera_key) = self.scene.cameras.get(cam_id)
+                && let Some(camera) = self.scene.camera_pool.get(camera_key)
             {
                 let time_seconds = self.last_loop_time
                     .duration_since(self.start_time)
@@ -448,15 +447,14 @@ impl ApplicationHandler for GltfViewer {
 
                 if physical_size.height > 0 {
                     let new_aspect = physical_size.width as f32 / physical_size.height as f32;
-                    let camera_idx = self.scene.active_camera
-                        .and_then(|node_id| self.scene.get_node(node_id))
-                        .and_then(|node| node.camera);
-
-                    if let Some(idx) = camera_idx
-                        && let Some(camera) = self.scene.cameras.get_mut(idx) {
-                            camera.aspect = new_aspect;
-                            camera.update_projection_matrix();
+                    if let Some(node_handle) = self.scene.active_camera {
+                        if let Some(&camera_key) = self.scene.cameras.get(node_handle) {
+                            if let Some(camera) = self.scene.camera_pool.get_mut(camera_key) {
+                                camera.aspect = new_aspect;
+                                camera.update_projection_matrix();
+                            }
                         }
+                    }
                 }
             }
             WindowEvent::RedrawRequested => {

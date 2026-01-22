@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use glam::Vec3;
 use three::app::{App, AppContext, AppHandler};
-use three::scene::{Camera, NodeIndex, light};
+use three::scene::{Camera, NodeHandle, light};
 use three::OrbitControls;
 use three::utils::fps_counter::FpsCounter;
 use three::assets::GltfLoader;
@@ -12,7 +12,7 @@ use three::renderer::settings::RenderSettings;
 /// Morph Target (变形目标) 动画示例
 struct MorphTargetDemo {
     mixer: AnimationMixer,
-    cam_node_id: NodeIndex,
+    cam_node_id: NodeHandle,
     controls: OrbitControls,
     fps_counter: FpsCounter,
 }
@@ -68,14 +68,17 @@ impl AppHandler for MorphTargetDemo {
         }
 
         // 输出 Mesh Morph Target 信息
-        for (mesh_key, mesh) in ctx.scene.meshes.iter() {
-            if let Some(geometry) = ctx.assets.get_geometry(mesh.geometry) {
-                if geometry.has_morph_targets() {
-                    println!("Mesh {:?} has {} morph targets, {} vertices per target",
-                        mesh_key,
-                        geometry.morph_target_count,
-                        geometry.morph_vertex_count
-                    );
+        for (node_handle, &mesh_key) in ctx.scene.meshes.iter() {
+            if let Some(mesh) = ctx.scene.mesh_pool.get(mesh_key) {
+                if let Some(geometry) = ctx.assets.get_geometry(mesh.geometry) {
+                    if geometry.has_morph_targets() {
+                        println!("Mesh {:?} (node {:?}) has {} morph targets, {} vertices per target",
+                            mesh_key,
+                            node_handle,
+                            geometry.morph_target_count,
+                            geometry.morph_vertex_count
+                        );
+                    }
                 }
             }
         }

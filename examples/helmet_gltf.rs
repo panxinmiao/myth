@@ -1,6 +1,6 @@
 use glam::Vec3;
 use three::app::{App, AppContext, AppHandler};
-use three::scene::{Camera, NodeIndex, light};
+use three::scene::{Camera, NodeHandle, light};
 use three::OrbitControls;
 use three::utils::fps_counter::FpsCounter;
 use three::assets::GltfLoader;
@@ -8,7 +8,7 @@ use three::renderer::settings::RenderSettings;
 
 /// glTF PBR 头盔示例
 struct HelmetGltf {
-    cam_node_id: NodeIndex,
+    cam_node_id: NodeHandle,
     controls: OrbitControls,
     fps_counter: FpsCounter,
 }
@@ -53,7 +53,10 @@ impl AppHandler for HelmetGltf {
             if let Some(node) = ctx.scene.get_node_mut(root_node_idx) {
                 node.transform.scale = Vec3::splat(1.0);
                 node.transform.position = Vec3::new(0.0, 0.0, 0.0);
-                println!("Model root node: {}", node.name);
+                // 获取节点名称
+                if let Some(name) = ctx.scene.names.get(root_node_idx) {
+                    println!("Model root node: {}", name);
+                }
             }
         }
 

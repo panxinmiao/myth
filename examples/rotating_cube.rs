@@ -1,13 +1,13 @@
 use glam::{Vec3, Vec4, Quat};
 use three::app::{App, AppContext, AppHandler};
 use three::resources::{Geometry, Material, Mesh};
-use three::scene::{Camera, NodeIndex};
+use three::scene::{Camera, NodeHandle};
 
 /// 旋转立方体示例
 /// 
 /// 演示带动画更新的 AppHandler 模式
 struct RotatingCube {
-    cube_node_id: NodeIndex,
+    cube_node_id: NodeHandle,
 }
 
 impl AppHandler for RotatingCube {

@@ -41,21 +41,21 @@ impl AnimationMixer {
 
                  match (&track.data, binding.target) {
                     (TrackData::Vector3(t), TargetPath::Translation) => {
-                        if let Some(node) = scene.get_node_mut(binding.node_id) {
+                        if let Some(node) = scene.get_node_mut(binding.node_handle) {
                             let val = t.sample_with_cursor(time, cursor);
                             node.transform.position = val; 
                             node.transform.mark_dirty();
                         }
                     },
                     (TrackData::Vector3(t), TargetPath::Scale) => {
-                        if let Some(node) = scene.get_node_mut(binding.node_id) {
+                        if let Some(node) = scene.get_node_mut(binding.node_handle) {
                             let val = t.sample_with_cursor(time, cursor);
                             node.transform.scale = val;
                             node.transform.mark_dirty();
                         }
                     },
                     (TrackData::Quaternion(t), TargetPath::Rotation) => {
-                        if let Some(node) = scene.get_node_mut(binding.node_id) {
+                        if let Some(node) = scene.get_node_mut(binding.node_handle) {
                             let val = t.sample_with_cursor(time, cursor);
                             node.transform.rotation = val;
                             node.transform.mark_dirty();
@@ -63,10 +63,7 @@ impl AnimationMixer {
                     },  
                     (TrackData::MorphWeights(t), TargetPath::Weights) => {
                         let weights_pod = t.sample_with_cursor(time, cursor);
-
-                        if let Some(node) = scene.get_node_mut(binding.node_id) {
-                            node.set_morph_weights_from_pod(&weights_pod);
-                        }
+                        scene.set_morph_weights_from_pod(binding.node_handle, &weights_pod);
                     },
                     _ => {}
                 }

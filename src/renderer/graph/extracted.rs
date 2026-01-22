@@ -12,7 +12,7 @@
 use glam::Mat4;
 
 use crate::scene::scene::SceneFeatures;
-use crate::scene::{NodeIndex, Scene, SkeletonKey, MeshKey};
+use crate::scene::{NodeHandle, Scene, SkeletonKey, MeshKey};
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::scene::camera::Camera;
 
@@ -21,8 +21,8 @@ use crate::scene::camera::Camera;
 /// 使用 Clone 而非 Copy，因为 SkinBinding 包含非 Copy 类型
 #[derive(Clone)]
 pub struct ExtractedRenderItem {
-    /// 节点索引（用于调试和回溯）
-    pub node_index: NodeIndex,
+    /// 节点句柄（用于调试和回溯）
+    pub node_handle: NodeHandle,
     /// Mesh 的 Key（用于回写缓存）
     pub mesh_key: MeshKey,
     /// 世界变换矩阵 (64 bytes)
@@ -45,7 +45,6 @@ pub struct ExtractedRenderItem {
 #[derive(Clone)]
 pub struct ExtractedSkeleton {
     pub skeleton_key: SkeletonKey,
-    // pub joint_matrices: Vec<Mat4>,
 }
 
 /// 提取的场景数据
@@ -110,17 +109,17 @@ impl ExtractedScene {
         let frustum = camera.frustum;
         let camera_pos = camera.world_matrix.translation;
 
-        for (node_id, node) in scene.nodes.iter() {
+        for (node_handle, node) in scene.nodes.iter() {
             // 跳过不可见节点
             if !node.visible {
                 continue;
             }
 
-            // 获取 Mesh 组件
-            let Some(mesh_key) = node.mesh else {
+            // 获取 Mesh 组件（从组件存储中查询）
+            let Some(&mesh_key) = scene.meshes.get(node_handle) else {
                 continue;
             };
-            let Some(mesh) = scene.meshes.get(mesh_key) else {
+            let Some(mesh) = scene.mesh_pool.get(mesh_key) else {
                 continue;
             };
 
@@ -134,13 +133,13 @@ impl ExtractedScene {
 
             // 验证资源存在性（安全检查）
             let Some(geometry) = assets.get_geometry(geo_handle) else {
-                log::warn!("Node {:?} refers to missing Geometry {:?}", node_id, geo_handle);
+                log::warn!("Node {:?} refers to missing Geometry {:?}", node_handle, geo_handle);
                 continue;
             };
 
             // 材质可以稍后检查，但最好在这里也验证
             if assets.get_material(mat_handle).is_none() {
-                log::warn!("Node {:?} refers to missing Material {:?}", node_id, mat_handle);
+                log::warn!("Node {:?} refers to missing Material {:?}", node_handle, mat_handle);
                 continue;
             }
 
@@ -163,13 +162,16 @@ impl ExtractedScene {
             let cached_bind_group_id = mesh.render_cache.bind_group_id;
             let cached_pipeline_id = mesh.render_cache.pipeline_id;
 
+            // 获取骨骼绑定（从组件存储中查询）
+            let skeleton = scene.skins.get(node_handle).map(|skin| skin.skeleton);
+
             self.render_items.push(ExtractedRenderItem {
-                node_index: node_id,
+                node_handle,
                 mesh_key,
                 world_matrix,
                 geometry: geo_handle,
                 material: mat_handle,
-                skeleton: node.skin.as_ref().map(|skin| skin.skeleton),
+                skeleton,
                 distance_sq,
                 cached_bind_group_id,
                 cached_pipeline_id,
@@ -179,10 +181,9 @@ impl ExtractedScene {
 
     /// 提取骨骼数据
     fn extract_skeletons(&mut self, scene: &Scene) {
-        for (skel_key, _skeleton) in &scene.skins {
+        for (skel_key, _skeleton) in &scene.skeleton_pool {
             self.skeletons.push(ExtractedSkeleton {
                 skeleton_key: skel_key,
-                // joint_matrices: skeleton.joint_matrices.clone(),
             });
         }
     }
@@ -192,7 +193,6 @@ impl ExtractedScene {
         self.background = scene.background;
         self.scene_features = scene.get_features();
         self.scene_id = scene.id;
-        // todo envmap
     }
 
     /// 获取渲染项数量

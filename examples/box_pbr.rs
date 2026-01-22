@@ -1,14 +1,14 @@
 use glam::{Vec3, Vec4, Quat};
 use three::app::{App, AppContext, AppHandler};
 use three::resources::{Geometry, MeshStandardMaterial, Mesh, Texture};
-use three::scene::{Camera, NodeIndex, light};
+use three::scene::{Camera, NodeHandle, light};
 use three::utils::fps_counter::FpsCounter;
 use three::OrbitControls;
 use three::renderer::settings::RenderSettings;
 
 /// PBR 材质立方体示例
 struct PbrBox {
-    cube_node_id: NodeIndex,
+    cube_node_id: NodeHandle,
     controls: OrbitControls,
     fps_counter: FpsCounter,
 }

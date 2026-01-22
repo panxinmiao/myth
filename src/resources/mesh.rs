@@ -1,4 +1,3 @@
-use thunderdome::Index;
 use crate::assets::{GeometryHandle, MaterialHandle};
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::uniforms::MorphUniforms;
@@ -6,8 +5,6 @@ use crate::renderer::core::resources::ResourceIdSet;
 
 pub const MAX_MORPH_TARGETS: usize = 32;
 pub const MORPH_WEIGHT_THRESHOLD: f32 = 0.001;
-
-pub type MeshHandle = Index;
 
 /// 渲染代理缓存
 /// 
@@ -33,9 +30,6 @@ impl RenderCache {
 pub struct Mesh {
     pub name: String,
     
-    // === 场景图节点 ===
-    pub node_id: Option<Index>,
-    
     // === 资源引用 ===
     pub geometry: GeometryHandle,
     pub material: MaterialHandle,
@@ -51,8 +45,6 @@ pub struct Mesh {
     
     /// Morph Uniform Buffer (GPU 用，每帧更新)
     pub(crate) morph_uniforms: CpuBuffer<MorphUniforms>,
-
-    // pub(crate) active_joint_indices: Vec<u16>,
     
     // === 渲染缓存 ===
     /// 渲染代理缓存，避免每帧重复查找
@@ -66,14 +58,12 @@ impl Mesh {
     ) -> Self {
         Self {
             name: "Mesh".to_string(),
-            node_id : None,
             geometry,
             material,
             visible: true,
             render_order: 0,
             morph_target_influences: Vec::new(),
-            morph_uniforms: CpuBuffer::new_uniform( Some("Mesh Morph Uniforms")),
-            // active_joint_indices: Vec::new(),
+            morph_uniforms: CpuBuffer::new_uniform(Some("Mesh Morph Uniforms")),
             render_cache: RenderCache::default(),
         }
     }

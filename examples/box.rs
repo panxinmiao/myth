@@ -1,12 +1,12 @@
 use glam::{Vec3, Vec4, Quat};
 use three::app::{App, AppContext, AppHandler};
 use three::resources::{Geometry, Material, Mesh, Texture};
-use three::scene::{Camera, NodeIndex};
+use three::scene::{Camera, NodeHandle};
 use three::OrbitControls;
 
 /// 带纹理的旋转立方体 + 轨道控制器
 struct TexturedBox {
-    cube_node_id: NodeIndex,
+    cube_node_id: NodeHandle,
     controls: OrbitControls,
 }
 

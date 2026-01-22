@@ -20,7 +20,7 @@ pub mod uniforms;
 pub mod version_tracker;
 pub mod material;
 
-pub use mesh::{Mesh, MeshHandle};
+pub use mesh::Mesh;
 pub use material::{
     Material, MaterialData, MaterialFeatures, MaterialTrait,
     MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, MeshPhysicalMaterial, 

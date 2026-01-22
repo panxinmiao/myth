@@ -135,7 +135,7 @@ impl RenderFrame {
         // 3. Prepare 阶段：准备 GPU 资源
         // ========================================================================
         self.prepare_global_resources(resource_manager, assets, scene, camera, time);
-        self.upload_skeletons_extracted(resource_manager, &scene.skins, &self.extracted_scene);
+        self.upload_skeletons_extracted(resource_manager, &scene.skeleton_pool, &self.extracted_scene);
 
         // ========================================================================
         // 4. 构建瞬态 RenderGraph 并执行
