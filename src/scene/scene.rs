@@ -63,6 +63,8 @@ pub struct Scene {
     /// 形变权重
     pub morph_weights: SparseSecondaryMap<NodeHandle, Vec<f32>>,
 
+    morph_tartget_nodes: Vec<NodeHandle>,
+
     // === 资源池 (只保留真正需要共享的资源) ===
     /// Skeleton 是真正的共享资源，多个角色可能引用同一个骨架定义
     pub skeleton_pool: SlotMap<SkeletonKey, Skeleton>,
@@ -101,6 +103,7 @@ impl Scene {
             lights: SparseSecondaryMap::new(),
             skins: SparseSecondaryMap::new(),
             morph_weights: SparseSecondaryMap::new(),
+            morph_tartget_nodes: Vec::with_capacity(16),
 
             // 资源池（仅保留真正共享的资源）
             skeleton_pool: SlotMap::with_key(),
@@ -575,7 +578,6 @@ impl Scene {
     }
 
     pub fn update_skeletons(&mut self) {
-        // 步骤 1: 收集任务
         let mut tasks = Vec::new();
 
         for (node_handle, binding) in &self.skins {
@@ -588,31 +590,36 @@ impl Scene {
             }
         }
 
-        // 步骤 2: 执行任务
         for (skeleton_id, root_inv) in tasks {
             if let Some(skeleton) = self.skeleton_pool.get_mut(skeleton_id) {
                 skeleton.compute_joint_matrices(&self.nodes, root_inv);
+                // 惰性计算包围盒（仅在首次需要时计算）
+                if skeleton.local_bounds.is_none() {
+                    skeleton.compute_local_bounds(&self.nodes);
+                }
             }
         }
     }
 
     pub fn sync_morph_weights(&mut self) {
-        // 收集需要更新的节点
-        let updates: Vec<_> = self.morph_weights.iter()
-            .filter_map(|(node_handle, weights)| {
-                if !weights.is_empty() && self.meshes.contains_key(node_handle) {
-                    Some((node_handle, weights.clone()))
-                } else {
-                    None
-                }
-            })
-            .collect();
+        self.morph_tartget_nodes.clear();
+        
+        for (handle, _) in &self.morph_weights {
+            if self.meshes.contains_key(handle) {
+                self.morph_tartget_nodes.push(handle);
+            }
+        }
 
-        // 更新 Mesh 的 morph weights
-        for (node_handle, weights) in updates {
-            if let Some(mesh) = self.meshes.get_mut(node_handle) {
-                mesh.set_morph_target_influences(&weights);
-                mesh.update_morph_uniforms();
+        for handle in &self.morph_tartget_nodes {            
+            if let Some(weights) = self.morph_weights.get(*handle) {
+                if weights.is_empty() { continue; }
+                
+                let weights_slice = weights.as_slice();
+                
+                if let Some(mesh) = self.meshes.get_mut(*handle) {
+                    mesh.set_morph_target_influences(weights_slice);
+                    mesh.update_morph_uniforms();
+                }
             }
         }
     }
@@ -629,42 +636,31 @@ impl Scene {
 
     fn get_bbox_of_one_node(&self, node_handle: NodeHandle, assets: &AssetServer) -> Option<BoundingBox> {
         let node = self.get_node(node_handle)?;
+        if node.visible == false {
+            return None;
+        }
         let mesh = self.meshes.get(node_handle)?;
+        if mesh.visible == false {
+            return None;
+        }
         let geometry = assets.get_geometry(mesh.geometry)?;
 
-        let local_bbox = if let Some(bbox) = geometry.bounding_box.borrow().as_ref() {
-            bbox.clone()
-        } else {
-            geometry.compute_bounding_volume();
-            geometry.bounding_box.borrow().as_ref()?.clone()
-        };
-
+        // 有骨骼绑定时使用 Skeleton 的包围盒
         if let Some(skeleton_binding) = self.skins.get(node_handle) {
             if let Some(skeleton) = self.skeleton_pool.get(skeleton_binding.skeleton) {
-                let mut min = Vec3::splat(f32::INFINITY);
-                let mut max = Vec3::splat(f32::NEG_INFINITY);
-                let mut bone_found = false;
-
-                for &bone_handle in &skeleton.bones {
-                    if let Some(bone_node) = self.get_node(bone_handle) {
-                        let pos = bone_node.transform.world_matrix.translation.to_vec3();
-                        min = min.min(pos);
-                        max = max.max(pos);
-                        bone_found = true;
-                    }
-                }
-
-                if !bone_found {
-                    return None;
-                }
-
-                let approximate_radius = 0.15;
-                return Some(BoundingBox { min, max }.inflate(approximate_radius));
+                return Some(skeleton.world_bounds(&self.nodes)?);
             }
         }
 
-        let world_matrix = &node.transform.world_matrix;
-        Some(local_bbox.transform(world_matrix))
+        // 无骨骼绑定时使用 Geometry 的包围盒
+        let local_bbox = if let Some(bbox) = geometry.bounding_box.borrow().as_ref() {
+            *bbox
+        } else {
+            geometry.compute_bounding_volume();
+            *geometry.bounding_box.borrow().as_ref()?
+        };
+
+        Some(local_bbox.transform(&node.transform.world_matrix))
     }
 
     pub fn get_bbox_of_node(&self, node_handle: NodeHandle, assets: &AssetServer) -> Option<BoundingBox> {

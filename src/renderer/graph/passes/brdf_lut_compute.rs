@@ -114,6 +114,6 @@ impl RenderNode for BRDFLutComputePass {
 
         self.brdf_lut_texture_handle.replace(Some(handle));
 
-        println!("BRDF LUT generated and registered with handle {}", handle);
+        // println!("BRDF LUT generated and registered with handle {}", handle);
     }
 }

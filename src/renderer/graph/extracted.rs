@@ -107,32 +107,27 @@ impl ExtractedScene {
         let frustum = camera.frustum;
         let camera_pos = camera.world_matrix.translation;
 
-        for (node_handle, node) in scene.nodes.iter() {
-            // 跳过不可见节点
-            if !node.visible {
+        for (node_handle, mesh) in scene.meshes.iter() {
+            if !mesh.visible {
                 continue;
             }
 
-            // 获取 Mesh 组件（直接从组件存储中查询）
-            let Some(mesh) = scene.meshes.get(node_handle) else {
+            let Some(node) = scene.nodes.get(node_handle) else {
                 continue;
             };
 
-            // 跳过不可见的 Mesh
-            if !mesh.visible {
+            if !node.visible {
                 continue;
             }
 
             let geo_handle = mesh.geometry;
             let mat_handle = mesh.material;
 
-            // 验证资源存在性（安全检查）
             let Some(geometry) = assets.get_geometry(geo_handle) else {
                 log::warn!("Node {:?} refers to missing Geometry {:?}", node_handle, geo_handle);
                 continue;
             };
 
-            // 材质可以稍后检查，但最好在这里也验证
             if assets.get_material(mat_handle).is_none() {
                 log::warn!("Node {:?} refers to missing Material {:?}", node_handle, mat_handle);
                 continue;
@@ -141,24 +136,44 @@ impl ExtractedScene {
             let node_world = node.transform.world_matrix;
             let world_matrix = Mat4::from(node_world);
 
-            // 视锥剔除
-            if let Some(bs) = geometry.bounding_sphere.borrow().as_ref() {
-                let scale = node.transform.scale.max_element();
-                let center = node_world.transform_point3(bs.center);
-                if !frustum.intersects_sphere(center, bs.radius * scale) {
-                    continue;
+            // 视锥剔除：根据是否有骨骼绑定选择不同的包围盒
+            let skin_binding = scene.skins.get(node_handle);
+            let is_visible = if let Some(binding) = skin_binding {
+                // 有骨骼绑定：使用 Skeleton 的包围盒
+                if let Some(skeleton) = scene.skeleton_pool.get(binding.skeleton) {
+                    if let Some(local_bounds) = skeleton.local_bounds() {
+                        let world_bounds = local_bounds.transform(&node_world);
+                        frustum.intersects_box(world_bounds.min, world_bounds.max)
+                    } else {
+                        // 包围盒尚未计算，默认可见
+                        true
+                    }
+                } else {
+                    true
                 }
+            } else {
+                // 无骨骼绑定：使用 Geometry 的包围盒
+                if let Some(bbox) = geometry.bounding_box.borrow().as_ref() {
+                    let world_bounds = bbox.transform(&node_world);
+                    frustum.intersects_box(world_bounds.min, world_bounds.max)
+                } else if let Some(bs) = geometry.bounding_sphere.borrow().as_ref() {
+                    // 回退到包围球
+                    let scale = node.transform.scale.max_element();
+                    let center = node_world.transform_point3(bs.center);
+                    frustum.intersects_sphere(center, bs.radius * scale)
+                } else {
+                    true
+                }
+            };
+
+            if !is_visible {
+                continue;
             }
 
-            // 计算到相机的距离（用于排序）
             let distance_sq = camera_pos.distance_squared(node_world.translation);
-
-            // 从 Mesh 的渲染缓存中获取缓存的 ID
             let cached_bind_group_id = mesh.render_cache.bind_group_id;
             let cached_pipeline_id = mesh.render_cache.pipeline_id;
-
-            // 获取骨骼绑定（从组件存储中查询）
-            let skeleton = scene.skins.get(node_handle).map(|skin| skin.skeleton);
+            let skeleton = skin_binding.map(|skin| skin.skeleton);
 
             self.render_items.push(ExtractedRenderItem {
                 node_handle,

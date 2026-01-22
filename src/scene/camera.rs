@@ -166,4 +166,31 @@ impl Frustum {
         true
     }
 
+    /// AABB 与视锥体相交检测
+    /// 使用平面-AABB 测试，如果 AABB 完全在任意平面外侧则返回 false
+    pub fn intersects_box(&self, min: Vec3, max: Vec3) -> bool {
+        for (i, plane) in self.planes.iter().enumerate() {
+            // 跳过 Far Plane
+            if i == 5 { continue; }
+            
+            // 如果平面是零向量（无效平面），直接跳过
+            if plane.x == 0.0 && plane.y == 0.0 && plane.z == 0.0 {
+                continue;
+            }
+
+            // 找到 AABB 上距离平面最近的点（p-vertex）
+            // 如果这个点在平面外侧，则整个 AABB 都在外侧
+            let p = Vec3::new(
+                if plane.x >= 0.0 { max.x } else { min.x },
+                if plane.y >= 0.0 { max.y } else { min.y },
+                if plane.z >= 0.0 { max.z } else { min.z },
+            );
+
+            let dist = plane.x * p.x + plane.y * p.y + plane.z * p.z + plane.w;
+            if dist < 0.0 {
+                return false;
+            }
+        }
+        true
+    }
 }

@@ -45,6 +45,8 @@ pub struct Mesh {
     
     /// Morph Uniform Buffer (GPU 用，每帧更新)
     pub(crate) morph_uniforms: CpuBuffer<MorphUniforms>,
+
+    pub(crate) morph_dirty: bool,
     
     // === 渲染缓存 ===
     /// 渲染代理缓存，避免每帧重复查找
@@ -63,7 +65,8 @@ impl Mesh {
             visible: true,
             render_order: 0,
             morph_target_influences: Vec::new(),
-            morph_uniforms: CpuBuffer::new_uniform(Some("Mesh Morph Uniforms")),
+            morph_uniforms: CpuBuffer::new_uniform(None),
+            morph_dirty: false,
             render_cache: RenderCache::default(),
         }
     }
@@ -98,13 +101,16 @@ impl Mesh {
     /// 批量设置 morph target 权重
     pub fn set_morph_target_influences(&mut self, weights: &[f32]) {
         let len = weights.len().min(self.morph_target_influences.len());
-        self.morph_target_influences[..len].copy_from_slice(&weights[..len]);
+        if self.morph_target_influences[..len] != weights[..len] {
+            self.morph_target_influences[..len].copy_from_slice(&weights[..len]);
+            self.morph_dirty = true;
+        }
     }
     
     /// 更新 Morph Uniforms (排序剔除并填充 GPU buffer)
     /// 应在每帧渲染前调用
     pub fn update_morph_uniforms(&mut self) {
-        if self.morph_target_influences.is_empty() {
+        if self.morph_target_influences.is_empty() || !self.morph_dirty {
             return;
         }
         
@@ -139,6 +145,7 @@ impl Mesh {
             uniforms.weights[vec_idx][component] = *weight;
             uniforms.indices[vec_idx][component] = *target_idx as u32;
         }
+        self.morph_dirty = false;
     }
     
     // 使渲染缓存失效（当 geometry 或 material 改变时调用）
