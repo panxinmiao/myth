@@ -9,7 +9,6 @@ use smallvec::{SmallVec, smallvec};
 
 use crate::assets::{AssetServer, MaterialHandle};
 use crate::resources::material::Material;
-use crate::resources::material::MaterialData;
 
 use crate::renderer::core::binding::Bindings;
 use crate::renderer::core::builder::ResourceBuilder;
@@ -110,12 +109,10 @@ impl ResourceManager {
     /// 
     /// 返回: (uniform_result, image_ids, sampler_ids)
     fn ensure_material_resources_with_ids(&mut self, assets: &AssetServer, material: &Material) -> (super::EnsureResult, SmallVec<[u64; 8]>, SmallVec<[u64; 8]>) {
-        let uniform_result = match &material.data {
-            MaterialData::Basic(m) => self.ensure_buffer(&m.uniforms),
-            MaterialData::Phong(m) => self.ensure_buffer(&m.uniforms),
-            MaterialData::Standard(m) => self.ensure_buffer(&m.uniforms),
-            MaterialData::Physical(m) => self.ensure_buffer(&m.uniforms),
-        };
+        let uniform_result = self.ensure_buffer_ref(
+            material.data.uniform_buffer(), 
+            material.data.uniform_bytes()
+        );
 
         // 分别收集 Image ID 和 Sampler ID
         let mut image_ids = SmallVec::new();
@@ -142,7 +139,6 @@ impl ResourceManager {
                         sampler_ids.push(self.dummy_sampler.id);
                     }
                 },
-                // 内部附件附件
                 TextureSource::Attachment(id) => {
                     image_ids.push(id);
                     // 3. Sampler ID 处理

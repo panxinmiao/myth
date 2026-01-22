@@ -6,10 +6,13 @@ mod physical;
 pub use basic::MeshBasicMaterial;
 pub use phong::MeshPhongMaterial;
 pub use standard::MeshStandardMaterial;
+pub use physical::MeshPhysicalMaterial;
 
-use std::{borrow::Cow, ops::Deref};
+use std::{any::Any, borrow::Cow, ops::Deref};
 
-use crate::resources::{material::physical::MeshPhysicalMaterial, texture::TextureSource};
+use crate::renderer::core::builder::ResourceBuilder;
+use crate::resources::buffer::BufferRef;
+use crate::resources::texture::TextureSource;
 use bitflags::bitflags;
 use glam::Vec4;
 use uuid::Uuid;
@@ -28,6 +31,53 @@ bitflags! {
         const USE_SPECULAR_MAP  = 1 << 6;
         const USE_IBL           = 1 << 7;
     }
+}
+
+// ============================================================================
+// MaterialTrait: 核心抽象接口
+// ============================================================================
+
+/// 所有材质类型必须实现的核心 Trait
+/// 
+/// 这个 Trait 定义了材质系统的统一接口，支持：
+/// - 内置材质的静态分发（高性能）
+/// - 自定义材质的动态分发（可扩展）
+pub trait MaterialTrait: Any + Send + Sync + std::fmt::Debug {
+    /// 返回着色器名称，用于 Shader 识别和加载
+    fn shader_name(&self) -> &'static str;
+
+    /// 返回材质特性标志位，用于控制 Shader 变体
+    fn features(&self) -> MaterialFeatures;
+
+    /// 返回材质设置（透明度、深度测试等）
+    fn settings(&self) -> &MaterialSettings;
+
+    /// 返回材质绑定资源
+    fn bindings(&self) -> &MaterialBindings;
+
+    /// 定义 GPU 资源绑定
+    fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>);
+
+    /// 获取 Uniform Buffer 引用（用于 GPU 资源确保）
+    fn uniform_buffer(&self) -> &BufferRef;
+
+    /// 获取 Uniform 数据字节切片（用于 GPU 数据上传）
+    fn uniform_bytes(&self) -> &[u8];
+
+    /// Uniform 数据版本号（用于脏检查）
+    fn uniform_version(&self) -> u64;
+
+    /// 布局版本号（Pipeline/Layout 相关变更）
+    fn layout_version(&self) -> u64;
+
+    /// 绑定版本号（BindGroup 相关变更）
+    fn binding_version(&self) -> u64;
+
+    /// 向下转型支持（用于 Custom 材质的类型恢复）
+    fn as_any(&self) -> &dyn Any;
+
+    /// 向下转型支持（可变引用）
+    fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 // ============================================================================
@@ -149,124 +199,136 @@ impl Default for MaterialSettings {
 // 核心材质枚举 (Material Data Enum)
 // ============================================================================
 
+/// 材质数据枚举
+/// 
+/// 采用"静态分发 + 动态逃生舱"的混合策略：
+/// - 内置材质（Basic/Phong/Standard/Physical）使用静态分发，保证高性能
+/// - Custom 变体允许用户扩展自定义材质，通过 dyn Trait 动态分发
 #[derive(Debug)]
 pub enum MaterialData {
     Basic(MeshBasicMaterial),
     Phong(MeshPhongMaterial),
     Standard(MeshStandardMaterial),
     Physical(MeshPhysicalMaterial),
+    Custom(Box<dyn MaterialTrait>),
 }
 
 impl MaterialData {
     pub fn shader_name(&self) -> &'static str {
         match self {
-            Self::Basic(_) => "mesh_basic",
-            Self::Phong(_) => "mesh_phong",
-            Self::Standard(_) => "mesh_physical",
-            Self::Physical(_) => "mesh_physical",
+            Self::Basic(m) => m.shader_name(),
+            Self::Phong(m) => m.shader_name(),
+            Self::Standard(m) => m.shader_name(),
+            Self::Physical(m) => m.shader_name(),
+            Self::Custom(m) => m.shader_name(),
         }
     }
 
     pub fn get_features(&self) -> MaterialFeatures {
-        let mut features = MaterialFeatures::empty();
         match self {
-            Self::Basic(m) => {
-                if m.bindings().map.is_some() { features |= MaterialFeatures::USE_MAP; }
-            }
-            Self::Phong(m) => {
-                if m.bindings().map.is_some() { features |= MaterialFeatures::USE_MAP; }
-                if m.bindings().normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
-                if m.bindings().specular_map.is_some() { features |= MaterialFeatures::USE_SPECULAR_MAP; }
-                if m.bindings().emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
-            }
-            Self::Standard(m) => {
-                features |= MaterialFeatures::USE_IBL;
-                if m.bindings().map.is_some() { features |= MaterialFeatures::USE_MAP; }
-                if m.bindings().normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
-                if m.bindings().roughness_map.is_some() { features |= MaterialFeatures::USE_ROUGHNESS_MAP; }
-                if m.bindings().metalness_map.is_some() { features |= MaterialFeatures::USE_METALNESS_MAP; }
-                if m.bindings().emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
-                if m.bindings().ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
-                if m.bindings().specular_map.is_some() { features |= MaterialFeatures::USE_SPECULAR_MAP; }
-            }
-            Self::Physical(m) => {
-                features |= MaterialFeatures::USE_IBL;
-                if m.bindings().map.is_some() { features |= MaterialFeatures::USE_MAP; }
-                if m.bindings().normal_map.is_some() { features |= MaterialFeatures::USE_NORMAL_MAP; }
-                if m.bindings().roughness_map.is_some() { features |= MaterialFeatures::USE_ROUGHNESS_MAP; }
-                if m.bindings().metalness_map.is_some() { features |= MaterialFeatures::USE_METALNESS_MAP; }
-                if m.bindings().emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
-                if m.bindings().ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
-                if m.bindings().specular_map.is_some() { features |= MaterialFeatures::USE_SPECULAR_MAP; }
-            }
+            Self::Basic(m) => m.features(),
+            Self::Phong(m) => m.features(),
+            Self::Standard(m) => m.features(),
+            Self::Physical(m) => m.features(),
+            Self::Custom(m) => m.features(),
         }
-        features
     }
-    
+
     pub fn uniform_version(&self) -> u64 {
         match self {
-            Self::Basic(m) => m.uniforms.handle().version,
-            Self::Phong(m) => m.uniforms.handle().version,
-            Self::Standard(m) => m.uniforms.handle().version,
-            Self::Physical(m) => m.uniforms.handle().version,
+            Self::Basic(m) => m.uniform_version(),
+            Self::Phong(m) => m.uniform_version(),
+            Self::Standard(m) => m.uniform_version(),
+            Self::Physical(m) => m.uniform_version(),
+            Self::Custom(m) => m.uniform_version(),
         }
     }
-    
+
     pub fn binding_version(&self) -> u64 {
         match self {
             Self::Basic(m) => m.binding_version(),
             Self::Phong(m) => m.binding_version(),
             Self::Standard(m) => m.binding_version(),
             Self::Physical(m) => m.binding_version(),
+            Self::Custom(m) => m.binding_version(),
         }
     }
-    
+
     pub fn layout_version(&self) -> u64 {
         match self {
             Self::Basic(m) => m.layout_version(),
             Self::Phong(m) => m.layout_version(),
             Self::Standard(m) => m.layout_version(),
             Self::Physical(m) => m.layout_version(),
+            Self::Custom(m) => m.layout_version(),
         }
     }
-    
+
+    pub fn uniform_buffer(&self) -> &BufferRef {
+        match self {
+            Self::Basic(m) => m.uniform_buffer(),
+            Self::Phong(m) => m.uniform_buffer(),
+            Self::Standard(m) => m.uniform_buffer(),
+            Self::Physical(m) => m.uniform_buffer(),
+            Self::Custom(m) => m.uniform_buffer(),
+        }
+    }
+
+    pub fn uniform_bytes(&self) -> &[u8] {
+        match self {
+            Self::Basic(m) => m.uniform_bytes(),
+            Self::Phong(m) => m.uniform_bytes(),
+            Self::Standard(m) => m.uniform_bytes(),
+            Self::Physical(m) => m.uniform_bytes(),
+            Self::Custom(m) => m.uniform_bytes(),
+        }
+    }
+
     pub fn settings(&self) -> &MaterialSettings {
         match self {
             Self::Basic(m) => m.settings(),
             Self::Phong(m) => m.settings(),
             Self::Standard(m) => m.settings(),
             Self::Physical(m) => m.settings(),
+            Self::Custom(m) => m.settings(),
         }
     }
 
-    pub fn settings_mut(&mut self) -> SettingsGuard<'_> {
-        match self {
-            Self::Basic(m) => m.settings_mut(),
-            Self::Phong(m) => m.settings_mut(),
-            Self::Standard(m) => m.settings_mut(),
-            Self::Physical(m) => m.settings_mut(),
-        }
-    }
-
-    /// 获取材质绑定资源的只读引用
     pub fn bindings(&self) -> &MaterialBindings {
         match self {
-            Self::Basic(m) => m.bindings(),
-            Self::Phong(m) => m.bindings(),
-            Self::Standard(m) => m.bindings(),
-            Self::Physical(m) => m.bindings(),
+            Self::Basic(m) => MaterialTrait::bindings(m),
+            Self::Phong(m) => MaterialTrait::bindings(m),
+            Self::Standard(m) => MaterialTrait::bindings(m),
+            Self::Physical(m) => MaterialTrait::bindings(m),
+            Self::Custom(m) => m.bindings(),
         }
     }
 
-    pub fn bindings_mut(&mut self) -> BindingsGuard<'_> {
+    pub fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
         match self {
-            Self::Basic(m) => m.bindings_mut(),
-            Self::Phong(m) => m.bindings_mut(),
-            Self::Standard(m) => m.bindings_mut(),
-            Self::Physical(m) => m.bindings_mut(),
+            Self::Basic(m) => m.define_bindings(builder),
+            Self::Phong(m) => m.define_bindings(builder),
+            Self::Standard(m) => m.define_bindings(builder),
+            Self::Physical(m) => m.define_bindings(builder),
+            Self::Custom(m) => m.define_bindings(builder),
         }
     }
 
+    /// 尝试向下转型为具体类型（用于 Custom 材质）
+    pub fn as_custom<T: MaterialTrait + 'static>(&self) -> Option<&T> {
+        match self {
+            Self::Custom(m) => m.as_any().downcast_ref::<T>(),
+            _ => None,
+        }
+    }
+
+    /// 尝试向下转型为具体类型的可变引用（用于 Custom 材质）
+    pub fn as_custom_mut<T: MaterialTrait + 'static>(&mut self) -> Option<&mut T> {
+        match self {
+            Self::Custom(m) => m.as_any_mut().downcast_mut::<T>(),
+            _ => None,
+        }
+    }
 }
 
 // ============================================================================
@@ -289,6 +351,13 @@ impl Material {
         }
     }
 
+    /// 从自定义材质创建 Material
+    /// 
+    /// 用于用户扩展的自定义材质类型
+    pub fn new_custom<T: MaterialTrait + 'static>(custom_material: T) -> Self {
+        Self::new(MaterialData::Custom(Box::new(custom_material)))
+    }
+
     // 辅助构造方法
     pub fn new_basic(color: Vec4) -> Self {
         Self::from(MeshBasicMaterial::new(color))
@@ -304,6 +373,16 @@ impl Material {
 
     pub fn new_physical(color: Vec4) -> Self {
         Self::from(MeshPhysicalMaterial::new(color))
+    }
+
+    /// 获取自定义材质的引用
+    pub fn as_custom<T: MaterialTrait + 'static>(&self) -> Option<&T> {
+        self.data.as_custom::<T>()
+    }
+
+    /// 获取自定义材质的可变引用
+    pub fn as_custom_mut<T: MaterialTrait + 'static>(&mut self) -> Option<&mut T> {
+        self.data.as_custom_mut::<T>()
     }
 
     // 类型转换辅助方法

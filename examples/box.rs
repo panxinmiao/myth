@@ -26,7 +26,7 @@ impl AppHandler for TexturedBox {
         }
         
         let geo_handle = ctx.assets.add_geometry(geometry);
-        let mat_handle = ctx.assets.add_material(basic_mat.into());
+        let mat_handle = ctx.assets.add_material(basic_mat);
 
         // 3. 创建 Mesh 并加入场景
         let mesh = Mesh::new(geo_handle, mat_handle);

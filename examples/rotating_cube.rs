@@ -17,7 +17,7 @@ impl AppHandler for RotatingCube {
         let geo_handle = ctx.assets.add_geometry(geometry);
 
         let material = Material::new_basic(Vec4::new(0.8, 0.3, 0.3, 1.0));
-        let mat_handle = ctx.assets.add_material(material.into());
+        let mat_handle = ctx.assets.add_material(material);
 
         // 2. 创建 Mesh 并添加到场景
         let mesh = Mesh::new(geo_handle, mat_handle);

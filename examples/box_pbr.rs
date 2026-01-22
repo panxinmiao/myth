@@ -1,6 +1,6 @@
 use glam::{Vec3, Vec4, Quat};
 use three::app::{App, AppContext, AppHandler};
-use three::resources::{Geometry, Material, Mesh, Texture};
+use three::resources::{Geometry, MeshStandardMaterial, Mesh, Texture};
 use three::scene::{Camera, NodeIndex, light};
 use three::utils::fps_counter::FpsCounter;
 use three::OrbitControls;
@@ -18,16 +18,16 @@ impl AppHandler for PbrBox {
         // 1. 准备资源
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
-        let mut mat = Material::new_standard(Vec4::new(1.0, 1.0, 1.0, 1.0));
+        
+        // 创建具体材质类型，便于访问类型特定的方法
+        let mut standard_mat = MeshStandardMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         let tex_handle = ctx.assets.add_texture(texture);
-
-        if let Some(physical) = mat.as_physical_mut() {
-            physical.set_map(Some(tex_handle.into()));
-        }
+        standard_mat.set_map(Some(tex_handle.into()));
         
         let geo_handle = ctx.assets.add_geometry(geometry);
-        let mat_handle = ctx.assets.add_material(mat.into());
+        // 在最后需要时才转换为通用 Material 类型
+        let mat_handle = ctx.assets.add_material(standard_mat.into());
 
         // 2. 创建 Mesh 并加入场景
         let mesh = Mesh::new(geo_handle, mat_handle);

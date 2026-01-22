@@ -60,7 +60,7 @@ impl AppHandler for Earth {
         }
             
         let geo_handle = ctx.assets.add_geometry(geometry);
-        let mat_handle = ctx.assets.add_material(mat.into());
+        let mat_handle = ctx.assets.add_material(mat);
 
         // 云层材质
         let mut cloud_material = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
@@ -75,7 +75,7 @@ impl AppHandler for Earth {
                 settings.side = three::Side::Front;
             }
         }
-        let cloud_material_handle = ctx.assets.add_material(cloud_material.into());
+        let cloud_material_handle = ctx.assets.add_material(cloud_material);
 
         // 2. 创建 Mesh 并加入场景
         let mesh = three::resources::Mesh::new(geo_handle, mat_handle);

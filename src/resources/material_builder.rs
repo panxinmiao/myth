@@ -53,7 +53,7 @@ impl MeshBasicMaterialBuilder {
     pub fn cull_mode(mut self, mode: Option<wgpu::Face>) -> Self { self.cull_mode = mode; self }
     pub fn side(mut self, side: Side) -> Self { self.side = side; self }
 
-    pub fn build(self) -> Material {
+    pub fn build(self) -> MeshBasicMaterial {
         let mut basic = MeshBasicMaterial::new(self.color);
         basic.bindings_mut().map = self.map;
         basic.uniforms_mut().opacity = self.opacity;
@@ -66,9 +66,7 @@ impl MeshBasicMaterialBuilder {
             settings.side = self.side;
         }
 
-        let mut mat = Material::new(MaterialData::Basic(basic));
-        mat.name = self.name;
-        mat
+        basic
     }
 }
 
@@ -140,7 +138,7 @@ impl MeshStandardMaterialBuilder {
     pub fn depth_test(mut self, enabled: bool) -> Self { self.depth_test = enabled; self }
     pub fn side(mut self, side: Side) -> Self { self.side = side; self }
     
-    pub fn build(self) -> Material {
+    pub fn build(self) -> MeshStandardMaterial {
         let mut standard = MeshStandardMaterial::new(self.color);
         
         {
@@ -170,8 +168,6 @@ impl MeshStandardMaterialBuilder {
             settings.side = self.side;
         }
 
-        let mut mat = Material::new(MaterialData::Standard(standard));
-        mat.name = self.name;
-        mat
+        standard
     }
 }

@@ -68,6 +68,20 @@ impl ResourceManager {
         )
     }
 
+    /// 通过 BufferRef 和原始字节数据确保 GpuBuffer 存在且数据最新
+    /// 
+    /// 用于支持 MaterialTrait 等通用接口
+    pub fn ensure_buffer_ref(&mut self, buffer_ref: &BufferRef, data: &[u8]) -> EnsureResult {
+        Self::write_buffer_internal(
+            &self.device,
+            &self.queue,
+            &mut self.gpu_buffers,
+            self.frame_index,
+            buffer_ref,
+            data,
+        )
+    }
+
     /// 确保 CpuBuffer 对应的 GpuBuffer 已经创建并上传最新数据
     /// 
     /// 仅返回物理资源 ID（兼容旧代码）
