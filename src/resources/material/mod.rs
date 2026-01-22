@@ -187,6 +187,7 @@ impl MaterialData {
                 if m.bindings().metalness_map.is_some() { features |= MaterialFeatures::USE_METALNESS_MAP; }
                 if m.bindings().emissive_map.is_some() { features |= MaterialFeatures::USE_EMISSIVE_MAP; }
                 if m.bindings().ao_map.is_some() { features |= MaterialFeatures::USE_AO_MAP; }
+                if m.bindings().specular_map.is_some() { features |= MaterialFeatures::USE_SPECULAR_MAP; }
             }
             Self::Physical(m) => {
                 features |= MaterialFeatures::USE_IBL;

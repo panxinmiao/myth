@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::fs;
+use std::sync::atomic::Ordering;
 use glam::{Affine3A, Mat4, Quat, Vec3, Vec4};
 use crate::resources::geometry::{Geometry, Attribute};
 use crate::resources::material::{Material, MeshStandardMaterial};
@@ -82,7 +83,7 @@ impl<'a> GltfLoader<'a> {
         let file = fs::File::open(path)
             .with_context(|| format!("Failed to open glTF file: {}", path.display()))?;
         let reader = std::io::BufReader::new(file);
-        let gltf = gltf::Gltf::from_reader(reader)
+        let gltf = gltf::Gltf::from_reader_without_validation(reader)
             .context("Failed to parse glTF file")?;
 
         let base_path = path.parent().unwrap_or(Path::new("./")).to_path_buf();
@@ -100,7 +101,26 @@ impl<'a> GltfLoader<'a> {
         };
 
         // 注册默认扩展 (可以在这里添加更多)
-        // loader.register_extension(Box::new(KhrMaterialsUnlit));
+        loader._register_extension(Box::new(KhrMaterialsPbrSpecularGlossiness));
+
+
+        let supported_ext = loader.extensions.keys().cloned().collect::<Vec<_>>();
+
+        let require_not_supported: Vec<_> = gltf.extensions_required().filter(
+            |ext| !supported_ext.contains(&ext.to_string())
+        ).collect();
+
+        if !require_not_supported.is_empty() {
+            println!("glTF file requires unsupported extensions: {:?}", require_not_supported);
+        }
+
+        let used_not_supported: Vec<_> = gltf.extensions_used().filter(
+            |ext| !supported_ext.contains(&ext.to_string())
+        ).collect();
+
+        if !used_not_supported.is_empty() {
+            println!("This GLTF uses extensions: {:?}, which are not supported yet, so the display may not be so correct.", used_not_supported);
+        }
 
         // 3. 资源加载流程
         loader.load_textures(&gltf, &buffers)?;
@@ -289,9 +309,26 @@ impl<'a> GltfLoader<'a> {
                 };
             }
 
-            
+            if let Some(specular) = material.specular() {
+                mat.uniforms_mut().specular = Vec3::from_array(specular.specular_color_factor());
+                mat.uniforms_mut().specular_intensity = specular.specular_factor();
+            }
+
             // 转换为通用 Material 枚举
             let mut engine_mat = Material::from(mat);
+            // Material Extensions
+
+            // 处理 KHR_materials_pbrSpecularGlossiness (这是一个特殊的扩展，有专门的API)
+            if material.pbr_specular_glossiness().is_some() {
+                if let Some(handler) = self.extensions.get_mut("KHR_materials_pbrSpecularGlossiness") {
+                    let mut ctx = LoadContext {
+                        assets: &mut self.assets, 
+                        texture_map: &self.texture_map, 
+                        material_map: &self.material_map,
+                    };
+                    handler.on_load_material(&mut ctx, &material, &mut engine_mat, &Value::Null)?;
+                }
+            }
 
             // extensions 处理
             if let Some(extensions_map) = material.extensions() {
@@ -302,6 +339,7 @@ impl<'a> GltfLoader<'a> {
                 };
 
                 for (name, value) in extensions_map {
+                    println!("Processing material extension: {}, {}", name, value);
                     // 只调用匹配的插件
                     if let Some(handler) = self.extensions.get_mut(name) {
                         handler.on_load_material(&mut ctx, &material, &mut engine_mat, value)?;
@@ -657,4 +695,132 @@ impl<'a> GltfLoader<'a> {
         
         Ok(animations)
     }
+}
+
+struct KhrMaterialsPbrSpecularGlossiness;
+
+impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
+    fn name(&self) -> &str {
+        "KHR_materials_pbrSpecularGlossiness"
+    }
+
+    fn on_load_material(&mut self, _ctx: &mut LoadContext, _gltf_mat: &gltf::Material, engine_mat: &mut Material, _extension_value: &Value) -> anyhow::Result<()> {
+        // KHR_materials_pbrSpecularGlossiness 扩展：
+        // 将 Specular-Glossiness 工作流转换为 Metallic-Roughness 工作流
+        
+        let sg = _gltf_mat.pbr_specular_glossiness()
+            .ok_or_else(|| anyhow::anyhow!("Material missing pbr_specular_glossiness data"))?;
+
+        let standard_mut = engine_mat.as_standard_mut()
+            .ok_or_else(|| anyhow::anyhow!("Material is not MeshStandardMaterial"))?;
+
+        // 1. 设置基础材质参数 (转换为非金属材质)
+        {
+            let mut uniforms = standard_mut.uniforms_mut();
+            uniforms.metalness = 0.0;  // Specular-Glossiness 工作流是非金属的
+            uniforms.roughness = 1.0;  // 默认粗糙度，如果没有贴图会被glossiness_factor覆盖
+            uniforms.specular = Vec3::from_array(sg.specular_factor());
+            uniforms.specular_intensity = 1.0;
+            uniforms.color = Vec4::from_array(sg.diffuse_factor());
+        }
+
+        // 2. 处理 diffuse 纹理 -> base color map
+        if let Some(diffuse_tex) = sg.diffuse_texture() {
+            let tex_handle = _ctx.texture_map[diffuse_tex.texture().index()];
+            let mut bindings = standard_mut.bindings_mut();
+            bindings.map = Some(tex_handle.into());
+
+            // diffuse 是 sRGB 颜色空间
+            if let Some(texture) = _ctx.assets.get_texture(tex_handle) {
+                texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
+            }
+        }
+
+        // 3. 处理 specular-glossiness 纹理
+        if let Some(sg_tex_info) = sg.specular_glossiness_texture() {
+            let tex_handle = _ctx.texture_map[sg_tex_info.texture().index()];
+            let glossiness_factor = sg.glossiness_factor();
+            
+            // 获取原始纹理数据并克隆（避免借用冲突）
+            let (width, height, source_data) = if let Some(source_texture) = _ctx.assets.get_texture(tex_handle) {
+                let source_image = &source_texture.image;
+                let w = source_image.width.load(Ordering::Relaxed);
+                let h = source_image.height.load(Ordering::Relaxed);
+                let data_clone = source_image.data.read().unwrap().clone();
+                (w, h, data_clone)
+            } else {
+                (0, 0, None)
+            };
+            
+            // 处理图像数据
+            if let Some(data) = source_data {
+                let pixel_count = (width * height) as usize;
+                
+                // 创建 specular map (RGB通道 = specular颜色, A通道 = 255)
+                let mut specular_data = Vec::with_capacity(pixel_count * 4);
+                // 创建 roughness map (G通道 = roughness, 其他通道填充)
+                let mut roughness_data = Vec::with_capacity(pixel_count * 4);
+                
+                for i in 0..pixel_count {
+                    let offset = i * 4;
+                    let r = data[offset];
+                    let g = data[offset + 1];
+                    let b = data[offset + 2];
+                    let glossiness = data[offset + 3];  // Alpha通道存储glossiness
+                    
+                    // Specular map: 保留RGB，设置A=255
+                    specular_data.push(r);
+                    specular_data.push(g);
+                    specular_data.push(b);
+                    specular_data.push(255);
+                    
+                    // Roughness map: roughness = 1 - glossiness
+                    // glossiness_channel 已经是 [0-255]，需要转为 [0-1] 再应用factor
+                    let glossiness_normalized = (glossiness as f32 / 255.0) * glossiness_factor;
+                    let roughness_normalized = 1.0 - glossiness_normalized;
+                    let roughness_byte = (roughness_normalized * 255.0) as u8;
+                    
+                    // 标准做法：roughness存储在G通道
+                    roughness_data.push(0);              // R
+                    roughness_data.push(roughness_byte); // G = roughness
+                    roughness_data.push(0);              // B
+                    roughness_data.push(255);            // A
+                }
+                
+                // 创建新的纹理资源
+                let specular_texture = Texture::new_2d(
+                    Some("sg_specular"),
+                    width,
+                    height,
+                    Some(specular_data),
+                    TextureFormat::Rgba8Unorm  // Specular是线性空间
+                );
+                
+                let roughness_texture = Texture::new_2d(
+                    Some("sg_roughness"),
+                    width,
+                    height,
+                    Some(roughness_data),
+                    TextureFormat::Rgba8Unorm
+                );
+                
+                // 添加到AssetServer并绑定到材质
+                let specular_handle = _ctx.assets.add_texture(specular_texture);
+                let roughness_handle = _ctx.assets.add_texture(roughness_texture);
+                
+                let mut bindings = standard_mut.bindings_mut();
+                bindings.specular_map = Some(specular_handle.into());
+                bindings.roughness_map = Some(roughness_handle.into());
+                bindings.metalness_map = Some(roughness_handle.into());  // 复用roughness map
+            }
+        } else {
+            // 如果没有纹理，只用glossiness_factor设置粗糙度
+            let glossiness_factor = sg.glossiness_factor();
+            let mut uniforms = standard_mut.uniforms_mut();
+            uniforms.roughness = 1.0 - glossiness_factor;
+        }
+
+        Ok(())
+    }
+    
 }

@@ -111,6 +111,11 @@ impl Bindings for MaterialData {
                     builder.add_texture("emissive_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("emissive_map", Some(*map), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
+
+                if let Some(map) = &m.bindings().specular_map {
+                    builder.add_texture("specular_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_sampler("specular_map", Some(*map), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+                }
             }
        
             Self::Physical(m) => {
@@ -153,6 +158,11 @@ impl Bindings for MaterialData {
                 if let Some(map) = &m.bindings().emissive_map {
                     builder.add_texture("emissive_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
                     builder.add_sampler("emissive_map", Some(*map), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
+                }
+
+                if let Some(map) = &m.bindings().specular_map {
+                    builder.add_texture("specular_map", Some(*map), wgpu::TextureSampleType::Float { filterable: true }, wgpu::TextureViewDimension::D2, wgpu::ShaderStages::FRAGMENT);
+                    builder.add_sampler("specular_map", Some(*map), wgpu::SamplerBindingType::Filtering, wgpu::ShaderStages::FRAGMENT);
                 }
 
             }

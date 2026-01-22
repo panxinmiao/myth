@@ -325,6 +325,9 @@ define_gpu_data_struct!(
         pub ao_map_intensity: f32 = 1.0,     // 4
         pub(crate) __padding: f32,              // 4 (8+4+4=16)
 
+        pub specular: Vec3 = Vec3::ONE,               // 12
+        pub specular_intensity: f32 = 0.0,    // 4
+
         // 使用优化后的 Mat3A (48 bytes)
         pub map_transform: Mat3A = Mat3A::IDENTITY,         
         pub normal_map_transform: Mat3A = Mat3A::IDENTITY,   
@@ -333,6 +336,7 @@ define_gpu_data_struct!(
         pub emissive_map_transform: Mat3A = Mat3A::IDENTITY, 
         pub occlusion_map_transform: Mat3A = Mat3A::IDENTITY,
         pub ao_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub specular_map_transform: Mat3A = Mat3A::IDENTITY,
     }
 );
 
@@ -353,6 +357,9 @@ define_gpu_data_struct!(
         pub ao_map_intensity: f32 = 1.0,     // 4
         pub(crate) __padding: f32,              // 4 (8+4+4=16)
 
+        pub specular: Vec3 = Vec3::ONE,               // 12
+        pub specular_intensity: f32 = 0.0,    // 4
+
         // 使用优化后的 Mat3A (48 bytes)
         pub map_transform: Mat3A = Mat3A::IDENTITY,         
         pub normal_map_transform: Mat3A = Mat3A::IDENTITY,   
@@ -361,6 +368,7 @@ define_gpu_data_struct!(
         pub emissive_map_transform: Mat3A = Mat3A::IDENTITY, 
         pub occlusion_map_transform: Mat3A = Mat3A::IDENTITY,
         pub ao_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub specular_map_transform: Mat3A = Mat3A::IDENTITY,
     }
 );
 
