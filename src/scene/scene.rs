@@ -493,6 +493,7 @@ impl Scene {
     pub fn update(&mut self) {
         self.update_matrix_world();
         self.update_skeletons();
+        self.sync_morph_weights();
         self.sync_gpu_buffers();
     }
 

@@ -147,9 +147,12 @@ impl<'a> GltfLoader<'a> {
         // 找出场景根节点
         if let Some(default_scene) = gltf.default_scene().or_else(|| gltf.scenes().next()) {
             for node in default_scene.nodes() {
-                root_handles.push(loader.node_mapping[node.index()]);
+                let node_handle = loader.node_mapping[node.index()];
+                root_handles.push(node_handle);
+                loader.scene.root_nodes.push(node_handle);
             }
         }
+
 
         // Step 4.3: 加载骨架 (Skins) - 此时所有 Node 已存在，可以安全引用
         let skeleton_keys = loader.load_skins(&gltf, &buffers)?;
