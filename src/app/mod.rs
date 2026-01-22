@@ -176,35 +176,30 @@ impl<H: AppHandler> AppRunner<H> {
     fn render_frame(&mut self) {
         if let (Some(renderer), Some(user_state)) = (&mut self.renderer, &self.user_state) {
             
-            // 获取当前激活相机的节点和组件
-            let active_camera_data = self.scene.active_camera
-                .and_then(|node_handle| {
-                    let camera_key = self.scene.cameras.get(node_handle).copied()?;
-                    Some(camera_key)
-                });
+            // 获取当前激活相机
+            let Some(node_handle) = self.scene.active_camera else {
+                return;
+            };
 
-            if let Some(camera_key) = active_camera_data {
-                // 暂时 Clone 出来，避免 Renderer 需要同时借用 Scene 和 Camera 的借用冲突
-                // 长期优化：Renderer::render 签名应该优化，只接受 Camera 的 Uniform 数据而不是引用
-                let camera = if let Some(cam) = self.scene.camera_pool.get(camera_key) {
-                    cam.clone()
-                } else {
-                    return;
-                };
+            // 直接获取相机组件的 clone
+            let camera = if let Some(cam) = self.scene.cameras.get(node_handle) {
+                cam.clone()
+            } else {
+                return;
+            };
 
-                let time_seconds = self.last_loop_time.duration_since(self.start_time).as_secs_f32();
-                
-                // 获取用户注入的 Render Nodes (例如 UI Pass)
-                let extra_nodes = user_state.extra_render_nodes();
+            let time_seconds = self.last_loop_time.duration_since(self.start_time).as_secs_f32();
+            
+            // 获取用户注入的 Render Nodes (例如 UI Pass)
+            let extra_nodes = user_state.extra_render_nodes();
 
-                renderer.render(
-                    &mut self.scene, 
-                    &camera, 
-                    &self.assets, 
-                    time_seconds,
-                    &extra_nodes, // <--- 关键：注入用户 Pass
-                );
-            }
+            renderer.render(
+                &mut self.scene, 
+                &camera, 
+                &self.assets, 
+                time_seconds,
+                &extra_nodes, // <--- 关键：注入用户 Pass
+            );
         }
     }
 }
@@ -305,11 +300,9 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                         let new_aspect = physical_size.width as f32 / physical_size.height as f32;
                         // 查找 active camera 并更新
                         if let Some(node_handle) = self.scene.active_camera {
-                            if let Some(camera_key) = self.scene.cameras.get(node_handle).copied() {
-                                if let Some(camera) = self.scene.camera_pool.get_mut(camera_key) {
-                                    camera.aspect = new_aspect;
-                                    camera.update_projection_matrix();
-                                }
+                            if let Some(camera) = self.scene.cameras.get_mut(node_handle) {
+                                camera.aspect = new_aspect;
+                                camera.update_projection_matrix();
                             }
                         }
                     }

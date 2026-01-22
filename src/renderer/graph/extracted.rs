@@ -12,7 +12,7 @@
 use glam::Mat4;
 
 use crate::scene::scene::SceneFeatures;
-use crate::scene::{NodeHandle, Scene, SkeletonKey, MeshKey};
+use crate::scene::{NodeHandle, Scene, SkeletonKey};
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::scene::camera::Camera;
 
@@ -21,10 +21,8 @@ use crate::scene::camera::Camera;
 /// 使用 Clone 而非 Copy，因为 SkinBinding 包含非 Copy 类型
 #[derive(Clone)]
 pub struct ExtractedRenderItem {
-    /// 节点句柄（用于调试和回溯）
+    /// 节点句柄（用于调试和回写缓存）
     pub node_handle: NodeHandle,
-    /// Mesh 的 Key（用于回写缓存）
-    pub mesh_key: MeshKey,
     /// 世界变换矩阵 (64 bytes)
     pub world_matrix: Mat4,
     /// 几何体句柄 (8 bytes)
@@ -115,11 +113,8 @@ impl ExtractedScene {
                 continue;
             }
 
-            // 获取 Mesh 组件（从组件存储中查询）
-            let Some(&mesh_key) = scene.meshes.get(node_handle) else {
-                continue;
-            };
-            let Some(mesh) = scene.mesh_pool.get(mesh_key) else {
+            // 获取 Mesh 组件（直接从组件存储中查询）
+            let Some(mesh) = scene.meshes.get(node_handle) else {
                 continue;
             };
 
@@ -167,7 +162,6 @@ impl ExtractedScene {
 
             self.render_items.push(ExtractedRenderItem {
                 node_handle,
-                mesh_key,
                 world_matrix,
                 geometry: geo_handle,
                 material: mat_handle,

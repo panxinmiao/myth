@@ -19,7 +19,7 @@ use slotmap::{SlotMap, SparseSecondaryMap};
 
 use crate::scene::node::Node;
 use crate::scene::camera::Camera;
-use crate::scene::{NodeHandle, CameraKey};
+use crate::scene::NodeHandle;
 
 /// 层级批次信息，用于并行化处理
 #[derive(Debug, Default)]
@@ -117,8 +117,7 @@ pub fn build_level_order_batches(
 /// 启用并行只需将内层循环改为 `par_iter`。
 pub fn update_hierarchy_batched(
     nodes: &mut SlotMap<NodeHandle, Node>,
-    cameras: &mut SlotMap<CameraKey, Camera>,
-    camera_components: &SparseSecondaryMap<NodeHandle, CameraKey>,
+    cameras: &mut SparseSecondaryMap<NodeHandle, Camera>,
     batches: &LevelOrderBatches,
 ) {
     for (level, batch) in batches.batches.iter().enumerate() {
@@ -146,10 +145,8 @@ pub fn update_hierarchy_batched(
                     node.transform.set_world_matrix(new_world);
                     
                     // 同步更新相机
-                    if let Some(&camera_key) = camera_components.get(node_handle) {
-                        if let Some(camera) = cameras.get_mut(camera_key) {
-                            camera.update_view_projection(&new_world);
-                        }
+                    if let Some(camera) = cameras.get_mut(node_handle) {
+                        camera.update_view_projection(&new_world);
                     }
                 }
             }
@@ -170,12 +167,11 @@ pub fn update_hierarchy_batched(
 /// 从而避免了 "上帝对象" 导致的借用冲突问题。
 pub fn update_hierarchy(
     nodes: &mut SlotMap<NodeHandle, Node>,
-    cameras: &mut SlotMap<CameraKey, Camera>,
-    camera_components: &SparseSecondaryMap<NodeHandle, CameraKey>,
+    cameras: &mut SparseSecondaryMap<NodeHandle, Camera>,
     roots: &[NodeHandle],
 ) {
     for &root_handle in roots {
-        update_transform_recursive(nodes, cameras, camera_components, root_handle, Affine3A::IDENTITY, false);
+        update_transform_recursive(nodes, cameras, root_handle, Affine3A::IDENTITY, false);
     }
 }
 
@@ -185,51 +181,44 @@ pub fn update_hierarchy(
 /// 同时减少重复借用开销。
 pub fn update_hierarchy_iterative(
     nodes: &mut SlotMap<NodeHandle, Node>,
-    cameras: &mut SlotMap<CameraKey, Camera>,
-    camera_components: &SparseSecondaryMap<NodeHandle, CameraKey>,
+    cameras: &mut SparseSecondaryMap<NodeHandle, Camera>,
     roots: &[NodeHandle],
 ) {
-    // 工作栈：(节点句柄, 父世界矩阵, 父是否变化)
     let mut stack: Vec<(NodeHandle, Affine3A, bool)> = Vec::with_capacity(64);
     
-    // 初始化：所有根节点入栈
     for &root_handle in roots.iter().rev() {
         stack.push((root_handle, Affine3A::IDENTITY, false));
     }
     
     while let Some((node_handle, parent_world_matrix, parent_changed)) = stack.pop() {
-        // 获取当前节点
-        let Some(node) = nodes.get_mut(node_handle) else {
-            continue;
-        };
-        
-        // 1. 更新局部矩阵
-        let local_changed = node.transform.update_local_matrix();
-        let world_needs_update = local_changed || parent_changed;
-        
-        // 2. 更新世界矩阵
-        if world_needs_update {
-            let new_world = parent_world_matrix * *node.transform.local_matrix();
-            node.transform.set_world_matrix(new_world);
+        // --- 阶段 1: 可变借用，处理更新逻辑 ---
+        let (current_world, world_needs_update) = {
+            let Some(node) = nodes.get_mut(node_handle) else {
+                continue;
+            };
             
-            // 同步更新相机
-            if let Some(&camera_key) = camera_components.get(node_handle) {
-                if let Some(camera) = cameras.get_mut(camera_key) {
+            let local_changed = node.transform.update_local_matrix();
+            let world_needs_update = local_changed || parent_changed;
+            
+            if world_needs_update {
+                let new_world = parent_world_matrix * *node.transform.local_matrix();
+                node.transform.set_world_matrix(new_world);
+                
+                if let Some(camera) = cameras.get_mut(node_handle) {
                     camera.update_view_projection(&new_world);
                 }
             }
-        }
+            
+            (node.transform.world_matrix, world_needs_update)
+        }; 
+        // 这里的闭包/作用域结束，`node` 的可变借用生命周期结束
         
-        // 3. 收集子节点信息（避免二次借用）
-        let current_world = node.transform.world_matrix;
-        let children_count = node.children.len();
-        
-        // 4. 将子节点压入栈（逆序以保持处理顺序）
-        for i in (0..children_count).rev() {
-            if let Some(node) = nodes.get(node_handle) {
-                if let Some(&child_handle) = node.children.get(i) {
-                    stack.push((child_handle, current_world, world_needs_update));
-                }
+        // --- 阶段 2: 不可变借用，高效收集子节点 ---
+        // [修复] 将查找移到循环外，只进行一次 SlotMap 查找
+        if let Some(node) = nodes.get(node_handle) {
+            // 直接遍历 slice，无需重复 get
+            for &child_handle in node.children.iter().rev() {
+                stack.push((child_handle, current_world, world_needs_update));
             }
         }
     }
@@ -238,8 +227,7 @@ pub fn update_hierarchy_iterative(
 /// 递归更新单个节点及其子树（保留原始递归版本作为参考）
 fn update_transform_recursive(
     nodes: &mut SlotMap<NodeHandle, Node>,
-    cameras: &mut SlotMap<CameraKey, Camera>,
-    camera_components: &SparseSecondaryMap<NodeHandle, CameraKey>,
+    cameras: &mut SparseSecondaryMap<NodeHandle, Camera>,
     node_handle: NodeHandle,
     parent_world_matrix: Affine3A,
     parent_changed: bool,
@@ -261,10 +249,8 @@ fn update_transform_recursive(
             node.transform.set_world_matrix(new_world);
             
             // 同步更新相机
-            if let Some(&camera_key) = camera_components.get(node_handle) {
-                if let Some(camera) = cameras.get_mut(camera_key) {
-                    camera.update_view_projection(&new_world);
-                }
+            if let Some(camera) = cameras.get_mut(node_handle) {
+                camera.update_view_projection(&new_world);
             }
         }
         
@@ -277,7 +263,7 @@ fn update_transform_recursive(
     
     // 阶段 2: 递归处理子节点
     for child_handle in children_handles {
-        update_transform_recursive(nodes, cameras, camera_components, child_handle, current_world_matrix, world_needs_update);
+        update_transform_recursive(nodes, cameras, child_handle, current_world_matrix, world_needs_update);
     }
 }
 
@@ -292,8 +278,7 @@ pub fn update_single_node_local(node: &mut Node) -> bool {
 /// 用于局部更新场景图的一部分
 pub fn update_subtree(
     nodes: &mut SlotMap<NodeHandle, Node>,
-    cameras: &mut SlotMap<CameraKey, Camera>,
-    camera_components: &SparseSecondaryMap<NodeHandle, CameraKey>,
+    cameras: &mut SparseSecondaryMap<NodeHandle, Camera>,
     root_handle: NodeHandle,
 ) {
     // 获取父节点的世界矩阵（如果有的话）
@@ -309,7 +294,7 @@ pub fn update_subtree(
         return;
     };
     
-    update_transform_recursive(nodes, cameras, camera_components, root_handle, parent_world, true);
+    update_transform_recursive(nodes, cameras, root_handle, parent_world, true);
 }
 
 #[cfg(test)]
@@ -320,8 +305,7 @@ mod tests {
     #[test]
     fn test_hierarchy_update() {
         let mut nodes: SlotMap<NodeHandle, Node> = SlotMap::with_key();
-        let mut cameras: SlotMap<CameraKey, Camera> = SlotMap::with_key();
-        let camera_components: SparseSecondaryMap<NodeHandle, CameraKey> = SparseSecondaryMap::new();
+        let mut cameras: SparseSecondaryMap<NodeHandle, Camera> = SparseSecondaryMap::new();
         
         // 创建简单的父子层级
         let mut parent = Node::new();
@@ -339,7 +323,7 @@ mod tests {
         let roots = vec![parent_handle];
         
         // 执行更新
-        update_hierarchy(&mut nodes, &mut cameras, &camera_components, &roots);
+        update_hierarchy(&mut nodes, &mut cameras, &roots);
         
         // 验证子节点的世界位置
         let child_world_pos = nodes.get(child_handle).unwrap().transform.world_matrix.translation;

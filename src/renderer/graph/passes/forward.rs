@@ -71,8 +71,9 @@ impl ForwardRenderPass {
                 continue;
             };
 
-            let Some(mesh) = ctx.scene.mesh_pool.get_mut(item.mesh_key) else {
-                warn!("Mesh {:?} missing during render prepare", item.mesh_key);
+            // 直接从 Scene 的 meshes 组件获取 Mesh
+            let Some(mesh) = ctx.scene.meshes.get_mut(item.node_handle) else {
+                warn!("Mesh for node {:?} missing during render prepare", item.node_handle);
                 continue;
             };
 
@@ -85,7 +86,7 @@ impl ForwardRenderPass {
             let object_data = ctx.resource_manager.prepare_mesh(ctx.assets, mesh, skeleton);
 
             let Some(object_data) = object_data else {
-                warn!("Failed to prepare ObjectBindingData for Mesh {:?}", item.mesh_key);
+                warn!("Failed to prepare ObjectBindingData for node {:?}", item.node_handle);
                 continue;
             };
 
@@ -160,7 +161,8 @@ impl ForwardRenderPass {
                 (pipeline, pipeline_id)
             };
 
-            if let Some(mesh) = ctx.scene.mesh_pool.get_mut(item.mesh_key) {
+            // 回写 pipeline 缓存到 Mesh
+            if let Some(mesh) = ctx.scene.meshes.get_mut(item.node_handle) {
                 mesh.render_cache.pipeline_id = Some(pipeline_id);
             }
 

@@ -82,9 +82,8 @@ impl AppHandler for SkinDemo {
 
         // 4. 创建 Mesh 节点并绑定骨骼
         let mesh = Mesh::new(geo_handle, mat_handle);
-        let mesh_key = ctx.scene.mesh_pool.insert(mesh);
         let mesh_node_id = ctx.scene.create_node_with_name("SkinnedMesh");
-        ctx.scene.set_mesh(mesh_node_id, mesh_key);
+        ctx.scene.set_mesh(mesh_node_id, mesh);
         ctx.scene.bind_skeleton(mesh_node_id, skel_id, BindMode::Attached);
 
         // 5. 添加灯光

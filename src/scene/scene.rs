@@ -20,7 +20,7 @@ use crate::scene::camera::Camera;
 use crate::scene::light::Light;
 use crate::scene::environment::Environment;
 
-use crate::scene::{CameraKey, LightKey, MeshKey, NodeHandle, SkeletonKey};
+use crate::scene::{NodeHandle, SkeletonKey};
 
 bitflags! {
     #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
@@ -50,23 +50,21 @@ pub struct Scene {
     // === 密集组件 (大多数节点都有) ===
     /// 节点名称 - 几乎所有节点都有名字
     pub names: SecondaryMap<NodeHandle, Cow<'static, str>>,
-    /// 网格组件 - 比较常见，但不是所有节点都有
-    pub meshes: SecondaryMap<NodeHandle, MeshKey>,
 
     // === 稀疏组件 (只有少数节点有) ===
-    /// 相机组件
-    pub cameras: SparseSecondaryMap<NodeHandle, CameraKey>,
-    /// 灯光组件
-    pub lights: SparseSecondaryMap<NodeHandle, LightKey>,
+    /// 网格组件 - 直接存储 Mesh 到节点
+    pub meshes: SparseSecondaryMap<NodeHandle, Mesh>,
+    /// 相机组件 - 直接存储 Camera 到节点
+    pub cameras: SparseSecondaryMap<NodeHandle, Camera>,
+    /// 灯光组件 - 直接存储 Light 到节点
+    pub lights: SparseSecondaryMap<NodeHandle, Light>,
     /// 骨骼蒙皮绑定
     pub skins: SparseSecondaryMap<NodeHandle, SkinBinding>,
     /// 形变权重
     pub morph_weights: SparseSecondaryMap<NodeHandle, Vec<f32>>,
 
-    // === 资源池 ===
-    pub mesh_pool: SlotMap<MeshKey, Mesh>,
-    pub camera_pool: SlotMap<CameraKey, Camera>,
-    pub light_pool: SlotMap<LightKey, Light>,
+    // === 资源池 (只保留真正需要共享的资源) ===
+    /// Skeleton 是真正的共享资源，多个角色可能引用同一个骨架定义
     pub skeleton_pool: SlotMap<SkeletonKey, Skeleton>,
 
     // === 环境和全局设置 ===
@@ -96,18 +94,15 @@ impl Scene {
 
             // 密集组件
             names: SecondaryMap::new(),
-            meshes: SecondaryMap::new(),
 
-            // 稀疏组件
+            // 稀疏组件（直接存储组件）
+            meshes: SparseSecondaryMap::new(),
             cameras: SparseSecondaryMap::new(),
             lights: SparseSecondaryMap::new(),
             skins: SparseSecondaryMap::new(),
             morph_weights: SparseSecondaryMap::new(),
 
-            // 资源池
-            mesh_pool: SlotMap::with_key(),
-            camera_pool: SlotMap::with_key(),
-            light_pool: SlotMap::with_key(),
+            // 资源池（仅保留真正共享的资源）
             skeleton_pool: SlotMap::with_key(),
 
             environment: Environment::new(),
@@ -187,16 +182,10 @@ impl Scene {
 
         // 3. 删除所有节点及其组件
         for node_handle in to_remove {
-            // 清理组件
-            if let Some(mesh_key) = self.meshes.remove(node_handle) {
-                self.mesh_pool.remove(mesh_key);
-            }
-            if let Some(camera_key) = self.cameras.remove(node_handle) {
-                self.camera_pool.remove(camera_key);
-            }
-            if let Some(light_key) = self.lights.remove(node_handle) {
-                self.light_pool.remove(light_key);
-            }
+            // 清理组件（直接删除，无需再从资源池移除）
+            self.meshes.remove(node_handle);
+            self.cameras.remove(node_handle);
+            self.lights.remove(node_handle);
             self.skins.remove(node_handle);
             self.morph_weights.remove(node_handle);
             self.names.remove(node_handle);
@@ -277,33 +266,48 @@ impl Scene {
     }
 
     /// 为节点设置 Mesh 组件
-    pub fn set_mesh(&mut self, handle: NodeHandle, mesh_key: MeshKey) {
-        self.meshes.insert(handle, mesh_key);
+    pub fn set_mesh(&mut self, handle: NodeHandle, mesh: Mesh) {
+        self.meshes.insert(handle, mesh);
     }
 
-    /// 获取节点的 Mesh 组件
-    pub fn get_mesh(&self, handle: NodeHandle) -> Option<MeshKey> {
-        self.meshes.get(handle).copied()
+    /// 获取节点的 Mesh 组件引用
+    pub fn get_mesh(&self, handle: NodeHandle) -> Option<&Mesh> {
+        self.meshes.get(handle)
+    }
+
+    /// 获取节点的 Mesh 组件可变引用
+    pub fn get_mesh_mut(&mut self, handle: NodeHandle) -> Option<&mut Mesh> {
+        self.meshes.get_mut(handle)
     }
 
     /// 为节点设置 Camera 组件
-    pub fn set_camera(&mut self, handle: NodeHandle, camera_key: CameraKey) {
-        self.cameras.insert(handle, camera_key);
+    pub fn set_camera(&mut self, handle: NodeHandle, camera: Camera) {
+        self.cameras.insert(handle, camera);
     }
 
-    /// 获取节点的 Camera 组件
-    pub fn get_camera(&self, handle: NodeHandle) -> Option<CameraKey> {
-        self.cameras.get(handle).copied()
+    /// 获取节点的 Camera 组件引用
+    pub fn get_camera(&self, handle: NodeHandle) -> Option<&Camera> {
+        self.cameras.get(handle)
+    }
+
+    /// 获取节点的 Camera 组件可变引用
+    pub fn get_camera_mut(&mut self, handle: NodeHandle) -> Option<&mut Camera> {
+        self.cameras.get_mut(handle)
     }
 
     /// 为节点设置 Light 组件
-    pub fn set_light(&mut self, handle: NodeHandle, light_key: LightKey) {
-        self.lights.insert(handle, light_key);
+    pub fn set_light(&mut self, handle: NodeHandle, light: Light) {
+        self.lights.insert(handle, light);
     }
 
-    /// 获取节点的 Light 组件
-    pub fn get_light(&self, handle: NodeHandle) -> Option<LightKey> {
-        self.lights.get(handle).copied()
+    /// 获取节点的 Light 组件引用
+    pub fn get_light(&self, handle: NodeHandle) -> Option<&Light> {
+        self.lights.get(handle)
+    }
+
+    /// 获取节点的 Light 组件可变引用
+    pub fn get_light_mut(&mut self, handle: NodeHandle) -> Option<&mut Light> {
+        self.lights.get_mut(handle)
     }
 
     /// 为节点绑定骨架
@@ -355,8 +359,7 @@ impl Scene {
     // ========================================================================
     
     pub fn iter_active_lights(&self) -> impl Iterator<Item = (&Light, &Affine3A)> {
-        self.lights.iter().filter_map(move |(node_handle, &light_key)| {
-            let light = self.light_pool.get(light_key)?;
+        self.lights.iter().filter_map(move |(node_handle, light)| {
             let node = self.nodes.get(node_handle)?;
             Some((light, &node.transform.world_matrix))
         })
@@ -373,30 +376,30 @@ impl Scene {
     }
 
     pub fn query_camera_bundle(&mut self, node_handle: NodeHandle) -> Option<(&mut Transform, &mut Camera)> {
-        let camera_key = self.cameras.get(node_handle).copied()?;
+        // 检查是否存在相机组件
+        if !self.cameras.contains_key(node_handle) {
+            return None;
+        }
         
-        // 分开借用以避免冲突
-        let camera = self.camera_pool.get_mut(camera_key)?;
-        // 这里需要使用 unsafe 或重新设计 API，暂时使用指针
+        // 使用指针以避免同时借用 nodes 和 cameras 的冲突
         let transform_ptr = self.nodes.get_mut(node_handle)
             .map(|n| &mut n.transform as *mut Transform)?;
+        let camera = self.cameras.get_mut(node_handle)?;
         
-        // SAFETY: camera 和 transform 是不相交的内存区域
+        // SAFETY: transform 和 camera 是不相交的内存区域
         unsafe { Some((&mut *transform_ptr, camera)) }
     }
 
     /// 查询指定节点的 Transform 和 Light
     pub fn query_light_bundle(&mut self, node_handle: NodeHandle) -> Option<(&mut Transform, &Light)> {
-        let light_key = self.lights.get(node_handle).copied()?;
-        let light = self.light_pool.get(light_key)?;
+        let light = self.lights.get(node_handle)?;
         let transform = &mut self.nodes.get_mut(node_handle)?.transform;
         Some((transform, light))
     }
 
     /// 查询指定节点的 Transform 和 Mesh
     pub fn query_mesh_bundle(&mut self, node_handle: NodeHandle) -> Option<(&mut Transform, &Mesh)> {
-        let mesh_key = self.meshes.get(node_handle).copied()?;
-        let mesh = self.mesh_pool.get(mesh_key)?;
+        let mesh = self.meshes.get(node_handle)?;
         let transform = &mut self.nodes.get_mut(node_handle)?.transform;
         Some((transform, mesh))
     }
@@ -409,8 +412,7 @@ impl Scene {
     pub fn update_matrix_world(&mut self) {
         transform_system::update_hierarchy_iterative(
             &mut self.nodes,
-            &mut self.camera_pool,
-            &self.cameras,
+            &mut self.cameras,
             &self.root_nodes,
         );
     }
@@ -419,8 +421,7 @@ impl Scene {
     pub fn update_subtree(&mut self, root_handle: NodeHandle) {
         transform_system::update_subtree(
             &mut self.nodes,
-            &mut self.camera_pool,
-            &self.cameras,
+            &mut self.cameras,
             root_handle,
         );
     }
@@ -431,16 +432,14 @@ impl Scene {
 
     pub fn add_mesh(&mut self, mesh: Mesh) -> NodeHandle {
         let node_handle = self.create_node_with_name(&mesh.name);
-        let mesh_key = self.mesh_pool.insert(mesh);
-        self.meshes.insert(node_handle, mesh_key);
+        self.meshes.insert(node_handle, mesh);
         self.root_nodes.push(node_handle);
         node_handle
     }
 
     pub fn add_mesh_to_parent(&mut self, mesh: Mesh, parent: NodeHandle) -> NodeHandle {
         let node_handle = self.create_node_with_name(&mesh.name);
-        let mesh_key = self.mesh_pool.insert(mesh);
-        self.meshes.insert(node_handle, mesh_key);
+        self.meshes.insert(node_handle, mesh);
         self.attach(node_handle, parent);
         node_handle
     }
@@ -451,32 +450,28 @@ impl Scene {
 
     pub fn add_camera(&mut self, camera: Camera) -> NodeHandle {
         let node_handle = self.create_node_with_name("Camera");
-        let camera_key = self.camera_pool.insert(camera);
-        self.cameras.insert(node_handle, camera_key);
+        self.cameras.insert(node_handle, camera);
         self.root_nodes.push(node_handle);
         node_handle
     }
 
     pub fn add_camera_to_parent(&mut self, camera: Camera, parent: NodeHandle) -> NodeHandle {
         let node_handle = self.create_node_with_name("Camera");
-        let camera_key = self.camera_pool.insert(camera);
-        self.cameras.insert(node_handle, camera_key);
+        self.cameras.insert(node_handle, camera);
         self.attach(node_handle, parent);
         node_handle
     }
 
     pub fn add_light(&mut self, light: Light) -> NodeHandle {
         let node_handle = self.create_node_with_name("Light");
-        let light_key = self.light_pool.insert(light);
-        self.lights.insert(node_handle, light_key);
+        self.lights.insert(node_handle, light);
         self.root_nodes.push(node_handle);
         node_handle
     }
 
     pub fn add_light_to_parent(&mut self, light: Light, parent: NodeHandle) -> NodeHandle {
         let node_handle = self.create_node_with_name("Light");
-        let light_key = self.light_pool.insert(light);
-        self.lights.insert(node_handle, light_key);
+        self.lights.insert(node_handle, light);
         self.attach(node_handle, parent);
         node_handle
     }
@@ -551,7 +546,7 @@ impl Scene {
     /// 同步环境数据到 GPU Buffer
     fn sync_environment_buffer(&mut self) {
         let env = &self.environment;
-        let light_count = self.light_pool.len();
+        let light_count = self.lights.len();
 
         let new_uniforms = EnvironmentUniforms {
             ambient_light: env.ambient_color,
@@ -602,18 +597,20 @@ impl Scene {
     }
 
     pub fn sync_morph_weights(&mut self) {
-        let mut updates = Vec::new();
-
-        for (node_handle, weights) in &self.morph_weights {
-            if let Some(&mesh_key) = self.meshes.get(node_handle) {
-                if !weights.is_empty() {
-                    updates.push((mesh_key, weights.clone()));
+        // 收集需要更新的节点
+        let updates: Vec<_> = self.morph_weights.iter()
+            .filter_map(|(node_handle, weights)| {
+                if !weights.is_empty() && self.meshes.contains_key(node_handle) {
+                    Some((node_handle, weights.clone()))
+                } else {
+                    None
                 }
-            }
-        }
+            })
+            .collect();
 
-        for (mesh_key, weights) in updates {
-            if let Some(mesh) = self.mesh_pool.get_mut(mesh_key) {
+        // 更新 Mesh 的 morph weights
+        for (node_handle, weights) in updates {
+            if let Some(mesh) = self.meshes.get_mut(node_handle) {
                 mesh.set_morph_target_influences(&weights);
                 mesh.update_morph_uniforms();
             }
@@ -632,8 +629,7 @@ impl Scene {
 
     fn get_bbox_of_one_node(&self, node_handle: NodeHandle, assets: &AssetServer) -> Option<BoundingBox> {
         let node = self.get_node(node_handle)?;
-        let mesh_key = self.meshes.get(node_handle).copied()?;
-        let mesh = self.mesh_pool.get(mesh_key)?;
+        let mesh = self.meshes.get(node_handle)?;
         let geometry = assets.get_geometry(mesh.geometry)?;
 
         let local_bbox = if let Some(bbox) = geometry.bounding_box.borrow().as_ref() {
@@ -718,7 +714,7 @@ pub struct NodeBuilder<'a> {
     scene: &'a mut Scene,
     handle: NodeHandle,
     parent: Option<NodeHandle>,
-    mesh_key: Option<MeshKey>,
+    mesh: Option<Mesh>,
 }
 
 impl<'a> NodeBuilder<'a> {
@@ -729,7 +725,7 @@ impl<'a> NodeBuilder<'a> {
             scene,
             handle,
             parent: None,
-            mesh_key: None,
+            mesh: None,
         }
     }
 
@@ -752,8 +748,8 @@ impl<'a> NodeBuilder<'a> {
         self
     }
 
-    pub fn with_mesh(mut self, mesh_key: MeshKey) -> Self {
-        self.mesh_key = Some(mesh_key);
+    pub fn with_mesh(mut self, mesh: Mesh) -> Self {
+        self.mesh = Some(mesh);
         self
     }
 
@@ -761,8 +757,8 @@ impl<'a> NodeBuilder<'a> {
         let handle = self.handle;
 
         // 设置 Mesh 组件
-        if let Some(mesh_key) = self.mesh_key {
-            self.scene.meshes.insert(handle, mesh_key);
+        if let Some(mesh) = self.mesh {
+            self.scene.meshes.insert(handle, mesh);
         }
 
         // 处理父子关系

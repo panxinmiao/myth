@@ -210,9 +210,7 @@ impl GltfViewer {
 
     fn render(&mut self) {
         if let Some(cam_id) = self.scene.active_camera {
-            if let Some(&camera_key) = self.scene.cameras.get(cam_id)
-                && let Some(camera) = self.scene.camera_pool.get(camera_key)
-            {
+            if let Some(camera) = self.scene.cameras.get(cam_id) {
                 let time_seconds = self.last_loop_time
                     .duration_since(self.start_time)
                     .as_secs_f32();
@@ -448,11 +446,9 @@ impl ApplicationHandler for GltfViewer {
                 if physical_size.height > 0 {
                     let new_aspect = physical_size.width as f32 / physical_size.height as f32;
                     if let Some(node_handle) = self.scene.active_camera {
-                        if let Some(&camera_key) = self.scene.cameras.get(node_handle) {
-                            if let Some(camera) = self.scene.camera_pool.get_mut(camera_key) {
-                                camera.aspect = new_aspect;
-                                camera.update_projection_matrix();
-                            }
+                        if let Some(camera) = self.scene.cameras.get_mut(node_handle) {
+                            camera.aspect = new_aspect;
+                            camera.update_projection_matrix();
                         }
                     }
                 }

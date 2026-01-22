@@ -441,11 +441,10 @@ impl<'a> GltfLoader<'a> {
                     }
                 }
                 
-                let mesh_key = self.scene.mesh_pool.insert(engine_mesh);
-
+                // 直接将 Mesh 组件挂载到节点
                 // 简化处理：目前只支持将第一个 primitive 挂载到节点
                 if i == 0 {
-                    self.scene.set_mesh(engine_node_handle, mesh_key);
+                    self.scene.set_mesh(engine_node_handle, engine_mesh);
                 } else {
                     println!("Warning: Multi-primitive meshes not fully supported on single node yet.");
                 }
