@@ -265,7 +265,7 @@ impl<'a> GltfLoader<'a> {
             mat.set_emissive(Vec3::from_array(material.emissive_factor()));
             
             {
-                let mut bindings= mat.bindings_mut();
+                let bindings= mat.bindings_mut();
                 if let Some(info) = pbr.base_color_texture() {
                     let tex_handle = self.texture_map[info.texture().index()];
                     // mat.set_map(Some(tex_handle.into()));
@@ -727,7 +727,7 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         // 2. 处理 diffuse 纹理 -> base color map
         if let Some(diffuse_tex) = sg.diffuse_texture() {
             let tex_handle = _ctx.texture_map[diffuse_tex.texture().index()];
-            let mut bindings = standard_mut.bindings_mut();
+            let bindings = standard_mut.bindings_mut();
             bindings.map = Some(tex_handle.into());
 
             // diffuse 是 sRGB 颜色空间
@@ -808,7 +808,7 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
                 let specular_handle = _ctx.assets.add_texture(specular_texture);
                 let roughness_handle = _ctx.assets.add_texture(roughness_texture);
                 
-                let mut bindings = standard_mut.bindings_mut();
+                let bindings = standard_mut.bindings_mut();
                 bindings.specular_map = Some(specular_handle.into());
                 bindings.roughness_map = Some(roughness_handle.into());
                 bindings.metalness_map = Some(roughness_handle.into());  // 复用roughness map

@@ -246,6 +246,17 @@ pub struct GpuGeometry {
 /// GPU 端材质资源
 /// 
 /// 使用资源 ID 追踪机制自动检测变化
+/// 
+/// # 版本追踪三维分离
+/// 
+/// 1. **资源拓扑 (BindGroup)**: 由 `resource_ids` 追踪
+///    - 纹理/采样器/Buffer ID 变化 -> 重建 BindGroup
+/// 
+/// 2. **资源内容 (Buffer Data)**: 由 `BufferRef` 追踪（外部）
+///    - Atomic 版本号变化 -> 上传 Buffer
+/// 
+/// 3. **管线状态 (RenderPipeline)**: 由 `version` 追踪
+///    - 深度写入/透明度/双面渲染等变化 -> 切换 Pipeline
 pub struct GpuMaterial {
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
@@ -254,11 +265,11 @@ pub struct GpuMaterial {
     /// Layout entries 的哈希值（用于快速比较是否需要重建 Layout）
     pub layout_hash: u64,
     pub binding_wgsl: String,
-    /// 所有依赖资源的物理 ID 集合
+    /// 所有依赖资源的物理 ID 集合（守卫 BindGroup 的有效性）
     pub resource_ids: ResourceIdSet,
+    /// 记录生成此 GpuMaterial 时的 Material 版本（用于 Pipeline 缓存）
+    pub version: u64,
     pub last_used_frame: u64,
-
-    pub uniform_buffer_id: u64,
     pub last_verified_frame: u64,
 }
 

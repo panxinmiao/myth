@@ -4,7 +4,7 @@ use glam::Vec4;
 
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::resources::buffer::BufferRef;
-use crate::resources::{buffer::CpuBuffer, material::{BindingsGuard, MaterialBindings, MaterialFeatures, MaterialSettings, MaterialTrait, SettingsGuard}, texture::TextureSource, uniforms::MeshPhongUniforms};
+use crate::resources::{buffer::CpuBuffer, material::{MaterialBindings, MaterialFeatures, MaterialSettings, MaterialTrait, SettingsGuard}, texture::TextureSource, uniforms::MeshPhongUniforms};
 
 
 // MeshPhongMaterial
@@ -15,8 +15,8 @@ pub struct MeshPhongMaterial {
     bindings: MaterialBindings,
     settings: MaterialSettings,
     
-    binding_version: u64,
-    layout_version: u64,
+    /// 材质配置版本号（Settings 变化时递增）
+    version: u64,
 }
 
 impl MeshPhongMaterial {
@@ -31,8 +31,7 @@ impl MeshPhongMaterial {
             ),
             bindings: MaterialBindings::default(),
             settings: MaterialSettings::default(),
-            binding_version: 0,
-            layout_version: 0,
+            version: 0,
         }
     }
     
@@ -48,13 +47,9 @@ impl MeshPhongMaterial {
         &self.bindings
     }
     
-    pub fn bindings_mut(&mut self) -> BindingsGuard<'_> {
-        BindingsGuard {
-            initial_layout: self.bindings.clone(),
-            bindings: &mut self.bindings,
-            binding_version: &mut self.binding_version,
-            layout_version: &mut self.layout_version,
-        }
+    /// 直接修改 bindings（纹理变化由 ResourceIdSet 自动检测）
+    pub fn bindings_mut(&mut self) -> &mut MaterialBindings {
+        &mut self.bindings
     }
     
     pub fn settings(&self) -> &MaterialSettings {
@@ -65,12 +60,11 @@ impl MeshPhongMaterial {
         SettingsGuard {
             initial_settings: self.settings.clone(),
             settings: &mut self.settings,
-            layout_version: &mut self.layout_version,
+            version: &mut self.version,
         }
     }
     
-    pub fn binding_version(&self) -> u64 { self.binding_version }
-    pub fn layout_version(&self) -> u64 { self.layout_version }
+    pub fn version(&self) -> u64 { self.version }
     
     pub fn set_color(&mut self, color: Vec4) {
         self.uniforms.write().color = color;
@@ -113,6 +107,13 @@ impl MaterialTrait for MeshPhongMaterial {
         &self.bindings
     }
 
+    fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource)) {
+        if let Some(ref tex) = self.bindings.map { visitor(tex); }
+        if let Some(ref tex) = self.bindings.normal_map { visitor(tex); }
+        if let Some(ref tex) = self.bindings.specular_map { visitor(tex); }
+        if let Some(ref tex) = self.bindings.emissive_map { visitor(tex); }
+    }
+
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
         builder.add_uniform::<MeshPhongUniforms>(
             "material",
@@ -149,16 +150,8 @@ impl MaterialTrait for MeshPhongMaterial {
         self.uniforms.as_bytes()
     }
 
-    fn uniform_version(&self) -> u64 {
-        self.uniforms.handle().version
-    }
-
-    fn layout_version(&self) -> u64 {
-        self.layout_version
-    }
-
-    fn binding_version(&self) -> u64 {
-        self.binding_version
+    fn version(&self) -> u64 {
+        self.version
     }
 
     fn as_any(&self) -> &dyn Any {

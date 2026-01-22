@@ -45,7 +45,7 @@ impl AppHandler for Earth {
 
         if let Some(phong) = mat.as_phong_mut() {
             {
-                let mut bindings = phong.bindings_mut();
+                let bindings = phong.bindings_mut();
                 bindings.map = Some(earth_tex_handle.into());
                 bindings.specular_map = Some(specular_tex_handle.into());
                 bindings.emissive_map = Some(emssive_tex_handle.into());

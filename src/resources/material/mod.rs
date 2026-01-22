@@ -42,6 +42,17 @@ bitflags! {
 /// 这个 Trait 定义了材质系统的统一接口，支持：
 /// - 内置材质的静态分发（高性能）
 /// - 自定义材质的动态分发（可扩展）
+/// 
+/// # 版本追踪机制（三维度分离）
+/// 
+/// 1. **资源拓扑 (BindGroup)**: 由 `ResourceIdSet` 追踪（Renderer 内部）
+///    - 纹理/采样器/Buffer ID 变化 -> 重建 BindGroup
+/// 
+/// 2. **资源内容 (Buffer Data)**: 由 `BufferRef` 追踪（Resource 内部）
+///    - Atomic 版本号变化 -> 上传 Buffer
+/// 
+/// 3. **管线状态 (RenderPipeline)**: 由 `version()` 追踪（Material 自身）
+///    - 深度写入/透明度/双面渲染等变化 -> 切换 Pipeline
 pub trait MaterialTrait: Any + Send + Sync + std::fmt::Debug {
     /// 返回着色器名称，用于 Shader 识别和加载
     fn shader_name(&self) -> &'static str;
@@ -55,6 +66,9 @@ pub trait MaterialTrait: Any + Send + Sync + std::fmt::Debug {
     /// 返回材质绑定资源
     fn bindings(&self) -> &MaterialBindings;
 
+    /// 遍历所有纹理资源（用于构建 ResourceIdSet）
+    fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource));
+
     /// 定义 GPU 资源绑定
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>);
 
@@ -64,14 +78,11 @@ pub trait MaterialTrait: Any + Send + Sync + std::fmt::Debug {
     /// 获取 Uniform 数据字节切片（用于 GPU 数据上传）
     fn uniform_bytes(&self) -> &[u8];
 
-    /// Uniform 数据版本号（用于脏检查）
-    fn uniform_version(&self) -> u64;
-
-    /// 布局版本号（Pipeline/Layout 相关变更）
-    fn layout_version(&self) -> u64;
-
-    /// 绑定版本号（BindGroup 相关变更）
-    fn binding_version(&self) -> u64;
+    /// 材质配置版本号
+    /// 
+    /// 仅表示材质自身配置(Settings)的变化，用于 Pipeline 查找
+    /// 每次调用 set_transparent, set_side 等方法时 +1
+    fn version(&self) -> u64;
 
     /// 向下转型支持（用于 Custom 材质的类型恢复）
     fn as_any(&self) -> &dyn Any;
@@ -84,47 +95,12 @@ pub trait MaterialTrait: Any + Send + Sync + std::fmt::Debug {
 // Guard 结构体（自动版本管理）
 // ============================================================================
 
-pub struct BindingsGuard<'a> {
-    bindings: &'a mut MaterialBindings,
-    binding_version: &'a mut u64,
-    layout_version: &'a mut u64,
-    initial_layout: MaterialBindings,
-}
-
-impl<'a> std::ops::Deref for BindingsGuard<'a> {
-    type Target = MaterialBindings;
-    fn deref(&self) -> &Self::Target {
-        self.bindings
-    }
-}
-
-impl<'a> std::ops::DerefMut for BindingsGuard<'a> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        self.bindings
-    }
-}
-
-impl<'a> Drop for BindingsGuard<'a> {
-    fn drop(&mut self) {
-        let layout_changed = 
-            (self.initial_layout.map.is_some() != self.bindings.map.is_some()) ||
-            (self.initial_layout.normal_map.is_some() != self.bindings.normal_map.is_some()) ||
-            (self.initial_layout.roughness_map.is_some() != self.bindings.roughness_map.is_some()) ||
-            (self.initial_layout.metalness_map.is_some() != self.bindings.metalness_map.is_some()) ||
-            (self.initial_layout.emissive_map.is_some() != self.bindings.emissive_map.is_some()) ||
-            (self.initial_layout.ao_map.is_some() != self.bindings.ao_map.is_some()) ||
-            (self.initial_layout.specular_map.is_some() != self.bindings.specular_map.is_some());
-        
-        if layout_changed {
-            *self.layout_version = self.layout_version.wrapping_add(1);
-        }
-        *self.binding_version = self.binding_version.wrapping_add(1);
-    }
-}
-
+/// Settings 修改守卫
+/// 
+/// 当 Settings 发生变化时自动递增材质版本号，用于 Pipeline 缓存检测
 pub struct SettingsGuard<'a> {
     settings: &'a mut MaterialSettings,
-    layout_version: &'a mut u64,
+    version: &'a mut u64,
     initial_settings: MaterialSettings,
 }
 
@@ -144,7 +120,7 @@ impl<'a> std::ops::DerefMut for SettingsGuard<'a> {
 impl<'a> Drop for SettingsGuard<'a> {
     fn drop(&mut self) {
         if self.settings != &self.initial_settings {
-            *self.layout_version = self.layout_version.wrapping_add(1);
+            *self.version = self.version.wrapping_add(1);
         }
     }
 }
@@ -234,33 +210,25 @@ impl MaterialData {
         }
     }
 
-    pub fn uniform_version(&self) -> u64 {
+    /// 材质配置版本号（用于 Pipeline 缓存）
+    pub fn version(&self) -> u64 {
         match self {
-            Self::Basic(m) => m.uniform_version(),
-            Self::Phong(m) => m.uniform_version(),
-            Self::Standard(m) => m.uniform_version(),
-            Self::Physical(m) => m.uniform_version(),
-            Self::Custom(m) => m.uniform_version(),
+            Self::Basic(m) => m.version(),
+            Self::Phong(m) => m.version(),
+            Self::Standard(m) => m.version(),
+            Self::Physical(m) => m.version(),
+            Self::Custom(m) => m.version(),
         }
     }
 
-    pub fn binding_version(&self) -> u64 {
+    /// 遍历所有纹理资源（用于构建 ResourceIdSet）
+    pub fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource)) {
         match self {
-            Self::Basic(m) => m.binding_version(),
-            Self::Phong(m) => m.binding_version(),
-            Self::Standard(m) => m.binding_version(),
-            Self::Physical(m) => m.binding_version(),
-            Self::Custom(m) => m.binding_version(),
-        }
-    }
-
-    pub fn layout_version(&self) -> u64 {
-        match self {
-            Self::Basic(m) => m.layout_version(),
-            Self::Phong(m) => m.layout_version(),
-            Self::Standard(m) => m.layout_version(),
-            Self::Physical(m) => m.layout_version(),
-            Self::Custom(m) => m.layout_version(),
+            Self::Basic(m) => m.visit_textures(visitor),
+            Self::Phong(m) => m.visit_textures(visitor),
+            Self::Standard(m) => m.visit_textures(visitor),
+            Self::Physical(m) => m.visit_textures(visitor),
+            Self::Custom(m) => m.visit_textures(visitor),
         }
     }
 

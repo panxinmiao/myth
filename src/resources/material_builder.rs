@@ -151,7 +151,7 @@ impl MeshStandardMaterialBuilder {
         }
 
         {
-            let mut bindings = standard.bindings_mut();
+            let bindings = standard.bindings_mut();
             bindings.map = self.map;
             bindings.normal_map = self.normal_map;
             bindings.roughness_map = self.roughness_map;

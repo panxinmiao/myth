@@ -114,6 +114,7 @@ impl ForwardRenderPass {
             // 这比 CPU 端的 version 更精确地反映 Pipeline 兼容性
             let fast_key = FastPipelineKey {
                 material_handle: item.material,
+                material_version: gpu_material.version,
                 material_layout_id: gpu_material.layout_id,
                 geometry_handle: item.geometry,
                 geometry_layout_version: geometry.layout_version(),

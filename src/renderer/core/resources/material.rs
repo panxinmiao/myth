@@ -2,166 +2,121 @@
 //!
 //! 采用 "Ensure -> Check -> Rebuild" 模式：
 //! 1. 确保所有 GPU 资源存在且数据最新
-//! 2. 比较物理资源 ID 是否变化
-//! 3. 如需重建，比较 LayoutEntries 决定是否需要新 Layout
-
-use smallvec::{SmallVec, smallvec};
+//! 2. 比较物理资源 ID 是否变化（决定 BindGroup 重建）
+//! 3. 更新材质版本号（用于 Pipeline 缓存）
+//! 
+//! # 版本追踪三维分离
+//! 
+//! 1. **资源拓扑 (BindGroup)**: 由 `ResourceIdSet` 追踪
+//!    - 纹理/采样器/Buffer ID 变化 -> 重建 BindGroup
+//! 
+//! 2. **资源内容 (Buffer Data)**: 由 `BufferRef` 追踪
+//!    - Atomic 版本号变化 -> 上传 Buffer
+//! 
+//! 3. **管线状态 (RenderPipeline)**: 由 `Material.version()` 追踪
+//!    - 深度写入/透明度/双面渲染等变化 -> 切换 Pipeline
 
 use crate::assets::{AssetServer, MaterialHandle};
 use crate::resources::material::Material;
 
-use crate::renderer::core::binding::Bindings;
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::resources::texture::TextureSource;
 
 use super::{ResourceManager, GpuMaterial, ResourceIdSet, hash_layout_entries};
 
-/// Material 准备结果
-/// 
-/// 预留的 API，用于未来更精细的 Pipeline 缓存控制
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-pub struct MaterialPrepareResult {
-    /// Uniform Buffer 的物理 ID
-    pub uniform_buffer_id: u64,
-    /// 所有 GpuImage 的物理 ID（对应纹理像素数据）
-    pub image_ids: SmallVec<[u64; 8]>,
-    /// 所有 GpuSampler 的物理 ID（对应采样参数）
-    pub sampler_ids: SmallVec<[u64; 8]>,
-    /// Layout ID
-    pub layout_id: u64,
-    /// BindGroup ID
-    pub bind_group_id: u64,
-    /// 是否有资源被重建
-    pub any_recreated: bool,
-}
 
 impl ResourceManager {
     /// 准备 Material 的 GPU 资源
     /// 
-    /// 使用新的资源 ID 追踪机制，自动检测变化并按需重建
-    pub(crate) fn prepare_material(&mut self, assets: &AssetServer, handle: MaterialHandle) -> Option<MaterialPrepareResult> {
-
-        // [Fast Path] 1. 检查帧缓存
+    /// 三维分离的变更检测：
+    /// - 资源拓扑变化 -> 重建 BindGroup（由 ResourceIdSet 检测）
+    /// - 资源内容变化 -> 上传 Buffer（由 BufferRef 自动处理）
+    /// - 管线状态变化 -> 切换 Pipeline（由 version 记录，供外部使用）
+    pub(crate) fn prepare_material(&mut self, assets: &AssetServer, handle: MaterialHandle) {
+        let Some(material) = assets.get_material(handle) else {
+            return;
+        };
+   
+        // [Fast Path] 帧内缓存检查
         if let Some(gpu_mat) = self.gpu_materials.get(handle) {
-            // 如果本帧已经验证过，直接返回结果！
-            // 这一点对于大量物体共享材质的场景是巨大的性能提升
             if gpu_mat.last_verified_frame == self.frame_index {
-                return Some(MaterialPrepareResult {
-                    uniform_buffer_id: gpu_mat.uniform_buffer_id,
-                    // 下面这些 vector 在 prepare_mesh 中并未使用，返回空即可
-                    image_ids: smallvec![0; 0],
-                    sampler_ids: smallvec![0; 0],
-                    layout_id: gpu_mat.layout_id,
-                    bind_group_id: gpu_mat.bind_group_id,
-                    any_recreated: false,
-                });
+                return;
             }
         }
 
-
-        let material = assets.get_material(handle)?;
-
         // 1. Ensure 阶段：确保所有资源存在且数据最新，收集物理资源 ID
-        let (uniform_result, image_ids, sampler_ids) = self.ensure_material_resources_with_ids(assets, material);
-        
-        // 2. 构建当前资源 ID 集合（包含 image_ids 和 sampler_ids）
-        let mut current_resource_ids = ResourceIdSet::with_capacity(1 + image_ids.len() + sampler_ids.len());
-        current_resource_ids.push(uniform_result.resource_id);
-        for id in &image_ids {
-            current_resource_ids.push(*id);
-        }
-        for id in &sampler_ids {
-            current_resource_ids.push(*id);
-        }
+        let mut current_resource_ids = self.ensure_material_resources(assets, material);
 
-        // 3. Check 阶段：检查是否需要重建 BindGroup
-        let needs_rebuild = if let Some(gpu_mat) = self.gpu_materials.get(handle) {
-            // 比较资源 ID 是否变化
+        // 2. Check 阶段：检查是否需要重建 BindGroup
+        // 注意：这里只看 ID，不看 version！
+        // 即使 material.version() 变了（比如改了混合模式），只要 ID 没变，就不重建 BindGroup
+        let needs_rebuild_bindgroup = if let Some(gpu_mat) = self.gpu_materials.get(handle) {
             let mut cached_ids = gpu_mat.resource_ids.clone();
-            !current_resource_ids.matches(&mut cached_ids) || uniform_result.was_recreated
+            !current_resource_ids.matches(&mut cached_ids)
         } else {
             true
         };
 
-        if needs_rebuild {
-            // 4. Rebuild 阶段
-            self.rebuild_material_with_ids(assets, handle, material, current_resource_ids, uniform_result.resource_id);
-        } else {
-            // 仅更新帧计数
-            if let Some(gpu_mat) = self.gpu_materials.get_mut(handle) {
-                gpu_mat.last_used_frame = self.frame_index;
-            }
+        if needs_rebuild_bindgroup {
+            // 3. Rebuild 阶段：重建 BindGroup（耗时操作）
+            self.rebuild_material_bindgroup(assets, handle, material, current_resource_ids);
         }
 
-        let gpu_mat = self.gpu_materials.get(handle)?;
-        Some(MaterialPrepareResult {
-            uniform_buffer_id: uniform_result.resource_id,
-            image_ids,
-            sampler_ids,
-            layout_id: gpu_mat.layout_id,
-            bind_group_id: gpu_mat.bind_group_id,
-            any_recreated: needs_rebuild,
-        })
+        // 4. 更新版本号和帧计数（极速操作）
+        // 无论是否重建了 BindGroup，都需要确保 gpu_mat 里的 version 是最新的
+        // 这样 PipelineCache 在渲染时可以用这个 version 做快速 check
+        if let Some(gpu_mat) = self.gpu_materials.get_mut(handle) {
+            gpu_mat.version = material.data.version();
+            gpu_mat.last_used_frame = self.frame_index;
+            gpu_mat.last_verified_frame = self.frame_index;
+        }
+
     }
 
-    /// 确保 Material 资源并返回物理 ID
+    /// 确保 Material 资源并返回资源 ID 集合
     /// 
-    /// 返回: (uniform_result, image_ids, sampler_ids)
-    fn ensure_material_resources_with_ids(&mut self, assets: &AssetServer, material: &Material) -> (super::EnsureResult, SmallVec<[u64; 8]>, SmallVec<[u64; 8]>) {
+    /// 使用 `visit_textures` 遍历所有纹理资源
+    fn ensure_material_resources(&mut self, assets: &AssetServer, material: &Material) -> ResourceIdSet {
+        // 确保 Uniform Buffer
         let uniform_result = self.ensure_buffer_ref(
             material.data.uniform_buffer(), 
             material.data.uniform_bytes()
         );
 
-        // 分别收集 Image ID 和 Sampler ID
-        let mut image_ids = SmallVec::new();
-        let mut sampler_ids = SmallVec::new();
-        let bindings = material.data.bindings();
-        
-        for tex_source in [
-            bindings.map,
-            bindings.normal_map,
-            bindings.roughness_map,
-            bindings.metalness_map,
-            bindings.emissive_map,
-            bindings.ao_map,
-            bindings.specular_map,
-        ].into_iter().flatten() {
+        // 收集资源 ID
+        let mut resource_ids = ResourceIdSet::with_capacity(16);
+        resource_ids.push(uniform_result.resource_id);
+
+        // 使用 visit_textures 遍历所有纹理资源
+        material.data.visit_textures(&mut |tex_source| {
             match tex_source {
                 TextureSource::Asset(tex_handle) => {
-                    self.prepare_texture(assets, tex_handle);
-                    if let Some(binding) = self.texture_bindings.get(tex_handle) {
-                        image_ids.push(binding.image_id);
-                        sampler_ids.push(binding.sampler_id);
-                    }else{
-                        image_ids.push(self.dummy_image.id);
-                        sampler_ids.push(self.dummy_sampler.id);
+                    self.prepare_texture(assets, *tex_handle);
+                    if let Some(binding) = self.texture_bindings.get(*tex_handle) {
+                        resource_ids.push(binding.image_id);
+                        resource_ids.push(binding.sampler_id);
+                    } else {
+                        resource_ids.push(self.dummy_image.id);
+                        resource_ids.push(self.dummy_sampler.id);
                     }
                 },
                 TextureSource::Attachment(id) => {
-                    image_ids.push(id);
-                    // 3. Sampler ID 处理
-                    // 由于 Attachment 通常没有绑定的 Sampler Asset，我们默认使用系统 Sampler
-                    // 或者，如果在 TextureSource 中包含了 Sampler 信息，可以在这里解析
-                    // 目前假设 Attachment 总是配对默认采样器 (Linear/Repeat)
-                    sampler_ids.push(self.dummy_sampler.id);
+                    resource_ids.push(*id);
+                    resource_ids.push(self.dummy_sampler.id);
                 },
             }
-            
-        }
+        });
 
-        (uniform_result, image_ids, sampler_ids)
+        resource_ids
     }
 
     /// 重建 Material 的 BindGroup（可能包括 Layout）
-    fn rebuild_material_with_ids(
+    fn rebuild_material_bindgroup(
         &mut self, 
         assets: &AssetServer, 
         handle: MaterialHandle, 
         material: &Material,
         resource_ids: ResourceIdSet,
-        uniform_buffer_id: u64,
     ) {
         let mut builder = ResourceBuilder::new();
         material.define_bindings(&mut builder);
@@ -195,8 +150,8 @@ impl ResourceManager {
             layout_hash,
             binding_wgsl,
             resource_ids,
+            version: material.data.version(),
             last_used_frame: self.frame_index,
-            uniform_buffer_id,
             last_verified_frame: self.frame_index,
         };
 

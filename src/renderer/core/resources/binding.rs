@@ -147,7 +147,7 @@ impl ResourceManager {
         mesh.update_morph_uniforms();
         let morph_result = self.ensure_buffer(&mesh.morph_uniforms);
         self.prepare_geometry(assets, mesh.geometry);
-        let mat_prep_result = self.prepare_material(assets, mesh.material)?;
+        self.prepare_material(assets, mesh.material);
         
         let geometry = assets.get_geometry(mesh.geometry)?;
         
@@ -156,7 +156,7 @@ impl ResourceManager {
         current_ids.push(self.model_allocator.buffer_id());
         current_ids.push(morph_result.resource_id);
         current_ids.push_optional(skeleton.map(|s| s.joint_matrices.handle().id));
-        current_ids.push(mat_prep_result.layout_id);
+        // current_ids.push(mat_prep_result.layout_id);
         
         // === Check 阶段: 快速指纹比较 ===
         if mesh.render_cache.fingerprint_matches(&current_ids) {

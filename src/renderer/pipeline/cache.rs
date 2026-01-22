@@ -43,6 +43,7 @@ pub struct PipelineKey {
 pub struct FastPipelineKey {
     pub material_handle: MaterialHandle,
     /// Material 的 BindGroupLayout ID（物理资源 ID）
+    pub material_version: u64,
     pub material_layout_id: u64,
     pub geometry_handle: GeometryHandle,
     /// Geometry 的结构版本（影响 VertexLayout）
