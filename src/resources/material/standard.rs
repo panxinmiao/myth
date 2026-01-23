@@ -115,7 +115,7 @@ impl Default for MeshStandardMaterial {
 
 impl MaterialTrait for MeshStandardMaterial {
     fn shader_name(&self) -> &'static str {
-        "mesh_physical"
+        "mesh_standard"
     }
 
     fn features(&self) -> MaterialFeatures {

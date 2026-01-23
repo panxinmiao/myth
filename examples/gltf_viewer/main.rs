@@ -90,13 +90,17 @@ impl AppHandler for GltfViewer {
         let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
         ctx.scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
-        ctx.scene.environment.set_intensity(3.0);
+        ctx.scene.environment.set_intensity(1.0);
 
         ctx.scene.environment.set_ambient_color(Vec3::splat(0.3));
 
         // 3. 添加灯光
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
-        ctx.scene.add_light(light);
+
+        let light_node = ctx.scene.add_light(light);
+        if let Some(node) = ctx.scene.get_node_mut(light_node) {
+            node.transform.position = Vec3::new(1.0, 1.0, 1.0);
+        }
 
         // 4. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
@@ -216,7 +220,7 @@ impl GltfViewer {
                         let radius = bbox.size().length() * 0.5;
                         if let Some((_transform, camera)) = ctx.scene.query_main_camera_bundle() {
 
-                            camera.near = (radius / 100.0).max(0.01);
+                            camera.near = radius / 100.0;
                             camera.update_projection_matrix();
                             self.controls.set_target(center);
                             self.controls.set_position(center + Vec3::new(0.0, radius, radius * 2.5));
@@ -301,10 +305,10 @@ impl GltfViewer {
                             self.is_playing = !self.is_playing;
                         }
                         
-                        if ui.button("⏹ Stop").clicked() {
-                            self.is_playing = false;
-                            self.mixer = AnimationMixer::new();
-                        }
+                        // if ui.button("⏹ Stop").clicked() {
+                        //     self.is_playing = false;
+                        //     self.mixer = AnimationMixer::new();
+                        // }
                     });
 
                     // 播放速度

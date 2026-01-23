@@ -328,6 +328,10 @@ impl<'a> GltfLoader<'a> {
 
                 if let Some(info) = material.emissive_texture() {
                     let tex_handle = self.texture_map[info.texture().index()];
+                    
+                    if let Some(texture) = self.assets.get_texture(tex_handle) {
+                        texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
+                    }
                     bindings.emissive_map = Some(tex_handle.into());
                 }
             }
@@ -346,6 +350,21 @@ impl<'a> GltfLoader<'a> {
             if let Some(specular) = material.specular() {
                 mat.uniforms_mut().specular = Vec3::from_array(specular.specular_color_factor());
                 mat.uniforms_mut().specular_intensity = specular.specular_factor();
+
+                if let Some(info) = specular.specular_color_texture() {
+                    let tex_handle = self.texture_map[info.texture().index()];
+
+                    if let Some(texture) = self.assets.get_texture(tex_handle) {
+                        texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
+                    }
+
+                    mat.bindings_mut().specular_map = Some(tex_handle.into());
+                }
+
+                if let Some(info) = specular.specular_texture() {
+                    let tex_handle = self.texture_map[info.texture().index()];
+                    mat.bindings_mut().specular_intensity_map = Some(tex_handle.into());
+                }
             }
 
             // 转换为通用 Material 枚举
@@ -768,8 +787,7 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         let sg = _gltf_mat.pbr_specular_glossiness()
             .ok_or_else(|| anyhow::anyhow!("Material missing pbr_specular_glossiness data"))?;
 
-        let standard_mut = engine_mat.as_standard_mut()
-            .ok_or_else(|| anyhow::anyhow!("Material is not MeshStandardMaterial"))?;
+        let standard_mut: &mut MeshStandardMaterial = engine_mat.as_any_mut().downcast_mut().ok_or_else(|| anyhow::anyhow!("Material is not MeshStandardMaterial"))?;
 
         // 1. 设置基础材质参数 (转换为非金属材质)
         {
@@ -785,16 +803,21 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         if let Some(diffuse_tex) = sg.diffuse_texture() {
             let tex_handle = _ctx.texture_map[diffuse_tex.texture().index()];
             let bindings = standard_mut.bindings_mut();
-            bindings.map = Some(tex_handle.into());
-
+            
             if let Some(texture) = _ctx.assets.get_texture(tex_handle) {
                 texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
             }
+            bindings.map = Some(tex_handle.into());
         }
 
         // 3. 处理 specular-glossiness 纹理
         if let Some(sg_tex_info) = sg.specular_glossiness_texture() {
             let tex_handle = _ctx.texture_map[sg_tex_info.texture().index()];
+
+            if let Some(texture) = _ctx.assets.get_texture(tex_handle) {
+                texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
+            }
+            
             let glossiness_factor = sg.glossiness_factor();
             
             let (width, height, source_data) = if let Some(source_texture) = _ctx.assets.get_texture(tex_handle) {
@@ -840,7 +863,7 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
                     width,
                     height,
                     Some(specular_data),
-                    TextureFormat::Rgba8Unorm
+                    TextureFormat::Rgba8UnormSrgb
                 );
                 
                 let roughness_texture = Texture::new_2d(

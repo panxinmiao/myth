@@ -146,6 +146,8 @@ pub struct MaterialBindings {
     pub ao_map_sampler: Option<SamplerSource>,
     pub specular_map: Option<TextureSource>,
     pub specular_map_sampler: Option<SamplerSource>,
+    pub specular_intensity_map: Option<TextureSource>,
+    pub specular_intensity_map_sampler: Option<SamplerSource>,
 }
 
 #[derive(PartialEq, Eq, Clone, Debug)]
@@ -412,6 +414,26 @@ impl Material {
         match &mut self.data {
             MaterialData::Physical(m) => Some(m),
             _ => None,
+        }
+    }
+
+    pub fn as_any(&self) -> &dyn Any {
+        match &self.data {
+            MaterialData::Basic(m) => m.as_any(),
+            MaterialData::Phong(m) => m.as_any(),
+            MaterialData::Standard(m) => m.as_any(),
+            MaterialData::Physical(m) => m.as_any(),
+            MaterialData::Custom(m) => m.as_any(),
+        }
+    }
+
+    pub fn as_any_mut(&mut self) -> &mut dyn Any {
+        match &mut self.data {
+            MaterialData::Basic(m) => m.as_any_mut(),
+            MaterialData::Phong(m) => m.as_any_mut(),
+            MaterialData::Standard(m) => m.as_any_mut(),
+            MaterialData::Physical(m) => m.as_any_mut(),
+            MaterialData::Custom(m) => m.as_any_mut(),
         }
     }
 

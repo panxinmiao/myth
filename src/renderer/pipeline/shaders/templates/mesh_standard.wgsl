@@ -225,5 +225,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
         out_color = out_color * (1.0 - material.clearcoat * fcc) + (clearcoat_specular_direct + clearcoat_specular_indirect) * material.clearcoat;
     $$ endif
 
+    {$ include 'pbr_tone_mapping' $}
+
     return vec4<f32>(out_color, diffuse_color.a);
 }

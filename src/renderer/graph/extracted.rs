@@ -135,9 +135,9 @@ impl ExtractedScene {
 
             let node_world = node.transform.world_matrix;
             let world_matrix = Mat4::from(node_world);
+            let skin_binding = scene.skins.get(node_handle);
 
             // 视锥剔除：根据是否有骨骼绑定选择不同的包围盒
-            let skin_binding = scene.skins.get(node_handle);
             let is_visible = if let Some(binding) = skin_binding {
                 // 有骨骼绑定：使用 Skeleton 的包围盒
                 if let Some(skeleton) = scene.skeleton_pool.get(binding.skeleton) {
