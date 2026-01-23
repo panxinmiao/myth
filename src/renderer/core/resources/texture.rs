@@ -286,6 +286,11 @@ impl ResourceManager {
     pub fn resolve_sampler_id(&mut self, assets: &AssetServer, source: SamplerSource) -> u64 {
         match source {
             SamplerSource::FromTexture(tex_handle) => {
+
+                if let Some(binding) = self.texture_bindings.get(tex_handle) {
+                    return binding.sampler_id;
+                }
+
                 if let Some(texture) = assets.get_texture(tex_handle) {
                     // [修改] 不需要转换 Key，直接传 sampler
                     self.get_or_create_sampler(texture.sampler, texture.name())
