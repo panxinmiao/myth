@@ -1,6 +1,6 @@
 use glam::{Vec3, Vec4, Quat};
 use three::app::{App, AppContext, AppHandler};
-use three::resources::{Geometry, Material, Mesh, Texture};
+use three::resources::{Geometry, Mesh, MeshBasicMaterial, Texture};
 use three::scene::{Camera, NodeHandle};
 use three::OrbitControls;
 
@@ -15,15 +15,15 @@ impl AppHandler for TexturedBox {
         // 1. 准备资源
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
-        let mut basic_mat = Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0));
+        let mut basic_mat = MeshBasicMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         // 2. 将资源添加到 AssetServer
         let tex_handle = ctx.assets.add_texture(texture);
 
-        if let Some(basic) = basic_mat.as_basic_mut() {
-            basic.set_map(Some(tex_handle.into()));
-            basic.uniforms_mut().color = Vec4::new(1.0, 1.0, 1.0, 1.0);
-        }
+
+        basic_mat.set_map(Some(tex_handle.into()));
+        basic_mat.set_color(Vec4::new(1.0, 1.0, 1.0, 1.0));
+      
         
         let geo_handle = ctx.assets.add_geometry(geometry);
         let mat_handle = ctx.assets.add_material(basic_mat);

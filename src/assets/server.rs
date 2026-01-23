@@ -90,7 +90,8 @@ impl AssetServer {
     }
 
     // === Material ===
-    pub fn add_material(&mut self, material: Material) -> MaterialHandle {
+    pub fn add_material(&mut self, material: impl Into<Material>) -> MaterialHandle {
+        let material = material.into();
         let uuid = material.uuid;
         let handle = self.materials.insert(material);
         self.lookup_mat.insert(uuid, handle);

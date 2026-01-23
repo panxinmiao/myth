@@ -128,7 +128,7 @@ impl ForwardRenderPass {
                 p.clone()
             } else {
                 let canonical_key = PipelineKey {
-                    mat_features: material.get_features(),
+                    mat_features: material.features(),
                     geo_features,
                     scene_features: ctx.extracted_scene.scene_features,
                     topology: geometry.topology,

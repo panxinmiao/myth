@@ -44,19 +44,15 @@ impl AppHandler for Earth {
         ).expect("Failed to load clouds texture");
 
         if let Some(phong) = mat.as_phong_mut() {
-            {
-                let bindings = phong.bindings_mut();
-                bindings.map = Some(earth_tex_handle.into());
-                bindings.specular_map = Some(specular_tex_handle.into());
-                bindings.emissive_map = Some(emssive_tex_handle.into());
-                bindings.normal_map = Some(normal_map_handle.into());
-            }
-
-            let mut uniforms = phong.uniforms_mut();
-            uniforms.normal_scale = Vec2::new(0.85, -0.85);
-            uniforms.shininess = 10.0;
-            uniforms.emissive = Vec3::new(0.0962, 0.0962, 0.0512);
-            uniforms.emissive_intensity = 3.0;
+            phong.set_map(Some(earth_tex_handle.into()));
+            phong.set_specular_map(Some(specular_tex_handle.into()));
+            phong.set_emissive_map(Some(emssive_tex_handle.into()));
+            phong.set_normal_map(Some(normal_map_handle.into()));
+            
+            phong.set_normal_scale(Vec2::new(0.85, -0.85));
+            phong.set_shininess(10.0);
+            phong.set_emissive(Vec3::new(0.0962, 0.0962, 0.0512));
+            phong.set_emissive_intensity(3.0);
         }
             
         let geo_handle = ctx.assets.add_geometry(geometry);
@@ -66,14 +62,10 @@ impl AppHandler for Earth {
         let mut cloud_material = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
         if let Some(phong) = cloud_material.as_phong_mut() {
             phong.set_map(Some(clouds_tex_handle.into()));
-            phong.uniforms_mut().opacity = 0.8;
-            
-            {
-                let mut settings = phong.settings_mut();
-                settings.transparent = true;
-                settings.depth_write = false;
-                settings.side = three::Side::Front;
-            }
+            phong.set_opacity(0.8);
+            phong.set_transparent(true);
+            phong.set_depth_write(false);
+            phong.set_side(three::Side::Front);
         }
         let cloud_material_handle = ctx.assets.add_material(cloud_material);
 

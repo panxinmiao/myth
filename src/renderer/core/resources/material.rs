@@ -17,7 +17,7 @@
 //!    - 深度写入/透明度/双面渲染等变化 -> 切换 Pipeline
 
 use crate::assets::{AssetServer, MaterialHandle};
-use crate::resources::material::Material;
+use crate::resources::material::{Material, RenderableMaterialTrait};
 
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::resources::texture::TextureSource;

@@ -22,9 +22,9 @@ pub mod material;
 
 pub use mesh::Mesh;
 pub use material::{
-    Material, MaterialData, MaterialFeatures, MaterialTrait,
+    Material, MaterialType, MaterialFeatures, MaterialTrait, RenderableMaterialTrait,
     MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, MeshPhysicalMaterial, 
-    MaterialSettings, MaterialBindings, Side,
+    Side,
 };
 pub use material_builder::{MeshBasicMaterialBuilder, MeshStandardMaterialBuilder};
 pub use texture::{Texture, TextureSampler};

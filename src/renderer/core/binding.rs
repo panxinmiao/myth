@@ -6,7 +6,7 @@ use crate::assets::TextureHandle;
 use crate::resources::texture::{SamplerSource, TextureSource};
 use crate::{Mesh, Scene};
 use crate::resources::buffer::BufferRef;
-use crate::resources::material::Material;
+use crate::resources::material::{Material, RenderableMaterialTrait};
 use crate::resources::geometry::Geometry;
 use crate::resources::uniforms::*;
 use crate::renderer::core::builder::{ResourceBuilder};

@@ -25,6 +25,7 @@ image = "0.25"
 gltf = {version = "1.4.1", features =["extensions", "KHR_materials_pbrSpecularGlossiness", "KHR_materials_specular"]}
 base64 = "0.22"
 
+paste = "1.0"
 rust-embed = "8.11.0"
 
 pollster = "0.4" 

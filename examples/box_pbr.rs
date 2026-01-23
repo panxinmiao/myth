@@ -27,7 +27,7 @@ impl AppHandler for PbrBox {
         
         let geo_handle = ctx.assets.add_geometry(geometry);
         // 在最后需要时才转换为通用 Material 类型
-        let mat_handle = ctx.assets.add_material(standard_mat.into());
+        let mat_handle = ctx.assets.add_material(standard_mat);
 
         // 2. 创建 Mesh 并加入场景
         let mesh = Mesh::new(geo_handle, mat_handle);

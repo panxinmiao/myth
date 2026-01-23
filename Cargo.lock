@@ -3167,6 +3167,7 @@ dependencies = [
  "log",
  "md5",
  "minijinja",
+ "paste",
  "pollster",
  "rfd",
  "rust-embed",
