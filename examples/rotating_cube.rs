@@ -21,25 +21,29 @@ impl AppHandler for RotatingCube {
 
         // 2. 创建 Mesh 并添加到场景
         let mesh = Mesh::new(geo_handle, mat_handle);
-        let cube_node_id = ctx.scene.add_mesh(mesh);
+        let scene = ctx.scenes.create_active();
+        let cube_node_id = scene.add_mesh(mesh);
 
         // 3. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let camera_node_id = ctx.scene.add_camera(camera);
+        let camera_node_id = scene.add_camera(camera);
         
-        if let Some(cam_node) = ctx.scene.get_node_mut(camera_node_id) {
+        if let Some(cam_node) = scene.get_node_mut(camera_node_id) {
             cam_node.transform.position = Vec3::new(0.0, 3.0, 20.0);
             cam_node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
         
-        ctx.scene.active_camera = Some(camera_node_id);
+        scene.active_camera = Some(camera_node_id);
 
         Self { cube_node_id }
     }
 
     fn update(&mut self, ctx: &mut AppContext) {
+        let Some(scene) = ctx.scenes.active_scene_mut() else{
+            return;
+        };
         // 让立方体旋转
-        if let Some(cube_node) = ctx.scene.get_node_mut(self.cube_node_id) {
+        if let Some(cube_node) = scene.get_node_mut(self.cube_node_id) {
             let rotation_y = Quat::from_rotation_y(ctx.time * 0.5);
             let rotation_x = Quat::from_rotation_x(ctx.time * 0.3);
             cube_node.transform.rotation = rotation_y * rotation_x;

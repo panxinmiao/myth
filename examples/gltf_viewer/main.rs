@@ -87,29 +87,32 @@ impl AppHandler for GltfViewer {
             three::ColorSpace::Srgb
         ).expect("Failed to load environment map");
 
+        let scene = ctx.scenes.create_active();
+
         let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
-        ctx.scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
-        ctx.scene.environment.set_intensity(1.0);
 
-        ctx.scene.environment.set_ambient_color(Vec3::splat(0.3));
+        scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
+        scene.environment.set_intensity(1.0);
+
+        scene.environment.set_ambient_color(Vec3::splat(0.3));
 
         // 3. 添加灯光
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
 
-        let light_node = ctx.scene.add_light(light);
-        if let Some(node) = ctx.scene.get_node_mut(light_node) {
+        let light_node = scene.add_light(light);
+        if let Some(node) = scene.get_node_mut(light_node) {
             node.transform.position = Vec3::new(1.0, 1.0, 1.0);
         }
 
         // 4. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = ctx.scene.add_camera(camera);
-        if let Some(node) = ctx.scene.get_node_mut(cam_node_id) {
+        let cam_node_id = scene.add_camera(camera);
+        if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 1.0, 5.0);
             node.transform.look_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y);
         }
-        ctx.scene.active_camera = Some(cam_node_id);
+        scene.active_camera = Some(cam_node_id);
 
         Self {
             ui_pass,
@@ -143,6 +146,9 @@ impl AppHandler for GltfViewer {
     }
 
     fn update(&mut self, ctx: &mut AppContext) {
+        let Some(scene) = ctx.scenes.active_scene_mut() else{
+            return;
+        };
         // 1. 更新 FPS
         if let Some(fps) = self.fps_counter.update() {
             self.current_fps = fps;
@@ -159,11 +165,11 @@ impl AppHandler for GltfViewer {
 
         // 2. 更新动画
         if self.is_playing {
-            self.mixer.update(ctx.dt * self.playback_speed, ctx.scene);
+            self.mixer.update(ctx.dt * self.playback_speed, scene);
         }
 
         // 3. 相机控制
-        if let Some((transform, camera)) = ctx.scene.query_main_camera_bundle() {
+        if let Some((transform, camera)) = scene.query_main_camera_bundle() {
             self.controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
         }
 
@@ -187,16 +193,19 @@ impl AppHandler for GltfViewer {
 
 impl GltfViewer {
     fn load_model(&mut self, path: &PathBuf, ctx: &mut AppContext) {
+        let Some(scene) = ctx.scenes.active_scene_mut() else{
+            return;
+        };
         // 清理旧模型
         for node_id in &self.loaded_nodes {
-            ctx.scene.remove_node(*node_id);
+            scene.remove_node(*node_id);
         }
         self.loaded_nodes.clear();
         self.animations.clear();
         self.mixer = AnimationMixer::new();
 
         // 加载新模型
-        match GltfLoader::load(path, ctx.assets, ctx.scene) {
+        match GltfLoader::load(path, ctx.assets, scene) {
             Ok((nodes, animations)) => {
                 self.loaded_nodes = nodes.clone();
                 self.animations = animations.iter().map(|c| Arc::new(c.clone())).collect();
@@ -207,19 +216,18 @@ impl GltfViewer {
                 if !self.animations.is_empty() {
                     let clip = self.animations[0].clone();
                     let root_node = nodes.first().copied().unwrap();
-                    let bindings = Binder::bind(ctx.scene, root_node, &clip);
+                    let bindings = Binder::bind(scene, root_node, &clip);
                     let mut action = AnimationAction::new(clip);
                     action.bindings = bindings;
                     self.mixer.add_action(action);
                 }
 
                 if let Some(root_node) = nodes.first() {
-                    ctx.scene.update_subtree(*root_node);
-                    if let Some(bbox) = ctx.scene.get_bbox_of_node(*root_node, ctx.assets) {
+                    scene.update_subtree(*root_node);
+                    if let Some(bbox) = scene.get_bbox_of_node(*root_node, ctx.assets) {
                         let center = bbox.center();
                         let radius = bbox.size().length() * 0.5;
-                        if let Some((_transform, camera)) = ctx.scene.query_main_camera_bundle() {
-
+                        if let Some((_transform, camera)) = scene.query_main_camera_bundle() {
                             camera.near = radius / 100.0;
                             camera.update_projection_matrix();
                             self.controls.set_target(center);
@@ -238,7 +246,9 @@ impl GltfViewer {
 
     fn render_ui(&mut self, ctx: &mut AppContext) {
         let egui_ctx = self.ui_pass.context().clone();
-
+        let Some(scene) = ctx.scenes.active_scene_mut() else{
+            return;
+        };
         // 主控制面板
         egui::Window::new("Control Panel")
             .default_pos([10.0, 10.0])
@@ -290,7 +300,7 @@ impl GltfViewer {
                                         // 切换动画
                                         self.mixer = AnimationMixer::new();
                                         let root_node = self.loaded_nodes.first().copied().unwrap();
-                                        let bindings = Binder::bind(ctx.scene, root_node, clip);
+                                        let bindings = Binder::bind(scene, root_node, clip);
                                         let mut action = AnimationAction::new(clip.clone());
                                         action.bindings = bindings;
                                         self.mixer.add_action(action);

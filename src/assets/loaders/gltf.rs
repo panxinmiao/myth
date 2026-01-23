@@ -348,8 +348,8 @@ impl<'a> GltfLoader<'a> {
             }
 
             if let Some(specular) = material.specular() {
-                mat.uniforms_mut().specular = Vec3::from_array(specular.specular_color_factor());
-                mat.uniforms_mut().specular_intensity = specular.specular_factor();
+                mat.set_specular(Vec3::from_array(specular.specular_color_factor()));
+                mat.set_specular_intensity(specular.specular_factor());
 
                 if let Some(info) = specular.specular_color_texture() {
                     let tex_handle = self.texture_map[info.texture().index()];

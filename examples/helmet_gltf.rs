@@ -28,14 +28,16 @@ impl AppHandler for HelmetGltf {
             three::ColorSpace::Srgb
         ).expect("Failed to load environment map");
 
+        ctx.scenes.create_active();
+        let scene = ctx.scenes.active_scene_mut().unwrap();
+
         let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
-        ctx.scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
+        scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
         // 2. 添加灯光
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
-        ctx.scene.add_light(light);
-
+        scene.add_light(light);
         // 3. 加载 glTF 模型
         let gltf_path = std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
         println!("Loading glTF model from: {}", gltf_path.display());
@@ -43,18 +45,18 @@ impl AppHandler for HelmetGltf {
         let (loaded_nodes, _animations) = GltfLoader::load(
             gltf_path,
             ctx.assets,
-            ctx.scene
+            scene
         ).expect("Failed to load glTF model");
 
         println!("Successfully loaded {} root nodes", loaded_nodes.len());
 
         // 4. 调整模型位置/缩放
         if let Some(&root_node_idx) = loaded_nodes.first() {
-            if let Some(node) = ctx.scene.get_node_mut(root_node_idx) {
+            if let Some(node) = scene.get_node_mut(root_node_idx) {
                 node.transform.scale = Vec3::splat(1.0);
                 node.transform.position = Vec3::new(0.0, 0.0, 0.0);
                 // 获取节点名称
-                if let Some(name) = ctx.scene.names.get(root_node_idx) {
+                if let Some(name) = scene.names.get(root_node_idx) {
                     println!("Model root node: {}", name);
                 }
             }
@@ -62,14 +64,14 @@ impl AppHandler for HelmetGltf {
 
         // 5. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = ctx.scene.add_camera(camera);
+        let cam_node_id = scene.add_camera(camera);
 
-        if let Some(node) = ctx.scene.get_node_mut(cam_node_id) {
+        if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 0.0, 3.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
 
-        ctx.scene.active_camera = Some(cam_node_id);
+        scene.active_camera = Some(cam_node_id);
 
         Self {
             cam_node_id,
@@ -79,8 +81,11 @@ impl AppHandler for HelmetGltf {
     }
 
     fn update(&mut self, ctx: &mut AppContext) {
+        let Some(scene) = ctx.scenes.active_scene_mut() else{
+            return;
+        };
         // 轨道控制器
-        if let Some(cam_node) = ctx.scene.get_node_mut(self.cam_node_id) {
+        if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
             self.controls.update(&mut cam_node.transform, ctx.input, 45.0, ctx.dt);
         }
 

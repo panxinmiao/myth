@@ -19,11 +19,11 @@ struct MorphTargetDemo {
 
 impl AppHandler for MorphTargetDemo {
     fn init(ctx: &mut AppContext) -> Self {
+        let scene = ctx.scenes.create_active();
         // 1. 添加灯光和环境
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 2.0);
-        ctx.scene.add_light(light);
-        ctx.scene.environment.set_ambient_color(Vec3::splat(0.3));
-
+        scene.add_light(light);
+        scene.environment.set_ambient_color(Vec3::splat(0.3));
         // 加载环境贴图
         let env_texture_handle = ctx.assets.load_cube_texture_from_files(
             [
@@ -39,7 +39,7 @@ impl AppHandler for MorphTargetDemo {
 
         let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
-        ctx.scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
+        scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
         // 2. 加载 glTF 模型 (带 Morph Target)
         let gltf_path = std::path::Path::new("examples/assets/facecap.glb");
@@ -48,7 +48,7 @@ impl AppHandler for MorphTargetDemo {
         let (loaded_nodes, animations) = GltfLoader::load(
             gltf_path,
             ctx.assets,
-            ctx.scene
+            scene
         ).expect("Failed to load glTF model");
 
         println!("Successfully loaded {} root nodes", loaded_nodes.len());
@@ -68,7 +68,7 @@ impl AppHandler for MorphTargetDemo {
         }
 
         // 输出 Mesh Morph Target 信息
-        for (node_handle, mesh) in ctx.scene.meshes.iter() {
+        for (node_handle, mesh) in scene.meshes.iter() {
             if let Some(geometry) = ctx.assets.get_geometry(mesh.geometry) {
                 if geometry.has_morph_targets() {
                     println!("Node {:?} has mesh with {} morph targets, {} vertices per target",
@@ -88,7 +88,7 @@ impl AppHandler for MorphTargetDemo {
             
             let root_node = loaded_nodes.first().copied().unwrap();
             let clip = Arc::new(clip);
-            let bindings = Binder::bind(ctx.scene, root_node, &clip);
+            let bindings = Binder::bind(scene, root_node, &clip);
             
             println!("Created {} bindings", bindings.len());
             
@@ -99,12 +99,12 @@ impl AppHandler for MorphTargetDemo {
 
         // 4. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = ctx.scene.add_camera(camera);
-        if let Some(node) = ctx.scene.get_node_mut(cam_node_id) {
+        let cam_node_id = scene.add_camera(camera);
+        if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 0.0, 4.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
-        ctx.scene.active_camera = Some(cam_node_id);
+        scene.active_camera = Some(cam_node_id);
 
         Self {
             mixer,
@@ -115,11 +115,14 @@ impl AppHandler for MorphTargetDemo {
     }
 
     fn update(&mut self, ctx: &mut AppContext) {
+        let Some(scene) = ctx.scenes.active_scene_mut() else{
+            return;
+        };
         // 更新动画
-        self.mixer.update(ctx.dt, ctx.scene);
+        self.mixer.update(ctx.dt, scene);
 
         // 轨道控制器
-        if let Some(cam_node) = ctx.scene.get_node_mut(self.cam_node_id) {
+        if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
             self.controls.update(&mut cam_node.transform, ctx.input, 45.0, ctx.dt);
         }
 

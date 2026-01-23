@@ -55,12 +55,14 @@ impl AppHandler for SkinningDemo {
 
         let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
-        ctx.scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
+
+        let scene = ctx.scenes.create_active();
+
+        scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
         // === 3. 添加灯光 ===
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
-        ctx.scene.add_light(light);
-
+        scene.add_light(light);
         // === 4. 加载 glTF 模型 ===
         println!("Loading glTF model from: {:?}", gltf_path);
         
@@ -68,7 +70,7 @@ impl AppHandler for SkinningDemo {
         let (loaded_nodes, animations) = match GltfLoader::load(
             gltf_path,
             ctx.assets,
-            ctx.scene
+            scene
         ) {
             Ok(res) => res,
             Err(e) => {
@@ -90,7 +92,7 @@ impl AppHandler for SkinningDemo {
             // 简单的假设：动画应用在第一个加载的根节点上
             if let Some(&root_node) = loaded_nodes.first() {
                 let clip = Arc::new(clip);
-                let bindings = Binder::bind(ctx.scene, root_node, &clip);
+                let bindings = Binder::bind(scene, root_node, &clip);
                 
                 if bindings.is_empty() {
                     println!("Warning: No bindings created for animation. Node names mismatch?");
@@ -107,13 +109,13 @@ impl AppHandler for SkinningDemo {
         // TODO: 真正的 Viewer 通常会根据模型包围盒(AABB)自动计算相机位置
         // 这里暂时用固定位置
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = ctx.scene.add_camera(camera);
+        let cam_node_id = scene.add_camera(camera);
         
-        if let Some(node) = ctx.scene.get_node_mut(cam_node_id) {
+        if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 1.5, 4.0); // 稍微抬高一点视角
             node.transform.look_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y);
         }
-        ctx.scene.active_camera = Some(cam_node_id);
+        scene.active_camera = Some(cam_node_id);
 
         Self {
             mixer,
@@ -124,9 +126,13 @@ impl AppHandler for SkinningDemo {
     }
 
     fn update(&mut self, ctx: &mut AppContext) {
-        self.mixer.update(ctx.dt, ctx.scene);
+        let Some(scene) = ctx.scenes.active_scene_mut() else{
+            return;
+        };
 
-        if let Some((transform, camera)) = ctx.scene.query_main_camera_bundle() {
+        self.mixer.update(ctx.dt, scene);
+
+        if let Some((transform, camera)) = scene.query_main_camera_bundle() {
             self.controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
         }
 

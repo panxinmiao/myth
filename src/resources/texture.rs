@@ -24,6 +24,12 @@ impl From<TextureHandle> for TextureSource {
     }
 }
 
+impl From<TextureHandle> for Option<TextureSource> {
+    fn from(handle: TextureHandle) -> Self {
+        Some(TextureSource::Asset(handle))
+    }
+}
+
 
 /// 描述纹理绑定时应使用的采样器策略。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

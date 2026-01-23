@@ -10,7 +10,6 @@
 //! - Uniforms: 着色器统一变量
 
 pub mod mesh;
-pub mod material_builder;
 pub mod texture;
 pub mod image;
 pub mod geometry;
@@ -19,6 +18,7 @@ pub mod buffer;
 pub mod uniforms;
 pub mod version_tracker;
 pub mod material;
+pub mod input;
 
 pub use mesh::Mesh;
 pub use material::{
@@ -26,7 +26,6 @@ pub use material::{
     MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, MeshPhysicalMaterial, 
     Side,
 };
-pub use material_builder::{MeshBasicMaterialBuilder, MeshStandardMaterialBuilder};
 pub use texture::{Texture, TextureSampler};
 pub use image::{Image, ImageDescriptor};
 pub use geometry::{
@@ -36,3 +35,4 @@ pub use geometry::{
 };
 pub use buffer::{BufferRef};
 pub use uniforms::{WgslType};
+pub use input::Input;

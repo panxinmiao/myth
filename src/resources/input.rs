@@ -71,7 +71,7 @@ impl Input {
                 }
             }
 
-            // 4. 键盘输入 (新增)
+            // 4. 键盘输入
             WindowEvent::KeyboardInput { event: key_event, .. } => {
                 self.handle_keyboard(key_event);
             }

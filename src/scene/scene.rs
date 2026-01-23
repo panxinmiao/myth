@@ -6,7 +6,7 @@ use slotmap::{SlotMap, SecondaryMap, SparseSecondaryMap};
 use glam::{Affine3A, Vec3, Vec4}; 
 use bitflags::bitflags;
 use crate::AssetServer;
-use crate::resources::BoundingBox;
+use crate::resources::{BoundingBox, Input};
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::uniforms::{EnvironmentUniforms, GpuLightStorage};
 use crate::resources::mesh::MAX_MORPH_TARGETS;
@@ -31,7 +31,24 @@ bitflags! {
 
 static NEXT_SCENE_ID: AtomicU32 = AtomicU32::new(1);
 
-/// 场景图结构 (ECS 风格)
+
+/// 场景逻辑接口
+/// 允许用户定义随场景生命周期更新的行为脚本。
+pub trait SceneLogic: Send + Sync + 'static {
+    fn update(&mut self, scene: &mut Scene, input: &Input, dt: f32);
+}
+
+// 语法糖：允许直接使用闭包作为逻辑
+pub struct CallbackLogic<F>(pub F);
+impl<F> SceneLogic for CallbackLogic<F> 
+where F: FnMut(&mut Scene, &Input, f32) + Send + Sync + 'static 
+{
+    fn update(&mut self, scene: &mut Scene, input: &Input, dt: f32) {
+        (self.0)(scene, input, dt)
+    }
+}
+
+/// 场景图结构
 /// 
 /// Scene 是纯数据层，存储场景图逻辑和组件数据。
 /// 使用 SlotMap + SecondaryMap 实现高性能组件化存储。
@@ -78,6 +95,9 @@ pub struct Scene {
     pub(crate) light_storage_buffer: CpuBuffer<Vec<GpuLightStorage>>,
     pub(crate) uniforms_buffer: CpuBuffer<EnvironmentUniforms>,
     light_data_cache: RefCell<Vec<GpuLightStorage>>,
+
+    // === 场景逻辑系统 ===
+    pub(crate) logics: Vec<Box<dyn SceneLogic>>,
 }
 
 impl Default for Scene {
@@ -125,6 +145,8 @@ impl Scene {
             ),
 
             light_data_cache: RefCell::new(Vec::with_capacity(16)),
+
+            logics: Vec::new(),
         }
     }
 
@@ -487,8 +509,35 @@ impl Scene {
         features
     }
 
+
+
+    // ========================================================================
+    // 场景更新以及逻辑系统
+    // ========================================================================
+
+    pub fn add_logic<L: SceneLogic>(&mut self, logic: L) {
+        self.logics.push(Box::new(logic));
+    }
+
+    /// 快捷方法：添加闭包逻辑 (用于快速原型)
+    pub fn on_update<F>(&mut self, f: F) 
+    where F: FnMut(&mut Scene, &Input, f32) + Send + Sync + 'static 
+    {
+        self.add_logic(CallbackLogic(f));
+    }
+
     /// 更新场景状态（每帧调用）
-    pub fn update(&mut self) {
+    pub fn update(&mut self, input: &Input, dt: f32) {
+        // 1. 执行用户逻辑
+        // 使用 mem::take 暂时取出，避免借用冲突
+        let mut logics = std::mem::take(&mut self.logics);
+        for logic in &mut logics {
+            logic.update(self, input, dt);
+        }
+        self.logics.append(&mut logics);
+
+
+        // 2. 执行引擎内部系统 (Transform, Skeleton, Morph...)
         self.update_matrix_world();
         self.update_skeletons();
         self.sync_morph_weights();

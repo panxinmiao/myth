@@ -57,17 +57,19 @@ impl AppHandler for SkinDemo {
         let geo_handle = ctx.assets.add_geometry(geometry);
         let mat_handle = ctx.assets.add_material(Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0)));
 
+        let scene = ctx.scenes.create_active();
+
         // 2. 创建骨骼节点结构 (Root -> Bone1)
-        let root_id = ctx.scene.create_node_with_name("Bone_Root");
-        if let Some(node) = ctx.scene.get_node_mut(root_id) {
+        let root_id = scene.create_node_with_name("Bone_Root");
+        if let Some(node) = scene.get_node_mut(root_id) {
             node.transform.position = Vec3::new(0.0, 0.0, 0.0);
         }
 
-        let bone1_id = ctx.scene.create_node_with_name("Bone_Top");
-        if let Some(node) = ctx.scene.get_node_mut(bone1_id) {
+        let bone1_id = scene.create_node_with_name("Bone_Top");
+        if let Some(node) = scene.get_node_mut(bone1_id) {
             node.transform.position = Vec3::new(0.0, 2.0, 0.0);
         }
-        ctx.scene.attach(bone1_id, root_id);
+        scene.attach(bone1_id, root_id);
         
         // 3. 创建 Skeleton 资源
         let ibm0 = Affine3A::IDENTITY;
@@ -79,28 +81,28 @@ impl AppHandler for SkinDemo {
             vec![ibm0, ibm1],
             0,
         );
-        let skel_id = ctx.scene.add_skeleton(skeleton);
+        let skel_id = scene.add_skeleton(skeleton);
 
         // 4. 创建 Mesh 节点并绑定骨骼
         let mesh = Mesh::new(geo_handle, mat_handle);
-        let mesh_node_id = ctx.scene.create_node_with_name("SkinnedMesh");
-        ctx.scene.set_mesh(mesh_node_id, mesh);
-        ctx.scene.bind_skeleton(mesh_node_id, skel_id, BindMode::Attached);
+        let mesh_node_id = scene.create_node_with_name("SkinnedMesh");
+        scene.set_mesh(mesh_node_id, mesh);
+        scene.bind_skeleton(mesh_node_id, skel_id, BindMode::Attached);
 
         // 5. 添加灯光
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 0.0);
-        ctx.scene.add_light(light);
+        scene.add_light(light);
 
         // 6. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = ctx.scene.add_camera(camera);
+        let cam_node_id = scene.add_camera(camera);
         
-        if let Some(node) = ctx.scene.get_node_mut(cam_node_id) {
+        if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 3.0, 10.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
         
-        ctx.scene.active_camera = Some(cam_node_id);
+        scene.active_camera = Some(cam_node_id);
 
         Self {
             bone1_id,
@@ -110,14 +112,18 @@ impl AppHandler for SkinDemo {
     }
 
     fn update(&mut self, ctx: &mut AppContext) {
+
+        let Some(scene) = ctx.scenes.active_scene_mut() else{
+            return;
+        };
         // 摆动骨骼
-        if let Some(node) = ctx.scene.get_node_mut(self.bone1_id) {
+        if let Some(node) = scene.get_node_mut(self.bone1_id) {
             let angle = ctx.time.sin() * 1.0;
             node.transform.rotation = Quat::from_rotation_z(angle);
         }
 
         // 轨道控制器
-        if let Some((transform, camera)) = ctx.scene.query_main_camera_bundle() {
+        if let Some((transform, camera)) = scene.query_main_camera_bundle() {
             self.controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
         }
 

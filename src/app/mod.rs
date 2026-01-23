@@ -1,10 +1,7 @@
-pub mod input;
-
-use self::input::Input;
-
 use std::sync::Arc;
 use std::time::Instant;
 
+use slotmap::{new_key_type, SlotMap};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -14,13 +11,89 @@ use crate::assets::AssetServer;
 use crate::scene::Scene;
 use crate::renderer::{Renderer, settings::RenderSettings};
 use crate::renderer::graph::RenderNode;
+use crate::resources::input::Input;
+
+new_key_type! {
+    pub struct SceneHandle;
+}
+
+/// 负责管理场景生命周期的子系统
+pub struct SceneManager {
+    scenes: SlotMap<SceneHandle, Scene>,
+    active_scene: Option<SceneHandle>,
+}
+
+impl SceneManager {
+    pub fn new() -> Self {
+        Self {
+            scenes: SlotMap::with_key(),
+            active_scene: None,
+        }
+    }
+
+    /// 创建一个新场景，返回其句柄
+    pub fn create_scene(&mut self) -> SceneHandle {
+        self.scenes.insert(Scene::new())
+    }
+
+    /// 删除场景（带安全检查）
+    pub fn remove_scene(&mut self, handle: SceneHandle) {
+        if self.active_scene == Some(handle) {
+            self.active_scene = None;
+            log::warn!("Active scene was removed! Screen will be empty.");
+        }
+        self.scenes.remove(handle);
+    }
+
+    /// [Helper] 设置当前激活场景
+    pub fn set_active(&mut self, handle: SceneHandle) {
+        if self.scenes.contains_key(handle) {
+            self.active_scene = Some(handle);
+        } else {
+            log::error!("Attempted to set invalid SceneHandle as active.");
+        }
+    }
+
+    /// 创建并设置一个新的激活场景，返回其可变引用
+    pub fn create_active(&mut self) -> &mut Scene {
+        let handle = self.create_scene();
+        self.set_active(handle);
+        self.get_scene_mut(handle).unwrap()
+    }
+
+    /// 获取当前激活场景的句柄
+    pub fn active_handle(&self) -> Option<SceneHandle> {
+        self.active_scene
+    }
+
+    /// 获取任意场景的引用
+    pub fn get_scene(&self, handle: SceneHandle) -> Option<&Scene> {
+        self.scenes.get(handle)
+    }
+
+    /// 获取任意场景的可变引用
+    pub fn get_scene_mut(&mut self, handle: SceneHandle) -> Option<&mut Scene> {
+        self.scenes.get_mut(handle)
+    }
+
+    /// 快捷方式：获取当前激活场景
+    pub fn active_scene(&self) -> Option<&Scene> {
+        self.active_scene.and_then(|h| self.scenes.get(h))
+    }
+
+    /// 获取当前激活的场景（可变引用）
+    pub fn active_scene_mut(&mut self) -> Option<&mut Scene> {
+        self.active_scene.and_then(|h| self.scenes.get_mut(h))
+    }
+}
 
 /// 应用上下文：提供给用户的所有引擎资源
 /// 在 init, update, on_event 中传递给用户
 pub struct AppContext<'a> {
     pub window: &'a Window,
-    pub renderer: &'a mut Renderer, // 允许用户 resize 或访问 device
-    pub scene: &'a mut Scene,
+    pub renderer: &'a mut Renderer,
+
+    pub scenes: &'a mut SceneManager,
     pub assets: &'a mut AssetServer,
     pub input: &'a Input,
     
@@ -30,35 +103,34 @@ pub struct AppContext<'a> {
     pub frame_count: u64,
 }
 
-/// 用户程序必须实现的 Trait (替代旧的闭包回调)
+
+/// 用户程序必须实现的 Trait
 pub trait AppHandler: Sized + 'static {
-    /// 初始化：引擎资源（Window, Renderer）准备好后调用
-    /// 用户应在此处创建自己的状态（如 UiPass, GameState）
     fn init(ctx: &mut AppContext) -> Self;
 
-    /// 窗口事件：返回 true 表示事件被用户消耗了，引擎不应再处理（例如 UI 捕获了鼠标）
     fn on_event(&mut self, _ctx: &mut AppContext, _event: &WindowEvent) -> bool {
         false 
     }
 
-    /// 逻辑更新：每一帧调用
-    fn update(&mut self, ctx: &mut AppContext);
+    fn update(&mut self, _ctx: &mut AppContext){}
 
-    /// 渲染扩展：返回需要注入到 RenderGraph 的额外节点（例如 UI Pass）
     fn extra_render_nodes(&self) -> Vec<&dyn RenderNode> {
         Vec::new() 
     }
 }
 
-/// 默认的空 Handler，用于简单的示例
+/// 默认的空 Handler
 pub struct DefaultHandler;
 impl AppHandler for DefaultHandler {
-    fn init(_ctx: &mut AppContext) -> Self { Self }
+    fn init(ctx: &mut AppContext) -> Self {
+        // 示例：默认创建一个场景，防止黑屏
+        ctx.scenes.create_active();
+        Self 
+    }
     fn update(&mut self, _ctx: &mut AppContext) {}
 }
 
 /// App 构建器
-/// 负责收集配置，并不持有运行时状态
 pub struct App {
     title: String,
     render_settings: RenderSettings,
@@ -82,8 +154,6 @@ impl App {
         self
     }
 
-    /// 启动引擎，接管主循环
-    /// H: 用户自定义的状态结构体
     pub fn run<H: AppHandler>(self) -> anyhow::Result<()> {
         let event_loop = EventLoop::new()?;
         event_loop.set_control_flow(ControlFlow::Poll);
@@ -99,8 +169,7 @@ impl Default for App {
     }
 }
 
-/// 实际的应用运行器 (实现了 winit ApplicationHandler)
-/// 它持有所有的引擎子系统以及用户的状态 H
+/// 实际的应用运行器
 struct AppRunner<H: AppHandler> {
     // === 配置 ===
     title: String,
@@ -108,13 +177,16 @@ struct AppRunner<H: AppHandler> {
 
     // === 系统 ===
     window: Option<Arc<Window>>,
-    renderer: Option<Renderer>, // 使用 Option 因为要在 resumed 中初始化
-    scene: Scene,
+    renderer: Option<Renderer>,
+    
+    // === 场景管理 ===
+    scene_manager: SceneManager,
+
     assets: AssetServer,
     input: Input,
 
     // === 运行时状态 ===
-    user_state: Option<H>, // 在 init 后才存在
+    user_state: Option<H>,
     start_time: Instant,
     last_loop_time: Instant,
     frame_count: u64,
@@ -128,7 +200,7 @@ impl<H: AppHandler> AppRunner<H> {
             render_settings,
             window: None,
             renderer: None,
-            scene: Scene::new(),
+            scene_manager: SceneManager::new(),
             assets: AssetServer::new(),
             input: Input::new(),
             user_state: None,
@@ -155,7 +227,7 @@ impl<H: AppHandler> AppRunner<H> {
             let mut ctx = AppContext {
                 window,
                 renderer,
-                scene: &mut self.scene,
+                scenes: &mut self.scene_manager,
                 assets: &mut self.assets,
                 input: &self.input,
                 time: total_time,
@@ -169,20 +241,32 @@ impl<H: AppHandler> AppRunner<H> {
 
         // 3. 引擎内部系统更新
         self.input.end_frame();
-        self.scene.update();
+        
+        // 只更新当前激活的场景
+        if let Some(handle) = self.scene_manager.active_handle() {
+            if let Some(scene) = self.scene_manager.scenes.get_mut(handle) {
+                scene.update(&self.input, dt);
+            }
+        }
     }
 
     // 内部辅助：渲染逻辑
     fn render_frame(&mut self) {
         if let (Some(renderer), Some(user_state)) = (&mut self.renderer, &self.user_state) {
             
+            // 获取当前激活场景
+            let Some(scene_handle) = self.scene_manager.active_handle() else {
+                return;
+            };
+            let Some(scene) = self.scene_manager.scenes.get_mut(scene_handle) else { return; };
+
             // 获取当前激活相机
-            let Some(node_handle) = self.scene.active_camera else {
+            let Some(camera_node) = scene.active_camera else {
                 return;
             };
 
             // 直接获取相机组件的 clone
-            let camera = if let Some(cam) = self.scene.cameras.get(node_handle) {
+            let camera = if let Some(cam) = scene.cameras.get(camera_node) {
                 cam.clone()
             } else {
                 return;
@@ -190,15 +274,15 @@ impl<H: AppHandler> AppRunner<H> {
 
             let time_seconds = self.last_loop_time.duration_since(self.start_time).as_secs_f32();
             
-            // 获取用户注入的 Render Nodes (例如 UI Pass)
+            // 获取用户注入的 Render Nodes
             let extra_nodes = user_state.extra_render_nodes();
 
             renderer.render(
-                &mut self.scene, 
+                scene,  // 传入 active scene
                 &camera, 
                 &self.assets, 
                 time_seconds,
-                &extra_nodes, // <--- 关键：注入用户 Pass
+                &extra_nodes,
             );
         }
     }
@@ -228,12 +312,11 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         self.renderer = Some(renderer);
 
         // 3. 初始化用户状态 (H::init)
-        // 构造一个临时的 Context 用于初始化
         let now = Instant::now();
         let mut ctx = AppContext {
             window: &window,
             renderer: self.renderer.as_mut().unwrap(),
-            scene: &mut self.scene,
+            scenes: &mut self.scene_manager,
             assets: &mut self.assets,
             input: &self.input,
             time: 0.0,
@@ -254,7 +337,6 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         _window_id: WindowId,
         event: WindowEvent,
     ) {
-        // 确保系统已完全初始化
         if self.window.is_none() || self.renderer.is_none() || self.user_state.is_none() {
             return;
         }
@@ -269,9 +351,9 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
             let mut ctx = AppContext {
                 window,
                 renderer,
-                scene: &mut self.scene,
+                scenes: &mut self.scene_manager,
                 assets: &mut self.assets,
-                input: &self.input, // 借用 self.input
+                input: &self.input, 
                 time: self.last_loop_time.duration_since(self.start_time).as_secs_f32(),
                 dt: 0.0,
                 frame_count: self.frame_count,
@@ -280,7 +362,6 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
             user_state.on_event(&mut ctx, &event)
         };
 
-        // B. 如果未被用户消耗，引擎默认处理
         if !consumed {
             self.input.process_event(&event);
             
@@ -288,22 +369,27 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                 WindowEvent::CloseRequested => event_loop.exit(),
                 WindowEvent::Resized(physical_size) => {
                     let scale_factor = window.scale_factor() as f32;
-                    // 更新 Renderer
+                    
                     if let Some(renderer) = &mut self.renderer {
                         renderer.resize(physical_size.width, physical_size.height, scale_factor);
                     }
-                    // 更新 Input
                     self.input.handle_resize(physical_size.width, physical_size.height);
                     
-                    // 更新相机长宽比
+                    // 更新当前激活场景相机的长宽比
                     if physical_size.height > 0 {
                         let new_aspect = physical_size.width as f32 / physical_size.height as f32;
-                        // 查找 active camera 并更新
-                        if let Some(node_handle) = self.scene.active_camera {
-                            if let Some(camera) = self.scene.cameras.get_mut(node_handle) {
-                                camera.aspect = new_aspect;
-                                camera.update_projection_matrix();
-                            }
+                        
+                        // 先检查是否有 active_scene
+                        if let Some(scene_handle) = self.scene_manager.active_handle() {
+                             if let Some(scene) = self.scene_manager.scenes.get_mut(scene_handle) {
+                                // 再检查 active_camera
+                                if let Some(node_handle) = scene.active_camera {
+                                    if let Some(camera) = scene.cameras.get_mut(node_handle) {
+                                        camera.aspect = new_aspect;
+                                        camera.update_projection_matrix();
+                                    }
+                                }
+                             }
                         }
                     }
                 },
@@ -317,8 +403,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                 _ => {}
             }
         } else {
-            // 即使被 consumed，如果是 Resize 或 Close，通常系统也需要响应
-            // 这里根据需求决定。为了安全，Resize 事件通常建议广播。
+             // 即使被 consumed，如果是 Resize 或 Redraw，引擎仍需响应
             if let WindowEvent::Resized(ps) = event {
                  let scale_factor = window.scale_factor() as f32;
                  if let Some(renderer) = &mut self.renderer {

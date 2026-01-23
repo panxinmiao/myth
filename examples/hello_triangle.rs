@@ -38,27 +38,27 @@ impl AppHandler for HelloTriangle {
         let geo_handle = ctx.assets.add_geometry(geometry);
         let mat_handle = ctx.assets.add_material(basic_mat);
 
+        ctx.scenes.create_active();
+        let scene = ctx.scenes.active_scene_mut().unwrap();
+
         // 4. 创建 Mesh 并加入场景
         let mesh = Mesh::new(geo_handle, mat_handle);
-        ctx.scene.add_mesh(mesh);
-
+        scene.add_mesh(mesh);
         // 5. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = ctx.scene.add_camera(camera);
+        let cam_node_id = scene.add_camera(camera);
 
-        if let Some(node) = ctx.scene.get_node_mut(cam_node_id) {
+        if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 0.0, 3.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
         
-        ctx.scene.active_camera = Some(cam_node_id);
+        scene.active_camera = Some(cam_node_id);
 
         Self
     }
 
-    fn update(&mut self, _ctx: &mut AppContext) {
-        // 静态场景，无需更新
-    }
+
 }
 
 fn main() -> anyhow::Result<()> {

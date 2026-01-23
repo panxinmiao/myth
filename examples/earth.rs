@@ -73,37 +73,40 @@ impl AppHandler for Earth {
         let mesh = three::resources::Mesh::new(geo_handle, mat_handle);
         let cloud_mesh = three::resources::Mesh::new(geo_handle, cloud_material_handle);
 
-        let earth_node_id = ctx.scene.add_mesh(mesh);
-        if let Some(earth) = ctx.scene.get_node_mut(earth_node_id) {
+        ctx.scenes.create_active();
+        let scene = ctx.scenes.active_scene_mut().unwrap();
+
+        let earth_node_id = scene.add_mesh(mesh);
+        if let Some(earth) = scene.get_node_mut(earth_node_id) {
             earth.transform.rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.0, -1.0, 0.0);
         }
 
-        let cloud_node_id = ctx.scene.add_mesh(cloud_mesh);
-        if let Some(clouds) = ctx.scene.get_node_mut(cloud_node_id) {
+        let cloud_node_id = scene.add_mesh(cloud_mesh);
+        if let Some(clouds) = scene.get_node_mut(cloud_node_id) {
             clouds.transform.scale = Vec3::splat(1.005);
             clouds.transform.rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.0, 0.41);
         }
 
         // 3. 添加灯光
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
-        let light_index = ctx.scene.add_light(light);
-        ctx.scene.environment.set_ambient_color(Vec3::new(0.0001, 0.0001, 0.0001));
+        let light_index = scene.add_light(light);
+        scene.environment.set_ambient_color(Vec3::new(0.0001, 0.0001, 0.0001));
 
-        if let Some(light_node) = ctx.scene.get_node_mut(light_index) {
+        if let Some(light_node) = scene.get_node_mut(light_index) {
             light_node.transform.position = Vec3::new(3.0, 0.0, 1.0);
             light_node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
 
         // 4. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = ctx.scene.add_camera(camera);
+        let cam_node_id = scene.add_camera(camera);
         
-        if let Some(node) = ctx.scene.get_node_mut(cam_node_id) {
+        if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 0.0, 250.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
         
-        ctx.scene.active_camera = Some(cam_node_id);
+        scene.active_camera = Some(cam_node_id);
 
         Self {
             earth_node_id,
@@ -114,21 +117,26 @@ impl AppHandler for Earth {
     }
 
     fn update(&mut self, ctx: &mut AppContext) {
+
+        let Some(scene) = ctx.scenes.active_scene_mut() else{
+            return;
+        };
+        
         let rot = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.001 * 60.0 * ctx.dt, 0.0);
         let rot_clouds = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.00125 * 60.0 * ctx.dt, 0.0);
 
         // 地球自转
-        if let Some(node) = ctx.scene.get_node_mut(self.earth_node_id) {
+        if let Some(node) = scene.get_node_mut(self.earth_node_id) {
             node.transform.rotation = rot * node.transform.rotation;
         }
         
         // 云层自转
-        if let Some(clouds) = ctx.scene.get_node_mut(self.cloud_node_id) {
+        if let Some(clouds) = scene.get_node_mut(self.cloud_node_id) {
             clouds.transform.rotation = rot_clouds * clouds.transform.rotation;
         }
 
         // 轨道控制器
-        if let Some((transform, camera)) = ctx.scene.query_main_camera_bundle() {
+        if let Some((transform, camera)) = scene.query_main_camera_bundle() {
             self.controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
         }
 
@@ -141,7 +149,7 @@ impl AppHandler for Earth {
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
-    App::new()
+        App::new()
         .with_title("Earth")
         .with_settings(RenderSettings { vsync: false, ..Default::default() })
         .run::<Earth>()

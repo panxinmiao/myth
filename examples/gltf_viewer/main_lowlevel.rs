@@ -22,12 +22,12 @@ use std::sync::Arc;
 use std::path::PathBuf;
 use glam::Vec3;
 
+use three::resources::Input;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
-use three::app::input::Input;
 use three::assets::{AssetServer, GltfLoader};
 use three::scene::{Scene, Camera, light, NodeHandle};
 use three::renderer::{Renderer, settings::RenderSettings};
@@ -205,7 +205,7 @@ impl GltfViewer {
         window.set_title(&title);
 
         self.input.end_frame();
-        self.scene.update();
+        self.scene.update(&self.input, dt);
     }
 
     fn render(&mut self) {

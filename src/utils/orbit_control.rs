@@ -1,7 +1,6 @@
 use glam::{Vec3};
 use winit::event::MouseButton;
-use crate::app::input::Input;
-use crate::scene::transform::Transform;
+use crate::{resources::Input, scene::transform::Transform};
 
 #[derive(Clone, Copy, Debug)]
 struct Spherical {
