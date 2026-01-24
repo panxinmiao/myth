@@ -19,10 +19,11 @@ pub mod uniforms;
 pub mod version_tracker;
 pub mod material;
 pub mod input;
+pub mod shader_defines;
 
 pub use mesh::Mesh;
 pub use material::{
-    Material, MaterialType, MaterialFeatures, MaterialTrait, RenderableMaterialTrait,
+    Material, MaterialType, MaterialTrait, RenderableMaterialTrait,
     MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, MeshPhysicalMaterial, 
     Side,
 };
@@ -31,8 +32,8 @@ pub use image::{Image, ImageDescriptor};
 pub use geometry::{
     Geometry, Attribute, 
     BoundingBox, BoundingSphere,
-    GeometryFeatures,
 };
 pub use buffer::{BufferRef};
 pub use uniforms::{WgslType};
 pub use input::Input;
+pub use shader_defines::ShaderDefines;

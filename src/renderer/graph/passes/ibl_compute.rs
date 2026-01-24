@@ -237,6 +237,16 @@ impl RenderNode for IBLComputePass {
                 ..Default::default()
             });
 
+            let clamp_sampler = ctx.wgpu_ctx.device .create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("IBL Clamp Sampler"),
+                address_mode_u: wgpu::AddressMode::Repeat,      // 水平循环
+                address_mode_v: wgpu::AddressMode::ClampToEdge, // 垂直钳制 (关键!)
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..Default::default()
+            });
+
             let bind_group = ctx.wgpu_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Equirect BindGroup"),
                 layout: &self.equirect_layout,
@@ -247,7 +257,7 @@ impl RenderNode for IBLComputePass {
                     },
                     wgpu::BindGroupEntry { 
                         binding: 1, 
-                        resource: wgpu::BindingResource::Sampler(&ctx.resource_manager.dummy_sampler.sampler) 
+                        resource: wgpu::BindingResource::Sampler(&clamp_sampler) 
                     },
                     wgpu::BindGroupEntry { 
                         binding: 2, 

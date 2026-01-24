@@ -10,8 +10,8 @@ use slotmap::Key;
 use crate::renderer::graph::{RenderNode, RenderContext, TrackedRenderPass};
 use crate::renderer::graph::frame::{RenderKey, RenderCommand};
 use crate::renderer::pipeline::{PipelineKey, FastPipelineKey};
+use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::resources::material::Side;
-use crate::resources::GeometryFeatures;
 use crate::resources::uniforms::DynamicModelUniforms;
 
 /// Forward 渲染 Pass
@@ -103,16 +103,25 @@ impl ForwardRenderPass {
                 continue;
             };
 
-            let mut geo_features = geometry.get_features();
+            // 计算几何体的宏定义，处理骨骼动画特殊情况
+            let mut geo_defines = geometry.shader_defines();
             let mut instance_variants = 0;
 
             if skeleton.is_none() {
-                geo_features.remove(GeometryFeatures::USE_SKINNING);
+                geo_defines.remove("use_skinning");
                 instance_variants |= 1 << 0;
             }
 
+            // 合并所有宏定义创建编译选项
+            let mat_defines = material.shader_defines();
+            let options = ShaderCompilationOptions::from_merged(
+                &mat_defines,
+                &geo_defines,
+                &ctx.extracted_scene.scene_defines,
+            );
+            let shader_hash = options.compute_hash();
+
             // 使用 GPU 端的 layout_id 构建快速缓存 Key
-            // 这比 CPU 端的 version 更精确地反映 Pipeline 兼容性
             let fast_key = FastPipelineKey {
                 material_handle: item.material,
                 material_version: gpu_material.version,
@@ -120,7 +129,7 @@ impl ForwardRenderPass {
                 geometry_handle: item.geometry,
                 geometry_layout_version: geometry.layout_version(),
                 instance_variants,
-                scene_id: ctx.extracted_scene.scene_features.bits(),
+                scene_id: ctx.extracted_scene.scene_defines.compute_hash() as u32,
                 render_state_id: ctx.render_state.id,
             };
 
@@ -128,9 +137,7 @@ impl ForwardRenderPass {
                 p.clone()
             } else {
                 let canonical_key = PipelineKey {
-                    mat_features: material.features(),
-                    geo_features,
-                    scene_features: ctx.extracted_scene.scene_features,
+                    shader_hash,
                     topology: geometry.topology,
                     cull_mode: match material.side() {
                         Side::Front => Some(wgpu::Face::Back),
@@ -150,6 +157,7 @@ impl ForwardRenderPass {
                     &ctx.wgpu_ctx.device,
                     material.shader_name(),
                     canonical_key,
+                    &options,
                     &gpu_geometry.layout_info,
                     gpu_material,
                     &object_data,

@@ -13,33 +13,10 @@ use std::{any::Any, borrow::Cow, ops::Deref};
 
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::resources::buffer::BufferRef;
+use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::texture::{SamplerSource, TextureSource};
-use bitflags::bitflags;
 use glam::Vec4;
 use uuid::Uuid;
-
-
-// Shader 编译选项
-bitflags! {
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-    pub struct MaterialFeatures: u32 {
-        const USE_MAP           = 1 << 0;
-        const USE_NORMAL_MAP    = 1 << 1;
-        const USE_ROUGHNESS_MAP = 1 << 2;
-        const USE_METALNESS_MAP = 1 << 3;
-        const USE_EMISSIVE_MAP  = 1 << 4;
-        const USE_AO_MAP        = 1 << 5;
-        const USE_SPECULAR_MAP  = 1 << 6;
-        const USE_SPECULAR_INTENSITY_MAP = 1 << 7;
-        const USE_IBL           = 1 << 8;
-        const USE_SPECULAR      = 1 << 9;
-        const USE_IOR           = 1 << 10;
-        const USE_CLEARCOAT     = 1 << 11;
-        const USE_CLEARCOAT_MAP = 1 << 12;
-        const USE_CLEARCOAT_ROUGHNESS_MAP = 1 << 13;
-        const USE_CLEARCOAT_NORMAL_MAP = 1 << 14;
-    }
-}
 
 
 /// [普通用户接口]
@@ -56,20 +33,25 @@ pub trait MaterialTrait: Any + Send + Sync + std::fmt::Debug {
 /// 普通用户不需要导入此 Trait。
 /// 只有在自定义新材质类型，或编写渲染管线时才需要使用。
 pub trait RenderableMaterialTrait: MaterialTrait {
-    // 逻辑属性
+    /// 着色器模板名称
     fn shader_name(&self) -> &'static str;
+    /// 材质版本号（用于缓存失效）
     fn version(&self) -> u64;
-    fn features(&self) -> MaterialFeatures;
+    /// 获取材质的 Shader 宏定义
+    fn shader_defines(&self) -> ShaderDefines;
+    /// 材质渲染设置
     fn settings(&self) -> &MaterialSettings;
     
-    // 底层资源绑定 (对普通用户隐藏细节的关键)
-    // 这里的 MaterialBindings 依然是 pub 的结构体，但其字段可以是 pub(crate)
+    /// 底层资源绑定
     fn bindings(&self) -> &MaterialBindings; 
     
-    // 访问器
+    /// 访问所有纹理
     fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource));
+    /// 定义 GPU 资源绑定
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>);
+    /// 获取 Uniform 缓冲区引用
     fn uniform_buffer(&self) -> &BufferRef;
+    /// 获取 Uniform 数据字节
     fn uniform_bytes(&self) -> &[u8];
 }
 
@@ -219,13 +201,13 @@ impl RenderableMaterialTrait for MaterialType {
         }
     }
 
-    fn features(&self) -> MaterialFeatures {
+    fn shader_defines(&self) -> ShaderDefines {
         match self {
-            Self::Basic(m) => m.features(),
-            Self::Phong(m) => m.features(),
-            Self::Standard(m) => m.features(),
-            Self::Physical(m) => m.features(),
-            Self::Custom(m) => m.features(),
+            Self::Basic(m) => m.shader_defines(),
+            Self::Phong(m) => m.shader_defines(),
+            Self::Standard(m) => m.shader_defines(),
+            Self::Physical(m) => m.shader_defines(),
+            Self::Custom(m) => m.shader_defines(),
         }
     }
 
@@ -438,8 +420,8 @@ impl Material {
     }
     
     #[inline]
-    pub fn features(&self) -> MaterialFeatures { 
-        self.data.features() 
+    pub fn shader_defines(&self) -> ShaderDefines { 
+        self.data.shader_defines() 
     }
     
     #[inline]

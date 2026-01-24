@@ -2,65 +2,88 @@
 //!
 //! 使用模板引擎生成最终的 WGSL 代码
 
-use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
-use serde::{Serialize, Serializer};
-use serde::ser::SerializeMap;
-use super::shader_manager::{get_env, LocationAllocator};
-use crate::resources::material::MaterialFeatures;
-use crate::resources::geometry::GeometryFeatures;
-use crate::scene::scene::SceneFeatures;
-use minijinja::value::Value;
+use std::collections::BTreeMap;
+use std::hash::{Hash, Hasher};
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
+use crate::resources::shader_defines::ShaderDefines;
+use super::shader_manager::{get_env, LocationAllocator};
+use minijinja::value::Value;
+use serde::Serialize;
+
+/// Shader 编译选项
+/// 
+/// 包含生成 Shader 所需的所有宏定义。
+/// 使用 `ShaderDefines` 存储所有来自材质、几何体和场景的宏定义。
+#[derive(Debug, Clone, Default)]
 pub struct ShaderCompilationOptions {
-    pub mat_features: MaterialFeatures,
-    pub geo_features: GeometryFeatures,
-    pub scene_features: SceneFeatures,
+    defines: ShaderDefines,
 }
 
-impl Serialize for ShaderCompilationOptions {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        let mut map = serializer.serialize_map(None)?;
+impl ShaderCompilationOptions {
+    /// 创建新的编译选项
+    pub fn new() -> Self {
+        Self {
+            defines: ShaderDefines::new(),
+        }
+    }
 
-        if self.mat_features.contains(MaterialFeatures::USE_IBL) { map.serialize_entry("USE_IBL", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_IOR) { map.serialize_entry("USE_IOR", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_SPECULAR) { map.serialize_entry("USE_SPECULAR", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_CLEARCOAT) { map.serialize_entry("USE_CLEARCOAT", &true)?; }
+    /// 从材质、几何体和场景的宏定义合并创建
+    pub fn from_merged(
+        mat_defines: &ShaderDefines,
+        geo_defines: &ShaderDefines,
+        scene_defines: &ShaderDefines,
+    ) -> Self {
+        let mut defines = mat_defines.clone();
+        defines.merge(geo_defines);
+        defines.merge(scene_defines);
+        Self { defines }
+    }
 
-        if self.mat_features.contains(MaterialFeatures::USE_MAP) { map.serialize_entry("use_map", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_NORMAL_MAP) { map.serialize_entry("use_normal_map", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_ROUGHNESS_MAP) { map.serialize_entry("use_roughness_map", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_METALNESS_MAP) { map.serialize_entry("use_metalness_map", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_EMISSIVE_MAP) { map.serialize_entry("use_emissive_map", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_AO_MAP) { map.serialize_entry("use_ao_map", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_SPECULAR_MAP) { map.serialize_entry("use_specular_map", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_SPECULAR_INTENSITY_MAP) { map.serialize_entry("use_specular_intensity_map", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_CLEARCOAT_MAP) { map.serialize_entry("use_clearcoat_map", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_CLEARCOAT_ROUGHNESS_MAP) { map.serialize_entry("use_clearcoat_roughness_map", &true)?; }
-        if self.mat_features.contains(MaterialFeatures::USE_CLEARCOAT_NORMAL_MAP) { map.serialize_entry("use_clearcoat_normal_map", &true)?; }
+    /// 获取宏定义的引用
+    #[inline]
+    pub fn defines(&self) -> &ShaderDefines {
+        &self.defines
+    }
 
-        if self.geo_features.contains(GeometryFeatures::HAS_UV) { map.serialize_entry("has_uv", &true)?; }
-        if self.geo_features.contains(GeometryFeatures::HAS_NORMAL) { map.serialize_entry("has_normal", &true)?; }
-        if self.geo_features.contains(GeometryFeatures::USE_VERTEX_COLOR) { map.serialize_entry("use_vertex_color", &true)?; }
-        if self.geo_features.contains(GeometryFeatures::USE_TANGENT) { map.serialize_entry("use_tangent", &true)?; }
-        if self.geo_features.contains(GeometryFeatures::USE_MORPHING) { map.serialize_entry("use_morphing", &true)?; }
-        if self.geo_features.contains(GeometryFeatures::USE_SKINNING) { map.serialize_entry("use_skinning", &true)?; }
-        if self.geo_features.contains(GeometryFeatures::USE_MORPH_NORMALS) { map.serialize_entry("use_morph_normals", &true)?; }
-        if self.geo_features.contains(GeometryFeatures::USE_MORPH_TANGENTS) { map.serialize_entry("use_morph_tangents", &true)?; }
+    /// 获取可变的宏定义引用
+    #[inline]
+    pub fn defines_mut(&mut self) -> &mut ShaderDefines {
+        &mut self.defines
+    }
 
-        if self.scene_features.contains(SceneFeatures::USE_ENV_MAP) { map.serialize_entry("use_env_map", &true)?; }
+    /// 计算编译选项的哈希值（用于缓存）
+    pub fn compute_hash(&self) -> u64 {
+        self.defines.compute_hash()
+    }
 
-        map.end()
+    /// 转换为模板渲染所需的 Map
+    fn to_template_map(&self) -> BTreeMap<String, bool> {
+        self.defines
+            .iter_strings()
+            .map(|(k, _v)| (k.to_string(), true))
+            .collect()
     }
 }
+
+impl Hash for ShaderCompilationOptions {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.defines.as_slice().hash(state);
+    }
+}
+
+impl PartialEq for ShaderCompilationOptions {
+    fn eq(&self, other: &Self) -> bool {
+        self.defines == other.defines
+    }
+}
+
+impl Eq for ShaderCompilationOptions {}
 
 #[derive(Serialize)]
 struct ShaderContext<'a> {
     #[serde(flatten)]
-    options: &'a ShaderCompilationOptions,
+    defines: BTreeMap<String, bool>,
     vertex_input_code: Option<&'a str>,
     binding_code: &'a str,
     loc: Value,
@@ -84,7 +107,7 @@ impl ShaderGenerator {
         let binding_code = format!("{}\n{}\n{}", global_binding_code, material_binding_code, object_binding_code);
 
         let ctx = ShaderContext {
-            options,
+            defines: options.to_template_map(),
             vertex_input_code: Some(&geometry_layout.vertex_input_code),
             binding_code: &binding_code,
             loc: loc_value,

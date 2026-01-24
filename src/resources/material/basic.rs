@@ -1,7 +1,7 @@
 use glam::Vec4;
 
 use crate::resources::buffer::CpuBuffer;
-use crate::resources::material::{MaterialBindings, MaterialFeatures, MaterialSettings, SettingsGuard};
+use crate::resources::material::{MaterialBindings, MaterialSettings, SettingsGuard};
 use crate::resources::uniforms::MeshBasicUniforms;
 use crate::{impl_material_api, impl_material_trait};
 
@@ -65,9 +65,9 @@ impl_material_trait!(
     MeshBasicMaterial,
     "mesh_basic",
     MeshBasicUniforms,
-    default_features: MaterialFeatures::empty(),
+    default_defines: [],
     textures: [
-        (map, USE_MAP),
+        (map, "use_map"),
     ]
 );
 

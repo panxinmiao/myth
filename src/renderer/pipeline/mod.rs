@@ -12,3 +12,4 @@ pub mod shader_manager;
 pub mod shader_gen;
 
 pub use cache::{PipelineCache, PipelineKey, FastPipelineKey};
+pub use shader_gen::ShaderCompilationOptions;

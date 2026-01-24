@@ -112,16 +112,16 @@ macro_rules! impl_material_api {
 
 /// [宏 2] Trait 实现器
 /// 自动实现 MaterialTrait 和 RenderableMaterialTrait。
-/// 负责处理所有的绑定逻辑、Feature 标志计算等繁琐工作。
+/// 负责处理所有的绑定逻辑、Shader 宏生成等繁琐工作。
 #[macro_export]
 macro_rules! impl_material_trait {
     (
         $struct_name:ident,
         $shader_name:expr,
         $uniform_struct:ty,
-        default_features: $default_features:expr,
-        // Textures: (字段名, FeatureFlag)
-        textures: [ $(($field:ident, $feature:ident)),* $(,)? ]
+        default_defines: [ $(($def_key:expr, $def_val:expr)),* $(,)? ],
+        // Textures: (字段名, 宏名称)
+        textures: [ $(($field:ident, $macro_name:expr)),* $(,)? ]
     ) => {
         // 1. 实现通用接口
         impl $crate::resources::material::MaterialTrait for $struct_name {
@@ -138,14 +138,19 @@ macro_rules! impl_material_trait {
             fn uniform_buffer(&self) -> &$crate::resources::buffer::BufferRef { self.uniforms.handle() }
             fn uniform_bytes(&self) -> &[u8] { self.uniforms.as_bytes() }
 
-            fn features(&self) -> $crate::resources::material::MaterialFeatures {
-                let mut features = $default_features;
+            fn shader_defines(&self) -> $crate::resources::shader_defines::ShaderDefines {
+                let mut defines = $crate::resources::shader_defines::ShaderDefines::new();
+                // 默认宏定义
+                $(
+                    defines.set($def_key, $def_val);
+                )*
+                // 纹理宏定义
                 $(
                     if self.bindings.$field.is_some() {
-                        features |= $crate::resources::material::MaterialFeatures::$feature;
+                        defines.set($macro_name, "1");
                     }
                 )*
-                features
+                defines
             }
 
             fn visit_textures(&self, visitor: &mut dyn FnMut(&$crate::resources::texture::TextureSource)) {

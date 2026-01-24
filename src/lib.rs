@@ -16,7 +16,7 @@ pub mod errors;
 pub mod utils;
 pub mod animation;
 
-pub use resources::{Mesh, Material, MaterialTrait, RenderableMaterialTrait, MaterialType, Texture, Image, Geometry, Side};
+pub use resources::{Mesh, Material, MaterialTrait, RenderableMaterialTrait, MaterialType, Texture, Image, Geometry, Side, ShaderDefines};
 pub use assets::{AssetServer, ColorSpace};
 pub use scene::{Node, Scene, Camera, Light};
 pub use resources::primitives::*;
@@ -25,4 +25,5 @@ pub use renderer::core::WgpuContext;
 pub use app::App;
 pub use errors::ThreeError;
 pub use utils::orbit_control::OrbitControls;
+pub use utils::interner;
 pub use animation::{AnimationClip, AnimationAction, AnimationMixer, Binder, LoopMode};

@@ -349,7 +349,7 @@ impl<'a> GltfLoader<'a> {
                     gltf::material::AlphaMode::Opaque => false,
                     gltf::material::AlphaMode::Mask => false,
                     gltf::material::AlphaMode::Blend => {
-                        settings.depth_write = false;
+                        // settings.depth_write = false;
                         true
                     },
                 };

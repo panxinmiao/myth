@@ -11,9 +11,6 @@ use rustc_hash::FxHashMap;
 use xxhash_rust::xxh3::xxh3_128;
 
 use crate::renderer::core::ObjectBindingData;
-use crate::resources::geometry::GeometryFeatures;
-use crate::resources::material::MaterialFeatures;
-use crate::scene::scene::SceneFeatures;
 use crate::assets::{GeometryHandle, MaterialHandle};
 
 use crate::renderer::pipeline::shader_gen::{ShaderGenerator, ShaderCompilationOptions};
@@ -21,11 +18,13 @@ use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 use crate::renderer::core::resources::GpuMaterial;
 
 /// L2 缓存 Key: 完整描述 Pipeline 的所有特征
+/// 
+/// 使用 shader_hash 替代原来的三个 Features 枚举，
+/// 实现更灵活的宏定义组合。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PipelineKey {
-    pub mat_features: MaterialFeatures,
-    pub geo_features: GeometryFeatures,
-    pub scene_features: SceneFeatures,
+    /// Shader 宏定义的组合哈希
+    pub shader_hash: u64,
     pub topology: wgpu::PrimitiveTopology,
     pub cull_mode: Option<wgpu::Face>,
     pub depth_write: bool,
@@ -92,6 +91,7 @@ impl PipelineCache {
         device: &wgpu::Device,
         template_name: &str,
         canonical_key: PipelineKey,
+        options: &ShaderCompilationOptions,
         vertex_layout: &GeneratedVertexLayout,
         gpu_material: &GpuMaterial,
         object_data: &ObjectBindingData,
@@ -102,19 +102,13 @@ impl PipelineCache {
             return cached.clone();
         }
 
-        let options = ShaderCompilationOptions {
-            mat_features: canonical_key.mat_features,
-            geo_features: canonical_key.geo_features,
-            scene_features: canonical_key.scene_features,
-        };
-
         let shader_source = ShaderGenerator::generate_shader(
             vertex_layout,
             global_binding_wgsl,
             &gpu_material.binding_wgsl,
             &object_data.binding_wgsl,
             template_name,
-            &options,
+            options,
         );
 
         if cfg!(feature = "debug_shader") {

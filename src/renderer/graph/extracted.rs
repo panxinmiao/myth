@@ -11,10 +11,10 @@
 
 use glam::Mat4;
 
-use crate::scene::scene::SceneFeatures;
+use crate::resources::shader_defines::ShaderDefines;
 use crate::scene::{NodeHandle, Scene, SkeletonKey};
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
-use crate::scene::camera::{RenderCamera};
+use crate::scene::camera::RenderCamera;
 
 /// 精简的渲染项，只包含 GPU 需要的数据
 /// 
@@ -56,8 +56,8 @@ pub struct ExtractedScene {
     pub skeletons: Vec<ExtractedSkeleton>,
     /// 背景颜色
     pub background: Option<glam::Vec4>,
-    /// 场景特性标志
-    pub scene_features: SceneFeatures,
+    /// 场景的 Shader 宏定义
+    pub scene_defines: ShaderDefines,
 
     pub scene_id: u32,
 }
@@ -69,7 +69,7 @@ impl ExtractedScene {
             render_items: Vec::new(),
             skeletons: Vec::new(),
             background: None,
-            scene_features: SceneFeatures::empty(),
+            scene_defines: ShaderDefines::new(),
             scene_id: 0,
         }
     }
@@ -80,7 +80,7 @@ impl ExtractedScene {
             render_items: Vec::with_capacity(item_capacity),
             skeletons: Vec::with_capacity(skeleton_capacity),
             background: None,
-            scene_features: SceneFeatures::empty(),
+            scene_defines: ShaderDefines::new(),
             scene_id: 0,
         }
     }
@@ -89,6 +89,7 @@ impl ExtractedScene {
     pub fn clear(&mut self) {
         self.render_items.clear();
         self.skeletons.clear();
+        self.scene_defines.clear();
         self.scene_id = 0;
     }
 
@@ -200,7 +201,7 @@ impl ExtractedScene {
     /// 提取环境数据
     fn extract_environment(&mut self, scene: &Scene) {
         self.background = scene.background;
-        self.scene_features = scene.get_features();
+        self.scene_defines = scene.shader_defines();
         self.scene_id = scene.id;
     }
 

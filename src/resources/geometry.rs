@@ -6,10 +6,10 @@ use uuid::Uuid;
 use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages};
 use glam::{Affine3A, Vec3, Vec4};
 use core::ops::Range;
-use bitflags::bitflags;
 
-use crate::resources::buffer::{BufferRef};
+use crate::resources::buffer::BufferRef;
 use crate::resources::primitives;
+use crate::resources::shader_defines::ShaderDefines;
 
 /// Attribute holds CPU-side data (Option<Arc<Vec<u8>>>) and metadata.
 #[derive(Debug, Clone)]
@@ -251,20 +251,6 @@ impl BoundingBox {
 pub struct BoundingSphere {
     pub center: Vec3,
     pub radius: f32,
-}
-
-bitflags! {
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-    pub struct GeometryFeatures: u32 {
-        const HAS_NORMAL       = 1 << 0;
-        const HAS_UV           = 1 << 1;
-        const USE_VERTEX_COLOR  = 1 << 2;
-        const USE_TANGENT       = 1 << 3;
-        const USE_MORPHING      = 1 << 4; // 变形
-        const USE_SKINNING      = 1 << 5; // 骨骼
-        const USE_MORPH_NORMALS = 1 << 6; // Morph Normal 数据
-        const USE_MORPH_TANGENTS = 1 << 7; // Morph Tangent 数据
-    }
 }
 
 #[derive(Debug)]
@@ -708,42 +694,46 @@ impl Geometry {
         }
     }
 
-    pub fn get_features(&self) -> GeometryFeatures {
-        let mut features = GeometryFeatures::empty();
+    /// 计算几何体的 Shader 宏定义
+    /// 
+    /// 这是一个计算属性，基于当前几何体的属性自动推导宏定义。
+    pub fn shader_defines(&self) -> ShaderDefines {
+        let mut defines = ShaderDefines::new();
 
         if self.attributes.contains_key("uv") {
-            features |= GeometryFeatures::HAS_UV;
+            defines.set("has_uv", "1");
         }
         if self.attributes.contains_key("normal") {
-            features |= GeometryFeatures::HAS_NORMAL;
+            defines.set("has_normal", "1");
         }
         if self.attributes.contains_key("color") {
-            features |= GeometryFeatures::USE_VERTEX_COLOR;
+            defines.set("use_vertex_color", "1");
         }
         if self.attributes.contains_key("tangent") {
-            features |= GeometryFeatures::USE_TANGENT;
+            defines.set("use_tangent", "1");
         }
         
         // Morph Target 特性检测
         if self.has_morph_targets() {
-            features |= GeometryFeatures::USE_MORPHING;
+            defines.set("use_morphing", "1");
             
             if self.morph_normal_buffer.is_some() {
-                features |= GeometryFeatures::USE_MORPH_NORMALS;
+                defines.set("use_morph_normals", "1");
             }
             if self.morph_tangent_buffer.is_some() {
-                features |= GeometryFeatures::USE_MORPH_TANGENTS;
+                defines.set("use_morph_tangents", "1");
             }
         }
 
+        // Skinning 特性检测
         let has_joints = self.attributes.contains_key("joints");
         let has_weights = self.attributes.contains_key("weights");
         
         if has_joints && has_weights {
-            features |= GeometryFeatures::USE_SKINNING;
+            defines.set("use_skinning", "1");
         }
 
-        features
+        defines
     }
 
     pub fn new_box(width: f32, height: f32, depth: f32) -> Self {

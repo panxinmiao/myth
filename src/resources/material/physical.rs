@@ -1,7 +1,7 @@
 use glam::{Vec2, Vec3, Vec4};
 
 use crate::resources::buffer::CpuBuffer;
-use crate::resources::material::{MaterialBindings, MaterialFeatures, MaterialSettings, SettingsGuard};
+use crate::resources::material::{MaterialBindings, MaterialSettings, SettingsGuard};
 use crate::resources::uniforms::MeshPhysicalUniforms;
 use crate::{impl_material_api, impl_material_trait};
 
@@ -85,19 +85,24 @@ impl_material_trait!(
     MeshPhysicalMaterial,
     "mesh_physical",
     MeshPhysicalUniforms,
-    default_features: MaterialFeatures::USE_IBL | MaterialFeatures::USE_SPECULAR | MaterialFeatures::USE_IOR | MaterialFeatures::USE_CLEARCOAT,
+    default_defines: [
+        ("USE_IBL", "1"),
+        ("USE_SPECULAR", "1"),
+        ("USE_IOR", "1"),
+        ("USE_CLEARCOAT", "1"),
+    ],
     textures: [
-        (map,           USE_MAP),
-        (normal_map,    USE_NORMAL_MAP),
-        (roughness_map, USE_ROUGHNESS_MAP),
-        (metalness_map, USE_METALNESS_MAP),
-        (ao_map,        USE_AO_MAP),
-        (emissive_map,  USE_EMISSIVE_MAP),
-        (specular_map,  USE_SPECULAR_MAP),
-        (specular_intensity_map, USE_SPECULAR_INTENSITY_MAP),
-        (clearcoat_map, USE_CLEARCOAT_MAP),
-        (clearcoat_roughness_map, USE_CLEARCOAT_ROUGHNESS_MAP),
-        (clearcoat_normal_map, USE_CLEARCOAT_NORMAL_MAP),
+        (map,           "use_map"),
+        (normal_map,    "use_normal_map"),
+        (roughness_map, "use_roughness_map"),
+        (metalness_map, "use_metalness_map"),
+        (ao_map,        "use_ao_map"),
+        (emissive_map,  "use_emissive_map"),
+        (specular_map,  "use_specular_map"),
+        (specular_intensity_map, "use_specular_intensity_map"),
+        (clearcoat_map, "use_clearcoat_map"),
+        (clearcoat_roughness_map, "use_clearcoat_roughness_map"),
+        (clearcoat_normal_map, "use_clearcoat_normal_map"),
     ]
 );
 

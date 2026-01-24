@@ -1,7 +1,7 @@
 use glam::{Vec2, Vec3, Vec4};
 
 use crate::resources::buffer::CpuBuffer;
-use crate::resources::material::{MaterialBindings, MaterialFeatures, MaterialSettings, SettingsGuard};
+use crate::resources::material::{MaterialBindings, MaterialSettings, SettingsGuard};
 use crate::resources::uniforms::MeshStandardUniforms;
 use crate::{impl_material_api, impl_material_trait};
 
@@ -80,15 +80,15 @@ impl_material_trait!(
     MeshStandardMaterial,
     "mesh_standard",
     MeshStandardUniforms,
-    default_features: MaterialFeatures::USE_IBL,
+    default_defines: [("USE_IBL", "1")],
     textures: [
-        (map,           USE_MAP),
-        (normal_map,    USE_NORMAL_MAP),
-        (roughness_map, USE_ROUGHNESS_MAP),
-        (metalness_map, USE_METALNESS_MAP),
-        (ao_map,        USE_AO_MAP),
-        (emissive_map,  USE_EMISSIVE_MAP),
-        (specular_map,  USE_SPECULAR_MAP),
+        (map,           "use_map"),
+        (normal_map,    "use_normal_map"),
+        (roughness_map, "use_roughness_map"),
+        (metalness_map, "use_metalness_map"),
+        (ao_map,        "use_ao_map"),
+        (emissive_map,  "use_emissive_map"),
+        (specular_map,  "use_specular_map"),
     ]
 );
 

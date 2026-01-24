@@ -4,10 +4,10 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use slotmap::{SlotMap, SecondaryMap, SparseSecondaryMap};
 use glam::{Affine3A, Vec3, Vec4}; 
-use bitflags::bitflags;
 use crate::AssetServer;
 use crate::resources::{BoundingBox, Input};
 use crate::resources::buffer::CpuBuffer;
+use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::uniforms::{EnvironmentUniforms, GpuLightStorage};
 use crate::resources::mesh::MAX_MORPH_TARGETS;
 use crate::scene::node::Node;
@@ -21,13 +21,6 @@ use crate::scene::light::Light;
 use crate::scene::environment::Environment;
 
 use crate::scene::{NodeHandle, SkeletonKey};
-
-bitflags! {
-    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
-    pub struct SceneFeatures: u32 {
-        const USE_ENV_MAP  = 1 << 0;
-    }
-}
 
 static NEXT_SCENE_ID: AtomicU32 = AtomicU32::new(1);
 
@@ -501,12 +494,15 @@ impl Scene {
         node_handle
     }
 
-    pub fn get_features(&self) -> SceneFeatures {
-        let mut features = SceneFeatures::empty();
+    /// 计算场景的 Shader 宏定义
+    /// 
+    /// 这是一个计算属性，基于当前场景的环境设置自动推导宏定义。
+    pub fn shader_defines(&self) -> ShaderDefines {
+        let mut defines = ShaderDefines::new();
         if self.environment.has_env_map() {
-            features |= SceneFeatures::USE_ENV_MAP;
+            defines.set("use_env_map", "1");
         }
-        features
+        defines
     }
 
 

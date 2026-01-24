@@ -1,7 +1,7 @@
 use glam::{Vec2, Vec3, Vec4};
 
 use crate::resources::buffer::CpuBuffer;
-use crate::resources::material::{MaterialBindings, MaterialFeatures, MaterialSettings, SettingsGuard};
+use crate::resources::material::{MaterialBindings, MaterialSettings, SettingsGuard};
 use crate::resources::uniforms::MeshPhongUniforms;
 use crate::{impl_material_api, impl_material_trait};
 
@@ -73,12 +73,12 @@ impl_material_trait!(
     MeshPhongMaterial,
     "mesh_phong",
     MeshPhongUniforms,
-    default_features: MaterialFeatures::empty(),
+    default_defines: [],
     textures: [
-        (map,          USE_MAP),
-        (normal_map,   USE_NORMAL_MAP),
-        (specular_map, USE_SPECULAR_MAP),
-        (emissive_map, USE_EMISSIVE_MAP),
+        (map,          "use_map"),
+        (normal_map,   "use_normal_map"),
+        (specular_map, "use_specular_map"),
+        (emissive_map, "use_emissive_map"),
     ]
 );
 
