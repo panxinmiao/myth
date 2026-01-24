@@ -345,20 +345,24 @@ define_gpu_data_struct!(
     struct MeshPhysicalUniforms {
         pub color: Vec4 = Vec4::ONE,           // 16
 
-        pub emissive: Vec3 = Vec3::ZERO,        // 12
+        pub emissive: Vec3 = Vec3::ZERO,       // 12
         pub emissive_intensity: f32 = 1.0,    // 4
 
-        pub roughness: f32 = 1.0,            // 4  
-        pub metalness: f32 = 0.0,           // 4
-        pub opacity: f32 = 1.0,            // 4
-        pub occlusion_strength: f32 = 1.0,     // 4 
+        pub roughness: f32 = 1.0,             // 4  
+        pub metalness: f32 = 0.0,            // 4
+        pub opacity: f32 = 1.0,              // 4
+        pub occlusion_strength: f32 = 1.0,   // 4 
 
-        pub normal_scale: Vec2 = Vec2::ONE,    // 8
+        pub normal_scale: Vec2 = Vec2::ONE,   // 8
         pub ao_map_intensity: f32 = 1.0,     // 4
-        pub(crate) __padding: f32,              // 4 (8+4+4=16)
+        pub ior: f32 = 1.5,                   // 4
 
-        pub specular: Vec3 = Vec3::ONE,               // 12
+        pub specular_color: Vec3 = Vec3::ONE,       // 12
         pub specular_intensity: f32 = 0.0,    // 4
+
+        pub clearcoat: f32 = 0.0,             // 4
+        pub clearcoat_roughness: f32 = 0.0,   // 4
+        pub clearcoat_normal_scale: Vec2 = Vec2::ONE, // 8
 
         // 使用优化后的 Mat3A (48 bytes)
         pub map_transform: Mat3A = Mat3A::IDENTITY,         
@@ -369,6 +373,10 @@ define_gpu_data_struct!(
         pub occlusion_map_transform: Mat3A = Mat3A::IDENTITY,
         pub ao_map_transform: Mat3A = Mat3A::IDENTITY,
         pub specular_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub specular_intensity_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub clearcoat_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub clearcoat_normal_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub clearcoat_roughness_map_transform: Mat3A = Mat3A::IDENTITY,
     }
 );
 

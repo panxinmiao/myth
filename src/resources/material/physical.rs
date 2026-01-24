@@ -62,8 +62,9 @@ impl_material_api!(
         (normal_scale,       Vec2, "Normal map scale."),
         (occlusion_strength, f32,  "Occlusion strength."),
         (ao_map_intensity,   f32,  "AO map intensity."),
-        (specular,           Vec3, "Specular color."),
+        (specular_color,           Vec3, "Specular color."),
         (specular_intensity, f32,  "Specular intensity."),
+        (ior,                f32,  "Index of Refraction."),
     ],
     textures: [
         (map,           "The color map."),
@@ -73,6 +74,10 @@ impl_material_api!(
         (ao_map,        "The AO map."),
         (emissive_map,  "The emissive map."),
         (specular_map,  "The specular map."),
+        (specular_intensity_map, "The specular intensity map."),
+        (clearcoat_map, "The clearcoat map."),
+        (clearcoat_roughness_map, "The clearcoat roughness map."),
+        (clearcoat_normal_map, "The clearcoat normal map."),
     ]
 );
 
@@ -80,7 +85,7 @@ impl_material_trait!(
     MeshPhysicalMaterial,
     "mesh_physical",
     MeshPhysicalUniforms,
-    default_features: MaterialFeatures::USE_IBL,
+    default_features: MaterialFeatures::USE_IBL | MaterialFeatures::USE_SPECULAR | MaterialFeatures::USE_IOR | MaterialFeatures::USE_CLEARCOAT,
     textures: [
         (map,           USE_MAP),
         (normal_map,    USE_NORMAL_MAP),
@@ -89,6 +94,10 @@ impl_material_trait!(
         (ao_map,        USE_AO_MAP),
         (emissive_map,  USE_EMISSIVE_MAP),
         (specular_map,  USE_SPECULAR_MAP),
+        (specular_intensity_map, USE_SPECULAR_INTENSITY_MAP),
+        (clearcoat_map, USE_CLEARCOAT_MAP),
+        (clearcoat_roughness_map, USE_CLEARCOAT_ROUGHNESS_MAP),
+        (clearcoat_normal_map, USE_CLEARCOAT_NORMAL_MAP),
     ]
 );
 

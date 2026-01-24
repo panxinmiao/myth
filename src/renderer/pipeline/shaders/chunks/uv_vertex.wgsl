@@ -58,3 +58,12 @@ $$ if use_anisotropy_map is defined
     out.anisotropy_map_uv = (u_material.anisotropy_map_transform * vec3<f32>(in.uv, 1.0)).xy;
 $$ endif
 
+$$ if use_sheen_color_map is defined
+    out.sheen_color_map_uv = (u_material.sheen_color_map_transform * vec3<f32>(in.uv, 1.0)).xy;
+$$ endif
+
+$$ if use_sheen_roughness_map is defined
+    out.sheen_roughness_map_uv = (u_material.sheen_roughness_map_transform * vec3<f32>(in.uv, 1.0)).xy;
+$$ endif
+
+

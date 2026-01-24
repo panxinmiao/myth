@@ -163,12 +163,6 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
         irradiance += light_map_color * u_material.light_map_intensity;
     $$ endif
 
-    $$ if USE_IBL is defined
-        let env_intensity = u_environment.env_map_intensity;
-        var ibl_irradiance = getIBLIrradiance( geometry.normal );
-        irradiance += ibl_irradiance * env_intensity;
-    $$ endif
-
     // Process irradiance
     RE_IndirectDiffuse( irradiance, geometry, material, &reflected_light );
 
@@ -184,7 +178,8 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
             clearcoat_ibl_radiance += getIBLRadiance( view, clearcoat_normal, material.clearcoat_roughness );
         $$ endif
 
-        RE_IndirectSpecular(ibl_radiance * env_intensity, ibl_irradiance, clearcoat_ibl_radiance, geometry, material, &reflected_light);
+        let ibl_irradiance = getIBLIrradiance( geometry.normal );
+        RE_IndirectSpecular(ibl_radiance, ibl_irradiance, clearcoat_ibl_radiance, geometry, material, &reflected_light);
     $$ endif
 
     // Ambient occlusion

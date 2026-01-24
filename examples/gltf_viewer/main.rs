@@ -95,7 +95,7 @@ impl AppHandler for GltfViewer {
         scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
         scene.environment.set_intensity(1.0);
 
-        scene.environment.set_ambient_color(Vec3::splat(0.3));
+        scene.environment.set_ambient_color(Vec3::splat(0.6));
 
         // 3. 添加灯光
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);

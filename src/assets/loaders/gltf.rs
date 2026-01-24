@@ -3,9 +3,8 @@ use std::path::Path;
 use std::fs;
 use std::sync::atomic::Ordering;
 use glam::{Affine3A, Mat4, Quat, Vec3, Vec4};
-use crate::resources::TextureSampler;
+use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler};
 use crate::resources::geometry::{Geometry, Attribute};
-use crate::resources::material::{Material, MeshStandardMaterial};
 use crate::resources::texture::Texture;
 use crate::scene::{Scene, NodeHandle, SkeletonKey};
 use crate::scene::skeleton::{Skeleton, BindMode};
@@ -101,8 +100,14 @@ impl<'a> GltfLoader<'a> {
 
         // 注册默认扩展
         loader._register_extension(Box::new(KhrMaterialsPbrSpecularGlossiness));
+        loader._register_extension(Box::new(KhrRMaterialsClearcoat));
 
-        let supported_ext = loader.extensions.keys().cloned().collect::<Vec<_>>();
+        let mut supported_ext = loader.extensions.keys().cloned().collect::<Vec<_>>();
+
+        // buiit-in supported extensions
+        supported_ext.push("KHR_materials_emissive_strength".to_string());
+        supported_ext.push("KHR_materials_ior".to_string());
+        supported_ext.push("KHR_materials_specular".to_string());
 
         let require_not_supported: Vec<_> = gltf.extensions_required().filter(
             |ext| !supported_ext.contains(&ext.to_string())
@@ -293,7 +298,7 @@ impl<'a> GltfLoader<'a> {
             let pbr = material.pbr_metallic_roughness();
 
             let base_color_factor = Vec4::from_array(pbr.base_color_factor());
-            let mut mat = MeshStandardMaterial::new(base_color_factor);
+            let mut mat = MeshPhysicalMaterial::new(base_color_factor);
 
             mat.set_metalness(pbr.metallic_factor());
             mat.set_roughness(pbr.roughness_factor());
@@ -347,8 +352,23 @@ impl<'a> GltfLoader<'a> {
                 };
             }
 
+
+            //=========================Material Extensions=========================//
+
+
+            // KHR_materials_emissive_strength
+            if let Some(info) = material.emissive_strength() {
+                mat.set_emissive_intensity(info);
+            }
+
+            // KHR_materials_ior
+            if let Some(info) =  material.ior() {
+                mat.set_ior(info);
+            }
+
+            // KHR_materials_specular
             if let Some(specular) = material.specular() {
-                mat.set_specular(Vec3::from_array(specular.specular_color_factor()));
+                mat.set_specular_color(Vec3::from_array(specular.specular_color_factor()));
                 mat.set_specular_intensity(specular.specular_factor());
 
                 if let Some(info) = specular.specular_color_texture() {
@@ -358,12 +378,12 @@ impl<'a> GltfLoader<'a> {
                         texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
                     }
 
-                    mat.bindings_mut().specular_map = Some(tex_handle.into());
+                    mat.set_specular_map(Some(tex_handle.into()));
                 }
 
                 if let Some(info) = specular.specular_texture() {
                     let tex_handle = self.texture_map[info.texture().index()];
-                    mat.bindings_mut().specular_intensity_map = Some(tex_handle.into());
+                    mat.set_specular_intensity_map(Some(tex_handle.into()));
                 }
             }
 
@@ -391,7 +411,7 @@ impl<'a> GltfLoader<'a> {
                 };
 
                 for (name, value) in extensions_map {
-                    println!("Processing material extension: {}, {}", name, value);
+                    // println!("Processing material extension: {}, {}", name, value);
                     if let Some(handler) = self.extensions.get_mut(name) {
                         handler.on_load_material(&mut ctx, &material, &mut engine_mat, value)?;
                     }
@@ -787,14 +807,14 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         let sg = _gltf_mat.pbr_specular_glossiness()
             .ok_or_else(|| anyhow::anyhow!("Material missing pbr_specular_glossiness data"))?;
 
-        let standard_mut: &mut MeshStandardMaterial = engine_mat.as_any_mut().downcast_mut().ok_or_else(|| anyhow::anyhow!("Material is not MeshStandardMaterial"))?;
+        let physical_mat: &mut MeshPhysicalMaterial = engine_mat.as_any_mut().downcast_mut().ok_or_else(|| anyhow::anyhow!("Material is not MeshStandardMaterial"))?;
 
         // 1. 设置基础材质参数 (转换为非金属材质)
         {
-            let mut uniforms = standard_mut.uniforms_mut();
+            let mut uniforms = physical_mat.uniforms_mut();
             uniforms.metalness = 0.0;
             uniforms.roughness = 1.0;
-            uniforms.specular = Vec3::from_array(sg.specular_factor());
+            uniforms.specular_color = Vec3::from_array(sg.specular_factor());
             uniforms.specular_intensity = 1.0;
             uniforms.color = Vec4::from_array(sg.diffuse_factor());
         }
@@ -802,7 +822,7 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         // 2. 处理 diffuse 纹理 -> base color map
         if let Some(diffuse_tex) = sg.diffuse_texture() {
             let tex_handle = _ctx.texture_map[diffuse_tex.texture().index()];
-            let bindings = standard_mut.bindings_mut();
+            let bindings = physical_mat.bindings_mut();
             
             if let Some(texture) = _ctx.assets.get_texture(tex_handle) {
                 texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
@@ -877,17 +897,75 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
                 let specular_handle = _ctx.assets.add_texture(specular_texture);
                 let roughness_handle = _ctx.assets.add_texture(roughness_texture);
                 
-                let bindings = standard_mut.bindings_mut();
+                let bindings = physical_mat.bindings_mut();
                 bindings.specular_map = Some(specular_handle.into());
                 bindings.roughness_map = Some(roughness_handle.into());
                 bindings.metalness_map = Some(roughness_handle.into());
             }
         } else {
             let glossiness_factor = sg.glossiness_factor();
-            let mut uniforms = standard_mut.uniforms_mut();
+            let mut uniforms = physical_mat.uniforms_mut();
             uniforms.roughness = 1.0 - glossiness_factor;
         }
 
         Ok(())
     }
+}
+
+
+struct KhrRMaterialsClearcoat;
+
+impl GltfExtensionParser for KhrRMaterialsClearcoat {
+    fn name(&self) -> &str {
+        "KHR_materials_clearcoat"
+    }
+
+    fn on_load_material(&mut self, _ctx: &mut LoadContext, _gltf_mat: &gltf::Material, engine_mat: &mut Material, extension_value: &Value) -> anyhow::Result<()> {
+        let clearcoat_info = extension_value.as_object()
+            .ok_or_else(|| anyhow::anyhow!("Invalid clearcoat extension data"))?;
+
+        let clearcoat_factor = clearcoat_info.get("clearcoatFactor")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+
+        let clearcoat_roughness = clearcoat_info.get("clearcoatRoughnessFactor")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+
+        let physical_mat: &mut MeshPhysicalMaterial = engine_mat.as_any_mut().downcast_mut().ok_or_else(|| anyhow::anyhow!("Material is not MeshPhysicalMaterial"))?;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.clearcoat = clearcoat_factor;
+            uniforms.clearcoat_roughness = clearcoat_roughness;
+        }
+
+        // 处理 clearcoat texture
+        if let Some(clearcoat_tex_info) = clearcoat_info.get("clearcoatTexture") {
+            if let Some(index) = clearcoat_tex_info.get("index").and_then(|v| v.as_u64()) {
+                let tex_handle: TextureHandle = _ctx.texture_map[index as usize];
+                physical_mat.set_clearcoat_map(tex_handle);
+            }
+        }
+
+        // 处理 clearcoat roughness texture
+        if let Some(clearcoat_roughness_tex_info) = clearcoat_info.get("clearcoatRoughnessTexture") {
+            if let Some(index) = clearcoat_roughness_tex_info.get("index").and_then(|v| v.as_u64()) {
+                let tex_handle = _ctx.texture_map[index as usize];
+                physical_mat.set_clearcoat_roughness_map(Some(tex_handle.into()));
+            }
+        }
+
+        // 处理 clearcoat normal texture
+        if let Some(clearcoat_normal_tex_info) = clearcoat_info.get("clearcoatNormalTexture") {
+            if let Some(index) = clearcoat_normal_tex_info.get("index").and_then(|v| v.as_u64()) {
+                let tex_handle = _ctx.texture_map[index as usize];
+                physical_mat.set_clearcoat_normal_map(tex_handle);
+                // Todo: normal map scale
+            }
+        }
+
+        Ok(())
+    }
+    
 }

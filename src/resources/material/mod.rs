@@ -30,7 +30,14 @@ bitflags! {
         const USE_EMISSIVE_MAP  = 1 << 4;
         const USE_AO_MAP        = 1 << 5;
         const USE_SPECULAR_MAP  = 1 << 6;
-        const USE_IBL           = 1 << 7;
+        const USE_SPECULAR_INTENSITY_MAP = 1 << 7;
+        const USE_IBL           = 1 << 8;
+        const USE_SPECULAR      = 1 << 9;
+        const USE_IOR           = 1 << 10;
+        const USE_CLEARCOAT     = 1 << 11;
+        const USE_CLEARCOAT_MAP = 1 << 12;
+        const USE_CLEARCOAT_ROUGHNESS_MAP = 1 << 13;
+        const USE_CLEARCOAT_NORMAL_MAP = 1 << 14;
     }
 }
 
@@ -84,10 +91,14 @@ pub struct MaterialBindings {
     pub(crate) ao_map_sampler: Option<SamplerSource>,
     pub(crate) specular_map: Option<TextureSource>,
     pub(crate) specular_map_sampler: Option<SamplerSource>,
-    #[allow(dead_code)]
     pub(crate) specular_intensity_map: Option<TextureSource>,
-    #[allow(dead_code)]
     pub(crate) specular_intensity_map_sampler: Option<SamplerSource>,
+    pub(crate) clearcoat_map: Option<TextureSource>,
+    pub(crate) clearcoat_map_sampler: Option<SamplerSource>,
+    pub(crate) clearcoat_roughness_map: Option<TextureSource>,
+    pub(crate) clearcoat_roughness_map_sampler: Option<SamplerSource>,
+    pub(crate) clearcoat_normal_map: Option<TextureSource>,
+    pub(crate) clearcoat_normal_map_sampler: Option<SamplerSource>,
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]

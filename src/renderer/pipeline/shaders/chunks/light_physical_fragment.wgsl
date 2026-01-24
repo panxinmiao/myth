@@ -31,11 +31,11 @@ $$ if USE_IOR is defined
         var specular_color = u_material.specular_color.rgb;
         
         $$ if use_specular_map is defined
-            specular_color *= textureSample( t_specular_map, s_specular_map, specular_map_uv ).rgb;
+            specular_color *= textureSample( t_specular_map, s_specular_map, varyings.specular_map_uv ).rgb;
         $$ endif
 
         $$ if use_specular_intensity_map is defined
-            specular_intensity *= textureSample( t_specular_intensity_map, s_specular_intensity_map, specular_intensity_map_uv ).a;
+            specular_intensity *= textureSample( t_specular_intensity_map, s_specular_intensity_map, varyings.specular_intensity_map_uv ).a;
         $$ endif
 
         material.specular_f90 = mix( specular_intensity, 1.0, metalness_factor );
@@ -65,11 +65,11 @@ $$ if USE_CLEARCOAT is defined
     material.clearcoat_f90 = 1.0;
 
     $$ if use_clearcoat_map is defined
-        material.clearcoat *= textureSample( t_clearcoat_map, s_clearcoat_map, clearcoat_map_uv ).r;
+        material.clearcoat *= textureSample( t_clearcoat_map, s_clearcoat_map, varyings.clearcoat_map_uv ).r;
     $$ endif
 
     $$ if use_clearcoat_roughness_map is defined
-        material.clearcoat_roughness *= textureSample( t_clearcoat_roughness_map, s_clearcoat_roughness_map, clearcoat_roughness_map_uv ).g;
+        material.clearcoat_roughness *= textureSample( t_clearcoat_roughness_map, s_clearcoat_roughness_map, varyings.clearcoat_roughness_map_uv ).g;
     $$ endif
 
     material.clearcoat = saturate( material.clearcoat );
@@ -85,13 +85,13 @@ $$ if USE_IRIDESCENCE is defined
     material.iridescence_ior = u_material.iridescence_ior;
 
     $$ if use_iridescence_map is defined
-        material.iridescence *= textureSample(t_iridescence_map, s_iridescence_map, iridescence_map_uv).r;
+        material.iridescence *= textureSample(t_iridescence_map, s_iridescence_map, varyings.iridescence_map_uv).r;
     $$ endif
 
     let iridescence_thickness_minimum = u_material.iridescence_thickness_range[0];
     let iridescence_thickness_maximum = u_material.iridescence_thickness_range[1];
     $$ if use_iridescence_thickness_map is defined
-        material.iridescence_thickness = (iridescence_thickness_maximum - iridescence_thickness_minimum) * textureSample(t_iridescence_thickness_map, s_iridescence_thickness_map, iridescence_thickness_map_uv).g + iridescence_thickness_minimum;
+        material.iridescence_thickness = (iridescence_thickness_maximum - iridescence_thickness_minimum) * textureSample(t_iridescence_thickness_map, s_iridescence_thickness_map, varyings.iridescence_thickness_map_uv).g + iridescence_thickness_minimum;
     $$ else
         material.iridescence_thickness = iridescence_thickness_maximum;
     $$ endif
@@ -115,12 +115,12 @@ $$ if USE_SHEEN is defined
     material.sheen_color = u_material.sheen_color.rgb * u_material.sheen;
 
     $$ if use_sheen_color_map is defined
-        material.sheen_color *= textureSample( t_sheen_color_map, s_sheen_color_map, varyings.texcoord{{sheen_color_map_uv or ''}} ).rgb;
+        material.sheen_color *= textureSample( t_sheen_color_map, s_sheen_color_map, varyings.sheen_color_map_uv).rgb;
     $$ endif
 
     material.sheen_roughness = clamp( u_material.sheen_roughness, 0.07, 1.0 );
     $$ if use_sheen_roughness_map is defined
-        material.sheen_roughness *= textureSample( t_sheen_roughness_map, s_sheen_roughness_map, varyings.texcoord{{sheen_roughness_map_uv or ''}} ).a;
+        material.sheen_roughness *= textureSample( t_sheen_roughness_map, s_sheen_roughness_map, varyings.sheen_roughness_map_uv).a;
     $$ endif
 
 $$ endif

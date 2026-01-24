@@ -58,3 +58,11 @@ $$ if use_anisotropy_map is defined
     @location({{ loc.next() }}) anisotropy_map_uv: vec2<f32>,
 $$ endif
 
+$$ if use_sheen_color_map is defined
+    @location({{ loc.next() }}) sheen_color_map_uv: vec2<f32>,
+$$ endif
+
+$$ if use_sheen_roughness_map is defined
+    @location({{ loc.next() }}) sheen_roughness_map_uv: vec2<f32>,
+$$ endif
+

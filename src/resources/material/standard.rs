@@ -29,14 +29,17 @@ impl MeshStandardMaterial {
         }
     }
     
+    #[allow(dead_code)]
     pub(crate) fn bindings_mut(&mut self) -> &mut MaterialBindings {
         &mut self.bindings
     }
 
+    #[allow(dead_code)]
     pub(crate) fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, MeshStandardUniforms> {
         self.uniforms.write()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn settings_mut(&mut self) -> SettingsGuard<'_> {
         SettingsGuard {
             initial_settings: self.settings.clone(),

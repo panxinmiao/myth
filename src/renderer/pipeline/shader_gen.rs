@@ -32,7 +32,14 @@ impl Serialize for ShaderCompilationOptions {
         if self.mat_features.contains(MaterialFeatures::USE_EMISSIVE_MAP) { map.serialize_entry("use_emissive_map", &true)?; }
         if self.mat_features.contains(MaterialFeatures::USE_AO_MAP) { map.serialize_entry("use_ao_map", &true)?; }
         if self.mat_features.contains(MaterialFeatures::USE_SPECULAR_MAP) { map.serialize_entry("use_specular_map", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_SPECULAR_INTENSITY_MAP) { map.serialize_entry("use_specular_intensity_map", &true)?; }
         if self.mat_features.contains(MaterialFeatures::USE_IBL) { map.serialize_entry("USE_IBL", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_SPECULAR) { map.serialize_entry("USE_SPECULAR", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_IOR) { map.serialize_entry("USE_IOR", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_CLEARCOAT) { map.serialize_entry("USE_CLEARCOAT", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_CLEARCOAT_MAP) { map.serialize_entry("use_clearcoat_map", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_CLEARCOAT_ROUGHNESS_MAP) { map.serialize_entry("use_clearcoat_roughness_map", &true)?; }
+        if self.mat_features.contains(MaterialFeatures::USE_CLEARCOAT_NORMAL_MAP) { map.serialize_entry("use_clearcoat_normal_map", &true)?; }
 
         if self.geo_features.contains(GeometryFeatures::HAS_UV) { map.serialize_entry("has_uv", &true)?; }
         if self.geo_features.contains(GeometryFeatures::HAS_NORMAL) { map.serialize_entry("has_normal", &true)?; }
