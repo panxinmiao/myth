@@ -167,7 +167,10 @@ impl ForwardRenderPass {
             }
 
             let mat_id = item.material.data().as_ffi() as u32;
-            let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq);
+
+            let is_transparent = material.transparent();
+
+            let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq, is_transparent);
 
             let cmd = RenderCommand {
                 object_data,
@@ -181,7 +184,7 @@ impl ForwardRenderPass {
                 dynamic_offset: 0,
             };
 
-            if material.transparent() {
+            if is_transparent {
                 transparent.push(cmd);
             } else {
                 opaque.push(cmd);
@@ -189,7 +192,7 @@ impl ForwardRenderPass {
         }
 
         opaque.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
-        transparent.sort_unstable_by(|a, b| b.sort_key.cmp(&a.sort_key));
+        transparent.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
     }
 
     /// 上传动态 Uniform 数据

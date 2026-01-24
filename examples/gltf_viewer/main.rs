@@ -98,11 +98,12 @@ impl AppHandler for GltfViewer {
         scene.environment.set_ambient_color(Vec3::splat(0.6));
 
         // 3. 添加灯光
-        let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
+        let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0);
 
         let light_node = scene.add_light(light);
         if let Some(node) = scene.get_node_mut(light_node) {
             node.transform.position = Vec3::new(1.0, 1.0, 1.0);
+            node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
 
         // 4. 设置相机

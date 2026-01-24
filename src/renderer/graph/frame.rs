@@ -22,12 +22,45 @@ use crate::renderer::pipeline::PipelineCache;
 pub struct RenderKey(u64);
 
 impl RenderKey {
-    pub fn new(pipeline_id: u16, material_index: u32, depth: f32) -> Self {
-        let p_bits = ((pipeline_id & 0x3FFF) as u64) << 50;
-        let m_bits = ((material_index & 0xFFFFF) as u64) << 30;
+    pub fn new(pipeline_id: u16, material_index: u32, depth: f32, transparent: bool) -> Self {
+        // 1. 统一处理深度压缩 (30 bits)
+        // 注意：这里假设 depth >= 0.0。如果 depth 可能为负，clamp 到 0 是安全的。
         let d_u32 = if depth.is_sign_negative() { 0 } else { depth.to_bits() >> 2 };
-        let d_bits = (d_u32 as u64) & 0x3FFF_FFFF;
-        Self(p_bits | m_bits | d_bits)
+        let raw_d_bits = (d_u32 as u64) & 0x3FFF_FFFF;
+
+        // 2. 准备其他数据
+        let p_bits = (pipeline_id & 0x3FFF) as u64; // 14 bits
+        let m_bits = (material_index & 0xFFFFF) as u64; // 20 bits
+
+        if transparent {
+            // 【透明物体】：
+            // 排序优先级：Depth (远->近) > Pipeline > Material
+            
+            // 1. 反转深度，让远处的物体(大深度)变成小数值，从而排在前面
+            let d_bits = raw_d_bits ^ 0x3FFF_FFFF;
+            
+            // 2. 重新排列位布局
+            // Depth (30 bits) << 34 | Pipeline (14 bits) << 20 | Material (20 bits)
+            // 总共 64 bits
+            Self(
+                (d_bits << 34) | 
+                (p_bits << 20) | 
+                m_bits
+            )
+        } else {
+            // 【不透明物体】：
+            // 排序优先级：Pipeline > Material > Depth (近->远)
+            
+            // Depth 保持正序 (小深度排前面，Front-to-Back)
+            let d_bits = raw_d_bits; 
+            
+            // Pipeline (14 bits) << 50 | Material (20 bits) << 30 | Depth (30 bits)
+            Self(
+                (p_bits << 50) | 
+                (m_bits << 30) | 
+                d_bits
+            )
+        }
     }
 }
 

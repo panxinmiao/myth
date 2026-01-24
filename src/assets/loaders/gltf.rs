@@ -348,7 +348,10 @@ impl<'a> GltfLoader<'a> {
                 settings.transparent = match material.alpha_mode() {
                     gltf::material::AlphaMode::Opaque => false,
                     gltf::material::AlphaMode::Mask => false,
-                    gltf::material::AlphaMode::Blend => true,
+                    gltf::material::AlphaMode::Blend => {
+                        settings.depth_write = false;
+                        true
+                    },
                 };
             }
 

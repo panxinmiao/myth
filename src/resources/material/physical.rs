@@ -62,7 +62,7 @@ impl_material_api!(
         (normal_scale,       Vec2, "Normal map scale."),
         (occlusion_strength, f32,  "Occlusion strength."),
         (ao_map_intensity,   f32,  "AO map intensity."),
-        (specular_color,           Vec3, "Specular color."),
+        (specular_color,     Vec3, "Specular color."),
         (specular_intensity, f32,  "Specular intensity."),
         (ior,                f32,  "Index of Refraction."),
     ],
