@@ -148,4 +148,11 @@ impl AssetServer {
         let handle = self.add_texture(texture);
         Ok(handle)
     }
+
+    /// 加载 HDR 格式的环境贴图 (Equirectangular format)
+    pub fn load_hdr_texture(&mut self, path: impl AsRef<Path>) -> anyhow::Result<TextureHandle> {
+        let texture = crate::assets::load_hdr_texture(path)?;
+        let handle = self.add_texture(texture);
+        Ok(handle)
+    }
 }

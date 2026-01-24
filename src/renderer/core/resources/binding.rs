@@ -433,8 +433,19 @@ impl ResourceManager {
         let light_result = self.ensure_buffer(&scene.light_storage_buffer);
         let scene_uniform_result = self.ensure_buffer(&scene.uniforms_buffer);
 
-        // 环境贴图 ID
-        let env_map_id = scene.environment.pmrem_map.map(|h| {
+        // 处理后的环境贴图 ID (用于 Skybox)
+        let processed_env_map_id = scene.environment.get_processed_env_map().map(|h| {
+            match h {
+                TextureSource::Asset(handle) => {
+                    self.prepare_texture(assets, *handle);
+                    self.texture_bindings.get(*handle).map(|b| b.image_id).unwrap_or(0)
+                },
+                TextureSource::Attachment(id) => *id,
+            }
+        }).unwrap_or(0);
+
+        // PMREM 贴图 ID (用于 IBL)
+        let pmrem_map_id = scene.environment.pmrem_map.map(|h| {
             match h {
                 TextureSource::Asset(handle) => {
                     self.prepare_texture(assets, handle);
@@ -442,7 +453,6 @@ impl ResourceManager {
                 },
                 TextureSource::Attachment(id) => id,
             }
-
         }).unwrap_or(0);
 
         let brdf_lut_id = scene.environment.brdf_lut.map(|h| {
@@ -456,13 +466,13 @@ impl ResourceManager {
         }).unwrap_or(0);
         
         // === Collect 阶段: 收集所有资源 ID ===
-        let mut current_ids = super::ResourceIdSet::with_capacity(6);
+        let mut current_ids = super::ResourceIdSet::with_capacity(8);
         current_ids.push(camera_result.resource_id);
         current_ids.push(env_result.resource_id);
         current_ids.push(light_result.resource_id);
         current_ids.push(scene_uniform_result.resource_id);
-        current_ids.push(env_map_id);
-
+        current_ids.push(processed_env_map_id);
+        current_ids.push(pmrem_map_id);
         current_ids.push(brdf_lut_id);
         
         // 使用 (render_state.id, light_buffer_id) 组合作为缓存键，支持多场景并发渲染

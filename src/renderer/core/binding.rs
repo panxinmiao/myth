@@ -129,8 +129,10 @@ impl Bindings for Scene {
             ))
         );
 
-        // Binding 3-4: Environment Map (Cube) and Sampler
-        let env_map_handle = self.environment.pmrem_map.unwrap_or(TextureHandle::dummy_env_map().into());
+        // Binding 3-4: Environment Map (Cube) and Sampler - use processed_env_map for Skybox
+        let env_map_handle = self.environment.get_processed_env_map()
+            .cloned()
+            .unwrap_or(TextureHandle::dummy_env_map().into());
         builder.add_texture(
             "env_map",
             Some(env_map_handle),

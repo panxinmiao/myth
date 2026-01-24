@@ -12,7 +12,7 @@ pub use loaders::GltfLoader;
 pub use handle::{AssetTracker, StrongHandle, WeakHandle, TrackedAsset};
 
 
-use image::{GenericImageView};
+use image::GenericImageView;
 use std::path::Path;
 use anyhow::Context;
 
@@ -46,6 +46,54 @@ pub fn load_texture_from_file(path: impl AsRef<Path>, color_space: ColorSpace) -
             ColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
         }
     );
+    
+    Ok(texture)
+}
+
+/// 加载 HDR 格式的环境贴图 (Equirectangular format)
+/// 返回一个 2D 纹理，格式为 Rgba16Float，可用于 IBL
+pub fn load_hdr_texture(path: impl AsRef<Path>) -> anyhow::Result<crate::resources::texture::Texture> {
+    let img = image::open(&path).context("Failed to open HDR file")?;
+    
+    let width = img.width();
+    let height = img.height();
+    
+    let rgb32f = img.into_rgb32f();
+    
+    let mut rgba_f16_data = Vec::with_capacity((width * height * 4) as usize * 2);
+    
+    for pixel in rgb32f.pixels() {
+        let r = half::f16::from_f32(pixel[0]);
+        let g = half::f16::from_f32(pixel[1]);
+        let b = half::f16::from_f32(pixel[2]);
+        let a = half::f16::from_f32(1.0);
+        
+        rgba_f16_data.extend_from_slice(&r.to_le_bytes());
+        rgba_f16_data.extend_from_slice(&g.to_le_bytes());
+        rgba_f16_data.extend_from_slice(&b.to_le_bytes());
+        rgba_f16_data.extend_from_slice(&a.to_le_bytes());
+    }
+
+    let image = crate::resources::image::Image::new(
+        path.as_ref().to_str(),
+        width,
+        height,
+        1,
+        wgpu::TextureDimension::D2,
+        wgpu::TextureFormat::Rgba16Float,
+        Some(rgba_f16_data),
+    );
+
+    let mut texture = crate::resources::texture::Texture::new(
+        path.as_ref().to_str(),
+        image,
+        wgpu::TextureViewDimension::D2,
+    );
+    
+    texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
+    texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
+    texture.sampler.mag_filter = wgpu::FilterMode::Linear;
+    texture.sampler.min_filter = wgpu::FilterMode::Linear;
     
     Ok(texture)
 }

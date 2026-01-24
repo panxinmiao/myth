@@ -7,8 +7,12 @@ use crate::resources::texture::{Texture, TextureSource};
 /// IBL 环境贴图配置
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct Environment {
-    /// 原始环境贴图 (Source Cubemap, 用于背景显示或重新生成 PMREM)
+    /// 用户设置的原始环境贴图 (可能是 2D HDR 或 Cube)
     pub source_env_map: Option<TextureSource>,
+    /// 标准化后的 CubeMap 源
+    /// 如果 source_env_map 是 Cube，则此字段等于 source_env_map
+    /// 如果 source_env_map 是 2D，则此字段指向转换后的 CubeMap
+    pub(crate) processed_env_map: Option<TextureSource>,
     /// 预过滤的环境贴图 (PMREM, 用于 PBR Specular IBL)
     pub pmrem_map: Option<TextureSource>,
     /// BRDF LUT 贴图
@@ -27,6 +31,7 @@ impl Environment {
     pub fn new() -> Self {
         Self {
             source_env_map: None,
+            processed_env_map: None,
             pmrem_map: None,
             brdf_lut: None,
             env_map_max_mip_level: 0.0,
@@ -42,17 +47,10 @@ impl Environment {
 
         if self.source_env_map != new_handle {
             self.source_env_map = new_handle;
-            // 清空 PMREM 以触发重新生成
+            self.processed_env_map = None;
             self.pmrem_map = None; 
             self.env_map_max_mip_level = 0.0;
         }
-
-        // self.source_env_map = texture_bundle.map(|(h, _)| h);
-        // self.pmrem_map = self.source_env_map.clone();
-
-        // self.env_map_max_mip_level = texture_bundle
-        //     .map(|(_, texture)| (texture.mip_level_count() - 1) as f32)
-        //     .unwrap_or(0.0);
     }
     
     /// 设置 BRDF LUT
@@ -73,5 +71,12 @@ impl Environment {
     /// 是否有有效的环境贴图
     pub fn has_env_map(&self) -> bool {
         self.source_env_map.is_some()
+    }
+    
+    /// 获取处理后的环境贴图 (用于 Skybox 等需要 CubeMap 的地方)
+    /// 只返回 processed_env_map，不回退到 source_env_map
+    /// 因为 source_env_map 可能是 2D 纹理，而 Skybox 需要 CubeMap
+    pub fn get_processed_env_map(&self) -> Option<&TextureSource> {
+        self.processed_env_map.as_ref()
     }
 }

@@ -3163,6 +3163,7 @@ dependencies = [
  "env_logger",
  "glam",
  "gltf",
+ "half",
  "image",
  "log",
  "md5",
