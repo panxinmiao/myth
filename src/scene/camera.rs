@@ -1,6 +1,22 @@
-use glam::{Mat4, Vec3, Vec4, Affine3A};
+use glam::{Affine3A, Mat4, Vec3, Vec3A, Vec4};
 use std::borrow::Cow;
 use uuid::Uuid;
+
+
+/// [新增] 纯栈上渲染相机对象 (POD)
+/// todo : 考虑直接满足std140对齐要求?
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+pub struct RenderCamera {
+    pub view_matrix: Mat4,
+    pub projection_matrix: Mat4,
+    pub view_projection_matrix: Mat4,
+    pub position: Vec3A, // 世界坐标位置，Lighting 需要
+    pub frustum: Frustum, // 剔除需要
+    pub near: f32,
+    pub far: f32,
+}
+
 
 #[derive(Debug, Clone)]
 pub struct Camera {
@@ -81,6 +97,19 @@ impl Camera {
         
         // 3. Frustum
         self.frustum = Frustum::from_matrix(self.view_projection_matrix);
+    }
+
+    pub fn extract_render_camera(&self) -> RenderCamera {
+        RenderCamera {
+            view_matrix: self.view_matrix,
+            projection_matrix: self.projection_matrix,
+            view_projection_matrix: self.view_projection_matrix,
+            // 从世界矩阵提取位置 (Translation)
+            position: self.world_matrix.translation.into(),
+            frustum: self.frustum, // Frustum 也是 Copy 的
+            near: self.near,
+            far: self.far,
+        }
     }
 
 }

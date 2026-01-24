@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use crate::resources::uniforms::RenderStateUniforms;
 use crate::resources::buffer::CpuBuffer;
-use crate::scene::camera::Camera;
+use crate::scene::camera::{RenderCamera};
 
 static NEXT_RENDER_STATE_ID: AtomicU32 = AtomicU32::new(0);
 
@@ -41,16 +41,16 @@ impl RenderState {
         self.uniforms.write()
     }
 
-    pub fn update(&mut self, camera: &Camera, time: f32) {
+    pub fn update(&mut self, camera: &RenderCamera, time: f32) {
         let view_matrix = camera.view_matrix;
         let vp_matrix = camera.view_projection_matrix;
-        let camera_position = camera.world_matrix.translation.to_vec3();
+        let camera_position = camera.position;
 
         let mut u = self.uniforms_mut();
         u.view_projection = vp_matrix;
         u.view_projection_inverse = vp_matrix.inverse();
         u.view_matrix = view_matrix;
-        u.camera_position = camera_position;
+        u.camera_position = camera_position.into();
         u.time = time;
     }
 }

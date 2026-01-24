@@ -3,7 +3,8 @@
 //! `RenderContext` 在渲染图的各个 Pass 之间传递共享数据，
 //! 避免参数列表过长，统一数据访问方式。
 
-use crate::scene::{Scene, Camera};
+use crate::scene::camera::RenderCamera;
+use crate::scene::{Scene};
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::pipeline::PipelineCache;
 use crate::assets::AssetServer;
@@ -30,7 +31,7 @@ pub struct RenderContext<'a> {
     /// 当前场景
     pub scene: &'a mut Scene,
     /// 相机
-    pub camera: &'a Camera,
+    pub camera: &'a RenderCamera,
     /// 当前帧的 Surface View
     pub surface_view: &'a wgpu::TextureView,
     /// 渲染状态

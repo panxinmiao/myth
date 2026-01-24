@@ -8,7 +8,7 @@ use log::warn;
 
 use crate::scene::skeleton::Skeleton;
 use crate::scene::{Scene, SkeletonKey};
-use crate::scene::camera::Camera;
+use crate::scene::camera::{RenderCamera};
 use crate::assets::AssetServer;
 
 use crate::renderer::core::{WgpuContext, ResourceManager};
@@ -93,7 +93,7 @@ impl RenderFrame {
         resource_manager: &mut ResourceManager,
         pipeline_cache: &mut PipelineCache,
         scene: &mut Scene,
-        camera: &Camera,
+        camera: &RenderCamera,
         assets: &AssetServer,
         time: f32,
         extra_nodes: &[&dyn RenderNode],
@@ -186,7 +186,7 @@ impl RenderFrame {
         resource_manager: &mut ResourceManager,
         assets: &AssetServer,
         scene: &Scene,
-        camera: &Camera,
+        camera: &RenderCamera,
         time: f32,
     ) {
         self.render_state.update(camera, time);

@@ -14,7 +14,7 @@ use std::sync::Arc;
 use winit::window::Window;
 
 use crate::scene::Scene;
-use crate::scene::camera::Camera;
+use crate::scene::camera::{RenderCamera};
 use crate::assets::AssetServer;
 use crate::errors::Result;
 
@@ -94,7 +94,7 @@ impl Renderer {
     pub fn render(
         &mut self, 
         scene: &mut Scene, 
-        camera: &Camera, 
+        camera: RenderCamera, 
         assets: &AssetServer, 
         time: f32,
         extra_nodes: &[&dyn RenderNode],
@@ -108,7 +108,7 @@ impl Renderer {
                 &mut state.resource_manager,
                 &mut state.pipeline_cache,
                 scene,
-                camera,
+                &camera,
                 assets,
                 time,
                 extra_nodes,

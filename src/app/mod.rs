@@ -238,9 +238,6 @@ impl<H: AppHandler> AppRunner<H> {
             // 2. 用户更新
             user_state.update(&mut ctx);
         }
-
-        // 3. 引擎内部系统更新
-        self.input.end_frame();
         
         // 只更新当前激活的场景
         if let Some(handle) = self.scene_manager.active_handle() {
@@ -248,6 +245,9 @@ impl<H: AppHandler> AppRunner<H> {
                 scene.update(&self.input, dt);
             }
         }
+
+        // 3. 引擎内部系统更新
+        self.input.end_frame();
     }
 
     // 内部辅助：渲染逻辑
@@ -266,8 +266,8 @@ impl<H: AppHandler> AppRunner<H> {
             };
 
             // 直接获取相机组件的 clone
-            let camera = if let Some(cam) = scene.cameras.get(camera_node) {
-                cam.clone()
+            let render_camera = if let Some(cam) = scene.cameras.get(camera_node) {
+                cam.extract_render_camera()
             } else {
                 return;
             };
@@ -279,7 +279,7 @@ impl<H: AppHandler> AppRunner<H> {
 
             renderer.render(
                 scene,  // 传入 active scene
-                &camera, 
+                render_camera, 
                 &self.assets, 
                 time_seconds,
                 &extra_nodes,

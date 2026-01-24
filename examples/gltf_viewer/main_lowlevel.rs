@@ -214,13 +214,13 @@ impl GltfViewer {
                 let time_seconds = self.last_loop_time
                     .duration_since(self.start_time)
                     .as_secs_f32();
-                let camera_clone = camera.clone();
+                let render_camera = camera.extract_render_camera();
                 
                 // 注入 UI Pass
                 if let Some(ui_pass) = &self.ui_pass {
                     self.renderer.render(
                         &mut self.scene, 
-                        &camera_clone, 
+                        render_camera, 
                         &self.assets, 
                         time_seconds,
                         &[ui_pass], // <-- 注入！
@@ -228,7 +228,7 @@ impl GltfViewer {
                 } else {
                     self.renderer.render(
                         &mut self.scene, 
-                        &camera_clone, 
+                        render_camera, 
                         &self.assets, 
                         time_seconds,
                         &[],

@@ -14,7 +14,7 @@ use glam::Mat4;
 use crate::scene::scene::SceneFeatures;
 use crate::scene::{NodeHandle, Scene, SkeletonKey};
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
-use crate::scene::camera::Camera;
+use crate::scene::camera::{RenderCamera};
 
 /// 精简的渲染项，只包含 GPU 需要的数据
 /// 
@@ -95,7 +95,7 @@ impl ExtractedScene {
     /// 复用当前实例的内存，从 Scene 中提取数据
     /// 
     /// 这是性能优化的关键：避免每帧分配新内存
-    pub fn extract_into(&mut self, scene: &Scene, camera: &Camera, assets: &AssetServer) {
+    pub fn extract_into(&mut self, scene: &Scene, camera: &RenderCamera, assets: &AssetServer) {
         self.clear();
         self.extract_render_items(scene, camera, assets);
         self.extract_skeletons(scene);
@@ -103,9 +103,9 @@ impl ExtractedScene {
     }
 
     /// 提取可见的渲染项
-    fn extract_render_items(&mut self, scene: &Scene, camera: &Camera, assets: &AssetServer) {
+    fn extract_render_items(&mut self, scene: &Scene, camera: &RenderCamera, assets: &AssetServer) {
         let frustum = camera.frustum;
-        let camera_pos = camera.world_matrix.translation;
+        let camera_pos = camera.position;
 
         for (node_handle, mesh) in scene.meshes.iter() {
             if !mesh.visible {
