@@ -63,7 +63,7 @@ impl RenderNode for BRDFLutComputePass {
         }
         if self.brdf_lut_texture_handle.borrow().is_some() {
             ctx.scene.environment.brdf_lut = Some(TextureSource::Attachment(
-                self.brdf_lut_texture_handle.borrow().unwrap()
+                self.brdf_lut_texture_handle.borrow().unwrap(), wgpu::TextureViewDimension::D2
             ));
             return;
         }
@@ -110,7 +110,7 @@ impl RenderNode for BRDFLutComputePass {
 
         // 4. 将生成的纹理注册到 Asset 系统并保存 Handle 到 Environment
         let handle = ctx.resource_manager.register_internal_texture_by_name("BRDF_LUT", view);
-        ctx.scene.environment.brdf_lut = Some(TextureSource::Attachment(handle));
+        ctx.scene.environment.brdf_lut = Some(TextureSource::Attachment(handle, wgpu::TextureViewDimension::D2));
 
         self.brdf_lut_texture_handle.replace(Some(handle));
 

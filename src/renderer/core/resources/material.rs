@@ -100,7 +100,7 @@ impl ResourceManager {
                         resource_ids.push(self.dummy_sampler.id);
                     }
                 },
-                TextureSource::Attachment(id) => {
+                TextureSource::Attachment(id,_) => {
                     resource_ids.push(*id);
                     resource_ids.push(self.dummy_sampler.id);
                 },

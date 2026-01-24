@@ -200,12 +200,8 @@ impl RenderNode for IBLComputePass {
                 }
                 (view_dim, Some(img_id))
             },
-            TextureSource::Attachment(id) => {
-                if ctx.resource_manager.internal_resources.get(id).is_none() {
-                    log::error!("Missing internal attachment: {}", id);
-                    return;
-                }
-                (TextureViewDimension::Cube, None)
+            TextureSource::Attachment(_, view_dim) => {
+                (*view_dim, None)
             }
         };
 
@@ -216,7 +212,7 @@ impl RenderNode for IBLComputePass {
                 TextureSource::Asset(_) => {
                     &ctx.resource_manager.get_image(cpu_image_id.unwrap()).unwrap().default_view
                 },
-                TextureSource::Attachment(id) => {
+                TextureSource::Attachment(id,_) => {
                     ctx.resource_manager.internal_resources.get(id).unwrap()
                 }
             };
@@ -277,6 +273,11 @@ impl RenderNode for IBLComputePass {
             None
         };
 
+        // 释放旧的processed_env_map资源
+        if let Some(TextureSource::Attachment(old_id,_)) = ctx.scene.environment.processed_env_map {
+            ctx.resource_manager.release_internal_texture(old_id);
+        }
+
         let pmrem_source_view = if let Some(ref cube_tex) = converted_cube_texture {
             let cube_view = cube_tex.create_view(&wgpu::TextureViewDescriptor {
                 dimension: Some(wgpu::TextureViewDimension::Cube),
@@ -284,7 +285,7 @@ impl RenderNode for IBLComputePass {
             });
             
             let converted_view_id = ctx.resource_manager.register_internal_texture(cube_view);
-            ctx.scene.environment.processed_env_map = Some(TextureSource::Attachment(converted_view_id));
+            ctx.scene.environment.processed_env_map = Some(TextureSource::Attachment(converted_view_id, wgpu::TextureViewDimension::Cube));
             
             cube_tex.create_view(&wgpu::TextureViewDescriptor {
                 dimension: Some(wgpu::TextureViewDimension::Cube),
@@ -301,7 +302,7 @@ impl RenderNode for IBLComputePass {
                             ..Default::default()
                         })
                 },
-                TextureSource::Attachment(_) => {
+                TextureSource::Attachment(_, _) => {
                     return;
                 }
             }
@@ -405,9 +406,14 @@ impl RenderNode for IBLComputePass {
             ..Default::default()
         });
 
-        let id = ctx.resource_manager.register_internal_texture_by_name("PMREM_Map", pmrem_cube_view);
+        // 释放旧的pmrem_map资源
+        if let Some(TextureSource::Attachment(old_id, _)) = ctx.scene.environment.pmrem_map {
+            ctx.resource_manager.release_internal_texture(old_id);
+        }
+
+        let id = ctx.resource_manager.register_internal_texture(pmrem_cube_view);
         
-        ctx.scene.environment.pmrem_map = Some(TextureSource::Attachment(id));
+        ctx.scene.environment.pmrem_map = Some(TextureSource::Attachment(id, wgpu::TextureViewDimension::Cube));
         ctx.scene.environment.env_map_max_mip_level = (mip_levels - 1) as f32;
         *self.last_processed_source.borrow_mut() = Some((current_source, current_version));
 

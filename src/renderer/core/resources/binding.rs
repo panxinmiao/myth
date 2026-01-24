@@ -80,6 +80,11 @@ impl ResourceManager {
     
         id
     }
+
+    pub fn release_internal_texture(&mut self, id: u64) {
+        self.internal_resources.remove(&id);
+        log::debug!("Released internal texture: {}", id);
+    }
     
 
     /// 统一获取 TextureView 的辅助方法
@@ -103,7 +108,7 @@ impl ResourceManager {
                 // Fallback
                 &self.dummy_image.default_view
             },
-            TextureSource::Attachment(id) => {
+            TextureSource::Attachment(id, _) => {
                 // 直接查找内部资源表
                 self.internal_resources.get(id)
                     .unwrap_or(&self.dummy_image.default_view)
@@ -285,7 +290,7 @@ impl ResourceManager {
                                 self.prepare_texture(assets, *handle);
                             },
                             // Attachment 类型是 GPU 内部生成的，无需 CPU->GPU 上传
-                            TextureSource::Attachment(_) => {
+                            TextureSource::Attachment(_, _) => {
                                 // Do nothing
                             }
                         }
@@ -440,7 +445,7 @@ impl ResourceManager {
                     self.prepare_texture(assets, *handle);
                     self.texture_bindings.get(*handle).map(|b| b.image_id).unwrap_or(0)
                 },
-                TextureSource::Attachment(id) => *id,
+                TextureSource::Attachment(id,_) => *id,
             }
         }).unwrap_or(0);
 
@@ -451,7 +456,7 @@ impl ResourceManager {
                     self.prepare_texture(assets, handle);
                     self.texture_bindings.get(handle).map(|b| b.image_id).unwrap_or(0)
                 },
-                TextureSource::Attachment(id) => id,
+                TextureSource::Attachment(id,_) => id,
             }
         }).unwrap_or(0);
 
@@ -461,7 +466,7 @@ impl ResourceManager {
                     self.prepare_texture(assets, handle);
                     self.texture_bindings.get(handle).map(|b| b.image_id).unwrap_or(0)
                 },
-                TextureSource::Attachment(id) => id,
+                TextureSource::Attachment(id,_) => id,
             }
         }).unwrap_or(0);
         

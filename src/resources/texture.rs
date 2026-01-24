@@ -15,7 +15,7 @@ pub enum TextureSource {
     Asset(TextureHandle),
     /// 纯 GPU 资源（如 Render Target），直接使用其 Resource ID (image_id)
     /// 这个 ID 通常由 RenderGraph 或 TexturePool 分配
-    Attachment(u64),
+    Attachment(u64, TextureViewDimension),
 }
 
 impl From<TextureHandle> for TextureSource {
@@ -64,7 +64,7 @@ impl From<TextureSource> for SamplerSource {
     fn from(texture_source: TextureSource) -> Self {
         match texture_source {
             TextureSource::Asset(handle) => Self::FromTexture(handle),
-            TextureSource::Attachment(_) => Self::Default,
+            TextureSource::Attachment(_, _) => Self::Default,
         }
     }
 }
