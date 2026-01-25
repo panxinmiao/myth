@@ -20,7 +20,7 @@ impl AppHandler for PhongBox {
         let tex_handle = ctx.assets.add_texture(texture);
 
         if let Some(phong) = mat.as_phong_mut() {
-            phong.set_map(Some(tex_handle.into()));
+            phong.map.texture = Some(tex_handle);
         }
         
         let geo_handle = ctx.assets.add_geometry(geometry);

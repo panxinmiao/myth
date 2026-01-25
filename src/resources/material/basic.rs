@@ -1,19 +1,25 @@
 use glam::Vec4;
 
 use crate::resources::buffer::CpuBuffer;
-use crate::resources::material::{MaterialBindings, MaterialSettings, SettingsGuard};
+use crate::resources::material::{MaterialSettings, SettingsGuard, TextureSlot};
+use crate::resources::texture::SamplerSource;
 use crate::resources::uniforms::MeshBasicUniforms;
 use crate::{impl_material_api, impl_material_trait};
 
 #[derive(Debug)]
 pub struct MeshBasicMaterial {
     pub(crate) uniforms: CpuBuffer<MeshBasicUniforms>,
-    pub(crate) bindings: MaterialBindings,
+    // #[allow(deprecated)]
+    // pub(crate) bindings: MaterialBindings,
     pub(crate) settings: MaterialSettings,
     pub(crate) version: u64,
+
+    pub map: TextureSlot,
+    pub map_sampler: Option<SamplerSource>,
 }
 
 impl MeshBasicMaterial {
+    // #[allow(deprecated)]
     pub fn new(color: Vec4) -> Self {
         let uniform_data = MeshBasicUniforms { color, ..Default::default() };
         
@@ -23,15 +29,13 @@ impl MeshBasicMaterial {
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 Some("MeshBasicUniforms")
             ),
-            bindings: MaterialBindings::default(),
+            // bindings: MaterialBindings::default(),
             settings: MaterialSettings::default(),
             version: 0,
+
+            map: TextureSlot::default(),
+            map_sampler: None,
         }
-    }
-    
-    #[allow(dead_code)]
-    pub(crate) fn bindings_mut(&mut self) -> &mut MaterialBindings {
-        &mut self.bindings
     }
 
     #[allow(dead_code)]
@@ -57,7 +61,7 @@ impl_material_api!(
         (opacity, f32,  "Opacity value."),
     ],
     textures: [
-        (map, "The color map."),
+        (map, map_transform, "The color map."),
     ]
 );
 

@@ -11,12 +11,127 @@ pub use physical::MeshPhysicalMaterial;
 
 use std::{any::Any, borrow::Cow, ops::Deref};
 
+use crate::assets::TextureHandle;
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::resources::buffer::BufferRef;
 use crate::resources::shader_defines::ShaderDefines;
-use crate::resources::texture::{SamplerSource, TextureSource};
-use glam::Vec4;
+use crate::resources::texture::TextureSource;
+use glam::{Mat3A, Vec2, Vec4};
 use uuid::Uuid;
+
+// ============================================================================
+// TextureSlot 架构
+// ============================================================================
+
+/// 纹理变换参数
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextureTransform {
+    pub offset: Vec2,
+    pub rotation: f32,
+    pub scale: Vec2,
+}
+
+impl Default for TextureTransform {
+    #[inline]
+    fn default() -> Self {
+        Self {
+            offset: Vec2::ZERO,
+            rotation: 0.0,
+            scale: Vec2::ONE,
+        }
+    }
+}
+
+/// 纹理槽位：封装纹理引用与变换参数
+#[derive(Clone, Debug, Default)]
+pub struct TextureSlot {
+    pub texture: Option<TextureHandle>,
+    pub transform: TextureTransform,
+}
+
+impl TextureSlot {
+    #[inline]
+    pub fn new(handle: TextureHandle) -> Self {
+        Self {
+            texture: Some(handle),
+            transform: TextureTransform::default(),
+        }
+    }
+
+    #[inline]
+    pub fn with_transform(handle: TextureHandle, transform: TextureTransform) -> Self {
+        Self {
+            texture: Some(handle),
+            transform,
+        }
+    }
+
+    /// 计算 UV 变换矩阵 (3x3)
+    /// 变换顺序: Translate * Rotate * Scale
+    #[inline]
+    pub fn compute_matrix(&self) -> Mat3A {
+        let (s, c) = self.transform.rotation.sin_cos();
+        let sx = self.transform.scale.x;
+        let sy = self.transform.scale.y;
+        
+        // 列主序矩阵 (Column-Major):
+        // | sx*c   -sy*s   tx |
+        // | sx*s    sy*c   ty |
+        // |  0       0      1 |
+        Mat3A::from_cols_array(&[
+            sx * c, sx * s, 0.0,
+            -sy * s, sy * c, 0.0,
+            self.transform.offset.x, self.transform.offset.y, 1.0,
+        ])
+    }
+
+    #[inline]
+    pub fn is_some(&self) -> bool {
+        self.texture.is_some()
+    }
+
+    #[inline]
+    pub fn is_none(&self) -> bool {
+        self.texture.is_none()
+    }
+}
+
+impl From<TextureHandle> for TextureSlot {
+    #[inline]
+    fn from(handle: TextureHandle) -> Self {
+        Self::new(handle)
+    }
+}
+
+impl From<Option<TextureHandle>> for TextureSlot {
+    #[inline]
+    fn from(opt: Option<TextureHandle>) -> Self {
+        Self {
+            texture: opt,
+            transform: TextureTransform::default(),
+        }
+    }
+}
+
+impl From<TextureSource> for TextureSlot {
+    #[inline]
+    fn from(source: TextureSource) -> Self {
+        match source {
+            TextureSource::Asset(handle) => Self::new(handle),
+            TextureSource::Attachment(_, _) => Self::default(),
+        }
+    }
+}
+
+impl From<Option<TextureSource>> for TextureSlot {
+    #[inline]
+    fn from(opt: Option<TextureSource>) -> Self {
+        match opt {
+            Some(TextureSource::Asset(handle)) => Self::new(handle),
+            _ => Self::default(),
+        }
+    }
+}
 
 
 /// [普通用户接口]
@@ -42,8 +157,10 @@ pub trait RenderableMaterialTrait: MaterialTrait {
     /// 材质渲染设置
     fn settings(&self) -> &MaterialSettings;
     
-    /// 底层资源绑定
-    fn bindings(&self) -> &MaterialBindings; 
+    /// 底层资源绑定 (已废弃，保留以向后兼容)
+    // #[deprecated(note = "Use define_bindings() instead")]
+    // #[allow(deprecated)]
+    // fn bindings(&self) -> &MaterialBindings; 
     
     /// 访问所有纹理
     fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource));
@@ -56,32 +173,12 @@ pub trait RenderableMaterialTrait: MaterialTrait {
 }
 
 
-/// 资源绑定数据 - 对应 BindGroup 变化
-#[derive(Default, Clone, Debug)]
-pub struct MaterialBindings {
-    pub(crate) map: Option<TextureSource>,
-    pub(crate) map_sampler: Option<SamplerSource>,
-    pub(crate) normal_map: Option<TextureSource>,
-    pub(crate) normal_map_sampler: Option<SamplerSource>,
-    pub(crate) roughness_map: Option<TextureSource>,
-    pub(crate) roughness_map_sampler: Option<SamplerSource>,
-    pub(crate) metalness_map: Option<TextureSource>,
-    pub(crate) metalness_map_sampler: Option<SamplerSource>,
-    pub(crate) emissive_map: Option<TextureSource>,
-    pub(crate) emissive_map_sampler: Option<SamplerSource>,
-    pub(crate) ao_map: Option<TextureSource>,
-    pub(crate) ao_map_sampler: Option<SamplerSource>,
-    pub(crate) specular_map: Option<TextureSource>,
-    pub(crate) specular_map_sampler: Option<SamplerSource>,
-    pub(crate) specular_intensity_map: Option<TextureSource>,
-    pub(crate) specular_intensity_map_sampler: Option<SamplerSource>,
-    pub(crate) clearcoat_map: Option<TextureSource>,
-    pub(crate) clearcoat_map_sampler: Option<SamplerSource>,
-    pub(crate) clearcoat_roughness_map: Option<TextureSource>,
-    pub(crate) clearcoat_roughness_map_sampler: Option<SamplerSource>,
-    pub(crate) clearcoat_normal_map: Option<TextureSource>,
-    pub(crate) clearcoat_normal_map_sampler: Option<SamplerSource>,
-}
+/// 资源绑定数据 (已废弃，现由 TextureSlot 直接管理)
+// #[derive(Default, Clone, Debug)]
+// #[deprecated(note = "Use TextureSlot fields directly on material structs")]
+// pub struct MaterialBindings {
+//     _marker: (),
+// }
 
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
 pub enum Side {
@@ -221,15 +318,16 @@ impl RenderableMaterialTrait for MaterialType {
         }
     }
 
-    fn bindings(&self) -> &MaterialBindings {
-        match self {
-            Self::Basic(m) => m.bindings(),
-            Self::Phong(m) => m.bindings(),
-            Self::Standard(m) => m.bindings(),
-            Self::Physical(m) => m.bindings(),
-            Self::Custom(m) => m.bindings(),
-        }
-    }
+    // #[allow(deprecated)]
+    // fn bindings(&self) -> &MaterialBindings {
+    //     match self {
+    //         Self::Basic(m) => m.bindings(),
+    //         Self::Phong(m) => m.bindings(),
+    //         Self::Standard(m) => m.bindings(),
+    //         Self::Physical(m) => m.bindings(),
+    //         Self::Custom(m) => m.bindings(),
+    //     }
+    // }
 
     fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource)) {
         match self {

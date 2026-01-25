@@ -404,39 +404,35 @@ impl<'a> GltfLoader<'a> {
             mat.set_roughness(pbr.roughness_factor());
             mat.set_emissive(Vec3::from_array(material.emissive_factor()));
             
-            {
-                let bindings = mat.bindings_mut();
-                
-                // Base Color Texture (sRGB)
-                if let Some(info) = pbr.base_color_texture() {
-                    let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
-                    bindings.map = Some(tex_handle.into());
-                }
+            // Base Color Texture (sRGB)
+            if let Some(info) = pbr.base_color_texture() {
+                let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
+                mat.map.texture = Some(tex_handle);
+            }
 
-                // Metallic-Roughness Texture (Linear)
-                if let Some(info) = pbr.metallic_roughness_texture() {
-                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
-                    bindings.roughness_map = Some(tex_handle.into());
-                    bindings.metalness_map = Some(tex_handle.into());
-                }
+            // Metallic-Roughness Texture (Linear)
+            if let Some(info) = pbr.metallic_roughness_texture() {
+                let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
+                mat.roughness_map.texture = Some(tex_handle);
+                mat.metalness_map.texture = Some(tex_handle);
+            }
 
-                // Normal Texture (Linear)
-                if let Some(info) = material.normal_texture() {
-                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
-                    bindings.normal_map = Some(tex_handle.into());
-                }
+            // Normal Texture (Linear)
+            if let Some(info) = material.normal_texture() {
+                let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
+                mat.normal_map.texture = Some(tex_handle);
+            }
 
-                // Occlusion Texture (Linear)
-                if let Some(info) = material.occlusion_texture() {
-                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
-                    bindings.ao_map = Some(tex_handle.into());
-                }
+            // Occlusion Texture (Linear)
+            if let Some(info) = material.occlusion_texture() {
+                let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
+                mat.ao_map.texture = Some(tex_handle);
+            }
 
-                // Emissive Texture (sRGB)
-                if let Some(info) = material.emissive_texture() {
-                    let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
-                    bindings.emissive_map = Some(tex_handle.into());
-                }
+            // Emissive Texture (sRGB)
+            if let Some(info) = material.emissive_texture() {
+                let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
+                mat.emissive_map.texture = Some(tex_handle);
             }
 
             {
@@ -447,7 +443,6 @@ impl<'a> GltfLoader<'a> {
                     gltf::material::AlphaMode::Opaque => false,
                     gltf::material::AlphaMode::Mask => false,
                     gltf::material::AlphaMode::Blend => {
-                        // settings.depth_write = false;
                         true
                     },
                 };
@@ -475,13 +470,13 @@ impl<'a> GltfLoader<'a> {
                 // Specular Color Texture (sRGB)
                 if let Some(info) = specular.specular_color_texture() {
                     let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
-                    mat.set_specular_map(Some(tex_handle.into()));
+                    mat.specular_map.texture = Some(tex_handle);
                 }
 
                 // Specular Intensity Texture (Linear)
                 if let Some(info) = specular.specular_texture() {
                     let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
-                    mat.set_specular_intensity_map(Some(tex_handle.into()));
+                    mat.specular_intensity_map.texture = Some(tex_handle);
                 }
             }
 
@@ -927,8 +922,7 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         // 2. 处理 diffuse 纹理 -> base color map (sRGB)
         if let Some(diffuse_tex) = sg.diffuse_texture() {
             let tex_handle = ctx.get_or_create_texture(diffuse_tex.texture().index(), true)?;
-            let bindings = physical_mat.bindings_mut();
-            bindings.map = Some(tex_handle.into());
+            physical_mat.map.texture = Some(tex_handle);
         }
 
         // 3. 处理 specular-glossiness 纹理
@@ -989,10 +983,9 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
             let specular_handle = ctx.assets.add_texture(specular_texture);
             let roughness_handle = ctx.assets.add_texture(roughness_texture);
             
-            let bindings = physical_mat.bindings_mut();
-            bindings.specular_map = Some(specular_handle.into());
-            bindings.roughness_map = Some(roughness_handle.into());
-            bindings.metalness_map = Some(roughness_handle.into());
+            physical_mat.specular_map.texture = Some(specular_handle);
+            physical_mat.roughness_map.texture = Some(roughness_handle);
+            physical_mat.metalness_map.texture = Some(roughness_handle);
         } else {
             let glossiness_factor = sg.glossiness_factor();
             let mut uniforms = physical_mat.uniforms_mut();
@@ -1035,7 +1028,7 @@ impl GltfExtensionParser for KhrRMaterialsClearcoat {
         if let Some(clearcoat_tex_info) = clearcoat_info.get("clearcoatTexture") {
             if let Some(index) = clearcoat_tex_info.get("index").and_then(|v| v.as_u64()) {
                 let tex_handle = ctx.get_or_create_texture(index as usize, false)?;
-                physical_mat.set_clearcoat_map(tex_handle);
+                physical_mat.clearcoat_map.texture = Some(tex_handle);
             }
         }
 
@@ -1043,7 +1036,7 @@ impl GltfExtensionParser for KhrRMaterialsClearcoat {
         if let Some(clearcoat_roughness_tex_info) = clearcoat_info.get("clearcoatRoughnessTexture") {
             if let Some(index) = clearcoat_roughness_tex_info.get("index").and_then(|v| v.as_u64()) {
                 let tex_handle = ctx.get_or_create_texture(index as usize, false)?;
-                physical_mat.set_clearcoat_roughness_map(Some(tex_handle.into()));
+                physical_mat.clearcoat_roughness_map.texture = Some(tex_handle);
             }
         }
 
@@ -1051,8 +1044,7 @@ impl GltfExtensionParser for KhrRMaterialsClearcoat {
         if let Some(clearcoat_normal_tex_info) = clearcoat_info.get("clearcoatNormalTexture") {
             if let Some(index) = clearcoat_normal_tex_info.get("index").and_then(|v| v.as_u64()) {
                 let tex_handle = ctx.get_or_create_texture(index as usize, false)?;
-                physical_mat.set_clearcoat_normal_map(tex_handle);
-                // Todo: normal map scale
+                physical_mat.clearcoat_normal_map.texture = Some(tex_handle);
             }
         }
 

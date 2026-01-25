@@ -23,7 +23,7 @@ impl AppHandler for PbrBox {
         let mut standard_mat = MeshStandardMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         let tex_handle = ctx.assets.add_texture(texture);
-        standard_mat.set_map(Some(tex_handle.into()));
+        standard_mat.map.texture = Some(tex_handle);
         
         let geo_handle = ctx.assets.add_geometry(geometry);
         // 在最后需要时才转换为通用 Material 类型

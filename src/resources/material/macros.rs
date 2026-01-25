@@ -10,8 +10,8 @@ macro_rules! impl_material_api {
         $uniform_struct:ty,
         // Uniforms: (字段名, 类型, 文档)
         uniforms: [ $(($u_field:ident, $u_type:ty, $u_doc:expr)),* $(,)? ],
-        // Textures: (字段名, 文档)
-        textures: [ $(($t_field:ident, $t_doc:expr)),* $(,)? ]
+        // Textures: (字段名, uniform变换字段名, 文档)
+        textures: [ $(($t_field:ident, $t_transform:ident, $t_doc:expr)),* $(,)? ]
     ) => {
         impl $struct_name {
 
@@ -24,7 +24,7 @@ macro_rules! impl_material_api {
             pub fn set_transparent(&mut self, transparent: bool) {
                 if self.settings.transparent != transparent {
                     self.settings.transparent = transparent;
-                    self.version += 1; // 标记脏状态，触发 Pipeline 重建
+                    self.version += 1;
                 }
             }
             pub fn transparent(&self) -> bool {
@@ -80,23 +80,23 @@ macro_rules! impl_material_api {
                 }
             )*
 
-            // --- Texture Accessors ---
-            $(
-                paste::paste! {
-                    #[doc = $t_doc]
-                    pub fn [<set_ $t_field>](&mut self, texture: impl Into<Option<$crate::resources::texture::TextureSource>>) {
-                        self.bindings.$t_field = texture.into();
+            /// 刷新纹理变换矩阵到 Uniform
+            /// 仅在数值实际改变时写入，避免触发不必要的 Version Bump
+            /// 返回值表示是否有数据更新
+            pub fn flush_texture_transforms(&mut self) -> bool {
+                let mut changed = false;
+                $(
+                    {
+                        let new_matrix = self.$t_field.compute_matrix();
+                        let current = self.uniforms.read().$t_transform;
+                        if current != new_matrix {
+                            self.uniforms.write().$t_transform = new_matrix;
+                            changed = true;
+                        }
                     }
-
-                    pub fn [<set_ $t_field _sampler>](&mut self, sampler: impl Into<Option<$crate::resources::texture::SamplerSource>>) {
-                        self.bindings.[<$t_field _sampler>] = sampler.into();
-                    }
-                }
-
-                pub fn $t_field(&self) -> Option<&$crate::resources::texture::TextureSource> {
-                    self.bindings.$t_field.as_ref()
-                }
-            )*
+                )*
+                changed
+            }
 
             // --- 批量配置 (Batch Config) ---
             pub fn configure<F>(&mut self, f: F)
@@ -134,7 +134,8 @@ macro_rules! impl_material_trait {
             fn shader_name(&self) -> &'static str { $shader_name }
             fn version(&self) -> u64 { self.version }
             fn settings(&self) -> &$crate::resources::material::MaterialSettings { &self.settings }
-            fn bindings(&self) -> &$crate::resources::material::MaterialBindings { &self.bindings }
+            #[allow(deprecated)]
+            // fn bindings(&self) -> &$crate::resources::material::MaterialBindings { &self.bindings }
             fn uniform_buffer(&self) -> &$crate::resources::buffer::BufferRef { self.uniforms.handle() }
             fn uniform_bytes(&self) -> &[u8] { self.uniforms.as_bytes() }
 
@@ -146,7 +147,7 @@ macro_rules! impl_material_trait {
                 )*
                 // 纹理宏定义
                 $(
-                    if self.bindings.$field.is_some() {
+                    if self.$field.is_some() {
                         defines.set($macro_name, "1");
                     }
                 )*
@@ -155,8 +156,8 @@ macro_rules! impl_material_trait {
 
             fn visit_textures(&self, visitor: &mut dyn FnMut(&$crate::resources::texture::TextureSource)) {
                 $(
-                    if let Some(tex) = &self.bindings.$field {
-                        visitor(tex);
+                    if let Some(handle) = &self.$field.texture {
+                        visitor(&$crate::resources::texture::TextureSource::Asset(*handle));
                     }
                 )*
             }
@@ -171,24 +172,21 @@ macro_rules! impl_material_trait {
 
                 // Textures
                 $(
-                    if let Some(tex) = &self.bindings.$field {
+                    if let Some(handle) = &self.$field.texture {
                         let binding_name = stringify!($field);
+                        let tex_source = $crate::resources::texture::TextureSource::Asset(*handle);
 
                         builder.add_texture(
                             binding_name,
-                            Some(*tex),
+                            Some(tex_source),
                             wgpu::TextureSampleType::Float { filterable: true },
                             wgpu::TextureViewDimension::D2,
                             wgpu::ShaderStages::FRAGMENT
                         );
 
                         paste::paste! {
-                            let sampler_source = self.bindings.[<$field _sampler>]
-                                .or_else(|| match tex {
-                                    $crate::resources::texture::TextureSource::Asset(handle) => 
-                                        Some($crate::resources::texture::SamplerSource::FromTexture(*handle)),
-                                    _ => None,
-                                });
+                            let sampler_source = self.[<$field _sampler>]
+                                .or_else(|| Some($crate::resources::texture::SamplerSource::FromTexture(*handle)));
                             
                             builder.add_sampler(
                                 binding_name, 

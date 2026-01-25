@@ -1,19 +1,31 @@
 use glam::{Vec2, Vec3, Vec4};
 
 use crate::resources::buffer::CpuBuffer;
-use crate::resources::material::{MaterialBindings, MaterialSettings, SettingsGuard};
+use crate::resources::material::{MaterialSettings, SettingsGuard, TextureSlot};
+use crate::resources::texture::SamplerSource;
 use crate::resources::uniforms::MeshPhongUniforms;
 use crate::{impl_material_api, impl_material_trait};
 
 #[derive(Debug)]
 pub struct MeshPhongMaterial {
     pub(crate) uniforms: CpuBuffer<MeshPhongUniforms>,
-    pub(crate) bindings: MaterialBindings,
+    // #[allow(deprecated)]
+    // pub(crate) bindings: MaterialBindings,
     pub(crate) settings: MaterialSettings,
     pub(crate) version: u64,
+
+    pub map: TextureSlot,
+    pub map_sampler: Option<SamplerSource>,
+    pub normal_map: TextureSlot,
+    pub normal_map_sampler: Option<SamplerSource>,
+    pub specular_map: TextureSlot,
+    pub specular_map_sampler: Option<SamplerSource>,
+    pub emissive_map: TextureSlot,
+    pub emissive_map_sampler: Option<SamplerSource>,
 }
 
 impl MeshPhongMaterial {
+    // #[allow(deprecated)]
     pub fn new(color: Vec4) -> Self {
         let uniform_data = MeshPhongUniforms { color, ..Default::default() };
         
@@ -23,15 +35,19 @@ impl MeshPhongMaterial {
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 Some("MeshPhongUniforms")
             ),
-            bindings: MaterialBindings::default(),
+            // bindings: MaterialBindings::default(),
             settings: MaterialSettings::default(),
             version: 0,
+
+            map: TextureSlot::default(),
+            map_sampler: None,
+            normal_map: TextureSlot::default(),
+            normal_map_sampler: None,
+            specular_map: TextureSlot::default(),
+            specular_map_sampler: None,
+            emissive_map: TextureSlot::default(),
+            emissive_map_sampler: None,
         }
-    }
-    
-    #[allow(dead_code)]
-    pub(crate) fn bindings_mut(&mut self) -> &mut MaterialBindings {
-        &mut self.bindings
     }
 
     #[allow(dead_code)]
@@ -62,10 +78,10 @@ impl_material_api!(
         (shininess,          f32,  "Shininess factor."),
     ],
     textures: [
-        (map,          "The color map."),
-        (normal_map,   "The normal map."),
-        (specular_map, "The specular map."),
-        (emissive_map, "The emissive map."),
+        (map,          map_transform,          "The color map."),
+        (normal_map,   normal_map_transform,   "The normal map."),
+        (specular_map, specular_map_transform, "The specular map."),
+        (emissive_map, emissive_map_transform, "The emissive map."),
     ]
 );
 

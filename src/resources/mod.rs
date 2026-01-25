@@ -25,7 +25,7 @@ pub use mesh::Mesh;
 pub use material::{
     Material, MaterialType, MaterialTrait, RenderableMaterialTrait,
     MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, MeshPhysicalMaterial, 
-    Side,
+    Side, TextureSlot, TextureTransform,
 };
 pub use texture::{Texture, TextureSampler};
 pub use image::{Image, ImageDescriptor};
