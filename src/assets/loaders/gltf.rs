@@ -1,7 +1,6 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::fs;
-use std::sync::atomic::Ordering;
 use glam::{Affine3A, Mat4, Quat, Vec3, Vec4};
 use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler};
 use crate::resources::geometry::{Geometry, Attribute};
@@ -19,16 +18,40 @@ use anyhow::Context;
 use serde_json::Value;
 
 // ============================================================================
-// 1. 插件化架构定义 (Plugin Architecture)
+// 1. 中间数据结构 (Intermediate Data Structures)
+// ============================================================================
+
+/// 临时存储 glTF 纹理的源数据，用于延迟创建引擎 Texture
+struct IntermediateTexture {
+    name: Option<String>,
+    image_data: Vec<u8>,   // RGBA8 格式的像素数据
+    width: u32,
+    height: u32,
+    sampler: TextureSampler,
+}
+
+/// 纹理缓存的 Key，用于去重
+/// 如果同一个 index 的纹理以相同的 sRGB 格式请求，则复用 Handle
+#[derive(Hash, PartialEq, Eq, Clone)]
+struct TextureCacheKey {
+    gltf_texture_index: usize,
+    is_srgb: bool,
+}
+
+// ============================================================================
+// 2. 插件化架构定义 (Plugin Architecture)
 // ============================================================================
 
 /// glTF 加载扩展 Trait
 /// Plugin 机制，允许拦截加载过程的不同阶段
 
-pub struct LoadContext<'a> {
+pub struct LoadContext<'a, 'b> {
     pub assets: &'a mut AssetServer,
-    pub texture_map: &'a [TextureHandle],
     pub material_map: &'a [MaterialHandle],
+    /// 用于在扩展中获取纹理（内部会根据 is_srgb 参数缓存和去重）
+    intermediate_textures: &'a [IntermediateTexture],
+    created_textures: &'a mut HashMap<TextureCacheKey, TextureHandle>,
+    _phantom: std::marker::PhantomData<&'b ()>,
 }
 
 pub trait GltfExtensionParser {
@@ -39,14 +62,57 @@ pub trait GltfExtensionParser {
         Ok(())
     }
 
-    /// 当纹理被加载时调用
-    fn on_load_texture(&mut self, _ctx: &mut LoadContext, _gltf_tex: &gltf::Texture, _engine_tex: &mut Texture, _extension_value: &serde_json::Value) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     /// 当节点被创建时调用 (可用于处理 KHR_lights_punctual 等挂载到节点的扩展)
     fn on_load_node(&mut self, _ctx: &mut LoadContext, _gltf_node: &gltf::Node, _scene: &mut Scene, _node_handle: NodeHandle, _extension_value: &Value) -> anyhow::Result<()> {
         Ok(())
+    }
+}
+
+// LoadContext 的辅助方法
+impl<'a, 'b> LoadContext<'a, 'b> {
+    /// 获取或创建纹理
+    /// - `gltf_texture_index`: glTF 纹理索引
+    /// - `is_srgb`: 是否使用 sRGB 颜色空间（baseColor/emissive 等使用 true，normal/roughness 等使用 false）
+    pub fn get_or_create_texture(
+        &mut self,
+        gltf_texture_index: usize,
+        is_srgb: bool,
+    ) -> anyhow::Result<TextureHandle> {
+        let key = TextureCacheKey {
+            gltf_texture_index,
+            is_srgb,
+        };
+
+        // 检查缓存
+        if let Some(&handle) = self.created_textures.get(&key) {
+            return Ok(handle);
+        }
+
+        // 从中间数据创建纹理
+        let raw = self.intermediate_textures.get(gltf_texture_index)
+            .ok_or_else(|| anyhow::anyhow!("Texture index {} out of bounds", gltf_texture_index))?;
+
+        let format = if is_srgb {
+            TextureFormat::Rgba8UnormSrgb
+        } else {
+            TextureFormat::Rgba8Unorm
+        };
+
+        let mut engine_tex = Texture::new_2d(
+            raw.name.as_deref(),
+            raw.width,
+            raw.height,
+            Some(raw.image_data.clone()),
+            format,
+        );
+
+        engine_tex.sampler = raw.sampler.clone();
+        engine_tex.generate_mipmaps = true;
+
+        let handle = self.assets.add_texture(engine_tex);
+        self.created_textures.insert(key, handle);
+
+        Ok(handle)
     }
 }
 
@@ -59,8 +125,12 @@ pub struct GltfLoader<'a> {
     scene: &'a mut Scene,
     base_path: std::path::PathBuf,
     
-    // 资源映射表
-    texture_map: Vec<TextureHandle>,
+    // 纹理中间数据（解析阶段生成，下标对应 glTF texture index）
+    intermediate_textures: Vec<IntermediateTexture>,
+    // 已创建的引擎纹理缓存（用于去重）
+    created_textures: HashMap<TextureCacheKey, TextureHandle>,
+    
+    // 材质映射表
     material_map: Vec<MaterialHandle>,
     // glTF Node Index -> Engine NodeHandle
     node_mapping: Vec<NodeHandle>,
@@ -92,7 +162,8 @@ impl<'a> GltfLoader<'a> {
             assets,
             scene,
             base_path,
-            texture_map: Vec::new(),
+            intermediate_textures: Vec::new(),
+            created_textures: HashMap::new(),
             material_map: Vec::new(),
             node_mapping: Vec::with_capacity(gltf.nodes().count()),
             extensions: HashMap::new(),
@@ -204,6 +275,7 @@ impl<'a> GltfLoader<'a> {
 
     // --- Loading Logic ---
 
+    /// 解析阶段：只加载 Image 数据和 Sampler 配置，存放在中间结构中
     fn load_textures(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<()> {
         for texture in gltf.textures() {
             let img = texture.source();
@@ -226,7 +298,8 @@ impl<'a> GltfLoader<'a> {
 
             let sampler = texture.sampler();
 
-            let engine_sampler = TextureSampler{
+            // 转换 glTF Sampler 为引擎 TextureSampler
+            let engine_sampler = TextureSampler {
                 mag_filter: sampler.mag_filter().map(|f| match f {
                     gltf::texture::MagFilter::Nearest => wgpu::FilterMode::Nearest,
                     gltf::texture::MagFilter::Linear => wgpu::FilterMode::Linear,
@@ -260,39 +333,66 @@ impl<'a> GltfLoader<'a> {
 
             let width = img_data.width();
             let height = img_data.height();
-            let tex_name = texture.name().unwrap_or("gltf_texture");
-            
-            let mut engine_tex = Texture::new_2d(
-                Some(tex_name),
+            let tex_name = texture.name().map(|s| s.to_string());
+
+            // 只存储中间数据，不创建引擎纹理
+            self.intermediate_textures.push(IntermediateTexture {
+                name: tex_name,
+                image_data: img_data.into_vec(),
                 width,
                 height,
-                Some(img_data.into_vec()),
-                TextureFormat::Rgba8Unorm
-            );
-
-            engine_tex.sampler = engine_sampler;
-            engine_tex.generate_mipmaps = true;
-
-            if let Some(extensions_map) = texture.extensions() {
-                let mut ctx = LoadContext {
-                    assets: &mut self.assets, 
-                    texture_map: &self.texture_map, 
-                    material_map: &self.material_map,
-                };
-
-                for (name, value) in extensions_map {
-                    if let Some(handler) = self.extensions.get_mut(name) {
-                        handler.on_load_texture(&mut ctx, &texture, &mut engine_tex, value)?;
-                    }
-                }
-            }
-
-            let handle = self.assets.add_texture(engine_tex);
-            self.texture_map.push(handle);
+                sampler: engine_sampler,
+            });
         }
         Ok(())
     }
 
+    /// 获取或创建纹理的辅助方法
+    /// - `gltf_texture_index`: glTF 纹理索引
+    /// - `is_srgb`: 是否使用 sRGB 颜色空间
+    fn get_or_create_texture(
+        &mut self,
+        gltf_texture_index: usize,
+        is_srgb: bool,
+    ) -> anyhow::Result<TextureHandle> {
+        let key = TextureCacheKey {
+            gltf_texture_index,
+            is_srgb,
+        };
+
+        // 检查缓存
+        if let Some(&handle) = self.created_textures.get(&key) {
+            return Ok(handle);
+        }
+
+        // 从中间数据创建纹理
+        let raw = self.intermediate_textures.get(gltf_texture_index)
+            .ok_or_else(|| anyhow::anyhow!("Texture index {} out of bounds", gltf_texture_index))?;
+
+        let format = if is_srgb {
+            TextureFormat::Rgba8UnormSrgb
+        } else {
+            TextureFormat::Rgba8Unorm
+        };
+
+        let mut engine_tex = Texture::new_2d(
+            raw.name.as_deref(),
+            raw.width,
+            raw.height,
+            Some(raw.image_data.clone()),
+            format,
+        );
+
+        engine_tex.sampler = raw.sampler.clone();
+        engine_tex.generate_mipmaps = true;
+
+        let handle = self.assets.add_texture(engine_tex);
+        self.created_textures.insert(key, handle);
+
+        Ok(handle)
+    }
+
+    /// 实例化阶段：加载材质时，按需创建纹理（根据使用上下文决定 colorspace）
     fn load_materials(&mut self, gltf: &gltf::Gltf) -> anyhow::Result<()> {
         for material in gltf.materials() {
             let pbr = material.pbr_metallic_roughness();
@@ -306,37 +406,35 @@ impl<'a> GltfLoader<'a> {
             
             {
                 let bindings = mat.bindings_mut();
+                
+                // Base Color Texture (sRGB)
                 if let Some(info) = pbr.base_color_texture() {
-                    let tex_handle = self.texture_map[info.texture().index()];
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
                     bindings.map = Some(tex_handle.into());
-                    
-                    if let Some(texture) = self.assets.get_texture(tex_handle) {
-                        texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
-                    }
                 }
 
+                // Metallic-Roughness Texture (Linear)
                 if let Some(info) = pbr.metallic_roughness_texture() {
-                    let tex_handle = self.texture_map[info.texture().index()];
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
                     bindings.roughness_map = Some(tex_handle.into());
                     bindings.metalness_map = Some(tex_handle.into());
                 }
 
+                // Normal Texture (Linear)
                 if let Some(info) = material.normal_texture() {
-                    let tex_handle = self.texture_map[info.texture().index()];
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
                     bindings.normal_map = Some(tex_handle.into());
                 }
 
+                // Occlusion Texture (Linear)
                 if let Some(info) = material.occlusion_texture() {
-                    let tex_handle = self.texture_map[info.texture().index()];
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
                     bindings.ao_map = Some(tex_handle.into());
                 }
 
+                // Emissive Texture (sRGB)
                 if let Some(info) = material.emissive_texture() {
-                    let tex_handle = self.texture_map[info.texture().index()];
-                    
-                    if let Some(texture) = self.assets.get_texture(tex_handle) {
-                        texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
-                    }
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
                     bindings.emissive_map = Some(tex_handle.into());
                 }
             }
@@ -374,18 +472,15 @@ impl<'a> GltfLoader<'a> {
                 mat.set_specular_color(Vec3::from_array(specular.specular_color_factor()));
                 mat.set_specular_intensity(specular.specular_factor());
 
+                // Specular Color Texture (sRGB)
                 if let Some(info) = specular.specular_color_texture() {
-                    let tex_handle = self.texture_map[info.texture().index()];
-
-                    if let Some(texture) = self.assets.get_texture(tex_handle) {
-                        texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
-                    }
-
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
                     mat.set_specular_map(Some(tex_handle.into()));
                 }
 
+                // Specular Intensity Texture (Linear)
                 if let Some(info) = specular.specular_texture() {
-                    let tex_handle = self.texture_map[info.texture().index()];
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
                     mat.set_specular_intensity_map(Some(tex_handle.into()));
                 }
             }
@@ -398,8 +493,10 @@ impl<'a> GltfLoader<'a> {
                 if let Some(handler) = self.extensions.get_mut("KHR_materials_pbrSpecularGlossiness") {
                     let mut ctx = LoadContext {
                         assets: &mut self.assets, 
-                        texture_map: &self.texture_map, 
                         material_map: &self.material_map,
+                        intermediate_textures: &self.intermediate_textures,
+                        created_textures: &mut self.created_textures,
+                        _phantom: std::marker::PhantomData,
                     };
                     handler.on_load_material(&mut ctx, &material, &mut engine_mat, &Value::Null)?;
                 }
@@ -409,8 +506,10 @@ impl<'a> GltfLoader<'a> {
             if let Some(extensions_map) = material.extensions() {
                 let mut ctx = LoadContext {
                     assets: &mut self.assets, 
-                    texture_map: &self.texture_map, 
                     material_map: &self.material_map,
+                    intermediate_textures: &self.intermediate_textures,
+                    created_textures: &mut self.created_textures,
+                    _phantom: std::marker::PhantomData,
                 };
 
                 for (name, value) in extensions_map {
@@ -444,8 +543,10 @@ impl<'a> GltfLoader<'a> {
         if let Some(extensions_map) = node.extensions() {
             let mut ctx = LoadContext {
                 assets: &mut self.assets,
-                texture_map: &self.texture_map,
                 material_map: &self.material_map,
+                intermediate_textures: &self.intermediate_textures,
+                created_textures: &mut self.created_textures,
+                _phantom: std::marker::PhantomData,
             };
             for (name, value) in extensions_map {
                 if let Some(handler) = self.extensions.get_mut(name) {
@@ -806,8 +907,8 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         "KHR_materials_pbrSpecularGlossiness"
     }
 
-    fn on_load_material(&mut self, _ctx: &mut LoadContext, _gltf_mat: &gltf::Material, engine_mat: &mut Material, _extension_value: &Value) -> anyhow::Result<()> {
-        let sg = _gltf_mat.pbr_specular_glossiness()
+    fn on_load_material(&mut self, ctx: &mut LoadContext, gltf_mat: &gltf::Material, engine_mat: &mut Material, _extension_value: &Value) -> anyhow::Result<()> {
+        let sg = gltf_mat.pbr_specular_glossiness()
             .ok_or_else(|| anyhow::anyhow!("Material missing pbr_specular_glossiness data"))?;
 
         let physical_mat: &mut MeshPhysicalMaterial = engine_mat.as_any_mut().downcast_mut().ok_or_else(|| anyhow::anyhow!("Material is not MeshStandardMaterial"))?;
@@ -817,94 +918,81 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
             let mut uniforms = physical_mat.uniforms_mut();
             uniforms.metalness = 0.0;
             uniforms.roughness = 1.0;
+            uniforms.ior = 1000.0;
             uniforms.specular_color = Vec3::from_array(sg.specular_factor());
             uniforms.specular_intensity = 1.0;
             uniforms.color = Vec4::from_array(sg.diffuse_factor());
         }
 
-        // 2. 处理 diffuse 纹理 -> base color map
+        // 2. 处理 diffuse 纹理 -> base color map (sRGB)
         if let Some(diffuse_tex) = sg.diffuse_texture() {
-            let tex_handle = _ctx.texture_map[diffuse_tex.texture().index()];
+            let tex_handle = ctx.get_or_create_texture(diffuse_tex.texture().index(), true)?;
             let bindings = physical_mat.bindings_mut();
-            
-            if let Some(texture) = _ctx.assets.get_texture(tex_handle) {
-                texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
-            }
             bindings.map = Some(tex_handle.into());
         }
 
         // 3. 处理 specular-glossiness 纹理
         if let Some(sg_tex_info) = sg.specular_glossiness_texture() {
-            let tex_handle = _ctx.texture_map[sg_tex_info.texture().index()];
-
-            if let Some(texture) = _ctx.assets.get_texture(tex_handle) {
-                texture.image.set_format(TextureFormat::Rgba8UnormSrgb);
-            }
-            
+            let tex_index = sg_tex_info.texture().index();
             let glossiness_factor = sg.glossiness_factor();
             
-            let (width, height, source_data) = if let Some(source_texture) = _ctx.assets.get_texture(tex_handle) {
-                let source_image = &source_texture.image;
-                let w = source_image.width.load(Ordering::Relaxed);
-                let h = source_image.height.load(Ordering::Relaxed);
-                let data_clone = source_image.data.read().unwrap().clone();
-                (w, h, data_clone)
-            } else {
-                (0, 0, None)
-            };
+            // 从中间数据获取原始图像数据
+            let raw = ctx.intermediate_textures.get(tex_index)
+                .ok_or_else(|| anyhow::anyhow!("Texture index {} out of bounds", tex_index))?;
             
-            if let Some(data) = source_data {
-                let pixel_count = (width * height) as usize;
+            let width = raw.width;
+            let height = raw.height;
+            let data = &raw.image_data;
+            let pixel_count = (width * height) as usize;
+            
+            let mut specular_data = Vec::with_capacity(pixel_count * 4);
+            let mut roughness_data = Vec::with_capacity(pixel_count * 4);
+            
+            for i in 0..pixel_count {
+                let offset = i * 4;
+                let r = data[offset];
+                let g = data[offset + 1];
+                let b = data[offset + 2];
+                let glossiness = data[offset + 3];
                 
-                let mut specular_data = Vec::with_capacity(pixel_count * 4);
-                let mut roughness_data = Vec::with_capacity(pixel_count * 4);
+                specular_data.push(r);
+                specular_data.push(g);
+                specular_data.push(b);
+                specular_data.push(255);
                 
-                for i in 0..pixel_count {
-                    let offset = i * 4;
-                    let r = data[offset];
-                    let g = data[offset + 1];
-                    let b = data[offset + 2];
-                    let glossiness = data[offset + 3];
-                    
-                    specular_data.push(r);
-                    specular_data.push(g);
-                    specular_data.push(b);
-                    specular_data.push(255);
-                    
-                    let glossiness_normalized = (glossiness as f32 / 255.0) * glossiness_factor;
-                    let roughness_normalized = 1.0 - glossiness_normalized;
-                    let roughness_byte = (roughness_normalized * 255.0) as u8;
-                    
-                    roughness_data.push(0);
-                    roughness_data.push(roughness_byte);
-                    roughness_data.push(0);
-                    roughness_data.push(255);
-                }
+                let glossiness_normalized = (glossiness as f32 / 255.0) * glossiness_factor;
+                let roughness_normalized = 1.0 - glossiness_normalized;
+                let roughness_byte = (roughness_normalized * 255.0) as u8;
                 
-                let specular_texture = Texture::new_2d(
-                    Some("sg_specular"),
-                    width,
-                    height,
-                    Some(specular_data),
-                    TextureFormat::Rgba8UnormSrgb
-                );
-                
-                let roughness_texture = Texture::new_2d(
-                    Some("sg_roughness"),
-                    width,
-                    height,
-                    Some(roughness_data),
-                    TextureFormat::Rgba8Unorm
-                );
-                
-                let specular_handle = _ctx.assets.add_texture(specular_texture);
-                let roughness_handle = _ctx.assets.add_texture(roughness_texture);
-                
-                let bindings = physical_mat.bindings_mut();
-                bindings.specular_map = Some(specular_handle.into());
-                bindings.roughness_map = Some(roughness_handle.into());
-                bindings.metalness_map = Some(roughness_handle.into());
+                roughness_data.push(0);
+                roughness_data.push(roughness_byte);
+                roughness_data.push(0);
+                roughness_data.push(255);
             }
+            
+            let specular_texture = Texture::new_2d(
+                Some("sg_specular"),
+                width,
+                height,
+                Some(specular_data),
+                TextureFormat::Rgba8UnormSrgb
+            );
+            
+            let roughness_texture = Texture::new_2d(
+                Some("sg_roughness"),
+                width,
+                height,
+                Some(roughness_data),
+                TextureFormat::Rgba8Unorm
+            );
+            
+            let specular_handle = ctx.assets.add_texture(specular_texture);
+            let roughness_handle = ctx.assets.add_texture(roughness_texture);
+            
+            let bindings = physical_mat.bindings_mut();
+            bindings.specular_map = Some(specular_handle.into());
+            bindings.roughness_map = Some(roughness_handle.into());
+            bindings.metalness_map = Some(roughness_handle.into());
         } else {
             let glossiness_factor = sg.glossiness_factor();
             let mut uniforms = physical_mat.uniforms_mut();
@@ -923,7 +1011,7 @@ impl GltfExtensionParser for KhrRMaterialsClearcoat {
         "KHR_materials_clearcoat"
     }
 
-    fn on_load_material(&mut self, _ctx: &mut LoadContext, _gltf_mat: &gltf::Material, engine_mat: &mut Material, extension_value: &Value) -> anyhow::Result<()> {
+    fn on_load_material(&mut self, ctx: &mut LoadContext, _gltf_mat: &gltf::Material, engine_mat: &mut Material, extension_value: &Value) -> anyhow::Result<()> {
         let clearcoat_info = extension_value.as_object()
             .ok_or_else(|| anyhow::anyhow!("Invalid clearcoat extension data"))?;
 
@@ -943,26 +1031,26 @@ impl GltfExtensionParser for KhrRMaterialsClearcoat {
             uniforms.clearcoat_roughness = clearcoat_roughness;
         }
 
-        // 处理 clearcoat texture
+        // 处理 clearcoat texture (Linear)
         if let Some(clearcoat_tex_info) = clearcoat_info.get("clearcoatTexture") {
             if let Some(index) = clearcoat_tex_info.get("index").and_then(|v| v.as_u64()) {
-                let tex_handle: TextureHandle = _ctx.texture_map[index as usize];
+                let tex_handle = ctx.get_or_create_texture(index as usize, false)?;
                 physical_mat.set_clearcoat_map(tex_handle);
             }
         }
 
-        // 处理 clearcoat roughness texture
+        // 处理 clearcoat roughness texture (Linear)
         if let Some(clearcoat_roughness_tex_info) = clearcoat_info.get("clearcoatRoughnessTexture") {
             if let Some(index) = clearcoat_roughness_tex_info.get("index").and_then(|v| v.as_u64()) {
-                let tex_handle = _ctx.texture_map[index as usize];
+                let tex_handle = ctx.get_or_create_texture(index as usize, false)?;
                 physical_mat.set_clearcoat_roughness_map(Some(tex_handle.into()));
             }
         }
 
-        // 处理 clearcoat normal texture
+        // 处理 clearcoat normal texture (Linear)
         if let Some(clearcoat_normal_tex_info) = clearcoat_info.get("clearcoatNormalTexture") {
             if let Some(index) = clearcoat_normal_tex_info.get("index").and_then(|v| v.as_u64()) {
-                let tex_handle = _ctx.texture_map[index as usize];
+                let tex_handle = ctx.get_or_create_texture(index as usize, false)?;
                 physical_mat.set_clearcoat_normal_map(tex_handle);
                 // Todo: normal map scale
             }
@@ -970,5 +1058,4 @@ impl GltfExtensionParser for KhrRMaterialsClearcoat {
 
         Ok(())
     }
-    
 }
