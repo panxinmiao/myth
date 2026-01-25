@@ -47,6 +47,7 @@ impl Default for TextureTransform {
 pub struct TextureSlot {
     pub texture: Option<TextureHandle>,
     pub transform: TextureTransform,
+    pub channel: u8,
 }
 
 impl TextureSlot {
@@ -55,6 +56,7 @@ impl TextureSlot {
         Self {
             texture: Some(handle),
             transform: TextureTransform::default(),
+            channel: 0,
         }
     }
 
@@ -63,6 +65,7 @@ impl TextureSlot {
         Self {
             texture: Some(handle),
             transform,
+            channel: 0,
         }
     }
 
@@ -109,6 +112,7 @@ impl From<Option<TextureHandle>> for TextureSlot {
         Self {
             texture: opt,
             transform: TextureTransform::default(),
+            channel: 0,
         }
     }
 }
@@ -529,6 +533,18 @@ impl Material {
     pub fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
         self.data.define_bindings(builder)
     }
+
+    #[inline]
+    pub fn auto_sync_texture_to_uniforms(&self) -> bool {
+        match &self.data {
+            MaterialType::Basic(m) => m.auto_sync_texture_to_uniforms,
+            MaterialType::Phong(m) => m.auto_sync_texture_to_uniforms,
+            MaterialType::Standard(m) => m.auto_sync_texture_to_uniforms,
+            MaterialType::Physical(m) => m.auto_sync_texture_to_uniforms,
+            MaterialType::Custom(_) => false,
+        }
+    }
+
 }
 
 // ============================================================================

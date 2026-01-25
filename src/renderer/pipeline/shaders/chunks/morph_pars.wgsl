@@ -1,7 +1,7 @@
 // Morph Target 变形 Shader Chunk
 // 使用稀疏索引 + 紧凑存储架构
 
-$$ if use_morphing
+$$ if HAS_MORPH_TARGETS
 
 /// 从紧凑 Storage Buffer 获取 Morph Position 位移
 /// 布局: [ Target 0 所有顶点 | Target 1 所有顶点 | ... ]
@@ -16,7 +16,7 @@ fn fetch_morph_position(vertex_index: u32, target_index: u32) -> vec3<f32> {
     );
 }
 
-$$ if use_morph_normals
+$$ if HAS_MORPH_NORMALS
 /// 从紧凑 Storage Buffer 获取 Morph Normal 位移
 fn fetch_morph_normal(vertex_index: u32, target_index: u32) -> vec3<f32> {
     let start_idx = (target_index * u_morph_targets.vertex_count + vertex_index) * 3u;
@@ -28,7 +28,7 @@ fn fetch_morph_normal(vertex_index: u32, target_index: u32) -> vec3<f32> {
 }
 $$ endif
 
-$$ if use_morph_tangents
+$$ if HAS_MORPH_TANGENTS
 /// 从紧凑 Storage Buffer 获取 Morph Tangent 位移
 fn fetch_morph_tangent(vertex_index: u32, target_index: u32) -> vec3<f32> {
     let start_idx = (target_index * u_morph_targets.vertex_count + vertex_index) * 3u;
@@ -64,7 +64,7 @@ fn apply_morph_targets(
         // 应用 Position 位移
         result.position += fetch_morph_position(vertex_index, target_idx) * weight;
         
-        $$ if use_morph_normals
+        $$ if HAS_MORPH_NORMALS
         // 应用 Normal 位移
         result.normal += fetch_morph_normal(vertex_index, target_idx) * weight;
         $$ endif

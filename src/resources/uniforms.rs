@@ -15,9 +15,11 @@ pub trait WgslType {
         // 默认实现为空（针对 f32, vec3 等基础类型）
     }
 }
-
 impl WgslType for f32 { fn wgsl_type_name() -> Cow<'static, str> { "f32".into() } }
+impl WgslType for i16 { fn wgsl_type_name() -> Cow<'static, str> { "i16".into() } }
 impl WgslType for i32 { fn wgsl_type_name() -> Cow<'static, str> { "i32".into() } }
+impl WgslType for u8 { fn wgsl_type_name() -> Cow<'static, str> { "u8".into() } }
+impl WgslType for u16 { fn wgsl_type_name() -> Cow<'static, str> { "u16".into() } }
 impl WgslType for u32 { fn wgsl_type_name() -> Cow<'static, str> { "u32".into() } }
 impl WgslType for Vec2 { fn wgsl_type_name() -> Cow<'static, str> { "vec2<f32>".into() } }
 impl WgslType for Vec3 { fn wgsl_type_name() -> Cow<'static, str> { "vec3<f32>".into() } }
@@ -334,9 +336,9 @@ define_gpu_data_struct!(
         pub roughness_map_transform: Mat3A = Mat3A::IDENTITY,
         pub metalness_map_transform: Mat3A = Mat3A::IDENTITY,
         pub emissive_map_transform: Mat3A = Mat3A::IDENTITY, 
-        pub occlusion_map_transform: Mat3A = Mat3A::IDENTITY,
         pub ao_map_transform: Mat3A = Mat3A::IDENTITY,
         pub specular_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub specular_intensity_map_transform: Mat3A = Mat3A::IDENTITY,
     }
 );
 
@@ -370,7 +372,6 @@ define_gpu_data_struct!(
         pub roughness_map_transform: Mat3A = Mat3A::IDENTITY,
         pub metalness_map_transform: Mat3A = Mat3A::IDENTITY,
         pub emissive_map_transform: Mat3A = Mat3A::IDENTITY, 
-        pub occlusion_map_transform: Mat3A = Mat3A::IDENTITY,
         pub ao_map_transform: Mat3A = Mat3A::IDENTITY,
         pub specular_map_transform: Mat3A = Mat3A::IDENTITY,
         pub specular_intensity_map_transform: Mat3A = Mat3A::IDENTITY,

@@ -124,8 +124,8 @@ macro_rules! impl_material_trait {
         $shader_name:expr,
         $uniform_struct:ty,
         default_defines: [ $(($def_key:expr, $def_val:expr)),* $(,)? ],
-        // Textures: (字段名, 宏名称)
-        textures: [ $(($field:ident, $macro_name:expr)),* $(,)? ]
+        // Textures: (字段名)
+        textures: [ $($field:ident),* $(,)? ]
     ) => {
         // 1. 实现通用接口
         impl $crate::resources::material::MaterialTrait for $struct_name {
@@ -147,11 +147,23 @@ macro_rules! impl_material_trait {
                 $(
                     defines.set($def_key, $def_val);
                 )*
+
                 // 纹理宏定义
                 $(
                     if self.$field.is_some() {
-                        defines.set($macro_name, "1");
+                        // 2.1 自动生成开关宏：map -> HAS_MAP
+                        // stringify!(map) -> "map" -> to_uppercase() -> "MAP"
+                        let field_upper = stringify!($field).to_uppercase();
+                        let has_define_key = format!("HAS_{}", field_upper);
+                        defines.set(&has_define_key, "1");
+
+                        // 2.2 自动生成 UV 通道宏：map -> MAP_UV
+                        // 值为 self.map.channel (例如 "0", "1")
+                        let uv_define_key = format!("{}_UV", field_upper);
+                        let uv_define_val = self.$field.channel.to_string();
+                        defines.set(&uv_define_key, &uv_define_val);
                     }
+
                 )*
                 defines
             }

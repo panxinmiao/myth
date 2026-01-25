@@ -1,11 +1,11 @@
 use std::collections::HashMap;
 use std::path::Path;
 use std::fs;
-use glam::{Affine3A, Mat4, Quat, Vec3, Vec4};
-use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler};
+use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
+use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler, TextureSlot, TextureTransform};
 use crate::resources::geometry::{Geometry, Attribute};
 use crate::resources::texture::Texture;
-use crate::scene::{Scene, NodeHandle, SkeletonKey};
+use crate::scene::{NodeHandle, Scene, SkeletonKey};
 use crate::scene::skeleton::{Skeleton, BindMode};
 use crate::assets::{AssetServer, TextureHandle, MaterialHandle, GeometryHandle};
 use crate::animation::clip::{AnimationClip, Track, TrackMeta, TrackData};
@@ -15,7 +15,7 @@ use crate::animation::values::MorphWeightData;
 use crate::resources::mesh::MAX_MORPH_TARGETS;
 use wgpu::{VertexFormat, TextureFormat};
 use anyhow::Context;
-use serde_json::Value;
+use serde_json::{Value};
 
 // ============================================================================
 // 1. 中间数据结构 (Intermediate Data Structures)
@@ -65,6 +65,43 @@ pub trait GltfExtensionParser {
     /// 当节点被创建时调用 (可用于处理 KHR_lights_punctual 等挂载到节点的扩展)
     fn on_load_node(&mut self, _ctx: &mut LoadContext, _gltf_node: &gltf::Node, _scene: &mut Scene, _node_handle: NodeHandle, _extension_value: &Value) -> anyhow::Result<()> {
         Ok(())
+    }
+
+    fn setup_texture_map_from_extension(&mut self, ctx: &mut LoadContext, info: &Value , texture_slot: &mut TextureSlot){
+
+        if let Some(tex_info) = info.get("clearcoatTexture") {
+            if let Some(index) = tex_info.get("index").and_then(|v| v.as_u64()) {
+                let Some(tex_handle) = ctx.get_or_create_texture(index as usize, false).ok() else {
+                    // log::warn!("Failed to create texture for index {}", index);
+                    return;
+                };
+                texture_slot.texture = Some(tex_handle);
+                texture_slot.channel = tex_info.get("texCoord").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+
+                if let Some(transform) = tex_info.get("extensions")
+                    .and_then(|exts| exts.get("KHR_texture_transform"))
+                {
+                    if let Some(offset_array) = transform.get("offset").and_then(|v| v.as_array()) {
+                        let offset_x = offset_array.get(0).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                        let offset_y = offset_array.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                        texture_slot.transform.offset = Vec2::new(offset_x, offset_y);
+                    }
+                    if let Some(scale_array) = transform.get("scale").and_then(|v| v.as_array()) {
+                        let scale_x = scale_array.get(0).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+                        let scale_y = scale_array.get(1).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+                        texture_slot.transform.scale = Vec2::new(scale_x, scale_y);
+                    }
+                    if let Some(rotation) = transform.get("rotation").and_then(|v| v.as_f64()) {
+                        texture_slot.transform.rotation = rotation as f32;
+                    }
+
+                    if let Some(tex_coord) = transform.get("texCoord").and_then(|v| v.as_u64()) {
+                        texture_slot.channel = tex_coord as u8;
+                    }
+                }
+            }
+        }
+
     }
 }
 
@@ -392,6 +429,22 @@ impl<'a> GltfLoader<'a> {
         Ok(handle)
     }
 
+    fn setup_texture_map(&mut self, texture_slot: &mut TextureSlot, info: &gltf::texture::Info) -> anyhow::Result<()> {
+        let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
+        texture_slot.texture = Some(tex_handle);
+        texture_slot.channel = info.tex_coord() as u8;
+        if let Some(transform) = info.texture_transform() {
+            texture_slot.transform.offset = Vec2::from_array(transform.offset());
+            texture_slot.transform.scale = Vec2::from_array(transform.scale());
+            texture_slot.transform.rotation = transform.rotation();
+
+            if let Some(tex_coord) = transform.tex_coord() {
+                texture_slot.channel = tex_coord as u8;
+            }
+        }
+        Ok(())
+    }
+
     /// 实例化阶段：加载材质时，按需创建纹理（根据使用上下文决定 colorspace）
     fn load_materials(&mut self, gltf: &gltf::Gltf) -> anyhow::Result<()> {
         for material in gltf.materials() {
@@ -406,33 +459,40 @@ impl<'a> GltfLoader<'a> {
             
             // Base Color Texture (sRGB)
             if let Some(info) = pbr.base_color_texture() {
-                let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
-                mat.map.texture = Some(tex_handle);
+                // let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
+
+                self.setup_texture_map(&mut mat.map, &info)?;
             }
 
             // Metallic-Roughness Texture (Linear)
             if let Some(info) = pbr.metallic_roughness_texture() {
-                let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
-                mat.roughness_map.texture = Some(tex_handle);
-                mat.metalness_map.texture = Some(tex_handle);
+                self.setup_texture_map(&mut mat.roughness_map, &info)?;
+                self.setup_texture_map(&mut mat.metalness_map, &info)?;
             }
 
             // Normal Texture (Linear)
             if let Some(info) = material.normal_texture() {
+                // self.setup_texture_map(&mut mat.normal_map, &info)?;
                 let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
                 mat.normal_map.texture = Some(tex_handle);
+                mat.normal_map.channel = info.tex_coord() as u8;
+
+                // normal map don't have transform ?
             }
 
             // Occlusion Texture (Linear)
             if let Some(info) = material.occlusion_texture() {
                 let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
                 mat.ao_map.texture = Some(tex_handle);
+                mat.ao_map.channel = info.tex_coord() as u8;
+                mat.set_ao_map_intensity(info.strength());
+
+                // ao map don't have transform ?
             }
 
             // Emissive Texture (sRGB)
             if let Some(info) = material.emissive_texture() {
-                let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
-                mat.emissive_map.texture = Some(tex_handle);
+                self.setup_texture_map(&mut mat.emissive_map, &info)?;
             }
 
             {
@@ -450,8 +510,6 @@ impl<'a> GltfLoader<'a> {
 
 
             //=========================Material Extensions=========================//
-
-
             // KHR_materials_emissive_strength
             if let Some(info) = material.emissive_strength() {
                 mat.set_emissive_intensity(info);
@@ -469,18 +527,15 @@ impl<'a> GltfLoader<'a> {
 
                 // Specular Color Texture (sRGB)
                 if let Some(info) = specular.specular_color_texture() {
-                    let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
-                    mat.specular_map.texture = Some(tex_handle);
+                    self.setup_texture_map(&mut mat.specular_map, &info)?;
                 }
 
                 // Specular Intensity Texture (Linear)
                 if let Some(info) = specular.specular_texture() {
-                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
-                    mat.specular_intensity_map.texture = Some(tex_handle);
+                    self.setup_texture_map(&mut mat.specular_intensity_map, &info)?;
                 }
             }
 
-            // 转换为通用 Material 枚举
             let mut engine_mat = Material::from(mat);
 
             // 处理 KHR_materials_pbrSpecularGlossiness
@@ -514,6 +569,12 @@ impl<'a> GltfLoader<'a> {
                     }
                 }
             }
+
+
+            engine_mat.as_any_mut().downcast_mut::<MeshPhysicalMaterial>().unwrap().flush_texture_transforms();
+
+            // 转换为通用 Material 枚举
+            // let mut engine_mat = Material::from(mat);
 
             let handle = self.assets.add_material(engine_mat);
             self.material_map.push(handle);
@@ -923,6 +984,8 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         if let Some(diffuse_tex) = sg.diffuse_texture() {
             let tex_handle = ctx.get_or_create_texture(diffuse_tex.texture().index(), true)?;
             physical_mat.map.texture = Some(tex_handle);
+
+            
         }
 
         // 3. 处理 specular-glossiness 纹理
@@ -982,10 +1045,31 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
             
             let specular_handle = ctx.assets.add_texture(specular_texture);
             let roughness_handle = ctx.assets.add_texture(roughness_texture);
+
+            let mut uv_channel = sg_tex_info.tex_coord();
+
+            let transform = if let Some(tex_transform) = sg_tex_info.texture_transform() {
+                uv_channel = tex_transform.tex_coord().unwrap_or(uv_channel);
+                TextureTransform {
+                    offset: Vec2::from_array(tex_transform.offset()),
+                    scale: Vec2::from_array(tex_transform.scale()),
+                    rotation: tex_transform.rotation(),
+                }
+            } else {
+                TextureTransform::default()
+            };
             
             physical_mat.specular_map.texture = Some(specular_handle);
+            physical_mat.specular_map.channel = uv_channel as u8;
+            physical_mat.specular_map.transform = transform.clone();
+
             physical_mat.roughness_map.texture = Some(roughness_handle);
+            physical_mat.roughness_map.channel = uv_channel as u8;
+            physical_mat.roughness_map.transform = transform.clone();
+
             physical_mat.metalness_map.texture = Some(roughness_handle);
+            physical_mat.metalness_map.channel = uv_channel as u8;
+            physical_mat.metalness_map.transform = transform.clone();
         } else {
             let glossiness_factor = sg.glossiness_factor();
             let mut uniforms = physical_mat.uniforms_mut();
@@ -1026,26 +1110,17 @@ impl GltfExtensionParser for KhrRMaterialsClearcoat {
 
         // 处理 clearcoat texture (Linear)
         if let Some(clearcoat_tex_info) = clearcoat_info.get("clearcoatTexture") {
-            if let Some(index) = clearcoat_tex_info.get("index").and_then(|v| v.as_u64()) {
-                let tex_handle = ctx.get_or_create_texture(index as usize, false)?;
-                physical_mat.clearcoat_map.texture = Some(tex_handle);
-            }
+            self.setup_texture_map_from_extension(ctx, &clearcoat_tex_info, &mut physical_mat.clearcoat_map);
         }
 
         // 处理 clearcoat roughness texture (Linear)
         if let Some(clearcoat_roughness_tex_info) = clearcoat_info.get("clearcoatRoughnessTexture") {
-            if let Some(index) = clearcoat_roughness_tex_info.get("index").and_then(|v| v.as_u64()) {
-                let tex_handle = ctx.get_or_create_texture(index as usize, false)?;
-                physical_mat.clearcoat_roughness_map.texture = Some(tex_handle);
-            }
+            self.setup_texture_map_from_extension(ctx, &clearcoat_roughness_tex_info, &mut physical_mat.clearcoat_roughness_map);
         }
 
         // 处理 clearcoat normal texture (Linear)
         if let Some(clearcoat_normal_tex_info) = clearcoat_info.get("clearcoatNormalTexture") {
-            if let Some(index) = clearcoat_normal_tex_info.get("index").and_then(|v| v.as_u64()) {
-                let tex_handle = ctx.get_or_create_texture(index as usize, false)?;
-                physical_mat.clearcoat_normal_map.texture = Some(tex_handle);
-            }
+            self.setup_texture_map_from_extension(ctx, &clearcoat_normal_tex_info, &mut physical_mat.clearcoat_normal_map);
         }
 
         Ok(())

@@ -1,5 +1,5 @@
     
-$$ if use_skinning
+$$ if HAS_SKINNING
     let skin_index = vec4<u32>(in.joints);
     let skin_weight = in.weights;
 
@@ -19,7 +19,7 @@ $$ if use_skinning
 
     local_normal = normalize(skin_normal_mat * local_normal);
 
-    $$ if use_tangent is defined
+    $$ if HAS_TANGENT
         object_tangent = (skin_normal_mat * object_tangent).xyz;
     $$ endif
 

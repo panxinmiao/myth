@@ -14,6 +14,8 @@ pub struct MeshBasicMaterial {
 
     pub map: TextureSlot,
     pub map_sampler: Option<SamplerSource>,
+
+    pub auto_sync_texture_to_uniforms: bool,
 }
 
 impl MeshBasicMaterial {
@@ -31,6 +33,8 @@ impl MeshBasicMaterial {
 
             map: TextureSlot::default(),
             map_sampler: None,
+
+            auto_sync_texture_to_uniforms: false,
         }
     }
 
@@ -67,7 +71,7 @@ impl_material_trait!(
     MeshBasicUniforms,
     default_defines: [],
     textures: [
-        (map, "use_map"),
+        map,
     ]
 );
 

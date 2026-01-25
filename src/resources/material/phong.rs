@@ -20,6 +20,8 @@ pub struct MeshPhongMaterial {
     pub specular_map_sampler: Option<SamplerSource>,
     pub emissive_map: TextureSlot,
     pub emissive_map_sampler: Option<SamplerSource>,
+
+    pub auto_sync_texture_to_uniforms: bool,
 }
 
 impl MeshPhongMaterial {
@@ -43,6 +45,8 @@ impl MeshPhongMaterial {
             specular_map_sampler: None,
             emissive_map: TextureSlot::default(),
             emissive_map_sampler: None,
+
+            auto_sync_texture_to_uniforms: false,
         }
     }
 
@@ -87,10 +91,10 @@ impl_material_trait!(
     MeshPhongUniforms,
     default_defines: [],
     textures: [
-        (map,          "use_map"),
-        (normal_map,   "use_normal_map"),
-        (specular_map, "use_specular_map"),
-        (emissive_map, "use_emissive_map"),
+        map,
+        normal_map,
+        specular_map,
+        emissive_map,
     ]
 );
 

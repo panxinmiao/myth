@@ -26,6 +26,8 @@ pub struct MeshStandardMaterial {
     pub emissive_map_sampler: Option<SamplerSource>,
     pub specular_map: TextureSlot,
     pub specular_map_sampler: Option<SamplerSource>,
+
+    pub auto_sync_texture_to_uniforms: bool,
 }
 
 impl MeshStandardMaterial {
@@ -55,6 +57,8 @@ impl MeshStandardMaterial {
             emissive_map_sampler: None,
             specular_map: TextureSlot::default(),
             specular_map_sampler: None,
+
+            auto_sync_texture_to_uniforms: false,
         }
     }
 
@@ -106,13 +110,13 @@ impl_material_trait!(
     MeshStandardUniforms,
     default_defines: [("USE_IBL", "1")],
     textures: [
-        (map,           "use_map"),
-        (normal_map,    "use_normal_map"),
-        (roughness_map, "use_roughness_map"),
-        (metalness_map, "use_metalness_map"),
-        (ao_map,        "use_ao_map"),
-        (emissive_map,  "use_emissive_map"),
-        (specular_map,  "use_specular_map"),
+        map,
+        normal_map,
+        roughness_map,
+        metalness_map,
+        ao_map,
+        emissive_map,
+        specular_map,
     ]
 );
 

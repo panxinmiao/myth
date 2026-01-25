@@ -34,6 +34,8 @@ pub struct MeshPhysicalMaterial {
     pub clearcoat_roughness_map_sampler: Option<SamplerSource>,
     pub clearcoat_normal_map: TextureSlot,
     pub clearcoat_normal_map_sampler: Option<SamplerSource>,
+
+    pub auto_sync_texture_to_uniforms: bool,
 }
 
 impl MeshPhysicalMaterial {
@@ -71,6 +73,8 @@ impl MeshPhysicalMaterial {
             clearcoat_roughness_map_sampler: None,
             clearcoat_normal_map: TextureSlot::default(),
             clearcoat_normal_map_sampler: None,
+
+            auto_sync_texture_to_uniforms: false,
         }
     }
 
@@ -132,17 +136,17 @@ impl_material_trait!(
         ("USE_CLEARCOAT", "1"),
     ],
     textures: [
-        (map,           "use_map"),
-        (normal_map,    "use_normal_map"),
-        (roughness_map, "use_roughness_map"),
-        (metalness_map, "use_metalness_map"),
-        (ao_map,        "use_ao_map"),
-        (emissive_map,  "use_emissive_map"),
-        (specular_map,  "use_specular_map"),
-        (specular_intensity_map, "use_specular_intensity_map"),
-        (clearcoat_map, "use_clearcoat_map"),
-        (clearcoat_roughness_map, "use_clearcoat_roughness_map"),
-        (clearcoat_normal_map, "use_clearcoat_normal_map"),
+        map,
+        normal_map,
+        roughness_map,
+        metalness_map,
+        ao_map,
+        emissive_map,
+        specular_map,
+        specular_intensity_map,
+        clearcoat_map,
+        clearcoat_roughness_map,
+        clearcoat_normal_map,
     ]
 );
 

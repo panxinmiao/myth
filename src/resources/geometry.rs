@@ -699,29 +699,22 @@ impl Geometry {
     /// 这是一个计算属性，基于当前几何体的属性自动推导宏定义。
     pub fn shader_defines(&self) -> ShaderDefines {
         let mut defines = ShaderDefines::new();
-
-        if self.attributes.contains_key("uv") {
-            defines.set("has_uv", "1");
-        }
-        if self.attributes.contains_key("normal") {
-            defines.set("has_normal", "1");
-        }
-        if self.attributes.contains_key("color") {
-            defines.set("use_vertex_color", "1");
-        }
-        if self.attributes.contains_key("tangent") {
-            defines.set("use_tangent", "1");
+        println!("Geometry Shader Defines Calculation:");
+        
+        for name in self.attributes.keys() {
+            let macro_name = format!("HAS_{}", name.to_uppercase());
+            defines.set(&macro_name, "1");
         }
         
         // Morph Target 特性检测
         if self.has_morph_targets() {
-            defines.set("use_morphing", "1");
+            defines.set("HAS_MORPH_TARGETS", "1");
             
             if self.morph_normal_buffer.is_some() {
-                defines.set("use_morph_normals", "1");
+                defines.set("HAS_MORPH_NORMALS", "1");
             }
             if self.morph_tangent_buffer.is_some() {
-                defines.set("use_morph_tangents", "1");
+                defines.set("HAS_MORPH_TANGENTS", "1");
             }
         }
 
@@ -730,7 +723,7 @@ impl Geometry {
         let has_weights = self.attributes.contains_key("weights");
         
         if has_joints && has_weights {
-            defines.set("use_skinning", "1");
+            defines.set("HAS_SKINNING", "1");
         }
 
         defines

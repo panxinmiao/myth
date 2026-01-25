@@ -500,7 +500,7 @@ impl Scene {
     pub fn shader_defines(&self) -> ShaderDefines {
         let mut defines = ShaderDefines::new();
         if self.environment.has_env_map() {
-            defines.set("use_env_map", "1");
+            defines.set("HAS_ENV_MAP", "1");
         }
         defines
     }

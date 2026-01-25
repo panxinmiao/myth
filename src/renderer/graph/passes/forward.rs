@@ -108,7 +108,7 @@ impl ForwardRenderPass {
             let mut instance_variants = 0;
 
             if skeleton.is_none() {
-                geo_defines.remove("use_skinning");
+                geo_defines.remove("HAS_SKINNING");
                 instance_variants |= 1 << 0;
             }
 

@@ -23,11 +23,11 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.position = u_render_state.view_projection * world_pos;
     out.world_position = world_pos.xyz / world_pos.w;
 
-    $$ if use_vertex_color
+    $$ if HAS_VERTEX_COLOR
         out.color = in.color;
     $$ endif
 
-    $$ if has_uv
+    $$ if HAS_UV
     out.uv = in.uv;
     $$ endif
 
@@ -40,7 +40,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 @fragment
 fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
     var normal = normalize(varyings.normal);
-    $$ if flat_shading
+    $$ if FLAT_SHADING
         let u = dpdx(varyings.world_position);
         let v = dpdy(varyings.world_position);
         normal = normalize(cross(u, v));
@@ -49,16 +49,16 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     $$ endif
 
 
-    $$ if color_mode == 'normal'
+    $$ if COLOR_MODE == 'normal'
         var diffuse_color = vec4<f32>((normalize(surface_normal) * 0.5 + 0.5), 1.0);
     $$ else
         var diffuse_color = u_material.color;
 
-        $$ if use_vertex_color
+        $$ if HAS_VERTEX_COLOR
             diffuse_color *= varyings.color;
         $$ endif
 
-        {$ if use_map $}
+        {$ if HAS_MAP $}
             let tex_color = textureSample(t_map, s_map, varyings.uv);
             diffuse_color *= tex_color;
         {$ endif $}
@@ -75,7 +75,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
 
     // let face_direction = f32(is_front) * 2.0 - 1.0;
 
-    $$ if use_normal_map is defined
+    $$ if HAS_NORMAL_MAP is defined
 
         let tbn = getTangentFrame(view, normal, varyings.normal_map_uv );
 
@@ -85,7 +85,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     $$ endif
 
 
-    $$ if use_specular_map is defined
+    $$ if HAS_SPECULAR_MAP is defined
         let specular_map = textureSample( t_specular_map, s_specular_map, varyings.specular_map_uv );
         let specular_strength = specular_map.r;
     $$ else
@@ -108,7 +108,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     let ambient_color = u_environment.ambient_light.rgb;
     var irradiance = getAmbientLightIrradiance( ambient_color );
     // Light map (pre-baked lighting)
-    $$ if use_light_map is defined
+    $$ if HAS_LIGHT_MAP is defined
         let light_map_color = textureSample(t_light_map, s_light_map, varyings.light_map_uv ).rgb;
         irradiance += light_map_color * u_material.light_map_intensity;
     $$ endif
@@ -117,7 +117,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     RE_IndirectDiffuse( irradiance, geometry, material, &reflected_light );
 
     // Ambient occlusion
-    $$ if use_ao_map is defined
+    $$ if HAS_AO_MAP is defined
         let ao_map_intensity = u_material.ao_map_intensity;
         let ambient_occlusion = ( textureSample( t_ao_map, s_ao_map, varyings.ao_map_uv ).r - 1.0 ) * ao_map_intensity + 1.0;
 
@@ -128,7 +128,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     var out_color = reflected_light.direct_diffuse + reflected_light.direct_specular + reflected_light.indirect_diffuse + reflected_light.indirect_specular;
 
     var emissive_color = u_material.emissive.rgb * u_material.emissive_intensity;
-    $$ if use_emissive_map is defined
+    $$ if HAS_EMISSIVE_MAP is defined
         emissive_color *= textureSample(t_emissive_map, s_emissive_map, varyings.emissive_map_uv).rgb;
     $$ endif
     out_color += emissive_color;

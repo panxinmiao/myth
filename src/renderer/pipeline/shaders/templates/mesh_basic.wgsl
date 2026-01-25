@@ -22,11 +22,11 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.position = u_render_state.view_projection * world_pos;
     out.world_position = world_pos.xyz / world_pos.w;
 
-    $$ if use_vertex_color
+    $$ if HAS_VERTEX_COLOR
         out.color = in.color;
     $$ endif
 
-    $$ if has_uv
+    $$ if HAS_UV
     out.uv = in.uv;
     $$ endif
 
@@ -40,7 +40,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var final_color = u_material.color;
-    {$ if use_map $}
+    {$ if HAS_MAP $}
     let tex_color = textureSample(t_map, s_map, in.uv);
     final_color = final_color * tex_color;
     {$ endif $}
