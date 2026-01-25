@@ -9,8 +9,6 @@ use crate::{impl_material_api, impl_material_trait};
 #[derive(Debug)]
 pub struct MeshStandardMaterial {
     pub(crate) uniforms: CpuBuffer<MeshStandardUniforms>,
-    // #[allow(deprecated)]
-    // pub(crate) bindings: MaterialBindings,
     pub(crate) settings: MaterialSettings,
     pub(crate) version: u64,
 
@@ -31,7 +29,6 @@ pub struct MeshStandardMaterial {
 }
 
 impl MeshStandardMaterial {
-    // #[allow(deprecated)]
     pub fn new(color: Vec4) -> Self {
         let uniform_data = MeshStandardUniforms { color, ..Default::default() };
         
@@ -41,7 +38,6 @@ impl MeshStandardMaterial {
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 Some("MeshStandardUniforms")
             ),
-            // bindings: MaterialBindings::default(),
             settings: MaterialSettings::default(),
             version: 0,
 
@@ -94,13 +90,13 @@ impl_material_api!(
         (specular_intensity, f32,  "Specular intensity."),
     ],
     textures: [
-        (map,           map_transform,           "The color map."),
-        (normal_map,    normal_map_transform,    "The normal map."),
-        (roughness_map, roughness_map_transform, "The roughness map."),
-        (metalness_map, metalness_map_transform, "The metalness map."),
-        (ao_map,        ao_map_transform,        "The AO map."),
-        (emissive_map,  emissive_map_transform,  "The emissive map."),
-        (specular_map,  specular_map_transform,  "The specular map."),
+        (map,           "The color map."),
+        (normal_map,    "The normal map."),
+        (roughness_map, "The roughness map."),
+        (metalness_map, "The metalness map."),
+        (ao_map,        "The AO map."),
+        (emissive_map,  "The emissive map."),
+        (specular_map,  "The specular map."),
     ]
 );
 

@@ -9,8 +9,6 @@ use crate::{impl_material_api, impl_material_trait};
 #[derive(Debug)]
 pub struct MeshPhongMaterial {
     pub(crate) uniforms: CpuBuffer<MeshPhongUniforms>,
-    // #[allow(deprecated)]
-    // pub(crate) bindings: MaterialBindings,
     pub(crate) settings: MaterialSettings,
     pub(crate) version: u64,
 
@@ -25,7 +23,6 @@ pub struct MeshPhongMaterial {
 }
 
 impl MeshPhongMaterial {
-    // #[allow(deprecated)]
     pub fn new(color: Vec4) -> Self {
         let uniform_data = MeshPhongUniforms { color, ..Default::default() };
         
@@ -35,7 +32,6 @@ impl MeshPhongMaterial {
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 Some("MeshPhongUniforms")
             ),
-            // bindings: MaterialBindings::default(),
             settings: MaterialSettings::default(),
             version: 0,
 
@@ -78,10 +74,10 @@ impl_material_api!(
         (shininess,          f32,  "Shininess factor."),
     ],
     textures: [
-        (map,          map_transform,          "The color map."),
-        (normal_map,   normal_map_transform,   "The normal map."),
-        (specular_map, specular_map_transform, "The specular map."),
-        (emissive_map, emissive_map_transform, "The emissive map."),
+        (map,          "The color map."),
+        (normal_map,   "The normal map."),
+        (specular_map, "The specular map."),
+        (emissive_map, "The emissive map."),
     ]
 );
 

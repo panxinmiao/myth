@@ -9,8 +9,6 @@ use crate::{impl_material_api, impl_material_trait};
 #[derive(Debug)]
 pub struct MeshPhysicalMaterial {
     pub(crate) uniforms: CpuBuffer<MeshPhysicalUniforms>,
-    // #[allow(deprecated)]
-    // pub(crate) bindings: MaterialBindings,
     pub(crate) settings: MaterialSettings,
     pub(crate) version: u64,
 
@@ -39,7 +37,6 @@ pub struct MeshPhysicalMaterial {
 }
 
 impl MeshPhysicalMaterial {
-    // #[allow(deprecated)]
     pub fn new(color: Vec4) -> Self {
         let uniform_data = MeshPhysicalUniforms { color, ..Default::default() };
         
@@ -49,7 +46,6 @@ impl MeshPhysicalMaterial {
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 Some("MeshPhysicalUniforms")
             ),
-            // bindings: MaterialBindings::default(),
             settings: MaterialSettings::default(),
             version: 0,
 
@@ -111,17 +107,17 @@ impl_material_api!(
         (ior,                f32,  "Index of Refraction."),
     ],
     textures: [
-        (map,                    map_transform,                    "The color map."),
-        (normal_map,             normal_map_transform,             "The normal map."),
-        (roughness_map,          roughness_map_transform,          "The roughness map."),
-        (metalness_map,          metalness_map_transform,          "The metalness map."),
-        (ao_map,                 ao_map_transform,                 "The AO map."),
-        (emissive_map,           emissive_map_transform,           "The emissive map."),
-        (specular_map,           specular_map_transform,           "The specular map."),
-        (specular_intensity_map, specular_intensity_map_transform, "The specular intensity map."),
-        (clearcoat_map,          clearcoat_map_transform,          "The clearcoat map."),
-        (clearcoat_roughness_map, clearcoat_roughness_map_transform, "The clearcoat roughness map."),
-        (clearcoat_normal_map,   clearcoat_normal_map_transform,   "The clearcoat normal map."),
+        (map,                    "The color map."),
+        (normal_map,             "The normal map."),
+        (roughness_map,          "The roughness map."),
+        (metalness_map,          "The metalness map."),
+        (ao_map,                 "The AO map."),
+        (emissive_map,           "The emissive map."),
+        (specular_map,           "The specular map."),
+        (specular_intensity_map, "The specular intensity map."),
+        (clearcoat_map,          "The clearcoat map."),
+        (clearcoat_roughness_map, "The clearcoat roughness map."),
+        (clearcoat_normal_map,   "The clearcoat normal map."),
     ]
 );
 

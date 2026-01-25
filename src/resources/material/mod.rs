@@ -157,11 +157,6 @@ pub trait RenderableMaterialTrait: MaterialTrait {
     /// 材质渲染设置
     fn settings(&self) -> &MaterialSettings;
     
-    /// 底层资源绑定 (已废弃，保留以向后兼容)
-    // #[deprecated(note = "Use define_bindings() instead")]
-    // #[allow(deprecated)]
-    // fn bindings(&self) -> &MaterialBindings; 
-    
     /// 访问所有纹理
     fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource));
     /// 定义 GPU 资源绑定
@@ -171,14 +166,6 @@ pub trait RenderableMaterialTrait: MaterialTrait {
     /// 获取 Uniform 数据字节
     fn uniform_bytes(&self) -> &[u8];
 }
-
-
-/// 资源绑定数据 (已废弃，现由 TextureSlot 直接管理)
-// #[derive(Default, Clone, Debug)]
-// #[deprecated(note = "Use TextureSlot fields directly on material structs")]
-// pub struct MaterialBindings {
-//     _marker: (),
-// }
 
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
 pub enum Side {
@@ -317,17 +304,6 @@ impl RenderableMaterialTrait for MaterialType {
             Self::Custom(m) => m.settings(),
         }
     }
-
-    // #[allow(deprecated)]
-    // fn bindings(&self) -> &MaterialBindings {
-    //     match self {
-    //         Self::Basic(m) => m.bindings(),
-    //         Self::Phong(m) => m.bindings(),
-    //         Self::Standard(m) => m.bindings(),
-    //         Self::Physical(m) => m.bindings(),
-    //         Self::Custom(m) => m.bindings(),
-    //     }
-    // }
 
     fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource)) {
         match self {

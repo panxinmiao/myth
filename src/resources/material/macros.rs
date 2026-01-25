@@ -11,7 +11,7 @@ macro_rules! impl_material_api {
         // Uniforms: (字段名, 类型, 文档)
         uniforms: [ $(($u_field:ident, $u_type:ty, $u_doc:expr)),* $(,)? ],
         // Textures: (字段名, uniform变换字段名, 文档)
-        textures: [ $(($t_field:ident, $t_transform:ident, $t_doc:expr)),* $(,)? ]
+        textures: [ $(($t_field:ident, $t_doc:expr)),* $(,)? ]
     ) => {
         impl $struct_name {
 
@@ -85,12 +85,16 @@ macro_rules! impl_material_api {
             /// 返回值表示是否有数据更新
             pub fn flush_texture_transforms(&mut self) -> bool {
                 let mut changed = false;
+                let mut uniforms = self.uniforms.write();
+
                 $(
-                    {
+                    paste::paste! {
+                        // 1. 计算矩阵 (依然会有 trig 开销，但在锁内操作是连续内存访问，稍微好点)
                         let new_matrix = self.$t_field.compute_matrix();
-                        let current = self.uniforms.read().$t_transform;
-                        if current != new_matrix {
-                            self.uniforms.write().$t_transform = new_matrix;
+                        
+                        // 2. 自动推导字段名: map -> map_transform
+                        if uniforms.[<$t_field _transform>] != new_matrix {
+                            uniforms.[<$t_field _transform>] = new_matrix;
                             changed = true;
                         }
                     }
@@ -134,8 +138,6 @@ macro_rules! impl_material_trait {
             fn shader_name(&self) -> &'static str { $shader_name }
             fn version(&self) -> u64 { self.version }
             fn settings(&self) -> &$crate::resources::material::MaterialSettings { &self.settings }
-            #[allow(deprecated)]
-            // fn bindings(&self) -> &$crate::resources::material::MaterialBindings { &self.bindings }
             fn uniform_buffer(&self) -> &$crate::resources::buffer::BufferRef { self.uniforms.handle() }
             fn uniform_bytes(&self) -> &[u8] { self.uniforms.as_bytes() }
 

@@ -9,8 +9,6 @@ use crate::{impl_material_api, impl_material_trait};
 #[derive(Debug)]
 pub struct MeshBasicMaterial {
     pub(crate) uniforms: CpuBuffer<MeshBasicUniforms>,
-    // #[allow(deprecated)]
-    // pub(crate) bindings: MaterialBindings,
     pub(crate) settings: MaterialSettings,
     pub(crate) version: u64,
 
@@ -19,7 +17,6 @@ pub struct MeshBasicMaterial {
 }
 
 impl MeshBasicMaterial {
-    // #[allow(deprecated)]
     pub fn new(color: Vec4) -> Self {
         let uniform_data = MeshBasicUniforms { color, ..Default::default() };
         
@@ -29,7 +26,6 @@ impl MeshBasicMaterial {
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 Some("MeshBasicUniforms")
             ),
-            // bindings: MaterialBindings::default(),
             settings: MaterialSettings::default(),
             version: 0,
 
@@ -61,7 +57,7 @@ impl_material_api!(
         (opacity, f32,  "Opacity value."),
     ],
     textures: [
-        (map, map_transform, "The color map."),
+        (map, "The color map."),
     ]
 );
 
