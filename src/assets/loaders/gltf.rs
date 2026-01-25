@@ -570,8 +570,10 @@ impl<'a> GltfLoader<'a> {
                 }
             }
 
-
-            engine_mat.as_any_mut().downcast_mut::<MeshPhysicalMaterial>().unwrap().flush_texture_transforms();
+            // 由于上述代码直接修改了 pub(crate) 字段，需要手动通知版本更新
+            let physical_mat = engine_mat.as_any_mut().downcast_mut::<MeshPhysicalMaterial>().unwrap();
+            physical_mat.flush_texture_transforms();
+            physical_mat.notify_pipeline_dirty();
 
             // 转换为通用 Material 枚举
             // let mut engine_mat = Material::from(mat);

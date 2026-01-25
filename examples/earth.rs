@@ -44,10 +44,10 @@ impl AppHandler for Earth {
         ).expect("Failed to load clouds texture");
 
         if let Some(phong) = mat.as_phong_mut() {
-            phong.map.texture = Some(earth_tex_handle);
-            phong.specular_map.texture = Some(specular_tex_handle);
-            phong.emissive_map.texture = Some(emssive_tex_handle);
-            phong.normal_map.texture = Some(normal_map_handle);
+            phong.set_map(Some(earth_tex_handle));
+            phong.specular_map_mut().set_texture(Some(specular_tex_handle));
+            phong.emissive_map_mut().set_texture(Some(emssive_tex_handle));
+            phong.normal_map_mut().set_texture(Some(normal_map_handle));
             
             phong.set_normal_scale(Vec2::new(0.85, -0.85));
             phong.set_shininess(10.0);
@@ -61,7 +61,7 @@ impl AppHandler for Earth {
         // 云层材质
         let mut cloud_material = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
         if let Some(phong) = cloud_material.as_phong_mut() {
-            phong.map.texture = Some(clouds_tex_handle);
+            phong.set_map(Some(clouds_tex_handle));
             phong.set_opacity(0.8);
             phong.set_transparent(true);
             phong.set_depth_write(false);

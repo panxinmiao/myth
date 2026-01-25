@@ -3,6 +3,8 @@
 /// [宏 1] API 生成器
 /// 自动生成 Setters, Getters 和 Configure 方法。
 /// 隐藏了底层的 uniforms 和 bindings 字段，只暴露干净的 Public API。
+/// 
+/// 纹理槽位采用 Guard 模式，自动追踪纹理有/无状态的变化以触发版本更新。
 #[macro_export]
 macro_rules! impl_material_api {
     (
@@ -10,7 +12,7 @@ macro_rules! impl_material_api {
         $uniform_struct:ty,
         // Uniforms: (字段名, 类型, 文档)
         uniforms: [ $(($u_field:ident, $u_type:ty, $u_doc:expr)),* $(,)? ],
-        // Textures: (字段名, uniform变换字段名, 文档)
+        // Textures: (字段名, 文档)
         textures: [ $(($t_field:ident, $t_doc:expr)),* $(,)? ]
     ) => {
         impl $struct_name {
@@ -24,7 +26,7 @@ macro_rules! impl_material_api {
             pub fn set_transparent(&mut self, transparent: bool) {
                 if self.settings.transparent != transparent {
                     self.settings.transparent = transparent;
-                    self.version += 1;
+                    self.version = self.version.wrapping_add(1);
                 }
             }
             pub fn transparent(&self) -> bool {
@@ -35,7 +37,7 @@ macro_rules! impl_material_api {
             pub fn set_side(&mut self, side: $crate::resources::material::Side) {
                 if self.settings.side != side {
                     self.settings.side = side;
-                    self.version += 1;
+                    self.version = self.version.wrapping_add(1);
                 }
             }
             pub fn side(&self) -> $crate::resources::material::Side {
@@ -46,7 +48,7 @@ macro_rules! impl_material_api {
             pub fn set_depth_test(&mut self, depth_test: bool) {
                 if self.settings.depth_test != depth_test {
                     self.settings.depth_test = depth_test;
-                    self.version += 1;
+                    self.version = self.version.wrapping_add(1);
                 }
             }
             pub fn depth_test(&self) -> bool {
@@ -58,7 +60,7 @@ macro_rules! impl_material_api {
             pub fn set_depth_write(&mut self, depth_write: bool) {
                 if self.settings.depth_write != depth_write {
                     self.settings.depth_write = depth_write;
-                    self.version += 1;
+                    self.version = self.version.wrapping_add(1);
                 }
             }
             pub fn depth_write(&self) -> bool {
@@ -80,6 +82,45 @@ macro_rules! impl_material_api {
                 }
             )*
 
+            // ==========================================
+            // 2. 纹理槽位 API (Guard 模式)
+            // ==========================================
+            $(
+                paste::paste! {
+                    #[doc = $t_doc]
+                    #[doc = "\n\n获取纹理槽位的只读引用。"]
+                    #[inline]
+                    pub fn $t_field(&self) -> &$crate::resources::material::TextureSlot {
+                        &self.$t_field
+                    }
+
+                    #[doc = $t_doc]
+                    #[doc = "\n\n获取纹理槽位的可变引用守卫。"]
+                    #[doc = "当纹理的有/无状态变化时，会自动触发版本更新。"]
+                    #[inline]
+                    pub fn [<$t_field _mut>](&mut self) -> $crate::resources::material::TextureSlotGuard<'_> {
+                        $crate::resources::material::TextureSlotGuard::new(
+                            &mut self.$t_field,
+                            &mut self.version
+                        )
+                    }
+
+                    #[doc = $t_doc]
+                    #[doc = "\n\n快捷方法：直接设置纹理句柄。"]
+                    #[doc = "会自动处理版本更新。"]
+                    #[inline]
+                    pub fn [<set_ $t_field>](&mut self, texture: Option<impl Into<$crate::resources::material::TextureSlot>>) {
+                        let new_slot = texture.map(|t| t.into()).unwrap_or_default();
+                        let was_some = self.$t_field.texture.is_some();
+                        let is_some = new_slot.texture.is_some();
+                        self.$t_field = new_slot;
+                        if was_some != is_some {
+                            self.version = self.version.wrapping_add(1);
+                        }
+                    }
+                }
+            )*
+
             /// 刷新纹理变换矩阵到 Uniform
             /// 仅在数值实际改变时写入，避免触发不必要的 Version Bump
             /// 返回值表示是否有数据更新
@@ -89,10 +130,10 @@ macro_rules! impl_material_api {
 
                 $(
                     paste::paste! {
-                        // 1. 计算矩阵 (依然会有 trig 开销，但在锁内操作是连续内存访问，稍微好点)
+                        // 计算矩阵
                         let new_matrix = self.$t_field.compute_matrix();
                         
-                        // 2. 自动推导字段名: map -> map_transform
+                        // 自动推导字段名: map -> map_transform
                         if uniforms.[<$t_field _transform>] != new_matrix {
                             uniforms.[<$t_field _transform>] = new_matrix;
                             changed = true;
@@ -109,6 +150,18 @@ macro_rules! impl_material_api {
             {
                 let mut guard = self.uniforms.write();
                 f(&mut *guard);
+            }
+
+            /// 手动通知材质管线需要重建。
+            /// 
+            /// **注意**: 大多数情况下不需要手动调用此方法，因为通过标准 API 修改纹理槽位
+            /// 时会自动追踪版本变化。此方法仅用于以下特殊场景：
+            /// 
+            /// - 直接修改 `pub(crate)` 字段后（如加载器内部代码）
+            /// - 确信材质配置已改变但版本未更新时
+            #[inline]
+            pub fn notify_pipeline_dirty(&mut self) {
+                self.version = self.version.wrapping_add(1);
             }
         }
     };

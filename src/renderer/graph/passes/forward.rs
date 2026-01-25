@@ -103,25 +103,11 @@ impl ForwardRenderPass {
                 continue;
             };
 
-            // 计算几何体的宏定义，处理骨骼动画特殊情况
-            let mut geo_defines = geometry.shader_defines();
-            let mut instance_variants = 0;
+            // 计算 instance_variants（仅基于骨骼存在与否）
+            let instance_variants = if skeleton.is_none() { 1u32 << 0 } else { 0 };
 
-            if skeleton.is_none() {
-                geo_defines.remove("HAS_SKINNING");
-                instance_variants |= 1 << 0;
-            }
-
-            // 合并所有宏定义创建编译选项
-            let mat_defines = material.shader_defines();
-            let options = ShaderCompilationOptions::from_merged(
-                &mat_defines,
-                &geo_defines,
-                &ctx.extracted_scene.scene_defines,
-            );
-            let shader_hash = options.compute_hash();
-
-            // 使用 GPU 端的 layout_id 构建快速缓存 Key
+            // 使用版本号构建快速缓存 Key
+            // 注意：scene_id 的哈希计算已被缓存优化，成本较低
             let fast_key = FastPipelineKey {
                 material_handle: item.material,
                 material_version: gpu_material.version,
@@ -133,9 +119,25 @@ impl ForwardRenderPass {
                 render_state_id: ctx.render_state.id,
             };
 
+            // ========== 热路径优化：先检查 L1 缓存 ==========
             let (pipeline, pipeline_id) = if let Some(p) = ctx.pipeline_cache.get_pipeline_fast(fast_key) {
+                // L1 缓存命中：直接使用已缓存的 Pipeline，无需计算 shader_defines
                 p.clone()
             } else {
+                // L1 缓存未命中：需要完整计算 shader_defines 以构建/查找 Pipeline
+                let mut geo_defines = geometry.shader_defines();
+                if skeleton.is_none() {
+                    geo_defines.remove("HAS_SKINNING");
+                }
+
+                let mat_defines = material.shader_defines();
+                let options = ShaderCompilationOptions::from_merged(
+                    &mat_defines,
+                    &geo_defines,
+                    &ctx.extracted_scene.scene_defines,
+                );
+                let shader_hash = options.compute_hash();
+
                 let canonical_key = PipelineKey {
                     shader_hash,
                     topology: geometry.topology,

@@ -292,6 +292,9 @@ pub struct Geometry {
 
     pub bounding_box: RefCell<Option<BoundingBox>>,
     pub bounding_sphere: RefCell<Option<BoundingSphere>>,
+
+    /// ShaderDefines 缓存：(layout_version, cached_defines)
+    cached_shader_defines: RefCell<Option<(u64, ShaderDefines)>>,
 }
 
 impl Default for Geometry {
@@ -323,6 +326,7 @@ impl Geometry {
             draw_range: 0..u32::MAX,
             bounding_box: RefCell::new(None),
             bounding_sphere: RefCell::new(None),
+            cached_shader_defines: RefCell::new(None),
         }
     }
 
@@ -696,10 +700,21 @@ impl Geometry {
 
     /// 计算几何体的 Shader 宏定义
     /// 
-    /// 这是一个计算属性，基于当前几何体的属性自动推导宏定义。
+    /// 使用内部缓存机制，仅当 `layout_version` 发生变化时才重新计算。
+    /// 这避免了热路径上的 Map 遍历开销。
     pub fn shader_defines(&self) -> ShaderDefines {
+        // 快速路径：检查缓存
+        {
+            let cache = self.cached_shader_defines.borrow();
+            if let Some((cached_version, cached_defines)) = cache.as_ref() {
+                if *cached_version == self.layout_version {
+                    return cached_defines.clone();
+                }
+            }
+        }
+
+        // 慢速路径：重新计算
         let mut defines = ShaderDefines::new();
-        println!("Geometry Shader Defines Calculation:");
         
         for name in self.attributes.keys() {
             let macro_name = format!("HAS_{}", name.to_uppercase());
@@ -725,6 +740,9 @@ impl Geometry {
         if has_joints && has_weights {
             defines.set("HAS_SKINNING", "1");
         }
+
+        // 更新缓存
+        *self.cached_shader_defines.borrow_mut() = Some((self.layout_version, defines.clone()));
 
         defines
     }

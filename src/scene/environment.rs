@@ -5,7 +5,7 @@
 use crate::resources::texture::{Texture, TextureSource};
 
 /// IBL 环境贴图配置
-#[derive(Default, Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 pub struct Environment {
     /// 用户设置的原始环境贴图 (可能是 2D HDR 或 Cube)
     pub source_env_map: Option<TextureSource>,
@@ -25,6 +25,28 @@ pub struct Environment {
     pub rotation: f32,
     /// 环境光颜色 (ambient)
     pub ambient_color: glam::Vec3,
+
+    /// 版本号（用于追踪影响 Pipeline 的变化）
+    version: u64,
+}
+
+impl Default for Environment {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl PartialEq for Environment {
+    fn eq(&self, other: &Self) -> bool {
+        self.source_env_map == other.source_env_map
+            && self.processed_env_map == other.processed_env_map
+            && self.pmrem_map == other.pmrem_map
+            && self.brdf_lut == other.brdf_lut
+            && self.env_map_max_mip_level == other.env_map_max_mip_level
+            && self.intensity == other.intensity
+            && self.rotation == other.rotation
+            && self.ambient_color == other.ambient_color
+    }
 }
 
 impl Environment {
@@ -38,18 +60,32 @@ impl Environment {
             intensity: 1.0,
             rotation: 0.0,
             ambient_color: glam::Vec3::ZERO,
+            version: 0,
         }
+    }
+
+    /// 获取版本号
+    #[inline]
+    pub fn version(&self) -> u64 {
+        self.version
     }
     
     /// 设置环境贴图
     pub fn set_env_map(&mut self, texture_bundle: Option<(TextureSource, &Texture)>) {
         let new_handle = texture_bundle.map(|(h, _)| h);
+        let was_some = self.source_env_map.is_some();
+        let is_some = new_handle.is_some();
 
         if self.source_env_map != new_handle {
             self.source_env_map = new_handle;
             self.processed_env_map = None;
             self.pmrem_map = None; 
             self.env_map_max_mip_level = 0.0;
+
+            // 有/无状态变化影响 shader_defines
+            if was_some != is_some {
+                self.version = self.version.wrapping_add(1);
+            }
         }
     }
     

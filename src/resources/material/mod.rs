@@ -97,6 +97,60 @@ impl TextureSlot {
     pub fn is_none(&self) -> bool {
         self.texture.is_none()
     }
+    
+    /// 设置纹理
+    #[inline]
+    pub fn set_texture(&mut self, handle: Option<TextureHandle>) {
+        self.texture = handle;
+    }
+}
+
+// ============================================================================
+// TextureSlotGuard - 纹理槽位修改守卫
+// ============================================================================
+
+/// 纹理槽位修改守卫
+/// 
+/// 当纹理的有/无状态发生变化时（影响 Shader 宏），自动递增版本号。
+/// 使用 RAII 模式确保版本控制的正确性。
+pub struct TextureSlotGuard<'a> {
+    slot: &'a mut TextureSlot,
+    version: &'a mut u64,
+    was_some: bool,
+}
+
+impl<'a> TextureSlotGuard<'a> {
+    /// 创建纹理槽位守卫
+    #[inline]
+    pub fn new(slot: &'a mut TextureSlot, version: &'a mut u64) -> Self {
+        let was_some = slot.texture.is_some();
+        Self { slot, version, was_some }
+    }
+}
+
+impl std::ops::Deref for TextureSlotGuard<'_> {
+    type Target = TextureSlot;
+    
+    #[inline]
+    fn deref(&self) -> &Self::Target {
+        self.slot
+    }
+}
+
+impl std::ops::DerefMut for TextureSlotGuard<'_> {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.slot
+    }
+}
+
+impl Drop for TextureSlotGuard<'_> {
+    fn drop(&mut self) {
+        let is_some = self.slot.texture.is_some();
+        if self.was_some != is_some {
+            *self.version = self.version.wrapping_add(1);
+        }
+    }
 }
 
 impl From<TextureHandle> for TextureSlot {

@@ -12,7 +12,7 @@ pub struct MeshBasicMaterial {
     pub(crate) settings: MaterialSettings,
     pub(crate) version: u64,
 
-    pub map: TextureSlot,
+    pub(crate) map: TextureSlot,
     pub map_sampler: Option<SamplerSource>,
 
     pub auto_sync_texture_to_uniforms: bool,

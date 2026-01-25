@@ -12,13 +12,13 @@ pub struct MeshPhongMaterial {
     pub(crate) settings: MaterialSettings,
     pub(crate) version: u64,
 
-    pub map: TextureSlot,
+    pub(crate) map: TextureSlot,
     pub map_sampler: Option<SamplerSource>,
-    pub normal_map: TextureSlot,
+    pub(crate) normal_map: TextureSlot,
     pub normal_map_sampler: Option<SamplerSource>,
-    pub specular_map: TextureSlot,
+    pub(crate) specular_map: TextureSlot,
     pub specular_map_sampler: Option<SamplerSource>,
-    pub emissive_map: TextureSlot,
+    pub(crate) emissive_map: TextureSlot,
     pub emissive_map_sampler: Option<SamplerSource>,
 
     pub auto_sync_texture_to_uniforms: bool,

@@ -89,6 +89,9 @@ pub struct Scene {
     pub(crate) uniforms_buffer: CpuBuffer<EnvironmentUniforms>,
     light_data_cache: RefCell<Vec<GpuLightStorage>>,
 
+    /// Scene shader_defines 缓存：(environment_version, cached_defines)
+    cached_shader_defines: RefCell<Option<(u64, ShaderDefines)>>,
+
     // === 场景逻辑系统 ===
     pub(crate) logics: Vec<Box<dyn SceneLogic>>,
 }
@@ -138,6 +141,8 @@ impl Scene {
             ),
 
             light_data_cache: RefCell::new(Vec::with_capacity(16)),
+
+            cached_shader_defines: RefCell::new(None),
 
             logics: Vec::new(),
         }
@@ -496,12 +501,29 @@ impl Scene {
 
     /// 计算场景的 Shader 宏定义
     /// 
-    /// 这是一个计算属性，基于当前场景的环境设置自动推导宏定义。
+    /// 使用内部缓存机制，仅当 Environment 版本变化时才重新计算。
     pub fn shader_defines(&self) -> ShaderDefines {
+        let env_version = self.environment.version();
+
+        // 快速路径：检查缓存
+        {
+            let cache = self.cached_shader_defines.borrow();
+            if let Some((cached_version, cached_defines)) = cache.as_ref() {
+                if *cached_version == env_version {
+                    return cached_defines.clone();
+                }
+            }
+        }
+
+        // 慢速路径：重新计算
         let mut defines = ShaderDefines::new();
         if self.environment.has_env_map() {
             defines.set("HAS_ENV_MAP", "1");
         }
+
+        // 更新缓存
+        *self.cached_shader_defines.borrow_mut() = Some((env_version, defines.clone()));
+
         defines
     }
 
