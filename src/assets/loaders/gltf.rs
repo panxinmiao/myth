@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::fs;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
+use crate::{AnimationAction, AnimationMixer, Binder};
 use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler, TextureSlot, TextureTransform};
 use crate::resources::geometry::{Geometry, Attribute};
 use crate::resources::texture::Texture;
@@ -182,7 +183,7 @@ impl<'a> GltfLoader<'a> {
         path: &Path,
         assets: &'a mut AssetServer,
         scene: &'a mut Scene
-    ) -> anyhow::Result<(Vec<NodeHandle>, Vec<AnimationClip>)> {
+    ) -> anyhow::Result<NodeHandle> {
         
         // 1. 读取文件和 Buffer
         let file = fs::File::open(path)
@@ -246,7 +247,10 @@ impl<'a> GltfLoader<'a> {
         }
 
         // Step 4.2: 建立层级关系 (Hierarchy)
-        let mut root_handles = Vec::new();
+        let root_handle = loader.scene.create_node_with_name("gltf_root");
+        loader.scene.root_nodes.push(root_handle);
+    
+
         for node in gltf.nodes() {
             let parent_handle = loader.node_mapping[node.index()];
             
@@ -262,8 +266,7 @@ impl<'a> GltfLoader<'a> {
         if let Some(default_scene) = gltf.default_scene().or_else(|| gltf.scenes().next()) {
             for node in default_scene.nodes() {
                 let node_handle = loader.node_mapping[node.index()];
-                root_handles.push(node_handle);
-                loader.scene.root_nodes.push(node_handle);
+                loader.scene.attach(node_handle, root_handle);
             }
         }
 
@@ -276,10 +279,28 @@ impl<'a> GltfLoader<'a> {
             loader.bind_node_mesh_and_skin(&node, &buffers, &skeleton_keys)?;
         }
 
-        // 5. 加载动画数据 (可选)
+        // 5. 加载动画数据
         let animations = loader.load_animations(&gltf, &buffers)?;
 
-        Ok((root_handles, animations))
+        let mut mixer = AnimationMixer::new();
+        for clip in animations {
+            // 1. 为每个 Clip 创建 Action
+            // let clip = clip.clone();
+            let bindings = Binder::bind(loader.scene, root_handle, &clip);
+            
+            let mut action = AnimationAction::new(clip.into());
+            action.bindings = bindings;
+            
+            // 默认不播放，或者权重设为 0
+            action.enabled = false; 
+            action.weight = 0.0;
+            
+            // 2. 全部加入同一个 Mixer
+            mixer.add_action(action);
+        }
+        loader.scene.animation_mixers.insert(root_handle, mixer);
+
+        Ok(root_handle)
     }
 
     fn _register_extension(&mut self, ext: Box<dyn GltfExtensionParser>) {

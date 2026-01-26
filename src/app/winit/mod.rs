@@ -124,24 +124,14 @@ impl<H: AppHandler> AppRunner<H> {
             return;
         };
 
-        // 帧开始：清理瞬时状态
-        engine.input.start_frame();
-        engine.frame_count += 1;
-
-        let frate_state = FrameState {
+        let frame_state = FrameState {
             time: total_time,
             dt,
             frame_count: engine.frame_count,
         };
 
-        user_state.update(engine, window, &frate_state);
-
-        engine.time = total_time;
-        engine.dt = dt;
-
-        if let Some(scene) = engine.scene_manager.active_scene_mut() {
-            scene.update(&engine.input, dt);
-        }
+        user_state.update(engine, window, &frame_state);
+        engine.update(dt);
     }
 
     fn render_frame(&mut self) {

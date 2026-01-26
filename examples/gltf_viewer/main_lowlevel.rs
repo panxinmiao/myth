@@ -34,19 +34,15 @@ use three::scene::{Scene, Camera, light, NodeHandle};
 use three::renderer::{Renderer, settings::RenderSettings};
 use three::OrbitControls;
 use three::utils::fps_counter::FpsCounter;
-use three::{AnimationMixer, AnimationAction, Binder};
-use three::animation::clip::AnimationClip;
 
 use ui_pass::UiPass;
 
 /// 应用状态
 struct ViewerState {
     /// 当前加载的模型根节点
-    loaded_nodes: Vec<NodeHandle>,
-    /// 动画混合器
-    mixer: AnimationMixer,
-    /// 可用的动画列表
-    animations: Vec<Arc<AnimationClip>>,
+    gltf_node: Option<NodeHandle>,
+    // /// 可用的动画列表
+    animations: Vec<String>,
     /// 当前选中的动画索引
     current_animation: usize,
     /// 是否正在播放动画
@@ -68,8 +64,7 @@ struct ViewerState {
 impl Default for ViewerState {
     fn default() -> Self {
         Self {
-            loaded_nodes: Vec::new(),
-            mixer: AnimationMixer::new(),
+            gltf_node: None,
             animations: Vec::new(),
             current_animation: 0,
             is_playing: true,
@@ -165,11 +160,6 @@ impl GltfViewer {
             self.state.current_fps = fps;
         }
 
-        // 更新动画
-        if self.state.is_playing {
-            self.state.mixer.update(dt * self.state.playback_speed, &mut self.scene);
-        }
-
         // 相机控制
         if let Some((transform, camera)) = self.scene.query_main_camera_bundle() {
             self.state.controls.update(transform, &self.input, camera.fov.to_degrees(), dt);
@@ -241,29 +231,26 @@ impl GltfViewer {
 
     fn load_model(&mut self, path: &PathBuf) {
         // 清理旧模型
-        for node_id in &self.state.loaded_nodes {
-            self.scene.remove_node(*node_id);
+        if let Some(gltf_node) = self.state.gltf_node {
+            self.scene.remove_node(gltf_node);
         }
-        self.state.loaded_nodes.clear();
+        self.state.gltf_node = None;
         self.state.animations.clear();
-        self.state.mixer = AnimationMixer::new();
-
         // 加载新模型
         match GltfLoader::load(path, &mut self.assets, &mut self.scene) {
-            Ok((nodes, animations)) => {
-                self.state.loaded_nodes = nodes.clone();
-                self.state.animations = animations.iter().map(|c| Arc::new(c.clone())).collect();
+            Ok(gltf_node) => {
+                self.state.gltf_node = Some(gltf_node);
                 self.state.model_path = Some(path.clone());
                 self.state.current_animation = 0;
 
                 // 自动播放第一个动画
-                if !self.state.animations.is_empty() {
-                    let clip = self.state.animations[0].clone();
-                    let root_node = nodes.first().copied().unwrap();
-                    let bindings = Binder::bind(&self.scene, root_node, &clip);
-                    let mut action = AnimationAction::new(clip);
-                    action.bindings = bindings;
-                    self.state.mixer.add_action(action);
+                if let Some(mixer) = self.scene.animation_mixers.get_mut(gltf_node) {
+                    self.state.animations = mixer.list_animations();
+
+                    if let Some(clip_name) = self.state.animations.first() {
+                        println!("Auto-playing animation: {}", clip_name);
+                        mixer.play(clip_name);
+                    }
                 }
 
                 log::info!("Loaded model: {:?}", path);
@@ -311,25 +298,27 @@ impl GltfViewer {
                     // 动画选择
                     let current_anim = self.state.current_animation;
                     let anim_name = if current_anim < self.state.animations.len() {
-                        self.state.animations[current_anim].name.clone()
+                        self.state.animations[current_anim].clone()
                     } else {
-                        "选择动画".to_string()
+                        "Select Animation".to_string()
                     };
                     
                     ui.horizontal(|ui| {
-                        ui.label("动画:");
+                        ui.label("Animation:");
                         egui::ComboBox::from_id_salt("animation_selector")
                             .selected_text(&anim_name)
                             .show_ui(ui, |ui| {
                                 for (i, clip) in self.state.animations.iter().enumerate() {
-                                    if ui.selectable_value(&mut self.state.current_animation, i, &clip.name).changed() {
+                                    if ui.selectable_value(&mut self.state.current_animation, i, clip).changed() {
                                         // 切换动画
-                                        self.state.mixer = AnimationMixer::new();
-                                        let root_node = self.state.loaded_nodes.first().copied().unwrap();
-                                        let bindings = Binder::bind(&self.scene, root_node, clip);
-                                        let mut action = AnimationAction::new(clip.clone());
-                                        action.bindings = bindings;
-                                        self.state.mixer.add_action(action);
+                                        if let Some(gltf_node) = self.state.gltf_node {
+                                            println!("click to animation: {}", clip);
+                                            if let Some(mixer) = self.scene.animation_mixers.get_mut(gltf_node) {
+                                                mixer.stop_all();
+                                                println!("Switching to animation: {}", clip);
+                                                mixer.play(clip);
+                                            }
+                                        }
                                     }
                                 }
                             });
@@ -341,9 +330,14 @@ impl GltfViewer {
                             self.state.is_playing = !self.state.is_playing;
                         }
                         
-                        if ui.button("⏹ 停止").clicked() {
-                            self.state.is_playing = false;
-                            self.state.mixer = AnimationMixer::new();
+                        if let Some(gltf_node) = self.state.gltf_node {
+                            if let Some(mixer) = self.scene.animation_mixers.get_mut(gltf_node) {
+                                if self.state.is_playing {
+                                    mixer.play(&self.state.animations[self.state.current_animation]);
+                                } else {
+                                    mixer.stop_all();
+                                }
+                            }
                         }
                     });
 
@@ -354,12 +348,6 @@ impl GltfViewer {
                             .step_by(0.1)
                             .suffix("x"));
                     });
-
-                    // 显示动画信息
-                    if current_anim < self.state.animations.len() {
-                        let clip = &self.state.animations[current_anim];
-                        ui.label(format!("时长: {:.2}s | 轨道数: {}", clip.duration, clip.tracks.len()));
-                    }
                 }
 
                 ui.separator();
@@ -367,7 +355,6 @@ impl GltfViewer {
                 // 信息显示
                 ui.heading("ℹ️ 信息");
                 ui.label(format!("FPS: {:.1}", self.state.current_fps));
-                ui.label(format!("节点数: {}", self.state.loaded_nodes.len()));
             });
 
         // 帮助提示

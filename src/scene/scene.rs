@@ -5,6 +5,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use slotmap::{SlotMap, SecondaryMap, SparseSecondaryMap};
 use glam::{Affine3A, Vec3, Vec4}; 
 use crate::AssetServer;
+use crate::animation::{AnimationMixer, AnimationSystem};
 use crate::resources::{BoundingBox, Input};
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::shader_defines::ShaderDefines;
@@ -72,6 +73,8 @@ pub struct Scene {
     pub skins: SparseSecondaryMap<NodeHandle, SkinBinding>,
     /// 形变权重
     pub morph_weights: SparseSecondaryMap<NodeHandle, Vec<f32>>,
+    /// 动画混合器组件（稀疏存储，只有角色根节点有动画）
+    pub animation_mixers: SparseSecondaryMap<NodeHandle, AnimationMixer>,
 
     morph_target_nodes: Vec<NodeHandle>,
 
@@ -120,6 +123,7 @@ impl Scene {
             skins: SparseSecondaryMap::new(),
             morph_weights: SparseSecondaryMap::new(),
             morph_target_nodes: Vec::with_capacity(16),
+            animation_mixers: SparseSecondaryMap::new(),
 
             // 资源池（仅保留真正共享的资源）
             skeleton_pool: SlotMap::with_key(),
@@ -205,15 +209,14 @@ impl Scene {
 
         // 3. 删除所有节点及其组件
         for node_handle in to_remove {
-            // 清理组件（直接删除，无需再从资源池移除）
             self.meshes.remove(node_handle);
             self.cameras.remove(node_handle);
             self.lights.remove(node_handle);
             self.skins.remove(node_handle);
             self.morph_weights.remove(node_handle);
             self.names.remove(node_handle);
+            self.animation_mixers.remove(node_handle);
 
-            // 删除节点
             self.nodes.remove(node_handle);
         }
     }
@@ -546,16 +549,17 @@ impl Scene {
 
     /// 更新场景状态（每帧调用）
     pub fn update(&mut self, input: &Input, dt: f32) {
-        // 1. 执行用户逻辑
-        // 使用 mem::take 暂时取出，避免借用冲突
+        // 1. 执行用户脚本（Gameplay）
         let mut logics = std::mem::take(&mut self.logics);
         for logic in &mut logics {
             logic.update(self, input, dt);
         }
         self.logics.append(&mut logics);
 
+        // 2. 动画系统更新（修改节点 Transform）
+        AnimationSystem::update(self, dt);
 
-        // 2. 执行引擎内部系统 (Transform, Skeleton, Morph...)
+        // 3. 执行引擎内部系统（Transform、Skeleton、Morph）
         self.update_matrix_world();
         self.update_skeletons();
         self.sync_morph_weights();

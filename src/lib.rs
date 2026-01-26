@@ -17,7 +17,7 @@ pub mod resources;
 pub mod scene;
 pub mod utils;
 
-pub use animation::{AnimationAction, AnimationClip, AnimationMixer, Binder, LoopMode};
+pub use animation::{AnimationAction, AnimationClip, AnimationMixer, AnimationSystem, Binder, LoopMode};
 pub use assets::{AssetServer, ColorSpace};
 pub use engine::ThreeEngine;
 pub use errors::ThreeError;

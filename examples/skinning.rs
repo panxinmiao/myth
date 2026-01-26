@@ -8,7 +8,6 @@ use three::scene::{Camera, light};
 use three::OrbitControls;
 use three::utils::fps_counter::FpsCounter;
 use three::assets::GltfLoader;
-use three::{AnimationMixer, AnimationAction, Binder};
 use three::renderer::settings::RenderSettings;
 use three::engine::{FrameState, ThreeEngine};
 use winit::window::Window;
@@ -17,7 +16,6 @@ use winit::window::Window;
 /// 
 /// 用法: skinning [path_to_model.glb]
 struct SkinningDemo {
-    mixer: AnimationMixer,
     controls: OrbitControls,
     fps_counter: FpsCounter,
 }
@@ -68,7 +66,7 @@ impl AppHandler for SkinningDemo {
         println!("Loading glTF model from: {:?}", gltf_path);
         
         // 这里加一个简单的错误处理，防止路径错误直接崩溃不好调试
-        let (loaded_nodes, animations) = match GltfLoader::load(
+        let gltf_node = match GltfLoader::load(
             gltf_path,
             &mut engine.assets,
             scene
@@ -81,32 +79,23 @@ impl AppHandler for SkinningDemo {
             }
         };
 
-        println!("Successfully loaded {} root nodes", loaded_nodes.len());
-        println!("Total animations found: {}", animations.len());
+        println!("Successfully loaded root node: {:?}", gltf_node);
 
-        // === 5. 设置动画混合器 ===
-        let mut mixer = AnimationMixer::new();
-        
-        if let Some(clip) = animations.into_iter().next() {
-            println!("Playing animation: {} (duration: {:.2}s)", clip.name, clip.duration);
-            
-            // 简单的假设：动画应用在第一个加载的根节点上
-            if let Some(&root_node) = loaded_nodes.first() {
-                let clip = Arc::new(clip);
-                let bindings = Binder::bind(scene, root_node, &clip);
-                
-                if bindings.is_empty() {
-                    println!("Warning: No bindings created for animation. Node names mismatch?");
-                } else {
-                    println!("Created {} bindings", bindings.len());
-                    let mut action = AnimationAction::new(clip);
-                    action.bindings = bindings;
-                    mixer.add_action(action);
-                }
+        //  查询动画列表
+        if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
+            println!("Loaded animations:");
+
+            let animations = mixer.list_animations();
+
+            for anim_name in &animations {
+                println!(" - {}", anim_name);
             }
+
+            mixer.play("SambaDance");
+
         }
 
-        // === 6. 设置相机 ===
+        // === 5. 设置相机 ===
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
         
@@ -117,8 +106,6 @@ impl AppHandler for SkinningDemo {
         scene.active_camera = Some(cam_node_id);
 
         Self {
-            mixer,
-            // 这里的 center 最好也是模型的中心
             controls: OrbitControls::new(Vec3::new(0.0, 1.5, 4.0), Vec3::new(0.0, 1.0, 0.0)),
             fps_counter: FpsCounter::new(),
         }
@@ -128,8 +115,6 @@ impl AppHandler for SkinningDemo {
         let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
-
-        self.mixer.update(frame.dt, scene);
 
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
             self.controls.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);

@@ -20,7 +20,6 @@ pub struct ThreeEngine {
     pub input: Input,
 
     pub(crate) time: f32,
-    pub(crate) dt: f32,
     pub(crate) frame_count: u64,
 }
 
@@ -34,7 +33,6 @@ impl ThreeEngine {
             assets: AssetServer::new(),
             input: Input::new(),
             time: 0.0,
-            dt: 0.0,
             frame_count: 0,
         }
     }
@@ -49,9 +47,9 @@ impl ThreeEngine {
     {
         self.renderer.init(window, width, height).await?;
 
-        if self.scene_manager.active_handle().is_none() {
-            self.scene_manager.create_active();
-        }
+        // if self.scene_manager.active_handle().is_none() {
+        //     self.scene_manager.create_active();
+        // }
 
         Ok(())
     }
@@ -65,22 +63,21 @@ impl ThreeEngine {
         }
     }
 
-    /// 更新引擎状态（每帧调用一次）
-    ///
-    /// 注意：如果使用 App adapter，帧开始的 `input.start_frame()` 由 adapter 调用。
-    /// 如果直接驱动引擎，需要在 update 前手动调用 `input.start_frame()`。
     pub fn update(&mut self, dt: f32) {
-        self.dt = dt;
         self.time += dt;
-        self.frame_count += 1;
 
         if let Some(scene) = self.scene_manager.active_scene_mut() {
             scene.update(&self.input, dt);
         }
+
+        self.input.start_frame();
     }
 
-    /// 渲染当前帧
+    // /// 渲染当前帧
     pub fn render(&mut self, extra_nodes: &[&dyn RenderNode]) {
+
+        self.frame_count += 1;
+
         let Some(scene_handle) = self.scene_manager.active_handle() else {
             return;
         };

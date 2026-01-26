@@ -6,14 +6,11 @@ use three::scene::{Camera, NodeHandle, light};
 use three::{OrbitControls, ThreeEngine};
 use three::utils::fps_counter::FpsCounter;
 use three::assets::GltfLoader;
-use three::{AnimationMixer, AnimationAction, Binder};
-use three::animation::binding::TargetPath;
 use three::renderer::settings::RenderSettings;
 use winit::window::Window;
 
 /// Morph Target (变形目标) 动画示例
 struct MorphTargetDemo {
-    mixer: AnimationMixer,
     cam_node_id: NodeHandle,
     controls: OrbitControls,
     fps_counter: FpsCounter,
@@ -47,27 +44,27 @@ impl AppHandler for MorphTargetDemo {
         let gltf_path = std::path::Path::new("examples/assets/facecap.glb");
         println!("Loading glTF model from: {}", gltf_path.display());
         
-        let (loaded_nodes, animations) = GltfLoader::load(
+        let gltf_node = GltfLoader::load(
             gltf_path,
             &mut engine.assets,
             scene
         ).expect("Failed to load glTF model");
 
-        println!("Successfully loaded {} root nodes", loaded_nodes.len());
-        println!("Total animations found: {}", animations.len());
+        println!("Successfully loaded root node: {:?}", gltf_node);
 
-        // 输出动画信息
-        for (i, anim) in animations.iter().enumerate() {
-            println!("Animation {}: '{}' with {} tracks", i, anim.name, anim.tracks.len());
-            
-            let morph_tracks: Vec<_> = anim.tracks.iter()
-                .filter(|t| t.meta.target == TargetPath::Weights)
-                .collect();
-            
-            if !morph_tracks.is_empty() {
-                println!("  - Found {} morph target weight tracks", morph_tracks.len());
+        //  查询动画列表
+        if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
+            println!("Loaded animations:");
+
+            let animations = mixer.list_animations();
+
+            for anim_name in &animations {
+                println!(" - {}", anim_name);
             }
+            mixer.play("Key|Take 001|BaseLayer");
+
         }
+
 
         // 输出 Mesh Morph Target 信息
         for (node_handle, mesh) in scene.meshes.iter() {
@@ -82,23 +79,6 @@ impl AppHandler for MorphTargetDemo {
             }
         }
 
-        // 3. 设置动画混合器
-        let mut mixer = AnimationMixer::new();
-        
-        if let Some(clip) = animations.into_iter().next() {
-            println!("Playing animation: {} (duration: {:.2}s)", clip.name, clip.duration);
-            
-            let root_node = loaded_nodes.first().copied().unwrap();
-            let clip = Arc::new(clip);
-            let bindings = Binder::bind(scene, root_node, &clip);
-            
-            println!("Created {} bindings", bindings.len());
-            
-            let mut action = AnimationAction::new(clip);
-            action.bindings = bindings;
-            mixer.add_action(action);
-        }
-
         // 4. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
@@ -109,7 +89,6 @@ impl AppHandler for MorphTargetDemo {
         scene.active_camera = Some(cam_node_id);
 
         Self {
-            mixer,
             cam_node_id,
             controls: OrbitControls::new(Vec3::new(0.0, 0.0, 4.0), Vec3::ZERO),
             fps_counter: FpsCounter::new(),
@@ -120,14 +99,12 @@ impl AppHandler for MorphTargetDemo {
         let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
-        // 更新动画
-        self.mixer.update(frame.dt, scene);
-        // 轨道控制器
+
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
+            println!("update{}", frame.dt);
             self.controls.update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
         }
 
-        // FPS 显示
         if let Some(fps) = self.fps_counter.update() {
             window.set_title(&format!("Morph Target Demo - FPS: {:.1}", fps));
         }

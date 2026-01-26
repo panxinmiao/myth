@@ -40,20 +40,18 @@ impl AppHandler for HdrEnvDemo {
         let gltf_path = std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
         println!("Loading glTF model from: {}", gltf_path.display());
         
-        let (loaded_nodes, _animations) = GltfLoader::load(
+        let gltf_node = GltfLoader::load(
             gltf_path,
             &mut engine.assets,
             scene
         ).expect("Failed to load glTF model");
 
-        println!("Successfully loaded {} root nodes", loaded_nodes.len());
+        println!("Successfully loaded root node: {:?}", gltf_node);
 
         // 4. 调整模型位置/缩放
-        if let Some(&root_node_idx) = loaded_nodes.first() {
-            if let Some(node) = scene.get_node_mut(root_node_idx) {
-                node.transform.scale = Vec3::splat(1.0);
-                node.transform.position = Vec3::new(0.0, 0.0, 0.0);
-            }
+        if let Some(node) = scene.get_node_mut(gltf_node) {
+            node.transform.scale = Vec3::splat(1.0);
+            node.transform.position = Vec3::new(0.0, 0.0, 0.0);
         }
 
         // 5. 设置相机
