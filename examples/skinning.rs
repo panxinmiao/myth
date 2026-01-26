@@ -3,13 +3,15 @@ use std::path::Path; // 引入 Path
 use std::env; // 引入 env
 
 use glam::Vec3;
-use three::app::{App, AppContext, AppHandler};
+use three::app::winit::{App, AppHandler};
 use three::scene::{Camera, light};
 use three::OrbitControls;
 use three::utils::fps_counter::FpsCounter;
 use three::assets::GltfLoader;
 use three::{AnimationMixer, AnimationAction, Binder};
 use three::renderer::settings::RenderSettings;
+use three::engine::{FrameState, ThreeEngine};
+use winit::window::Window;
 
 /// 骨骼动画示例
 /// 
@@ -21,7 +23,7 @@ struct SkinningDemo {
 }
 
 impl AppHandler for SkinningDemo {
-    fn init(ctx: &mut AppContext) -> Self {
+    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // === 1. 解析启动参数 ===
         let args: Vec<String> = env::args().collect();
         
@@ -40,7 +42,7 @@ impl AppHandler for SkinningDemo {
         let gltf_path = Path::new(gltf_path_str);
 
         // === 2. 加载环境贴图 (保持不变) ===
-        let env_texture_handle = ctx.assets.load_cube_texture_from_files(
+        let env_texture_handle = engine.assets.load_cube_texture_from_files(
             [
                 "examples/assets/Park2/posx.jpg",
                 "examples/assets/Park2/negx.jpg",
@@ -52,10 +54,10 @@ impl AppHandler for SkinningDemo {
             three::ColorSpace::Srgb
         ).expect("Failed to load environment map");
 
-        let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
+        let env_texture = engine.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
 
-        let scene = ctx.scenes.create_active();
+        let scene = engine.scene_manager.create_active();
 
         scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
@@ -68,7 +70,7 @@ impl AppHandler for SkinningDemo {
         // 这里加一个简单的错误处理，防止路径错误直接崩溃不好调试
         let (loaded_nodes, animations) = match GltfLoader::load(
             gltf_path,
-            ctx.assets,
+            &mut engine.assets,
             scene
         ) {
             Ok(res) => res,
@@ -122,19 +124,19 @@ impl AppHandler for SkinningDemo {
         }
     }
 
-    fn update(&mut self, ctx: &mut AppContext) {
-        let Some(scene) = ctx.scenes.active_scene_mut() else{
+    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+        let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
 
-        self.mixer.update(ctx.dt, scene);
+        self.mixer.update(frame.dt, scene);
 
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
+            self.controls.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);
         }
 
         if let Some(fps) = self.fps_counter.update() {
-            ctx.window.set_title(&format!("Skinning Animation | FPS: {:.2}", fps));
+            window.set_title(&format!("Skinning Animation | FPS: {:.2}", fps));
         }
     }
 }

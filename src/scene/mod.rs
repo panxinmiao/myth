@@ -16,6 +16,7 @@ pub mod camera;
 pub mod light;
 pub mod environment;
 pub mod skeleton;
+pub mod manager;
 
 // 重新导出常用类型
 pub use node::Node;

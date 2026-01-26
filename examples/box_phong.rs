@@ -1,8 +1,12 @@
+use std::sync::Arc;
+
 use glam::{Vec3, Vec4, Quat};
-use three::app::{App, AppContext, AppHandler};
+use three::app::winit::{App, AppHandler};
+use three::engine::FrameState;
 use three::resources::{Geometry, Material, Mesh, Texture};
 use three::scene::{Camera, NodeHandle, light};
-use three::OrbitControls;
+use three::{OrbitControls, ThreeEngine};
+use winit::window::Window;
 
 /// Phong 材质立方体示例
 struct PhongBox {
@@ -11,24 +15,23 @@ struct PhongBox {
 }
 
 impl AppHandler for PhongBox {
-    fn init(ctx: &mut AppContext) -> Self {
+    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // 1. 准备资源
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
         let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
-        let tex_handle = ctx.assets.add_texture(texture);
+        let tex_handle = engine.assets.add_texture(texture);
 
         if let Some(phong) = mat.as_phong_mut() {
             phong.set_map(Some(tex_handle));
         }
         
-        let geo_handle = ctx.assets.add_geometry(geometry);
-        let mat_handle = ctx.assets.add_material(mat);
+        let geo_handle = engine.assets.add_geometry(geometry);
+        let mat_handle = engine.assets.add_material(mat);
 
-        ctx.scenes.create_active();
-        let scene = ctx.scenes.active_scene_mut().unwrap();
-
+        engine.scene_manager.create_active();
+        let scene = engine.scene_manager.active_scene_mut().unwrap();
         // 2. 创建 Mesh 并加入场景
         let mesh = Mesh::new(geo_handle, mat_handle);
         let cube_node_id = scene.add_mesh(mesh);
@@ -53,8 +56,8 @@ impl AppHandler for PhongBox {
         }
     }
 
-    fn update(&mut self, ctx: &mut AppContext) {
-        let Some(scene) = ctx.scenes.active_scene_mut() else{
+    fn update(&mut self, engine: &mut ThreeEngine, _window: &Arc<Window>, frame: &FrameState) {
+        let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
         // 旋转立方体
@@ -66,8 +69,12 @@ impl AppHandler for PhongBox {
 
         // 轨道控制器
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
+            self.controls.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);
         }
+    }
+    
+    fn extra_render_nodes(&self) -> Vec<&dyn three::renderer::graph::RenderNode> {
+        Vec::new()
     }
 }
 

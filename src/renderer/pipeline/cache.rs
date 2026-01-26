@@ -111,7 +111,8 @@ impl PipelineCache {
             options,
         );
 
-        if cfg!(feature = "debug_shader") {
+        // 调试输出生成的 Shader 代码
+        if cfg!(debug_assertions) {
             fn normalize_newlines(s: &str) -> String {
                 let mut result = String::with_capacity(s.len());
                 let mut last_was_newline = false;

@@ -1,10 +1,14 @@
+use std::sync::Arc;
+
 use glam::Vec3;
-use three::app::{App, AppContext, AppHandler};
+use three::app::winit::{App, AppHandler};
+use three::engine::FrameState;
 use three::scene::{Camera, NodeHandle, light};
-use three::OrbitControls;
+use three::{OrbitControls, ThreeEngine};
 use three::utils::fps_counter::FpsCounter;
 use three::assets::GltfLoader;
 use three::renderer::settings::RenderSettings;
+use winit::window::Window;
 
 /// HDR 环境贴图示例
 /// 演示如何使用 HDR 格式的 Equirectangular 环境贴图进行 IBL 渲染
@@ -15,16 +19,16 @@ struct HdrEnvDemo {
 }
 
 impl AppHandler for HdrEnvDemo {
-    fn init(ctx: &mut AppContext) -> Self {
+    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // 1. 加载 HDR 环境贴图 (Equirectangular 格式)
-        let env_texture_handle = ctx.assets.load_hdr_texture(
+        let env_texture_handle = engine.assets.load_hdr_texture(
             "examples/assets/citrus_orchard_road_puresky_2k.hdr"
         ).expect("Failed to load HDR environment map");
 
-        ctx.scenes.create_active();
-        let scene = ctx.scenes.active_scene_mut().unwrap();
+        engine.scene_manager.create_active();
+        let scene = engine.scene_manager.active_scene_mut().unwrap();
 
-        let env_texture = ctx.assets.get_texture(env_texture_handle).unwrap();
+        let env_texture = engine.assets.get_texture(env_texture_handle).unwrap();
         scene.environment.set_env_map(Some((env_texture_handle.into(), env_texture)));
         scene.environment.set_intensity(1.0);
 
@@ -38,7 +42,7 @@ impl AppHandler for HdrEnvDemo {
         
         let (loaded_nodes, _animations) = GltfLoader::load(
             gltf_path,
-            ctx.assets,
+            &mut engine.assets,
             scene
         ).expect("Failed to load glTF model");
 
@@ -73,17 +77,17 @@ impl AppHandler for HdrEnvDemo {
         }
     }
 
-    fn update(&mut self, ctx: &mut AppContext) {
-        let Some(scene) = ctx.scenes.active_scene_mut() else {
+    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+        let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
 
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
-            self.controls.update(&mut cam_node.transform, ctx.input, 45.0, ctx.dt);
+            self.controls.update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
         }
 
         if let Some(fps) = self.fps_counter.update() {
-            ctx.window.set_title(&format!("HDR Environment Demo - FPS: {:.0}", fps));
+            window.set_title(&format!("HDR Environment Demo - FPS: {:.0}", fps));
         }
     }
 }

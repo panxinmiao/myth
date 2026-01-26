@@ -1,8 +1,12 @@
+use std::sync::Arc;
+
 use glam::{Vec3, Vec4, Quat};
-use three::app::{App, AppContext, AppHandler};
+use three::app::winit::{App, AppHandler};
+use three::engine::FrameState;
 use three::resources::{Geometry, Mesh, MeshBasicMaterial, Texture};
 use three::scene::{Camera};
-use three::OrbitControls;
+use three::{OrbitControls, ThreeEngine};
+use winit::window::Window;
 
 /// 带纹理的旋转立方体 + 轨道控制器
 struct TexturedBox {
@@ -10,25 +14,25 @@ struct TexturedBox {
 }
 
 impl AppHandler for TexturedBox {
-    fn init(ctx: &mut AppContext) -> Self {
+    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // 1. 准备资源
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
         let mut basic_mat = MeshBasicMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         // 2. 将资源添加到 AssetServer
-        let tex_handle = ctx.assets.add_texture(texture);
+        let tex_handle = engine.assets.add_texture(texture);
 
         basic_mat.set_map(Some(tex_handle));
         basic_mat.set_color(Vec4::new(1.0, 1.0, 1.0, 1.0));
       
         
-        let geo_handle = ctx.assets.add_geometry(geometry);
-        let mat_handle = ctx.assets.add_material(basic_mat);
+        let geo_handle = engine.assets.add_geometry(geometry);
+        let mat_handle = engine.assets.add_material(basic_mat);
 
-        ctx.scenes.create_active();
+        engine.scene_manager.create_active();
 
-        let scene = ctx.scenes.active_scene_mut().unwrap();
+        let scene = engine.scene_manager.active_scene_mut().unwrap();
 
         // 3. 创建 Mesh 并加入场景
         let mesh = Mesh::new(geo_handle, mat_handle);
@@ -58,7 +62,7 @@ impl AppHandler for TexturedBox {
         Self { controls }
     }
 
-    fn update(&mut self, ctx: &mut AppContext) {
+    fn update(&mut self, engine: &mut ThreeEngine, _window: &Arc<Window>, frame: &FrameState) {
         // let scene = ctx.scenes.active_scene_mut().expect("No active scene");
         // // 旋转立方体
         // if let Some(node) = scene.get_node_mut(self.cube_node_id) {
@@ -66,10 +70,10 @@ impl AppHandler for TexturedBox {
         //     let rot_x = Quat::from_rotation_x(0.01);
         //     node.transform.rotation = node.transform.rotation * rot_y * rot_x;
         // }
-        let scene = ctx.scenes.active_scene_mut().unwrap();
+        let scene = engine.scene_manager.active_scene_mut().unwrap();
         // 轨道控制器
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
+            self.controls.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);
         }
     }
 }

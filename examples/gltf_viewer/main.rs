@@ -21,19 +21,21 @@ mod ui_pass;
 use std::sync::Arc;
 use std::path::PathBuf;
 use glam::Vec3;
+use three::engine::FrameState;
 use winit::event::WindowEvent;
 
-use three::app::{App, AppContext, AppHandler};
+use three::app::winit::{App, AppHandler};
 use three::assets::GltfLoader;
 use three::scene::{Camera, NodeHandle, light};
 use three::renderer::graph::RenderNode;
 use three::renderer::settings::RenderSettings;
-use three::OrbitControls;
+use three::{OrbitControls, ThreeEngine};
 use three::utils::fps_counter::FpsCounter;
 use three::{AnimationMixer, AnimationAction, Binder};
 use three::animation::clip::AnimationClip;
 
 use ui_pass::UiPass;
+use winit::window::Window;
 
 /// glTF Viewer 应用状态
 struct GltfViewer {
@@ -65,17 +67,17 @@ struct GltfViewer {
 }
 
 impl AppHandler for GltfViewer {
-    fn init(ctx: &mut AppContext) -> Self {
+    fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self {
         // 1. 创建 UI Pass
-        let wgpu_ctx = ctx.renderer.wgpu_ctx().expect("Renderer not initialized");
+        let wgpu_ctx = engine.renderer.wgpu_ctx().expect("Renderer not initialized");
         let ui_pass = UiPass::new(
             &wgpu_ctx.device,
             wgpu_ctx.config.format,
-            ctx.window,
+            window,
         );
 
         // 2. 加载环境贴图
-        let env_texture_handle = ctx.assets.load_cube_texture_from_files(
+        let env_texture_handle = engine.assets.load_cube_texture_from_files(
             [
                 "examples/assets/Park2/posx.jpg",
                 "examples/assets/Park2/negx.jpg",
@@ -87,9 +89,9 @@ impl AppHandler for GltfViewer {
             three::ColorSpace::Srgb
         ).expect("Failed to load environment map");
 
-        let scene = ctx.scenes.create_active();
+        let scene = engine.scene_manager.create_active();
 
-        let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
+        let env_texture = engine.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
 
         scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
@@ -131,23 +133,23 @@ impl AppHandler for GltfViewer {
         }
     }
 
-    fn on_event(&mut self, ctx: &mut AppContext, event: &WindowEvent) -> bool {
+    fn on_event(&mut self, _engine: &mut ThreeEngine, window: &Arc<Window>, event: &WindowEvent) -> bool {
         // UI 优先处理事件
-        if self.ui_pass.handle_input(ctx.window, event) {
+        if self.ui_pass.handle_input(window, event) {
             return true;
         }
         
         // 处理窗口大小调整
         if let WindowEvent::Resized(size) = event {
-            let scale_factor = ctx.window.scale_factor() as f32;
+            let scale_factor = window.scale_factor() as f32;
             self.ui_pass.resize(size.width, size.height, scale_factor);
         }
         
         false
     }
 
-    fn update(&mut self, ctx: &mut AppContext) {
-        let Some(scene) = ctx.scenes.active_scene_mut() else{
+    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+        let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
         // 1. 更新 FPS
@@ -161,27 +163,27 @@ impl AppHandler for GltfViewer {
             } else {
                 format!("glTF Viewer | FPS: {:.0}", self.current_fps)
             };
-            ctx.window.set_title(&title);
+            window.set_title(&title);
         }
 
         // 2. 更新动画
         if self.is_playing {
-            self.mixer.update(ctx.dt * self.playback_speed, scene);
+            self.mixer.update(frame.dt * self.playback_speed, scene);
         }
 
         // 3. 相机控制
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
+            self.controls.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);
         }
 
         // 4. 构建 UI
-        self.ui_pass.begin_frame(ctx.window);
-        self.render_ui(ctx);
-        self.ui_pass.end_frame(ctx.window);
+        self.ui_pass.begin_frame(window);
+        self.render_ui(engine);
+        self.ui_pass.end_frame(window);
 
         // 5. 处理待加载的模型
         if let Some(path) = self.pending_load.take() {
-            self.load_model(&path, ctx);
+            self.load_model(&path, engine);
         }
 
 
@@ -193,8 +195,8 @@ impl AppHandler for GltfViewer {
 }
 
 impl GltfViewer {
-    fn load_model(&mut self, path: &PathBuf, ctx: &mut AppContext) {
-        let Some(scene) = ctx.scenes.active_scene_mut() else{
+    fn load_model(&mut self, path: &PathBuf, engine: &mut ThreeEngine) {
+        let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
         // 清理旧模型
@@ -206,7 +208,7 @@ impl GltfViewer {
         self.mixer = AnimationMixer::new();
 
         // 加载新模型
-        match GltfLoader::load(path, ctx.assets, scene) {
+        match GltfLoader::load(path, &mut engine.assets, scene) {
             Ok((nodes, animations)) => {
                 self.loaded_nodes = nodes.clone();
                 self.animations = animations.iter().map(|c| Arc::new(c.clone())).collect();
@@ -225,7 +227,7 @@ impl GltfViewer {
 
                 if let Some(root_node) = nodes.first() {
                     scene.update_subtree(*root_node);
-                    if let Some(bbox) = scene.get_bbox_of_node(*root_node, ctx.assets) {
+                    if let Some(bbox) = scene.get_bbox_of_node(*root_node, &engine.assets) {
                         let center = bbox.center();
                         let radius = bbox.size().length() * 0.5;
                         if let Some((_transform, camera)) = scene.query_main_camera_bundle() {
@@ -245,9 +247,9 @@ impl GltfViewer {
         }
     }
 
-    fn render_ui(&mut self, ctx: &mut AppContext) {
+    fn render_ui(&mut self, engine: &mut ThreeEngine) {
         let egui_ctx = self.ui_pass.context().clone();
-        let Some(scene) = ctx.scenes.active_scene_mut() else{
+        let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
         // 主控制面板

@@ -1,10 +1,14 @@
+use std::sync::Arc;
+
 use glam::Vec3;
-use three::app::{App, AppContext, AppHandler};
+use three::app::winit::{App, AppHandler};
+use three::engine::FrameState;
 use three::scene::{Camera, NodeHandle, light};
-use three::OrbitControls;
+use three::{OrbitControls, ThreeEngine};
 use three::utils::fps_counter::FpsCounter;
 use three::assets::GltfLoader;
 use three::renderer::settings::RenderSettings;
+use winit::window::Window;
 
 /// glTF PBR 头盔示例
 struct HelmetGltf {
@@ -14,9 +18,9 @@ struct HelmetGltf {
 }
 
 impl AppHandler for HelmetGltf {
-    fn init(ctx: &mut AppContext) -> Self {
+    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // 1. 加载环境贴图 (PBR 需要 IBL)
-        let env_texture_handle = ctx.assets.load_cube_texture_from_files(
+        let env_texture_handle = engine.assets.load_cube_texture_from_files(
             [
                 "examples/assets/Park2/posx.jpg",
                 "examples/assets/Park2/negx.jpg",
@@ -28,10 +32,10 @@ impl AppHandler for HelmetGltf {
             three::ColorSpace::Srgb
         ).expect("Failed to load environment map");
 
-        ctx.scenes.create_active();
-        let scene = ctx.scenes.active_scene_mut().unwrap();
+        engine.scene_manager.create_active();
+        let scene = engine.scene_manager.active_scene_mut().unwrap();
 
-        let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
+        let env_texture = engine.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
         scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
@@ -44,7 +48,7 @@ impl AppHandler for HelmetGltf {
         
         let (loaded_nodes, _animations) = GltfLoader::load(
             gltf_path,
-            ctx.assets,
+            &mut engine.assets,
             scene
         ).expect("Failed to load glTF model");
 
@@ -80,19 +84,23 @@ impl AppHandler for HelmetGltf {
         }
     }
 
-    fn update(&mut self, ctx: &mut AppContext) {
-        let Some(scene) = ctx.scenes.active_scene_mut() else{
+    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+        let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
         // 轨道控制器
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
-            self.controls.update(&mut cam_node.transform, ctx.input, 45.0, ctx.dt);
+            self.controls.update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
         }
 
         // FPS 显示
         if let Some(fps) = self.fps_counter.update() {
-            ctx.window.set_title(&format!("glTF PBR Demo - FPS: {:.0}", fps));
+            window.set_title(&format!("glTF PBR Demo - FPS: {:.0}", fps));
         }
+    }
+    
+    fn extra_render_nodes(&self) -> Vec<&dyn three::renderer::graph::RenderNode> {
+        Vec::new()
     }
 }
 

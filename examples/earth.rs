@@ -1,10 +1,14 @@
+use std::sync::Arc;
+
 use glam::{Vec2, Vec3, Vec4, Quat};
-use three::app::{App, AppContext, AppHandler};
+use three::app::winit::{App, AppHandler};
+use three::engine::FrameState;
 use three::resources::Material;
 use three::scene::{Camera, NodeHandle, light};
-use three::OrbitControls;
+use three::{OrbitControls, ThreeEngine};
 use three::utils::fps_counter::FpsCounter;
 use three::renderer::settings::RenderSettings;
+use winit::window::Window;
 
 /// 地球渲染示例
 struct Earth {
@@ -15,7 +19,7 @@ struct Earth {
 }
 
 impl AppHandler for Earth {
-    fn init(ctx: &mut AppContext) -> Self {
+    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // 1. 准备资源
         let geometry = three::create_sphere(three::resources::primitives::SphereOptions {
             radius: 63.71,
@@ -27,19 +31,19 @@ impl AppHandler for Earth {
         let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         // 加载纹理
-        let earth_tex_handle = ctx.assets.load_texture_from_file(
+        let earth_tex_handle = engine.assets.load_texture_from_file(
             "examples/assets/planets/earth_atmos_4096.jpg", three::ColorSpace::Srgb
         ).expect("Failed to load earth texture");
-        let specular_tex_handle = ctx.assets.load_texture_from_file(
+        let specular_tex_handle = engine.assets.load_texture_from_file(
             "examples/assets/planets/earth_specular_2048.jpg", three::ColorSpace::Srgb
         ).expect("Failed to load specular texture");
-        let emssive_tex_handle = ctx.assets.load_texture_from_file(
+        let emssive_tex_handle = engine.assets.load_texture_from_file(
             "examples/assets/planets/earth_lights_2048.png", three::ColorSpace::Srgb
         ).expect("Failed to load emissive texture");
-        let normal_map_handle = ctx.assets.load_texture_from_file(
+        let normal_map_handle = engine.assets.load_texture_from_file(
             "examples/assets/planets/earth_normal_2048.jpg", three::ColorSpace::Linear
         ).expect("Failed to load normal map");
-        let clouds_tex_handle = ctx.assets.load_texture_from_file(
+        let clouds_tex_handle = engine.assets.load_texture_from_file(
             "examples/assets/planets/earth_clouds_1024.png", three::ColorSpace::Srgb
         ).expect("Failed to load clouds texture");
 
@@ -55,8 +59,8 @@ impl AppHandler for Earth {
             phong.set_emissive_intensity(3.0);
         }
             
-        let geo_handle = ctx.assets.add_geometry(geometry);
-        let mat_handle = ctx.assets.add_material(mat);
+        let geo_handle = engine.assets.add_geometry(geometry);
+        let mat_handle = engine.assets.add_material(mat);
 
         // 云层材质
         let mut cloud_material = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
@@ -67,14 +71,14 @@ impl AppHandler for Earth {
             phong.set_depth_write(false);
             phong.set_side(three::Side::Front);
         }
-        let cloud_material_handle = ctx.assets.add_material(cloud_material);
+        let cloud_material_handle = engine.assets.add_material(cloud_material);
 
         // 2. 创建 Mesh 并加入场景
         let mesh = three::resources::Mesh::new(geo_handle, mat_handle);
         let cloud_mesh = three::resources::Mesh::new(geo_handle, cloud_material_handle);
 
-        ctx.scenes.create_active();
-        let scene = ctx.scenes.active_scene_mut().unwrap();
+        engine.scene_manager.create_active();
+        let scene = engine.scene_manager.active_scene_mut().unwrap();
 
         let earth_node_id = scene.add_mesh(mesh);
         if let Some(earth) = scene.get_node_mut(earth_node_id) {
@@ -116,14 +120,14 @@ impl AppHandler for Earth {
         }
     }
 
-    fn update(&mut self, ctx: &mut AppContext) {
+    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
 
-        let Some(scene) = ctx.scenes.active_scene_mut() else{
+        let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
         
-        let rot = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.001 * 60.0 * ctx.dt, 0.0);
-        let rot_clouds = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.00125 * 60.0 * ctx.dt, 0.0);
+        let rot = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.001 * 60.0 * frame.dt, 0.0);
+        let rot_clouds = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.00125 * 60.0 * frame.dt, 0.0);
 
         // 地球自转
         if let Some(node) = scene.get_node_mut(self.earth_node_id) {
@@ -137,13 +141,17 @@ impl AppHandler for Earth {
 
         // 轨道控制器
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
+            self.controls.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);
         }
 
         // FPS 显示
         if let Some(fps) = self.fps_counter.update() {
-            ctx.window.set_title(&format!("Earth | FPS: {:.2}", fps));
+            window.set_title(&format!("Earth | FPS: {:.2}", fps));
         }
+    }
+    
+    fn extra_render_nodes(&self) -> Vec<&dyn three::renderer::graph::RenderNode> {
+        Vec::new()
     }
 }
 

@@ -1,12 +1,16 @@
+use std::sync::Arc;
+
 use glam::{Affine3A, Quat, Vec3, Vec2, Vec4};
-use three::app::{App, AppContext, AppHandler};
+use three::app::winit::{App, AppHandler};
+use three::engine::FrameState;
 use three::resources::{Attribute, Geometry, Material, Mesh};
 use three::scene::skeleton::{BindMode, Skeleton};
 use three::scene::{Camera, NodeHandle, light};
 use three::utils::fps_counter::FpsCounter;
-use three::OrbitControls;
+use three::{OrbitControls, ThreeEngine};
 use three::renderer::settings::RenderSettings;
 use wgpu::VertexFormat;
+use winit::window::Window;
 
 /// 骨骼蒙皮示例
 /// 
@@ -18,7 +22,7 @@ struct SkinDemo {
 }
 
 impl AppHandler for SkinDemo {
-    fn init(ctx: &mut AppContext) -> Self {
+    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // 1. 创建几何体 (简单的矩形模拟手臂)
         let positions = vec![
             Vec3::new(-0.5, 0.0, 0.0), Vec3::new(0.5, 0.0, 0.0), // 底部
@@ -54,10 +58,10 @@ impl AppHandler for SkinDemo {
         geometry.set_attribute("normal", Attribute::new_planar(&vec![Vec3::Y; 4], VertexFormat::Float32x3)); 
         geometry.set_attribute("uv", Attribute::new_planar(&vec![Vec2::ZERO; 4], VertexFormat::Float32x2));
 
-        let geo_handle = ctx.assets.add_geometry(geometry);
-        let mat_handle = ctx.assets.add_material(Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0)));
+        let geo_handle = engine.assets.add_geometry(geometry);
+        let mat_handle = engine.assets.add_material(Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0)));
 
-        let scene = ctx.scenes.create_active();
+        let scene = engine.scene_manager.create_active();
 
         // 2. 创建骨骼节点结构 (Root -> Bone1)
         let root_id = scene.create_node_with_name("Bone_Root");
@@ -111,25 +115,25 @@ impl AppHandler for SkinDemo {
         }
     }
 
-    fn update(&mut self, ctx: &mut AppContext) {
+    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
 
-        let Some(scene) = ctx.scenes.active_scene_mut() else{
+        let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
         // 摆动骨骼
         if let Some(node) = scene.get_node_mut(self.bone1_id) {
-            let angle = ctx.time.sin() * 1.0;
+            let angle = frame.time.sin() * 1.0;
             node.transform.rotation = Quat::from_rotation_z(angle);
         }
 
         // 轨道控制器
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
+            self.controls.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);
         }
 
         // FPS 显示
         if let Some(fps) = self.fps_counter.update() {
-            ctx.window.set_title(&format!("Skin Demo | FPS: {:.2}", fps));
+            window.set_title(&format!("Skin Demo | FPS: {:.2}", fps));
         }
     }
 }

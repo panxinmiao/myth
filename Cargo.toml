@@ -8,7 +8,7 @@ crate-type = ["rlib"]
 
 [dependencies]
 # 窗口管理
-winit = "0.30"
+winit = { version = "0.30", optional = true }
 wgpu = "28.0.0"
 raw-window-handle = "0.6"
 
@@ -46,8 +46,8 @@ smallvec = "1.15"
 half = "2.4"
 
 [features]
-default = []
-debug_shader = []
+default = ["winit"]      # 默认开启，方便普通用户
+winit = ["dep:winit"]    # 只有开启此 feature 才引入 winit 依赖
 
 # 开发依赖 (用于 examples)
 [dev-dependencies]

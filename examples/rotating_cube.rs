@@ -1,7 +1,12 @@
+use std::sync::Arc;
+
 use glam::{Vec3, Vec4, Quat};
-use three::app::{App, AppContext, AppHandler};
+use three::ThreeEngine;
+use three::app::winit::{App, AppHandler};
+use three::engine::FrameState;
 use three::resources::{Geometry, Material, Mesh};
 use three::scene::{Camera, NodeHandle};
+use winit::window::Window;
 
 /// 旋转立方体示例
 /// 
@@ -11,17 +16,17 @@ struct RotatingCube {
 }
 
 impl AppHandler for RotatingCube {
-    fn init(ctx: &mut AppContext) -> Self {
+    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // 1. 创建并添加几何体和材质到资产服务器
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
-        let geo_handle = ctx.assets.add_geometry(geometry);
+        let geo_handle = engine.assets.add_geometry(geometry);
 
         let material = Material::new_basic(Vec4::new(0.8, 0.3, 0.3, 1.0));
-        let mat_handle = ctx.assets.add_material(material);
+        let mat_handle = engine.assets.add_material(material);
 
         // 2. 创建 Mesh 并添加到场景
         let mesh = Mesh::new(geo_handle, mat_handle);
-        let scene = ctx.scenes.create_active();
+        let scene = engine.scene_manager.create_active();
         let cube_node_id = scene.add_mesh(mesh);
 
         // 3. 设置相机
@@ -38,14 +43,14 @@ impl AppHandler for RotatingCube {
         Self { cube_node_id }
     }
 
-    fn update(&mut self, ctx: &mut AppContext) {
-        let Some(scene) = ctx.scenes.active_scene_mut() else{
+    fn update(&mut self, engine: &mut ThreeEngine, _window: &Arc<Window>, frame: &FrameState) {
+        let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
         // 让立方体旋转
         if let Some(cube_node) = scene.get_node_mut(self.cube_node_id) {
-            let rotation_y = Quat::from_rotation_y(ctx.time * 0.5);
-            let rotation_x = Quat::from_rotation_x(ctx.time * 0.3);
+            let rotation_y = Quat::from_rotation_y(frame.time * 0.5);
+            let rotation_x = Quat::from_rotation_x(frame.time * 0.3);
             cube_node.transform.rotation = rotation_y * rotation_x;
         }
     }

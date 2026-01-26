@@ -23,7 +23,7 @@ use std::path::PathBuf;
 use glam::Vec3;
 
 use three::resources::Input;
-use three::app::input_adapter;
+use three::app::winit::input_adapter;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};

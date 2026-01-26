@@ -1,10 +1,14 @@
+use std::sync::Arc;
+
 use glam::{Vec3, Vec4, Quat};
-use three::app::{App, AppContext, AppHandler};
+use three::app::winit::{App, AppHandler};
+use three::engine::FrameState;
 use three::resources::{Geometry, MeshStandardMaterial, Mesh, Texture};
 use three::scene::{Camera, NodeHandle, light};
 use three::utils::fps_counter::FpsCounter;
-use three::OrbitControls;
+use three::{OrbitControls, ThreeEngine};
 use three::renderer::settings::RenderSettings;
+use winit::window::Window;
 
 /// PBR 材质立方体示例
 struct PbrBox {
@@ -14,7 +18,7 @@ struct PbrBox {
 }
 
 impl AppHandler for PbrBox {
-    fn init(ctx: &mut AppContext) -> Self {
+    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // 1. 准备资源
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
@@ -22,14 +26,14 @@ impl AppHandler for PbrBox {
         // 创建具体材质类型，便于访问类型特定的方法
         let mut standard_mat = MeshStandardMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
-        let tex_handle = ctx.assets.add_texture(texture);
+        let tex_handle = engine.assets.add_texture(texture);
         standard_mat.set_map(Some(tex_handle));
         
-        let geo_handle = ctx.assets.add_geometry(geometry);
+        let geo_handle = engine.assets.add_geometry(geometry);
         // 在最后需要时才转换为通用 Material 类型
-        let mat_handle = ctx.assets.add_material(standard_mat);
+        let mat_handle = engine.assets.add_material(standard_mat);
 
-        let scene =ctx.scenes.create_active();
+        let scene = engine.scene_manager.create_active();
         //let scene = ctx.scenes.active_scene_mut().unwrap();
 
         // 2. 创建 Mesh 并加入场景
@@ -40,7 +44,7 @@ impl AppHandler for PbrBox {
         scene.add_light(light);
 
         // 4. 加载环境贴图
-        let env_texture_handle = ctx.assets.load_cube_texture_from_files(
+        let env_texture_handle = engine.assets.load_cube_texture_from_files(
             [
                 "examples/assets/Park2/posx.jpg",
                 "examples/assets/Park2/negx.jpg",
@@ -52,7 +56,7 @@ impl AppHandler for PbrBox {
             three::ColorSpace::Srgb
         ).expect("Failed to load environment map");
 
-        let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
+        let env_texture = engine.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
         scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
@@ -74,25 +78,25 @@ impl AppHandler for PbrBox {
         }
     }
 
-    fn update(&mut self, ctx: &mut AppContext) {
-        let Some(scene) = ctx.scenes.active_scene_mut() else{
+    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+        let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
         // 旋转立方体
         if let Some(node) = scene.get_node_mut(self.cube_node_id) {
-            let rot_y = Quat::from_rotation_y(0.02 * 60.0 * ctx.dt);
-            let rot_x = Quat::from_rotation_x(0.01 * 60.0 * ctx.dt);
+            let rot_y = Quat::from_rotation_y(0.02 * 60.0 * frame.dt);
+            let rot_x = Quat::from_rotation_x(0.01 * 60.0 * frame.dt);
             node.transform.rotation = node.transform.rotation * rot_y * rot_x;
         }
 
         // 轨道控制器
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, ctx.input, camera.fov.to_degrees(), ctx.dt);
+            self.controls.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);
         }
 
         // FPS 显示
         if let Some(fps) = self.fps_counter.update() {
-            ctx.window.set_title(&format!("Box PBR | FPS: {:.2}", fps));
+            window.set_title(&format!("Box PBR | FPS: {:.2}", fps));
         }
     }
 }

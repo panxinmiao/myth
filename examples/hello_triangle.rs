@@ -1,7 +1,11 @@
+use std::sync::Arc;
+
 use glam::{Vec3, Vec4};
-use three::app::{App, AppContext, AppHandler};
+use three::ThreeEngine;
+use three::app::winit::{App, AppHandler};
 use three::resources::{Geometry, Attribute, Material, Mesh, Texture};
 use three::scene::Camera;
+use winit::window::Window;
 
 /// Hello Triangle 示例
 /// 
@@ -9,7 +13,7 @@ use three::scene::Camera;
 struct HelloTriangle;
 
 impl AppHandler for HelloTriangle {
-    fn init(ctx: &mut AppContext) -> Self {
+    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // 1. 构建三角形几何体
         let mut geometry = Geometry::new();
         geometry.set_attribute("position", Attribute::new_planar(&[
@@ -29,18 +33,17 @@ impl AppHandler for HelloTriangle {
         let mut basic_mat = Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0));
         
         // 3. 添加到 AssetServer
-        let tex_handle = ctx.assets.add_texture(texture);
+        let tex_handle = engine.assets.add_texture(texture);
 
         if let Some(basic) = basic_mat.as_basic_mut() {
             basic.set_map(Some(tex_handle));
         }
 
-        let geo_handle = ctx.assets.add_geometry(geometry);
-        let mat_handle = ctx.assets.add_material(basic_mat);
+        let geo_handle = engine.assets.add_geometry(geometry);
+        let mat_handle = engine.assets.add_material(basic_mat);
 
-        ctx.scenes.create_active();
-        let scene = ctx.scenes.active_scene_mut().unwrap();
-
+        engine.scene_manager.create_active();
+        let scene = engine.scene_manager.active_scene_mut().unwrap();
         // 4. 创建 Mesh 并加入场景
         let mesh = Mesh::new(geo_handle, mat_handle);
         scene.add_mesh(mesh);

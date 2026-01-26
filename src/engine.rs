@@ -5,12 +5,12 @@
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
-use crate::app::SceneManager;
 use crate::assets::AssetServer;
 use crate::renderer::graph::RenderNode;
 use crate::renderer::settings::RenderSettings;
 use crate::renderer::Renderer;
 use crate::resources::input::Input;
+use crate::scene::manager::SceneManager;
 
 /// 纯粹的引擎实例，不包含窗口管理逻辑
 pub struct ThreeEngine {
@@ -119,4 +119,13 @@ impl Default for ThreeEngine {
     fn default() -> Self {
         Self::new(RenderSettings::default())
     }
+}
+
+
+
+#[derive(Debug, Clone, Copy)]
+pub struct FrameState {
+    pub time: f32,       // 游戏运行总时长
+    pub dt: f32,         // 上一帧的间隔
+    pub frame_count: u64,
 }

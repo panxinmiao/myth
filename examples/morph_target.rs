@@ -1,13 +1,15 @@
 use std::sync::Arc;
 use glam::Vec3;
-use three::app::{App, AppContext, AppHandler};
+use three::app::winit::{App, AppHandler};
+use three::engine::FrameState;
 use three::scene::{Camera, NodeHandle, light};
-use three::OrbitControls;
+use three::{OrbitControls, ThreeEngine};
 use three::utils::fps_counter::FpsCounter;
 use three::assets::GltfLoader;
 use three::{AnimationMixer, AnimationAction, Binder};
 use three::animation::binding::TargetPath;
 use three::renderer::settings::RenderSettings;
+use winit::window::Window;
 
 /// Morph Target (变形目标) 动画示例
 struct MorphTargetDemo {
@@ -18,14 +20,14 @@ struct MorphTargetDemo {
 }
 
 impl AppHandler for MorphTargetDemo {
-    fn init(ctx: &mut AppContext) -> Self {
-        let scene = ctx.scenes.create_active();
+    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
+        let scene = engine.scene_manager.create_active();
         // 1. 添加灯光和环境
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 2.0);
         scene.add_light(light);
         scene.environment.set_ambient_color(Vec3::splat(0.3));
         // 加载环境贴图
-        let env_texture_handle = ctx.assets.load_cube_texture_from_files(
+        let env_texture_handle = engine.assets.load_cube_texture_from_files(
             [
                 "examples/assets/Park2/posx.jpg",
                 "examples/assets/Park2/negx.jpg",
@@ -37,7 +39,7 @@ impl AppHandler for MorphTargetDemo {
             three::ColorSpace::Srgb
         ).expect("Failed to load environment map");
 
-        let env_texture = ctx.assets.get_texture_mut(env_texture_handle).unwrap();
+        let env_texture = engine.assets.get_texture_mut(env_texture_handle).unwrap();
         env_texture.generate_mipmaps = true;
         scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
@@ -47,7 +49,7 @@ impl AppHandler for MorphTargetDemo {
         
         let (loaded_nodes, animations) = GltfLoader::load(
             gltf_path,
-            ctx.assets,
+            &mut engine.assets,
             scene
         ).expect("Failed to load glTF model");
 
@@ -69,7 +71,7 @@ impl AppHandler for MorphTargetDemo {
 
         // 输出 Mesh Morph Target 信息
         for (node_handle, mesh) in scene.meshes.iter() {
-            if let Some(geometry) = ctx.assets.get_geometry(mesh.geometry) {
+            if let Some(geometry) = engine.assets.get_geometry(mesh.geometry) {
                 if geometry.has_morph_targets() {
                     println!("Node {:?} has mesh with {} morph targets, {} vertices per target",
                         node_handle,
@@ -114,21 +116,20 @@ impl AppHandler for MorphTargetDemo {
         }
     }
 
-    fn update(&mut self, ctx: &mut AppContext) {
-        let Some(scene) = ctx.scenes.active_scene_mut() else{
+    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+        let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
         // 更新动画
-        self.mixer.update(ctx.dt, scene);
-
+        self.mixer.update(frame.dt, scene);
         // 轨道控制器
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
-            self.controls.update(&mut cam_node.transform, ctx.input, 45.0, ctx.dt);
+            self.controls.update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
         }
 
         // FPS 显示
         if let Some(fps) = self.fps_counter.update() {
-            ctx.window.set_title(&format!("Morph Target Demo - FPS: {:.1}", fps));
+            window.set_title(&format!("Morph Target Demo - FPS: {:.1}", fps));
         }
     }
 }
