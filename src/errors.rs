@@ -9,7 +9,7 @@ pub enum ThreeError {
     DeviceCreateFailed(#[from] wgpu::RequestDeviceError),
 
     #[error("Window system error: {0}")]
-    WindowError(#[from] winit::error::OsError),
+    WindowError(#[from] raw_window_handle::HandleError),
 
     #[error("Asset not found: {0}")]
     AssetNotFound(String),

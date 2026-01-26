@@ -23,6 +23,7 @@ use std::path::PathBuf;
 use glam::Vec3;
 
 use three::resources::Input;
+use three::app::input_adapter;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -204,7 +205,7 @@ impl GltfViewer {
         };
         window.set_title(&title);
 
-        self.input.end_frame();
+        self.input.start_frame();
         self.scene.update(&self.input, dt);
     }
 
@@ -442,7 +443,7 @@ impl ApplicationHandler for GltfViewer {
                     ui_pass.resize(physical_size.width, physical_size.height, scale_factor);
                 }
 
-                self.input.handle_resize(physical_size.width, physical_size.height);
+                self.input.inject_resize(physical_size.width, physical_size.height);
 
                 if physical_size.height > 0 {
                     let new_aspect = physical_size.width as f32 / physical_size.height as f32;
@@ -466,8 +467,8 @@ impl ApplicationHandler for GltfViewer {
                 }
             }
             _ => {
-                // 让 Input 统一处理鼠标和键盘事件
-                self.input.process_event(&event);
+                // 使用 input_adapter 将 winit 事件翻译到引擎 Input
+                input_adapter::process_window_event(&mut self.input, &event);
             }
         }
     }

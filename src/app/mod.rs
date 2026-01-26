@@ -7,6 +7,8 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
+pub mod input_adapter;
+
 use crate::assets::AssetServer;
 use crate::engine::ThreeEngine;
 use crate::renderer::graph::RenderNode;
@@ -225,6 +227,8 @@ impl<H: AppHandler> AppRunner<H> {
             return;
         };
 
+        // 帧开始：清理瞬时状态
+        engine.input.start_frame();
         engine.frame_count += 1;
 
         let mut ctx = AppContext {
@@ -246,8 +250,6 @@ impl<H: AppHandler> AppRunner<H> {
         if let Some(scene) = engine.scene_manager.active_scene_mut() {
             scene.update(&engine.input, dt);
         }
-
-        engine.input.end_frame();
     }
 
     fn render_frame(&mut self) {
@@ -353,7 +355,8 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         };
 
         if !consumed {
-            engine.input.process_event(&event);
+            // 使用 adapter 将 winit 事件翻译为引擎 Input
+            input_adapter::process_window_event(&mut engine.input, &event);
 
             match event {
                 WindowEvent::CloseRequested => event_loop.exit(),

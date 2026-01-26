@@ -1,6 +1,6 @@
-use glam::{Vec3};
-use winit::event::MouseButton;
-use crate::{resources::Input, scene::transform::Transform};
+use glam::Vec3;
+use crate::resources::input::{Input, MouseButton};
+use crate::scene::transform::Transform;
 
 #[derive(Clone, Copy, Debug)]
 struct Spherical {
@@ -94,68 +94,62 @@ impl OrbitControls {
     }
 
     pub fn update(&mut self, transform: &mut Transform, input: &Input, fov_degrees: f32, dt: f32) {
-        let screen_height = input.screen_size.y.max(1.0);
+        let screen_height = input.screen_size().y.max(1.0);
 
-        // ============================
-        // 1. 输入处理
-        // ============================
-
-        // --- 旋转 (保持惯性模型) ---
-        if self.enable_rotate && input.is_mouse_pressed(MouseButton::Left) {
-            let rotate_angle_x = 2.0 * std::f32::consts::PI * input.cursor_delta.x / screen_height;
-            let rotate_angle_y = 2.0 * std::f32::consts::PI * input.cursor_delta.y / screen_height;
+        // 旋转
+        if self.enable_rotate && input.get_mouse_button(MouseButton::Left) {
+            let mouse_delta = input.mouse_delta();
+            let rotate_angle_x = 2.0 * std::f32::consts::PI * mouse_delta.x / screen_height;
+            let rotate_angle_y = 2.0 * std::f32::consts::PI * mouse_delta.y / screen_height;
 
             self.spherical_delta.theta -= rotate_angle_x * self.rotate_speed;
             self.spherical_delta.phi -= rotate_angle_y * self.rotate_speed;
         }
 
-        if self.enable_zoom && input.scroll_delta.y != 0.0 {
+        // 缩放
+        let scroll = input.scroll_delta();
+        if self.enable_zoom && scroll.y != 0.0 {
             let zoom_scale = 0.95f32.powf(self.zoom_speed);
-            
-            // [核心修改] 这里只修改 target_radius，不修改当前的 spherical.radius
-            if input.scroll_delta.y > 0.0 {
+
+            if scroll.y > 0.0 {
                 self.target_radius *= zoom_scale;
             } else {
                 self.target_radius /= zoom_scale;
             }
-            
+
             self.target_radius = self.target_radius.clamp(self.min_distance, self.max_distance);
         }
 
-        if self.enable_pan && input.is_mouse_pressed(MouseButton::Right) {
+        // 平移
+        if self.enable_pan && input.get_mouse_button(MouseButton::Right) {
+            let mouse_delta = input.mouse_delta();
             let position = transform.position;
             let offset_dir = position - self.target;
             let target_distance = offset_dir.length();
             let target_world_height = 2.0 * target_distance * (fov_degrees.to_radians() * 0.5).tan();
-            
-            let pan_x = -input.cursor_delta.x * (target_world_height / screen_height) * self.pan_speed;
-            let pan_y = input.cursor_delta.y * (target_world_height / screen_height) * self.pan_speed;
+
+            let pan_x = -mouse_delta.x * (target_world_height / screen_height) * self.pan_speed;
+            let pan_y = mouse_delta.y * (target_world_height / screen_height) * self.pan_speed;
 
             let (right, up, _) = transform.rotation_basis();
             self.pan_offset += right * pan_x + up * pan_y;
         }
 
-        // ============================
-        // 2. 状态更新
-        // ============================
-
         let time_scale = dt * 60.0;
 
-        // 应用平移 (立即生效)
+        // 应用平移
         self.target += self.pan_offset;
-        self.pan_offset = Vec3::ZERO; // 清零，无惯性
+        self.pan_offset = Vec3::ZERO;
 
-        // 应用旋转 (惯性累积)
+        // 应用旋转
         self.spherical.theta += self.spherical_delta.theta * time_scale;
         self.spherical.phi += self.spherical_delta.phi * time_scale;
         self.spherical.phi = self.spherical.phi.clamp(self.min_polar_angle, self.max_polar_angle);
         self.spherical.make_safe();
 
-        // 应用缩放 (插值平滑)
+        // 应用缩放
         if self.enable_damping {
-            // 使用 lerp 平滑逼近目标半径
             let lerp_factor = 1.0 - (1.0 - self.zoom_damping_factor).powf(time_scale);
-            
             self.spherical.radius += (self.target_radius - self.spherical.radius) * lerp_factor;
         } else {
             self.spherical.radius = self.target_radius;
@@ -163,9 +157,7 @@ impl OrbitControls {
 
         self.spherical.radius = self.spherical.radius.clamp(self.min_distance, self.max_distance);
 
-        // ============================
-        // 3. 计算 Transform
-        // ============================
+        // 计算 Transform
         let sin_phi_radius = self.spherical.phi.sin() * self.spherical.radius;
         let offset = Vec3::new(
             sin_phi_radius * self.spherical.theta.sin(),
@@ -176,9 +168,7 @@ impl OrbitControls {
         transform.position = self.target + offset;
         transform.look_at(self.target, Vec3::Y);
 
-        // ============================
-        // 4. 旋转阻尼衰减
-        // ============================
+        // 旋转阻尼衰减
         if self.enable_damping {
             let damping = (1.0 - self.damping_factor).powf(time_scale);
             self.spherical_delta.theta *= damping;

@@ -60,12 +60,15 @@ impl ThreeEngine {
     pub fn resize(&mut self, width: u32, height: u32, scale_factor: f32) {
         if width > 0 && height > 0 {
             self.renderer.resize(width, height, scale_factor);
-            self.input.handle_resize(width, height);
+            self.input.inject_resize(width, height);
             self.update_camera_aspect(width as f32 / height as f32);
         }
     }
 
     /// 更新引擎状态（每帧调用一次）
+    ///
+    /// 注意：如果使用 App adapter，帧开始的 `input.start_frame()` 由 adapter 调用。
+    /// 如果直接驱动引擎，需要在 update 前手动调用 `input.start_frame()`。
     pub fn update(&mut self, dt: f32) {
         self.dt = dt;
         self.time += dt;
@@ -74,8 +77,6 @@ impl ThreeEngine {
         if let Some(scene) = self.scene_manager.active_scene_mut() {
             scene.update(&self.input, dt);
         }
-
-        self.input.end_frame();
     }
 
     /// 渲染当前帧

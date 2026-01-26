@@ -1,125 +1,232 @@
-use std::collections::HashSet;
+﻿//! 平台无关的输入系统
+//!
+//! 定义了不依赖任何 GUI 库的输入类型和状态容器。
+//! 具体的平台适配器（如 Winit Adapter）负责将平台事件翻译为这些类型。
+
 use glam::Vec2;
-use winit::event::{ElementState, MouseButton, MouseScrollDelta, WindowEvent, KeyEvent};
-use winit::keyboard::{KeyCode, PhysicalKey};
+use std::collections::HashSet;
 
-#[derive(Default, Debug, Clone)]
+/// 键盘按键枚举（平台无关）
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum Key {
+    // 字母键
+    A, B, C, D, E, F, G, H, I, J, K, L, M,
+    N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+
+    // 数字键
+    Key0, Key1, Key2, Key3, Key4, Key5, Key6, Key7, Key8, Key9,
+
+    // 功能键
+    F1, F2, F3, F4, F5, F6, F7, F8, F9, F10, F11, F12,
+
+    // 控制键
+    Space, Enter, Escape, Backspace, Tab, Delete, Insert,
+    Home, End, PageUp, PageDown,
+
+    // 修饰键
+    ShiftLeft, ShiftRight, ControlLeft, ControlRight,
+    AltLeft, AltRight, SuperLeft, SuperRight,
+
+    // 方向键
+    ArrowUp, ArrowDown, ArrowLeft, ArrowRight,
+
+    // 标点符号
+    Comma, Period, Slash, Backslash,
+    Semicolon, Quote, BracketLeft, BracketRight,
+    Minus, Equal, Grave,
+
+    // 小键盘
+    Numpad0, Numpad1, Numpad2, Numpad3, Numpad4,
+    Numpad5, Numpad6, Numpad7, Numpad8, Numpad9,
+    NumpadAdd, NumpadSubtract, NumpadMultiply, NumpadDivide,
+    NumpadDecimal, NumpadEnter,
+}
+
+/// 鼠标按键枚举
+#[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
+pub enum MouseButton {
+    Left,
+    Right,
+    Middle,
+    Back,
+    Forward,
+    Other(u16),
+}
+
+/// 按键状态
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum ButtonState {
+    Pressed,
+    Released,
+}
+
+/// 平台无关的输入状态容器
+#[derive(Debug, Clone)]
 pub struct Input {
-    // === 鼠标状态 ===
-    /// 当前鼠标在窗口内的位置
-    pub cursor_position: Vec2,
-    /// 上一帧到这一帧的鼠标位移 (dx, dy)
-    pub cursor_delta: Vec2,
-    /// 这一帧的滚轮滚动量 (x, y)
-    pub scroll_delta: Vec2,
-    /// 当前按下的鼠标按键集合
-    pub mouse_buttons: HashSet<MouseButton>,
+    // 键盘状态
+    pressed_keys: HashSet<Key>,
+    just_pressed_keys: HashSet<Key>,
+    just_released_keys: HashSet<Key>,
 
-    // === 键盘状态 ===
-    /// 当前按下的键盘按键集合 (使用物理按键 Code，适应不同布局)
-    pub keys_pressed: HashSet<KeyCode>,
+    // 鼠标按键状态
+    pressed_mouse: HashSet<MouseButton>,
+    just_pressed_mouse: HashSet<MouseButton>,
+    just_released_mouse: HashSet<MouseButton>,
 
-    // === 窗口状态 ===
-    /// 窗口大小
-    pub screen_size: Vec2,
+    // 鼠标位置和移动
+    mouse_position: Vec2,
+    mouse_delta: Vec2,
+    scroll_delta: Vec2,
+
+    // 窗口状态
+    screen_size: Vec2,
 }
 
 impl Input {
+    #[must_use]
     pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// 核心方法：统一处理所有窗口事件
-    /// 这让 App 的主循环非常干净
-    pub fn process_event(&mut self, event: &WindowEvent) {
-        match event {
-            // 1. 鼠标移动
-            WindowEvent::CursorMoved { position, .. } => {
-                let new_pos = Vec2::new(position.x as f32, position.y as f32);
-                
-                // 如果不是第一帧（防止初始化时的跳变），计算位移
-                // 注意：这里简单的判断 != ZERO 还是有点隐患，但在渲染循环稳定后没问题
-                if self.cursor_position != Vec2::ZERO {
-                    self.cursor_delta += new_pos - self.cursor_position;
-                }
-                self.cursor_position = new_pos;
-            }
-
-            // 2. 鼠标按键
-            WindowEvent::MouseInput { state, button, .. } => {
-                match state {
-                    ElementState::Pressed => {
-                        self.mouse_buttons.insert(*button);
-                    }
-                    ElementState::Released => {
-                        self.mouse_buttons.remove(button);
-                    }
-                }
-            }
-
-            // 3. 鼠标滚轮
-            WindowEvent::MouseWheel { delta, .. } => {
-                match delta {
-                    MouseScrollDelta::LineDelta(x, y) => {
-                        self.scroll_delta += Vec2::new(*x, *y);
-                    }
-                    MouseScrollDelta::PixelDelta(pos) => {
-                        // 简单的缩放转换，通常 PixelDelta 值较大，这里给一个经验系数
-                        const PIXEL_SCALE: f32 = 0.01; 
-                        self.scroll_delta += Vec2::new(pos.x as f32, pos.y as f32) * PIXEL_SCALE;
-                    }
-                }
-            }
-
-            // 4. 键盘输入
-            WindowEvent::KeyboardInput { event: key_event, .. } => {
-                self.handle_keyboard(key_event);
-            }
-
-            // 5. 窗口大小改变
-            WindowEvent::Resized(size) => {
-                self.screen_size = Vec2::new(size.width as f32, size.height as f32);
-            }
-
-            _ => {}
+        Self {
+            pressed_keys: HashSet::new(),
+            just_pressed_keys: HashSet::new(),
+            just_released_keys: HashSet::new(),
+            pressed_mouse: HashSet::new(),
+            just_pressed_mouse: HashSet::new(),
+            just_released_mouse: HashSet::new(),
+            mouse_position: Vec2::ZERO,
+            mouse_delta: Vec2::ZERO,
+            scroll_delta: Vec2::ZERO,
+            screen_size: Vec2::ZERO,
         }
     }
 
-    /// 帧末清理
-    /// 必须在每一帧逻辑更新结束后调用，清除“瞬时”状态（Delta）
-    pub fn end_frame(&mut self) {
-        self.cursor_delta = Vec2::ZERO;
+    // ========== System API (供 Engine/Adapter 调用) ==========
+
+    /// 帧开始时清理瞬时状态（JustPressed/JustReleased/Delta）
+    pub fn start_frame(&mut self) {
+        self.just_pressed_keys.clear();
+        self.just_released_keys.clear();
+        self.just_pressed_mouse.clear();
+        self.just_released_mouse.clear();
+        self.mouse_delta = Vec2::ZERO;
         self.scroll_delta = Vec2::ZERO;
     }
 
-    /// 手动处理 Resize (如果 App 在事件之外需要调用)
-    pub fn handle_resize(&mut self, width: u32, height: u32) {
-        self.screen_size = Vec2::new(width as f32, height as f32);
-    }
-
-    // === 内部辅助 ===
-
-    fn handle_keyboard(&mut self, event: &KeyEvent) {
-        // 我们只关心物理按键 (PhysicalKey)，这样 WASD 在不同键盘布局下位置一致
-        if let PhysicalKey::Code(code) = event.physical_key {
-            match event.state {
-                ElementState::Pressed => {
-                    self.keys_pressed.insert(code);
+    /// 注入键盘事件
+    pub fn inject_key(&mut self, key: Key, state: ButtonState) {
+        match state {
+            ButtonState::Pressed => {
+                if self.pressed_keys.insert(key) {
+                    self.just_pressed_keys.insert(key);
                 }
-                ElementState::Released => {
-                    self.keys_pressed.remove(&code);
+            }
+            ButtonState::Released => {
+                if self.pressed_keys.remove(&key) {
+                    self.just_released_keys.insert(key);
                 }
             }
         }
     }
 
-    // === 用户查询接口 ===
-
-    pub fn is_mouse_pressed(&self, button: MouseButton) -> bool {
-        self.mouse_buttons.contains(&button)
+    /// 注入鼠标按键事件
+    pub fn inject_mouse_button(&mut self, button: MouseButton, state: ButtonState) {
+        match state {
+            ButtonState::Pressed => {
+                if self.pressed_mouse.insert(button) {
+                    self.just_pressed_mouse.insert(button);
+                }
+            }
+            ButtonState::Released => {
+                if self.pressed_mouse.remove(&button) {
+                    self.just_released_mouse.insert(button);
+                }
+            }
+        }
     }
 
-    pub fn is_key_pressed(&self, code: KeyCode) -> bool {
-        self.keys_pressed.contains(&code)
+    /// 注入鼠标位置
+    pub fn inject_mouse_position(&mut self, x: f32, y: f32) {
+        let new_pos = Vec2::new(x, y);
+        if self.mouse_position != Vec2::ZERO {
+            self.mouse_delta += new_pos - self.mouse_position;
+        }
+        self.mouse_position = new_pos;
+    }
+
+    /// 注入滚轮滚动
+    pub fn inject_scroll(&mut self, delta_x: f32, delta_y: f32) {
+        self.scroll_delta += Vec2::new(delta_x, delta_y);
+    }
+
+    /// 注入窗口尺寸变化
+    pub fn inject_resize(&mut self, width: u32, height: u32) {
+        self.screen_size = Vec2::new(width as f32, height as f32);
+    }
+
+    // ========== User API (供游戏/场景逻辑查询) ==========
+
+    /// 检查按键是否正在按下
+    #[must_use]
+    pub fn get_key(&self, key: Key) -> bool {
+        self.pressed_keys.contains(&key)
+    }
+
+    /// 检查按键是否在这一帧刚按下
+    #[must_use]
+    pub fn get_key_down(&self, key: Key) -> bool {
+        self.just_pressed_keys.contains(&key)
+    }
+
+    /// 检查按键是否在这一帧刚释放
+    #[must_use]
+    pub fn get_key_up(&self, key: Key) -> bool {
+        self.just_released_keys.contains(&key)
+    }
+
+    /// 检查鼠标按键是否正在按下
+    #[must_use]
+    pub fn get_mouse_button(&self, button: MouseButton) -> bool {
+        self.pressed_mouse.contains(&button)
+    }
+
+    /// 检查鼠标按键是否在这一帧刚按下
+    #[must_use]
+    pub fn get_mouse_button_down(&self, button: MouseButton) -> bool {
+        self.just_pressed_mouse.contains(&button)
+    }
+
+    /// 检查鼠标按键是否在这一帧刚释放
+    #[must_use]
+    pub fn get_mouse_button_up(&self, button: MouseButton) -> bool {
+        self.just_released_mouse.contains(&button)
+    }
+
+    /// 获取当前鼠标位置
+    #[must_use]
+    pub fn mouse_position(&self) -> Vec2 {
+        self.mouse_position
+    }
+
+    /// 获取这一帧的鼠标移动量
+    #[must_use]
+    pub fn mouse_delta(&self) -> Vec2 {
+        self.mouse_delta
+    }
+
+    /// 获取这一帧的滚轮滚动量
+    #[must_use]
+    pub fn scroll_delta(&self) -> Vec2 {
+        self.scroll_delta
+    }
+
+    /// 获取窗口尺寸
+    #[must_use]
+    pub fn screen_size(&self) -> Vec2 {
+        self.screen_size
+    }
+}
+
+impl Default for Input {
+    fn default() -> Self {
+        Self::new()
     }
 }
