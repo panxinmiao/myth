@@ -65,6 +65,7 @@ impl ThreeEngine {
 
     pub fn update(&mut self, dt: f32) {
         self.time += dt;
+        self.frame_count += 1;
 
         if let Some(scene) = self.scene_manager.active_scene_mut() {
             scene.update(&self.input, dt);
@@ -75,8 +76,6 @@ impl ThreeEngine {
 
     // /// 渲染当前帧
     pub fn render(&mut self, extra_nodes: &[&dyn RenderNode]) {
-
-        self.frame_count += 1;
 
         let Some(scene_handle) = self.scene_manager.active_handle() else {
             return;

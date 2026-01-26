@@ -215,8 +215,11 @@ impl GltfViewer {
                 if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
                     self.animations = mixer.list_animations();
 
+                    // if let Some(action) = mixer.any_action() {
+                    //     action.play();
+                    // }
+
                     if let Some(clip_name) = self.animations.first() {
-                        println!("Auto-playing animation: {}", clip_name);
                         mixer.play(clip_name);
                     }
                 }
@@ -296,10 +299,8 @@ impl GltfViewer {
                                     if ui.selectable_value(&mut self.current_animation, i, clip).changed() {
                                         // 切换动画
                                         if let Some(gltf_node) = self.gltf_node {
-                                            println!("click to animation: {}", clip);
                                             if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
                                                 mixer.stop_all();
-                                                println!("Switching to animation: {}", clip);
                                                 mixer.play(clip);
                                             }
                                         }

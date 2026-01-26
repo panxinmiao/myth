@@ -607,8 +607,10 @@ impl<'a> GltfLoader<'a> {
 
     // 仅创建节点和 Transform，设置名称组件
     fn create_node_shallow(&mut self, node: &gltf::Node) -> anyhow::Result<NodeHandle> {
-        let node_name = node.name().unwrap_or("Node");
-        let handle = self.scene.create_node_with_name(node_name);
+        let node_name = node.name()
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| format!("Node_{}", node.index()));
+        let handle = self.scene.create_node_with_name(node_name.as_str());
 
         // 设置变换
         if let Some(engine_node) = self.scene.get_node_mut(handle) {
@@ -872,8 +874,9 @@ impl<'a> GltfLoader<'a> {
                 let gltf_node = target.node();
                 
                 // 获取节点名称用于绑定
-                let node_name = gltf_node.name().unwrap_or("Node").to_string();
-         
+                let node_name = gltf_node.name().map(|s| s.to_string())
+                    .unwrap_or_else(|| format!("Node_{}", gltf_node.index()));
+                        
                 let times: Vec<f32> = reader.read_inputs().unwrap().collect();
                 
                 let interpolation = match channel.sampler().interpolation() {

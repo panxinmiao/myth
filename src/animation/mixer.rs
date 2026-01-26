@@ -53,15 +53,47 @@ impl AnimationMixer {
         handle
     }
 
-    /// 获取 Action (可变)
-    pub fn get_action_mut(&mut self, handle: ActionHandle) -> Option<&mut AnimationAction> {
-        self.actions.get_mut(handle)
+    /// 只读访问
+    pub fn get_action(&self, name: &str) -> Option<&AnimationAction> {
+        let handle = *self.name_map.get(name)?;
+        self.actions.get(handle)
     }
 
-    /// 通过名称获取 Action (可变)
-    pub fn get_action_by_name_mut(&mut self, name: &str) -> Option<&mut AnimationAction> {
+    /// 只读访问
+    pub fn get_action_by_handle(&self, handle: ActionHandle) -> Option<&AnimationAction> {
+        self.actions.get(handle)
+    }
+
+    // 获取动画控制器
+    pub fn action(&mut self, name: &str) -> Option<ActionControl<'_>> {
         let handle = *self.name_map.get(name)?;
-        self.actions.get_mut(handle)
+        Some(ActionControl {
+            mixer: self,
+            handle,
+        })
+    }
+
+    pub fn any_action(&mut self) -> Option<ActionControl<'_>> {
+        if let Some((handle, _)) = self.actions.iter().next() {
+            Some(ActionControl {
+                mixer: self,
+                handle,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// 如果用户已经有了 Handle
+    pub fn get_control(&mut self, handle: ActionHandle) -> Option<ActionControl<'_>> {
+        if self.actions.contains_key(handle) {
+             Some(ActionControl {
+                mixer: self,
+                handle,
+            })
+        } else {
+            None
+        }
     }
 
     /// 播放指定动画
@@ -170,5 +202,105 @@ impl AnimationMixer {
                 }
             }
         }
+    }
+}
+
+
+
+
+pub struct ActionControl<'a> {
+    mixer: &'a mut AnimationMixer,
+    handle: ActionHandle,
+}
+
+impl<'a> ActionControl<'a> {
+    /// 核心逻辑：播放
+    pub fn play(self) -> Self {
+        // 1. 确保加入激活列表
+        if !self.mixer.active_handles.contains(&self.handle) {
+            self.mixer.active_handles.push(self.handle);
+        }
+        
+        // 2. 修改 Action 自身状态
+        if let Some(action) = self.mixer.actions.get_mut(self.handle) {
+            action.enabled = true;
+            action.paused = false;
+            action.weight = 1.0;
+            action.time = 0.0; // 从头开始播放
+        }
+        self
+    }
+
+    pub fn set_loop_mode(self, mode: crate::animation::action::LoopMode) -> Self {
+        if let Some(action) = self.mixer.actions.get_mut(self.handle) {
+            action.loop_mode = mode;
+        }
+        self
+    }
+
+    pub fn set_time_scale(self, scale: f32) -> Self {
+        if let Some(action) = self.mixer.actions.get_mut(self.handle) {
+            action.time_scale = scale;
+        }
+        self
+    }
+
+    pub fn set_weight(self, weight: f32) -> Self {
+        if let Some(action) = self.mixer.actions.get_mut(self.handle) {
+            action.weight = weight;
+        }
+        self
+    }
+
+    pub fn set_time(self, time: f32) -> Self {
+        if let Some(action) = self.mixer.actions.get_mut(self.handle) {
+            action.time = time;
+        }
+        self
+    }
+
+    pub fn resume(self) -> Self {
+        if let Some(action) = self.mixer.actions.get_mut(self.handle) {
+            action.paused = false;
+        }
+        self
+    }
+
+    pub fn pause(self) -> Self {
+        if let Some(action) = self.mixer.actions.get_mut(self.handle) {
+            action.paused = true;
+        }
+        self
+    }
+
+    /// 核心逻辑：停止
+    pub fn stop(self) {
+         if let Some(action) = self.mixer.actions.get_mut(self.handle) {
+            action.enabled = false;
+            action.weight = 0.0;
+        }
+        // 从激活列表移除（或者留给 update 清理，这里立刻移除比较干净）
+        self.mixer.active_handles.retain(|&h| h != self.handle);
+    }
+    
+    /// 核心逻辑：淡入
+    pub fn fade_in(self, _duration: f32) -> Self {
+        // 实现淡入逻辑...
+        self.play() // 链式调用
+    }
+}
+
+
+impl<'a> std::ops::Deref for ActionControl<'a> {
+    type Target = AnimationAction;
+    fn deref(&self) -> &Self::Target {
+        //由于 handle 必定有效（内部逻辑保证），这里可以用 unwrap 或者安全处理
+        self.mixer.actions.get(self.handle).unwrap()
+    }
+}
+
+impl<'a> std::ops::DerefMut for ActionControl<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.mixer.actions.get_mut(self.handle).unwrap()
     }
 }
