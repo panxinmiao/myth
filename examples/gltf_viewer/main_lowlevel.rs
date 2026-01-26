@@ -401,7 +401,8 @@ impl ApplicationHandler for GltfViewer {
 
         // 初始化 Renderer
         log::info!("Initializing Renderer Backend...");
-        if let Err(e) = pollster::block_on(self.renderer.init(window.clone())) {
+        let size = window.inner_size();
+        if let Err(e) = pollster::block_on(self.renderer.init(window.clone(), size.width, size.height)) {
             log::error!("Fatal Renderer Error: {}", e);
             event_loop.exit();
             return;

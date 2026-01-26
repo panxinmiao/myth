@@ -3,10 +3,9 @@
 //! WgpuContext 只持有 device, queue, surface, config
 //! 负责 Resize 和 Present
 
-use std::sync::Arc;
-use winit::window::Window;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
-use crate::errors::{ThreeError, Result};
+use crate::errors::{Result, ThreeError};
 use crate::renderer::settings::RenderSettings;
 
 /// WGPU 核心上下文
@@ -22,32 +21,44 @@ pub struct WgpuContext {
 }
 
 impl WgpuContext {
-    pub async fn new(window: Arc<Window>, settings: &RenderSettings) -> Result<Self> {
-        let size = window.inner_size();
-
+    pub async fn new<W>(
+        window: W,
+        settings: &RenderSettings,
+        width: u32,
+        height: u32,
+    ) -> Result<Self>
+    where
+        W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static,
+    {
         let instance = wgpu::Instance::default();
-        let surface = instance.create_surface(window.clone())
+        let surface = instance
+            .create_surface(window)
             .map_err(|e| ThreeError::AdapterRequestFailed(e.to_string()))?;
-        
-        let adapter = instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: settings.power_preference,
-            compatible_surface: Some(&surface),
-            force_fallback_adapter: false,
-        }).await
-        .map_err(|e| ThreeError::AdapterRequestFailed(e.to_string()))?;
 
-        let (device, queue) = adapter.request_device(
-            &wgpu::DeviceDescriptor {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: settings.power_preference,
+                compatible_surface: Some(&surface),
+                force_fallback_adapter: false,
+            })
+            .await
+            .map_err(|e| ThreeError::AdapterRequestFailed(e.to_string()))?;
+
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
                 label: None,
                 required_features: settings.required_features,
                 required_limits: settings.required_limits.clone(),
                 memory_hints: wgpu::MemoryHints::Performance,
                 ..Default::default()
-            },
-        ).await?;
+            })
+            .await?;
 
-        let mut config = surface.get_default_config(&adapter, size.width, size.height)
-            .ok_or_else(|| ThreeError::AdapterRequestFailed("Surface not supported by adapter".to_string()))?;
+        let mut config = surface
+            .get_default_config(&adapter, width, height)
+            .ok_or_else(|| {
+                ThreeError::AdapterRequestFailed("Surface not supported by adapter".to_string())
+            })?;
 
         config.present_mode = if settings.vsync {
             wgpu::PresentMode::AutoVsync
@@ -56,7 +67,8 @@ impl WgpuContext {
         };
         surface.configure(&device, &config);
 
-        let depth_texture_view = Self::create_depth_texture(&device, &config, settings.depth_format);
+        let depth_texture_view =
+            Self::create_depth_texture(&device, &config, settings.depth_format);
 
         Ok(Self {
             device,

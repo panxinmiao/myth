@@ -40,7 +40,6 @@ impl AppHandler for SkinningDemo {
         let gltf_path = Path::new(gltf_path_str);
 
         // === 2. 加载环境贴图 (保持不变) ===
-        // 注意：实际项目中建议把 assets 路径也做成可配置的，或者打包在 binary 旁
         let env_texture_handle = ctx.assets.load_cube_texture_from_files(
             [
                 "examples/assets/Park2/posx.jpg",
@@ -106,8 +105,6 @@ impl AppHandler for SkinningDemo {
         }
 
         // === 6. 设置相机 ===
-        // TODO: 真正的 Viewer 通常会根据模型包围盒(AABB)自动计算相机位置
-        // 这里暂时用固定位置
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
         

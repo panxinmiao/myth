@@ -10,25 +10,24 @@ pub mod graph;
 pub mod pipeline;
 pub mod settings;
 
-use std::sync::Arc;
-use winit::window::Window;
+use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
-use crate::scene::Scene;
-use crate::scene::camera::{RenderCamera};
 use crate::assets::AssetServer;
 use crate::errors::Result;
+use crate::scene::Scene;
+use crate::scene::camera::RenderCamera;
 
-use self::core::{WgpuContext, ResourceManager};
+use self::core::{ResourceManager, WgpuContext};
 use self::graph::RenderFrame;
+use self::graph::RenderNode;
 use self::pipeline::PipelineCache;
 use self::settings::RenderSettings;
-use self::graph::RenderNode;
 
 /// 主渲染器
 pub struct Renderer {
     settings: RenderSettings,
     context: Option<RendererState>,
-    _size: winit::dpi::PhysicalSize<u32>,
+    _size: [u32; 2],
 }
 
 /// 渲染器内部状态
@@ -45,25 +44,27 @@ impl Renderer {
         Self {
             settings,
             context: None,
-            _size: winit::dpi::PhysicalSize::new(0, 0),
+            _size: [0, 0],
         }
     }
 
-    /// 阶段 2: 初始化 GPU 上下文 (需要 Window)
-    pub async fn init(&mut self, window: Arc<Window>) -> Result<()> {
-        if self.context.is_some() { return Ok(()); }
+    /// 阶段 2: 初始化 GPU 上下文 (接受任何窗口句柄)
+    pub async fn init<W>(&mut self, window: W, width: u32, height: u32) -> Result<()>
+    where
+        W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static,
+    {
+        if self.context.is_some() {
+            return Ok(());
+        }
 
-        let size = window.inner_size();
-        self._size = size;
+        self._size = [width, height];
 
         // 1. 创建 WGPU 上下文
-        let wgpu_ctx = WgpuContext::new(window.clone(), &self.settings).await?;
+        let wgpu_ctx = WgpuContext::new(window, &self.settings, width, height).await?;
 
         // 2. 初始化资源管理器
-        let resource_manager = ResourceManager::new(
-            wgpu_ctx.device.clone(), 
-            wgpu_ctx.queue.clone()
-        );
+        let resource_manager =
+            ResourceManager::new(wgpu_ctx.device.clone(), wgpu_ctx.queue.clone());
 
         // 3. 创建渲染帧管理器
         let render_frame = RenderFrame::new(wgpu_ctx.device.clone());
@@ -81,7 +82,7 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, width: u32, height: u32, _scale_factor: f32) {
-        self._size = winit::dpi::PhysicalSize::new(width, height);
+        self._size = [width, height];
         if let Some(state) = &mut self.context {
             state.wgpu_ctx.resize(width, height);
         }
@@ -99,7 +100,7 @@ impl Renderer {
         time: f32,
         extra_nodes: &[&dyn RenderNode],
     ) {
-        if self._size.width == 0 || self._size.height == 0 {
+        if self._size[0] == 0 || self._size[1] == 0 {
             return;
         }
         if let Some(state) = &mut self.context {
