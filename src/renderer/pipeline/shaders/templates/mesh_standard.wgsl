@@ -12,14 +12,17 @@
 fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var out: VertexOutput;
 
-    var local_pos = vec4<f32>(in.position, 1.0);
+    var local_position = in.position;
     var local_normal = in.normal;
 
     $$ if HAS_TANGENT is defined
-        var object_tangent = in.tangent.xyz;
+    var object_tangent = in.tangent.xyz;
     $$ endif
 
     {$ include 'morph_vertex' $}
+
+    var local_pos = vec4<f32>(local_position, 1.0);
+
     {$ include 'skin_vertex' $}
 
     let world_pos = u_model.world_matrix * local_pos;
@@ -27,11 +30,11 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.position = u_render_state.view_projection * world_pos;
     out.world_position = world_pos.xyz / world_pos.w;
 
-    $$ if HAS_VERTEX_COLOR is defined
+    $$ if HAS_VERTEX_COLOR
         out.color = in.color;
     $$ endif
 
-    $$ if HAS_UV is defined
+    $$ if HAS_UV
     out.uv = in.uv;
     $$ endif
 

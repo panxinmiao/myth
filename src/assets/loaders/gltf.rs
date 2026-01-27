@@ -1,12 +1,14 @@
 use std::collections::HashMap;
-use std::path::Path;
 use std::fs;
+use std::path::Path;
+use std::sync::Arc;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
 use crate::resources::material::AlphaMode;
 use crate::{AnimationAction, AnimationMixer, Binder};
 use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler, TextureSlot, TextureTransform};
 use crate::resources::geometry::{Geometry, Attribute};
 use crate::resources::texture::Texture;
+use crate::resources::buffer::BufferRef;
 use crate::scene::{NodeHandle, Scene, SkeletonKey};
 use crate::scene::skeleton::{Skeleton, BindMode};
 use crate::assets::{AssetServer, TextureHandle, MaterialHandle, GeometryHandle};
@@ -15,7 +17,7 @@ use crate::animation::tracks::{KeyframeTrack, InterpolationMode};
 use crate::animation::binding::TargetPath;
 use crate::animation::values::MorphWeightData;
 use crate::resources::mesh::MAX_MORPH_TARGETS;
-use wgpu::{VertexFormat, TextureFormat};
+use wgpu::{VertexFormat, TextureFormat, BufferUsages, VertexStepMode};
 use anyhow::Context;
 use serde_json::{Value};
 
@@ -39,6 +41,38 @@ struct IntermediateTexture {
 struct TextureCacheKey {
     gltf_texture_index: usize,
     is_srgb: bool,
+}
+
+
+/// 定义一个待合并的属性通道
+struct InterleaveChannel {
+    name: String,
+    data: Vec<u8>,        // 标准化后的字节数据
+    format: VertexFormat, // wgpu 格式
+    item_size: usize,     // 单个顶点占用的字节数 (例如 Float32x3 = 12)
+}
+
+impl InterleaveChannel {
+    /// 泛型辅助函数：从迭代器快速构建通道
+    fn from_iter<T, I>(name: &str, iter: I, format: VertexFormat) -> Self
+    where
+        T: bytemuck::Pod,
+        I: Iterator<Item = T>,
+    {
+        // 直接收集为字节流，避免中间产生 Vec<[f32;3]> 这样的强类型容器
+        let data: Vec<u8> = iter
+            .flat_map(|v| bytemuck::bytes_of(&v).to_vec()) // 这里为了通用性稍微牺牲了一点点收集性能，但逻辑更解耦
+            .collect();
+        
+        let item_size = std::mem::size_of::<T>();
+        
+        Self {
+            name: name.to_string(),
+            data,
+            format,
+            item_size,
+        }
+    }
 }
 
 // ============================================================================
@@ -173,6 +207,8 @@ pub struct GltfLoader<'a> {
     // glTF Node Index -> Engine NodeHandle
     node_mapping: Vec<NodeHandle>,
 
+    default_material: Option<MaterialHandle>,
+
     // 扩展列表
     extensions: HashMap<String, Box<dyn GltfExtensionParser>>,
 }
@@ -195,6 +231,8 @@ impl<'a> GltfLoader<'a> {
         let base_path = path.parent().unwrap_or(Path::new("./")).to_path_buf();
         let buffers = Self::load_buffers(&gltf, &base_path)?;
 
+        // let default_material = assets.add_material(Material::new_standard(Vec4::ONE));
+
         // 2. 初始化加载器
         let mut loader = Self {
             assets,
@@ -205,6 +243,7 @@ impl<'a> GltfLoader<'a> {
             material_map: Vec::new(),
             node_mapping: Vec::with_capacity(gltf.nodes().count()),
             extensions: HashMap::new(),
+            default_material: None,
         };
 
         // 注册默认扩展
@@ -308,6 +347,16 @@ impl<'a> GltfLoader<'a> {
     }
 
     // --- Helpers ---
+
+    fn get_default_material(&mut self) -> MaterialHandle {
+        if let Some(mat) = &self.default_material {
+            mat.clone()
+        } else {
+            let mat = self.assets.add_material(Material::new_standard(Vec4::ONE));
+            self.default_material = Some(mat.clone());
+            mat
+        }
+    }
 
     fn load_buffers(gltf: &gltf::Gltf, base_path: &Path) -> anyhow::Result<Vec<Vec<u8>>> {
         let mut buffer_data = Vec::new();
@@ -468,6 +517,91 @@ impl<'a> GltfLoader<'a> {
         Ok(())
     }
 
+
+    fn _analyze_alpha_distribution(image: Option<&IntermediateTexture>, factor_alpha: f32, sample_count: usize) -> AlphaMode {
+
+        if image.is_none() {
+            if factor_alpha > 0.98 {
+                return AlphaMode::Opaque;
+            } else {
+                // 如果因子小于 0.98 (例如 0.5)，那就是均匀的半透明
+                return AlphaMode::Blend;
+            }
+        }
+
+        let image = image.unwrap();
+        let (width, height) = (image.width, image.height);
+        let total_pixels = (width * height) as usize;
+        // 步长计算：为了性能，我们不检查所有像素，而是跳跃采样
+        let step = (total_pixels / sample_count).max(1);
+        
+        let mut opaque_pixels = 0;      // Alpha ≈ 1.0
+        let mut transparent_pixels = 0; // Alpha ≈ 0.0
+        let mut intermediate_pixels = 0; // 0.0 < Alpha < 1.0 (半透明)
+        let mut sampled_total = 0;
+
+        // 阈值设置
+        let threshold_low = 0.04; // 对应 10/255
+        let threshold_high = 0.96; // 对应 245/255
+
+        // 遍历像素 (平铺的一维迭代器，带步长)
+        // 注意：这里使用 pixels() 迭代器可能比较慢，针对 Raw Buffer 直接索引会更快，
+        // 但为了通用性，这里演示 GenericImageView 的用法。
+        let pixels_data = &image.image_data;
+
+        for i in (0..total_pixels).step_by(step) {
+            let pixel_start = i * 4;
+            if pixel_start + 3 >= pixels_data.len() {
+                break;
+            }
+            let tex_alpha = pixels_data[pixel_start + 3] as f32 / 255.0; // RGBA 的 A 通道
+
+            let final_alpha = tex_alpha * factor_alpha;
+            
+            if final_alpha >= threshold_high {
+                opaque_pixels += 1;
+            } else if final_alpha <= threshold_low {
+                transparent_pixels += 1;
+            } else {
+                intermediate_pixels += 1;
+            }
+            sampled_total += 1;
+        }
+
+        if sampled_total == 0 {
+            return AlphaMode::Opaque;
+        }
+
+        let opaque_ratio = opaque_pixels as f32 / sampled_total as f32;
+        let transparent_ratio = transparent_pixels as f32 / sampled_total as f32;
+        let intermediate_ratio = intermediate_pixels as f32 / sampled_total as f32;
+
+        // println!("Alpha Analysis: Opaque {:.2}%, Transparent {:.2}%, Intermediate {:.2}%", 
+        //     opaque_ratio * 100.0, transparent_ratio * 100.0, intermediate_ratio * 100.0);
+        // === 判定逻辑 ===
+        
+        // 1. 如果超过 98% 的像素是不透明的 -> 强制 OPAQUE
+        // 即使有一些噪点，通常也是压缩导致的，不应该作为半透明处理
+        if opaque_ratio > 0.98 {
+            return AlphaMode::Opaque;
+        }
+
+        // 如果绝大多数像素是完全透明的（例如一个隐形墙，或者材质贴图丢了导致全黑全透）。
+        // 这种情况用 Mask (discard) 比 Blend (混合) 性能更好，且不会写深度导致遮挡。
+        if transparent_ratio > 0.98 {
+            return AlphaMode::Mask(0.5);
+        }
+
+        // 2. 如果半透明区域 (中间值) 非常少 (< 5%) -> 强制 MASK
+        // 说明像素要么全透，要么全不透，典型的树叶、栅栏特征
+        if intermediate_ratio < 0.05 {
+            // 默认 Mask Cutoff 通常设为 0.5
+            return AlphaMode::Mask(0.5);
+        }
+        // 3. 既有大量透明，又有大量渐变 -> 维持 BLEND
+        AlphaMode::Blend
+    }
+
     /// 实例化阶段：加载材质时，按需创建纹理（根据使用上下文决定 colorspace）
     fn load_materials(&mut self, gltf: &gltf::Gltf) -> anyhow::Result<()> {
         for material in gltf.materials() {
@@ -518,7 +652,6 @@ impl<'a> GltfLoader<'a> {
                 self.setup_texture_map(&mut mat.emissive_map, &info, true)?;
             }
 
-
             mat.set_side(if material.double_sided() { crate::resources::material::Side::Double } else { crate::resources::material::Side::Front });
     
             let alpha_mode = match material.alpha_mode() {
@@ -528,13 +661,25 @@ impl<'a> GltfLoader<'a> {
                     AlphaMode::Mask(cut_off)
                 },
                 gltf::material::AlphaMode::Blend => {
-                    mat.set_depth_write(false);
+                    // let base_color = pbr.base_color_factor();
+                    // let intermediate_tex = if let Some(info) = pbr.base_color_texture() {
+                    //     let tex_index = info.texture().index();
+                    //     Some(&self.intermediate_textures[tex_index])
+                    // } else {
+                    //     None
+                    // };
+                    // Self::_analyze_alpha_distribution(intermediate_tex, base_color[3], 4096)
+
+                    // mat.set_depth_write(false);
                     AlphaMode::Blend
                 },
             };
-            
-            mat.set_alpha_mode(alpha_mode);
 
+            // if alpha_mode == AlphaMode::Blend {
+            //     mat.set_depth_write(false);
+            // }
+
+            mat.set_alpha_mode(alpha_mode);
 
             //=========================Material Extensions=========================//
             // KHR_materials_emissive_strength
@@ -712,6 +857,39 @@ impl<'a> GltfLoader<'a> {
 
         Ok(skeleton_keys)
     }
+    
+    // 辅助方法：将 glTF Primitive 转换为 Engine Mesh
+    fn build_engine_mesh(
+        &mut self,
+        primitive: &gltf::Primitive,
+        buffers: &[Vec<u8>]
+    ) -> anyhow::Result<crate::resources::mesh::Mesh> {
+        // 1. 加载 Geometry
+        let geo_handle = self.load_primitive_geometry(primitive, buffers)?;
+        
+        // 2. 获取或创建 Material
+        let mat_idx = primitive.material().index();
+        let mat_handle = if let Some(idx) = mat_idx {
+            self.material_map[idx]
+        } else {
+            self.get_default_material()
+        };
+
+        // 3. 创建 Mesh 实例
+        let mut engine_mesh = crate::resources::mesh::Mesh::new(geo_handle, mat_handle);
+        
+        // 4. 初始化 Morph Targets
+        if let Some(geometry) = self.assets.get_geometry(geo_handle) {
+            if geometry.has_morph_targets() {
+                engine_mesh.init_morph_targets(
+                    geometry.morph_target_count,
+                    geometry.morph_vertex_count
+                );
+            }
+        }
+
+        Ok(engine_mesh)
+    }
 
     fn bind_node_mesh_and_skin(
         &mut self,
@@ -723,34 +901,25 @@ impl<'a> GltfLoader<'a> {
 
         // 1. 加载 Mesh
         if let Some(mesh) = node.mesh() {
-            for (i, primitive) in mesh.primitives().enumerate() {
-                let geo_handle = self.load_primitive_geometry(&primitive, buffers)?;
-                
-                let mat_idx = primitive.material().index();
-                let mat_handle = if let Some(idx) = mat_idx {
-                    self.material_map[idx]
-                } else {
-                    self.assets.add_material(Material::new_standard(Vec4::ONE))
-                };
+            let primitives: Vec<_> = mesh.primitives().collect();
 
-                let mut engine_mesh = crate::resources::mesh::Mesh::new(geo_handle, mat_handle);
-                
-                // 如果 geometry 有 morph targets，初始化 mesh 的 morph target influences
-                if let Some(geometry) = self.assets.get_geometry(geo_handle) {
-                    if geometry.has_morph_targets() {
-                        engine_mesh.init_morph_targets(
-                            geometry.morph_target_count,
-                            geometry.morph_vertex_count
-                        );
-                    }
-                }
-                
-                // 直接将 Mesh 组件挂载到节点
-                // 简化处理：目前只支持将第一个 primitive 挂载到节点
-                if i == 0 {
+            match primitives.len() {
+                0 => { /* 空 Mesh，不做处理 */ },
+                // 情况 A: 单个 Primitive -> 直接挂载到当前 Node
+                1 => {
+                    let engine_mesh = self.build_engine_mesh(&primitives[0], buffers)?;
                     self.scene.set_mesh(engine_node_handle, engine_mesh);
-                } else {
-                    println!("Warning: Multi-primitive meshes not fully supported on single node yet.");
+                }
+                // 情况 B: 多个 Primitive -> 创建子 Node 挂载
+                _ => {
+                    for primitive in primitives {
+                        let engine_mesh = self.build_engine_mesh(&primitive, buffers)?;
+                        
+                        // 创建子节点来承载 SubMesh
+                        let sub_node_handle = self.scene.create_node();
+                        self.scene.attach(sub_node_handle, engine_node_handle);
+                        self.scene.set_mesh(sub_node_handle, engine_mesh);
+                    }
                 }
             }
         }
@@ -765,6 +934,81 @@ impl<'a> GltfLoader<'a> {
         Ok(())
     }
 
+    fn build_interleaved_buffer(
+        label: &str,
+        channels: Vec<InterleaveChannel>,
+        vertex_count: usize,
+    ) -> Option<(BufferRef, Vec<(String, Attribute)>)> { // 返回 Buffer 和 属性描述列表
+        if channels.is_empty() || vertex_count == 0 {
+            return None;
+        }
+
+        // 1. 自动计算 Stride
+        let total_stride: usize = channels.iter().map(|c| c.item_size).sum();
+        let buffer_size = total_stride * vertex_count;
+        
+        // 2. 分配大 Buffer
+        let mut interleaved_data = vec![0u8; buffer_size];
+
+        // 3. 填充数据 (Interleaving)
+        // 这种写法虽然是双重循环，但对于 CPU cache 来说，我们按顶点顺序写入是友好的
+        // 为了极致性能，可以将外层循环设为 attributes，内层为 vertex，但那样会导致写入时的 cache miss。
+        // 这里保持：外层 Vertex，内层 Attribute
+        
+        // 预计算每个 channel 在 stride 中的偏移量，避免循环内重复计算
+        let mut offsets = Vec::with_capacity(channels.len());
+        let mut current_offset = 0;
+        for ch in &channels {
+            offsets.push(current_offset);
+            current_offset += ch.item_size;
+        }
+
+        // 执行交错拷贝
+        for i in 0..vertex_count {
+            let vertex_start = i * total_stride;
+            for (ch_idx, channel) in channels.iter().enumerate() {
+                let src_start = i * channel.item_size;
+                let src_end = src_start + channel.item_size;
+                
+                // 安全性检查：防止某些属性数据长度不对
+                if src_end <= channel.data.len() {
+                    let dest_start = vertex_start + offsets[ch_idx];
+                    interleaved_data[dest_start..dest_start + channel.item_size]
+                        .copy_from_slice(&channel.data[src_start..src_end]);
+                }
+            }
+        }
+
+        // 4. 创建 GPU Buffer
+        let buffer = BufferRef::new(
+            buffer_size,
+            BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            Some(label),
+        );
+        // 这里模拟填充 BufferRef 的数据，根据你的 ECS/Resource 架构可能有所不同
+        // buffer.write(&interleaved_data); 或者保持 Arc<Vec<u8>>
+        let data_arc = Some(Arc::new(interleaved_data));
+
+        // 5. 生成 Attribute 描述
+        let mut attributes = Vec::new();
+        for (i, channel) in channels.into_iter().enumerate() {
+            attributes.push((
+                channel.name,
+                Attribute::new_interleaved(
+                    buffer.clone(),
+                    data_arc.clone(),
+                    channel.format,
+                    offsets[i] as u64,
+                    vertex_count as u32,
+                    total_stride as u64,
+                    VertexStepMode::Vertex,
+                ),
+            ));
+        }
+
+        Some((buffer, attributes))
+    }
+
     fn load_primitive_geometry(
         &mut self,
         primitive: &gltf::Primitive,
@@ -773,54 +1017,89 @@ impl<'a> GltfLoader<'a> {
         let mut geometry = Geometry::new();
         let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
-        // Positions
-        if let Some(iter) = reader.read_positions() {
-            let positions: Vec<[f32; 3]> = iter.collect();
-            geometry.set_attribute("position", Attribute::new_planar(&positions, VertexFormat::Float32x3));
+        // === Step 1: 读取所有顶点数据到临时向量 ===
+        let positions: Vec<[f32; 3]> = reader.read_positions()
+            .map(|iter| iter.collect())
+            .unwrap_or_default();
+        
+        let vertex_count = positions.len();
+        if vertex_count == 0 {
+            return Ok(self.assets.add_geometry(geometry));
         }
 
-        // Normals
+        geometry.set_attribute("position", Attribute::new_planar(&positions, VertexFormat::Float32x3));
+
+        // === Step 2: Slot 1 - Surface Attributes (收集阶段) ===
+        let mut surface_channels = Vec::new();
+
         if let Some(iter) = reader.read_normals() {
-            let normals: Vec<[f32; 3]> = iter.collect();
-            geometry.set_attribute("normal", Attribute::new_planar(&normals, VertexFormat::Float32x3));
+            surface_channels.push(InterleaveChannel::from_iter("normal", iter, VertexFormat::Float32x3));
         }
-
-        // UVs
-        if let Some(iter) = reader.read_tex_coords(0) {
-            let uvs: Vec<[f32; 2]> = iter.into_f32().collect();
-            geometry.set_attribute("uv", Attribute::new_planar(&uvs, VertexFormat::Float32x2));
-        }
-
-        // Tangents
+        
         if let Some(iter) = reader.read_tangents() {
-            let tangents: Vec<[f32; 4]> = iter.collect();
-            geometry.set_attribute("tangent", Attribute::new_planar(&tangents, VertexFormat::Float32x4));
+            surface_channels.push(InterleaveChannel::from_iter("tangent", iter, VertexFormat::Float32x4));
         }
 
-        // Joints (Skinning)
-        if let Some(iter) = reader.read_joints(0) {
-            let joints: Vec<[u16; 4]> = iter.into_u16().collect();
-            geometry.set_attribute("joints", Attribute::new_planar(&joints, VertexFormat::Uint16x4));
+        // glTF 标准规定 texCoord 只到 0/1，但扩展可能有更多，这里循环检查
+        for i in 0..4 { // 假设只支持到 uv3
+            if let Some(iter) = reader.read_tex_coords(i).map(|r| r.into_f32()) {
+                // 命名规则: uv, uv1, uv2, uv3
+                let name = if i == 0 { "uv".to_string() } else { format!("uv{}", i) };
+                surface_channels.push(InterleaveChannel::from_iter(&name, iter, VertexFormat::Float32x2));
+            }
         }
 
-        // Weights (Skinning)
-        if let Some(iter) = reader.read_weights(0) {
-            let weights: Vec<[f32; 4]> = iter.into_f32().collect();
-            geometry.set_attribute("weights", Attribute::new_planar(&weights, VertexFormat::Float32x4));
+        if let Some(iter) = reader.read_colors(0).map(|r| r.into_rgba_f32()) {
+            surface_channels.push(InterleaveChannel::from_iter("color", iter, VertexFormat::Float32x4));
         }
 
-        // Indices
+        // === 构建 Surface Buffer ===
+        if let Some((_, attrs)) = Self::build_interleaved_buffer(
+            "SurfaceBuffer", 
+            surface_channels, 
+            vertex_count
+        ) {
+            for (name, attr) in attrs {
+                geometry.set_attribute(&name, attr);
+            }
+        }
+
+
+        // === Step 3: Slot 2 - Skinning Attributes (收集阶段) ===
+        let mut skin_channels = Vec::new();
+
+        if let Some(iter) = reader.read_joints(0).map(|r| r.into_u16()) {
+            skin_channels.push(InterleaveChannel::from_iter("joints", iter, VertexFormat::Uint16x4));
+        }
+        
+        if let Some(iter) = reader.read_weights(0).map(|r| r.into_f32()) {
+            skin_channels.push(InterleaveChannel::from_iter("weights", iter, VertexFormat::Float32x4));
+        }
+
+        // === 构建 Skinning Buffer ===
+        if let Some((_, attrs)) = Self::build_interleaved_buffer(
+            "SkinningBuffer", 
+            skin_channels, 
+            vertex_count
+        ) {
+            for (name, attr) in attrs {
+                geometry.set_attribute(&name, attr);
+            }
+        }
+
+        // === Step 5: Indices ===
         if let Some(iter) = reader.read_indices() {
             let indices: Vec<u32> = iter.into_u32().collect();
             geometry.set_indices_u32(&indices);
         }
+
+        // === 2.加载 Morph Targets 数据 ===
 
         // 定义一个闭包，用于从 buffers 中获取数据切片
         let get_buffer_data = |buffer: gltf::Buffer| -> Option<&[u8]> {
             buffers.get(buffer.index()).map(|v| v.as_slice())
         };
 
-        // === 2.加载 Morph Targets 数据 ===
         for target in primitive.morph_targets() {
             // 2.1 Morph Positions (Displacement) - Vec3
             if let Some(accessor) = target.positions() {
@@ -856,7 +1135,7 @@ impl<'a> GltfLoader<'a> {
             }
         }
 
-        // === 3. 构建 Morph Storage Buffers ===
+        // === 构建 Morph Storage Buffers ===
         geometry.build_morph_storage_buffers();
 
         geometry.compute_bounding_volume();

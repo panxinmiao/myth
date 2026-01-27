@@ -239,9 +239,11 @@ macro_rules! impl_material_trait {
 
                         // 2.2 自动生成 UV 通道宏：map -> MAP_UV
                         // 值为 self.map.channel (例如 "0", "1")
-                        let uv_define_key = format!("{}_UV", field_upper);
-                        let uv_define_val = self.$field.channel.to_string();
-                        defines.set(&uv_define_key, &uv_define_val);
+                        if self.$field.channel > 0 {
+                            let uv_define_key = format!("{}_UV", field_upper);
+                            let uv_define_val = self.$field.channel.to_string();
+                            defines.set(&uv_define_key, &uv_define_val);
+                        }
                     }
 
                 )*

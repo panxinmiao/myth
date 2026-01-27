@@ -101,7 +101,6 @@ impl AppHandler for MorphTargetDemo {
         };
 
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
-            println!("update{}", frame.dt);
             self.controls.update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
         }
 

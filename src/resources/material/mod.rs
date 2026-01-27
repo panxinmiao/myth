@@ -261,7 +261,7 @@ impl Default for MaterialSettings {
 
 impl MaterialSettings {
     /// 生成 Shader 宏定义
-    pub fn generate_shader_defines(&self, defines: &mut ShaderDefines) {
+    pub(crate) fn generate_shader_defines(&self, defines: &mut ShaderDefines) {
         // Alpha Mode
         match self.alpha_mode {
             AlphaMode::Opaque => {
@@ -572,17 +572,17 @@ impl Material {
 
     // 代理方法
     #[inline]
-    pub fn shader_name(&self) -> &'static str { 
+    pub(crate) fn shader_name(&self) -> &'static str { 
         self.data.shader_name() 
     }
     
     #[inline]
-    pub fn shader_defines(&self) -> ShaderDefines { 
+    pub(crate) fn shader_defines(&self) -> ShaderDefines { 
         self.data.shader_defines() 
     }
     
     #[inline]
-    pub fn settings(&self) -> &MaterialSettings {
+    pub(crate) fn settings(&self) -> &MaterialSettings {
         self.data.settings()
     }
     

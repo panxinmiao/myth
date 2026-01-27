@@ -12,10 +12,17 @@
 fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var out: VertexOutput;
 
-    var local_pos = vec4<f32>(in.position, 1.0);
+    var local_position = in.position;
     var local_normal = in.normal;
 
+    $$ if HAS_TANGENT is defined
+    var object_tangent = in.tangent.xyz;
+    $$ endif
+
     {$ include 'morph_vertex' $}
+
+    var local_pos = vec4<f32>(local_position, 1.0);
+
     {$ include 'skin_vertex' $}
 
     let world_pos = u_model.world_matrix * local_pos;
@@ -33,6 +40,13 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 
     out.geometry_normal = local_normal;
     out.normal = normalize(u_model.normal_matrix * local_normal);
+
+    $$ if HAS_TANGENT is defined
+        let v_tangent = normalize(( u_model.world_matrix  * vec4f(object_tangent, 0.0) ).xyz);
+        let v_bitangent = normalize(cross(out.normal, v_tangent) * in.tangent.w);
+        out.v_tangent = vec3<f32>(v_tangent);
+        out.v_bitangent = vec3<f32>(v_bitangent);
+    $$ endif
     {$ include 'uv_vertex' $}
     return out;
 }

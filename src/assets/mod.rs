@@ -8,6 +8,8 @@ pub use server::{
     AssetServer,
     GeometryHandle, MaterialHandle, TextureHandle, SamplerHandle,
 };
+
+#[cfg(feature = "gltf")]
 pub use loaders::GltfLoader;
 pub use handle::{AssetTracker, StrongHandle, WeakHandle, TrackedAsset};
 

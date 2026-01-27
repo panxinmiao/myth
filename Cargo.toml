@@ -7,17 +7,18 @@ edition = "2024"
 crate-type = ["rlib"]
 
 [dependencies]
-# 窗口管理
-winit = { version = "0.30", optional = true }
 wgpu = "28.0.0"
+
 raw-window-handle = "0.6"
+winit = { version = "0.30", optional = true }
 
 bytemuck = { version = "1.24", features = ["derive", "min_const_generics"]}
 glam = { version = "0.31.0" , features = ["bytemuck"] }
 slotmap = { version = "1.1.1", features = ["serde"] }
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 
-minijinja = {version ="2.14", features = ["loader", "custom_syntax"] }
+minijinja = {version ="2.15.1", features = ["loader", "custom_syntax"] }
+rust-embed = "8.11.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
@@ -25,11 +26,10 @@ image = "0.25"
 gltf = {version = "1.4.1", features =[
     "extensions", "KHR_materials_pbrSpecularGlossiness", 
     "KHR_materials_specular" , "KHR_materials_emissive_strength", 
-    "KHR_materials_ior", "KHR_texture_transform"]}
+    "KHR_materials_ior", "KHR_texture_transform"],  optional = true}
 base64 = "0.22"
 
 paste = "1.0"
-rust-embed = "8.11.0"
 
 pollster = "0.4" 
 env_logger = "0.11"
@@ -46,10 +46,11 @@ smallvec = "1.15"
 half = "2.4"
 
 [features]
-default = ["winit"]      # 默认开启，方便普通用户
-winit = ["dep:winit"]    # 只有开启此 feature 才引入 winit 依赖
+default = ["winit", "gltf"]  
+winit = ["dep:winit"]
+gltf = ["dep:gltf"]
 
-# 开发依赖 (用于 examples)
+
 [dev-dependencies]
 # egui = "0.33"
 # egui-winit = "0.33"
@@ -71,8 +72,6 @@ web-sys = { version = "0.3.85", features = [
     "Window",
     "Element",
 ]}
-
-# === 示例配置 ===
 
 [[example]]
 name = "gltf_viewer"

@@ -76,6 +76,11 @@ pub fn preload_common_macros() {
         "HAS_MORPH_TANGENTS",
         // 场景相关
         "HAS_ENV_MAP",
+        // 管线相关
+        "ALPHA_MODE",
+        "OPAQUE",
+        "MASK",
+        "BLEND",
         // 常用值
         "1",
         "true",
