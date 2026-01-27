@@ -11,7 +11,7 @@ use crate::renderer::graph::{RenderNode, RenderContext, TrackedRenderPass};
 use crate::renderer::graph::frame::{RenderKey, RenderCommand};
 use crate::renderer::pipeline::{PipelineKey, FastPipelineKey};
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
-use crate::resources::material::Side;
+use crate::resources::material::{AlphaMode, Side};
 use crate::resources::uniforms::DynamicModelUniforms;
 
 /// Forward 渲染 Pass
@@ -148,8 +148,8 @@ impl ForwardRenderPass {
                     },
                     depth_write: material.depth_write(),
                     // Reverse Z: Greater for depth test
-                    depth_compare: if material.depth_test() { wgpu::CompareFunction::Greater } else { wgpu::CompareFunction::Always },
-                    blend_state: if material.transparent() { Some(wgpu::BlendState::ALPHA_BLENDING) } else { None },
+                    depth_compare: if material.depth_test() { wgpu::CompareFunction::GreaterEqual } else { wgpu::CompareFunction::Always },
+                    blend_state: if material.alpha_mode() == AlphaMode::Blend { Some(wgpu::BlendState::ALPHA_BLENDING) } else { None },
                     color_format: ctx.wgpu_ctx.config.format,
                     depth_format: ctx.wgpu_ctx.depth_format,
                     sample_count: 1,
@@ -178,7 +178,7 @@ impl ForwardRenderPass {
 
             let mat_id = item.material.data().as_ffi() as u32;
 
-            let is_transparent = material.transparent();
+            let is_transparent = material.alpha_mode() == AlphaMode::Blend;
 
             let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq, is_transparent);
 

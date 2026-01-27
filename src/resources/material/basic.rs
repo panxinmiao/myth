@@ -59,6 +59,7 @@ impl_material_api!(
     uniforms: [
         (color,   Vec4, "Base color."),
         (opacity, f32,  "Opacity value."),
+        (alpha_test, f32, "Alpha test threshold."),
     ],
     textures: [
         (map, "The color map."),

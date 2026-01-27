@@ -281,8 +281,11 @@ define_gpu_data_struct!(
 define_gpu_data_struct!(
     struct MeshBasicUniforms {
         pub color: Vec4 = Vec4::ONE,           // 16
+
         pub opacity: f32 = 1.0,          // 4
-        pub(crate) __padding: UniformArray<f32, 3>,      // 12 (4+12=16)
+        pub alpha_test: f32 = 0.0,       // 4
+        pub(crate) __padding: UniformArray<f32, 2>,      // 8 (4+4+8=16)
+
         pub map_transform: Mat3A = Mat3A::IDENTITY,
     }
 );
@@ -300,7 +303,7 @@ define_gpu_data_struct!(
 
         pub normal_scale: Vec2 = Vec2::ONE,
         pub shininess: f32 = 30.0,
-        pub(crate) __padding: f32, // 4 (12+4=16)
+        pub alpha_test: f32 = 0.0,
 
         pub map_transform: Mat3A = Mat3A::IDENTITY,
         pub normal_map_transform: Mat3A = Mat3A::IDENTITY,
@@ -321,11 +324,11 @@ define_gpu_data_struct!(
         pub roughness: f32 = 1.0,            // 4  
         pub metalness: f32 = 0.0,           // 4
         pub opacity: f32 = 1.0,            // 4
-        pub occlusion_strength: f32 = 1.0,     // 4 
+        pub alpha_test: f32 = 0.0,              // 4 (8+4+4=16)
 
         pub normal_scale: Vec2 = Vec2::ONE,    // 8
         pub ao_map_intensity: f32 = 1.0,     // 4
-        pub(crate) __padding: f32,              // 4 (8+4+4=16)
+        pub __padding: f32,   // 4 (8+4+4=16)
 
         pub specular: Vec3 = Vec3::ONE,               // 12
         pub specular_intensity: f32 = 0.0,    // 4
@@ -353,7 +356,7 @@ define_gpu_data_struct!(
         pub roughness: f32 = 1.0,             // 4  
         pub metalness: f32 = 0.0,            // 4
         pub opacity: f32 = 1.0,              // 4
-        pub occlusion_strength: f32 = 1.0,   // 4 
+        pub alpha_test: f32 = 0.0,   // 4 
 
         pub normal_scale: Vec2 = Vec2::ONE,   // 8
         pub ao_map_intensity: f32 = 1.0,     // 4

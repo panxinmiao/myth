@@ -232,10 +232,17 @@ pub enum Side {
     Double,
 }
 
+#[derive(PartialEq, Clone, Debug, Copy)]
+pub enum AlphaMode {
+    Opaque,
+    Mask(f32), // alpha cutoff
+    Blend,
+}
+
 /// 材质设置 - 对应 Pipeline 变化
-#[derive(PartialEq, Eq, Clone, Debug)]
+#[derive(PartialEq, Clone, Debug)]
 pub struct MaterialSettings {
-    pub(crate) transparent: bool,
+    pub(crate) alpha_mode: AlphaMode,
     pub(crate) depth_write: bool,
     pub(crate) depth_test: bool,
     pub(crate) side: Side,
@@ -244,14 +251,32 @@ pub struct MaterialSettings {
 impl Default for MaterialSettings {
     fn default() -> Self {
         Self {
-            transparent: false,
+            alpha_mode: AlphaMode::Opaque,
             depth_write: true, 
-            depth_test: true,  
+            depth_test: true,
             side: Side::Front,
         }
     }
 }
 
+impl MaterialSettings {
+    /// 生成 Shader 宏定义
+    pub fn generate_shader_defines(&self, defines: &mut ShaderDefines) {
+        // Alpha Mode
+        match self.alpha_mode {
+            AlphaMode::Opaque => {
+                defines.set("ALPHA_MODE", "OPAQUE");
+            }
+            AlphaMode::Mask(_cutoff) => {
+                defines.set("ALPHA_MODE", "MASK");
+            }
+            AlphaMode::Blend => {
+                defines.set("ALPHA_MODE", "BLEND");
+            }
+        }
+
+    }
+}
 /// Settings 修改守卫
 /// 
 /// 当 Settings 发生变化时自动递增材质版本号，用于 Pipeline 缓存检测
@@ -562,9 +587,13 @@ impl Material {
     }
     
     // 便捷访问器
-    #[inline]
-    pub fn transparent(&self) -> bool {
-        self.settings().transparent
+    // #[inline]
+    // pub fn transparent(&self) -> bool {
+    //     self.settings().transparent
+    // }
+
+    pub fn alpha_mode(&self) -> AlphaMode {
+        self.settings().alpha_mode
     }
     
     #[inline]

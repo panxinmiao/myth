@@ -23,14 +23,41 @@ macro_rules! impl_material_api {
             
             /// 设置是否开启透明混合。
             /// 注意：切换此选项可能会触发布局重建。
-            pub fn set_transparent(&mut self, transparent: bool) {
-                if self.settings.transparent != transparent {
-                    self.settings.transparent = transparent;
+            // pub fn set_transparent(&mut self, transparent: bool) {
+            //     let transparent_mode = if transparent {
+            //         $crate::resources::material::AlphaMode::Blend
+            //     } else {
+            //         $crate::resources::material::AlphaMode::Opaque
+            //     };
+
+            //     if self.settings.alpha_mode != transparent_mode {
+            //         self.settings.alpha_mode = transparent_mode;
+            //         self.version = self.version.wrapping_add(1);
+            //     }
+            // }
+            // pub fn transparent(&self) -> bool {
+            //     match self.settings.alpha_mode {
+            //         $crate::resources::material::AlphaMode::Blend => true,
+            //         _ => false,
+            //     }
+            // }
+
+            pub fn set_alpha_mode(&mut self, mode: $crate::resources::material::AlphaMode) {
+                if self.settings.alpha_mode != mode {
+                    match mode {
+                        $crate::resources::material::AlphaMode::Mask(cutoff) => {
+                            let mut uniforms = self.uniforms.write();
+                            uniforms.alpha_test = cutoff;
+                        }
+                        _ => {}
+                    }
+                    self.settings.alpha_mode = mode;
                     self.version = self.version.wrapping_add(1);
                 }
             }
-            pub fn transparent(&self) -> bool {
-                self.settings.transparent
+
+            pub fn alpha_mode(&self) -> $crate::resources::material::AlphaMode {
+                self.settings.alpha_mode
             }
 
             /// 设置渲染面剔除模式 (Front/Back/Double)。
@@ -218,6 +245,9 @@ macro_rules! impl_material_trait {
                     }
 
                 )*
+                // settings 相关宏定义
+                self.settings.generate_shader_defines(&mut defines);
+
                 defines
             }
 

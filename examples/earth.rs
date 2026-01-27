@@ -4,6 +4,7 @@ use glam::{Vec2, Vec3, Vec4, Quat};
 use three::app::winit::{App, AppHandler};
 use three::engine::FrameState;
 use three::resources::Material;
+use three::resources::material::AlphaMode;
 use three::scene::{Camera, NodeHandle, light};
 use three::{OrbitControls, ThreeEngine};
 use three::utils::fps_counter::FpsCounter;
@@ -67,7 +68,7 @@ impl AppHandler for Earth {
         if let Some(phong) = cloud_material.as_phong_mut() {
             phong.set_map(Some(clouds_tex_handle));
             phong.set_opacity(0.8);
-            phong.set_transparent(true);
+            phong.set_alpha_mode(AlphaMode::Blend);
             phong.set_depth_write(false);
             phong.set_side(three::Side::Front);
         }

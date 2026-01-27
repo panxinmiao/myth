@@ -77,7 +77,8 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     // Apply opacity
     diffuse_color.a = diffuse_color.a * u_material.opacity;
 
-    // todo alpha test
+    // alpha test
+    {$ include 'alpha_test' $}
 
     let view = normalize(u_render_state.camera_position - varyings.world_position);  //todo orthographic camera
 

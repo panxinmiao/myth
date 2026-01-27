@@ -58,10 +58,10 @@ impl ShaderCompilationOptions {
     }
 
     /// 转换为模板渲染所需的 Map
-    fn to_template_map(&self) -> BTreeMap<String, bool> {
+    fn to_template_map(&self) -> BTreeMap<String, String> {
         self.defines
             .iter_strings()
-            .map(|(k, _v)| (k.to_string(), true))
+            .map(|(k, v)| (k.to_string(), v.to_string()))
             .collect()
     }
 }
@@ -83,7 +83,7 @@ impl Eq for ShaderCompilationOptions {}
 #[derive(Serialize)]
 struct ShaderContext<'a> {
     #[serde(flatten)]
-    defines: BTreeMap<String, bool>,
+    defines: BTreeMap<String, String>,
     vertex_input_code: Option<&'a str>,
     binding_code: &'a str,
     loc: Value,

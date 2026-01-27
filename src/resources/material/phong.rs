@@ -70,6 +70,7 @@ impl_material_api!(
     MeshPhongUniforms,
     uniforms: [
         (color,              Vec4, "Diffuse color."),
+        (alpha_test,         f32,  "Alpha test threshold."),
         (specular,           Vec3, "Specular color."),
         (opacity,            f32,  "Opacity value."),
         (emissive,           Vec3, "Emissive color."),

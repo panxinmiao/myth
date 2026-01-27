@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::fs;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
+use crate::resources::material::AlphaMode;
 use crate::{AnimationAction, AnimationMixer, Binder};
 use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler, TextureSlot, TextureTransform};
 use crate::resources::geometry::{Geometry, Attribute};
@@ -29,6 +30,7 @@ struct IntermediateTexture {
     width: u32,
     height: u32,
     sampler: TextureSampler,
+    generate_mipmaps: bool,
 }
 
 /// 纹理缓存的 Key，用于去重
@@ -68,40 +70,38 @@ pub trait GltfExtensionParser {
         Ok(())
     }
 
-    fn setup_texture_map_from_extension(&mut self, ctx: &mut LoadContext, info: &Value , texture_slot: &mut TextureSlot){
+    fn setup_texture_map_from_extension(&mut self, ctx: &mut LoadContext, tex_info: &Value , texture_slot: &mut TextureSlot, is_srgb: bool) {
+        if let Some(index) = tex_info.get("index").and_then(|v| v.as_u64()) {
+            let Some(tex_handle) = ctx.get_or_create_texture(index as usize, is_srgb).ok() else {
+                // log::warn!("Failed to create texture for index {}", index);
+                return;
+            };
+            texture_slot.texture = Some(tex_handle);
+            texture_slot.channel = tex_info.get("texCoord").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
 
-        if let Some(tex_info) = info.get("clearcoatTexture") {
-            if let Some(index) = tex_info.get("index").and_then(|v| v.as_u64()) {
-                let Some(tex_handle) = ctx.get_or_create_texture(index as usize, false).ok() else {
-                    // log::warn!("Failed to create texture for index {}", index);
-                    return;
-                };
-                texture_slot.texture = Some(tex_handle);
-                texture_slot.channel = tex_info.get("texCoord").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+            if let Some(transform) = tex_info.get("extensions")
+                .and_then(|exts| exts.get("KHR_texture_transform"))
+            {
+                if let Some(offset_array) = transform.get("offset").and_then(|v| v.as_array()) {
+                    let offset_x = offset_array.get(0).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                    let offset_y = offset_array.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+                    texture_slot.transform.offset = Vec2::new(offset_x, offset_y);
+                }
+                if let Some(scale_array) = transform.get("scale").and_then(|v| v.as_array()) {
+                    let scale_x = scale_array.get(0).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+                    let scale_y = scale_array.get(1).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+                    texture_slot.transform.scale = Vec2::new(scale_x, scale_y);
+                }
+                if let Some(rotation) = transform.get("rotation").and_then(|v| v.as_f64()) {
+                    texture_slot.transform.rotation = rotation as f32;
+                }
 
-                if let Some(transform) = tex_info.get("extensions")
-                    .and_then(|exts| exts.get("KHR_texture_transform"))
-                {
-                    if let Some(offset_array) = transform.get("offset").and_then(|v| v.as_array()) {
-                        let offset_x = offset_array.get(0).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                        let offset_y = offset_array.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                        texture_slot.transform.offset = Vec2::new(offset_x, offset_y);
-                    }
-                    if let Some(scale_array) = transform.get("scale").and_then(|v| v.as_array()) {
-                        let scale_x = scale_array.get(0).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                        let scale_y = scale_array.get(1).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                        texture_slot.transform.scale = Vec2::new(scale_x, scale_y);
-                    }
-                    if let Some(rotation) = transform.get("rotation").and_then(|v| v.as_f64()) {
-                        texture_slot.transform.rotation = rotation as f32;
-                    }
-
-                    if let Some(tex_coord) = transform.get("texCoord").and_then(|v| v.as_u64()) {
-                        texture_slot.channel = tex_coord as u8;
-                    }
+                if let Some(tex_coord) = transform.get("texCoord").and_then(|v| v.as_u64()) {
+                    texture_slot.channel = tex_coord as u8;
                 }
             }
         }
+        
 
     }
 }
@@ -145,7 +145,7 @@ impl<'a, 'b> LoadContext<'a, 'b> {
         );
 
         engine_tex.sampler = raw.sampler.clone();
-        engine_tex.generate_mipmaps = true;
+        engine_tex.generate_mipmaps = raw.generate_mipmaps;
 
         let handle = self.assets.add_texture(engine_tex);
         self.created_textures.insert(key, handle);
@@ -355,6 +355,7 @@ impl<'a> GltfLoader<'a> {
             };
 
             let sampler = texture.sampler();
+            let mut generate_mipmaps = false;
 
             // 转换 glTF Sampler 为引擎 TextureSampler
             let engine_sampler = TextureSampler {
@@ -365,10 +366,10 @@ impl<'a> GltfLoader<'a> {
                 min_filter: sampler.min_filter().map(|f| match f {
                     gltf::texture::MinFilter::Nearest => wgpu::FilterMode::Nearest,
                     gltf::texture::MinFilter::Linear => wgpu::FilterMode::Linear,
-                    gltf::texture::MinFilter::NearestMipmapNearest => wgpu::FilterMode::Nearest,
-                    gltf::texture::MinFilter::LinearMipmapNearest => wgpu::FilterMode::Linear,
-                    gltf::texture::MinFilter::NearestMipmapLinear => wgpu::FilterMode::Nearest,
-                    gltf::texture::MinFilter::LinearMipmapLinear => wgpu::FilterMode::Linear,
+                    gltf::texture::MinFilter::NearestMipmapNearest => { generate_mipmaps = true; wgpu::FilterMode::Nearest },
+                    gltf::texture::MinFilter::LinearMipmapNearest => { generate_mipmaps = true; wgpu::FilterMode::Linear },
+                    gltf::texture::MinFilter::NearestMipmapLinear => { generate_mipmaps = true; wgpu::FilterMode::Nearest },
+                    gltf::texture::MinFilter::LinearMipmapLinear => { generate_mipmaps = true; wgpu::FilterMode::Linear },
                 }).unwrap_or(wgpu::FilterMode::Linear),
                 address_mode_u: match sampler.wrap_s() {
                     gltf::texture::WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
@@ -382,8 +383,8 @@ impl<'a> GltfLoader<'a> {
                 },
                 address_mode_w: wgpu::AddressMode::ClampToEdge, // glTF 不支持 3D 纹理，这里默认
                 mipmap_filter: match sampler.min_filter() {
-                    Some(gltf::texture::MinFilter::NearestMipmapNearest) | Some(gltf::texture::MinFilter::LinearMipmapNearest) => wgpu::MipmapFilterMode::Nearest,
-                    Some(gltf::texture::MinFilter::NearestMipmapLinear) | Some(gltf::texture::MinFilter::LinearMipmapLinear) => wgpu::MipmapFilterMode::Linear,
+                    Some(gltf::texture::MinFilter::NearestMipmapNearest) | Some(gltf::texture::MinFilter::LinearMipmapNearest) => {generate_mipmaps = true; wgpu::MipmapFilterMode::Nearest},
+                    Some(gltf::texture::MinFilter::NearestMipmapLinear) | Some(gltf::texture::MinFilter::LinearMipmapLinear) => {generate_mipmaps = true; wgpu::MipmapFilterMode::Linear},
                     _ => wgpu::MipmapFilterMode::Linear,
                 },
                 ..Default::default()
@@ -400,6 +401,7 @@ impl<'a> GltfLoader<'a> {
                 width,
                 height,
                 sampler: engine_sampler,
+                generate_mipmaps,
             });
         }
         Ok(())
@@ -442,7 +444,7 @@ impl<'a> GltfLoader<'a> {
         );
 
         engine_tex.sampler = raw.sampler.clone();
-        engine_tex.generate_mipmaps = true;
+        engine_tex.generate_mipmaps = raw.generate_mipmaps;
 
         let handle = self.assets.add_texture(engine_tex);
         self.created_textures.insert(key, handle);
@@ -450,8 +452,8 @@ impl<'a> GltfLoader<'a> {
         Ok(handle)
     }
 
-    fn setup_texture_map(&mut self, texture_slot: &mut TextureSlot, info: &gltf::texture::Info) -> anyhow::Result<()> {
-        let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
+    fn setup_texture_map(&mut self, texture_slot: &mut TextureSlot, info: &gltf::texture::Info, is_srgb: bool) -> anyhow::Result<()> {
+        let tex_handle = self.get_or_create_texture(info.texture().index(), is_srgb)?;
         texture_slot.texture = Some(tex_handle);
         texture_slot.channel = info.tex_coord() as u8;
         if let Some(transform) = info.texture_transform() {
@@ -482,13 +484,13 @@ impl<'a> GltfLoader<'a> {
             if let Some(info) = pbr.base_color_texture() {
                 // let tex_handle = self.get_or_create_texture(info.texture().index(), true)?;
 
-                self.setup_texture_map(&mut mat.map, &info)?;
+                self.setup_texture_map(&mut mat.map, &info, true)?;
             }
 
             // Metallic-Roughness Texture (Linear)
             if let Some(info) = pbr.metallic_roughness_texture() {
-                self.setup_texture_map(&mut mat.roughness_map, &info)?;
-                self.setup_texture_map(&mut mat.metalness_map, &info)?;
+                self.setup_texture_map(&mut mat.roughness_map, &info, false)?;
+                self.setup_texture_map(&mut mat.metalness_map, &info, false)?;
             }
 
             // Normal Texture (Linear)
@@ -513,21 +515,25 @@ impl<'a> GltfLoader<'a> {
 
             // Emissive Texture (sRGB)
             if let Some(info) = material.emissive_texture() {
-                self.setup_texture_map(&mut mat.emissive_map, &info)?;
+                self.setup_texture_map(&mut mat.emissive_map, &info, true)?;
             }
 
-            {
-                let mut settings = mat.settings_mut();
 
-                settings.side = if material.double_sided() { crate::resources::material::Side::Double } else { crate::resources::material::Side::Front };
-                settings.transparent = match material.alpha_mode() {
-                    gltf::material::AlphaMode::Opaque => false,
-                    gltf::material::AlphaMode::Mask => false,
-                    gltf::material::AlphaMode::Blend => {
-                        true
-                    },
-                };
-            }
+            mat.set_side(if material.double_sided() { crate::resources::material::Side::Double } else { crate::resources::material::Side::Front });
+    
+            let alpha_mode = match material.alpha_mode() {
+                gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+                gltf::material::AlphaMode::Mask => {
+                    let cut_off = material.alpha_cutoff().unwrap_or(0.5);
+                    AlphaMode::Mask(cut_off)
+                },
+                gltf::material::AlphaMode::Blend => {
+                    mat.set_depth_write(false);
+                    AlphaMode::Blend
+                },
+            };
+            
+            mat.set_alpha_mode(alpha_mode);
 
 
             //=========================Material Extensions=========================//
@@ -548,12 +554,12 @@ impl<'a> GltfLoader<'a> {
 
                 // Specular Color Texture (sRGB)
                 if let Some(info) = specular.specular_color_texture() {
-                    self.setup_texture_map(&mut mat.specular_map, &info)?;
+                    self.setup_texture_map(&mut mat.specular_map, &info, true)?;
                 }
 
                 // Specular Intensity Texture (Linear)
                 if let Some(info) = specular.specular_texture() {
-                    self.setup_texture_map(&mut mat.specular_intensity_map, &info)?;
+                    self.setup_texture_map(&mut mat.specular_intensity_map, &info, false)?;
                 }
             }
 
@@ -1136,17 +1142,17 @@ impl GltfExtensionParser for KhrRMaterialsClearcoat {
 
         // 处理 clearcoat texture (Linear)
         if let Some(clearcoat_tex_info) = clearcoat_info.get("clearcoatTexture") {
-            self.setup_texture_map_from_extension(ctx, &clearcoat_tex_info, &mut physical_mat.clearcoat_map);
+            self.setup_texture_map_from_extension(ctx, &clearcoat_tex_info, &mut physical_mat.clearcoat_map, false);
         }
 
         // 处理 clearcoat roughness texture (Linear)
         if let Some(clearcoat_roughness_tex_info) = clearcoat_info.get("clearcoatRoughnessTexture") {
-            self.setup_texture_map_from_extension(ctx, &clearcoat_roughness_tex_info, &mut physical_mat.clearcoat_roughness_map);
+            self.setup_texture_map_from_extension(ctx, &clearcoat_roughness_tex_info, &mut physical_mat.clearcoat_roughness_map, false);
         }
 
         // 处理 clearcoat normal texture (Linear)
         if let Some(clearcoat_normal_tex_info) = clearcoat_info.get("clearcoatNormalTexture") {
-            self.setup_texture_map_from_extension(ctx, &clearcoat_normal_tex_info, &mut physical_mat.clearcoat_normal_map);
+            self.setup_texture_map_from_extension(ctx, &clearcoat_normal_tex_info, &mut physical_mat.clearcoat_normal_map, false);
         }
 
         Ok(())
