@@ -1,5 +1,9 @@
     $$ if HAS_MORPH_TARGETS
-    let morph_result = apply_morph_targets(vertex_index, in.position, in.normal);
+    let morph_result = apply_morph_targets(vertex_index, in.position, in.normal, object_tangent);
     local_pos = vec4<f32>(morph_result.position, 1.0);
     local_normal = morph_result.normal;
+
+    $$ if HAS_TANGENT
+        object_tangent = morph_result.tangent;
+    $$ endif
     $$ endif

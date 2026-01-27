@@ -148,7 +148,7 @@ impl ForwardRenderPass {
                     },
                     depth_write: material.depth_write(),
                     // Reverse Z: Greater for depth test
-                    depth_compare: if material.depth_test() { wgpu::CompareFunction::GreaterEqual } else { wgpu::CompareFunction::Always },
+                    depth_compare: if material.depth_test() { wgpu::CompareFunction::Greater } else { wgpu::CompareFunction::Always },
                     blend_state: if material.alpha_mode() == AlphaMode::Blend { Some(wgpu::BlendState::ALPHA_BLENDING) } else { None },
                     color_format: ctx.wgpu_ctx.config.format,
                     depth_format: ctx.wgpu_ctx.depth_format,

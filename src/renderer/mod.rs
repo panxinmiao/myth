@@ -27,7 +27,7 @@ use self::settings::RenderSettings;
 pub struct Renderer {
     settings: RenderSettings,
     context: Option<RendererState>,
-    _size: [u32; 2],
+    size: [u32; 2],
 }
 
 /// 渲染器内部状态
@@ -44,7 +44,7 @@ impl Renderer {
         Self {
             settings,
             context: None,
-            _size: [0, 0],
+            size: [0, 0],
         }
     }
 
@@ -57,7 +57,7 @@ impl Renderer {
             return Ok(());
         }
 
-        self._size = [width, height];
+        self.size = [width, height];
 
         // 1. 创建 WGPU 上下文
         let wgpu_ctx = WgpuContext::new(window, &self.settings, width, height).await?;
@@ -82,7 +82,7 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, width: u32, height: u32, _scale_factor: f32) {
-        self._size = [width, height];
+        self.size = [width, height];
         if let Some(state) = &mut self.context {
             state.wgpu_ctx.resize(width, height);
         }
@@ -100,7 +100,7 @@ impl Renderer {
         time: f32,
         extra_nodes: &[&dyn RenderNode],
     ) {
-        if self._size[0] == 0 || self._size[1] == 0 {
+        if self.size[0] == 0 || self.size[1] == 0 {
             return;
         }
         if let Some(state) = &mut self.context {

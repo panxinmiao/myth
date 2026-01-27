@@ -56,11 +56,14 @@ impl ThreeEngine {
 
     /// 处理窗口尺寸变化
     pub fn resize(&mut self, width: u32, height: u32, scale_factor: f32) {
+
+        self.renderer.resize(width, height, scale_factor);
+        self.input.inject_resize(width, height);
+
         if width > 0 && height > 0 {
-            self.renderer.resize(width, height, scale_factor);
-            self.input.inject_resize(width, height);
             self.update_camera_aspect(width as f32 / height as f32);
         }
+
     }
 
     pub fn update(&mut self, dt: f32) {

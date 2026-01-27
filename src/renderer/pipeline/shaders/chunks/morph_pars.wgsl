@@ -45,11 +45,13 @@ $$ endif
 fn apply_morph_targets(
     vertex_index: u32,
     base_position: vec3<f32>,
-    base_normal: vec3<f32>
+    base_normal: vec3<f32>,
+    base_tangent: vec3<f32>
 ) -> MorphResult {
     var result: MorphResult;
     result.position = base_position;
     result.normal = base_normal;
+    result.tangent = base_tangent;
     
     let active_count = u_morph_targets.count;
     
@@ -68,10 +70,16 @@ fn apply_morph_targets(
         // 应用 Normal 位移
         result.normal += fetch_morph_normal(vertex_index, target_idx) * weight;
         $$ endif
+
+        // 应用 Tangent 位移
+        $$ if HAS_MORPH_TANGENTS
+        result.tangent += fetch_morph_tangent(vertex_index, target_idx) * weight;
+        $$ endif
     }
     
     // 归一化法线
     result.normal = normalize(result.normal);
+    result.tangent = normalize(result.tangent);
     
     return result;
 }
@@ -79,6 +87,7 @@ fn apply_morph_targets(
 struct MorphResult {
     position: vec3<f32>,
     normal: vec3<f32>,
+    tangent: vec3<f32>,
 }
 
 $$ endif
