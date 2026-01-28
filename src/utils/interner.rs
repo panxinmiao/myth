@@ -68,7 +68,7 @@ pub fn preload_common_macros() {
         // 几何体相关
         "HAS_UV",
         "HAS_NORMAL",
-        "HAS_VERTEX_COLOR",
+        "HAS_COLOR",
         "HAS_TANGENT",
         "HAS_SKINNING",
         "HAS_MORPH_TARGETS",

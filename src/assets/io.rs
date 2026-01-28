@@ -59,9 +59,13 @@ impl HttpAssetReader {
         } else {
             url
         };
+
+        
         Ok(Self {
             root_url,
-            client: reqwest::Client::new(),
+            client: reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(30))
+            .build()?,
         })
     }
 

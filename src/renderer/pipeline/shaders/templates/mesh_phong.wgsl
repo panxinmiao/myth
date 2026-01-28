@@ -30,7 +30,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.position = u_render_state.view_projection * world_pos;
     out.world_position = world_pos.xyz / world_pos.w;
 
-    $$ if HAS_VERTEX_COLOR
+    $$ if HAS_COLOR
         out.color = in.color;
     $$ endif
 
@@ -68,7 +68,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     $$ else
         var diffuse_color = u_material.color;
 
-        $$ if HAS_VERTEX_COLOR
+        $$ if HAS_COLOR
             diffuse_color *= varyings.color;
         $$ endif
 

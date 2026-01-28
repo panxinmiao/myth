@@ -13,7 +13,10 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     var out: VertexOutput;
 
     var local_position = in.position;
+
+    $$ if HAS_NORMAL is defined
     var local_normal = in.normal;
+    $$ endif
 
     $$ if HAS_TANGENT is defined
     var object_tangent = in.tangent.xyz;
@@ -30,34 +33,38 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.position = u_render_state.view_projection * world_pos;
     out.world_position = world_pos.xyz / world_pos.w;
 
-    $$ if HAS_VERTEX_COLOR
-        out.color = in.color;
+    $$ if HAS_COLOR
+    out.color = in.color;
     $$ endif
 
     $$ if HAS_UV
     out.uv = in.uv;
     $$ endif
 
+    $$ if HAS_NORMAL
     out.geometry_normal = local_normal;
     out.normal = normalize(u_model.normal_matrix * local_normal);
-
-    $$ if HAS_TANGENT is defined
-        let v_tangent = normalize(( u_model.world_matrix  * vec4f(object_tangent, 0.0) ).xyz);
-        let v_bitangent = normalize(cross(out.normal, v_tangent) * in.tangent.w);
-        out.v_tangent = vec3<f32>(v_tangent);
-        out.v_bitangent = vec3<f32>(v_bitangent);
     $$ endif
+
+    $$ if HAS_TANGENT
+    let v_tangent = normalize(( u_model.world_matrix  * vec4f(object_tangent, 0.0) ).xyz);
+    let v_bitangent = normalize(cross(out.normal, v_tangent) * in.tangent.w);
+    out.v_tangent = vec3<f32>(v_tangent);
+    out.v_bitangent = vec3<f32>(v_bitangent);
+    $$ endif
+
     {$ include 'uv_vertex' $}
     return out;
 }
 
 @fragment
 fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
-    var surface_normal = normalize(vec3<f32>(varyings.normal));
-    $$ if FLAT_SHADING
+    $$ if FLAT_SHADING or HAS_NORMAL is not defined
         let u = dpdx(varyings.world_position);
         let v = dpdy(varyings.world_position);
-        surface_normal = normalize(cross(u, v));
+        var surface_normal = normalize(cross(u, v));
+    $$ else
+        var surface_normal = normalize(vec3<f32>(varyings.normal));    
     $$ endif
 
     $$ if COLOR_MODE == 'normal'
@@ -65,7 +72,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     $$ else
         var diffuse_color = u_material.color;
 
-        $$ if HAS_VERTEX_COLOR
+        $$ if HAS_COLOR
             diffuse_color *= varyings.color;
         $$ endif
 

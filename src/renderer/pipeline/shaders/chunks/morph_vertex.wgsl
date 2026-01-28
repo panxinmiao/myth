@@ -12,7 +12,7 @@ $$ if HAS_MORPH_TARGETS
         // 应用 Position 位移
         local_position += fetch_morph_position(vertex_index, target_idx) * weight;
         
-        $$ if HAS_MORPH_NORMALS
+        $$ if HAS_MORPH_NORMALS and HAS_NORMAL
         // 应用 Normal 位移
         local_normal += fetch_morph_normal(vertex_index, target_idx) * weight;
         $$ endif
@@ -25,7 +25,9 @@ $$ if HAS_MORPH_TARGETS
     
     // local_pos = vec4<f32>(local_pos, 1.0);
     // 归一化法线
+    $$ if HAS_NORMAL
     local_normal = normalize(local_normal);
+    $$ endif
     $$ if HAS_TANGENT
     object_tangent = normalize(object_tangent);
     $$ endif

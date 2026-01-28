@@ -18,9 +18,18 @@ use crate::animation::tracks::{KeyframeTrack, InterpolationMode};
 use crate::animation::binding::TargetPath;
 use crate::animation::values::MorphWeightData;
 use crate::resources::mesh::MAX_MORPH_TARGETS;
-use wgpu::{VertexFormat, TextureFormat, BufferUsages, VertexStepMode};
+use wgpu::{BufferUsages, PrimitiveTopology, TextureFormat, VertexFormat, VertexStepMode};
 use anyhow::Context;
 use serde_json::Value;
+
+use std::sync::OnceLock;
+
+fn get_global_runtime() -> &'static Runtime {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| {
+        Runtime::new().expect("Failed to create global asset loader runtime")
+    })
+}
 
 struct IntermediateTexture {
     name: Option<String>,
@@ -188,7 +197,7 @@ impl<'a> GltfLoader<'a> {
         assets: &'a mut AssetServer,
         scene: &'a mut Scene
     ) -> anyhow::Result<NodeHandle> {
-        let rt = Runtime::new().map_err(|e| anyhow::anyhow!("Failed to create runtime: {}", e))?;
+        let rt = get_global_runtime();
         rt.block_on(Self::load_async(source, assets, scene))
     }
 
@@ -846,12 +855,22 @@ impl<'a> GltfLoader<'a> {
             return Ok(self.assets.add_geometry(geometry));
         }
 
+        // positions 属性是必须的
         geometry.set_attribute("position", Attribute::new_planar(&positions, VertexFormat::Float32x3));
+
+        // 设置索引
+        if let Some(iter) = reader.read_indices() {
+            let indices: Vec<u32> = iter.into_u32().collect();
+            geometry.set_indices_u32(&indices);
+        }
 
         let mut surface_channels = Vec::new();
 
         if let Some(iter) = reader.read_normals() {
             surface_channels.push(InterleaveChannel::from_iter("normal", iter, VertexFormat::Float32x3));
+        }else{
+            // 如果没有法线，则计算法线
+            geometry.compute_vertex_normals();
         }
         
         if let Some(iter) = reader.read_tangents() {
@@ -899,10 +918,7 @@ impl<'a> GltfLoader<'a> {
             }
         }
 
-        if let Some(iter) = reader.read_indices() {
-            let indices: Vec<u32> = iter.into_u32().collect();
-            geometry.set_indices_u32(&indices);
-        }
+
 
         let get_buffer_data = |buffer: gltf::Buffer| -> Option<&[u8]> {
             buffers.get(buffer.index()).map(|v| v.as_slice())
@@ -940,6 +956,15 @@ impl<'a> GltfLoader<'a> {
             }
         }
 
+        geometry.topology = match primitive.mode() {
+            gltf::mesh::Mode::Points => PrimitiveTopology::PointList,
+            gltf::mesh::Mode::Lines => PrimitiveTopology::LineList,
+            gltf::mesh::Mode::LineLoop => PrimitiveTopology::LineList, // TODO: LineLoop not directly supported
+            gltf::mesh::Mode::LineStrip => PrimitiveTopology::LineStrip,
+            gltf::mesh::Mode::Triangles => PrimitiveTopology::TriangleList,
+            gltf::mesh::Mode::TriangleStrip => PrimitiveTopology::TriangleStrip,
+            gltf::mesh::Mode::TriangleFan => PrimitiveTopology::TriangleList, // TODO: TriangleFan not directly supported
+        };
         geometry.build_morph_storage_buffers();
         geometry.compute_bounding_volume();
 

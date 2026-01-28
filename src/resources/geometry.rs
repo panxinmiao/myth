@@ -567,6 +567,103 @@ impl Geometry {
         self.data_version = self.data_version.wrapping_add(1);
     }
 
+    pub fn compute_vertex_normals(&mut self) {
+        // 1. 获取位置属性 (必须存在)
+        let pos_attr = match self.attributes.get("position") {
+            Some(attr) => attr,
+            None => return,
+        };
+        
+        // 获取位置数据引用
+        let pos_bytes = match &pos_attr.data {
+            Some(data) => data.as_ref(),
+            None => return,
+        };
+
+        if pos_attr.format != VertexFormat::Float32x3 {
+            return;
+        }
+
+        let pos_count = pos_attr.count as usize;
+        let mut normals = vec![Vec3::ZERO; pos_count];
+
+        // 辅助函数：解析位置
+        let pos_stride = pos_attr.stride as usize;
+        let pos_offset = pos_attr.offset as usize;
+        
+        // 这一步只是为了方便读取，和之前一样
+        let get_pos = |i: usize| -> Vec3 {
+            let start = pos_offset + i * pos_stride;
+            // 边界检查，防止恶意数据导致的 panic
+            if start + 12 > pos_bytes.len() { return Vec3::ZERO; }
+            
+            let slice = &pos_bytes[start..start + 12];
+            let vals: &[f32; 3] = bytemuck::cast_slice(slice).try_into().unwrap_or(&[0.0; 3]);
+            Vec3::from_array(*vals)
+        };
+
+        let mut accumulate_triangle = |i0: usize, i1: usize, i2: usize| {
+            // 简单的越界保护
+            if i0 >= pos_count || i1 >= pos_count || i2 >= pos_count { return; }
+
+            let v0 = get_pos(i0);
+            let v1 = get_pos(i1);
+            let v2 = get_pos(i2);
+
+            // 面积加权法线 (Area Weighted)
+            // 叉积的模长 = 2 * 三角形面积
+            let face_normal = (v1 - v0).cross(v2 - v0);
+
+            // 累加
+            normals[i0] += face_normal;
+            normals[i1] += face_normal;
+            normals[i2] += face_normal;
+        };
+
+        // 2. 检查索引属性是否存在
+        if let Some(index_attr) = &self.index_attribute {
+            // === 情况 A: Indexed Geometry (有索引) ===
+            if let Some(index_bytes) = &index_attr.data {
+                let index_bytes = index_bytes.as_ref();
+                
+                match index_attr.format {
+                    VertexFormat::Uint16 => {
+                        let u16s: &[u16] = bytemuck::cast_slice(index_bytes);
+                        for chunk in u16s.chunks_exact(3) {
+                            accumulate_triangle(chunk[0] as usize, chunk[1] as usize, chunk[2] as usize);
+                        }
+                    },
+                    VertexFormat::Uint32 => {
+                        let u32s: &[u32] = bytemuck::cast_slice(index_bytes);
+                        for chunk in u32s.chunks_exact(3) {
+                            accumulate_triangle(chunk[0] as usize, chunk[1] as usize, chunk[2] as usize);
+                        }
+                    },
+                    _ => {} // 不支持的索引格式
+                }
+            }
+        } else {
+            // === 情况 B: Non-Indexed Geometry (无索引) ===
+            // 假定顶点是每 3 个组成一个三角形 (TRIANGLES 拓扑)
+            // 直接遍历 0..pos_count
+            for i in (0..pos_count).step_by(3) {
+                // 确保最后不够 3 个顶点时不处理
+                if i + 2 < pos_count {
+                    accumulate_triangle(i, i + 1, i + 2);
+                }
+            }
+        }
+
+        // 3. 最后统一归一化
+        for n in normals.iter_mut() {
+            *n = n.normalize_or_zero();
+        }
+
+        // 4. 创建属性并存回
+        let normal_attr = Attribute::new_planar(&normals, VertexFormat::Float32x3);
+        self.set_attribute("normal", normal_attr);
+    }
+
     pub fn compute_bounding_volume(&self) {
         let pos_attr = match self.attributes.get("position") {
             Some(attr) => attr,

@@ -12,7 +12,7 @@ struct VertexOutput {
     @location({{ loc.next() }}) v_bitangent: vec3<f32>,
     $$ endif
     $$ endif
-    $$ if HAS_VERTEX_COLOR
+    $$ if HAS_COLOR
     @location({{ loc.next() }}) color: vec4<f32>,
     $$ endif
     {$ include 'uv_vetex_output' $}
