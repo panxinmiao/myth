@@ -21,7 +21,7 @@ use crate::animation::values::MorphWeightData;
 use crate::resources::mesh::MAX_MORPH_TARGETS;
 use wgpu::{BufferUsages, PrimitiveTopology, TextureFormat, VertexFormat, VertexStepMode};
 use anyhow::Context;
-use serde_json::Value;
+use serde_json::{Value};
 
 use std::sync::OnceLock;
 
@@ -31,6 +31,166 @@ fn get_global_runtime() -> &'static Runtime {
         Runtime::new().expect("Failed to create global asset loader runtime")
     })
 }
+
+fn decode_data_uri(uri: &str) -> anyhow::Result<Vec<u8>> {
+    if uri.starts_with("data:") {
+        // 找到逗号位置
+        let comma = uri.find(',').ok_or_else(|| anyhow::anyhow!("Invalid Data URI"))?;
+        
+        // 检查是否是 base64
+        let header = &uri[0..comma];
+        let data = &uri[comma + 1..];
+
+        if header.ends_with(";base64") {
+            // 需要 base64 crate
+            use base64::{Engine as _, engine::general_purpose};
+            let bytes = general_purpose::STANDARD.decode(data)?;
+            Ok(bytes)
+        } else {
+            // Todo: 百分号解码 (URL decode)
+            Err(anyhow::anyhow!("Unsupported Data URI encoding (only base64 supported)"))
+        }
+    } else {
+        Err(anyhow::anyhow!("Not a Data URI"))
+    }
+}
+
+/// 从 JSON 扩展数据中解析 KHR_texture_transform
+fn parse_transform_from_json(texture_slot: &mut TextureSlot,
+    transform_val: &Value
+) {
+
+    if let Some(offset) = transform_val.get("offset").and_then(|v| v.as_array()) {
+        let x = offset.get(0).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+        let y = offset.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
+        texture_slot.transform.offset = Vec2::new(x, y);
+    }
+
+    if let Some(scale) = transform_val.get("scale").and_then(|v| v.as_array()) {
+        let x = scale.get(0).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+        let y = scale.get(1).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
+        texture_slot.transform.scale = Vec2::new(x, y);
+    }
+
+    if let Some(rotation) = transform_val.get("rotation").and_then(|v| v.as_f64()) {
+        texture_slot.transform.rotation = rotation as f32;
+    }
+
+    if let Some(tex_coord) = transform_val.get("texCoord").and_then(|v| v.as_u64()) {
+        texture_slot.channel = tex_coord as u8;
+    }
+    
+}
+
+
+/// 预处理 glTF 数据，修复不兼容的字段
+fn sanitize_gltf_data(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
+    // 检查魔数，判断是否为 GLB
+    if data.starts_with(b"glTF") {
+        sanitize_glb(data)
+    } else {
+        sanitize_json(data)
+    }
+}
+
+/// 修复纯 JSON 数据
+fn sanitize_json(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
+    let mut root: Value = serde_json::from_slice(data)
+        .context("Failed to parse GLTF JSON for sanitization")?;
+
+    if patch_json_value(&mut root) {
+        let patched = serde_json::to_vec(&root)?;
+        Ok(Cow::Owned(patched))
+    } else {
+        Ok(Cow::Borrowed(data))
+    }
+}
+
+/// 修复 GLB 数据 (需要解包 Chunk 0，修补后再重新打包)
+fn sanitize_glb(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
+    if data.len() < 12 { return Ok(Cow::Borrowed(data)); }
+    
+    // 读取头部
+    let version = u32::from_le_bytes(data[4..8].try_into()?);
+    if version != 2 { return Ok(Cow::Borrowed(data)); } // 只处理 v2
+
+    // 读取 Chunk 0 (JSON)
+    let chunk0_len = u32::from_le_bytes(data[12..16].try_into()?) as usize;
+    let chunk0_type = u32::from_le_bytes(data[16..20].try_into()?);
+    
+    // Chunk Type 0x4E4F534A 是 "JSON"
+    if chunk0_type != 0x4E4F534A { return Ok(Cow::Borrowed(data)); }
+
+    let json_bytes = &data[20..20 + chunk0_len];
+    
+    // 尝试修复 JSON
+    let mut root: Value = serde_json::from_slice(json_bytes)?;
+    if !patch_json_value(&mut root) {
+        return Ok(Cow::Borrowed(data));
+    }
+
+    // --- 重新打包 GLB ---
+    let new_json_bytes = serde_json::to_vec(&root)?;
+    
+    // 计算 Padding (4字节对齐)
+    let padding = (4 - (new_json_bytes.len() % 4)) % 4;
+    let new_chunk0_len = new_json_bytes.len() + padding;
+    
+    // 构建新 GLB
+    let mut new_glb = Vec::with_capacity(data.len() + (new_chunk0_len as isize - chunk0_len as isize).abs() as usize);
+    
+    // 1. Header (12 bytes)
+    new_glb.extend_from_slice(&data[0..8]); // Magic + Version
+    // Total Length 稍后回填
+    new_glb.extend_from_slice(&[0, 0, 0, 0]); 
+
+    // 2. Chunk 0 Header
+    new_glb.extend_from_slice(&(new_chunk0_len as u32).to_le_bytes());
+    new_glb.extend_from_slice(&chunk0_type.to_le_bytes());
+
+    // 3. Chunk 0 Data
+    new_glb.extend_from_slice(&new_json_bytes);
+    for _ in 0..padding { new_glb.push(0x20); } // JSON padding 用空格填充
+
+    // 4. 剩余 Chunks (直接拷贝)
+    let rest_offset = 20 + chunk0_len;
+    if rest_offset < data.len() {
+        new_glb.extend_from_slice(&data[rest_offset..]);
+    }
+
+    // 5. 修正 Total Length (Header offset 8)
+    let total_len = new_glb.len() as u32;
+    new_glb[8..12].copy_from_slice(&total_len.to_le_bytes());
+
+    Ok(Cow::Owned(new_glb))
+}
+
+/// 执行具体的修补逻辑
+fn patch_json_value(root: &mut Value) -> bool {
+    let mut changed = false;
+
+    // 修复 1: 移除没有 'node' 的 animation channels
+    if let Some(anims) = root.get_mut("animations").and_then(|v| v.as_array_mut()) {
+        for anim in anims {
+            if let Some(channels) = anim.get_mut("channels").and_then(|v| v.as_array_mut()) {
+                let old_len = channels.len();
+                channels.retain(|ch| {
+                    // 检查 target.node 是否存在
+                    ch.get("target")
+                        .and_then(|t| t.get("node"))
+                        .is_some()
+                });
+                if channels.len() != old_len {
+                    changed = true;
+                    log::warn!("Sanitizer: Removed {} invalid animation channels (missing node)", old_len - channels.len());
+                }
+            }
+        }
+    }
+
+    changed
+}
+
 
 struct IntermediateTexture {
     name: Option<String>,
@@ -101,27 +261,11 @@ pub trait GltfExtensionParser {
             };
             texture_slot.texture = Some(tex_handle);
             texture_slot.channel = tex_info.get("texCoord").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
+            
 
             if let Some(transform) = tex_info.get("extensions")
-                .and_then(|exts| exts.get("KHR_texture_transform"))
-            {
-                if let Some(offset_array) = transform.get("offset").and_then(|v| v.as_array()) {
-                    let offset_x = offset_array.get(0).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                    let offset_y = offset_array.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
-                    texture_slot.transform.offset = Vec2::new(offset_x, offset_y);
-                }
-                if let Some(scale_array) = transform.get("scale").and_then(|v| v.as_array()) {
-                    let scale_x = scale_array.get(0).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                    let scale_y = scale_array.get(1).and_then(|v| v.as_f64()).unwrap_or(1.0) as f32;
-                    texture_slot.transform.scale = Vec2::new(scale_x, scale_y);
-                }
-                if let Some(rotation) = transform.get("rotation").and_then(|v| v.as_f64()) {
-                    texture_slot.transform.rotation = rotation as f32;
-                }
-
-                if let Some(tex_coord) = transform.get("texCoord").and_then(|v| v.as_u64()) {
-                    texture_slot.channel = tex_coord as u8;
-                }
+                .and_then(|exts| exts.get("KHR_texture_transform")){
+                    parse_transform_from_json(texture_slot, transform);
             }
         }
     }
@@ -214,8 +358,16 @@ impl<'a> GltfLoader<'a> {
         let gltf_bytes = reader.read_bytes(file_name).await
             .with_context(|| format!("Failed to read glTF file: {}", source))?;
         
-        let gltf = gltf::Gltf::from_slice(&gltf_bytes)
-            .context("Failed to parse glTF data")?;
+        let sanitized_bytes = sanitize_gltf_data(&gltf_bytes)
+            .context("Failed to sanitize glTF data")?;
+
+        let gltf = match gltf::Gltf::from_slice_without_validation(&sanitized_bytes) {
+            Ok(g) => g,
+            Err(err) => {
+                log::error!("GLTF Parse Error Details: {:?}", err);
+                return Err(anyhow::anyhow!("Failed to parse glTF: {}", err));
+            }
+        };
 
         let buffers = Self::load_buffers_async(&gltf, &reader).await?;
 
@@ -239,6 +391,7 @@ impl<'a> GltfLoader<'a> {
             "KHR_materials_emissive_strength".to_string(),
             "KHR_materials_ior".to_string(),
             "KHR_materials_specular".to_string(),
+            "KHR_texture_transform".to_string(),
         ]);
 
         let require_not_supported: Vec<_> = gltf.extensions_required().filter(
@@ -339,9 +492,18 @@ impl<'a> GltfLoader<'a> {
                 }
                 gltf::buffer::Source::Uri(uri) => {
                     let uri = uri.to_string();
-                    tasks.push(tokio::spawn(async move {
-                        reader.read_bytes(&uri).await
-                    }));
+                    if uri.starts_with("data:") {
+                        // Data URI
+                        tasks.push(tokio::spawn(async move {
+                            decode_data_uri(&uri) 
+                        }));
+                    } else {
+                        // 正常的网络/文件路径
+                        tasks.push(tokio::spawn(async move {
+                            reader.read_bytes(&uri).await
+                        }));
+                    }
+
                 }
             }
         }
@@ -420,7 +582,11 @@ impl<'a> GltfLoader<'a> {
             tasks.push(tokio::spawn(async move {
                 // A. 下载 / 获取数据
                 let img_bytes = if let Some(uri) = uri_opt {
-                    reader.read_bytes(&uri).await?
+                    if uri.starts_with("data:") {
+                        decode_data_uri(&uri)?
+                    } else {
+                        reader.read_bytes(&uri).await?
+                    }
                 } else {
                     buffer_data.unwrap()
                 };
@@ -537,6 +703,20 @@ impl<'a> GltfLoader<'a> {
                 let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
                 mat.normal_map.texture = Some(tex_handle);
                 mat.normal_map.channel = info.tex_coord() as u8;
+                mat.set_normal_scale(Vec2::splat(info.scale()));
+
+                let json_material = material.index()
+                    .and_then(|i| gltf.document.materials().nth(i));
+
+                // [修复]: 从 JSON 中补全 transform
+                if let Some(json_mat) = json_material {
+                    if let Some(json_normal) = &json_mat.normal_texture() {
+                        if let Some(transform_val) = json_normal.extensions()
+                            .and_then(|exts| exts.get("KHR_texture_transform")){
+                                parse_transform_from_json(&mut mat.normal_map, transform_val);
+                        }
+                    }
+                }
             }
 
             if let Some(info) = material.occlusion_texture() {
@@ -544,6 +724,19 @@ impl<'a> GltfLoader<'a> {
                 mat.ao_map.texture = Some(tex_handle);
                 mat.ao_map.channel = info.tex_coord() as u8;
                 mat.set_ao_map_intensity(info.strength());
+
+                let json_material = material.index()
+                    .and_then(|i| gltf.document.materials().nth(i));
+
+                // [修复]: 从 JSON 中补全 transform
+                if let Some(json_mat) = json_material {
+                    if let Some(json_occlusion) = &json_mat.occlusion_texture() {
+                        if let Some(transform_val) = json_occlusion.extensions()
+                            .and_then(|exts| exts.get("KHR_texture_transform")){
+                                parse_transform_from_json(&mut mat.ao_map, transform_val);
+                        }
+                    }
+                }
             }
 
             if let Some(info) = material.emissive_texture() {

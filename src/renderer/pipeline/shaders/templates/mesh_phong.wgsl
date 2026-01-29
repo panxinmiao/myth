@@ -73,7 +73,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
         $$ endif
 
         {$ if HAS_MAP $}
-            let tex_color = textureSample(t_map, s_map, varyings.uv);
+            let tex_color = textureSample(t_map, s_map, varyings.map_uv);
             diffuse_color *= tex_color;
         {$ endif $}
 

@@ -414,7 +414,7 @@ impl GltfViewer {
                     let center = bbox.center();
                     let radius = bbox.size().length() * 0.5;
                     if let Some((_transform, camera)) = scene.query_main_camera_bundle() {
-                        camera.near = (radius / 100.0).max(0.001);
+                        camera.near = radius / 100.0;
                         camera.update_projection_matrix();
                         self.controls.set_target(center);
                         self.controls.set_position(center + Vec3::new(0.0, radius, radius * 2.5));

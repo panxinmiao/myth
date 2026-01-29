@@ -73,7 +73,7 @@ impl TextureSlot {
     /// 变换顺序: Translate * Rotate * Scale
     #[inline]
     pub fn compute_matrix(&self) -> Mat3A {
-        let (s, c) = self.transform.rotation.sin_cos();
+        let (s, c) = (-self.transform.rotation).sin_cos();
         let sx = self.transform.scale.x;
         let sy = self.transform.scale.y;
         
