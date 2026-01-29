@@ -25,7 +25,7 @@ pub use mesh::Mesh;
 pub use material::{
     Material, MaterialType, MaterialTrait, RenderableMaterialTrait,
     MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, MeshPhysicalMaterial, 
-    Side, TextureSlot, TextureTransform,
+    Side, TextureSlot, TextureTransform, AlphaMode,
 };
 pub use buffer::BufferRef;
 pub use geometry::{Attribute, BoundingBox, BoundingSphere, Geometry};

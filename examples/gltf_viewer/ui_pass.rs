@@ -1,7 +1,8 @@
 //! UI Pass 插件模块
 //!
 //! 这是一个外部插件示例，演示如何将 egui 集成到 three-rs 渲染引擎中。
-//! 该模块**不属于**引擎核心，是"用户代码"(User Land Code)。
+//! 该模块暂时**不属于**引擎核心，是"用户代码"(User Land Code)。
+//! 未来，它可能会被移入引擎核心，作为官方 UI 解决方案提供。
 //!
 //! # 设计说明
 //! - `UiPass` 实现了 `RenderNode` trait，可以被注入到引擎的 RenderGraph 中
@@ -11,11 +12,12 @@
 
 use std::cell::RefCell;
 
+use rustc_hash::FxHashMap;
 use winit::window::Window;
 use winit::event::WindowEvent;
 use wgpu::{Device, TextureFormat};
 
-use three::renderer::graph::{RenderNode, RenderContext};
+use three::{assets::TextureHandle, renderer::graph::{RenderContext, RenderNode}};
 
 /// UI 渲染 Pass
 /// 
@@ -43,6 +45,16 @@ pub struct UiPass {
     textures_delta: RefCell<egui::TexturesDelta>,
     /// 屏幕描述符
     screen_descriptor: RefCell<egui_wgpu::ScreenDescriptor>,
+
+
+    // === 延迟注册系统， 提供给外部App访问内部纹理的方法 ===
+    /// 待处理的纹理请求队列
+    texture_requests: RefCell<Vec<TextureHandle>>,
+    /// 已注册的纹理映射表 (Handle -> egui::TextureId)
+    texture_map: RefCell<FxHashMap<TextureHandle, egui::TextureId>>,
+    /// 记录 GPU 资源 ID 用于失效检测 (Handle -> GpuImageId)
+    gpu_resource_ids: RefCell<FxHashMap<TextureHandle, u64>>,
+
 }
 
 impl UiPass {
@@ -92,6 +104,11 @@ impl UiPass {
                 size_in_pixels: [size.width, size.height],
                 pixels_per_point: window.scale_factor() as f32,
             }),
+
+            // 初始化延迟注册系统
+            texture_requests: RefCell::new(Vec::new()),
+            texture_map: RefCell::new(FxHashMap::default()),
+            gpu_resource_ids: RefCell::new(FxHashMap::default()),
         }
     }
 
@@ -102,8 +119,65 @@ impl UiPass {
     /// 返回 `true` 表示事件被 UI 消耗，应用不应再处理
     pub fn handle_input(&self, window: &Window, event: &WindowEvent) -> bool {
         let response = self.state.borrow_mut().on_window_event(window, event);
+
+        if let WindowEvent::MouseInput { state: winit::event::ElementState::Released, .. } = event {
+            return false;
+        }
+
+        // let is_mouse_released = matches!(event, 
+        //     WindowEvent::MouseInput { state: winit::event::ElementState::Released, .. }
+        // );
+
+        // // 1. 优先检查鼠标释放事件，防止“点击穿透”问题
+        // if is_mouse_released {
+        //     return false;
+        // }
+
         response.consumed
     }
+
+    #[allow(dead_code)]
+    pub fn request_texture(&self, handle: TextureHandle) -> Option<egui::TextureId> {
+        // 1. 如果已存在，直接返回
+        if let Some(&id) = self.texture_map.borrow().get(&handle) {
+            return Some(id);
+        }
+
+        // 2. 如果不存在，检查是否已在请求队列中
+        let mut requests = self.texture_requests.borrow_mut();
+        if !requests.contains(&handle) {
+            requests.push(handle);
+        }
+
+        None
+    }
+
+    #[allow(dead_code)]
+    pub fn free_texture(&self, handle: TextureHandle) {
+        if let Some(id) = self.texture_map.borrow_mut().remove(&handle) {
+            self.gpu_resource_ids.borrow_mut().remove(&handle);
+            self.renderer.borrow_mut().free_texture(&id);
+        }
+    }
+
+
+    pub fn register_native_texture(
+        &self, 
+        device: &wgpu::Device, 
+        view: &wgpu::TextureView, 
+        filter: wgpu::FilterMode
+    ) -> egui::TextureId {
+
+        let device_egui: &egui_wgpu::wgpu::Device = unsafe { std::mem::transmute(device) };
+        let view_egui: &egui_wgpu::wgpu::TextureView = unsafe { std::mem::transmute(view) };
+
+        self.renderer.borrow_mut().register_native_texture(
+            device_egui,
+            view_egui,
+            filter
+        )
+    }
+
 
     /// 每帧开始时调用
     pub fn begin_frame(&self, window: &Window) {
@@ -168,6 +242,53 @@ impl RenderNode for UiPass {
     }
 
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+
+        // === 1. 处理延迟纹理注册 ===
+        {
+            let mut requests = self.texture_requests.borrow_mut();
+            
+            // 如果没有请求，直接跳过，连闭包都不用创建
+            if !requests.is_empty() {
+                let mut map = self.texture_map.borrow_mut();
+                let mut gpu_ids = self.gpu_resource_ids.borrow_mut();
+                
+                // 获取资源管理器
+                let resources = &ctx.resource_manager;
+                
+                // retain: 仅保留那些“注册失败（未就绪）”的请求
+                // 返回 true = 保留 (未就绪)
+                // 返回 false = 移除 (已注册)
+                requests.retain(|&handle| {
+                    // 1. 尝试查找绑定信息
+                    if let Some(binding) = resources.get_texture_binding(handle) {
+                        let image_id = binding.cpu_image_id;
+                        
+                        // 2. 尝试获取 GPU 图像资源
+                        if let Some(gpu_image) = resources.get_image(image_id) {
+                            // 3. 执行注册
+                            // let device_egui: &egui_wgpu::wgpu::Device = unsafe { std::mem::transmute(&ctx.wgpu_ctx.device) };
+                            // let view_egui: &egui_wgpu::wgpu::TextureView = unsafe { std::mem::transmute(&gpu_image.default_view) };
+                            
+                            // let id = renderer.register_native_texture(
+                            //     device_egui,
+                            //     view_egui,
+                            //     egui_wgpu::wgpu::FilterMode::Linear,
+                            // );
+                            let id = self.register_native_texture(&ctx.wgpu_ctx.device, &gpu_image.default_view, egui_wgpu::wgpu::FilterMode::Linear);
+                            
+                            map.insert(handle, id);
+                            gpu_ids.insert(handle, gpu_image.id);
+                            
+                            return false; // 已处理，从队列中移除
+                        }
+                    }
+                    
+                    true // 还没准备好，保留在队列中，下帧再试
+                });
+            }
+        }
+
+
         let device = &ctx.wgpu_ctx.device;
         let queue = &ctx.wgpu_ctx.queue;
         let view = ctx.surface_view;

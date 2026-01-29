@@ -93,7 +93,7 @@ impl ResourceManager {
                 TextureSource::Asset(tex_handle) => {
                     self.prepare_texture(assets, *tex_handle);
                     if let Some(binding) = self.texture_bindings.get(*tex_handle) {
-                        resource_ids.push(binding.image_id);
+                        resource_ids.push(binding.view_id);
                         resource_ids.push(binding.sampler_id);
                     } else {
                         resource_ids.push(self.dummy_image.id);

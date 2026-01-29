@@ -149,8 +149,10 @@ impl GpuBuffer {
 /// 将 TextureHandle 映射到对应的 GpuImage ID、View ID 和 GpuSampler ID
 #[derive(Debug, Clone, Copy)]
 pub struct TextureBinding {
-    pub image_id: u64,
+    /// GPU 端图像视图 ID
     pub view_id: u64,
+    /// CPU 端图像 ID
+    pub cpu_image_id: u64,
     pub sampler_id: u64,
     /// CPU 端 Texture 版本（用于检测采样参数变化）
     pub texture_version: u64,
@@ -159,10 +161,10 @@ pub struct TextureBinding {
 /// 纹理视图缓存键
 ///
 /// 用于按需创建和缓存不同配置的 TextureView。
-/// Key 包含 image_id，确保底层 Image 重建时自动失效。
+/// Key 包含 view_id，确保底层 Image 重建时自动失效。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureViewKey {
-    pub image_id: u64,
+    pub view_id: u64,
     pub format: Option<wgpu::TextureFormat>,
     pub dimension: Option<wgpu::TextureViewDimension>,
     pub base_mip_level: u32,
@@ -174,9 +176,9 @@ pub struct TextureViewKey {
 
 impl TextureViewKey {
     #[inline]
-    pub fn new(image_id: u64, desc: &wgpu::TextureViewDescriptor) -> Self {
+    pub fn new(view_id: u64, desc: &wgpu::TextureViewDescriptor) -> Self {
         Self {
-            image_id,
+            view_id,
             format: desc.format,
             dimension: desc.dimension,
             base_mip_level: desc.base_mip_level,
@@ -188,9 +190,9 @@ impl TextureViewKey {
     }
 
     #[inline]
-    pub fn default_for_image(image_id: u64) -> Self {
+    pub fn default_for_view(view_id: u64) -> Self {
         Self {
-            image_id,
+            view_id,
             format: None,
             dimension: None,
             base_mip_level: 0,
@@ -317,12 +319,14 @@ pub struct ResourceManager {
 
     pub(crate) gpu_geometries: SecondaryMap<GeometryHandle, GpuGeometry>,
     pub(crate) gpu_materials: SecondaryMap<MaterialHandle, GpuMaterial>,
+    pub(crate) global_states: FxHashMap<u64, GpuGlobalState>,
+
     /// TextureHandle 到 (ImageId, SamplerId) 的映射
     pub(crate) texture_bindings: SecondaryMap<TextureHandle, TextureBinding>,
     /// SamplerHandle 到 SamplerId 的映射
     pub(crate) sampler_bindings: SecondaryMap<SamplerHandle, u64>,
     
-    pub(crate) global_states: FxHashMap<u64, GpuGlobalState>,
+    /// 所有 GpuBuffer，Key 是 CPU Buffer 的 ID
     pub(crate) gpu_buffers: FxHashMap<u64, GpuBuffer>,
     /// 所有 GpuImage，Key 是 CPU Image 的 ID
     pub(crate) gpu_images: FxHashMap<u64, GpuImage>,
@@ -623,6 +627,6 @@ impl ResourceManager {
         self.gpu_images.retain(|_, v| v.last_used_frame >= cutoff);
         self.global_states.retain(|_, v| v.last_used_frame >= cutoff);
         // texture_bindings 跟随 gpu_images 清理
-        self.texture_bindings.retain(|_, b| self.gpu_images.contains_key(&b.image_id));
+        self.texture_bindings.retain(|_, b| self.gpu_images.contains_key(&b.cpu_image_id));
     }
 }

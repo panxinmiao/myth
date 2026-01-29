@@ -79,12 +79,12 @@ impl MeshPhysicalMaterial {
     }
 
     #[allow(dead_code)]
-    pub(crate) fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, MeshPhysicalUniforms> {
+    pub fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, MeshPhysicalUniforms> {
         self.uniforms.write()
     }
 
     #[allow(dead_code)]
-    pub(crate) fn settings_mut(&mut self) -> SettingsGuard<'_> {
+    pub fn settings_mut(&mut self) -> SettingsGuard<'_> {
         SettingsGuard {
             initial_settings: self.settings.clone(),
             settings: &mut self.settings,
@@ -108,6 +108,8 @@ impl_material_api!(
         (ao_map_intensity,   f32,  "AO map intensity."),
         (specular_color,     Vec3, "Specular color."),
         (specular_intensity, f32,  "Specular intensity."),
+        (clearcoat,          f32,  "Clearcoat factor."),
+        (clearcoat_roughness, f32, "Clearcoat roughness factor."),
         (ior,                f32,  "Index of Refraction."),
     ],
     textures: [

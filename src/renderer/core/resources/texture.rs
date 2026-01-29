@@ -168,7 +168,7 @@ impl ResourceManager {
             let image_id = texture_asset.image.id();
             if let Some(gpu_img) = self.gpu_images.get(&image_id) {
                 let version_match = binding.texture_version == texture_asset.version();
-                let image_match = binding.image_id == gpu_img.id && 
+                let image_match = binding.view_id == gpu_img.id && 
                                   gpu_img.generation_id == texture_asset.image.generation_id();
                 
                 if version_match && image_match {
@@ -212,8 +212,8 @@ impl ResourceManager {
         let sampler_id = self.get_or_create_sampler(texture_asset.sampler, texture_asset.name());
 
         let binding = TextureBinding {
-            image_id: gpu_image_id,
             view_id: gpu_image_id,
+            cpu_image_id: image_id,
             sampler_id,
             texture_version: texture_asset.version(),
         };

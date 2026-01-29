@@ -28,6 +28,7 @@ pub use resources::{
     Geometry, Image, Material, MaterialTrait, MaterialType, Mesh, RenderableMaterialTrait,
     ShaderDefines, Side, Texture,
 };
+pub use resources::material::*;
 pub use scene::{Camera, Light, Node, Scene};
 pub use utils::interner;
 pub use utils::orbit_control::OrbitControls;

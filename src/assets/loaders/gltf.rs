@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
@@ -584,6 +585,7 @@ impl<'a> GltfLoader<'a> {
             }
 
             let mut engine_mat = Material::from(mat);
+            engine_mat.name = material.name().map(|s| Cow::Owned(s.to_string()));
 
             if material.pbr_specular_glossiness().is_some() {
                 if let Some(handler) = self.extensions.get_mut("KHR_materials_pbrSpecularGlossiness") {

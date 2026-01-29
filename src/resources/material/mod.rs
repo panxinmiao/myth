@@ -242,10 +242,10 @@ pub enum AlphaMode {
 /// 材质设置 - 对应 Pipeline 变化
 #[derive(PartialEq, Clone, Debug)]
 pub struct MaterialSettings {
-    pub(crate) alpha_mode: AlphaMode,
-    pub(crate) depth_write: bool,
-    pub(crate) depth_test: bool,
-    pub(crate) side: Side,
+    pub alpha_mode: AlphaMode,
+    pub depth_write: bool,
+    pub depth_test: bool,
+    pub side: Side,
 }
 
 impl Default for MaterialSettings {
@@ -280,7 +280,7 @@ impl MaterialSettings {
 /// Settings 修改守卫
 /// 
 /// 当 Settings 发生变化时自动递增材质版本号，用于 Pipeline 缓存检测
-pub(crate) struct SettingsGuard<'a> {
+pub struct SettingsGuard<'a> {
     settings: &'a mut MaterialSettings,
     version: &'a mut u64,
     initial_settings: MaterialSettings,

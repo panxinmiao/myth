@@ -100,7 +100,7 @@ impl ResourceManager {
                 
                 // 查找 Asset 对应的 GPU 资源
                 if let Some(binding) = self.texture_bindings.get(*handle) {
-                    if let Some(img) = self.gpu_images.values().find(|img| img.id == binding.image_id) {
+                    if let Some(img) = self.gpu_images.get(&binding.cpu_image_id) {
                         return &img.default_view;
                     }
                 }
@@ -443,7 +443,7 @@ impl ResourceManager {
             match h {
                 TextureSource::Asset(handle) => {
                     self.prepare_texture(assets, *handle);
-                    self.texture_bindings.get(*handle).map(|b| b.image_id).unwrap_or(0)
+                    self.texture_bindings.get(*handle).map(|b| b.view_id).unwrap_or(0)
                 },
                 TextureSource::Attachment(id,_) => *id,
             }
@@ -454,7 +454,7 @@ impl ResourceManager {
             match h {
                 TextureSource::Asset(handle) => {
                     self.prepare_texture(assets, handle);
-                    self.texture_bindings.get(handle).map(|b| b.image_id).unwrap_or(0)
+                    self.texture_bindings.get(handle).map(|b| b.view_id).unwrap_or(0)
                 },
                 TextureSource::Attachment(id,_) => id,
             }
@@ -464,7 +464,7 @@ impl ResourceManager {
             match h {
                 TextureSource::Asset(handle) => {
                     self.prepare_texture(assets, handle);
-                    self.texture_bindings.get(handle).map(|b| b.image_id).unwrap_or(0)
+                    self.texture_bindings.get(handle).map(|b| b.view_id).unwrap_or(0)
                 },
                 TextureSource::Attachment(id,_) => id,
             }
