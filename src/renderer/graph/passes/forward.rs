@@ -58,6 +58,8 @@ impl ForwardRenderPass {
         transparent.clear();
 
         ctx.resource_manager.ensure_model_buffer_capacity(ctx.extracted_scene.render_items.len());
+
+        let scene_hash = ctx.extracted_scene.scene_defines.compute_hash() as u32;
         
         for item_idx in 0..ctx.extracted_scene.render_items.len() {
             let item = &ctx.extracted_scene.render_items[item_idx];
@@ -115,7 +117,7 @@ impl ForwardRenderPass {
                 geometry_handle: item.geometry,
                 geometry_layout_version: geometry.layout_version(),
                 instance_variants,
-                scene_id: ctx.extracted_scene.scene_defines.compute_hash() as u32,
+                scene_id: scene_hash,
                 render_state_id: ctx.render_state.id,
             };
 

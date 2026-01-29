@@ -134,21 +134,7 @@ impl RenderFrame {
         resource_manager.next_frame();
 
         // ========================================================================
-        // 1. Acquire Surface
-        // ========================================================================
-        let output = match wgpu_ctx.surface.get_current_texture() {
-            Ok(output) => output,
-            Err(wgpu::SurfaceError::Lost) => return,
-            Err(e) => {
-                eprintln!("Render error: {:?}", e);
-                return;
-            }
-        };
-        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-
-        // ========================================================================
-        // 2. Extract 阶段：复用内存，避免每帧分配
+        // 1. Extract 阶段：复用内存，避免每帧分配
         // ========================================================================
         self.extracted_scene.extract_into(scene, camera, assets);
 
@@ -163,10 +149,25 @@ impl RenderFrame {
         }
 
         // ========================================================================
-        // 3. Prepare 阶段：准备 GPU 资源
+        // 2. Prepare 阶段：准备 GPU 资源
         // ========================================================================
         self.prepare_global_resources(resource_manager, assets, scene, camera, time);
         self.upload_skeletons_extracted(resource_manager, &scene.skeleton_pool, &self.extracted_scene);
+
+
+        // ========================================================================
+        // 3. Acquire Surface
+        // ========================================================================
+        let output = match wgpu_ctx.surface.get_current_texture() {
+            Ok(output) => output,
+            Err(wgpu::SurfaceError::Lost) => return,
+            Err(e) => {
+                eprintln!("Render error: {:?}", e);
+                return;
+            }
+        };
+        let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
+
 
         // ========================================================================
         // 4. 构建瞬态 RenderGraph 并执行
