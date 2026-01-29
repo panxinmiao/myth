@@ -24,7 +24,7 @@ pub struct ThreeEngine {
 }
 
 impl ThreeEngine {
-    /// 创建引擎（轻量级，无 GPU 资源）
+    /// 创建引擎
     #[must_use]
     pub fn new(settings: RenderSettings) -> Self {
         Self {
@@ -46,10 +46,6 @@ impl ThreeEngine {
         W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static,
     {
         self.renderer.init(window, width, height).await?;
-
-        // if self.scene_manager.active_handle().is_none() {
-        //     self.scene_manager.create_active();
-        // }
 
         Ok(())
     }

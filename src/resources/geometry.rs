@@ -769,7 +769,7 @@ impl Geometry {
                 buffer: shared_buffer_ref.clone(), 
                 data: Some(shared_data.clone()), 
 
-                version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
+                version: 0,
                 format,
                 offset,
                 stride,

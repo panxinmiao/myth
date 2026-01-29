@@ -1,7 +1,5 @@
 //! Geometry 相关操作
 
-use std::sync::Arc;
-
 use crate::assets::{AssetServer, GeometryHandle};
 use crate::resources::geometry::Geometry;
 
@@ -89,7 +87,7 @@ impl ResourceManager {
     }
 
     fn create_gpu_geometry(&mut self, geometry: &Geometry, handle: GeometryHandle) {
-        let layout_info = Arc::new(crate::renderer::pipeline::vertex::generate_vertex_layout(geometry));
+        let layout_info = crate::renderer::pipeline::vertex::generate_vertex_layout(geometry);
 
         let mut vertex_buffers = Vec::new();
         let mut vertex_buffer_ids = Vec::new();

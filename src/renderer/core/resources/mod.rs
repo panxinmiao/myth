@@ -234,7 +234,7 @@ pub struct GpuSampler {
 /// 
 /// Vertex Buffer IDs 用于 Pipeline 缓存验证，不影响 BindGroup
 pub struct GpuGeometry {
-    pub layout_info: Arc<GeneratedVertexLayout>,
+    pub layout_info: GeneratedVertexLayout,
     pub vertex_buffers: Vec<wgpu::Buffer>,
     pub vertex_buffer_ids: Vec<u64>,
     pub index_buffer: Option<(wgpu::Buffer, wgpu::IndexFormat, u32, u64)>,

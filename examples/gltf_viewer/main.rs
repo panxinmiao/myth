@@ -560,12 +560,13 @@ impl GltfViewer {
                     let is_loading = matches!(self.loading_state, LoadingState::LoadingList | LoadingState::LoadingModel(_));
                     
                     ui.add_enabled_ui(!is_loading, |ui| {
-                        let model_names: Vec<_> = self.model_list.iter()
-                            .map(|m| m.name.as_str())
-                            .collect();
-                        
+
                         ui.horizontal(|ui| {
+                            let model_names: Vec<_> = self.model_list.iter()
+                                .map(|m| m.name.as_str())
+                                .collect();
                             ui.label("Model:");
+
                             let combo = egui::ComboBox::from_id_salt("remote_model_selector")
                                 .width(180.0)
                                 .selected_text(
@@ -580,13 +581,15 @@ impl GltfViewer {
                                     ui.selectable_value(&mut self.selected_model_index, i, *name);
                                 }
                             });
+
+                            if ui.button("Load").clicked() {
+                                if let Some(url) = self.build_remote_url(self.selected_model_index) {
+                                    self.pending_load = Some(ModelSource::Remote(url));
+                                }
+                            }
                         });
 
-                        if ui.button("📥 Load Remote Model").clicked() {
-                            if let Some(url) = self.build_remote_url(self.selected_model_index) {
-                                self.pending_load = Some(ModelSource::Remote(url));
-                            }
-                        }
+
                     });
                     
                     // 显示加载状态
