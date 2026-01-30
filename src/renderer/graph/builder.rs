@@ -51,7 +51,7 @@ struct NodeEntry<'a> {
 /// # 性能考虑
 /// 
 /// - 内部 Vec 预分配 16 个条目，覆盖大部分场景
-/// - 排序使用标准库的 `sort_by_key`，对于小数组非常高效
+/// - 排序使用标准库的 `sort_unstable_by_key`，高效且无额外内存开销
 /// - 节点存储为引用，无堆分配开销
 pub struct FrameBuilder<'a> {
     /// 节点列表（未排序）
@@ -147,15 +147,15 @@ impl<'a> FrameBuilder<'a> {
     /// # 执行顺序
     /// 
     /// 1. 按 `RenderStage` 排序（PreProcess → UI）
-    /// 2. 同阶段内按添加顺序排序（稳定排序）
+    /// 2. 同阶段内按添加顺序排序
     /// 3. 构建 `RenderGraph` 并执行
     pub fn execute(mut self, ctx: &mut RenderContext) {
         if self.nodes.is_empty() {
             return;
         }
         
-        // 排序：先按阶段，再按插入顺序（稳定排序）
-        self.nodes.sort_by_key(|e| (e.stage.order(), e.order));
+        // 排序：先按阶段，再按插入顺序
+        self.nodes.sort_unstable_by_key(|e| (e.stage.order(), e.order));
         
         // 构建 RenderGraph
         let mut graph = RenderGraph::with_capacity(self.nodes.len());
@@ -173,7 +173,7 @@ impl<'a> FrameBuilder<'a> {
     /// 
     /// 返回的 `RenderGraph` 的生命周期与 `FrameBuilder` 相同。
     pub fn build(mut self) -> RenderGraph<'a> {
-        self.nodes.sort_by_key(|e| (e.stage.order(), e.order));
+        self.nodes.sort_unstable_by_key(|e| (e.stage.order(), e.order));
         
         let mut graph = RenderGraph::with_capacity(self.nodes.len());
         for entry in &self.nodes {

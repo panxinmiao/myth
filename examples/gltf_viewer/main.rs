@@ -317,8 +317,10 @@ impl AppHandler for GltfViewer {
         }
     }
 
-    fn extra_render_nodes(&self) -> Vec<(RenderStage, &dyn three::renderer::graph::RenderNode)> {
-        vec![(RenderStage::UI, &self.ui_pass)]
+    fn compose_frame<'a>(&'a self, composer: three::renderer::graph::FrameComposer<'a>) {
+        composer
+            .add_node(RenderStage::UI, &self.ui_pass)
+            .render();
     }
 }
 

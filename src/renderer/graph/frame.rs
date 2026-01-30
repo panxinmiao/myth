@@ -1,35 +1,37 @@
 //! 渲染帧管理
 //!
-//! `RenderFrame` 负责：extract, prepare, 构建渲染上下文
-//! 采用 Render Graph 架构，将渲染逻辑拆分到独立的 Pass 中。
+//! `RenderFrame` 负责：
+//! - 持有内置渲染 Pass（BRDF LUT、IBL、Forward）
+//! - 持有提取的场景数据（`ExtractedScene`）和渲染状态（`RenderState`）
+//! - 提供 Extract 和 Prepare 阶段的执行
 //!
-//! # 新架构：FrameBuilder
+//! # 三阶段渲染架构
 //!
-//! 引入 `FrameBuilder` 模式，允许用户在指定阶段插入自定义渲染节点：
+//! 渲染流程分为三个明确的阶段：
+//!
+//! 1. **Prepare (准备)**：`extract_and_prepare()` - 提取场景数据，准备 GPU 资源
+//! 2. **Compose (组装)**：通过 `FrameComposer` 链式添加渲染节点
+//! 3. **Execute (执行)**：`FrameComposer::render()` - 获取 Surface 并提交 GPU 命令
+//!
+//! # 示例
 //!
 //! ```ignore
-//! // 旧 API（已废弃）
-//! renderer.render(scene, camera, assets, time, &[&ui_pass]);
-//!
-//! // 新 API
-//! renderer.begin_frame(scene, camera, assets, time)
+//! // 优雅的链式调用
+//! renderer.begin_frame(scene, &camera, assets, time)?
 //!     .add_node(RenderStage::UI, &ui_pass)
 //!     .render();
 //! ```
 
-use crate::scene::Scene;
-use crate::scene::camera::RenderCamera;
 use crate::assets::AssetServer;
+use crate::renderer::core::ResourceManager;
+use crate::scene::camera::RenderCamera;
+use crate::scene::Scene;
 
-use crate::renderer::core::{WgpuContext, ResourceManager};
-use super::node::RenderNode;
+use super::extracted::ExtractedScene;
+use super::passes::{BRDFLutComputePass, ForwardRenderPass, IBLComputePass};
 use super::render_state::RenderState;
-use super::context::RenderContext;
-use crate::renderer::graph::extracted::ExtractedScene;
-use crate::renderer::graph::passes::{ForwardRenderPass, BRDFLutComputePass, IBLComputePass};
-use crate::renderer::graph::stage::RenderStage;
-use crate::renderer::graph::builder::FrameBuilder;
-use crate::renderer::pipeline::PipelineCache;
+use super::stage::RenderStage;
+use super::builder::FrameBuilder;
 
 /// 渲染排序键 (Pipeline ID + Material ID + Depth)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -79,16 +81,16 @@ impl RenderKey {
 }
 
 /// 渲染帧管理器
-/// 
+///
 /// 采用 Render Graph 架构：
 /// 1. Extract 阶段：从 Scene 提取渲染数据
 /// 2. Prepare 阶段：准备 GPU 资源
-/// 3. Execute 阶段：通过 `FrameBuilder` 执行渲染 Pass
-/// 
+/// 3. Execute 阶段：通过 `FrameComposer` 执行渲染 Pass
+///
 /// # 性能考虑
 /// - `ExtractedScene` 和内置 Pass 持久化以复用内存
 /// - 命令列表在 Pass 内部管理，避免跨帧分配
-/// - `FrameBuilder` 每帧创建，但开销极低（仅 Vec 指针操作）
+/// - `FrameComposer` 每帧创建，但开销极低（仅 Vec 指针操作）
 pub struct RenderFrame {
     render_state: RenderState,
     extracted_scene: ExtractedScene,
@@ -107,85 +109,83 @@ impl RenderFrame {
             ibl_pass: IBLComputePass::new(&device),
         }
     }
-    
+
     /// 获取内置的 BRDF LUT 计算 Pass
     #[inline]
     pub fn brdf_pass(&self) -> &BRDFLutComputePass {
         &self.brdf_pass
     }
-    
+
     /// 获取内置的 IBL 计算 Pass
     #[inline]
     pub fn ibl_pass(&self) -> &IBLComputePass {
         &self.ibl_pass
     }
-    
+
     /// 获取内置的 Forward 渲染 Pass
     #[inline]
     pub fn forward_pass(&self) -> &ForwardRenderPass {
         &self.forward_pass
     }
 
-    /// 准备帧渲染
-    /// 
-    /// 执行 Extract 和 Prepare 阶段，返回可用于构建渲染管线的 `PreparedFrame`。
-    /// 
+    /// 获取渲染状态引用
+    #[inline]
+    pub fn render_state(&self) -> &RenderState {
+        &self.render_state
+    }
+
+    /// 获取提取的场景数据引用
+    #[inline]
+    pub fn extracted_scene(&self) -> &ExtractedScene {
+        &self.extracted_scene
+    }
+
+    /// 阶段 1: 提取场景数据并准备全局资源
+    ///
+    /// 执行 Extract 和 Prepare 阶段，为后续的 Compose 和 Execute 做准备。
+    ///
     /// # 阶段说明
-    /// 
+    ///
     /// 1. **Extract**：从 Scene 提取渲染数据到 `ExtractedScene`
     /// 2. **Prepare**：准备全局 GPU 资源（相机 Uniform、光照数据等）
-    /// 3. **Acquire Surface**：获取交换链纹理
-    /// 
-    /// # 返回
-    /// 
-    /// 返回 `Some(PreparedFrame)` 如果成功获取 Surface 纹理，否则返回 `None`。
+    ///
+    /// # 注意
+    ///
+    /// 此方法不获取 Surface，Surface 获取延迟到 `FrameComposer::render()` 中，
+    /// 以减少 SwapChain Buffer 的持有时间。
     #[allow(clippy::too_many_arguments)]
-    pub fn prepare<'a>(
-        &'a mut self,
-        wgpu_ctx: &'a mut WgpuContext,
-        resource_manager: &'a mut ResourceManager,
-        pipeline_cache: &'a mut PipelineCache,
-        scene: &'a mut Scene,
-        camera: &'a RenderCamera,
-        assets: &'a AssetServer,
+    pub fn extract_and_prepare(
+        &mut self,
+        _wgpu_ctx: &mut crate::renderer::core::WgpuContext,
+        resource_manager: &mut ResourceManager,
+        _pipeline_cache: &mut crate::renderer::pipeline::PipelineCache,
+        scene: &mut Scene,
+        camera: &RenderCamera,
+        assets: &AssetServer,
         time: f32,
-    ) -> Option<PreparedFrame<'a>> {
+    ) {
         resource_manager.next_frame();
 
-        // ========================================================================
-        // 1. Extract 阶段：复用内存，避免每帧分配
-        // ========================================================================
-        self.extracted_scene.extract_into(scene, camera, assets, resource_manager);
+        // 1. Extract：复用内存，避免每帧分配
+        self.extracted_scene
+            .extract_into(scene, camera, assets, resource_manager);
 
-        // ========================================================================
-        // 2. Prepare 阶段：准备 GPU 资源
-        // ========================================================================
+        // 2. Prepare：准备全局 GPU 资源
         self.render_state.update(camera, time);
         resource_manager.prepare_global(assets, scene, &self.render_state);
+    }
 
-        // ========================================================================
-        // 3. Acquire Surface
-        // ========================================================================
-        let output = match wgpu_ctx.surface.get_current_texture() {
-            Ok(output) => output,
-            Err(wgpu::SurfaceError::Lost) => return None,
-            Err(e) => {
-                eprintln!("Render error: {:?}", e);
-                return None;
-            }
-        };
-
-        Some(PreparedFrame {
-            render_frame: self,
-            wgpu_ctx,
-            resource_manager,
-            pipeline_cache,
-            scene,
-            camera,
-            assets,
-            time,
-            surface_texture: output,
-        })
+    /// 将内置 Pass 注入到 `FrameBuilder` 中
+    ///
+    /// 这是一个辅助方法，用于在 `FrameComposer` 创建时注入内置 Pass。
+    /// 返回修改后的 `FrameBuilder` 以支持链式调用。
+    #[inline]
+    pub fn inject_builtin_passes<'a>(&'a self, mut builder: FrameBuilder<'a>) -> FrameBuilder<'a> {
+        builder
+            .add_node(RenderStage::PreProcess, &self.brdf_pass)
+            .add_node(RenderStage::PreProcess, &self.ibl_pass)
+            .add_node(RenderStage::Opaque, &self.forward_pass);
+        builder
     }
 
     /// 定期清理资源
@@ -194,133 +194,5 @@ impl RenderFrame {
         if resource_manager.frame_index().is_multiple_of(600) {
             resource_manager.prune(6000);
         }
-    }
-}
-
-/// 准备完成的帧
-/// 
-/// 持有一帧渲染所需的所有资源引用。
-/// 通过 `render_default()` 或 `render_with_nodes()` 方法执行渲染。
-/// 
-/// # 生命周期
-/// 
-/// `PreparedFrame` 的生命周期较短，仅在单帧渲染期间存在。
-/// 它持有 Surface 纹理的所有权，在 `render()` 后自动 present。
-/// 
-/// # 设计说明
-/// 
-/// 采用"分离构建"模式：
-/// - `PreparedFrame` 持有渲染资源和内置 Pass
-/// - 用户可以通过 `render_with_nodes()` 添加自定义节点
-/// - 支持按阶段精确插入节点
-pub struct PreparedFrame<'a> {
-    render_frame: &'a RenderFrame,
-    wgpu_ctx: &'a mut WgpuContext,
-    resource_manager: &'a mut ResourceManager,
-    pipeline_cache: &'a mut PipelineCache,
-    scene: &'a mut Scene,
-    camera: &'a RenderCamera,
-    assets: &'a AssetServer,
-    time: f32,
-    surface_texture: wgpu::SurfaceTexture,
-}
-
-impl<'a> PreparedFrame<'a> {
-    /// 获取内置的 BRDF LUT 计算 Pass
-    #[inline]
-    pub fn brdf_pass(&self) -> &BRDFLutComputePass {
-        self.render_frame.brdf_pass()
-    }
-    
-    /// 获取内置的 IBL 计算 Pass
-    #[inline]
-    pub fn ibl_pass(&self) -> &IBLComputePass {
-        self.render_frame.ibl_pass()
-    }
-    
-    /// 获取内置的 Forward 渲染 Pass
-    #[inline]
-    pub fn forward_pass(&self) -> &ForwardRenderPass {
-        self.render_frame.forward_pass()
-    }
-    
-    /// 使用默认内置 Pass 渲染
-    /// 
-    /// 包含：BRDF LUT → IBL → Forward
-    /// 
-    /// # 示例
-    /// 
-    /// ```ignore
-    /// if let Some(frame) = renderer.begin_frame(scene, camera, assets, time) {
-    ///     frame.render_default();
-    /// }
-    /// ```
-    #[inline]
-    pub fn render_default(self) {
-        self.render_with_nodes(&[]);
-    }
-    
-    /// 使用自定义节点渲染
-    /// 
-    /// 在内置 Pass 基础上添加自定义渲染节点。
-    /// 节点按阶段排序执行。
-    /// 
-    /// # 参数
-    /// 
-    /// - `extra_nodes`: 额外的渲染节点，元组格式为 `(RenderStage, &dyn RenderNode)`
-    /// 
-    /// # 示例
-    /// 
-    /// ```ignore
-    /// frame.render_with_nodes(&[
-    ///     (RenderStage::UI, &ui_pass),
-    ///     (RenderStage::PostProcess, &bloom_pass),
-    /// ]);
-    /// ```
-    pub fn render_with_nodes(self, extra_nodes: &[(RenderStage, &dyn RenderNode)]) {
-        let mut builder = FrameBuilder::new();
-        
-        // 添加内置 Pass
-        builder
-            .add_node(RenderStage::PreProcess, self.render_frame.brdf_pass())
-            .add_node(RenderStage::PreProcess, self.render_frame.ibl_pass())
-            .add_node(RenderStage::Opaque, self.render_frame.forward_pass());
-        
-        // 添加用户自定义节点
-        for (stage, node) in extra_nodes {
-            builder.add_node(*stage, *node);
-        }
-        
-        self.render(builder);
-    }
-    
-    /// 执行渲染并呈现
-    /// 
-    /// 接受配置好的 `FrameBuilder`，执行渲染管线并呈现到屏幕。
-    /// 
-    /// # 参数
-    /// 
-    /// - `builder`: 配置好的帧构建器
-    fn render(self, builder: FrameBuilder<'_>) {
-        let view = self.surface_texture.texture.create_view(&wgpu::TextureViewDescriptor::default());
-        
-        let mut ctx = RenderContext {
-            wgpu_ctx: self.wgpu_ctx,
-            resource_manager: self.resource_manager,
-            pipeline_cache: self.pipeline_cache,
-            assets: self.assets,
-            scene: self.scene,
-            camera: self.camera,
-            surface_view: &view,
-            render_state: &self.render_frame.render_state,
-            extracted_scene: &self.render_frame.extracted_scene,
-            time: self.time,
-        };
-        
-        // 执行渲染管线
-        builder.execute(&mut ctx);
-        
-        // Present
-        self.surface_texture.present();
     }
 }

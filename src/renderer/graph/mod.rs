@@ -11,25 +11,28 @@
 //! - RenderContext: 渲染上下文
 //! - RenderStage: 渲染阶段定义
 //! - FrameBuilder: 帧构建器
+//! - FrameComposer: 帧合成器（链式 API）
 
-pub mod frame;
-pub mod pass;
-pub mod render_state;
-pub mod extracted;
-pub mod context;
-pub mod node;
-pub mod graph;
-pub mod passes;
-pub mod stage;
 pub mod builder;
+pub mod composer;
+pub mod context;
+pub mod extracted;
+pub mod frame;
+pub mod graph;
+pub mod node;
+pub mod pass;
+pub mod passes;
+pub mod render_state;
+pub mod stage;
 
-pub use frame::{RenderFrame, PreparedFrame};
-pub use pass::TrackedRenderPass;
-pub use render_state::RenderState;
-pub use extracted::{ExtractedScene, ExtractedRenderItem, ExtractedSkeleton};
-pub use context::RenderContext;
-pub use node::RenderNode;
-pub use graph::RenderGraph;
-pub use passes::ForwardRenderPass;
-pub use stage::RenderStage;
 pub use builder::FrameBuilder;
+pub use composer::FrameComposer;
+pub use context::RenderContext;
+pub use extracted::{ExtractedRenderItem, ExtractedScene, ExtractedSkeleton};
+pub use frame::RenderFrame;
+pub use graph::RenderGraph;
+pub use node::RenderNode;
+pub use pass::TrackedRenderPass;
+pub use passes::ForwardRenderPass;
+pub use render_state::RenderState;
+pub use stage::RenderStage;

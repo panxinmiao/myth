@@ -18,7 +18,7 @@ use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
 use self::core::{ResourceManager, WgpuContext};
-use self::graph::{RenderFrame, PreparedFrame};
+use self::graph::{FrameComposer, RenderFrame};
 use self::pipeline::PipelineCache;
 use self::settings::RenderSettings;
 
@@ -88,44 +88,45 @@ impl Renderer {
     }
 
     /// 开始构建一帧渲染
-    /// 
-    /// 返回 `PreparedFrame`，可通过 `FrameBuilder` 配置渲染管线。
-    /// 
+    ///
+    /// 返回 `FrameComposer`，提供链式 API 配置渲染管线。
+    ///
     /// # 新 API 用法
-    /// 
+    ///
     /// ```ignore
     /// // 方式 1：使用默认内置 Pass
-    /// if let Some(frame) = renderer.begin_frame(scene, camera, assets, time) {
-    ///     frame.render_default();
+    /// if let Some(composer) = renderer.begin_frame(scene, camera, assets, time) {
+    ///     composer.render();
     /// }
-    /// 
-    /// // 方式 2：自定义渲染管线
-    /// if let Some(frame) = renderer.begin_frame(scene, camera, assets, time) {
-    ///     frame.build()
+    ///
+    /// // 方式 2：自定义渲染管线（链式调用）
+    /// if let Some(composer) = renderer.begin_frame(scene, camera, assets, time) {
+    ///     composer
     ///         .add_node(RenderStage::UI, &ui_pass)
     ///         .add_node(RenderStage::PostProcess, &bloom_pass)
     ///         .render();
     /// }
     /// ```
-    /// 
+    ///
     /// # 返回
-    /// 
-    /// 返回 `Some(PreparedFrame)` 如果成功准备帧，否则返回 `None`
-    /// （例如窗口尺寸为 0 或 Surface 丢失）。
+    ///
+    /// 返回 `Some(FrameComposer)` 如果成功准备帧，否则返回 `None`
+    /// （例如窗口尺寸为 0 或资源未就绪）。
     pub fn begin_frame<'a>(
         &'a mut self,
         scene: &'a mut Scene,
         camera: &'a RenderCamera,
         assets: &'a AssetServer,
         time: f32,
-    ) -> Option<PreparedFrame<'a>> {
+    ) -> Option<FrameComposer<'a>> {
         if self.size[0] == 0 || self.size[1] == 0 {
             return None;
         }
-        
+
         let state = self.context.as_mut()?;
-        
-        let prepared = state.render_frame.prepare(
+
+        // Prepare 阶段：提取场景、准备内置 Pass
+        state.render_frame.extract_and_prepare(
             &mut state.wgpu_ctx,
             &mut state.resource_manager,
             &mut state.pipeline_cache,
@@ -133,9 +134,19 @@ impl Renderer {
             camera,
             assets,
             time,
-        )?;
-        
-        Some(prepared)
+        );
+
+        // 返回 FrameComposer，延迟 Surface 获取到 render() 调用
+        Some(FrameComposer::new(
+            &mut state.wgpu_ctx,
+            &mut state.resource_manager,
+            &mut state.pipeline_cache,
+            &mut state.render_frame,
+            scene,
+            camera,
+            assets,
+            time,
+        ))
     }
     
     /// 定期清理资源

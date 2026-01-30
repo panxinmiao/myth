@@ -208,18 +208,20 @@ impl GltfViewer {
                     .as_secs_f32();
                 let render_camera = camera.extract_render_camera();
                 
-                // 使用新的 FrameBuilder API
-                if let Some(prepared_frame) = self.renderer.begin_frame(
+                // 使用新的链式 FrameComposer API
+                if let Some(composer) = self.renderer.begin_frame(
                     &mut self.scene,
                     &render_camera,
                     &self.assets,
                     time_seconds,
                 ) {
-                    // 注入 UI Pass
+                    // 注入 UI Pass（如果存在）
                     if let Some(ui_pass) = &self.ui_pass {
-                        prepared_frame.render_with_nodes(&[(RenderStage::UI, ui_pass as &dyn three::renderer::graph::RenderNode)]);
+                        composer
+                            .add_node(RenderStage::UI, ui_pass as &dyn three::renderer::graph::RenderNode)
+                            .render();
                     } else {
-                        prepared_frame.render_default();
+                        composer.render();
                     }
                 }
                 

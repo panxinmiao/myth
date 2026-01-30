@@ -7,39 +7,43 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use crate::engine::{FrameState, ThreeEngine};
-use crate::renderer::graph::{RenderStage, RenderNode};
+use crate::renderer::graph::FrameComposer;
 use crate::renderer::settings::RenderSettings;
 
 pub mod input_adapter;
-
 
 /// 用户程序必须实现的 Trait
 pub trait AppHandler: Sized + 'static {
     fn init(_ctx: &mut ThreeEngine, _window: &Arc<Window>) -> Self;
 
-    fn on_event(&mut self, _engine: &mut ThreeEngine, _window: &Arc<Window>, _event: &WindowEvent) -> bool {
+    fn on_event(
+        &mut self,
+        _engine: &mut ThreeEngine,
+        _window: &Arc<Window>,
+        _event: &WindowEvent,
+    ) -> bool {
         false
     }
 
     fn update(&mut self, _engine: &mut ThreeEngine, _window: &Arc<Window>, _frame: &FrameState) {}
 
-    /// 返回额外的渲染节点
-    /// 
-    /// 返回一个按阶段组织的渲染节点列表。
-    /// 这些节点将被添加到内置 Pass 之后，按阶段顺序执行。
-    /// 
+    /// 配置渲染管线
+    ///
+    /// 通过链式 API 添加自定义渲染节点到帧合成器。
+    /// 默认实现只渲染内置 Pass。
+    ///
     /// # 示例
-    /// 
+    ///
     /// ```ignore
-    /// fn extra_render_nodes(&self) -> Vec<(RenderStage, &dyn RenderNode)> {
-    ///     vec![
-    ///         (RenderStage::UI, &self.ui_pass),
-    ///         (RenderStage::PostProcess, &self.bloom_pass),
-    ///     ]
+    /// fn compose_frame<'a>(&'a self, composer: FrameComposer<'a>) {
+    ///     composer
+    ///         .add_node(RenderStage::UI, &self.ui_pass)
+    ///         .add_node(RenderStage::PostProcess, &self.bloom_pass)
+    ///         .render();
     /// }
     /// ```
-    fn extra_render_nodes(&self) -> Vec<(RenderStage, &dyn RenderNode)> {
-        Vec::new()
+    fn compose_frame<'a>(&'a self, composer: FrameComposer<'a>) {
+        composer.render();
     }
 }
 
@@ -50,8 +54,7 @@ impl AppHandler for DefaultHandler {
     fn init(_ctx: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         Self
     }
-    fn update(&mut self, _engine: &mut ThreeEngine, _window: &Arc<Window>,  _frame: &FrameState) {}
-
+    fn update(&mut self, _engine: &mut ThreeEngine, _window: &Arc<Window>, _frame: &FrameState) {}
 }
 
 /// App 构建器
@@ -168,20 +171,18 @@ impl<H: AppHandler> AppRunner<H> {
         };
 
         let render_camera = cam.extract_render_camera();
-        
-        // 获取用户自定义的渲染节点
-        let extra_nodes = user_state.extra_render_nodes();
 
-        // 使用新的 FrameBuilder API
-        if let Some(prepared_frame) = engine.renderer.begin_frame(
+        // 使用新的链式 FrameComposer API
+        if let Some(composer) = engine.renderer.begin_frame(
             scene,
             &render_camera,
             &engine.assets,
             engine.time,
         ) {
-            prepared_frame.render_with_nodes(&extra_nodes);
+            // 用户通过 compose_frame 链式添加节点
+            user_state.compose_frame(composer);
         }
-        
+
         // 定期清理资源
         engine.renderer.maybe_prune();
     }
