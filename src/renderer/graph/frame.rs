@@ -3,11 +3,8 @@
 //! RenderFrame 负责：extract, prepare, 执行渲染图
 //! 采用 Render Graph 架构，将渲染逻辑拆分到独立的 Pass 中
 
-use slotmap::SlotMap;
-use log::warn;
 
-use crate::scene::skeleton::Skeleton;
-use crate::scene::{Scene, SkeletonKey};
+use crate::scene::{Scene};
 use crate::scene::camera::{RenderCamera};
 use crate::assets::AssetServer;
 
@@ -64,18 +61,7 @@ impl RenderKey {
     }
 }
 
-/// 准备好提交给 GPU 的指令
-pub struct RenderCommand {
-    pub object_data: crate::renderer::core::ObjectBindingData,
-    pub geometry_handle: crate::assets::GeometryHandle,
-    pub material_handle: crate::assets::MaterialHandle,
-    pub render_state_id: u32,
-    pub pipeline_id: u16,
-    pub pipeline: wgpu::RenderPipeline,
-    pub model_matrix: glam::Mat4,
-    pub sort_key: RenderKey,
-    pub dynamic_offset: u32,
-}
+
 
 /// 渲染帧管理器
 /// 
@@ -101,7 +87,7 @@ impl RenderFrame {
 
         Self {
             render_state: RenderState::new(),
-            extracted_scene: ExtractedScene::with_capacity(1024, 16),
+            extracted_scene: ExtractedScene::with_capacity(1024),
             forward_pass: ForwardRenderPass::new(wgpu::Color::BLACK),
             brdf_pass: BRDFLutComputePass::new(&device),
             ibl_pass: IBLComputePass::new(&device),
@@ -136,27 +122,28 @@ impl RenderFrame {
         // ========================================================================
         // 1. Extract 阶段：复用内存，避免每帧分配
         // ========================================================================
-        self.extracted_scene.extract_into(scene, camera, assets);
-
-        // 更新清屏颜色
-        if let Some(bg_color) = self.extracted_scene.background {
-            self.forward_pass.clear_color = wgpu::Color {
-                r: bg_color.x as f64,
-                g: bg_color.y as f64,
-                b: bg_color.z as f64,
-                a: bg_color.w as f64,
-            };
-        }
+        self.extracted_scene.extract_into(scene, camera, assets, resource_manager);
 
         // ========================================================================
         // 2. Prepare 阶段：准备 GPU 资源
         // ========================================================================
         self.prepare_global_resources(resource_manager, assets, scene, camera, time);
-        self.upload_skeletons_extracted(resource_manager, &scene.skeleton_pool, &self.extracted_scene);
 
 
         // ========================================================================
-        // 3. Acquire Surface
+        // 3. 构建瞬态 RenderGraph 并执行
+        // ========================================================================
+
+        // let _ = &self.forward_pass.prepare(&mut PrepareContext {
+        //     resource_manager,
+        //     pipeline_cache,
+        //     assets,
+        //     extracted_scene: &self.extracted_scene,
+        //     render_state: &self.render_state,
+        //     wgpu_ctx,
+        // });
+        // ========================================================================
+        //  Acquire Surface
         // ========================================================================
         let output = match wgpu_ctx.surface.get_current_texture() {
             Ok(output) => output,
@@ -166,12 +153,10 @@ impl RenderFrame {
                 return;
             }
         };
+
         let view = output.texture.create_view(&wgpu::TextureViewDescriptor::default());
 
 
-        // ========================================================================
-        // 4. 构建瞬态 RenderGraph 并执行
-        // ========================================================================
         {
             let mut ctx = RenderContext {
                 wgpu_ctx,
@@ -204,12 +189,17 @@ impl RenderFrame {
             // 执行渲染图（内部创建 encoder 并提交）
             graph.execute(&mut ctx);
         }
+        
+        // 执行渲染图（内部创建 encoder 并提交）
+        // graph.execute(render_ctx);
 
         // ========================================================================
         // 5. Present
         // ========================================================================
         output.present();
 
+
+        // 定期清理资源(Todo: LRU 策略)
         if resource_manager.frame_index().is_multiple_of(600) {
             resource_manager.prune(6000);
         }
@@ -219,7 +209,7 @@ impl RenderFrame {
         &mut self,
         resource_manager: &mut ResourceManager,
         assets: &AssetServer,
-        scene: &Scene,
+        scene: &mut Scene,
         camera: &RenderCamera,
         time: f32,
     ) {
@@ -227,28 +217,38 @@ impl RenderFrame {
         resource_manager.prepare_global(assets, scene, &self.render_state);
     }
 
-    fn upload_skeletons_extracted(
-        &self,
-        resource_manager: &mut ResourceManager,
-        skins: &SlotMap<SkeletonKey, Skeleton>,
-        extracted: &ExtractedScene,
-    ) {
-        let mut processed_skeletons = rustc_hash::FxHashSet::default();
+    // fn upload_skeletons_extracted(
+    //     &self,
+    //     resource_manager: &mut ResourceManager,
+    //     skins: &SlotMap<SkeletonKey, Skeleton>,
+    //     extracted: &ExtractedScene,
+    // ) {
+    //     let mut processed_skeletons = rustc_hash::FxHashSet::default();
 
-        for skel in &extracted.skeletons {
-            if processed_skeletons.contains(&skel.skeleton_key) {
-                continue;
-            }
+    //     for skel in &extracted.skeletons {
+    //         if processed_skeletons.contains(&skel.skeleton_key) {
+    //             continue;
+    //         }
 
-            let skeleton = match skins.get(skel.skeleton_key) {
-                Some(s) => s,
-                None => {
-                    warn!("Skeleton {:?} missing during upload", skel.skeleton_key);
-                    continue;
-                }
-            };
-            resource_manager.prepare_skeleton(skel.skeleton_key, skeleton);
-            processed_skeletons.insert(skel.skeleton_key);
-        }
-    }
+    //         let skeleton = match skins.get(skel.skeleton_key) {
+    //             Some(s) => s,
+    //             None => {
+    //                 warn!("Skeleton {:?} missing during upload", skel.skeleton_key);
+    //                 continue;
+    //             }
+    //         };
+    //         resource_manager.prepare_skeleton(skel.skeleton_key, skeleton);
+    //         processed_skeletons.insert(skel.skeleton_key);
+    //     }
+    // }
+
+    // fn update_meshes_extracted(
+    //     &self,
+    //     resource_manager: &mut ResourceManager,
+    //     extracted: &ExtractedScene,
+    // ) {
+    //     for item in &extracted.render_items {
+    //         resource_manager.update_mesh_instance(item.node_key, &item.transform);
+    //     }
+    // }
 }

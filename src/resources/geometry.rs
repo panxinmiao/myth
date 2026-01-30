@@ -835,7 +835,7 @@ impl Geometry {
         let has_weights = self.attributes.contains_key("weights");
         
         if has_joints && has_weights {
-            defines.set("HAS_SKINNING", "1");
+            defines.set("SUPPORT_SKINNING", "1");
         }
 
         // 更新缓存

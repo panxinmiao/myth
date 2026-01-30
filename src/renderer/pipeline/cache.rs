@@ -7,15 +7,16 @@
 //! - **L1 快速缓存**: 基于资源 Handle 和 Layout ID 的极快路径
 //! - **L2 规范缓存**: 基于完整 Pipeline 特征的规范化缓存
 
+use std::hash::Hash;
 use rustc_hash::FxHashMap;
 use xxhash_rust::xxh3::xxh3_128;
 
-use crate::renderer::core::ObjectBindingData;
+use crate::renderer::core::BindGroupContext;
 use crate::assets::{GeometryHandle, MaterialHandle};
 
 use crate::renderer::pipeline::shader_gen::{ShaderGenerator, ShaderCompilationOptions};
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
-use crate::renderer::core::resources::GpuMaterial;
+use crate::renderer::core::resources::{GpuGlobalState, GpuMaterial};
 
 /// L2 缓存 Key: 完整描述 Pipeline 的所有特征
 /// 
@@ -40,19 +41,22 @@ pub struct PipelineKey {
 /// 使用 GPU 端的 layout_id 而非 CPU 端的 version，更精确地反映 Pipeline 兼容性
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub struct FastPipelineKey {
+    /// Material 句柄
     pub material_handle: MaterialHandle,
-    /// Material 的 BindGroupLayout ID（物理资源 ID）
+    /// Material 的 version
     pub material_version: u64,
-    pub material_layout_id: u64,
+
+    /// 几何体句柄
     pub geometry_handle: GeometryHandle,
-    /// Geometry 的结构版本（影响 VertexLayout）
-    pub geometry_layout_version: u64,
+    /// Geometry 的 version
+    pub geometry_version: u64,
+
     /// 实例变体标志（如是否有骨骼）
     pub instance_variants: u32,
-    /// 场景特性 ID
-    pub scene_id: u32,
-    /// 渲染状态 ID
-    pub render_state_id: u32,
+
+    /// GPU World state ID
+    pub global_state_id: u32,
+
 }
 
 pub struct PipelineCache {
@@ -94,19 +98,18 @@ impl PipelineCache {
         options: &ShaderCompilationOptions,
         vertex_layout: &GeneratedVertexLayout,
         gpu_material: &GpuMaterial,
-        object_data: &ObjectBindingData,
-        global_binding_wgsl: &str,
-        global_layout: &wgpu::BindGroupLayout,
+        object_bind_group: &BindGroupContext,
+        gpu_world: &GpuGlobalState,
     ) -> (wgpu::RenderPipeline, u16) {
         if let Some(cached) = self.canonical_cache.get(&canonical_key) {
             return cached.clone();
         }
 
         let shader_source = ShaderGenerator::generate_shader(
-            vertex_layout,
-            global_binding_wgsl,
+            &vertex_layout.vertex_input_code,
+            &gpu_world.binding_wgsl,
             &gpu_material.binding_wgsl,
-            &object_data.binding_wgsl,
+            &object_bind_group.binding_wgsl,
             template_name,
             options,
         );
@@ -147,9 +150,9 @@ impl PipelineCache {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[
-                global_layout,
+                &gpu_world.layout,
                 &gpu_material.layout,
-                &object_data.layout
+                &object_bind_group.layout
             ],
             immediate_size: 0,
         });

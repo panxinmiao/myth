@@ -23,7 +23,7 @@ use crate::renderer::graph::RenderState;
 
 use super::{
     ResourceManager, GpuBuffer, GpuGlobalState, 
-    ObjectBindGroupKey, ObjectBindingData,
+    ObjectBindGroupKey, BindGroupContext,
     generate_gpu_resource_id, ModelBufferAllocator,
 };
 
@@ -35,7 +35,7 @@ impl ResourceManager {
     // ========================================================================
 
     /// 更新骨骼数据到 GPU
-    pub fn prepare_skeleton(&mut self, _skeleton_id: SkeletonKey, skeleton: &Skeleton) {
+    pub fn prepare_skeleton(&mut self, skeleton: &Skeleton) {
         // 每帧强制上传 joint matrices 到 GPU
         let buffer_ref = skeleton.joint_matrices.handle();
 
@@ -129,7 +129,7 @@ impl ResourceManager {
     /// 准备 Mesh 的基础资源
     /// 
     /// 采用 "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" 模式
-    pub fn prepare_mesh(&mut self, assets: &AssetServer, mesh: &mut Mesh, skeleton: Option<&Skeleton>) -> Option<ObjectBindingData> {
+    pub fn prepare_mesh(&mut self, assets: &AssetServer, mesh: &mut Mesh, skeleton: Option<&Skeleton>) -> Option<BindGroupContext> {
         // === Ensure 阶段: 确保所有资源已上传 ===
         // 如果 Allocator 本帧发生了扩容，ID 会改变，必须在此处注册新 ID
         
@@ -185,7 +185,7 @@ impl ResourceManager {
             return Some(binding_data.clone());
         }
         
-        // 创建新 BindGroup
+        // 创建新 GpuObject
         let binding_data = self.create_object_bind_group_internal(assets, geometry, mesh, skeleton, cache_key);
         mesh.render_cache.bind_group_id = Some(binding_data.bind_group_id);
         mesh.render_cache.resource_ids = current_ids;
@@ -202,7 +202,7 @@ impl ResourceManager {
         mesh: &Mesh,
         skeleton: Option<&Skeleton>,
         cache_key: ObjectBindGroupKey,
-    ) -> ObjectBindingData {
+    ) -> BindGroupContext {
         let min_binding_size = ModelBufferAllocator::uniform_stride();
         let model_buffer_ref = self.model_allocator.cpu_buffer().handle().clone();
 
@@ -235,7 +235,7 @@ impl ResourceManager {
         self.prepare_binding_resources(assets, &builder.resources);
         let (bind_group, bind_group_id) = self.create_bind_group(&layout, &builder);
 
-        let data = ObjectBindingData {
+        let data = BindGroupContext {
             layout,
             bind_group,
             bind_group_id,

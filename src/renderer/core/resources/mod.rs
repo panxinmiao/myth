@@ -301,7 +301,7 @@ pub struct GpuGlobalState {
 pub(crate) type ObjectBindGroupKey = u64;
 
 #[derive(Clone)]
-pub struct ObjectBindingData {
+pub struct BindGroupContext {
     pub layout: wgpu::BindGroupLayout,
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
@@ -345,8 +345,8 @@ pub struct ResourceManager {
     pub(crate) model_allocator: ModelBufferAllocator,
 
     // === Object BindGroup 缓存 ===
-    pub(crate) object_bind_group_cache: FxHashMap<ObjectBindGroupKey, ObjectBindingData>,
-    pub(crate) bind_group_id_lookup: FxHashMap<u64, ObjectBindingData>,
+    pub(crate) object_bind_group_cache: FxHashMap<ObjectBindGroupKey, BindGroupContext>,
+    pub(crate) bind_group_id_lookup: FxHashMap<u64, BindGroupContext>,
 
 
     /// 存储内部生成的纹理视图 (Render Targets / Attachments)
@@ -612,7 +612,7 @@ impl ResourceManager {
 
     /// 通过缓存的 ID 快速获取 BindGroup 数据
     #[inline]
-    pub fn get_cached_bind_group(&self, cached_bind_group_id: u64) -> Option<&ObjectBindingData> {
+    pub fn get_cached_bind_group(&self, cached_bind_group_id: u64) -> Option<&BindGroupContext> {
         self.bind_group_id_lookup.get(&cached_bind_group_id)
     }
 

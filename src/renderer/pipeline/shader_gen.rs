@@ -5,7 +5,6 @@
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
-use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 use crate::resources::shader_defines::ShaderDefines;
 use super::shader_manager::{get_env, LocationAllocator};
 use minijinja::value::Value;
@@ -33,10 +32,12 @@ impl ShaderCompilationOptions {
         mat_defines: &ShaderDefines,
         geo_defines: &ShaderDefines,
         scene_defines: &ShaderDefines,
+        item_defines: &ShaderDefines,
     ) -> Self {
         let mut defines = mat_defines.clone();
         defines.merge(geo_defines);
         defines.merge(scene_defines);
+        defines.merge(item_defines);
         Self { defines }
     }
 
@@ -93,7 +94,7 @@ pub struct ShaderGenerator;
 
 impl ShaderGenerator {
     pub fn generate_shader(
-        geometry_layout: &GeneratedVertexLayout,
+        vertex_input_code: &str,
         global_binding_code: &str,
         object_binding_code: &str,
         material_binding_code: &str,
@@ -108,7 +109,7 @@ impl ShaderGenerator {
 
         let ctx = ShaderContext {
             defines: options.to_template_map(),
-            vertex_input_code: Some(&geometry_layout.vertex_input_code),
+            vertex_input_code: Some(vertex_input_code),
             binding_code: &binding_code,
             loc: loc_value,
         };

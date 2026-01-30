@@ -41,3 +41,13 @@ pub struct RenderContext<'a> {
     /// 当前时间
     pub time: f32,
 }
+
+
+pub struct PrepareContext<'a> {
+    pub resource_manager: &'a mut ResourceManager,
+    pub pipeline_cache: &'a mut PipelineCache,
+    pub assets: &'a AssetServer,
+    pub extracted_scene: &'a ExtractedScene,
+    pub render_state: &'a RenderState,
+    pub wgpu_ctx: &'a WgpuContext,
+}

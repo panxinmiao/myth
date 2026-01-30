@@ -74,6 +74,7 @@ pub fn preload_common_macros() {
         "HAS_MORPH_TARGETS",
         "HAS_MORPH_NORMALS",
         "HAS_MORPH_TANGENTS",
+        "SUPPORT_SKINNING",
         // 场景相关
         "HAS_ENV_MAP",
         // 管线相关

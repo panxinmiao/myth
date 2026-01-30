@@ -9,9 +9,13 @@
 //! - 使用 Copy 类型尽可能减少开销
 //! - 携带缓存 ID 以避免每帧重复查找
 
+use std::collections::HashSet;
+
 use glam::Mat4;
 
+use crate::renderer::core::{BindGroupContext, ResourceManager};
 use crate::resources::shader_defines::ShaderDefines;
+use crate::scene::environment::Environment;
 use crate::scene::{NodeHandle, Scene, SkeletonKey};
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::scene::camera::RenderCamera;
@@ -25,18 +29,24 @@ pub struct ExtractedRenderItem {
     pub node_handle: NodeHandle,
     /// 世界变换矩阵 (64 bytes)
     pub world_matrix: Mat4,
+
+    pub object_bind_group: BindGroupContext,
     /// 几何体句柄 (8 bytes)
     pub geometry: GeometryHandle,
     /// 材质句柄 (8 bytes)
     pub material: MaterialHandle,
-    /// 蒙皮绑定信息（可选）
-    pub skeleton: Option<SkeletonKey>,
+
+    pub item_variant_flags: u32,
+
+    pub item_shader_defines: ShaderDefines,
+
     /// 到相机的距离平方（用于排序）
     pub distance_sq: f32,
-    /// 缓存的 BindGroup ID（快速路径）
-    pub cached_bind_group_id: Option<u64>,
-    /// 缓存的 Pipeline ID（快速路径）
-    pub cached_pipeline_id: Option<u16>,
+
+    // 缓存的 BindGroup ID（快速路径）
+    // pub cached_bind_group_id: Option<u64>,
+    // /// 缓存的 Pipeline ID（快速路径）
+    // pub cached_pipeline_id: Option<u16>,
 }
 
 /// 提取的骨骼数据
@@ -52,14 +62,20 @@ pub struct ExtractedSkeleton {
 pub struct ExtractedScene {
     /// 可见的渲染项列表（已经过视锥剔除）
     pub render_items: Vec<ExtractedRenderItem>,
-    /// 需要上传的骨骼数据
-    pub skeletons: Vec<ExtractedSkeleton>,
-    /// 背景颜色
-    pub background: Option<glam::Vec4>,
     /// 场景的 Shader 宏定义
     pub scene_defines: ShaderDefines,
-
     pub scene_id: u32,
+    pub background: Option<glam::Vec4>,
+    pub envvironment: Environment,
+
+    collected_meshes: Vec<CollectedMesh>,
+    collected_skeleton_keys: HashSet<SkeletonKey>,
+
+}
+
+struct CollectedMesh {
+    pub node_handle: NodeHandle,
+    pub skeleton: Option<SkeletonKey>,
 }
 
 impl ExtractedScene {
@@ -67,46 +83,54 @@ impl ExtractedScene {
     pub fn new() -> Self {
         Self {
             render_items: Vec::new(),
-            skeletons: Vec::new(),
-            background: None,
             scene_defines: ShaderDefines::new(),
             scene_id: 0,
+            background: None,
+            envvironment: Environment::default(),
+            collected_meshes: Vec::new(),
+            collected_skeleton_keys: HashSet::default(),
         }
     }
 
     /// 预分配容量
-    pub fn with_capacity(item_capacity: usize, skeleton_capacity: usize) -> Self {
+    pub fn with_capacity(item_capacity: usize) -> Self {
         Self {
             render_items: Vec::with_capacity(item_capacity),
-            skeletons: Vec::with_capacity(skeleton_capacity),
-            background: None,
             scene_defines: ShaderDefines::new(),
             scene_id: 0,
+            background: None,
+            envvironment: Environment::default(),
+            collected_meshes: Vec::with_capacity(item_capacity),
+            collected_skeleton_keys: HashSet::default(),
         }
     }
 
     /// 清空数据以便重用
     pub fn clear(&mut self) {
         self.render_items.clear();
-        self.skeletons.clear();
+        // self.skeletons.clear();
         self.scene_defines.clear();
         self.scene_id = 0;
+
+
+        self.collected_meshes.clear();
+        self.collected_skeleton_keys.clear();
     }
 
     /// 复用当前实例的内存，从 Scene 中提取数据
-    /// 
-    /// 这是性能优化的关键：避免每帧分配新内存
-    pub fn extract_into(&mut self, scene: &Scene, camera: &RenderCamera, assets: &AssetServer) {
+    pub fn extract_into(&mut self, scene: &mut Scene, camera: &RenderCamera, assets: &AssetServer, resource_manager: &mut ResourceManager) {
         self.clear();
-        self.extract_render_items(scene, camera, assets);
-        self.extract_skeletons(scene);
+        self.extract_render_items(scene, camera, assets , resource_manager);
         self.extract_environment(scene);
     }
 
     /// 提取可见的渲染项
-    fn extract_render_items(&mut self, scene: &Scene, camera: &RenderCamera, assets: &AssetServer) {
+    fn extract_render_items(&mut self, scene: &mut Scene, camera: &RenderCamera, assets: &AssetServer, resource_manager: &mut ResourceManager) {
         let frustum = camera.frustum;
         let camera_pos = camera.position;
+
+        // let mut collected_meshes = Vec::new();
+        // let mut collected_skeleton_keys = HashSet::new();
 
         for (node_handle, mesh) in scene.meshes.iter() {
             if !mesh.visible {
@@ -135,7 +159,6 @@ impl ExtractedScene {
             }
 
             let node_world = node.transform.world_matrix;
-            let world_matrix = Mat4::from(node_world);
             let skin_binding = scene.skins.get(node_handle);
 
             // 视锥剔除：根据是否有骨骼绑定选择不同的包围盒
@@ -171,38 +194,90 @@ impl ExtractedScene {
                 continue;
             }
 
+            self.collected_meshes.push(CollectedMesh {
+                node_handle,
+                skeleton: skin_binding.map(|skin| skin.skeleton),
+            });
+
+            if let Some(binding) = skin_binding {
+                self.collected_skeleton_keys.insert(binding.skeleton);
+            }
+
+        }
+
+        // 准备骨骼数据
+        for skeleton_key in &self.collected_skeleton_keys {
+            if let Some(skeleton) = scene.skeleton_pool.get(*skeleton_key){
+                resource_manager.prepare_skeleton(skeleton);
+            }
+        }
+
+        // 确保模型缓冲区容量
+        resource_manager.ensure_model_buffer_capacity(self.collected_meshes.len());
+
+        // 更新并填充渲染项
+        for collected_mesh in &self.collected_meshes {
+            let node_handle = collected_mesh.node_handle;
+
+            let node = if let Some(n) = scene.nodes.get(node_handle) {
+                n
+            } else {
+                continue;
+            };
+
+            let mesh = if let Some(m) = scene.meshes.get_mut(node_handle) {
+                m
+            } else {
+                continue;
+            };
+            
+            let node_world = node.transform.world_matrix;
+            let world_matrix = Mat4::from(node_world);
+   
+            let skeleton = collected_mesh.skeleton.and_then(|key| scene.skeleton_pool.get(key).map(|s| s));
+            mesh.update_morph_uniforms();
+            
+            let object_bind_group = if let Some(binding) = resource_manager.prepare_mesh(assets, mesh, skeleton) {
+                binding
+            } else {
+                continue;
+            };
+
+
             let distance_sq = camera_pos.distance_squared(node_world.translation);
-            let cached_bind_group_id = mesh.render_cache.bind_group_id;
-            let cached_pipeline_id = mesh.render_cache.pipeline_id;
-            let skeleton = skin_binding.map(|skin| skin.skeleton);
+            let mut item_shader_defines = ShaderDefines::with_capacity(1);
+
+            if skeleton.is_some() {
+                item_shader_defines.set("HAS_SKINNING", "1");
+            }
 
             self.render_items.push(ExtractedRenderItem {
                 node_handle,
                 world_matrix,
-                geometry: geo_handle,
-                material: mat_handle,
-                skeleton,
+                object_bind_group,
+                geometry: mesh.geometry,
+                material: mesh.material,
+                item_variant_flags: {
+                    // if mesh.morph_targets.len() > 0 {
+                    //     flags |= crate::renderer::pipeline::PipelineItemVariants::HAS_MORPH_TARGETS as u32;
+                    // }
+                    // Todo: Define the flags properly
+                    skeleton.is_some() as u32
+                },
+                item_shader_defines,
                 distance_sq,
-                cached_bind_group_id,
-                cached_pipeline_id,
             });
         }
     }
 
-    /// 提取骨骼数据
-    fn extract_skeletons(&mut self, scene: &Scene) {
-        for (skel_key, _skeleton) in &scene.skeleton_pool {
-            self.skeletons.push(ExtractedSkeleton {
-                skeleton_key: skel_key,
-            });
-        }
-    }
+
 
     /// 提取环境数据
     fn extract_environment(&mut self, scene: &Scene) {
-        self.background = scene.background;
+        // self.background = scene.background;
         self.scene_defines = scene.shader_defines();
         self.scene_id = scene.id;
+        self.envvironment = scene.environment.clone();
     }
 
     /// 获取渲染项数量

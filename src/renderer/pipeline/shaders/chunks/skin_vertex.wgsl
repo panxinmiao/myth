@@ -1,5 +1,5 @@
     
-$$ if HAS_SKINNING
+$$ if HAS_SKINNING and SUPPORT_SKINNING
     let skin_index = vec4<u32>(in.joints);
     let skin_weight = in.weights;
 

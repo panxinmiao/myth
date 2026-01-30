@@ -8,7 +8,7 @@ use log::{warn, error};
 use slotmap::Key;
 
 use crate::renderer::graph::{RenderNode, RenderContext, TrackedRenderPass};
-use crate::renderer::graph::frame::{RenderKey, RenderCommand};
+use crate::renderer::graph::frame::{RenderKey};
 use crate::renderer::pipeline::{PipelineKey, FastPipelineKey};
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::resources::material::{AlphaMode, Side};
@@ -34,32 +34,35 @@ use crate::resources::uniforms::DynamicModelUniforms;
 pub struct ForwardRenderPass {
     /// 清屏颜色
     pub clear_color: wgpu::Color,
-    /// 复用的不透明命令列表（使用 RefCell 提供内部可变性）
-    opaque_commands: RefCell<Vec<RenderCommand>>,
-    /// 复用的透明命令列表（使用 RefCell 提供内部可变性）
-    transparent_commands: RefCell<Vec<RenderCommand>>,
+
+    commands : RefCell<CommandsBundle>,
 }
 
 impl ForwardRenderPass {
     pub fn new(clear_color: wgpu::Color) -> Self {
         Self {
             clear_color,
-            opaque_commands: RefCell::new(Vec::with_capacity(512)),
-            transparent_commands: RefCell::new(Vec::with_capacity(128)),
+            commands: RefCell::new(CommandsBundle::new()),
         }
     }
 
     /// 准备并排序渲染命令
     fn prepare_and_sort_commands(&self, ctx: &mut RenderContext) {
-        let mut opaque = self.opaque_commands.borrow_mut();
-        let mut transparent = self.transparent_commands.borrow_mut();
-        
-        opaque.clear();
-        transparent.clear();
+        // let mut opaque = self.commands.borrow_mut().opaque_commands;
+        // let mut transparent = self.commands.borrow_mut().transparent_commands;
 
-        ctx.resource_manager.ensure_model_buffer_capacity(ctx.extracted_scene.render_items.len());
+        let mut commands_bundle = self.commands.borrow_mut();
 
-        let scene_hash = ctx.extracted_scene.scene_defines.compute_hash() as u32;
+        commands_bundle.clear();
+
+
+        let Some(gpu_world) = ctx.resource_manager.get_global_state(ctx.render_state.id, ctx.extracted_scene.scene_id) else {
+            error!("Render Environment missing for render_state_id {}, scene_id {}", ctx.render_state.id, ctx.extracted_scene.scene_id);
+            return;
+        };
+
+        commands_bundle.gpu_global_bind_group_id =gpu_world.bind_group_id;
+        commands_bundle.gpu_global_bind_group = Some(gpu_world.bind_group.clone());
         
         for item_idx in 0..ctx.extracted_scene.render_items.len() {
             let item = &ctx.extracted_scene.render_items[item_idx];
@@ -73,24 +76,8 @@ impl ForwardRenderPass {
                 continue;
             };
 
-            // 直接从 Scene 的 meshes 组件获取 Mesh
-            let Some(mesh) = ctx.scene.meshes.get_mut(item.node_handle) else {
-                warn!("Mesh for node {:?} missing during render prepare", item.node_handle);
-                continue;
-            };
 
-            let skeleton = if let Some(skel_key) = item.skeleton {
-                ctx.scene.skeleton_pool.get(skel_key)
-            } else {
-                None
-            };
-    
-            let object_data = ctx.resource_manager.prepare_mesh(ctx.assets, mesh, skeleton);
-
-            let Some(object_data) = object_data else {
-                warn!("Failed to prepare ObjectBindingData for node {:?}", item.node_handle);
-                continue;
-            };
+            let object_bind_group = &item.object_bind_group;
 
             let Some(gpu_geometry) = ctx.resource_manager.get_geometry(item.geometry) else {
                 error!("CRITICAL: GpuGeometry missing for {:?}", item.geometry);
@@ -100,25 +87,17 @@ impl ForwardRenderPass {
                 error!("CRITICAL: GpuMaterial missing for {:?}", item.material);
                 continue;
             };
-            let Some(gpu_world) = ctx.resource_manager.get_global_state(ctx.render_state.id, ctx.extracted_scene.scene_id) else {
-                error!("Render Environment missing for render_state_id {}, scene_id {}", ctx.render_state.id, ctx.extracted_scene.scene_id);
-                continue;
-            };
 
-            // 计算 instance_variants（仅基于骨骼存在与否）
-            let instance_variants = if skeleton.is_none() { 1u32 << 0 } else { 0 };
 
             // 使用版本号构建快速缓存 Key
             // 注意：scene_id 的哈希计算已被缓存优化，成本较低
             let fast_key = FastPipelineKey {
                 material_handle: item.material,
                 material_version: gpu_material.version,
-                material_layout_id: gpu_material.layout_id,
                 geometry_handle: item.geometry,
-                geometry_layout_version: geometry.layout_version(),
-                instance_variants,
-                scene_id: scene_hash,
-                render_state_id: ctx.render_state.id,
+                geometry_version: geometry.layout_version(),
+                instance_variants: item.item_variant_flags,
+                global_state_id: gpu_world.id,
             };
 
             // ========== 热路径优化：先检查 L1 缓存 ==========
@@ -127,16 +106,17 @@ impl ForwardRenderPass {
                 p.clone()
             } else {
                 // L1 缓存未命中：需要完整计算 shader_defines 以构建/查找 Pipeline
-                let mut geo_defines = geometry.shader_defines();
-                if skeleton.is_none() {
-                    geo_defines.remove("HAS_SKINNING");
-                }
+                let geo_defines = geometry.shader_defines();
 
                 let mat_defines = material.shader_defines();
+
+                // let object_defines = item.item_shader_defines;
+
                 let options = ShaderCompilationOptions::from_merged(
                     &mat_defines,
                     &geo_defines,
                     &ctx.extracted_scene.scene_defines,
+                    &item.item_shader_defines,
                 );
                 let shader_hash = options.compute_hash();
 
@@ -164,9 +144,8 @@ impl ForwardRenderPass {
                     &options,
                     &gpu_geometry.layout_info,
                     gpu_material,
-                    &object_data,
-                    &gpu_world.binding_wgsl,
-                    &gpu_world.layout,
+                    object_bind_group,
+                    &gpu_world,
                 );
 
                 ctx.pipeline_cache.insert_pipeline_fast(fast_key, (pipeline.clone(), pipeline_id));
@@ -185,10 +164,9 @@ impl ForwardRenderPass {
             let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq, is_transparent);
 
             let cmd = RenderCommand {
-                object_data,
+                object_bind_group: object_bind_group.clone(),
                 geometry_handle: item.geometry,
                 material_handle: item.material,
-                render_state_id: ctx.render_state.id,
                 pipeline_id,
                 pipeline,
                 model_matrix: item.world_matrix,
@@ -197,23 +175,23 @@ impl ForwardRenderPass {
             };
 
             if is_transparent {
-                transparent.push(cmd);
+                commands_bundle.insert_transparent(cmd);
             } else {
-                opaque.push(cmd);
+                commands_bundle.insert_opaque(cmd);
             }
         }
 
-        opaque.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
-        transparent.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
+        commands_bundle.sort_commands();
     }
 
     /// 上传动态 Uniform 数据
     fn upload_dynamic_uniforms(&self, ctx: &mut RenderContext) {
-        let mut opaque = self.opaque_commands.borrow_mut();
-        let mut transparent = self.transparent_commands.borrow_mut();
-        
-        let total_count = opaque.len() + transparent.len();
-        if total_count == 0 { return; }
+        let mut cmds = self.commands.borrow_mut();
+        if cmds.is_empty() {
+            return;
+        }
+
+        let opaque = &mut cmds.opaque_commands;
 
         for cmd in opaque.iter_mut() {
             let world_matrix_inverse = cmd.model_matrix.inverse();
@@ -228,6 +206,8 @@ impl ForwardRenderPass {
 
             cmd.dynamic_offset = offset;
         }
+
+        let transparent = &mut cmds.transparent_commands;
 
         for cmd in transparent.iter_mut() {
             let world_matrix_inverse = cmd.model_matrix.inverse();
@@ -256,12 +236,6 @@ impl ForwardRenderPass {
     ) {
         if cmds.is_empty() { return; }
 
-        if let Some(gpu_global) = ctx.resource_manager.get_global_state(ctx.render_state.id, ctx.extracted_scene.scene_id) {
-            pass.set_bind_group(0, gpu_global.bind_group_id, &gpu_global.bind_group, &[]);
-        } else {
-            return;
-        }
-
         for cmd in cmds {
             pass.set_pipeline(cmd.pipeline_id, &cmd.pipeline);
 
@@ -271,8 +245,8 @@ impl ForwardRenderPass {
 
             pass.set_bind_group(
                 2,
-                cmd.object_data.bind_group_id,
-                &cmd.object_data.bind_group,
+                cmd.object_bind_group.bind_group_id,
+                &cmd.object_bind_group.bind_group,
                 &[cmd.dynamic_offset],
             );
 
@@ -304,7 +278,7 @@ impl RenderNode for ForwardRenderPass {
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
         // 1. 准备渲染命令（通过 RefCell 获取内部可变性）
         self.prepare_and_sort_commands(ctx);
-        
+
         // 2. 上传动态 Uniform
         self.upload_dynamic_uniforms(ctx);
 
@@ -314,8 +288,7 @@ impl RenderNode for ForwardRenderPass {
         // 4. 开始渲染通道并执行绘制
         {
             // 获取不可变借用（必须在 TrackedRenderPass 之前声明以保证生命周期）
-            let opaque = self.opaque_commands.borrow();
-            let transparent = self.transparent_commands.borrow();
+            let commands_bundle = self.commands.borrow();
 
             let pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Forward Render Pass"),
@@ -345,17 +318,73 @@ impl RenderNode for ForwardRenderPass {
             let pass = encoder.begin_render_pass(&pass_desc);
             let mut tracked = TrackedRenderPass::new(pass);
 
+            if let Some(gpu_global_bind_group) = &commands_bundle.gpu_global_bind_group {
+                tracked.set_bind_group(0, commands_bundle.gpu_global_bind_group_id, &gpu_global_bind_group, &[]);
+            } else {
+                return;
+            }
 
             Self::draw_list(
                 ctx,
                 &mut tracked,
-                &opaque,
+                &commands_bundle.opaque_commands,
             );
             Self::draw_list(
                 ctx,
                 &mut tracked,
-                &transparent,
+                &commands_bundle.transparent_commands,
             );
         }
+    }
+}
+
+
+struct RenderCommand {
+    object_bind_group: crate::renderer::core::BindGroupContext,
+    geometry_handle: crate::assets::GeometryHandle,
+    material_handle: crate::assets::MaterialHandle,
+    pipeline_id: u16,
+    pipeline: wgpu::RenderPipeline,
+    model_matrix: glam::Mat4,
+    sort_key: RenderKey,
+    dynamic_offset: u32,
+}
+
+struct CommandsBundle {
+    opaque_commands: Vec<RenderCommand>,
+    transparent_commands: Vec<RenderCommand>,
+    gpu_global_bind_group_id: u64,
+    gpu_global_bind_group: Option<wgpu::BindGroup>,
+}
+
+impl CommandsBundle {
+    pub fn new() -> Self {
+        Self {
+            opaque_commands: Vec::with_capacity(512),
+            transparent_commands: Vec::with_capacity(128),
+            gpu_global_bind_group_id: 0,
+            gpu_global_bind_group: None,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.opaque_commands.clear();
+        self.transparent_commands.clear();
+    }
+
+    pub fn insert_opaque(&mut self, cmd: RenderCommand) {
+        self.opaque_commands.push(cmd);
+    }
+    pub fn insert_transparent(&mut self, cmd: RenderCommand) {
+        self.transparent_commands.push(cmd);
+    }
+
+    pub fn sort_commands(&mut self) {
+        self.opaque_commands.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
+        self.transparent_commands.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.opaque_commands.is_empty() && self.transparent_commands.is_empty()
     }
 }
