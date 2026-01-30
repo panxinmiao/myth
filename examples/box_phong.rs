@@ -72,10 +72,7 @@ impl AppHandler for PhongBox {
             self.controls.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);
         }
     }
-    
-    fn extra_render_nodes(&self) -> Vec<&dyn three::renderer::graph::RenderNode> {
-        Vec::new()
-    }
+
 }
 
 fn main() -> anyhow::Result<()> {

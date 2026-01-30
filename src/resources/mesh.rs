@@ -10,16 +10,13 @@ pub const MORPH_WEIGHT_THRESHOLD: f32 = 0.001;
 /// 
 /// 采用 "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" 模式
 #[derive(Debug, Clone, Default)]
-pub struct RenderCache {
+pub struct BindGroupCache {
     pub bind_group_id: Option<u64>,
-    pub pipeline_id: Option<u16>,
     /// 缓存的资源 ID 集合（用于指纹比较）
     pub(crate) resource_ids: ResourceIdSet,
-    pub(crate) geometry_id: Option<GeometryHandle>,
-    pub(crate) material_id: Option<MaterialHandle>,
 }
 
-impl RenderCache {
+impl BindGroupCache {
     #[inline]
     pub fn fingerprint_matches(&self, current_ids: &ResourceIdSet) -> bool {
         self.bind_group_id.is_some() && self.resource_ids.matches_slice(current_ids.as_slice())
@@ -50,7 +47,7 @@ pub struct Mesh {
     
     // === 渲染缓存 ===
     /// 渲染代理缓存，避免每帧重复查找
-    pub render_cache: RenderCache,
+    pub(crate) bind_group_cache: BindGroupCache,
 }
 
 impl Mesh {
@@ -67,7 +64,7 @@ impl Mesh {
             morph_target_influences: Vec::new(),
             morph_uniforms: CpuBuffer::new_uniform(None),
             morph_dirty: false,
-            render_cache: RenderCache::default(),
+            bind_group_cache: BindGroupCache::default(),
         }
     }
 

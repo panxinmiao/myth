@@ -164,8 +164,8 @@ impl ResourceManager {
         // current_ids.push(mat_prep_result.layout_id);
         
         // === Check 阶段: 快速指纹比较 ===
-        if mesh.render_cache.fingerprint_matches(&current_ids) {
-            if let Some(cached_id) = mesh.render_cache.bind_group_id {
+        if mesh.bind_group_cache.fingerprint_matches(&current_ids) {
+            if let Some(cached_id) = mesh.bind_group_cache.bind_group_id {
                 if let Some(data) = self.get_cached_bind_group(cached_id) {
                     return Some(data.clone());
                 }
@@ -177,21 +177,15 @@ impl ResourceManager {
         
         // 检查全局缓存
         if let Some(binding_data) = self.object_bind_group_cache.get(&cache_key) {
-            mesh.render_cache.bind_group_id = Some(binding_data.bind_group_id);
-            mesh.render_cache.resource_ids = current_ids;
-            mesh.render_cache.geometry_id = Some(mesh.geometry);
-            mesh.render_cache.material_id = Some(mesh.material);
-            mesh.render_cache.pipeline_id = None;
+            mesh.bind_group_cache.bind_group_id = Some(binding_data.bind_group_id);
+            mesh.bind_group_cache.resource_ids = current_ids;
             return Some(binding_data.clone());
         }
         
         // 创建新 GpuObject
         let binding_data = self.create_object_bind_group_internal(assets, geometry, mesh, skeleton, cache_key);
-        mesh.render_cache.bind_group_id = Some(binding_data.bind_group_id);
-        mesh.render_cache.resource_ids = current_ids;
-        mesh.render_cache.geometry_id = Some(mesh.geometry);
-        mesh.render_cache.material_id = Some(mesh.material);
-        mesh.render_cache.pipeline_id = None;
+        mesh.bind_group_cache.bind_group_id = Some(binding_data.bind_group_id);
+        mesh.bind_group_cache.resource_ids = current_ids;
         Some(binding_data)
     }
 

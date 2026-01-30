@@ -152,10 +152,6 @@ impl ForwardRenderPass {
                 (pipeline, pipeline_id)
             };
 
-            // 回写 pipeline 缓存到 Mesh
-            if let Some(mesh) = ctx.scene.meshes.get_mut(item.node_handle) {
-                mesh.render_cache.pipeline_id = Some(pipeline_id);
-            }
 
             let mat_id = item.material.data().as_ffi() as u32;
 

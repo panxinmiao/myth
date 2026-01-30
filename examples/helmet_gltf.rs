@@ -86,10 +86,7 @@ impl AppHandler for HelmetGltf {
             window.set_title(&format!("glTF PBR Demo - FPS: {:.0}", fps));
         }
     }
-    
-    fn extra_render_nodes(&self) -> Vec<&dyn three::renderer::graph::RenderNode> {
-        Vec::new()
-    }
+
 }
 
 fn main() -> anyhow::Result<()> {
