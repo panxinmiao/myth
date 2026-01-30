@@ -7,7 +7,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 use winit::window::{Window, WindowId};
 
 use crate::engine::{FrameState, ThreeEngine};
-use crate::renderer::graph::RenderNode;
+use crate::renderer::graph::{RenderStage, RenderNode};
 use crate::renderer::settings::RenderSettings;
 
 pub mod input_adapter;
@@ -23,7 +23,22 @@ pub trait AppHandler: Sized + 'static {
 
     fn update(&mut self, _engine: &mut ThreeEngine, _window: &Arc<Window>, _frame: &FrameState) {}
 
-    fn extra_render_nodes(&self) -> Vec<&dyn RenderNode> {
+    /// 返回额外的渲染节点
+    /// 
+    /// 返回一个按阶段组织的渲染节点列表。
+    /// 这些节点将被添加到内置 Pass 之后，按阶段顺序执行。
+    /// 
+    /// # 示例
+    /// 
+    /// ```ignore
+    /// fn extra_render_nodes(&self) -> Vec<(RenderStage, &dyn RenderNode)> {
+    ///     vec![
+    ///         (RenderStage::UI, &self.ui_pass),
+    ///         (RenderStage::PostProcess, &self.bloom_pass),
+    ///     ]
+    /// }
+    /// ```
+    fn extra_render_nodes(&self) -> Vec<(RenderStage, &dyn RenderNode)> {
         Vec::new()
     }
 }
@@ -153,11 +168,22 @@ impl<H: AppHandler> AppRunner<H> {
         };
 
         let render_camera = cam.extract_render_camera();
+        
+        // 获取用户自定义的渲染节点
         let extra_nodes = user_state.extra_render_nodes();
 
-        engine
-            .renderer
-            .render(scene, render_camera, &engine.assets, engine.time, &extra_nodes);
+        // 使用新的 FrameBuilder API
+        if let Some(prepared_frame) = engine.renderer.begin_frame(
+            scene,
+            &render_camera,
+            &engine.assets,
+            engine.time,
+        ) {
+            prepared_frame.render_with_nodes(&extra_nodes);
+        }
+        
+        // 定期清理资源
+        engine.renderer.maybe_prune();
     }
 }
 

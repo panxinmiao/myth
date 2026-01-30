@@ -2,7 +2,7 @@
 //!
 //! 负责将 Scene 绘制到屏幕，采用 Core - Graph - Pipeline 分层架构：
 //! - core: WGPU 上下文封装（Device, Queue, Surface, ResourceManager）
-//! - graph: 渲染管线组织（RenderFrame, Pass, Sort）
+//! - graph: 渲染管线组织（RenderFrame, Pass, Sort, FrameBuilder）
 //! - pipeline: PSO 缓存与构建
 
 pub mod core;
@@ -18,8 +18,7 @@ use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
 use self::core::{ResourceManager, WgpuContext};
-use self::graph::RenderFrame;
-use self::graph::RenderNode;
+use self::graph::{RenderFrame, PreparedFrame};
 use self::pipeline::PipelineCache;
 use self::settings::RenderSettings;
 
@@ -88,32 +87,63 @@ impl Renderer {
         }
     }
 
-    /// 渲染场景
+    /// 开始构建一帧渲染
     /// 
-    /// # 参数
-    /// - `extra_nodes`: 额外的渲染节点（如 UI Pass），将在内置 Pass 之后执行
-    pub fn render(
-        &mut self, 
-        scene: &mut Scene, 
-        camera: RenderCamera, 
-        assets: &AssetServer, 
+    /// 返回 `PreparedFrame`，可通过 `FrameBuilder` 配置渲染管线。
+    /// 
+    /// # 新 API 用法
+    /// 
+    /// ```ignore
+    /// // 方式 1：使用默认内置 Pass
+    /// if let Some(frame) = renderer.begin_frame(scene, camera, assets, time) {
+    ///     frame.render_default();
+    /// }
+    /// 
+    /// // 方式 2：自定义渲染管线
+    /// if let Some(frame) = renderer.begin_frame(scene, camera, assets, time) {
+    ///     frame.build()
+    ///         .add_node(RenderStage::UI, &ui_pass)
+    ///         .add_node(RenderStage::PostProcess, &bloom_pass)
+    ///         .render();
+    /// }
+    /// ```
+    /// 
+    /// # 返回
+    /// 
+    /// 返回 `Some(PreparedFrame)` 如果成功准备帧，否则返回 `None`
+    /// （例如窗口尺寸为 0 或 Surface 丢失）。
+    pub fn begin_frame<'a>(
+        &'a mut self,
+        scene: &'a mut Scene,
+        camera: &'a RenderCamera,
+        assets: &'a AssetServer,
         time: f32,
-        extra_nodes: &[&dyn RenderNode],
-    ) {
+    ) -> Option<PreparedFrame<'a>> {
         if self.size[0] == 0 || self.size[1] == 0 {
-            return;
+            return None;
         }
+        
+        let state = self.context.as_mut()?;
+        
+        let prepared = state.render_frame.prepare(
+            &mut state.wgpu_ctx,
+            &mut state.resource_manager,
+            &mut state.pipeline_cache,
+            scene,
+            camera,
+            assets,
+            time,
+        )?;
+        
+        Some(prepared)
+    }
+    
+    /// 定期清理资源
+    /// 
+    /// 建议在每帧渲染后调用。
+    pub fn maybe_prune(&mut self) {
         if let Some(state) = &mut self.context {
-            state.render_frame.render(
-                &mut state.wgpu_ctx,
-                &mut state.resource_manager,
-                &mut state.pipeline_cache,
-                scene,
-                &camera,
-                assets,
-                time,
-                extra_nodes,
-            );
+            state.render_frame.maybe_prune(&mut state.resource_manager);
         }
     }
 

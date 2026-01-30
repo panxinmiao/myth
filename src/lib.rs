@@ -22,6 +22,7 @@ pub use assets::{AssetServer, ColorSpace};
 pub use engine::ThreeEngine;
 pub use errors::ThreeError;
 pub use renderer::core::WgpuContext;
+pub use renderer::graph::{RenderStage, FrameBuilder, PreparedFrame};
 pub use renderer::Renderer;
 pub use resources::primitives::*;
 pub use resources::{

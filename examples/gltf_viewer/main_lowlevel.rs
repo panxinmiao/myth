@@ -13,7 +13,7 @@
 //! # 架构说明
 //! 这个示例展示了 "UI as a Plugin" 模式：
 //! - `UiPass` 是外部代码，实现了 `RenderNode` trait
-//! - 通过 `renderer.render(..., &[&ui_pass])` 注入渲染流程
+//! - 通过 `render_with_nodes(&[(RenderStage::UI, &ui_pass)])` 注入渲染流程
 //! - 引擎核心完全不依赖 egui
 
 mod ui_pass;
@@ -24,6 +24,7 @@ use glam::Vec3;
 
 use three::resources::Input;
 use three::app::winit::input_adapter;
+use three::renderer::graph::RenderStage;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
@@ -207,24 +208,23 @@ impl GltfViewer {
                     .as_secs_f32();
                 let render_camera = camera.extract_render_camera();
                 
-                // 注入 UI Pass
-                if let Some(ui_pass) = &self.ui_pass {
-                    self.renderer.render(
-                        &mut self.scene, 
-                        render_camera, 
-                        &self.assets, 
-                        time_seconds,
-                        &[ui_pass], // <-- 注入！
-                    );
-                } else {
-                    self.renderer.render(
-                        &mut self.scene, 
-                        render_camera, 
-                        &self.assets, 
-                        time_seconds,
-                        &[],
-                    );
+                // 使用新的 FrameBuilder API
+                if let Some(prepared_frame) = self.renderer.begin_frame(
+                    &mut self.scene,
+                    &render_camera,
+                    &self.assets,
+                    time_seconds,
+                ) {
+                    // 注入 UI Pass
+                    if let Some(ui_pass) = &self.ui_pass {
+                        prepared_frame.render_with_nodes(&[(RenderStage::UI, ui_pass as &dyn three::renderer::graph::RenderNode)]);
+                    } else {
+                        prepared_frame.render_default();
+                    }
                 }
+                
+                // 定期清理资源
+                self.renderer.maybe_prune();
             }
         }
     }

@@ -17,7 +17,7 @@
 //! # 架构说明
 //! 这个示例展示了 "UI as a Plugin" 模式：
 //! - `UiPass` 实现了 `RenderNode` trait，可以注入到 RenderGraph
-//! - 通过 `extra_render_nodes()` 方法将 UI Pass 注入渲染流程
+//! - 通过 `configure_render_pipeline()` 方法将 UI Pass 注入到 UI 阶段
 //! - 引擎核心完全不依赖 egui
 
 mod ui_pass;
@@ -36,7 +36,7 @@ use winit::event::WindowEvent;
 use three::app::winit::{App, AppHandler};
 use three::assets::{GltfLoader, MaterialHandle, TextureHandle};
 use three::scene::{Camera, NodeHandle, light};
-use three::renderer::graph::RenderNode;
+use three::renderer::graph::RenderStage;
 use three::renderer::settings::{RenderSettings};
 use three::{AssetServer, OrbitControls, RenderableMaterialTrait, Scene, ThreeEngine};
 use three::utils::fps_counter::FpsCounter;
@@ -317,8 +317,8 @@ impl AppHandler for GltfViewer {
         }
     }
 
-    fn extra_render_nodes(&self) -> Vec<&dyn RenderNode> {
-        vec![&self.ui_pass]
+    fn extra_render_nodes(&self) -> Vec<(RenderStage, &dyn three::renderer::graph::RenderNode)> {
+        vec![(RenderStage::UI, &self.ui_pass)]
     }
 }
 

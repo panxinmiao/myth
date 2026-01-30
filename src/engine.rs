@@ -6,7 +6,6 @@
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::assets::AssetServer;
-use crate::renderer::graph::RenderNode;
 use crate::renderer::settings::RenderSettings;
 use crate::renderer::Renderer;
 use crate::resources::input::Input;
@@ -72,28 +71,13 @@ impl ThreeEngine {
 
         self.input.start_frame();
     }
-
-    // /// 渲染当前帧
-    pub fn render(&mut self, extra_nodes: &[&dyn RenderNode]) {
-
-        let Some(scene_handle) = self.scene_manager.active_handle() else {
-            return;
-        };
-        let Some(scene) = self.scene_manager.get_scene_mut(scene_handle) else {
-            return;
-        };
-        let Some(cam_node) = scene.active_camera else {
-            return;
-        };
-        let Some(cam) = scene.cameras.get(cam_node) else {
-            return;
-        };
-
-        let camera = cam.extract_render_camera();
-        let time = self.time;
-
-        self.renderer
-            .render(scene, camera, &self.assets, time, extra_nodes);
+    
+    /// 定期清理资源
+    /// 
+    /// 建议在每帧渲染后调用。
+    #[inline]
+    pub fn maybe_prune(&mut self) {
+        self.renderer.maybe_prune();
     }
 
     fn update_camera_aspect(&mut self, aspect: f32) {
