@@ -156,9 +156,9 @@ impl RenderFrame {
     #[allow(clippy::too_many_arguments)]
     pub fn extract_and_prepare(
         &mut self,
-        _wgpu_ctx: &mut crate::renderer::core::WgpuContext,
+        // _wgpu_ctx: &mut crate::renderer::core::WgpuContext,
         resource_manager: &mut ResourceManager,
-        _pipeline_cache: &mut crate::renderer::pipeline::PipelineCache,
+        // _pipeline_cache: &mut crate::renderer::pipeline::PipelineCache,
         scene: &mut Scene,
         camera: &RenderCamera,
         assets: &AssetServer,

@@ -50,12 +50,12 @@ struct NodeEntry<'a> {
 /// 
 /// # 性能考虑
 /// 
-/// - 内部 Vec 预分配 16 个条目，覆盖大部分场景
+/// - 内部 smallvec 预分配 16 个条目，覆盖大部分场景
 /// - 排序使用标准库的 `sort_unstable_by_key`，高效且无额外内存开销
 /// - 节点存储为引用，无堆分配开销
 pub struct FrameBuilder<'a> {
     /// 节点列表（未排序）
-    nodes: Vec<NodeEntry<'a>>,
+    nodes: smallvec::SmallVec<[NodeEntry<'a>; 16]>,
     /// 下一个插入顺序号
     next_order: u16,
 }
@@ -73,7 +73,7 @@ impl<'a> FrameBuilder<'a> {
     #[inline]
     pub fn new() -> Self {
         Self {
-            nodes: Vec::with_capacity(16),
+            nodes: smallvec::SmallVec::with_capacity(16),
             next_order: 0,
         }
     }
@@ -82,7 +82,7 @@ impl<'a> FrameBuilder<'a> {
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
-            nodes: Vec::with_capacity(capacity),
+            nodes: smallvec::SmallVec::with_capacity(capacity),
             next_order: 0,
         }
     }

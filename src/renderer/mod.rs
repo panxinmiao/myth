@@ -127,9 +127,9 @@ impl Renderer {
 
         // Prepare 阶段：提取场景、准备内置 Pass
         state.render_frame.extract_and_prepare(
-            &mut state.wgpu_ctx,
+            //&mut state.wgpu_ctx,
             &mut state.resource_manager,
-            &mut state.pipeline_cache,
+            //&mut state.pipeline_cache,
             scene,
             camera,
             assets,
