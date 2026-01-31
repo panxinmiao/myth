@@ -3,6 +3,47 @@
 //! Three is a modern 3D rendering engine built with Rust and wgpu, inspired by Three.js.
 //! It provides a flexible, high-performance foundation for real-time graphics applications.
 //!
+//! ## Quick Start
+//!
+//! For the simplest way to get started, use the [`prelude`] module:
+//!
+//! ```rust,ignore
+//! use three::prelude::*;
+//!
+//! struct MyApp;
+//!
+//! impl AppHandler for MyApp {
+//!     fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self {
+//!         // Create a scene with a mesh
+//!         let scene = engine.scene_manager.create_active();
+//!         
+//!         // Add a cube
+//!         let geometry = Geometry::new_box(1.0, 1.0, 1.0);
+//!         let material = Material::new_basic(Vec4::new(1.0, 0.5, 0.2, 1.0));
+//!         let mesh = Mesh::new(
+//!             engine.assets.geometries.add(geometry),
+//!             engine.assets.materials.add(material),
+//!         );
+//!         scene.add_mesh(mesh);
+//!         
+//!         // Setup camera
+//!         let camera = Camera::new_perspective(60.0, 16.0/9.0, 0.1);
+//!         let cam_node = scene.add_camera(camera);
+//!         scene.active_camera = Some(cam_node);
+//!         
+//!         MyApp
+//!     }
+//!     
+//!     fn update(&mut self, engine: &mut ThreeEngine, _: &Arc<Window>, frame: &FrameState) {
+//!         // Update logic here
+//!     }
+//! }
+//!
+//! fn main() -> anyhow::Result<()> {
+//!     App::new().with_title("My 3D App").run::<MyApp>()
+//! }
+//! ```
+//!
 //! ## Architecture Overview
 //!
 //! The engine follows a layered architecture designed for modularity and performance:
@@ -26,56 +67,39 @@
 //! └─────────────────────────────────────────────────────────────┘
 //! ```
 //!
-//! ## Key Modules
+//! ## Module Organization
 //!
-//! - [`app`] - Application lifecycle and window management (Winit integration)
-//! - [`engine`] - Core engine instance that orchestrates all subsystems
-//! - [`scene`] - Scene graph system with nodes, cameras, lights, and transforms
-//! - [`renderer`] - Rendering pipeline with Core, Graph, and Pipeline layers
-//! - [`resources`] - CPU-side resource definitions (Geometry, Material, Texture, etc.)
-//! - [`animation`] - Skeletal and morph target animation system
-//! - [`assets`] - Asset loading and management (glTF, textures, etc.)
+//! This crate uses a **progressive disclosure** pattern:
 //!
-//! ## Quick Start
+//! - **High-level API**: Use [`prelude`] for common types and traits
+//! - **Domain modules**: Access organized APIs via [`scene`], [`resources`], [`assets`], etc.
+//! - **Low-level access**: Advanced users can access [`renderer`] internals
 //!
-//! ```rust,ignore
-//! use three::{App, AppHandler, ThreeEngine, Scene, Camera, Mesh};
-//! use three::app::winit::AppHandler;
+//! ### Core Modules
 //!
-//! struct MyApp;
-//!
-//! impl AppHandler for MyApp {
-//!     fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self {
-//!         // Create a scene with a camera and some objects
-//!         let scene = Scene::new();
-//!         // ... setup scene ...
-//!         MyApp
-//!     }
-//!
-//!     fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
-//!         // Update logic here
-//!     }
-//! }
-//!
-//! fn main() -> anyhow::Result<()> {
-//!     App::new()
-//!         .with_title("My 3D App")
-//!         .run::<MyApp>()
-//! }
-//! ```
+//! | Module | Description |
+//! |--------|-------------|
+//! | [`app`] | Application lifecycle and window management |
+//! | [`engine`] | Core engine instance ([`ThreeEngine`]) |
+//! | [`scene`] | Scene graph with nodes, cameras, and lights |
+//! | [`resources`] | Resource definitions (geometry, material, texture) |
+//! | [`assets`] | Asset loading and management (glTF, images) |
+//! | [`animation`] | Skeletal and morph target animation system |
+//! | [`math`] | Re-exported math types from `glam` |
+//! | [`render`] | Rendering configuration and advanced APIs |
 //!
 //! ## Feature Flags
 //!
-//! - `winit` (default) - Enables window management via winit
-//! - `gltf` (default) - Enables glTF model loading
-//! - `http` (default) - Enables HTTP asset loading
+//! - `winit` (default) - Window management via winit
+//! - `gltf` (default) - glTF 2.0 model loading
+//! - `http` (default) - HTTP asset loading (native only)
 //!
 //! ## Design Principles
 //!
-//! - **Performance First**: Cache-friendly data layouts, GPU resource pooling, and efficient batching
-//! - **Modular Design**: Each subsystem is independent and can be used separately
-//! - **Type Safety**: Strong typing with SlotMap handles for resource references
-//! - **Modern Graphics**: Built on wgpu for cross-platform WebGPU/Vulkan/Metal/DX12 support
+//! - **Performance First**: Cache-friendly data layouts, GPU resource pooling
+//! - **Progressive Disclosure**: Simple API for beginners, full control for experts
+//! - **Type Safety**: SlotMap handles for safe resource references
+//! - **Cross-Platform**: WebGPU/Vulkan/Metal/DX12 via wgpu
 
 #![warn(clippy::all)]
 #![warn(clippy::pedantic)]
@@ -85,6 +109,10 @@
 #![allow(clippy::missing_errors_doc)]
 #![allow(clippy::missing_panics_doc)]
 #![allow(clippy::too_many_arguments)]
+
+// ============================================================================
+// Internal Module Declarations
+// ============================================================================
 
 pub mod animation;
 pub mod app;
@@ -96,19 +124,203 @@ pub mod resources;
 pub mod scene;
 pub mod utils;
 
-pub use animation::{AnimationAction, AnimationClip, AnimationMixer, AnimationSystem, Binder, LoopMode};
-pub use assets::{AssetServer, ColorSpace};
-pub use engine::ThreeEngine;
-pub use errors::ThreeError;
-pub use renderer::core::WgpuContext;
-pub use renderer::graph::{FrameBuilder, FrameComposer, RenderStage};
-pub use renderer::Renderer;
-pub use resources::primitives::*;
+// ============================================================================
+// Prelude - Common imports for everyday use
+// ============================================================================
+
+/// Prelude module for convenient imports.
+///
+/// Import everything you need for basic usage with a single line:
+///
+/// ```rust,ignore
+/// use three::prelude::*;
+/// ```
+///
+/// This includes:
+/// - Application types: [`App`], [`AppHandler`], [`ThreeEngine`], [`FrameState`]
+/// - Scene types: [`Scene`], [`Node`], [`NodeHandle`], [`Camera`], [`Light`]
+/// - Resource types: [`Mesh`], [`Geometry`], [`Material`], [`Texture`]
+/// - Common math types from `glam`
+/// - Asset loading: [`AssetServer`]
+pub mod prelude {
+    // Application
+    pub use crate::app::winit::{App, AppHandler};
+    pub use crate::engine::{ThreeEngine, FrameState};
+    
+    // Scene graph
+    pub use crate::scene::{
+        Scene, SceneLogic, Node, NodeHandle, SkeletonKey,
+        Camera, ProjectionType, Light, LightKind, Transform,
+    };
+    
+    // Resources
+    pub use crate::resources::{
+        Mesh, Geometry, Material, MaterialType, Texture, Image,
+        MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, MeshPhysicalMaterial,
+        Side, AlphaMode, TextureSlot,
+    };
+    
+    // Assets
+    pub use crate::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle, ColorSpace};
+    
+    // Animation
+    pub use crate::animation::{AnimationClip, AnimationAction, AnimationMixer, LoopMode};
+    
+    // Math (re-export common glam types)
+    pub use glam::{Vec2, Vec3, Vec4, Quat, Mat3, Mat4, Affine3A, EulerRot};
+    
+    // Utilities
+    pub use crate::utils::orbit_control::OrbitControls;
+    
+    // Renderer (limited exposure)
+    pub use crate::renderer::graph::{FrameComposer, RenderStage};
+    pub use crate::renderer::settings::RenderSettings;
+}
+
+// ============================================================================
+// Math Module - Re-exported glam types
+// ============================================================================
+
+/// Math types re-exported from the `glam` crate.
+///
+/// Using this module ensures version compatibility between your code
+/// and the engine's internal math operations.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use three::math::{Vec3, Quat, Mat4};
+///
+/// let position = Vec3::new(1.0, 2.0, 3.0);
+/// let rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+/// ```
+///
+/// # Available Types
+///
+/// ## Vectors
+/// - [`Vec2`], [`Vec3`], [`Vec4`] - Float vectors
+/// - [`IVec2`], [`IVec3`], [`IVec4`] - Integer vectors
+/// - [`UVec2`], [`UVec3`], [`UVec4`] - Unsigned integer vectors
+///
+/// ## Matrices
+/// - [`Mat2`], [`Mat3`], [`Mat4`] - Square matrices
+/// - [`Affine2`], [`Affine3A`] - Affine transformation matrices
+///
+/// ## Quaternions
+/// - [`Quat`] - Unit quaternion for rotations
+///
+/// ## Other
+/// - [`EulerRot`] - Euler rotation order enumeration
+pub mod math {
+    pub use glam::*;
+}
+
+// ============================================================================
+// Render Module - Advanced rendering API (alias for renderer)
+// ============================================================================
+
+/// Rendering system configuration and advanced APIs.
+///
+/// Most users only need [`RenderSettings`](renderer::settings::RenderSettings) 
+/// to configure basic options. Advanced users can access the render graph 
+/// system for custom passes.
+///
+/// # Basic Usage
+///
+/// ```rust,ignore
+/// use three::render::RenderSettings;
+///
+/// let settings = RenderSettings {
+///     vsync: true,
+///     clear_color: wgpu::Color::BLACK,
+///     ..Default::default()
+/// };
+///
+/// App::new()
+///     .with_settings(settings)
+///     .run::<MyApp>()?;
+/// ```
+///
+/// # Advanced: Custom Render Passes
+///
+/// Implement [`RenderNode`](renderer::graph::RenderNode) to add custom 
+/// rendering passes:
+///
+/// ```rust,ignore
+/// use three::render::{FrameComposer, RenderStage, RenderNode};
+///
+/// impl AppHandler for MyApp {
+///     fn compose_frame<'a>(&'a self, composer: FrameComposer<'a>) {
+///         composer
+///             .add_node(RenderStage::UI, &self.ui_pass)
+///             .render();
+///     }
+/// }
+/// ```
+pub mod render {
+    pub use crate::renderer::settings::RenderSettings;
+    pub use crate::renderer::graph::{
+        FrameComposer, FrameBuilder, RenderStage, RenderNode,
+        RenderContext, RenderState, TrackedRenderPass,
+    };
+    pub use crate::renderer::Renderer;
+    
+    /// Low-level GPU context access.
+    ///
+    /// These types are for advanced users who need direct GPU access.
+    /// Most applications should not need to use these directly.
+    pub mod core {
+        pub use crate::renderer::core::WgpuContext;
+        pub use crate::renderer::core::ResourceManager;
+        // Advanced: GPU binding system
+        pub use crate::renderer::core::{BindingResource, Bindings, ResourceBuilder};
+    }
+}
+
+// ============================================================================
+// Top-Level Re-exports for Convenience
+// ============================================================================
+
+// Application
+pub use app::winit::{App, AppHandler};
+pub use engine::{ThreeEngine, FrameState};
+
+// Scene (most common types)
+pub use scene::{Scene, Node, NodeHandle, Camera, Light, Transform};
+
+// Resources (most common types)
 pub use resources::{
-    Geometry, Image, Material, MaterialTrait, MaterialType, Mesh, RenderableMaterialTrait,
-    ShaderDefines, Side, Texture,
+    Mesh, Geometry, Material, MaterialType, Texture, Image,
+    MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, MeshPhysicalMaterial,
+    Side, AlphaMode,
+    // Advanced: Material trait for custom materials
+    MaterialTrait, RenderableMaterialTrait, TextureSlot, TextureTransform,
+    // Geometry primitives
+    ShaderDefines, Attribute,
 };
-pub use resources::material::*;
-pub use scene::{Camera, Light, Node, Scene};
+
+// Primitives - Geometry creation functions
+pub use resources::primitives::{
+    create_box, create_sphere, SphereOptions, create_plane, PlaneOptions,
+};
+
+// Assets
+pub use assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle, ColorSpace};
+
+// Animation
+pub use animation::{
+    AnimationClip, AnimationAction, AnimationMixer, AnimationSystem,
+    Track, TrackData, TrackMeta, LoopMode, InterpolationMode, Binder,
+};
+
+// Renderer
+pub use renderer::graph::{FrameComposer, FrameBuilder, RenderStage};
+pub use renderer::settings::RenderSettings;
+pub use renderer::Renderer;
+
+// Errors
+pub use errors::ThreeError;
+
+// Utilities
 pub use utils::interner;
 pub use utils::orbit_control::OrbitControls;

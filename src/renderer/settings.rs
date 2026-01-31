@@ -1,12 +1,102 @@
-//! 渲染设置
+//! Render Settings Configuration
+//!
+//! This module defines the configuration options for the rendering system.
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use three::render::RenderSettings;
+//!
+//! let settings = RenderSettings {
+//!     vsync: false,
+//!     clear_color: wgpu::Color { r: 0.1, g: 0.2, b: 0.3, a: 1.0 },
+//!     power_preference: wgpu::PowerPreference::HighPerformance,
+//!     ..Default::default()
+//! };
+//!
+//! App::new()
+//!     .with_settings(settings)
+//!     .run::<MyApp>()?;
+//! ```
 
+/// Configuration options for the rendering system.
+///
+/// This struct controls fundamental rendering parameters including GPU selection,
+/// required features, and common render state settings.
+///
+/// # Fields
+///
+/// | Field | Description | Default |
+/// |-------|-------------|---------|
+/// | `power_preference` | GPU selection preference | `HighPerformance` |
+/// | `required_features` | Required wgpu features | Empty |
+/// | `required_limits` | Required wgpu limits | Default |
+/// | `clear_color` | Background clear color | Black |
+/// | `depth_format` | Depth buffer format | `Depth32Float` |
+/// | `vsync` | Vertical sync enabled | `true` |
+///
+/// # GPU Selection
+///
+/// The `power_preference` field controls which GPU adapter is selected:
+///
+/// - `HighPerformance`: Prefer discrete GPU (better for games/visualization)
+/// - `LowPower`: Prefer integrated GPU (better for battery life)
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use three::render::RenderSettings;
+///
+/// // High-performance settings for games
+/// let game_settings = RenderSettings {
+///     power_preference: wgpu::PowerPreference::HighPerformance,
+///     vsync: false, // Uncapped framerate
+///     ..Default::default()
+/// };
+///
+/// // Battery-friendly settings for tools
+/// let tool_settings = RenderSettings {
+///     power_preference: wgpu::PowerPreference::LowPower,
+///     vsync: true,
+///     ..Default::default()
+/// };
+/// ```
 #[derive(Debug, Clone)]
 pub struct RenderSettings {
+    /// GPU adapter selection preference.
+    ///
+    /// - `HighPerformance`: Prefer discrete/dedicated GPU
+    /// - `LowPower`: Prefer integrated GPU
     pub power_preference: wgpu::PowerPreference,
+    
+    /// Required wgpu features that must be supported by the adapter.
+    ///
+    /// The engine will fail to initialize if these features are not available.
+    /// Use with caution on WebGPU targets where feature support varies.
     pub required_features: wgpu::Features,
+    
+    /// Required wgpu limits that must be supported by the adapter.
+    ///
+    /// Limits define maximum resource sizes, binding counts, etc.
     pub required_limits: wgpu::Limits,
+    
+    /// Background clear color for the main render target.
+    ///
+    /// This color is used to clear the framebuffer at the start of each frame.
     pub clear_color: wgpu::Color,
+    
+    /// Depth buffer texture format.
+    ///
+    /// `Depth32Float` is recommended for reverse-Z rendering (better precision).
+    /// `Depth24PlusStencil8` can be used if stencil buffer is needed.
     pub depth_format: wgpu::TextureFormat,
+    
+    /// Enable vertical synchronization (VSync).
+    ///
+    /// When `true`, the framerate is capped to the display refresh rate,
+    /// reducing screen tearing and power consumption.
+    /// When `false`, the framerate is uncapped, which may cause tearing
+    /// but reduces input latency.
     pub vsync: bool,
 }
 

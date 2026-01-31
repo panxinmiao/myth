@@ -1,7 +1,41 @@
+//! Orbit Camera Controller
+//!
+//! Provides intuitive mouse-based camera control for 3D scene navigation.
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use three::prelude::*;
+//!
+//! struct MyApp {
+//!     orbit: OrbitControls,
+//! }
+//!
+//! impl AppHandler for MyApp {
+//!     fn init(engine: &mut ThreeEngine, _: &Arc<Window>) -> Self {
+//!         let camera_pos = Vec3::new(0.0, 5.0, 10.0);
+//!         let target = Vec3::ZERO;
+//!         Self {
+//!             orbit: OrbitControls::new(camera_pos, target),
+//!         }
+//!     }
+//!
+//!     fn update(&mut self, engine: &mut ThreeEngine, _: &Arc<Window>, frame: &FrameState) {
+//!         if let Some((transform, camera)) = engine.scene_manager
+//!             .active_scene_mut()
+//!             .and_then(|s| s.query_main_camera_bundle())
+//!         {
+//!             self.orbit.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);
+//!         }
+//!     }
+//! }
+//! ```
+
 use glam::Vec3;
 use crate::resources::input::{Input, MouseButton};
 use crate::scene::transform::Transform;
 
+/// Internal spherical coordinate representation.
 #[derive(Clone, Copy, Debug)]
 struct Spherical {
     pub radius: f32,
@@ -31,35 +65,89 @@ impl Spherical {
     }
 }
 
+/// Mouse-based orbit camera controller.
+///
+/// Allows users to rotate, zoom, and pan the camera around a target point
+/// using mouse input. Similar to Three.js `OrbitControls`.
+///
+/// # Controls
+///
+/// | Input | Action |
+/// |-------|--------|
+/// | Left Mouse + Drag | Rotate camera around target |
+/// | Right Mouse + Drag | Pan camera and target |
+/// | Scroll Wheel | Zoom in/out |
+///
+/// # Features
+///
+/// - Smooth damping for natural feel
+/// - Configurable rotation/zoom/pan speeds
+/// - Distance and angle constraints
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let mut orbit = OrbitControls::new(
+///     Vec3::new(0.0, 5.0, 10.0),  // camera position
+///     Vec3::ZERO,                   // look-at target
+/// );
+///
+/// // Customize settings
+/// orbit.enable_damping = true;
+/// orbit.rotate_speed = 0.5;
+/// orbit.min_distance = 2.0;
+/// orbit.max_distance = 50.0;
+///
+/// // In update loop
+/// orbit.update(&mut camera_transform, &input, fov_degrees, dt);
+/// ```
 pub struct OrbitControls {
-
+    /// Enable smooth damping for rotation and zoom.
     pub enable_damping: bool,
+    /// Damping factor for rotation (0.0 = instant, 1.0 = no movement).
     pub damping_factor: f32,
+    /// Damping factor for zoom (0.0 = instant, 1.0 = no movement).
     pub zoom_damping_factor: f32,
 
+    /// Enable mouse wheel zoom.
     pub enable_zoom: bool,
+    /// Zoom speed multiplier.
     pub zoom_speed: f32,
+    
+    /// Enable left-click rotation.
     pub enable_rotate: bool,
+    /// Rotation speed multiplier.
     pub rotate_speed: f32,
+    
+    /// Enable right-click panning.
     pub enable_pan: bool,
+    /// Pan speed multiplier.
     pub pan_speed: f32,
 
+    /// Minimum distance from target (zoom limit).
     pub min_distance: f32,
+    /// Maximum distance from target (zoom limit).
     pub max_distance: f32,
+    /// Minimum polar angle in radians (0 = top-down view).
     pub min_polar_angle: f32,
+    /// Maximum polar angle in radians (π = bottom-up view).
     pub max_polar_angle: f32,
 
- 
+    // Internal state
     target: Vec3,
     spherical: Spherical,
-
     spherical_delta: Spherical,
     pan_offset: Vec3,   
-    
     target_radius: f32,         
 }
 
 impl OrbitControls {
+    /// Creates a new orbit controller.
+    ///
+    /// # Arguments
+    ///
+    /// * `camera_pos` - Initial camera world position
+    /// * `target` - Point to orbit around (look-at target)
     pub fn new(camera_pos: Vec3, target: Vec3) -> Self {
         let mut spherical = Spherical::new(1.0, 0.0, 0.0);
         spherical.set_from_vec3(camera_pos - target);
@@ -93,6 +181,16 @@ impl OrbitControls {
         }
     }
 
+    /// Updates the camera transform based on input.
+    ///
+    /// Call this once per frame in your update loop.
+    ///
+    /// # Arguments
+    ///
+    /// * `transform` - Camera's transform component to modify
+    /// * `input` - Current input state
+    /// * `fov_degrees` - Camera field of view in degrees (for pan scaling)
+    /// * `dt` - Delta time in seconds
     pub fn update(&mut self, transform: &mut Transform, input: &Input, fov_degrees: f32, dt: f32) {
         let screen_height = input.screen_size().y.max(1.0);
 
@@ -179,10 +277,17 @@ impl OrbitControls {
         }
     }
 
+    /// Sets the orbit target point.
+    ///
+    /// The camera will orbit around this point.
     pub fn set_target(&mut self, target: Vec3) {
         self.target = target;
     }
 
+    /// Sets the camera position directly.
+    ///
+    /// Updates internal spherical coordinates to match the new position
+    /// while keeping the current target.
     pub fn set_position(&mut self, position: Vec3) {
         let offset = position - self.target;
         self.spherical.set_from_vec3(offset);
@@ -191,6 +296,9 @@ impl OrbitControls {
 }
 
 impl Transform {
+    /// Returns the local coordinate axes based on current rotation.
+    ///
+    /// Returns (right, up, forward) vectors in world space.
     pub fn rotation_basis(&self) -> (Vec3, Vec3, Vec3) {
         let right = self.rotation * Vec3::X;
         let up = self.rotation * Vec3::Y;
