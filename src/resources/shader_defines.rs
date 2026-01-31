@@ -121,13 +121,13 @@ impl ShaderDefines {
     }
 
     /// Get shader define value
-    pub fn get(&self, key: &str) -> Option<&str> {
-        interner::get(key).and_then(|key_sym| self.get_symbol(key_sym))
+    pub fn get(&self, key: &str) -> Option<String> {
+        interner::get(key).and_then(|key_sym| self.get_symbol(key_sym).map(|s| s.to_string()))
     }
 
     /// Get shader define value using Symbol
     #[inline]
-    pub fn get_symbol(&self, key: Symbol) -> Option<&'static str> {
+    pub fn get_symbol(&self, key: Symbol) -> Option<std::borrow::Cow<'static, str>> {
         self.defines
             .binary_search_by_key(&key, |&(k, _)| k)
             .ok()
@@ -160,8 +160,8 @@ impl ShaderDefines {
 
     /// Iterate all shader defines (as strings)
     #[inline]
-    pub fn iter_strings(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
-        self.defines.iter().map(|&(k, v)| (interner::resolve(k), interner::resolve(v)))
+    pub fn iter_strings(&self) -> impl Iterator<Item = (String, String)> + '_ {
+        self.defines.iter().map(|&(k, v)| (interner::resolve(k).to_string(), interner::resolve(v).to_string()))
     }
 
     /// Convert to BTreeMap (for template rendering)
@@ -242,7 +242,7 @@ mod tests {
         assert!(defines.contains("USE_NORMAL_MAP"));
         assert!(!defines.contains("USE_AO_MAP"));
         
-        assert_eq!(defines.get("USE_MAP"), Some("1"));
+        assert_eq!(defines.get("USE_MAP"), Some("1".to_string()));
     }
 
     #[test]
@@ -275,9 +275,9 @@ mod tests {
         
         d1.merge(&d2);
         
-        assert_eq!(d1.get("A"), Some("1"));
-        assert_eq!(d1.get("B"), Some("3")); // Overwritten
-        assert_eq!(d1.get("C"), Some("4"));
+        assert_eq!(d1.get("A"), Some("1".to_string()));
+        assert_eq!(d1.get("B"), Some("3".to_string())); // Overwritten
+        assert_eq!(d1.get("C"), Some("4".to_string()));
     }
 
     #[test]

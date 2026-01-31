@@ -3,7 +3,6 @@
 //! Implements the main drawing logic for the forward rendering pipeline.
 
 use std::cell::RefCell;
-use glam::Mat3A;
 use log::{warn, error};
 use slotmap::Key;
 
@@ -12,7 +11,7 @@ use crate::renderer::graph::frame::{RenderKey};
 use crate::renderer::pipeline::{PipelineKey, FastPipelineKey};
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::resources::material::{AlphaMode, Side};
-use crate::resources::uniforms::DynamicModelUniforms;
+use crate::resources::uniforms::{DynamicModelUniforms, Mat3Uniform};
 
 /// Forward Render Pass
 /// 
@@ -189,7 +188,7 @@ impl ForwardRenderPass {
 
         for cmd in opaque.iter_mut() {
             let world_matrix_inverse = cmd.model_matrix.inverse();
-            let normal_matrix = Mat3A::from_mat4(world_matrix_inverse.transpose());
+            let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
 
             let offset = ctx.resource_manager.allocate_model_uniform(DynamicModelUniforms {
                 world_matrix: cmd.model_matrix,
@@ -205,7 +204,7 @@ impl ForwardRenderPass {
 
         for cmd in transparent.iter_mut() {
             let world_matrix_inverse = cmd.model_matrix.inverse();
-            let normal_matrix = Mat3A::from_mat4(world_matrix_inverse.transpose());
+            let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
 
             let offset = ctx.resource_manager.allocate_model_uniform(DynamicModelUniforms {
                 world_matrix: cmd.model_matrix,

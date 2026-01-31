@@ -47,4 +47,4 @@ pub use image::{Image, ImageDescriptor};
 pub use input::{ButtonState, Input, Key, MouseButton};
 pub use shader_defines::ShaderDefines;
 pub use texture::{Texture, TextureSampler};
-pub use uniforms::WgslType;
+pub use uniforms::{WgslType, Mat3Uniform};

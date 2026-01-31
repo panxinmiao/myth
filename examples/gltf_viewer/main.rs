@@ -24,13 +24,11 @@
 mod ui_pass;
 
 use std::sync::Arc;
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::thread;
-use std::time::Duration;
 
 use glam::Vec3;
-use parking_lot::deadlock;
 use three::engine::FrameState;
 use three::renderer::core::{BindingResource, ResourceBuilder};
 use three::resources::texture::TextureSource;
@@ -46,6 +44,79 @@ use three::utils::fps_counter::FpsCounter;
 
 use ui_pass::UiPass;
 use winit::window::Window;
+
+// ============================================================================
+// WASM File Selection Module
+// ============================================================================
+
+#[cfg(target_arch = "wasm32")]
+mod wasm_file_picker {
+    use wasm_bindgen::prelude::*;
+    use wasm_bindgen::JsCast;
+    use std::sync::mpsc::Sender;
+
+    /// Opens a file picker dialog and sends the selected file data through the channel
+    pub fn pick_gltf_file(sender: Sender<(String, Vec<u8>)>) {
+        let document = web_sys::window().unwrap().document().unwrap();
+        
+        // Create a hidden file input
+        let input: web_sys::HtmlInputElement = document
+            .create_element("input")
+            .unwrap()
+            .dyn_into()
+            .unwrap();
+        
+        input.set_type("file");
+        input.set_accept(".gltf,.glb");
+        input.style().set_property("display", "none").unwrap();
+        
+        // Add to document
+        document.body().unwrap().append_child(&input).unwrap();
+        
+        // Set up change event handler
+        let input_clone = input.clone();
+        let closure = Closure::wrap(Box::new(move |_event: web_sys::Event| {
+            let input = input_clone.clone();
+            let sender = sender.clone();
+            
+            if let Some(files) = input.files() {
+                if let Some(file) = files.get(0) {
+                    let file_name = file.name();
+                    
+                    // Read file using FileReader
+                    let reader = web_sys::FileReader::new().unwrap();
+                    let reader_clone = reader.clone();
+                    let file_name_clone = file_name.clone();
+                    
+                    let onload = Closure::wrap(Box::new(move |_: web_sys::ProgressEvent| {
+                        let result = reader_clone.result().unwrap();
+                        let array_buffer = result.dyn_into::<js_sys::ArrayBuffer>().unwrap();
+                        let uint8_array = js_sys::Uint8Array::new(&array_buffer);
+                        let data = uint8_array.to_vec();
+                        
+                        let _ = sender.send((file_name_clone.clone(), data));
+                    }) as Box<dyn FnMut(_)>);
+                    
+                    reader.set_onload(Some(onload.as_ref().unchecked_ref()));
+                    onload.forget();
+                    
+                    reader.read_as_array_buffer(&file).unwrap();
+                }
+            }
+            
+            // Clean up input element
+            if let Some(parent) = input.parent_node() {
+                parent.remove_child(&input).ok();
+            }
+        }) as Box<dyn FnMut(_)>);
+        
+        input.add_event_listener_with_callback("change", closure.as_ref().unchecked_ref()).unwrap();
+        closure.forget();
+        
+        // Trigger click
+        input.click();
+    }
+}
 
 // ============================================================================
 // Remote Model Resources
@@ -78,8 +149,12 @@ enum LoadingState {
 /// Model source type
 #[derive(Debug, Clone)]
 enum ModelSource {
+    #[cfg(not(target_arch = "wasm32"))]
     Local(PathBuf),
     Remote(String), // URL
+    /// WASM: file data loaded from browser (name, bytes)
+    #[cfg(target_arch = "wasm32")]
+    WasmFile(String, Vec<u8>),
 }
 
 // ============================================================================
@@ -140,8 +215,10 @@ struct GltfViewer {
 
 
     // === File Dialog Related ===
+    #[cfg(not(target_arch = "wasm32"))]
     /// File dialog receiver
     file_dialog_rx: Receiver<PathBuf>,
+    #[cfg(not(target_arch = "wasm32"))]
     /// File dialog sender
     file_dialog_tx: Sender<PathBuf>,
     
@@ -178,6 +255,18 @@ struct GltfViewer {
     // === Render Settings ===
     /// IBL toggle
     ibl_enabled: bool,
+    
+    // === WASM File Picker ===
+    #[cfg(target_arch = "wasm32")]
+    wasm_file_rx: Receiver<(String, Vec<u8>)>,
+    #[cfg(target_arch = "wasm32")]
+    wasm_file_tx: Sender<(String, Vec<u8>)>,
+    
+    // === WASM HDR Loading ===
+    #[cfg(target_arch = "wasm32")]
+    hdr_receiver: Option<Receiver<three::resources::texture::Texture>>,
+    #[cfg(target_arch = "wasm32")]
+    env_map_pending: bool,
 }
 
 /// Async Prefab load result
@@ -201,26 +290,52 @@ impl AppHandler for GltfViewer {
             window,
         );
 
-        // 2. 加载环境贴图
-        let env_texture_handle = engine.assets.load_cube_texture_from_files(
-            [
-                "examples/assets/Park2/posx.jpg",
-                "examples/assets/Park2/negx.jpg",
-                "examples/assets/Park2/posy.jpg",
-                "examples/assets/Park2/negy.jpg",
-                "examples/assets/Park2/posz.jpg",
-                "examples/assets/Park2/negz.jpg",
-            ],
-            three::ColorSpace::Srgb,
-            true
-        ).expect("Failed to load environment map");
-
         let scene = engine.scene_manager.create_active();
 
-        let env_texture = engine.assets.textures.get(env_texture_handle).unwrap();
+        // 2. 加载环境贴图 (仅在 Native 上)
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let env_texture_handle = engine.assets.load_cube_texture_from_files(
+                [
+                    "examples/assets/Park2/posx.jpg",
+                    "examples/assets/Park2/negx.jpg",
+                    "examples/assets/Park2/posy.jpg",
+                    "examples/assets/Park2/negy.jpg",
+                    "examples/assets/Park2/posz.jpg",
+                    "examples/assets/Park2/negz.jpg",
+                ],
+                three::ColorSpace::Srgb,
+                true
+            ).expect("Failed to load environment map");
 
-        scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
-        scene.environment.set_intensity(1.0);
+            let env_texture = engine.assets.textures.get(env_texture_handle).unwrap();
+            scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
+            scene.environment.set_intensity(1.0);
+        }
+        
+        // On WASM, load HDR environment map asynchronously via HTTP
+        #[cfg(target_arch = "wasm32")]
+        let (hdr_tx, hdr_rx) = channel();
+        
+        #[cfg(target_arch = "wasm32")]
+        {
+            log::info!("Starting async HDR environment map loading on WASM");
+            // Use the same base URL as assets
+            let hdr_url = "assets/blouberg_sunrise_2_1k.hdr";
+            
+            wasm_bindgen_futures::spawn_local(async move {
+                match load_hdr_texture_async(hdr_url).await {
+                    Ok(texture) => {
+                        log::info!("HDR texture loaded successfully");
+                        let _ = hdr_tx.send(texture);
+                    }
+                    Err(e) => {
+                        log::error!("Failed to load HDR texture: {}", e);
+                    }
+                }
+            });
+        }
+        
         scene.environment.set_ambient_color(Vec3::splat(0.6));
 
         // 3. 添加灯光
@@ -243,8 +358,13 @@ impl AppHandler for GltfViewer {
 
         // 5. 创建异步通道
         let (tx, rx) = channel();
+        #[cfg(not(target_arch = "wasm32"))]
         let (file_dialog_tx, file_dialog_rx) = channel();
         let (prefab_tx, prefab_rx) = channel();
+        
+        // WASM file picker channel
+        #[cfg(target_arch = "wasm32")]
+        let (wasm_file_tx, wasm_file_rx) = channel();
 
         let mut viewer = Self {
             ui_pass,
@@ -260,7 +380,9 @@ impl AppHandler for GltfViewer {
             pending_load: None,
 
             // === 文件对话框相关 ===
+            #[cfg(not(target_arch = "wasm32"))]
             file_dialog_rx,
+            #[cfg(not(target_arch = "wasm32"))]
             file_dialog_tx,
 
             // 远程模型
@@ -283,6 +405,18 @@ impl AppHandler for GltfViewer {
             
             // 渲染设置
             ibl_enabled: true,
+            
+            // WASM file picker
+            #[cfg(target_arch = "wasm32")]
+            wasm_file_rx,
+            #[cfg(target_arch = "wasm32")]
+            wasm_file_tx,
+            
+            // WASM HDR loading
+            #[cfg(target_arch = "wasm32")]
+            hdr_receiver: Some(hdr_rx),
+            #[cfg(target_arch = "wasm32")]
+            env_map_pending: true,
         };
 
         // 6. 启动加载远程模型列表
@@ -366,10 +500,19 @@ impl GltfViewer {
         self.loading_state = LoadingState::LoadingList;
         let tx = self.load_sender.clone();
         
-        thread::spawn(move || {
+        #[cfg(not(target_arch = "wasm32"))]
+        std::thread::spawn(move || {
             let result = fetch_model_list_blocking();
             let _ = tx.send(LoadResult::ModelList(result));
         });
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            wasm_bindgen_futures::spawn_local(async move {
+                let result = fetch_model_list_async().await;
+                let _ = tx.send(LoadResult::ModelList(result));
+            });
+        }
     }
 
     /// 处理异步加载结果
@@ -390,6 +533,23 @@ impl GltfViewer {
                 }
             }
         }
+        
+        // WASM: 处理 HDR 环境贴图加载结果
+        #[cfg(target_arch = "wasm32")]
+        if self.env_map_pending {
+            if let Some(rx) = &self.hdr_receiver {
+                if let Ok(texture) = rx.try_recv() {
+                    log::info!("Applying HDR environment map");
+                    let env_texture_handle = engine.assets.textures.add(texture);
+                    if let Some(scene) = engine.scene_manager.active_scene_mut() {
+                        let env_texture = engine.assets.textures.get(env_texture_handle).unwrap();
+                        scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
+                        scene.environment.set_intensity(1.0);
+                    }
+                    self.env_map_pending = false;
+                }
+            }
+        }
 
         // 处理 Prefab 加载结果 - 实例化到场景中
         while let Ok(result) = self.prefab_receiver.try_recv() {
@@ -397,8 +557,16 @@ impl GltfViewer {
             self.instantiate_prefab(engine, result);
         }
 
+        // Native: 处理文件对话框结果
+        #[cfg(not(target_arch = "wasm32"))]
         while let Ok(path) = self.file_dialog_rx.try_recv() {
             self.pending_load = Some(ModelSource::Local(path));
+        }
+        
+        // WASM: 处理浏览器文件选择结果
+        #[cfg(target_arch = "wasm32")]
+        while let Ok((name, data)) = self.wasm_file_rx.try_recv() {
+            self.pending_load = Some(ModelSource::WasmFile(name, data));
         }
     }
 
@@ -461,41 +629,83 @@ impl GltfViewer {
             return;
         };
 
-        // 获取加载路径
-        let (load_path, display_name) = match &source {
-            ModelSource::Local(path) => {
-                let name = path.file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "Unknown".to_string());
-                (path.to_string_lossy().to_string(), name)
-            }
-            ModelSource::Remote(url) => {
-                let name = url.rsplit('/').next()
-                    .unwrap_or("Remote Model")
-                    .to_string();
-                (url.clone(), name)
-            }
-        };
-
-        self.loading_state = LoadingState::LoadingModel(display_name.clone());
-
-        // 异步加载 - 在子线程中执行，不阻塞主线程
         let assets = engine.assets.clone();
         let prefab_tx = self.prefab_sender.clone();
-        
-        thread::spawn(move || {
-            match GltfLoader::load_sync(&load_path, assets) {
-                Ok(prefab) => {
-                    let _ = prefab_tx.send(PrefabLoadResult {
-                        prefab,
-                        display_name,
+
+        // 处理不同的加载源
+        match source {
+            #[cfg(not(target_arch = "wasm32"))]
+            ModelSource::Local(path) => {
+                let display_name = path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "Unknown".to_string());
+                
+                self.loading_state = LoadingState::LoadingModel(display_name.clone());
+                
+                let load_path = path.to_string_lossy().to_string();
+
+                std::thread::spawn(move || {
+                    match GltfLoader::load_sync(&load_path, assets) {
+                        Ok(prefab) => {
+                            let _ = prefab_tx.send(PrefabLoadResult { prefab, display_name });
+                        }
+                        Err(e) => {
+                            log::error!("Failed to load model: {}", e);
+                        }
+                    }
+                });
+            }
+            
+            ModelSource::Remote(url) => {
+                let display_name = url.rsplit('/').next()
+                    .unwrap_or("Remote Model")
+                    .to_string();
+                
+                self.loading_state = LoadingState::LoadingModel(display_name.clone());
+                
+                #[cfg(not(target_arch = "wasm32"))]
+                std::thread::spawn(move || {
+                    match GltfLoader::load_sync(&url, assets) {
+                        Ok(prefab) => {
+                            let _ = prefab_tx.send(PrefabLoadResult { prefab, display_name });
+                        }
+                        Err(e) => {
+                            log::error!("Failed to load model: {}", e);
+                        }
+                    }
+                });
+
+                #[cfg(target_arch = "wasm32")]
+                {
+                    wasm_bindgen_futures::spawn_local(async move {
+                        match GltfLoader::load_async(&url, assets).await {
+                            Ok(prefab) => {
+                                let _ = prefab_tx.send(PrefabLoadResult { prefab, display_name });
+                            }
+                            Err(e) => {
+                                log::error!("Failed to load model: {}", e);
+                            }
+                        }
                     });
                 }
-                Err(e) => {
-                    log::error!("Failed to load model: {}", e);
-                }
             }
-        });
+            
+            #[cfg(target_arch = "wasm32")]
+            ModelSource::WasmFile(name, data) => {
+                self.loading_state = LoadingState::LoadingModel(name.clone());
+                
+                wasm_bindgen_futures::spawn_local(async move {
+                    match GltfLoader::load_from_bytes(data, assets).await {
+                        Ok(prefab) => {
+                            let _ = prefab_tx.send(PrefabLoadResult { prefab, display_name: name });
+                        }
+                        Err(e) => {
+                            log::error!("Failed to load model from bytes: {}", e);
+                        }
+                    }
+                });
+            }
+        }
     }
 
     /// 从选中的远程模型构建 URL
@@ -682,14 +892,9 @@ impl GltfViewer {
                 ui.separator();
 
                 // ===== 本地文件加载 =====
+                #[cfg(not(target_arch = "wasm32"))]
                 ui.collapsing("📁 Local File", |ui| {
                     if ui.button("Open glTF/glb File...").clicked() {
-                        // if let Some(path) = rfd::FileDialog::new()
-                        //     .add_filter("glTF", &["gltf", "glb"])
-                        //     .pick_file()
-                        // {
-                        //     self.pending_load = Some(ModelSource::Local(path));
-                        // }
                         // 克隆发送端，移动到异步块中
                         let sender = self.file_dialog_tx.clone();
 
@@ -702,7 +907,6 @@ impl GltfViewer {
 
                             if let Some(file_handle) = file {
                                 // 获取路径并发送回主线程
-                                // 注意：在 WASM 上 path() 可能无法通过 ModelSource::Local 使用
                                 let path = file_handle.path().to_path_buf();
                                 let _ = sender.send(path);
                             }
@@ -714,6 +918,24 @@ impl GltfViewer {
                     } else {
                         ui.label("No model loaded");
                     }
+                });
+
+                #[cfg(target_arch = "wasm32")]
+                ui.collapsing("📁 Local File", |ui| {
+                    if ui.button("Open glTF/glb File...").clicked() {
+                        let sender = self.wasm_file_tx.clone();
+                        wasm_file_picker::pick_gltf_file(sender);
+                    }
+                    
+                    if let Some(name) = &self.model_name {
+                        ui.label(format!("Current: {}", name));
+                    } else {
+                        ui.label("No model loaded");
+                    }
+                    
+                    ui.separator();
+                    ui.label("💡 Tip: GLB format recommended");
+                    ui.label("(contains all data in one file)");
                 });
 
                 ui.separator();
@@ -1278,7 +1500,8 @@ impl GltfViewer {
 // 辅助函数
 // ============================================================================
 
-/// 同步获取远程模型列表
+/// 同步获取远程模型列表 (Native)
+#[cfg(not(target_arch = "wasm32"))]
 fn fetch_model_list_blocking() -> Result<Vec<ModelInfo>, String> {
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()
@@ -1310,6 +1533,131 @@ fn fetch_model_list_blocking() -> Result<Vec<ModelInfo>, String> {
     })
 }
 
+/// 异步获取远程模型列表 (WASM)
+#[cfg(target_arch = "wasm32")]
+async fn fetch_model_list_async() -> Result<Vec<ModelInfo>, String> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+    use web_sys::{Request, RequestInit, RequestMode, Response};
+    
+    let window = web_sys::window().ok_or("No window found")?;
+    
+    let opts = RequestInit::new();
+    opts.set_method("GET");
+    opts.set_mode(RequestMode::Cors);
+    
+    let request = Request::new_with_str_and_init(MODEL_LIST_URL, &opts)
+        .map_err(|e| format!("Failed to create request: {:?}", e))?;
+    
+    let resp_value = JsFuture::from(window.fetch_with_request(&request))
+        .await
+        .map_err(|e| format!("Fetch failed: {:?}", e))?;
+    
+    let resp: Response = resp_value.dyn_into()
+        .map_err(|_| "Response is not a Response object")?;
+    
+    if !resp.ok() {
+        return Err(format!("HTTP error: {}", resp.status()));
+    }
+    
+    let text = JsFuture::from(resp.text().map_err(|e| format!("Failed to get text: {:?}", e))?)
+        .await
+        .map_err(|e| format!("Failed to read response: {:?}", e))?;
+    
+    let text_str = text.as_string().ok_or("Response is not a string")?;
+    
+    let models: Vec<ModelInfo> = serde_json::from_str(&text_str)
+        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
+    
+    Ok(models)
+}
+
+/// Async load HDR texture (WASM)
+#[cfg(target_arch = "wasm32")]
+async fn load_hdr_texture_async(url: &str) -> anyhow::Result<three::resources::texture::Texture> {
+    use wasm_bindgen::JsCast;
+    use wasm_bindgen_futures::JsFuture;
+    use web_sys::{Request, RequestInit, RequestMode, Response};
+    use anyhow::Context;
+    
+    let window = web_sys::window().ok_or_else(|| anyhow::anyhow!("No window found"))?;
+    
+    let opts = RequestInit::new();
+    opts.set_method("GET");
+    opts.set_mode(RequestMode::Cors);
+    
+    let request = Request::new_with_str_and_init(url, &opts)
+        .map_err(|e| anyhow::anyhow!("Failed to create request: {:?}", e))?;
+    
+    let resp_value = JsFuture::from(window.fetch_with_request(&request))
+        .await
+        .map_err(|e| anyhow::anyhow!("Fetch failed: {:?}", e))?;
+    
+    let resp: Response = resp_value.dyn_into()
+        .map_err(|_| anyhow::anyhow!("Response is not a Response object"))?;
+    
+    if !resp.ok() {
+        return Err(anyhow::anyhow!("HTTP error: {}", resp.status()));
+    }
+    
+    let array_buffer = JsFuture::from(
+        resp.array_buffer().map_err(|e| anyhow::anyhow!("Failed to get array buffer: {:?}", e))?
+    )
+    .await
+    .map_err(|e| anyhow::anyhow!("Failed to read response: {:?}", e))?;
+    
+    let uint8_array = js_sys::Uint8Array::new(&array_buffer);
+    let bytes = uint8_array.to_vec();
+    
+    // Parse HDR image
+    let img = image::load_from_memory(&bytes)
+        .context("Failed to decode HDR image")?;
+    
+    let width = img.width();
+    let height = img.height();
+    
+    let rgb32f = img.into_rgb32f();
+    
+    // Convert to RGBA16F
+    let mut rgba_f16_data = Vec::with_capacity((width * height * 4) as usize * 2);
+    
+    for pixel in rgb32f.pixels() {
+        let r = half::f16::from_f32(pixel[0]);
+        let g = half::f16::from_f32(pixel[1]);
+        let b = half::f16::from_f32(pixel[2]);
+        let a = half::f16::from_f32(1.0);
+        
+        rgba_f16_data.extend_from_slice(&r.to_le_bytes());
+        rgba_f16_data.extend_from_slice(&g.to_le_bytes());
+        rgba_f16_data.extend_from_slice(&b.to_le_bytes());
+        rgba_f16_data.extend_from_slice(&a.to_le_bytes());
+    }
+
+    let image = three::resources::image::Image::new(
+        Some(url),
+        width,
+        height,
+        1,
+        wgpu::TextureDimension::D2,
+        wgpu::TextureFormat::Rgba16Float,
+        Some(rgba_f16_data),
+    );
+
+    let mut texture = three::resources::texture::Texture::new(
+        Some(url),
+        image,
+        wgpu::TextureViewDimension::D2,
+    );
+    
+    texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
+    texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
+    texture.sampler.mag_filter = wgpu::FilterMode::Linear;
+    texture.sampler.min_filter = wgpu::FilterMode::Linear;
+    
+    Ok(texture)
+}
+
+
 
 #[cfg(not(target_arch = "wasm32"))]
 fn execute_future<F: std::future::Future<Output = ()> + Send + 'static>(f: F) {
@@ -1317,38 +1665,23 @@ fn execute_future<F: std::future::Future<Output = ()> + Send + 'static>(f: F) {
 }
 
 #[cfg(target_arch = "wasm32")]
+#[allow(dead_code)]
 fn execute_future<F: std::future::Future<Output = ()> + 'static>(f: F) {
     wasm_bindgen_futures::spawn_local(f);
 }
 
+// ============================================================================
+// Native Main Entry Point
+// ============================================================================
+
+#[cfg(not(target_arch = "wasm32"))]
 fn main() -> anyhow::Result<()> {
     env_logger::init();
-
-    // === 启动死锁检测线程 ===
-    thread::spawn(move || {
-        loop {
-            thread::sleep(Duration::from_secs(3));
-            let deadlocks = deadlock::check_deadlock();
-            if deadlocks.is_empty() {
-                continue;
-            }
-
-            println!("{} deadlocks detected", deadlocks.len());
-            for (i, threads) in deadlocks.iter().enumerate() {
-                println!("Deadlock #{}", i);
-                for t in threads {
-                    println!("Thread Id {:#?}", t.thread_id());
-                    println!("{:#?}", t.backtrace());
-                }
-            }
-        }
-    });
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
         .expect("无法创建 Tokio Runtime");
-
 
     let _enter = rt.enter();
     
@@ -1357,3 +1690,36 @@ fn main() -> anyhow::Result<()> {
         .with_settings(RenderSettings { vsync: false, ..Default::default() })
         .run::<GltfViewer>()
 }
+
+// ============================================================================
+// WASM Entry Point
+// ============================================================================
+
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(start)]
+pub fn wasm_main() {
+    // Set up panic hook for better error messages
+    std::panic::set_hook(Box::new(console_error_panic_hook::hook));
+    
+    // Initialize logging
+    console_log::init_with_level(log::Level::Info)
+        .expect("Failed to initialize logger");
+    
+    log::info!("Starting glTF Viewer (WASM)...");
+    
+    // Run the application
+    if let Err(e) = App::new()
+        .with_title("glTF Viewer")
+        .with_settings(RenderSettings { vsync: true, ..Default::default() })
+        .run::<GltfViewer>()
+    {
+        log::error!("Application error: {}", e);
+    }
+}
+
+// WASM 需要一个空的 main 函数
+#[cfg(target_arch = "wasm32")]
+fn main() {}

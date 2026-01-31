@@ -52,7 +52,7 @@ fn shader_loader(name: &str) -> Result<Option<String>, Error> {
         Cow::Owned(format!("{}.wgsl", name))
     };
 
-    #[cfg(debug_assertions)]
+    #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
     {
         let path = std::path::Path::new("src/renderer/pipeline/shaders").join(filename.as_ref());
         if path.exists() {
@@ -66,7 +66,9 @@ fn shader_loader(name: &str) -> Result<Option<String>, Error> {
         }
     }
 
-    if let Some(file) = ShaderAssets::get(filename.as_ref())
+    // rust_embed 统一使用 '/' 作为路径分隔符
+    //let normalized_filename = filename.replace('\\', "/");
+    if let Some(file) = ShaderAssets::get(&filename)
         && let Ok(source) = std::str::from_utf8(file.data.as_ref()) {
             return Ok(Some(source.to_string()));
         }

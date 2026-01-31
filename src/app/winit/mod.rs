@@ -53,7 +53,12 @@
 //! ```
 
 use std::sync::Arc;
+
+#[cfg(not(target_arch = "wasm32"))]
 use std::time::Instant;
+
+#[cfg(target_arch = "wasm32")]
+use web_time::Instant;
 
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
@@ -242,12 +247,30 @@ impl App {
     /// # Errors
     ///
     /// Returns an error if event loop creation or execution fails.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn run<H: AppHandler>(self) -> anyhow::Result<()> {
         let event_loop = EventLoop::new()?;
         event_loop.set_control_flow(ControlFlow::Poll);
 
         let mut runner = AppRunner::<H>::new(self.title, self.render_settings);
         event_loop.run_app(&mut runner).map_err(Into::into)
+    }
+
+    /// Runs the application with the specified handler (WASM version).
+    ///
+    /// On WASM, this spawns an async task and returns immediately.
+    /// The event loop runs via requestAnimationFrame.
+    #[cfg(target_arch = "wasm32")]
+    pub fn run<H: AppHandler>(self) -> anyhow::Result<()> {
+        use winit::platform::web::EventLoopExtWebSys;
+        
+        let event_loop = EventLoop::new()?;
+        event_loop.set_control_flow(ControlFlow::Poll);
+
+        let runner = AppRunner::<H>::new(self.title, self.render_settings);
+        event_loop.spawn_app(runner);
+        
+        Ok(())
     }
 }
 
@@ -271,6 +294,40 @@ struct AppRunner<H: AppHandler> {
 
     start_time: Instant,
     last_loop_time: Instant,
+    
+    /// WASM async initialization state
+    #[cfg(target_arch = "wasm32")]
+    init_state: std::rc::Rc<std::cell::RefCell<WasmInitState<H>>>,
+}
+
+/// State for WASM async initialization
+#[cfg(target_arch = "wasm32")]
+struct WasmInitState<H: AppHandler> {
+    pending: bool,
+    result: Option<(ThreeEngine, H)>,
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<H: AppHandler> Default for WasmInitState<H> {
+    fn default() -> Self {
+        Self {
+            pending: false,
+            result: None,
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+impl<H: AppHandler> WasmInitState<H> {
+    /// Try to take the result if available, returns None if not ready or already taken
+    fn try_take_result(&mut self) -> Option<(ThreeEngine, H)> {
+        self.result.take()
+    }
+    
+    // Check if initialization is complete (result is ready)
+    // fn is_complete(&self) -> bool {
+    //     self.result.is_some()
+    // }
 }
 
 impl<H: AppHandler> AppRunner<H> {
@@ -284,6 +341,8 @@ impl<H: AppHandler> AppRunner<H> {
             user_state: None,
             start_time: now,
             last_loop_time: now,
+            #[cfg(target_arch = "wasm32")]
+            init_state: std::rc::Rc::new(std::cell::RefCell::new(WasmInitState::default())),
         }
     }
 
@@ -346,6 +405,7 @@ impl<H: AppHandler> AppRunner<H> {
 }
 
 impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
+    #[cfg(not(target_arch = "wasm32"))]
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.window.is_some() {
             return;
@@ -381,12 +441,124 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         self.last_loop_time = now;
     }
 
+    #[cfg(target_arch = "wasm32")]
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        use wasm_bindgen::JsCast;
+        use winit::platform::web::WindowAttributesExtWebSys;
+        
+        if self.window.is_some() {
+            return;
+        }
+
+        // Get canvas from DOM
+        let web_window = web_sys::window().expect("No window found");
+        let document = web_window.document().expect("No document found");
+        let canvas = document
+            .get_element_by_id("three-canvas")
+            .expect("Canvas element 'three-canvas' not found")
+            .dyn_into::<web_sys::HtmlCanvasElement>()
+            .expect("Element is not a canvas");
+
+        // Get canvas size
+        let width = canvas.client_width() as u32;
+        let height = canvas.client_height() as u32;
+        canvas.set_width(width);
+        canvas.set_height(height);
+
+        let window_attributes = Window::default_attributes()
+            .with_title(&self.title)
+            .with_canvas(Some(canvas.clone()));
+
+        let window = event_loop
+            .create_window(window_attributes)
+            .expect("Failed to create window");
+        let window = Arc::new(window);
+        self.window = Some(window.clone());
+
+        log::info!("Initializing WebGPU Renderer Backend...");
+
+        // On WASM, we must use true async initialization because requestAdapter is async
+        let render_settings = self.render_settings.clone();
+        let init_state = self.init_state.clone();
+        let window_clone = window.clone();
+        
+        wasm_bindgen_futures::spawn_local(async move {
+            let mut engine = ThreeEngine::new(render_settings);
+            let size = window_clone.inner_size();
+            let w = size.width.max(1);
+            let h = size.height.max(1);
+            
+            match engine.init(window_clone.clone(), w, h).await {
+                Ok(_) => {
+                    log::info!("WebGPU initialization successful");
+                    let user_state = H::init(&mut engine, &window_clone);
+                    init_state.borrow_mut().result = Some((engine, user_state));
+                }
+                Err(e) => {
+                    log::error!("Fatal Renderer Error: {}", e);
+                }
+            }
+        });
+        
+        self.init_state.borrow_mut().pending = true;
+        
+        let now = Instant::now();
+        self.start_time = now;
+        self.last_loop_time = now;
+    }
+
     fn window_event(
         &mut self,
         event_loop: &ActiveEventLoop,
         _window_id: WindowId,
         event: WindowEvent,
     ) {
+        // On WASM, check if async initialization has completed
+        #[cfg(target_arch = "wasm32")]
+        {
+            if self.engine.is_none() {
+                // Try to get the result without panicking if already borrowed
+                let result = {
+                    match self.init_state.try_borrow_mut() {
+                        Ok(mut state) => state.try_take_result(),
+                        Err(_) => {
+                            // Already borrowed (init in progress), try again later
+                            if let WindowEvent::RedrawRequested = event {
+                                if let Some(w) = &self.window {
+                                    w.request_redraw();
+                                }
+                            }
+                            return;
+                        }
+                    }
+                };
+                
+                if let Some((mut engine, user_state)) = result {
+                    // Immediately resize to correct dimensions after init completes
+                    if let Some(window) = &self.window {
+                        let size = window.inner_size();
+                        let scale_factor = window.scale_factor() as f32;
+                        let w = size.width.max(1);
+                        let h = size.height.max(1);
+                        engine.resize(w, h, scale_factor);
+                        log::info!("Resized to {}x{} after init", w, h);
+                    }
+                    
+                    self.engine = Some(engine);
+                    self.user_state = Some(user_state);
+                    log::info!("Engine initialization completed, starting render loop");
+                } else {
+                    // Still initializing, request another redraw to check again
+                    if let WindowEvent::RedrawRequested = event {
+                        if let Some(w) = &self.window {
+                            w.request_redraw();
+                        }
+                    }
+                    return;
+                }
+            }
+        }
+        
         let (Some(window), Some(engine), Some(user_state)) =
             (&self.window, &mut self.engine, &mut self.user_state)
         else {

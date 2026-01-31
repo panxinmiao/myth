@@ -22,8 +22,14 @@ impl AppHandler for HdrEnvDemo {
     fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // 1. 加载 HDR 环境贴图 (Equirectangular 格式)
         let env_texture_handle = engine.assets.load_hdr_texture(
-            "examples/assets/citrus_orchard_road_puresky_2k.hdr"
+            "examples/assets/blouberg_sunrise_2_1k.hdr"
         ).expect("Failed to load HDR environment map");
+
+        // let env_texture_handle = engine.assets.load_texture_from_file(
+        //     "examples/assets/royal_esplanade_2k.hdr.jpg",
+        //     three::ColorSpace::Srgb,
+        //     false
+        // ).expect("Failed to load HDR environment map");
 
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();

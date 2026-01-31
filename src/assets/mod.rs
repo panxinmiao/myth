@@ -54,9 +54,16 @@ pub use server::{
 pub use loaders::GltfLoader;
 pub use handle::{AssetTracker, StrongHandle, WeakHandle, TrackedAsset};
 pub use prefab::{Prefab, PrefabNode, PrefabSkeleton, SharedPrefab};
-pub use io::{AssetReader, AssetReaderVariant, FileAssetReader};
-#[cfg(feature = "http")]
+pub use io::{AssetReader, AssetReaderVariant};
+
+#[cfg(not(target_arch = "wasm32"))]
+pub use io::FileAssetReader;
+
+#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 pub use io::HttpAssetReader;
+
+#[cfg(target_arch = "wasm32")]
+pub use io::WasmHttpReader;
 
 
 use image::GenericImageView;

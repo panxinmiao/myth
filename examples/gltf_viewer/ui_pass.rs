@@ -118,7 +118,11 @@ impl UiPass {
     /// 
     /// 返回 `true` 表示事件被 UI 消耗，应用不应再处理
     pub fn handle_input(&self, window: &Window, event: &WindowEvent) -> bool {
-        let response = self.state.borrow_mut().on_window_event(window, event);
+        // Use try_borrow_mut to avoid panic on WASM when events re-enter
+        let response = match self.state.try_borrow_mut() {
+            Ok(mut state) => state.on_window_event(window, event),
+            Err(_) => return false, // RefCell already borrowed, skip this event
+        };
 
         if let WindowEvent::MouseInput { state: winit::event::ElementState::Released, .. } = event {
             return false;
@@ -181,8 +185,11 @@ impl UiPass {
 
     /// 每帧开始时调用
     pub fn begin_frame(&self, window: &Window) {
-        let raw_input = self.state.borrow_mut().take_egui_input(window);
-        self.egui_ctx.begin_pass(raw_input);
+        // Use try_borrow_mut to avoid panic on WASM re-entrant events
+        if let Ok(mut state) = self.state.try_borrow_mut() {
+            let raw_input = state.take_egui_input(window);
+            self.egui_ctx.begin_pass(raw_input);
+        }
     }
 
     /// 用户 UI 构建完成后调用
@@ -197,13 +204,20 @@ impl UiPass {
         } = self.egui_ctx.end_pass();
 
         // 处理平台输出（鼠标指针、剪贴板等）
-        self.state.borrow_mut().handle_platform_output(window, platform_output);
+        // Use try_borrow_mut to avoid panic on WASM re-entrant events
+        if let Ok(mut state) = self.state.try_borrow_mut() {
+            state.handle_platform_output(window, platform_output);
+        }
 
-        *self.textures_delta.borrow_mut() = textures_delta;
-        *self.clipped_primitives.borrow_mut() = self.egui_ctx.tessellate(
-            shapes, 
-            self.egui_ctx.pixels_per_point()
-        );
+        if let Ok(mut delta) = self.textures_delta.try_borrow_mut() {
+            *delta = textures_delta;
+        }
+        if let Ok(mut primitives) = self.clipped_primitives.try_borrow_mut() {
+            *primitives = self.egui_ctx.tessellate(
+                shapes, 
+                self.egui_ctx.pixels_per_point()
+            );
+        }
     }
 
     /// 获取 egui 上下文
@@ -215,9 +229,10 @@ impl UiPass {
 
     /// 窗口大小调整
     pub fn resize(&self, width: u32, height: u32, scale_factor: f32) {
-        let mut desc = self.screen_descriptor.borrow_mut();
-        desc.size_in_pixels = [width, height];
-        desc.pixels_per_point = scale_factor;
+        if let Ok(mut desc) = self.screen_descriptor.try_borrow_mut() {
+            desc.size_in_pixels = [width, height];
+            desc.pixels_per_point = scale_factor;
+        }
     }
 
     /// 检查 UI 是否想要捕获键盘输入
@@ -243,48 +258,57 @@ impl RenderNode for UiPass {
 
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
 
-        // === 1. 处理延迟纹理注册 ===
-        {
-            let mut requests = self.texture_requests.borrow_mut();
+        // === 1. 处理延迟纹理注册 (使用 Swap & Drain 模式避免死锁) ===
+        // 将请求队列移出 RefCell，避免持有锁时调用外部系统
+        let pending_requests: Vec<TextureHandle> = {
+            match self.texture_requests.try_borrow_mut() {
+                Ok(mut reqs) if !reqs.is_empty() => reqs.drain(..).collect(),
+                _ => Vec::new(), // 空或者已被借用，本帧跳过
+            }
+        };
+
+        let mut remaining_requests = Vec::new();
+
+        if !pending_requests.is_empty() {
+            let resources = &ctx.resource_manager;
             
-            // 如果没有请求，直接跳过，连闭包都不用创建
-            if !requests.is_empty() {
-                let mut map = self.texture_map.borrow_mut();
-                let mut gpu_ids = self.gpu_resource_ids.borrow_mut();
+            for handle in pending_requests {
+                let mut registered = false;
                 
-                // 获取资源管理器
-                let resources = &ctx.resource_manager;
-                
-                // retain: 仅保留那些“注册失败（未就绪）”的请求
-                // 返回 true = 保留 (未就绪)
-                // 返回 false = 移除 (已注册)
-                requests.retain(|&handle| {
-                    // 1. 尝试查找绑定信息
-                    if let Some(binding) = resources.get_texture_binding(handle) {
-                        let image_id = binding.cpu_image_id;
-                        
-                        // 2. 尝试获取 GPU 图像资源
-                        if let Some(gpu_image) = resources.get_image(image_id) {
-                            // 3. 执行注册
-                            // let device_egui: &egui_wgpu::wgpu::Device = unsafe { std::mem::transmute(&ctx.wgpu_ctx.device) };
-                            // let view_egui: &egui_wgpu::wgpu::TextureView = unsafe { std::mem::transmute(&gpu_image.default_view) };
-                            
-                            // let id = renderer.register_native_texture(
-                            //     device_egui,
-                            //     view_egui,
-                            //     egui_wgpu::wgpu::FilterMode::Linear,
-                            // );
-                            let id = self.register_native_texture(&ctx.wgpu_ctx.device, &gpu_image.default_view, egui_wgpu::wgpu::FilterMode::Linear);
-                            
-                            map.insert(handle, id);
-                            gpu_ids.insert(handle, gpu_image.id);
-                            
-                            return false; // 已处理，从队列中移除
-                        }
-                    }
+                // 尝试获取资源 (不持有 texture_requests 锁)
+                if let Some(binding) = resources.get_texture_binding(handle) {
+                    let image_id = binding.cpu_image_id;
                     
-                    true // 还没准备好，保留在队列中，下帧再试
-                });
+                    if let Some(gpu_image) = resources.get_image(image_id) {
+                        // 注册纹理 (短暂持有 renderer 锁)
+                        let id = self.register_native_texture(
+                            &ctx.wgpu_ctx.device, 
+                            &gpu_image.default_view, 
+                            wgpu::FilterMode::Linear
+                        );
+
+                        // 更新映射表 (短暂持有各自的锁)
+                        if let Ok(mut map) = self.texture_map.try_borrow_mut() {
+                            map.insert(handle, id);
+                        }
+                        if let Ok(mut gpu_ids) = self.gpu_resource_ids.try_borrow_mut() {
+                            gpu_ids.insert(handle, gpu_image.id);
+                        }
+                        
+                        registered = true;
+                    }
+                }
+                
+                if !registered {
+                    remaining_requests.push(handle);
+                }
+            }
+        }
+
+        // 将未就绪的请求放回队列
+        if !remaining_requests.is_empty() {
+            if let Ok(mut reqs) = self.texture_requests.try_borrow_mut() {
+                reqs.extend(remaining_requests);
             }
         }
 
@@ -294,15 +318,34 @@ impl RenderNode for UiPass {
         let view = ctx.surface_view;
 
         // 转换为 egui_wgpu 版本的类型
+        // 注意：这里使用 transmute 是因为 three-rs 和 egui-wgpu 使用相同版本的 wgpu (28.0.0)
+        // 已通过 cargo tree 验证版本一致性
         let device_egui: &egui_wgpu::wgpu::Device = unsafe { std::mem::transmute(device) };
         let queue_egui: &egui_wgpu::wgpu::Queue = unsafe { std::mem::transmute(queue) };
         let encoder_egui: &mut egui_wgpu::wgpu::CommandEncoder = unsafe { std::mem::transmute(encoder) };
         let view_egui: &egui_wgpu::wgpu::TextureView = unsafe { std::mem::transmute(view) };
 
-        let mut renderer = self.renderer.borrow_mut();
-        let paint_jobs = self.clipped_primitives.borrow();
-        let mut textures_delta = self.textures_delta.borrow_mut();
-        let screen_desc = self.screen_descriptor.borrow();
+        // 尝试获取渲染器锁，添加防重入保护
+        let mut renderer = match self.renderer.try_borrow_mut() {
+            Ok(r) => r,
+            Err(_) => {
+                log::warn!("UiPass::run re-entry detected, skipping frame!");
+                return;
+            }
+        };
+        
+        let paint_jobs = match self.clipped_primitives.try_borrow() {
+            Ok(jobs) => jobs,
+            Err(_) => return,
+        };
+        let mut textures_delta = match self.textures_delta.try_borrow_mut() {
+            Ok(delta) => delta,
+            Err(_) => return,
+        };
+        let screen_desc = match self.screen_descriptor.try_borrow() {
+            Ok(desc) => desc,
+            Err(_) => return,
+        };
 
         // 1. 更新纹理
         for (id, delta) in &textures_delta.set {

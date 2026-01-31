@@ -115,38 +115,32 @@ impl Transform {
         self.rotation = Quat::from_euler(order, x, y, z);
     }
 
-    /// Returns a reference to the local transformation matrix.
     #[inline]
     pub fn local_matrix(&self) -> &Affine3A {
         &self.local_matrix
     }
 
-    /// Returns a reference to the world transformation matrix.
     #[inline]
     pub fn world_matrix(&self) -> &Affine3A {
         &self.world_matrix
     }
 
-    /// Returns the world matrix as a 4x4 matrix.
     #[inline]
     pub fn world_matrix_as_mat4(&self) -> Mat4 {
         Mat4::from(self.world_matrix)
     }
 
-    /// Sets the world matrix directly.
     pub fn set_world_matrix(&mut self, mat: Affine3A) {
         self.world_matrix = mat;
     }
 
-    /// Sets the position and marks the transform as dirty.
     pub fn set_position(&mut self, pos: Vec3) {
         self.position = pos;
         self.mark_dirty();
     }
 
-    /// Directly sets the local matrix (e.g., from glTF or physics engine).
-    ///
-    /// Decomposes the matrix into TRS and synchronizes state.
+    /// 直接设置局部矩阵（例如来自 glTF 或物理引擎）
+    /// 会分解为 TRS 并同步状态
     pub fn apply_local_matrix(&mut self, mat: Affine3A) {
         self.local_matrix = mat;
         let (scale, rotation, translation) = mat.to_scale_rotation_translation();
@@ -159,18 +153,12 @@ impl Transform {
         self.force_update = false;
     }
 
-    /// Applies a local matrix from a Mat4 (converts to Affine3A first).
     pub fn apply_local_matrix_from_mat4(&mut self, mat: Mat4) {
         let affine = Affine3A::from_mat4(mat);
         self.apply_local_matrix(affine);
     }
 
-    /// Orients the transform to face a target point in parent space.
-    ///
-    /// # Arguments
-    ///
-    /// * `target` - The point to look at in parent-local coordinates
-    /// * `up` - The up vector (typically `Vec3::Y`)
+    /// 将变换面向目标点（在父坐标系中）
     pub fn look_at(&mut self, target: Vec3, up: Vec3) {
         let forward = (target - self.position).normalize();
         if forward.cross(up).length_squared() < 1e-4 {
@@ -182,7 +170,6 @@ impl Transform {
         self.rotation = Quat::from_mat3(&rot_mat);
     }
 
-    /// Marks the transform as needing update (forces matrix recalculation).
     pub fn mark_dirty(&mut self) {
         self.force_update = true;
     }

@@ -1,8 +1,117 @@
-use glam::{Vec2, Vec3, Vec4, Mat3A, Mat4, UVec4};
+use glam::{Vec2, Vec3, Vec4, Mat4, Mat3, UVec4};
 use bytemuck::{Pod, Zeroable};
 use std::borrow::Cow;
 use std::ops::{Deref, DerefMut};
 use std::collections::HashSet;
+
+// ============================================================================
+// Mat3Padded: A mat3x3<f32> with correct GPU alignment (48 bytes)
+// ============================================================================
+// 
+// In WGSL/WebGPU, mat3x3<f32> has the following layout:
+// - Each column is a vec3<f32>, but aligned to 16 bytes
+// - Total size: 3 columns × 16 bytes = 48 bytes
+//
+// glam::Mat3A provides this on native (via SIMD), but it's not Pod on WASM.
+// glam::Mat3 is only 36 bytes (3 columns × 12 bytes).
+// 
+// So we create our own type that's always 48 bytes on all platforms.
+// ============================================================================
+
+/// A mat3x3<f32> representation with correct GPU alignment (48 bytes total).
+/// Each column is stored as a Vec4 (only xyz used, w is padding).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Mat3Padded {
+    /// Column 0 (x-axis), w is padding
+    pub col0: Vec4,
+    /// Column 1 (y-axis), w is padding
+    pub col1: Vec4,
+    /// Column 2 (z-axis), w is padding
+    pub col2: Vec4,
+}
+
+unsafe impl Zeroable for Mat3Padded {}
+unsafe impl Pod for Mat3Padded {}
+
+impl Mat3Padded {
+    pub const IDENTITY: Self = Self {
+        col0: Vec4::new(1.0, 0.0, 0.0, 0.0),
+        col1: Vec4::new(0.0, 1.0, 0.0, 0.0),
+        col2: Vec4::new(0.0, 0.0, 1.0, 0.0),
+    };
+
+    pub const ZERO: Self = Self {
+        col0: Vec4::ZERO,
+        col1: Vec4::ZERO,
+        col2: Vec4::ZERO,
+    };
+
+    pub fn new(col0: Vec3, col1: Vec3, col2: Vec3) -> Self {
+        Self {
+            col0: col0.extend(0.0),
+            col1: col1.extend(0.0),
+            col2: col2.extend(0.0),
+        }
+    }
+
+    pub fn from_cols(col0: Vec3, col1: Vec3, col2: Vec3) -> Self {
+        Self::new(col0, col1, col2)
+    }
+
+    /// Create from a column-major array (9 floats)
+    /// Array layout: [col0.x, col0.y, col0.z, col1.x, col1.y, col1.z, col2.x, col2.y, col2.z]
+    pub fn from_cols_array(arr: &[f32; 9]) -> Self {
+        Self {
+            col0: Vec4::new(arr[0], arr[1], arr[2], 0.0),
+            col1: Vec4::new(arr[3], arr[4], arr[5], 0.0),
+            col2: Vec4::new(arr[6], arr[7], arr[8], 0.0),
+        }
+    }
+
+    /// Create from Mat4 (extracts upper-left 3x3)
+    pub fn from_mat4(m: Mat4) -> Self {
+        Self {
+            col0: Vec4::new(m.x_axis.x, m.x_axis.y, m.x_axis.z, 0.0),
+            col1: Vec4::new(m.y_axis.x, m.y_axis.y, m.y_axis.z, 0.0),
+            col2: Vec4::new(m.z_axis.x, m.z_axis.y, m.z_axis.z, 0.0),
+        }
+    }
+}
+
+impl From<Mat3> for Mat3Padded {
+    fn from(m: Mat3) -> Self {
+        Self {
+            col0: m.x_axis.extend(0.0),
+            col1: m.y_axis.extend(0.0),
+            col2: m.z_axis.extend(0.0),
+        }
+    }
+}
+
+impl From<Mat4> for Mat3Padded {
+    fn from(m: Mat4) -> Self {
+        Self {
+            col0: Vec4::new(m.x_axis.x, m.x_axis.y, m.x_axis.z, 0.0),
+            col1: Vec4::new(m.y_axis.x, m.y_axis.y, m.y_axis.z, 0.0),
+            col2: Vec4::new(m.z_axis.x, m.z_axis.y, m.z_axis.z, 0.0),
+        }
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<glam::Mat3A> for Mat3Padded {
+    fn from(m: glam::Mat3A) -> Self {
+        Self {
+            col0: Vec4::new(m.x_axis.x, m.x_axis.y, m.x_axis.z, 0.0),
+            col1: Vec4::new(m.y_axis.x, m.y_axis.y, m.y_axis.z, 0.0),
+            col2: Vec4::new(m.z_axis.x, m.z_axis.y, m.z_axis.z, 0.0),
+        }
+    }
+}
+
+// Type alias for backward compatibility
+pub type Mat3Uniform = Mat3Padded;
 
 
 // ============================================================================
@@ -25,7 +134,7 @@ impl WgslType for Vec2 { fn wgsl_type_name() -> Cow<'static, str> { "vec2<f32>".
 impl WgslType for Vec3 { fn wgsl_type_name() -> Cow<'static, str> { "vec3<f32>".into() } }
 impl WgslType for Vec4 { fn wgsl_type_name() -> Cow<'static, str> { "vec4<f32>".into() } }
 impl WgslType for Mat4 { fn wgsl_type_name() -> Cow<'static, str> { "mat4x4<f32>".into() } }
-impl WgslType for Mat3A { fn wgsl_type_name() -> Cow<'static, str> { "mat3x3<f32>".into() } }
+impl WgslType for Mat3Uniform { fn wgsl_type_name() -> Cow<'static, str> { "mat3x3<f32>".into() } }
 impl WgslType for UVec4 { fn wgsl_type_name() -> Cow<'static, str> { "vec4<u32>".into() } }
 
 
@@ -245,7 +354,7 @@ define_gpu_data_struct!(
     struct DynamicModelUniforms {
         pub world_matrix: Mat4,       //64
         pub world_matrix_inverse: Mat4,  //64
-        pub normal_matrix: Mat3A,   //48
+        pub normal_matrix: Mat3Uniform,   //48
 
         pub(crate) __padding_20: UniformArray<f32, 20> = UniformArray::new([0.0; 20]),
     }
@@ -286,7 +395,7 @@ define_gpu_data_struct!(
         pub alpha_test: f32 = 0.0,       // 4
         pub(crate) __padding: UniformArray<f32, 2>,      // 8 (4+4+8=16)
 
-        pub map_transform: Mat3A = Mat3A::IDENTITY,
+        pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
     }
 );
 
@@ -305,11 +414,11 @@ define_gpu_data_struct!(
         pub shininess: f32 = 30.0,
         pub alpha_test: f32 = 0.0,
 
-        pub map_transform: Mat3A = Mat3A::IDENTITY,
-        pub normal_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub specular_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub emissive_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub light_map_transform: Mat3A = Mat3A::IDENTITY,
+        pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub specular_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub emissive_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub light_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
     }
 );
 
@@ -333,15 +442,15 @@ define_gpu_data_struct!(
         pub specular: Vec3 = Vec3::ONE,               // 12
         pub specular_intensity: f32 = 0.0,    // 4
 
-        // Using optimized Mat3A (48 bytes)
-        pub map_transform: Mat3A = Mat3A::IDENTITY,         
-        pub normal_map_transform: Mat3A = Mat3A::IDENTITY,   
-        pub roughness_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub metalness_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub emissive_map_transform: Mat3A = Mat3A::IDENTITY, 
-        pub ao_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub specular_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub specular_intensity_map_transform: Mat3A = Mat3A::IDENTITY,
+        // Using optimized Mat3Uniform (48 bytes)
+        pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,         
+        pub normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,   
+        pub roughness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub metalness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub emissive_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY, 
+        pub ao_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub specular_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub specular_intensity_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
     }
 );
 
@@ -369,18 +478,18 @@ define_gpu_data_struct!(
         pub clearcoat_roughness: f32 = 0.0,   // 4
         pub clearcoat_normal_scale: Vec2 = Vec2::ONE, // 8
 
-        // Using optimized Mat3A (48 bytes)
-        pub map_transform: Mat3A = Mat3A::IDENTITY,         
-        pub normal_map_transform: Mat3A = Mat3A::IDENTITY,   
-        pub roughness_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub metalness_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub emissive_map_transform: Mat3A = Mat3A::IDENTITY, 
-        pub ao_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub specular_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub specular_intensity_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub clearcoat_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub clearcoat_normal_map_transform: Mat3A = Mat3A::IDENTITY,
-        pub clearcoat_roughness_map_transform: Mat3A = Mat3A::IDENTITY,
+        // Using optimized Mat3Uniform (48 bytes)
+        pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,         
+        pub normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,   
+        pub roughness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub metalness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub emissive_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY, 
+        pub ao_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub specular_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub specular_intensity_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub clearcoat_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub clearcoat_normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub clearcoat_roughness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
     }
 );
 

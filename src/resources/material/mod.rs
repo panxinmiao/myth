@@ -17,7 +17,8 @@ use crate::renderer::core::builder::ResourceBuilder;
 use crate::resources::buffer::BufferRef;
 use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::texture::TextureSource;
-use glam::{Mat3A, Vec2, Vec4};
+use crate::resources::uniforms::Mat3Uniform;
+use glam::{Vec2, Vec4};
 use uuid::Uuid;
 
 // ============================================================================
@@ -104,7 +105,7 @@ impl TextureSlot {
     ///
     /// The resulting matrix is in column-major order for WGSL compatibility.
     #[inline]
-    pub fn compute_matrix(&self) -> Mat3A {
+    pub fn compute_matrix(&self) -> Mat3Uniform {
         let (s, c) = (-self.transform.rotation).sin_cos();
         let sx = self.transform.scale.x;
         let sy = self.transform.scale.y;
@@ -113,7 +114,7 @@ impl TextureSlot {
         // | sx*c   -sy*s   tx |
         // | sx*s    sy*c   ty |
         // |  0       0      1 |
-        Mat3A::from_cols_array(&[
+        Mat3Uniform::from_cols_array(&[
             sx * c, sx * s, 0.0,
             -sy * s, sy * c, 0.0,
             self.transform.offset.x, self.transform.offset.y, 1.0,

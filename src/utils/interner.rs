@@ -4,11 +4,33 @@
 //! integer [`Symbol`]s for efficient comparison and hashing. This is the foundational
 //! infrastructure for the dynamic shader macro system.
 
-use lasso::{ThreadedRodeo, Spur};
-use once_cell::sync::Lazy;
+use std::borrow::Cow;
+use lasso::Spur;
 
-/// Global string interner instance
+#[cfg(not(target_arch = "wasm32"))]
+use once_cell::sync::Lazy;
+#[cfg(not(target_arch = "wasm32"))]
+use lasso::ThreadedRodeo;
+
+#[cfg(target_arch = "wasm32")]
+use std::cell::UnsafeCell;
+#[cfg(target_arch = "wasm32")]
+use lasso::Rodeo;
+
+/// Global string interner instance (Native - thread-safe)
+#[cfg(not(target_arch = "wasm32"))]
 static INTERNER: Lazy<ThreadedRodeo> = Lazy::new(ThreadedRodeo::new);
+
+
+#[cfg(target_arch = "wasm32")]
+// Global string interner instance (WASM - single-threaded)
+// 
+// We use UnsafeCell here because WASM is single-threaded and RefCell can cause
+// double-borrow panics when async callbacks interleave with event handlers.
+// Since WASM guarantees single-threaded execution, this is safe.
+thread_local! {
+    static INTERNER: UnsafeCell<Rodeo> = UnsafeCell::new(Rodeo::new());
+}
 
 /// Symbol type alias
 ///
@@ -20,30 +42,60 @@ pub type Symbol = Spur;
 ///
 /// If the string already exists in the intern pool, returns the existing Symbol.
 /// If it doesn't exist, adds it to the pool and returns a new Symbol.
+#[cfg(not(target_arch = "wasm32"))]
 #[inline]
 pub fn intern(s: &str) -> Symbol {
     INTERNER.get_or_intern(s)
+}
+
+#[cfg(target_arch = "wasm32")]
+#[inline]
+pub fn intern(s: &str) -> Symbol {
+    // SAFETY: WASM is single-threaded, so there's no concurrent access.
+    // We use UnsafeCell to avoid RefCell double-borrow panics that occur
+    // when async callbacks (spawn_local) interleave with event handlers.
+    INTERNER.with(|interner| unsafe { (*interner.get()).get_or_intern(s) })
 }
 
 /// Attempts to get the Symbol for an existing string.
 ///
 /// Returns `None` if the string doesn't exist in the intern pool.
 /// This method does not allocate new memory.
+#[cfg(not(target_arch = "wasm32"))]
 #[inline]
 pub fn get(s: &str) -> Option<Symbol> {
     INTERNER.get(s)
 }
 
+#[cfg(target_arch = "wasm32")]
+#[inline]
+pub fn get(s: &str) -> Option<Symbol> {
+    // SAFETY: WASM is single-threaded
+    INTERNER.with(|interner| unsafe { (*interner.get()).get(s) })
+}
+
 /// Resolves a Symbol back to its string.
 ///
-/// Returns a reference to the corresponding string in the intern pool.
+/// Returns a String containing the resolved value.
 ///
 /// # Panics
 ///
 /// Panics if the Symbol is invalid (this typically shouldn't happen).
+#[cfg(not(target_arch = "wasm32"))]
 #[inline]
-pub fn resolve(sym: Symbol) -> &'static str {
-    INTERNER.resolve(&sym)
+pub fn resolve(sym: Symbol) -> Cow<'static, str> {
+    Cow::Borrowed(INTERNER.resolve(&sym))
+}
+
+/// Resolves a Symbol back to its string (WASM version).
+#[cfg(target_arch = "wasm32")]
+#[inline]
+pub fn resolve(sym: Symbol) -> Cow<'static, str> {
+    INTERNER.with(|interner| {
+        unsafe { 
+            Cow::Owned((*interner.get()).resolve(&sym).to_string()) 
+        }
+    })
 }
 
 /// Pre-interns commonly used macro names.

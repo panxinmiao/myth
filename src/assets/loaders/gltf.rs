@@ -2,7 +2,7 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
-use tokio::runtime::Runtime;
+#[cfg(not(target_arch = "wasm32"))]
 use futures::future::try_join_all;
 use crate::resources::material::AlphaMode;
 use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler, TextureSlot, TextureTransform};
@@ -21,8 +21,13 @@ use wgpu::{BufferUsages, PrimitiveTopology, TextureFormat, VertexFormat, VertexS
 use anyhow::Context;
 use serde_json::Value;
 
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::runtime::Runtime;
+
+#[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
 
+#[cfg(not(target_arch = "wasm32"))]
 fn get_global_runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
@@ -292,7 +297,8 @@ pub struct GltfLoader {
 }
 
 impl GltfLoader {
-    /// Synchronous load entry point (backwards compatible)
+    /// Synchronous load entry point (backwards compatible) - Native only
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load(
         path: &std::path::Path,
         assets: &AssetServer
@@ -300,13 +306,153 @@ impl GltfLoader {
         Self::load_sync(path.to_string_lossy().as_ref(), assets.clone())
     }
 
-    /// Synchronous load (creates runtime internally)
+    /// Synchronous load (creates runtime internally) - Native only
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn load_sync(
         source: &str,
         assets: impl Into<Arc<AssetServer>>
     ) -> anyhow::Result<Arc<Prefab>> {
         let rt = get_global_runtime();
         rt.block_on(Self::load_async(source, assets))
+    }
+
+    /// Load from in-memory bytes (GLB format only)
+    /// 
+    /// This is useful for loading files selected via browser file picker on WASM,
+    /// or for loading embedded resources.
+    pub async fn load_from_bytes(
+        gltf_bytes: Vec<u8>,
+        assets: impl Into<Arc<AssetServer>>
+    ) -> anyhow::Result<Arc<Prefab>> {
+        let assets = assets.into();
+        
+        let sanitized_bytes = sanitize_gltf_data(&gltf_bytes)
+            .context("Failed to sanitize glTF data")?;
+
+        let gltf = match gltf::Gltf::from_slice_without_validation(&sanitized_bytes) {
+            Ok(g) => g,
+            Err(err) => {
+                log::error!("GLTF Parse Error Details: {:?}", err);
+                return Err(anyhow::anyhow!("Failed to parse glTF: {}", err));
+            }
+        };
+
+        // For GLB files loaded from bytes, all buffers should be embedded (blob)
+        // For external URI references, we cannot load them without a reader
+        let buffers = Self::load_buffers_from_embedded(&gltf)?;
+
+        // Create a dummy reader (won't be used for GLB files with embedded data)
+        // But textures might still reference external URIs, which will fail
+        #[cfg(not(target_arch = "wasm32"))]
+        let reader = AssetReaderVariant::File(Arc::new(crate::assets::io::FileAssetReader::new(".")));
+        #[cfg(target_arch = "wasm32")]
+        let reader = AssetReaderVariant::WasmHttp(Arc::new(crate::assets::io::WasmHttpReader::new(".")?));
+
+        let mut loader = Self {
+            assets,
+            reader,
+            intermediate_textures: Vec::new(),
+            created_textures: HashMap::new(),
+            material_map: Vec::new(),
+            extensions: HashMap::new(),
+            default_material: None,
+            prefab_nodes: Vec::with_capacity(gltf.nodes().count()),
+            prefab_skeletons: Vec::new(),
+        };
+
+        loader.register_extension(Box::new(KhrMaterialsPbrSpecularGlossiness));
+        loader.register_extension(Box::new(KhrMaterialsClearcoat));
+
+        // Load textures from embedded buffer views
+        loader.load_textures_from_buffers(&gltf, &buffers).await?;
+        loader.load_materials(&gltf)?;
+
+        let prefab = loader.build_prefab(&gltf, &buffers)?;
+
+        Ok(Arc::new(prefab))
+    }
+
+    /// Load buffers from embedded data only (GLB blob + data URIs)
+    fn load_buffers_from_embedded(gltf: &gltf::Gltf) -> anyhow::Result<Vec<Vec<u8>>> {
+        let mut buffers = Vec::new();
+
+        for buffer in gltf.buffers() {
+            let data = match buffer.source() {
+                gltf::buffer::Source::Bin => {
+                    gltf.blob.clone().ok_or_else(|| anyhow::anyhow!("Missing GLB blob - this method only supports GLB files with embedded data"))?
+                }
+                gltf::buffer::Source::Uri(uri) => {
+                    if uri.starts_with("data:") {
+                        decode_data_uri(uri)?
+                    } else {
+                        return Err(anyhow::anyhow!("External buffer URI '{}' not supported when loading from bytes. Use GLB format with embedded data.", uri));
+                    }
+                }
+            };
+            buffers.push(data);
+        }
+        
+        Ok(buffers)
+    }
+
+    /// Load textures from buffer views (for load_from_bytes)
+    async fn load_textures_from_buffers(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<()> {
+        for (_index, texture) in gltf.textures().enumerate() {
+            let (engine_sampler, generate_mipmaps) = Self::create_texture_sampler(&texture);
+            let name = texture.name().map(|s| s.to_string());
+
+            let img_source = texture.source().source();
+            let img_bytes = match img_source {
+                gltf::image::Source::Uri { uri, .. } => {
+                    if uri.starts_with("data:") {
+                        decode_data_uri(uri)?
+                    } else {
+                        return Err(anyhow::anyhow!("External texture URI '{}' not supported when loading from bytes", uri));
+                    }
+                }
+                gltf::image::Source::View { view, .. } => {
+                    let start = view.offset();
+                    let end = start + view.length();
+                    buffers[view.buffer().index()][start..end].to_vec()
+                }
+            };
+
+            let (image_data, width, height, _format) = Self::decode_image_sync(&img_bytes)?;
+
+            self.intermediate_textures.push(IntermediateTexture {
+                name,
+                sampler: engine_sampler,
+                image_data,
+                width,
+                height,
+                generate_mipmaps,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Sync image decode helper
+    fn decode_image_sync(img_bytes: &[u8]) -> anyhow::Result<(Vec<u8>, u32, u32, TextureFormat)> {
+        let img = image::load_from_memory(img_bytes)
+            .context("Failed to decode image")?;
+
+        let (width, height) = (img.width(), img.height());
+        
+        let (rgba, format) = match img {
+            image::DynamicImage::ImageRgba8(img) => (img.into_raw(), TextureFormat::Rgba8UnormSrgb),
+            image::DynamicImage::ImageRgb8(img) => {
+                let rgba = image::DynamicImage::ImageRgb8(img).into_rgba8();
+                (rgba.into_raw(), TextureFormat::Rgba8UnormSrgb)
+            }
+            image::DynamicImage::ImageLuma8(img) => {
+                let rgba = image::DynamicImage::ImageLuma8(img).into_rgba8();
+                (rgba.into_raw(), TextureFormat::Rgba8UnormSrgb)
+            }
+            other => (other.into_rgba8().into_raw(), TextureFormat::Rgba8UnormSrgb),
+        };
+
+        Ok((rgba, width, height, format))
     }
 
     /// Async load entry point - returns Prefab instead of NodeHandle
@@ -395,6 +541,8 @@ impl GltfLoader {
         }
     }
 
+    /// Load buffers asynchronously - Native version using tokio::spawn
+    #[cfg(not(target_arch = "wasm32"))]
     async fn load_buffers_async(gltf: &gltf::Gltf, reader: &AssetReaderVariant) -> anyhow::Result<Vec<Vec<u8>>> {
         let mut tasks = Vec::new();
 
@@ -432,50 +580,37 @@ impl GltfLoader {
         Ok(buffers)
     }
 
+    /// Load buffers asynchronously - WASM version (sequential, no tokio::spawn)
+    #[cfg(target_arch = "wasm32")]
+    async fn load_buffers_async(gltf: &gltf::Gltf, reader: &AssetReaderVariant) -> anyhow::Result<Vec<Vec<u8>>> {
+        let mut buffers = Vec::new();
+
+        for buffer in gltf.buffers() {
+            let data = match buffer.source() {
+                gltf::buffer::Source::Bin => {
+                    gltf.blob.clone().ok_or_else(|| anyhow::anyhow!("Missing GLB blob"))?
+                }
+                gltf::buffer::Source::Uri(uri) => {
+                    if uri.starts_with("data:") {
+                        decode_data_uri(uri)?
+                    } else {
+                        reader.read_bytes(uri).await?
+                    }
+                }
+            };
+            buffers.push(data);
+        }
+        
+        Ok(buffers)
+    }
+
+    /// Load textures asynchronously - Native version using tokio::spawn
+    #[cfg(not(target_arch = "wasm32"))]
     async fn load_textures_async(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<()> {
         let mut tasks: Vec<_> = Vec::new();
 
         for (index, texture) in gltf.textures().enumerate() {
-            let sampler = texture.sampler();
-            let mut generate_mipmaps = false;
-
-            let engine_sampler = TextureSampler {
-                mag_filter: sampler.mag_filter().map(|f| match f {
-                    gltf::texture::MagFilter::Nearest => wgpu::FilterMode::Nearest,
-                    gltf::texture::MagFilter::Linear => wgpu::FilterMode::Linear,
-                }).unwrap_or(wgpu::FilterMode::Linear),
-                min_filter: sampler.min_filter().map(|f| match f {
-                    gltf::texture::MinFilter::Nearest => wgpu::FilterMode::Nearest,
-                    gltf::texture::MinFilter::Linear => wgpu::FilterMode::Linear,
-                    gltf::texture::MinFilter::NearestMipmapNearest => { generate_mipmaps = true; wgpu::FilterMode::Nearest },
-                    gltf::texture::MinFilter::LinearMipmapNearest => { generate_mipmaps = true; wgpu::FilterMode::Linear },
-                    gltf::texture::MinFilter::NearestMipmapLinear => { generate_mipmaps = true; wgpu::FilterMode::Nearest },
-                    gltf::texture::MinFilter::LinearMipmapLinear => { generate_mipmaps = true; wgpu::FilterMode::Linear },
-                }).unwrap_or(wgpu::FilterMode::Linear),
-                address_mode_u: match sampler.wrap_s() {
-                    gltf::texture::WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
-                    gltf::texture::WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
-                    gltf::texture::WrappingMode::Repeat => wgpu::AddressMode::Repeat,
-                },
-                address_mode_v: match sampler.wrap_t() {
-                    gltf::texture::WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
-                    gltf::texture::WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
-                    gltf::texture::WrappingMode::Repeat => wgpu::AddressMode::Repeat,
-                },
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mipmap_filter: match sampler.min_filter() {
-                    Some(gltf::texture::MinFilter::NearestMipmapNearest) | Some(gltf::texture::MinFilter::LinearMipmapNearest) => {
-                        generate_mipmaps = true;
-                        wgpu::MipmapFilterMode::Nearest
-                    },
-                    Some(gltf::texture::MinFilter::NearestMipmapLinear) | Some(gltf::texture::MinFilter::LinearMipmapLinear) => {
-                        generate_mipmaps = true;
-                        wgpu::MipmapFilterMode::Linear
-                    },
-                    _ => wgpu::MipmapFilterMode::Linear,
-                },
-                ..Default::default()
-            };
+            let (engine_sampler, generate_mipmaps) = Self::create_texture_sampler(&texture);
 
             let name = texture.name().map(|s| s.to_string());
             let reader = self.reader.clone();
@@ -525,6 +660,93 @@ impl GltfLoader {
         }
 
         Ok(())
+    }
+
+    /// Load textures asynchronously - WASM version (sequential)
+    #[cfg(target_arch = "wasm32")]
+    async fn load_textures_async(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<()> {
+        for (index, texture) in gltf.textures().enumerate() {
+            let (engine_sampler, generate_mipmaps) = Self::create_texture_sampler(&texture);
+
+            let name = texture.name().map(|s| s.to_string());
+
+            let img_source = texture.source().source();
+            let img_bytes = match img_source {
+                gltf::image::Source::Uri { uri, .. } => {
+                    if uri.starts_with("data:") {
+                        decode_data_uri(uri)?
+                    } else {
+                        self.reader.read_bytes(uri).await?
+                    }
+                }
+                gltf::image::Source::View { view, .. } => {
+                    let start = view.offset();
+                    let end = start + view.length();
+                    buffers[view.buffer().index()][start..end].to_vec()
+                }
+            };
+
+            let img_data = image::load_from_memory(&img_bytes)
+                .with_context(|| format!("Failed to decode texture {}", index))?
+                .to_rgba8();
+
+            self.intermediate_textures.push(IntermediateTexture {
+                name,
+                width: img_data.width(),
+                height: img_data.height(),
+                image_data: img_data.into_vec(),
+                sampler: engine_sampler,
+                generate_mipmaps,
+            });
+        }
+
+        Ok(())
+    }
+
+    /// Helper function to create texture sampler from glTF texture
+    fn create_texture_sampler(texture: &gltf::Texture) -> (TextureSampler, bool) {
+        let sampler = texture.sampler();
+        let mut generate_mipmaps = false;
+
+        let engine_sampler = TextureSampler {
+            mag_filter: sampler.mag_filter().map(|f| match f {
+                gltf::texture::MagFilter::Nearest => wgpu::FilterMode::Nearest,
+                gltf::texture::MagFilter::Linear => wgpu::FilterMode::Linear,
+            }).unwrap_or(wgpu::FilterMode::Linear),
+            min_filter: sampler.min_filter().map(|f| match f {
+                gltf::texture::MinFilter::Nearest => wgpu::FilterMode::Nearest,
+                gltf::texture::MinFilter::Linear => wgpu::FilterMode::Linear,
+                gltf::texture::MinFilter::NearestMipmapNearest => { generate_mipmaps = true; wgpu::FilterMode::Nearest },
+                gltf::texture::MinFilter::LinearMipmapNearest => { generate_mipmaps = true; wgpu::FilterMode::Linear },
+                gltf::texture::MinFilter::NearestMipmapLinear => { generate_mipmaps = true; wgpu::FilterMode::Nearest },
+                gltf::texture::MinFilter::LinearMipmapLinear => { generate_mipmaps = true; wgpu::FilterMode::Linear },
+            }).unwrap_or(wgpu::FilterMode::Linear),
+            address_mode_u: match sampler.wrap_s() {
+                gltf::texture::WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+                gltf::texture::WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+                gltf::texture::WrappingMode::Repeat => wgpu::AddressMode::Repeat,
+            },
+            address_mode_v: match sampler.wrap_t() {
+                gltf::texture::WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+                gltf::texture::WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+                gltf::texture::WrappingMode::Repeat => wgpu::AddressMode::Repeat,
+            },
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mipmap_filter: match sampler.min_filter() {
+                Some(gltf::texture::MinFilter::NearestMipmapNearest) | Some(gltf::texture::MinFilter::LinearMipmapNearest) => {
+                    generate_mipmaps = true;
+                    wgpu::MipmapFilterMode::Nearest
+                },
+                Some(gltf::texture::MinFilter::NearestMipmapLinear) | Some(gltf::texture::MinFilter::LinearMipmapLinear) => {
+                    generate_mipmaps = true;
+                    wgpu::MipmapFilterMode::Linear
+                },
+                _ => wgpu::MipmapFilterMode::Linear,
+            },
+            ..Default::default()
+        };
+
+        (engine_sampler, generate_mipmaps)
     }
 
     fn get_or_create_texture(
