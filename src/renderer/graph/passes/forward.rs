@@ -91,7 +91,6 @@ impl ForwardRenderPass {
                 continue;
             };
 
-
             // 使用版本号构建快速缓存 Key
             // 注意：scene_id 的哈希计算已被缓存优化，成本较低
             let fast_key = FastPipelineKey {

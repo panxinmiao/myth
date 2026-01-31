@@ -129,83 +129,86 @@ impl ExtractedScene {
         let frustum = camera.frustum;
         let camera_pos = camera.position;
 
-        // let mut collected_meshes = Vec::new();
-        // let mut collected_skeleton_keys = HashSet::new();
-        let geo_guard = assets.geometries.read_lock();
-        //let mat_guard = assets.materials.read_lock();
+        // =========================================================
+        // 阶段 1：视锥剔除 & 收集 (持有读锁)
+        // =========================================================
+        {
 
-        for (node_handle, mesh) in scene.meshes.iter() {
-            if !mesh.visible {
-                continue;
-            }
+            let geo_guard = assets.geometries.read_lock();
 
-            let Some(node) = scene.nodes.get(node_handle) else {
-                continue;
-            };
+            for (node_handle, mesh) in scene.meshes.iter() {
+                if !mesh.visible {
+                    continue;
+                }
 
-            if !node.visible {
-                continue;
-            }
+                let Some(node) = scene.nodes.get(node_handle) else {
+                    continue;
+                };
 
-            let geo_handle = mesh.geometry;
-            // let mat_handle = mesh.material;
+                if !node.visible {
+                    continue;
+                }
 
-            let Some(geometry) = geo_guard.map.get(geo_handle) else {
-                log::warn!("Node {:?} refers to missing Geometry {:?}", node_handle, geo_handle);
-                continue;
-            };
+                let geo_handle = mesh.geometry;
+                // let mat_handle = mesh.material;
 
-            // if mat_guard.map.get(mat_handle).is_none() {
-            //     log::warn!("Node {:?} refers to missing Material {:?}", node_handle, mat_handle);
-            //     continue;
-            // }
+                let Some(geometry) = geo_guard.map.get(geo_handle) else {
+                    log::warn!("Node {:?} refers to missing Geometry {:?}", node_handle, geo_handle);
+                    continue;
+                };
 
-            let node_world = node.transform.world_matrix;
-            let skin_binding = scene.skins.get(node_handle);
+                let node_world = node.transform.world_matrix;
+                let skin_binding = scene.skins.get(node_handle);
 
-            // 视锥剔除：根据是否有骨骼绑定选择不同的包围盒
-            let is_visible = if let Some(binding) = skin_binding {
-                // 有骨骼绑定：使用 Skeleton 的包围盒
-                if let Some(skeleton) = scene.skeleton_pool.get(binding.skeleton) {
-                    if let Some(local_bounds) = skeleton.local_bounds() {
-                        let world_bounds = local_bounds.transform(&node_world);
-                        frustum.intersects_box(world_bounds.min, world_bounds.max)
+                // 视锥剔除：根据是否有骨骼绑定选择不同的包围盒
+                let is_visible = if let Some(binding) = skin_binding {
+                    // 有骨骼绑定：使用 Skeleton 的包围盒
+                    if let Some(skeleton) = scene.skeleton_pool.get(binding.skeleton) {
+                        if let Some(local_bounds) = skeleton.local_bounds() {
+                            let world_bounds = local_bounds.transform(&node_world);
+                            frustum.intersects_box(world_bounds.min, world_bounds.max)
+                        } else {
+                            // 包围盒尚未计算，默认可见
+                            true
+                        }
                     } else {
-                        // 包围盒尚未计算，默认可见
                         true
                     }
                 } else {
-                    true
+                    // 无骨骼绑定：使用 Geometry 的包围盒
+                    if let Some(bbox) = geometry.bounding_box.read().as_ref() {
+                        let world_bounds = bbox.transform(&node_world);
+                        frustum.intersects_box(world_bounds.min, world_bounds.max)
+                    } else if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
+                        // 回退到包围球
+                        let scale = node.transform.scale.max_element();
+                        let center = node_world.transform_point3(bs.center);
+                        frustum.intersects_sphere(center, bs.radius * scale)
+                    } else {
+                        true
+                    }
+                };
+
+                if !is_visible {
+                    continue;
                 }
-            } else {
-                // 无骨骼绑定：使用 Geometry 的包围盒
-                if let Some(bbox) = geometry.bounding_box.read().as_ref() {
-                    let world_bounds = bbox.transform(&node_world);
-                    frustum.intersects_box(world_bounds.min, world_bounds.max)
-                } else if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
-                    // 回退到包围球
-                    let scale = node.transform.scale.max_element();
-                    let center = node_world.transform_point3(bs.center);
-                    frustum.intersects_sphere(center, bs.radius * scale)
-                } else {
-                    true
+
+                self.collected_meshes.push(CollectedMesh {
+                    node_handle,
+                    skeleton: skin_binding.map(|skin| skin.skeleton),
+                });
+
+                if let Some(binding) = skin_binding {
+                    self.collected_skeleton_keys.insert(binding.skeleton);
                 }
-            };
 
-            if !is_visible {
-                continue;
-            }
-
-            self.collected_meshes.push(CollectedMesh {
-                node_handle,
-                skeleton: skin_binding.map(|skin| skin.skeleton),
-            });
-
-            if let Some(binding) = skin_binding {
-                self.collected_skeleton_keys.insert(binding.skeleton);
             }
 
         }
+
+        // =========================================================
+        // 阶段 2：准备资源 (无锁状态)
+        // =========================================================
 
         // 准备骨骼数据
         for skeleton_key in &self.collected_skeleton_keys {

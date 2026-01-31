@@ -26,8 +26,10 @@ use std::sync::Arc;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread;
+use std::time::Duration;
 
 use glam::Vec3;
+use parking_lot::deadlock;
 use three::engine::FrameState;
 use three::renderer::core::{BindingResource, ResourceBuilder};
 use three::resources::texture::TextureSource;
@@ -1320,6 +1322,26 @@ fn execute_future<F: std::future::Future<Output = ()> + 'static>(f: F) {
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
+
+    // === 启动死锁检测线程 ===
+    thread::spawn(move || {
+        loop {
+            thread::sleep(Duration::from_secs(3));
+            let deadlocks = deadlock::check_deadlock();
+            if deadlocks.is_empty() {
+                continue;
+            }
+
+            println!("{} deadlocks detected", deadlocks.len());
+            for (i, threads) in deadlocks.iter().enumerate() {
+                println!("Deadlock #{}", i);
+                for t in threads {
+                    println!("Thread Id {:#?}", t.thread_id());
+                    println!("{:#?}", t.backtrace());
+                }
+            }
+        }
+    });
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
