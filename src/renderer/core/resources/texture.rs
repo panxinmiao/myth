@@ -159,7 +159,7 @@ impl ResourceManager {
             return; 
         }
 
-        let Some(texture_asset) = assets.get_texture(handle) else {
+        let Some(texture_asset) = assets.textures.get(handle) else {
             log::warn!("Texture asset not found for handle: {:?}", handle);
             return;
         };
@@ -238,7 +238,7 @@ impl ResourceManager {
         }
 
         // 2. 获取 Asset 数据
-        let sampler_asset = assets.get_sampler(handle).expect("Sampler asset not found");
+        let sampler_asset = assets.samplers.get(handle).expect("Sampler asset not found");
         
         // 3. 构建 Key
         let key = sampler_asset.descriptor;
@@ -291,7 +291,7 @@ impl ResourceManager {
                     return binding.sampler_id;
                 }
 
-                if let Some(texture) = assets.get_texture(tex_handle) {
+                if let Some(texture) = assets.textures.get(tex_handle) {
                     // [修改] 不需要转换 Key，直接传 sampler
                     self.get_or_create_sampler(texture.sampler, texture.name())
                 } else {

@@ -306,7 +306,7 @@ impl<'a, 'b> LoadContext<'a, 'b> {
         engine_tex.sampler = raw.sampler.clone();
         engine_tex.generate_mipmaps = raw.generate_mipmaps;
 
-        let handle = self.assets.add_texture(engine_tex);
+        let handle = self.assets.textures.add(engine_tex);
         self.created_textures.insert(key, handle);
 
         Ok(handle)
@@ -471,7 +471,7 @@ impl<'a> GltfLoader<'a> {
         if let Some(mat) = &self.default_material {
             mat.clone()
         } else {
-            let mat = self.assets.add_material(Material::new_standard(Vec4::ONE));
+            let mat = self.assets.materials.add(Material::new_standard(Vec4::ONE));
             self.default_material = Some(mat.clone());
             mat
         }
@@ -657,7 +657,7 @@ impl<'a> GltfLoader<'a> {
         engine_tex.sampler = raw.sampler.clone();
         engine_tex.generate_mipmaps = raw.generate_mipmaps;
 
-        let handle = self.assets.add_texture(engine_tex);
+        let handle = self.assets.textures.add(engine_tex);
         self.created_textures.insert(key, handle);
 
         Ok(handle)
@@ -684,100 +684,121 @@ impl<'a> GltfLoader<'a> {
             let pbr = material.pbr_metallic_roughness();
 
             let base_color_factor = Vec4::from_array(pbr.base_color_factor());
-            let mut mat = MeshPhysicalMaterial::new(base_color_factor);
 
-            mat.set_metalness(pbr.metallic_factor());
-            mat.set_roughness(pbr.roughness_factor());
-            mat.set_emissive(Vec3::from_array(material.emissive_factor()));
-            
-            if let Some(info) = pbr.base_color_texture() {
-                self.setup_texture_map(&mut mat.map, &info, true)?;
-            }
 
-            if let Some(info) = pbr.metallic_roughness_texture() {
-                self.setup_texture_map(&mut mat.roughness_map, &info, false)?;
-                self.setup_texture_map(&mut mat.metalness_map, &info, false)?;
-            }
+            let mat = MeshPhysicalMaterial::new(base_color_factor);
 
-            if let Some(info) = material.normal_texture() {
-                let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
-                mat.normal_map.texture = Some(tex_handle);
-                mat.normal_map.channel = info.tex_coord() as u8;
-                mat.set_normal_scale(Vec2::splat(info.scale()));
 
-                let json_material = material.index()
-                    .and_then(|i| gltf.document.materials().nth(i));
+            {
 
-                // [修复]: 从 JSON 中补全 transform
-                if let Some(json_mat) = json_material {
-                    if let Some(json_normal) = &json_mat.normal_texture() {
-                        if let Some(transform_val) = json_normal.extensions()
-                            .and_then(|exts| exts.get("KHR_texture_transform")){
-                                parse_transform_from_json(&mut mat.normal_map, transform_val);
+                let mut uniforms = mat.uniforms.write();
+                let mut textures = mat.textures.write();
+                let mut settings = mat.settings.write();
+
+                uniforms.metalness = pbr.metallic_factor();
+                uniforms.roughness = pbr.roughness_factor();
+                uniforms.emissive = Vec3::from_array(material.emissive_factor());
+
+                
+                if let Some(info) = pbr.base_color_texture() {
+                    self.setup_texture_map(&mut textures.map, &info, true)?;
+                }
+
+                if let Some(info) = pbr.metallic_roughness_texture() {
+                    self.setup_texture_map(&mut textures.roughness_map, &info, false)?;
+                    self.setup_texture_map(&mut textures.metalness_map, &info, false)?;
+                }
+
+                if let Some(info) = material.normal_texture() {
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
+                    textures.normal_map.texture = Some(tex_handle);
+                    textures.normal_map.channel = info.tex_coord() as u8;
+                    uniforms.normal_scale = Vec2::splat(info.scale());
+                    // mat.set_normal_scale(Vec2::splat(info.scale()));
+
+
+                    let json_material = material.index()
+                        .and_then(|i| gltf.document.materials().nth(i));
+
+                    // [修复]: 从 JSON 中补全 transform
+                    if let Some(json_mat) = json_material {
+                        if let Some(json_normal) = &json_mat.normal_texture() {
+                            if let Some(transform_val) = json_normal.extensions()
+                                .and_then(|exts| exts.get("KHR_texture_transform")){
+                                    parse_transform_from_json(&mut textures.normal_map, transform_val);
+                            }
                         }
                     }
                 }
-            }
 
-            if let Some(info) = material.occlusion_texture() {
-                let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
-                mat.ao_map.texture = Some(tex_handle);
-                mat.ao_map.channel = info.tex_coord() as u8;
-                mat.set_ao_map_intensity(info.strength());
+                if let Some(info) = material.occlusion_texture() {
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
+                    textures.ao_map.texture = Some(tex_handle);
+                    textures.ao_map.channel = info.tex_coord() as u8;
+                    uniforms.ao_map_intensity = info.strength();
 
-                let json_material = material.index()
-                    .and_then(|i| gltf.document.materials().nth(i));
+                    let json_material = material.index()
+                        .and_then(|i| gltf.document.materials().nth(i));
 
-                // [修复]: 从 JSON 中补全 transform
-                if let Some(json_mat) = json_material {
-                    if let Some(json_occlusion) = &json_mat.occlusion_texture() {
-                        if let Some(transform_val) = json_occlusion.extensions()
-                            .and_then(|exts| exts.get("KHR_texture_transform")){
-                                parse_transform_from_json(&mut mat.ao_map, transform_val);
+                    // [修复]: 从 JSON 中补全 transform
+                    if let Some(json_mat) = json_material {
+                        if let Some(json_occlusion) = &json_mat.occlusion_texture() {
+                            if let Some(transform_val) = json_occlusion.extensions()
+                                .and_then(|exts| exts.get("KHR_texture_transform")){
+                                    parse_transform_from_json(&mut textures.ao_map, transform_val);
+                            }
                         }
                     }
                 }
-            }
 
-            if let Some(info) = material.emissive_texture() {
-                self.setup_texture_map(&mut mat.emissive_map, &info, true)?;
-            }
-
-            mat.set_side(if material.double_sided() { crate::resources::material::Side::Double } else { crate::resources::material::Side::Front });
-    
-            let alpha_mode = match material.alpha_mode() {
-                gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
-                gltf::material::AlphaMode::Mask => {
-                    let cut_off = material.alpha_cutoff().unwrap_or(0.5);
-                    AlphaMode::Mask(cut_off)
-                },
-                gltf::material::AlphaMode::Blend => AlphaMode::Blend,
-            };
-
-            mat.set_alpha_mode(alpha_mode);
-
-            if let Some(info) = material.emissive_strength() {
-                mat.set_emissive_intensity(info);
-            }
-
-            if let Some(info) = material.ior() {
-                mat.set_ior(info);
-            }
-
-            if let Some(specular) = material.specular() {
-                mat.set_specular_color(Vec3::from_array(specular.specular_color_factor()));
-                mat.set_specular_intensity(specular.specular_factor());
-
-                if let Some(info) = specular.specular_color_texture() {
-                    self.setup_texture_map(&mut mat.specular_map, &info, true)?;
+                if let Some(info) = material.emissive_texture() {
+                    self.setup_texture_map(&mut textures.emissive_map, &info, true)?;
                 }
 
-                if let Some(info) = specular.specular_texture() {
-                    self.setup_texture_map(&mut mat.specular_intensity_map, &info, false)?;
+                // mat.set_side(if material.double_sided() { crate::resources::material::Side::Double } else { crate::resources::material::Side::Front });
+                settings.side = if material.double_sided() { crate::resources::material::Side::Double } else { crate::resources::material::Side::Front };
+        
+                let alpha_mode = match material.alpha_mode() {
+                    gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+                    gltf::material::AlphaMode::Mask => {
+                        let cut_off = material.alpha_cutoff().unwrap_or(0.5);
+                        AlphaMode::Mask(cut_off)
+                    },
+                    gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+                };
+
+                // mat.set_alpha_mode(alpha_mode);
+                settings.alpha_mode = alpha_mode;
+
+                if let Some(info) = material.emissive_strength() {
+                    // mat.set_emissive_intensity(info);
+                    uniforms.emissive_intensity = info;
                 }
+
+                if let Some(info) = material.ior() {
+                    // mat.set_ior(info);
+                    uniforms.ior = info;
+                }
+
+                if let Some(specular) = material.specular() {
+                    // mat.set_specular_color(Vec3::from_array(specular.specular_color_factor()));
+                    // mat.set_specular_intensity(specular.specular_factor());
+                    uniforms.specular_color = Vec3::from_array(specular.specular_color_factor());
+                    uniforms.specular_intensity = specular.specular_factor();
+
+                    if let Some(info) = specular.specular_color_texture() {
+                        self.setup_texture_map(&mut textures.specular_map, &info, true)?;
+                    }
+
+                    if let Some(info) = specular.specular_texture() {
+                        self.setup_texture_map(&mut textures.specular_intensity_map, &info, false)?;
+                    }
+                }
+
             }
 
             let mut engine_mat = Material::from(mat);
+
             engine_mat.name = material.name().map(|s| Cow::Owned(s.to_string()));
 
             if material.pbr_specular_glossiness().is_some() {
@@ -813,7 +834,7 @@ impl<'a> GltfLoader<'a> {
             physical_mat.flush_texture_transforms();
             physical_mat.notify_pipeline_dirty();
 
-            let handle = self.assets.add_material(engine_mat);
+            let handle = self.assets.materials.add(engine_mat);
             self.material_map.push(handle);
         }
         Ok(())
@@ -923,7 +944,7 @@ impl<'a> GltfLoader<'a> {
 
         let mut engine_mesh = crate::resources::mesh::Mesh::new(geo_handle, mat_handle);
         
-        if let Some(geometry) = self.assets.get_geometry(geo_handle) {
+        if let Some(geometry) = self.assets.geometries.get(geo_handle) {
             if geometry.has_morph_targets() {
                 engine_mesh.init_morph_targets(
                     geometry.morph_target_count,
@@ -1047,7 +1068,7 @@ impl<'a> GltfLoader<'a> {
         
         let vertex_count = positions.len();
         if vertex_count == 0 {
-            return Ok(self.assets.add_geometry(geometry));
+            return Ok(self.assets.geometries.add(geometry));
         }
 
         // positions 属性是必须的
@@ -1163,7 +1184,7 @@ impl<'a> GltfLoader<'a> {
         geometry.build_morph_storage_buffers();
         geometry.compute_bounding_volume();
 
-        Ok(self.assets.add_geometry(geometry))
+        Ok(self.assets.geometries.add(geometry))
     }
 
     fn load_animations(
@@ -1313,7 +1334,7 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
 
         if let Some(diffuse_tex) = sg.diffuse_texture() {
             let tex_handle = ctx.get_or_create_texture(diffuse_tex.texture().index(), true)?;
-            physical_mat.map.texture = Some(tex_handle);
+            physical_mat.textures.write().map.texture = Some(tex_handle);
         }
 
         if let Some(sg_tex_info) = sg.specular_glossiness_texture() {
@@ -1369,8 +1390,8 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
                 TextureFormat::Rgba8Unorm
             );
             
-            let specular_handle = ctx.assets.add_texture(specular_texture);
-            let roughness_handle = ctx.assets.add_texture(roughness_texture);
+            let specular_handle = ctx.assets.textures.add(specular_texture);
+            let roughness_handle = ctx.assets.textures.add(roughness_texture);
 
             let mut uv_channel = sg_tex_info.tex_coord();
 
@@ -1384,18 +1405,19 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
             } else {
                 TextureTransform::default()
             };
+
+            let mut textures_set = physical_mat.textures.write();
             
-            physical_mat.specular_map.texture = Some(specular_handle);
-            physical_mat.specular_map.channel = uv_channel as u8;
-            physical_mat.specular_map.transform = transform.clone();
+            textures_set.specular_map.texture = Some(specular_handle);
+            textures_set.specular_map.channel = uv_channel as u8;
+            textures_set.specular_map.transform = transform.clone();
+            textures_set.roughness_map.texture = Some(roughness_handle);
+            textures_set.roughness_map.channel = uv_channel as u8;
+            textures_set.roughness_map.transform = transform.clone();
 
-            physical_mat.roughness_map.texture = Some(roughness_handle);
-            physical_mat.roughness_map.channel = uv_channel as u8;
-            physical_mat.roughness_map.transform = transform.clone();
-
-            physical_mat.metalness_map.texture = Some(roughness_handle);
-            physical_mat.metalness_map.channel = uv_channel as u8;
-            physical_mat.metalness_map.transform = transform;
+            textures_set.metalness_map.texture = Some(roughness_handle);
+            textures_set.metalness_map.channel = uv_channel as u8;
+            textures_set.metalness_map.transform = transform;
         } else {
             let glossiness_factor = sg.glossiness_factor();
             let mut uniforms = physical_mat.uniforms_mut();
@@ -1433,16 +1455,18 @@ impl GltfExtensionParser for KhrMaterialsClearcoat {
             uniforms.clearcoat_roughness = clearcoat_roughness;
         }
 
+        let mut textures = physical_mat.textures.write();
+
         if let Some(clearcoat_tex_info) = clearcoat_info.get("clearcoatTexture") {
-            self.setup_texture_map_from_extension(ctx, clearcoat_tex_info, &mut physical_mat.clearcoat_map, false);
+            self.setup_texture_map_from_extension(ctx, clearcoat_tex_info, &mut textures.clearcoat_map, false);
         }
 
         if let Some(clearcoat_roughness_tex_info) = clearcoat_info.get("clearcoatRoughnessTexture") {
-            self.setup_texture_map_from_extension(ctx, clearcoat_roughness_tex_info, &mut physical_mat.clearcoat_roughness_map, false);
+            self.setup_texture_map_from_extension(ctx, clearcoat_roughness_tex_info, &mut textures.clearcoat_roughness_map, false);
         }
 
         if let Some(clearcoat_normal_tex_info) = clearcoat_info.get("clearcoatNormalTexture") {
-            self.setup_texture_map_from_extension(ctx, clearcoat_normal_tex_info, &mut physical_mat.clearcoat_normal_map, false);
+            self.setup_texture_map_from_extension(ctx, clearcoat_normal_tex_info, &mut textures.clearcoat_normal_map, false);
         }
 
         Ok(())

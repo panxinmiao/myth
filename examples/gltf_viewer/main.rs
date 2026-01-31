@@ -134,6 +134,13 @@ struct GltfViewer {
     model_name: Option<String>,
     /// 是否需要重新加载模型
     pending_load: Option<ModelSource>,
+
+
+    // === 文件对话框相关 ===
+    /// 文件对话框接收端
+    file_dialog_rx: Receiver<PathBuf>,
+    /// 文件对话框发送端
+    file_dialog_tx: Sender<PathBuf>,
     
     // === 远程模型相关 ===
     /// 远程模型列表
@@ -189,13 +196,13 @@ impl AppHandler for GltfViewer {
                 "examples/assets/Park2/posz.jpg",
                 "examples/assets/Park2/negz.jpg",
             ],
-            three::ColorSpace::Srgb
+            three::ColorSpace::Srgb,
+            true
         ).expect("Failed to load environment map");
 
         let scene = engine.scene_manager.create_active();
 
-        let env_texture = engine.assets.get_texture_mut(env_texture_handle).unwrap();
-        env_texture.generate_mipmaps = true;
+        let env_texture = engine.assets.textures.get(env_texture_handle).unwrap();
 
         scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
         scene.environment.set_intensity(1.0);
@@ -222,6 +229,8 @@ impl AppHandler for GltfViewer {
         // 5. 创建异步通道
         let (tx, rx) = channel();
 
+        let (file_dialog_tx, file_dialog_rx) = channel();
+
         let mut viewer = Self {
             ui_pass,
             gltf_node: None,
@@ -234,7 +243,11 @@ impl AppHandler for GltfViewer {
             current_fps: 0.0,
             model_name: None,
             pending_load: None,
-            
+
+            // === 文件对话框相关 ===
+            file_dialog_rx,
+            file_dialog_tx,
+
             // 远程模型
             model_list: Vec::new(),
             selected_model_index: 0,
@@ -356,6 +369,10 @@ impl GltfViewer {
                     }
                 }
             }
+        }
+
+        while let Ok(path) = self.file_dialog_rx.try_recv() {
+            self.pending_load = Some(ModelSource::Local(path));
         }
     }
 
@@ -483,7 +500,7 @@ impl GltfViewer {
                 if !visited_materials.contains(&mat_handle) {
                     visited_materials.insert(mat_handle);
                     
-                    let mat_name = engine.assets.get_material(mat_handle)
+                    let mat_name = engine.assets.materials.get(mat_handle)
                         .and_then(|m| m.name.clone())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| format!("Material_{:?}", mat_handle));
@@ -494,8 +511,8 @@ impl GltfViewer {
                     });
                     
                     // 收集材质使用的纹理
-                    if let Some(material) = engine.assets.get_material(mat_handle) {
-                        self.collect_textures_from_material(material, &mat_name, &mut visited_textures);
+                    if let Some(material) = engine.assets.materials.get(mat_handle) {
+                        self.collect_textures_from_material(&material, &mat_name, &mut visited_textures);
                     }
                 }
             }
@@ -622,12 +639,29 @@ impl GltfViewer {
                 // ===== 本地文件加载 =====
                 ui.collapsing("📁 Local File", |ui| {
                     if ui.button("Open glTF/glb File...").clicked() {
-                        if let Some(path) = rfd::FileDialog::new()
-                            .add_filter("glTF", &["gltf", "glb"])
-                            .pick_file()
-                        {
-                            self.pending_load = Some(ModelSource::Local(path));
-                        }
+                        // if let Some(path) = rfd::FileDialog::new()
+                        //     .add_filter("glTF", &["gltf", "glb"])
+                        //     .pick_file()
+                        // {
+                        //     self.pending_load = Some(ModelSource::Local(path));
+                        // }
+                        // 克隆发送端，移动到异步块中
+                        let sender = self.file_dialog_tx.clone();
+
+                        // 生成异步任务
+                        execute_future(async move {
+                            let file = rfd::AsyncFileDialog::new()
+                                .add_filter("glTF", &["gltf", "glb"])
+                                .pick_file()
+                                .await; // 这里 await 不会卡死 UI
+
+                            if let Some(file_handle) = file {
+                                // 获取路径并发送回主线程
+                                // 注意：在 WASM 上 path() 可能无法通过 ModelSource::Local 使用
+                                let path = file_handle.path().to_path_buf();
+                                let _ = sender.send(path);
+                            }
+                        });
                     }
 
                     if let Some(name) = &self.model_name {
@@ -906,7 +940,7 @@ impl GltfViewer {
                 .num_columns(2)
                 .spacing([20.0, 4.0])
                 .show(ui, |ui| {
-                    if let Some(geo) = assets.get_geometry(mesh.geometry) {
+                    if let Some(geo) = assets.geometries.get(mesh.geometry) {
                         // 获取顶点数（从 position 属性）
                         if let Some(pos_attr) = geo.get_attribute("position") {
                             ui.label("Vertices:");
@@ -922,7 +956,7 @@ impl GltfViewer {
                     }
 
                     ui.label("Material:");
-                    let mat_name = assets.get_material(mesh.material)
+                    let mat_name = assets.materials.get(mesh.material)
                         .and_then(|m| m.name.clone())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "Unknown".to_string());
@@ -934,16 +968,20 @@ impl GltfViewer {
 
     /// 渲染材质详情
     fn render_material_details(&mut self, ui: &mut egui::Ui, assets: &mut AssetServer, handle: MaterialHandle) {
-        let Some(material) = assets.get_material_mut(handle) else {
+        let Some(material) = assets.materials.get(handle) else {
             ui.label("Material not found");
             return;
         };
+
+        // let mut material = (*material).clone();
 
         let name = material.name.clone()
             .map(|s| s.to_string())
             .unwrap_or_else(|| "Unnamed Material".to_string());
         ui.heading(format!("🎨 {}", name));
         ui.separator();
+
+        // let settings = material.settings();
 
         egui::Grid::new("material_grid")
             .num_columns(2)
@@ -959,23 +997,26 @@ impl GltfViewer {
                 ui.end_row();
 
                 // 只处理 Physical 材质
-                match &mut material.data {
+                match &material.data {
                     three::MaterialType::Physical(m) => {
                         {   // uniforms
+                            // let mut uniform_mut = m.uniforms_mut();
                             let mut uniform_mut = m.uniforms_mut();
 
                             ui.label("Type:");
                             ui.label("MeshPhysicalMaterial");
                             ui.end_row();
 
+                            
                             ui.label("Color:");
                             let mut color_arr = uniform_mut.color.to_array();
                             if ui.color_edit_button_rgba_unmultiplied(&mut color_arr).changed() {
-                                uniform_mut.color = glam::Vec4::from_array(color_arr); 
+                                uniform_mut.color = glam::Vec4::from_array(color_arr);
                             }
                             ui.end_row();
 
                             ui.label("Metalness:");
+                            // ui.add(egui::DragValue::new(&mut uniform_mut.metalness).speed(0.01));
                             ui.add(egui::DragValue::new(&mut uniform_mut.metalness).speed(0.01));
                             ui.end_row();
 
@@ -1114,7 +1155,7 @@ impl GltfViewer {
 
     /// 渲染纹理详情
     fn render_texture_details(&self, ui: &mut egui::Ui, assets: &mut AssetServer, handle: TextureHandle) {
-        let Some(texture) = assets.get_texture(handle) else {
+        let Some(texture) = assets.textures.get(handle) else {
             ui.label("Texture not found");
             return;
         };
@@ -1224,8 +1265,27 @@ fn fetch_model_list_blocking() -> Result<Vec<ModelInfo>, String> {
     })
 }
 
+
+#[cfg(not(target_arch = "wasm32"))]
+fn execute_future<F: std::future::Future<Output = ()> + Send + 'static>(f: F) {
+    tokio::spawn(f);
+}
+
+#[cfg(target_arch = "wasm32")]
+fn execute_future<F: std::future::Future<Output = ()> + 'static>(f: F) {
+    wasm_bindgen_futures::spawn_local(f);
+}
+
 fn main() -> anyhow::Result<()> {
     env_logger::init();
+
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("无法创建 Tokio Runtime");
+
+
+    let _enter = rt.enter();
     
     App::new()
         .with_title("glTF Viewer")

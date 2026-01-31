@@ -3,6 +3,7 @@ pub mod loaders;
 pub mod skeleton_asset;
 pub mod handle;
 pub mod io;
+pub mod storage;
 
 pub use server::{
     AssetServer,

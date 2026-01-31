@@ -1,25 +1,46 @@
+use std::sync::atomic::AtomicU64;
+
 use glam::{Vec2, Vec3, Vec4};
+use parking_lot::RwLock;
 
 use crate::resources::buffer::CpuBuffer;
-use crate::resources::material::{MaterialSettings, SettingsGuard, TextureSlot};
+use crate::resources::material::{MaterialSettings, TextureSlot};
 use crate::resources::texture::SamplerSource;
 use crate::resources::uniforms::MeshPhongUniforms;
 use crate::{impl_material_api, impl_material_trait};
 
+
+#[derive(Clone, Default, Debug)]
+pub struct MeshPhongTextureSet {
+    pub map: TextureSlot,
+    pub normal_map: TextureSlot,
+    pub specular_map: TextureSlot,
+    pub emissive_map: TextureSlot,
+
+    pub map_sampler: Option<SamplerSource>,
+    pub normal_map_sampler: Option<SamplerSource>,
+    pub specular_map_sampler: Option<SamplerSource>,
+    pub emissive_map_sampler: Option<SamplerSource>,
+}
+
+
+
 #[derive(Debug)]
 pub struct MeshPhongMaterial {
     pub(crate) uniforms: CpuBuffer<MeshPhongUniforms>,
-    pub(crate) settings: MaterialSettings,
-    pub(crate) version: u64,
+    pub(crate) settings: RwLock<MaterialSettings>,
+    pub(crate) version: AtomicU64,
 
-    pub(crate) map: TextureSlot,
-    pub map_sampler: Option<SamplerSource>,
-    pub(crate) normal_map: TextureSlot,
-    pub normal_map_sampler: Option<SamplerSource>,
-    pub(crate) specular_map: TextureSlot,
-    pub specular_map_sampler: Option<SamplerSource>,
-    pub(crate) emissive_map: TextureSlot,
-    pub emissive_map_sampler: Option<SamplerSource>,
+    pub(crate) textures: RwLock<MeshPhongTextureSet>,
+
+    // pub(crate) map: TextureSlot,
+    // pub map_sampler: Option<SamplerSource>,
+    // pub(crate) normal_map: TextureSlot,
+    // pub normal_map_sampler: Option<SamplerSource>,
+    // pub(crate) specular_map: TextureSlot,
+    // pub specular_map_sampler: Option<SamplerSource>,
+    // pub(crate) emissive_map: TextureSlot,
+    // pub emissive_map_sampler: Option<SamplerSource>,
 
     pub auto_sync_texture_to_uniforms: bool,
 }
@@ -34,35 +55,24 @@ impl MeshPhongMaterial {
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 Some("MeshPhongUniforms")
             ),
-            settings: MaterialSettings::default(),
-            version: 0,
+            settings: RwLock::new(MaterialSettings::default()),
+            version: AtomicU64::new(0),
 
-            map: TextureSlot::default(),
-            map_sampler: None,
-            normal_map: TextureSlot::default(),
-            normal_map_sampler: None,
-            specular_map: TextureSlot::default(),
-            specular_map_sampler: None,
-            emissive_map: TextureSlot::default(),
-            emissive_map_sampler: None,
+            textures: RwLock::new(MeshPhongTextureSet::default()),
+
+            // map: TextureSlot::default(),
+            // map_sampler: None,
+            // normal_map: TextureSlot::default(),
+            // normal_map_sampler: None,
+            // specular_map: TextureSlot::default(),
+            // specular_map_sampler: None,
+            // emissive_map: TextureSlot::default(),
+            // emissive_map_sampler: None,
 
             auto_sync_texture_to_uniforms: false,
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, MeshPhongUniforms> {
-        self.uniforms.write()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn settings_mut(&mut self) -> SettingsGuard<'_> {
-        SettingsGuard {
-            initial_settings: self.settings.clone(),
-            settings: &mut self.settings,
-            version: &mut self.version,
-        }
-    }
 }
 
 impl_material_api!(

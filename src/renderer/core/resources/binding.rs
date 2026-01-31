@@ -39,13 +39,15 @@ impl ResourceManager {
         // 每帧强制上传 joint matrices 到 GPU
         let buffer_ref = skeleton.joint_matrices.handle();
 
+        let buffer_guard = skeleton.joint_matrices.read();
+
         Self::write_buffer_internal(
             &self.device,
             &self.queue,
             &mut self.gpu_buffers,
             self.frame_index,
-            buffer_ref,
-            bytemuck::cast_slice(skeleton.joint_matrices.as_slice())
+            &buffer_ref,
+            bytemuck::cast_slice(buffer_guard.as_slice())
         );
     }
 
@@ -136,16 +138,21 @@ impl ResourceManager {
         if self.model_allocator.last_ensure_frame != self.frame_index {
             // self.ensure_buffer(self.model_allocator.cpu_buffer());
             let buffer_ref = self.model_allocator.buffer_handle();
-            let data = self.model_allocator.cpu_buffer().as_slice();
-            
-            Self::write_buffer_internal(
-                &self.device,
-                &self.queue,
-                &mut self.gpu_buffers,
-                self.frame_index,
-                buffer_ref,
-                bytemuck::cast_slice(data)
-            );
+
+            {
+                let cpu_buffer = self.model_allocator.cpu_buffer();
+                let guard = cpu_buffer.read();
+                let data = guard.as_slice();
+                Self::write_buffer_internal(
+                    &self.device,
+                    &self.queue,
+                    &mut self.gpu_buffers,
+                    self.frame_index,
+                    &buffer_ref,
+                    bytemuck::cast_slice(data)
+                );
+            }
+        
             self.model_allocator.last_ensure_frame = self.frame_index;
         }
 
@@ -154,7 +161,7 @@ impl ResourceManager {
         self.prepare_geometry(assets, mesh.geometry);
         self.prepare_material(assets, mesh.material);
         
-        let geometry = assets.get_geometry(mesh.geometry)?;
+        let geometry = assets.geometries.get(mesh.geometry)?;
         
         // === Collect 阶段: 收集所有资源 ID ===
         let mut current_ids = super::ResourceIdSet::with_capacity(4);
@@ -183,7 +190,7 @@ impl ResourceManager {
         }
         
         // 创建新 GpuObject
-        let binding_data = self.create_object_bind_group_internal(assets, geometry, mesh, skeleton, cache_key);
+        let binding_data = self.create_object_bind_group_internal(assets, &geometry, mesh, skeleton, cache_key);
         mesh.bind_group_cache.bind_group_id = Some(binding_data.bind_group_id);
         mesh.bind_group_cache.resource_ids = current_ids;
         Some(binding_data)
@@ -214,7 +221,7 @@ impl ResourceManager {
         if let Some(skeleton) = &skeleton {
             builder.add_storage_buffer(
                 "skins", 
-                skeleton.joint_matrices.handle(), 
+                &skeleton.joint_matrices.handle(), 
                 None, 
                 true, 
                 ShaderStages::VERTEX,

@@ -30,14 +30,15 @@ impl AppHandler for HttpGltfExample {
                 "examples/assets/Park2/posz.jpg",
                 "examples/assets/Park2/negz.jpg",
             ],
-            three::ColorSpace::Srgb
+            three::ColorSpace::Srgb,
+            true
         ).expect("Failed to load environment map");
 
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
 
-        let env_texture = engine.assets.get_texture_mut(env_texture_handle).unwrap();
-        env_texture.generate_mipmaps = true;
+        let env_texture = engine.assets.textures.get(env_texture_handle).unwrap();
+
         scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
         // 2. 添加灯光

@@ -17,6 +17,7 @@
 //!    - 深度写入/透明度/双面渲染等变化 -> 切换 Pipeline
 
 use crate::assets::{AssetServer, MaterialHandle};
+use crate::renderer::core::resources::EnsureResult;
 use crate::resources::material::{Material, RenderableMaterialTrait};
 
 use crate::renderer::core::builder::ResourceBuilder;
@@ -33,7 +34,7 @@ impl ResourceManager {
     /// - 资源内容变化 -> 上传 Buffer（由 BufferRef 自动处理）
     /// - 管线状态变化 -> 切换 Pipeline（由 version 记录，供外部使用）
     pub(crate) fn prepare_material(&mut self, assets: &AssetServer, handle: MaterialHandle) {
-        let Some(material) = assets.get_material(handle) else {
+        let Some(material) = assets.materials.get(handle) else {
             return;
         };
    
@@ -45,7 +46,7 @@ impl ResourceManager {
         }
 
         // 1. Ensure 阶段：确保所有资源存在且数据最新，收集物理资源 ID
-        let mut current_resource_ids = self.ensure_material_resources(assets, material);
+        let mut current_resource_ids = self.ensure_material_resources(assets, &material);
 
         // 2. Check 阶段：检查是否需要重建 BindGroup
         // 注意：这里只看 ID，不看 version！
@@ -59,7 +60,7 @@ impl ResourceManager {
 
         if needs_rebuild_bindgroup {
             // 3. Rebuild 阶段：重建 BindGroup（耗时操作）
-            self.rebuild_material_bindgroup(assets, handle, material, current_resource_ids);
+            self.rebuild_material_bindgroup(assets, handle, &material, current_resource_ids);
         }
 
         // 4. 更新版本号和帧计数（极速操作）
@@ -78,10 +79,20 @@ impl ResourceManager {
     /// 使用 `visit_textures` 遍历所有纹理资源
     fn ensure_material_resources(&mut self, assets: &AssetServer, material: &Material) -> ResourceIdSet {
         // 确保 Uniform Buffer
-        let uniform_result = self.ensure_buffer_ref(
-            material.data.uniform_buffer(), 
-            material.data.uniform_bytes()
-        );
+        // let uniform_result = self.ensure_buffer_ref(
+        //     material.data.uniform_buffer(), 
+        //     material.data.uniform_bytes()
+        // );
+
+        let mut uniform_result = EnsureResult::existing(0); 
+
+        // 2. 调用 with_uniform_bytes，传入闭包
+        material.data.with_uniform_bytes(&mut |bytes| {
+            uniform_result = self.ensure_buffer_ref(
+                &material.data.uniform_buffer(), 
+                bytes
+            );
+        });
 
         // 收集资源 ID
         let mut resource_ids = ResourceIdSet::with_capacity(16);

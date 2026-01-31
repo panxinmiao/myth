@@ -5,11 +5,12 @@ mod physical;
 mod macros;
 
 pub use basic::MeshBasicMaterial;
+use parking_lot::RwLockWriteGuard;
 pub use phong::MeshPhongMaterial;
 pub use standard::MeshStandardMaterial;
 pub use physical::MeshPhysicalMaterial;
 
-use std::{any::Any, borrow::Cow, ops::Deref};
+use std::{any::Any, borrow::Cow, ops::Deref, sync::atomic::{AtomicU64, Ordering}};
 
 use crate::assets::TextureHandle;
 use crate::renderer::core::builder::ResourceBuilder;
@@ -213,16 +214,17 @@ pub trait RenderableMaterialTrait: MaterialTrait {
     /// 获取材质的 Shader 宏定义
     fn shader_defines(&self) -> ShaderDefines;
     /// 材质渲染设置
-    fn settings(&self) -> &MaterialSettings;
+    fn settings(&self) -> MaterialSettings;
     
     /// 访问所有纹理
     fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource));
     /// 定义 GPU 资源绑定
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>);
     /// 获取 Uniform 缓冲区引用
-    fn uniform_buffer(&self) -> &BufferRef;
-    /// 获取 Uniform 数据字节
-    fn uniform_bytes(&self) -> &[u8];
+    fn uniform_buffer(&self) -> BufferRef;
+    // 获取 Uniform 数据字节
+    // fn uniform_bytes(&self) -> &[u8];
+    fn with_uniform_bytes(&self, f: &mut dyn FnMut(&[u8]));
 }
 
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
@@ -240,7 +242,7 @@ pub enum AlphaMode {
 }
 
 /// 材质设置 - 对应 Pipeline 变化
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Clone, Debug, Copy)]
 pub struct MaterialSettings {
     pub alpha_mode: AlphaMode,
     pub depth_write: bool,
@@ -281,28 +283,43 @@ impl MaterialSettings {
 /// 
 /// 当 Settings 发生变化时自动递增材质版本号，用于 Pipeline 缓存检测
 pub struct SettingsGuard<'a> {
-    settings: &'a mut MaterialSettings,
-    version: &'a mut u64,
+    guard: RwLockWriteGuard<'a, MaterialSettings>,
+    version: &'a AtomicU64,
     initial_settings: MaterialSettings,
+}
+
+impl<'a> SettingsGuard<'a> {
+    pub fn new(
+        guard: RwLockWriteGuard<'a, MaterialSettings>, 
+        version: &'a AtomicU64
+    ) -> Self {
+        // 保存快照 (MaterialSettings 必须实现 Clone)
+        let initial_settings = guard.clone();
+        Self {
+            guard,
+            initial_settings,
+            version,
+        }
+    }
 }
 
 impl<'a> std::ops::Deref for SettingsGuard<'a> {
     type Target = MaterialSettings;
     fn deref(&self) -> &Self::Target {
-        self.settings
+        &self.guard
     }
 }
 
 impl<'a> std::ops::DerefMut for SettingsGuard<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.settings
+        &mut self.guard
     }
 }
 
 impl<'a> Drop for SettingsGuard<'a> {
     fn drop(&mut self) {
-        if self.settings != &self.initial_settings {
-            *self.version = self.version.wrapping_add(1);
+        if *self.guard != self.initial_settings {
+            self.version.fetch_add(1, Ordering::Relaxed);
         }
     }
 }
@@ -378,7 +395,7 @@ impl RenderableMaterialTrait for MaterialType {
         }
     }
 
-    fn settings(&self) -> &MaterialSettings {
+    fn settings(&self) -> MaterialSettings {
         match self {
             Self::Basic(m) => m.settings(),
             Self::Phong(m) => m.settings(),
@@ -408,7 +425,7 @@ impl RenderableMaterialTrait for MaterialType {
         }
     }
 
-    fn uniform_buffer(&self) -> &BufferRef {
+    fn uniform_buffer(&self) -> BufferRef {
         match self {
             Self::Basic(m) => m.uniform_buffer(),
             Self::Phong(m) => m.uniform_buffer(),
@@ -418,13 +435,13 @@ impl RenderableMaterialTrait for MaterialType {
         }
     }
 
-    fn uniform_bytes(&self) -> &[u8] {
+    fn with_uniform_bytes(&self, visitor: &mut dyn FnMut(&[u8])) {
         match self {
-            Self::Basic(m) => m.uniform_bytes(),
-            Self::Phong(m) => m.uniform_bytes(),
-            Self::Standard(m) => m.uniform_bytes(),
-            Self::Physical(m) => m.uniform_bytes(),
-            Self::Custom(m) => m.uniform_bytes(),
+            Self::Basic(m) => m.with_uniform_bytes(visitor),
+            Self::Phong(m) => m.with_uniform_bytes(visitor),
+            Self::Standard(m) => m.with_uniform_bytes(visitor),
+            Self::Physical(m) => m.with_uniform_bytes(visitor),
+            Self::Custom(m) => m.with_uniform_bytes(visitor),
         }
     }
 }
@@ -562,6 +579,10 @@ impl Material {
         }
     }
 
+    pub fn uniforms(&self) -> &dyn Any {
+        self.data.as_any()
+    }
+
     pub fn as_any(&self) -> &dyn Any {
         self.data.as_any()
     }
@@ -582,7 +603,7 @@ impl Material {
     }
     
     #[inline]
-    pub(crate) fn settings(&self) -> &MaterialSettings {
+    pub(crate) fn settings(&self) -> MaterialSettings {
         self.data.settings()
     }
     
@@ -607,8 +628,8 @@ impl Material {
     }
     
     #[inline]
-    pub fn side(&self) -> &Side {
-        &self.settings().side
+    pub fn side(&self) -> Side {
+        self.settings().side
     }
 
     /// 定义 GPU 资源绑定（代理到内部数据）

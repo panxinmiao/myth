@@ -33,14 +33,14 @@ impl AppHandler for HelloTriangle {
         let mut basic_mat = Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0));
         
         // 3. 添加到 AssetServer
-        let tex_handle = engine.assets.add_texture(texture);
+        let tex_handle = engine.assets.textures.add(texture);
 
         if let Some(basic) = basic_mat.as_basic_mut() {
             basic.set_map(Some(tex_handle));
         }
 
-        let geo_handle = engine.assets.add_geometry(geometry);
-        let mat_handle = engine.assets.add_material(basic_mat);
+        let geo_handle = engine.assets.geometries.add(geometry);
+        let mat_handle = engine.assets.materials.add(basic_mat);
 
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();

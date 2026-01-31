@@ -63,15 +63,18 @@ impl ForwardRenderPass {
 
         commands_bundle.gpu_global_bind_group_id =gpu_world.bind_group_id;
         commands_bundle.gpu_global_bind_group = Some(gpu_world.bind_group.clone());
+
+        let geo_guard = ctx.assets.geometries.read_lock();
+        let mat_guard = ctx.assets.materials.read_lock();
         
         for item_idx in 0..ctx.extracted_scene.render_items.len() {
             let item = &ctx.extracted_scene.render_items[item_idx];
             
-            let Some(geometry) = ctx.assets.get_geometry(item.geometry) else {
+            let Some(geometry) = geo_guard.map.get(item.geometry) else {
                 warn!("Geometry {:?} missing during render prepare", item.geometry);
                 continue;
             };
-            let Some(material) = ctx.assets.get_material(item.material) else {
+            let Some(material) = mat_guard.map.get(item.material) else {
                 warn!("Material {:?} missing during render prepare", item.material);
                 continue;
             };

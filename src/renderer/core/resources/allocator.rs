@@ -133,7 +133,7 @@ impl ModelBufferAllocator {
     }
 
     /// 获取 Buffer 句柄
-    pub fn buffer_handle(&self) -> &BufferRef {
+    pub fn buffer_handle(&self) -> BufferRef {
         self.buffer.handle()
     }
 

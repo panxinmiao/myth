@@ -33,11 +33,12 @@ impl AppHandler for MorphTargetDemo {
                 "examples/assets/Park2/posz.jpg",
                 "examples/assets/Park2/negz.jpg",
             ],
-            three::ColorSpace::Srgb
+            three::ColorSpace::Srgb,
+            true
         ).expect("Failed to load environment map");
 
-        let env_texture = engine.assets.get_texture_mut(env_texture_handle).unwrap();
-        env_texture.generate_mipmaps = true;
+        let env_texture = engine.assets.textures.get(env_texture_handle).unwrap();
+
         scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
         // 2. 加载 glTF 模型 (带 Morph Target)
@@ -68,7 +69,7 @@ impl AppHandler for MorphTargetDemo {
 
         // 输出 Mesh Morph Target 信息
         for (node_handle, mesh) in scene.meshes.iter() {
-            if let Some(geometry) = engine.assets.get_geometry(mesh.geometry) {
+            if let Some(geometry) = engine.assets.geometries.get(mesh.geometry) {
                 if geometry.has_morph_targets() {
                     println!("Node {:?} has mesh with {} morph targets, {} vertices per target",
                         node_handle,

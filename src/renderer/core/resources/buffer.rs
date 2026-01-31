@@ -58,13 +58,18 @@ impl ResourceManager {
     /// 
     /// 返回 EnsureResult，包含物理资源 ID 和是否重建的标志
     pub fn ensure_buffer<T: super::GpuData>(&mut self, cpu_buffer: &super::CpuBuffer<T>) -> EnsureResult {
+        let buffer_ref = cpu_buffer.handle();
+        let buffer_gard  = cpu_buffer.read();
+
+        let data_to_upload = bytemuck::cast_slice(buffer_gard.as_bytes());
+
         Self::write_buffer_internal(
             &self.device,
             &self.queue,
             &mut self.gpu_buffers,
             self.frame_index,
-            cpu_buffer.handle(),
-            cpu_buffer.as_bytes(),
+            &buffer_ref,
+            data_to_upload,
         )
     }
 

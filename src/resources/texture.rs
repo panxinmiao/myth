@@ -2,7 +2,6 @@ use uuid::Uuid;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(debug_assertions)]
 use std::borrow::Cow;
-use glam::{Vec2, Mat3};
 use wgpu::{TextureFormat, TextureDimension, TextureViewDimension, AddressMode};
 use crate::{assets::{TextureHandle, server::SamplerHandle}, resources::image::Image};
 
@@ -153,46 +152,46 @@ impl Default for Sampler {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct TextureTransform {
-    pub offset: Vec2,
-    pub repeat: Vec2,
-    pub rotation: f32,
-    pub center: Vec2,
-}
+// #[derive(Debug, Clone, Copy)]
+// pub struct TextureTransform {
+//     pub offset: Vec2,
+//     pub repeat: Vec2,
+//     pub rotation: f32,
+//     pub center: Vec2,
+// }
 
-impl Default for TextureTransform {
-    fn default() -> Self {
-        Self {
-            offset: Vec2::ZERO,
-            repeat: Vec2::ONE,
-            rotation: 0.0,
-            center: Vec2::new(0.5, 0.5),
-        }
-    }
-}
+// impl Default for TextureTransform {
+//     fn default() -> Self {
+//         Self {
+//             offset: Vec2::ZERO,
+//             repeat: Vec2::ONE,
+//             rotation: 0.0,
+//             center: Vec2::new(0.5, 0.5),
+//         }
+//     }
+// }
 
-impl TextureTransform {
-    /// 获取 3x3 UV 变换矩阵
-    pub fn get_matrix(&self) -> Mat3 {
-        let c = self.rotation.cos();
-        let s = self.rotation.sin();
-        let ox = self.offset.x;
-        let oy = self.offset.y;
-        let rx = self.repeat.x;
-        let ry = self.repeat.y;
-        let cx = self.center.x;
-        let cy = self.center.y;
+// impl TextureTransform {
+//     /// 获取 3x3 UV 变换矩阵
+//     pub fn get_matrix(&self) -> Mat3 {
+//         let c = self.rotation.cos();
+//         let s = self.rotation.sin();
+//         let ox = self.offset.x;
+//         let oy = self.offset.y;
+//         let rx = self.repeat.x;
+//         let ry = self.repeat.y;
+//         let cx = self.center.x;
+//         let cy = self.center.y;
 
-        Mat3::from_cols_array(&[
-            c * rx,             s * rx,             0.0,
-            -s * ry,            c * ry,             0.0,
-            (c * -cx + s * -cy + cx) * rx + ox,
-            (-s * -cx + c * -cy + cy) * ry + oy,
-            1.0
-        ])
-    }
-}
+//         Mat3::from_cols_array(&[
+//             c * rx,             s * rx,             0.0,
+//             -s * ry,            c * ry,             0.0,
+//             (c * -cx + s * -cy + cx) * rx + ox,
+//             (-s * -cx + c * -cy + cy) * ry + oy,
+//             1.0
+//         ])
+//     }
+// }
 
 // ============================================================================
 // 2. Texture Asset
@@ -210,7 +209,7 @@ pub struct Texture {
     pub view_dimension: TextureViewDimension,
 
     pub sampler: TextureSampler,
-    pub transform: TextureTransform,
+    //pub transform: TextureTransform,
 
     pub generate_mipmaps: bool,
     
@@ -229,7 +228,7 @@ impl Texture {
             image,
             view_dimension,
             sampler: TextureSampler::default(),
-            transform: TextureTransform::default(),
+            // transform: TextureTransform::default(),
             generate_mipmaps: false,
             version: AtomicU64::new(0),
         }

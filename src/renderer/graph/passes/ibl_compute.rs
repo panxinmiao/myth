@@ -165,7 +165,7 @@ impl RenderNode for IBLComputePass {
         let mut current_version = 0;
         
         if let TextureSource::Asset(handle) = &current_source {
-            if let Some(tex) = ctx.assets.get_texture(*handle) {
+            if let Some(tex) = ctx.assets.textures.get(*handle) {
                 current_version = tex.version();
             }
         }
@@ -184,7 +184,7 @@ impl RenderNode for IBLComputePass {
             TextureSource::Asset(handle) => {
                 ctx.resource_manager.prepare_texture(ctx.assets, *handle);
 
-                let texture_asset = match ctx.assets.get_texture(*handle) {
+                let texture_asset = match ctx.assets.textures.get(*handle) {
                     Some(asset) => asset,
                     None => {
                         log::error!("IBL Source Asset missing: {:?}", handle);

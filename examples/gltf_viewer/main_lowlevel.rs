@@ -117,12 +117,13 @@ impl GltfViewer {
                 "examples/assets/Park2/posz.jpg",
                 "examples/assets/Park2/negz.jpg",
             ],
-            three::ColorSpace::Srgb
+            three::ColorSpace::Srgb,
+            true
         )?;
 
-        let env_texture = assets.get_texture_mut(env_texture_handle).unwrap();
-        env_texture.generate_mipmaps = true;
-        scene.environment.set_env_map(Some((env_texture_handle.into(), env_texture)));
+        let env_texture = assets.textures.get(env_texture_handle).unwrap();
+
+        scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
         // 添加灯光
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);

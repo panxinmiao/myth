@@ -19,10 +19,10 @@ impl AppHandler for RotatingCube {
     fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // 1. 创建并添加几何体和材质到资产服务器
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
-        let geo_handle = engine.assets.add_geometry(geometry);
+        let geo_handle = engine.assets.geometries.add(geometry);
 
         let material = Material::new_basic(Vec4::new(0.8, 0.3, 0.3, 1.0));
-        let mat_handle = engine.assets.add_material(material);
+        let mat_handle = engine.assets.materials.add(material);
 
         // 2. 创建 Mesh 并添加到场景
         let mesh = Mesh::new(geo_handle, mat_handle);

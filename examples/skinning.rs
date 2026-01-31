@@ -49,11 +49,11 @@ impl AppHandler for SkinningDemo {
                 "examples/assets/Park2/posz.jpg",
                 "examples/assets/Park2/negz.jpg",
             ],
-            three::ColorSpace::Srgb
+            three::ColorSpace::Srgb,
+            true
         ).expect("Failed to load environment map");
 
-        let env_texture = engine.assets.get_texture_mut(env_texture_handle).unwrap();
-        env_texture.generate_mipmaps = true;
+        let env_texture = engine.assets.textures.get(env_texture_handle).unwrap();
 
         let scene = engine.scene_manager.create_active();
 

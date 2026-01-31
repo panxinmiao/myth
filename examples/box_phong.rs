@@ -21,14 +21,14 @@ impl AppHandler for PhongBox {
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
         let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
-        let tex_handle = engine.assets.add_texture(texture);
+        let tex_handle = engine.assets.textures.add(texture);
 
         if let Some(phong) = mat.as_phong_mut() {
             phong.set_map(Some(tex_handle));
         }
         
-        let geo_handle = engine.assets.add_geometry(geometry);
-        let mat_handle = engine.assets.add_material(mat);
+        let geo_handle = engine.assets.geometries.add(geometry);
+        let mat_handle = engine.assets.materials.add(mat.into());
 
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();

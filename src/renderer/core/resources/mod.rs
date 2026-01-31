@@ -483,7 +483,8 @@ impl ResourceManager {
         // 初始化 Model GPU Buffer 映射
         let gpu_buffers = {
             let model_cpu_buffer = model_allocator.cpu_buffer();
-            let model_gpu_buffer = GpuBuffer::new(&device, model_cpu_buffer.as_bytes(), model_cpu_buffer.usage(), model_cpu_buffer.label());
+            let buffer_guard  = model_cpu_buffer.read();
+            let model_gpu_buffer = GpuBuffer::new(&device, buffer_guard.as_bytes(), model_cpu_buffer.usage(), model_cpu_buffer.label());
             
             let mut map = FxHashMap::default();
             map.insert(model_cpu_buffer.id(), model_gpu_buffer);
@@ -549,9 +550,10 @@ impl ResourceManager {
             // 立即创建新的 GpuBuffer (虽然数据还没填，但 wgpu::Buffer 对象需要存在)
             // 注意：这里我们创建一个未初始化的 Buffer 即可，因为后面 upload_model_buffer 会填充数据
             // 但为了安全，我们可以用 CpuBuffer 的默认数据初始化
+            let buffer_guard  = cpu_buf.read();
             let gpu_buf = GpuBuffer::new(
                 &self.device, 
-                cpu_buf.as_bytes(), 
+                buffer_guard.as_bytes(), 
                 cpu_buf.usage(), 
                 cpu_buf.label()
             );
@@ -578,8 +580,9 @@ impl ResourceManager {
         let allocator = &self.model_allocator;
         let buffer_ref = allocator.buffer_handle();
 
+        let buffer_guard  = allocator.cpu_buffer().read();
 
-        let full_slice = allocator.cpu_buffer().as_bytes();
+        let full_slice = buffer_guard.as_bytes();
 
         let stride = std::mem::size_of::<crate::resources::uniforms::DynamicModelUniforms>();
 
@@ -588,18 +591,12 @@ impl ResourceManager {
 
         let data_to_upload = &full_slice[0..used_bytes];
 
-        // if allocator.need_recreate_buffer() {
-        //     // Buffer 重建后，所有缓存都失效
-        //     self.object_bind_group_cache.clear();
-        //     self.bind_group_id_lookup.clear();
-        // }
-
         Self::write_buffer_internal(
             &self.device,
             &self.queue,
             &mut self.gpu_buffers,
             self.frame_index,
-            buffer_ref,
+            &buffer_ref,
             data_to_upload
         );
     }

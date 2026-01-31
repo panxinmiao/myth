@@ -21,14 +21,14 @@ impl AppHandler for TexturedBox {
         let mut basic_mat = MeshBasicMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         // 2. 将资源添加到 AssetServer
-        let tex_handle = engine.assets.add_texture(texture);
+        let tex_handle = engine.assets.textures.add(texture);
 
         basic_mat.set_map(Some(tex_handle));
         basic_mat.set_color(Vec4::new(1.0, 1.0, 1.0, 1.0));
       
         
-        let geo_handle = engine.assets.add_geometry(geometry);
-        let mat_handle = engine.assets.add_material(basic_mat);
+        let geo_handle = engine.assets.geometries.add(geometry);
+        let mat_handle = engine.assets.materials.add(basic_mat.into());
 
         engine.scene_manager.create_active();
 

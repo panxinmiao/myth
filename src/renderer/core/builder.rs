@@ -82,8 +82,8 @@ impl<'a> ResourceBuilder<'a> {
     ) {
         self.add_uniform_buffer(
             name, 
-            cpu_buffer.handle(), 
-            Some(cpu_buffer.as_bytes()), 
+            &cpu_buffer.handle(), 
+            None, 
             visibility, 
             false,
             None,

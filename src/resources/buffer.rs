@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(debug_assertions)]
 use std::borrow::Cow;
 use bytemuck::Pod;
+use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 
 static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -99,45 +100,88 @@ impl BufferRef {
 }
 
 pub struct BufferGuard<'a, T: GpuData> {
-    buffer: &'a mut CpuBuffer<T>,
+    guard: RwLockWriteGuard<'a, CpuBufferState<T>>,
 }
 
 impl<'a, T: GpuData> std::ops::Deref for BufferGuard<'a, T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
-        &self.buffer.data
+        &self.guard.data
     }
 }
 
 impl<'a, T: GpuData> std::ops::DerefMut for BufferGuard<'a, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.buffer.data
+        &mut self.guard.data
     }
 }
 
 impl<'a, T: GpuData> Drop for BufferGuard<'a, T> {
     fn drop(&mut self) {
-        self.buffer.buffer.version = self.buffer.buffer.version.wrapping_add(1);
-        
-        let new_size = self.buffer.data.byte_size();
-        if new_size != self.buffer.buffer.size {
-            self.buffer.buffer.size = new_size;
-        }
+        self.guard.version = self.guard.version.wrapping_add(1);
+        self.guard.size = self.guard.data.byte_size();
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct CpuBuffer<T: GpuData> {
+
+/// 内部可变状态：只有这些数据需要被锁保护
+#[derive(Debug)]
+struct CpuBufferState<T: GpuData> {
     data: T,
-    buffer: BufferRef,
+    version: u64,
+    size: usize,
+}
+
+#[derive(Debug)]
+pub struct CpuBuffer<T: GpuData> {
+    // 1. 不可变元数据 (Immutable Metadata) - 放在锁外，支持无锁访问
+    id: u64,
+    usage: wgpu::BufferUsages,
+    #[cfg(debug_assertions)]
+    label: Cow<'static, str>,
+
+    // 2. 可变状态 (Mutable State) - 放在锁内
+    inner: RwLock<CpuBufferState<T>>,
+}
+
+impl<T: GpuData + Clone> Clone for CpuBuffer<T> {
+    fn clone(&self) -> Self {
+        // 1. 获取读锁，拿到当前数据的引用
+        let guard = self.inner.read();
+        // 2. 构造新的 CpuBuffer，克隆数据
+        Self::new(
+            guard.data.clone(), 
+            self.usage, 
+            self.label() // 复用 Label
+        )
+    }
 }
 
 impl<T: GpuData> CpuBuffer<T> {
     pub fn new(data: T, usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         let size = data.byte_size();
-        let mut buffer = BufferRef::new(size, usage, label);
-        buffer.version = 0;
-        Self { data, buffer }
+
+        // 先创建 BufferRef 主要是为了复用它的 ID 生成逻辑
+        let base_ref = BufferRef::new(size, usage, label);
+
+        Self {
+            // 提取不可变元数据到外层
+            id: base_ref.id,
+            usage: base_ref.usage,
+            #[cfg(debug_assertions)]
+            label: base_ref.label,
+
+            // 初始化内部可变状态
+            inner: RwLock::new(CpuBufferState {
+                data,
+                version: 0,
+                size,
+            }),
+        }
+
+        // let mut buffer = BufferRef::new(size, usage, label);
+        // buffer.version = 0;
+        // Self { data, buffer }
     }
 
     pub fn default() -> Self 
@@ -158,56 +202,105 @@ impl<T: GpuData> CpuBuffer<T> {
         Self::new(T::default(), wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, label)
     }
 
-    pub fn read(&self) -> &T {
-        &self.data
-    }
+    // pub fn read(&self) -> &T {
+    //     &self.data
+    // }
 
-    pub fn write(&mut self) -> BufferGuard<'_, T> {
-        BufferGuard { buffer: self }
-    }
+    // pub fn write(&mut self) -> BufferGuard<'_, T> {
+    //     BufferGuard { buffer: self }
+    // }
     
-    pub fn handle(&self) -> &BufferRef {
-        &self.buffer
-    }
+    // pub fn handle(&self) -> &BufferRef {
+    //     &self.buffer
+    // }
 
+    // === 不需要锁的操作 ===
     pub fn id(&self) -> u64 {
-        self.buffer.id
+        self.id
     }
 
     pub fn usage(&self) -> wgpu::BufferUsages {
-        self.buffer.usage
+        self.usage
     }
 
     pub fn label(&self) -> Option<&str> {
-        self.buffer.label()
+        #[cfg(debug_assertions)]
+        { Some(&self.label) }
+        #[cfg(not(debug_assertions))]
+        { None }
     }
 
+    // === 需要锁的操作 ===
+
     pub fn size(&self) -> usize {
-        self.buffer.size
+        self.inner.read().size
     }
 
     pub fn version(&self) -> u64 {
-        self.buffer.version
+        self.inner.read().version
     }
 
-    pub fn as_bytes(&self) -> &[u8] {
-        self.data.as_bytes()
+    /// 获取数据读锁
+    /// 注意：返回的 Guard 只能访问 data
+    pub fn read(&self) -> BufferReadGuard<'_, T> {
+        BufferReadGuard {
+            guard: self.inner.read()
+        }
     }
+
+    // 为了让 deref 能够工作，我们需要一个小技巧或者让用户手动访问 .data
+    // 鉴于 CpuBufferState 对外不可见，建议让用户通过 read().data 访问，或者自定义 ReadGuard
+
+    pub fn write(&self) -> BufferGuard<'_, T> {
+        BufferGuard {
+            guard: self.inner.write(),
+        }
+    }
+
+    /// 获取当前的 BufferRef 快照
+    /// 注意：这里由返回 `&BufferRef` 改为了返回 `BufferRef` (值类型)
+    /// 因为版本号在锁里，我们必须现场构造一个新的 BufferRef
+    pub fn handle(&self) -> BufferRef {
+        let state = self.inner.read();
+        BufferRef {
+            id: self.id,
+            #[cfg(debug_assertions)]
+            label: self.label.clone(),
+            usage: self.usage,
+            size: state.size,
+            version: state.version,
+        }
+    }
+
+    // pub fn as_bytes(&self) -> &[u8] {
+    //     self.data.as_bytes()
+    // }
 }
 
-impl<T: GpuData> std::ops::Deref for CpuBuffer<T> {
+pub struct BufferReadGuard<'a, T: GpuData> {
+    guard: RwLockReadGuard<'a, CpuBufferState<T>>,
+}
+
+impl<'a, T: GpuData> std::ops::Deref for BufferReadGuard<'a, T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
-        &self.data
+        &self.guard.data
     }
 }
 
-impl<T: GpuData> GpuData for CpuBuffer<T> {
-    fn as_bytes(&self) -> &[u8] {
-        self.data.as_bytes()
-    }
+// impl<T: GpuData> std::ops::Deref for CpuBuffer<T> {
+//     type Target = T;
+//     fn deref(&self) -> &Self::Target {
+//         &self.data
+//     }
+// }
+
+// impl<T: GpuData> GpuData for CpuBuffer<T> {
+//     fn as_bytes(&self) -> &[u8] {
+//         self.data.as_bytes()
+//     }
     
-    fn byte_size(&self) -> usize {
-        self.data.byte_size()
-    }
-}
+//     fn byte_size(&self) -> usize {
+//         self.data.byte_size()
+//     }
+// }

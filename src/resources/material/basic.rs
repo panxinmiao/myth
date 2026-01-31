@@ -1,19 +1,28 @@
+use std::sync::atomic::AtomicU64;
+
 use glam::Vec4;
+use parking_lot::RwLock;
 
 use crate::resources::buffer::CpuBuffer;
-use crate::resources::material::{MaterialSettings, SettingsGuard, TextureSlot};
+use crate::resources::material::{MaterialSettings, TextureSlot};
 use crate::resources::texture::SamplerSource;
 use crate::resources::uniforms::MeshBasicUniforms;
 use crate::{impl_material_api, impl_material_trait};
 
+#[derive(Clone, Default, Debug)]
+pub struct MeshBasicTextureSet {
+    pub map: TextureSlot,
+
+    pub map_sampler: Option<SamplerSource>,
+}
+
 #[derive(Debug)]
 pub struct MeshBasicMaterial {
     pub(crate) uniforms: CpuBuffer<MeshBasicUniforms>,
-    pub(crate) settings: MaterialSettings,
-    pub(crate) version: u64,
+    pub(crate) settings: RwLock<MaterialSettings>,
+    pub(crate) version: AtomicU64,
 
-    pub(crate) map: TextureSlot,
-    pub map_sampler: Option<SamplerSource>,
+    pub(crate) textures : RwLock<MeshBasicTextureSet>,
 
     pub auto_sync_texture_to_uniforms: bool,
 }
@@ -28,29 +37,18 @@ impl MeshBasicMaterial {
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 Some("MeshBasicUniforms")
             ),
-            settings: MaterialSettings::default(),
-            version: 0,
+            settings: RwLock::new(MaterialSettings::default()),
+            version: AtomicU64::new(0),
 
-            map: TextureSlot::default(),
-            map_sampler: None,
+            textures: RwLock::new(MeshBasicTextureSet::default()),
+
+            // map: TextureSlot::default(),
+            // map_sampler: None,
 
             auto_sync_texture_to_uniforms: false,
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, MeshBasicUniforms> {
-        self.uniforms.write()
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn settings_mut(&mut self) -> SettingsGuard<'_> {
-        SettingsGuard {
-            initial_settings: self.settings.clone(),
-            settings: &mut self.settings,
-            version: &mut self.version,
-        }
-    }
 }
 
 impl_material_api!(

@@ -45,6 +45,8 @@ rustc-hash = "2.1.1"
 smallvec = "1.15"
 half = "2.4"
 
+parking_lot = { version = "0.12", features = ["deadlock_detection"] }
+
 tokio = { version = "1.43", features = ["fs", "rt-multi-thread", "macros"] }
 futures = "0.3"
 reqwest = { version = "0.13.1", default-features = false, features = ["default-tls"], optional = true }

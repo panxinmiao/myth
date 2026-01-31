@@ -20,82 +20,70 @@ macro_rules! impl_material_api {
             // ==========================================
             // 1. 通用 Settings API
             // ==========================================
-            
-            /// 设置是否开启透明混合。
-            /// 注意：切换此选项可能会触发布局重建。
-            // pub fn set_transparent(&mut self, transparent: bool) {
-            //     let transparent_mode = if transparent {
-            //         $crate::resources::material::AlphaMode::Blend
-            //     } else {
-            //         $crate::resources::material::AlphaMode::Opaque
-            //     };
 
-            //     if self.settings.alpha_mode != transparent_mode {
-            //         self.settings.alpha_mode = transparent_mode;
-            //         self.version = self.version.wrapping_add(1);
-            //     }
-            // }
-            // pub fn transparent(&self) -> bool {
-            //     match self.settings.alpha_mode {
-            //         $crate::resources::material::AlphaMode::Blend => true,
-            //         _ => false,
-            //     }
-            // }
+            pub fn settings_mut(&self) -> $crate::resources::material::SettingsGuard<'_> {
+                $crate::resources::material::SettingsGuard::new(
+                    self.settings.write(), 
+                    &self.version 
+                )
+            }
+
+            pub fn settings(&self) -> $crate::resources::material::MaterialSettings {
+                *self.settings.read()
+            }
+
 
             pub fn set_alpha_mode(&mut self, mode: $crate::resources::material::AlphaMode) {
-                if self.settings.alpha_mode != mode {
-                    match mode {
-                        $crate::resources::material::AlphaMode::Mask(cutoff) => {
-                            let mut uniforms = self.uniforms.write();
-                            uniforms.alpha_test = cutoff;
-                        }
-                        _ => {}
-                    }
-                    self.settings.alpha_mode = mode;
-                    self.version = self.version.wrapping_add(1);
+                self.settings_mut().alpha_mode = mode;
+                // 处理与之关联的 Uniform 逻辑
+                if let $crate::resources::material::AlphaMode::Mask(cutoff) = mode {
+                     self.uniforms.write().alpha_test = cutoff;
                 }
             }
 
             pub fn alpha_mode(&self) -> $crate::resources::material::AlphaMode {
-                self.settings.alpha_mode
+                self.settings.read().alpha_mode
             }
 
             /// 设置渲染面剔除模式 (Front/Back/Double)。
             pub fn set_side(&mut self, side: $crate::resources::material::Side) {
-                if self.settings.side != side {
-                    self.settings.side = side;
-                    self.version = self.version.wrapping_add(1);
-                }
+                self.settings_mut().side = side;
             }
             pub fn side(&self) -> $crate::resources::material::Side {
-                self.settings.side
+                self.settings.read().side
             }
 
             /// 开启或关闭深度测试。
             pub fn set_depth_test(&mut self, depth_test: bool) {
-                if self.settings.depth_test != depth_test {
-                    self.settings.depth_test = depth_test;
-                    self.version = self.version.wrapping_add(1);
-                }
+                self.settings_mut().depth_test = depth_test;
             }
             pub fn depth_test(&self) -> bool {
-                self.settings.depth_test
+                self.settings.read().depth_test
             }
 
             /// 开启或关闭深度写入。
             /// 对于透明物体，通常建议关闭此选项。
             pub fn set_depth_write(&mut self, depth_write: bool) {
-                if self.settings.depth_write != depth_write {
-                    self.settings.depth_write = depth_write;
-                    self.version = self.version.wrapping_add(1);
-                }
+                self.settings_mut().depth_write = depth_write;
             }
             pub fn depth_write(&self) -> bool {
-                self.settings.depth_write
+                self.settings.read().depth_write
             }
 
 
             // --- Uniform Accessors ---
+
+            /// 获取所有 Uniform 参数的可变访问器 (批量修改用)
+            /// 返回的 Guard 离开作用域时会自动标记数据为 Dirty
+            pub fn uniforms_mut(&self) -> $crate::resources::buffer::BufferGuard<'_, $uniform_struct> {
+                self.uniforms.write()
+            }
+
+            /// 获取所有 Uniform 参数的只读访问器
+            pub fn uniforms(&self) -> $crate::resources::buffer::BufferReadGuard<'_, $uniform_struct> {
+                self.uniforms.read()
+            }
+
             $(
                 paste::paste! {
                     #[doc = $u_doc]
@@ -109,42 +97,56 @@ macro_rules! impl_material_api {
                 }
             )*
 
-            // ==========================================
-            // 2. 纹理槽位 API (Guard 模式)
-            // ==========================================
+            // === Texture Accessors ===
             $(
                 paste::paste! {
-                    #[doc = $t_doc]
-                    #[doc = "\n\n获取纹理槽位的只读引用。"]
-                    #[inline]
-                    pub fn $t_field(&self) -> &$crate::resources::material::TextureSlot {
-                        &self.$t_field
-                    }
 
                     #[doc = $t_doc]
-                    #[doc = "\n\n获取纹理槽位的可变引用守卫。"]
-                    #[doc = "当纹理的有/无状态变化时，会自动触发版本更新。"]
-                    #[inline]
-                    pub fn [<$t_field _mut>](&mut self) -> $crate::resources::material::TextureSlotGuard<'_> {
-                        $crate::resources::material::TextureSlotGuard::new(
-                            &mut self.$t_field,
-                            &mut self.version
-                        )
-                    }
-
-                    #[doc = $t_doc]
-                    #[doc = "\n\n快捷方法：直接设置纹理句柄。"]
-                    #[doc = "会自动处理版本更新。"]
-                    #[inline]
-                    pub fn [<set_ $t_field>](&mut self, texture: Option<impl Into<$crate::resources::material::TextureSlot>>) {
-                        let new_slot = texture.map(|t| t.into()).unwrap_or_default();
-                        let was_some = self.$t_field.texture.is_some();
-                        let is_some = new_slot.texture.is_some();
-                        self.$t_field = new_slot;
-                        if was_some != is_some {
-                            self.version = self.version.wrapping_add(1);
+                    pub fn [<set_ $t_field>](&self, value: Option<$crate::assets::TextureHandle>) {
+                        // 获取 textures 的写锁
+                        let mut tex_data = self.textures.write();
+                        if tex_data.$t_field.texture != value {
+                            tex_data.$t_field.texture = value;
+                            // 纹理改变，BindGroup 需要重建，手动 bump version
+                            self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         }
                     }
+
+                    pub fn $t_field(&self) -> Option<$crate::assets::TextureHandle> {
+                        // 获取 textures 的读锁
+                        self.textures.read().$t_field.texture.clone()
+                    }
+
+                    // 允许修改纹理变换 (UV Transform)
+                    pub fn [<set_ $t_field _transform>](&self, transform: $crate::resources::material::TextureTransform) {
+                         let mut tex_data = self.textures.write();
+                         tex_data.$t_field.transform = transform;
+                         //  flush_texture_transforms() 或者在这里自动处理
+                    }
+
+                    // 比如同时修改 texture, channel, transform
+                    pub fn [<configure_ $t_field>]<F>(&self, f: F) 
+                    where F: FnOnce(&mut $crate::resources::material::TextureSlot) 
+                    {
+                        let mut tex_data = self.textures.write();
+                        let slot = &mut tex_data.$t_field;
+                        
+                        // 记录修改前的状态 (关键字段) 用于判断是否需要 bump version
+                        // 假设 TextureSlot 实现了 PartialEq，或者我们只关心 texture 和 channel
+                        let old_texture = slot.texture.clone();
+                        let old_channel = slot.channel;
+
+                        // 执行用户的闭包
+                        f(slot);
+
+                        // 检查是否需要更新版本号
+                        // 1. 纹理变了 -> BindGroup 变 -> Version++
+                        // 2. Channel 变了 -> Shader 宏变 (HAS_MAP_UV 1) -> Version++
+                        if slot.texture != old_texture || slot.channel != old_channel {
+                            self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+
                 }
             )*
 
@@ -153,12 +155,14 @@ macro_rules! impl_material_api {
             /// 返回值表示是否有数据更新
             pub fn flush_texture_transforms(&mut self) -> bool {
                 let mut changed = false;
+
+                let tex_data = self.textures.read();
                 let mut uniforms = self.uniforms.write();
 
                 $(
                     paste::paste! {
                         // 计算矩阵
-                        let new_matrix = self.$t_field.compute_matrix();
+                        let new_matrix = tex_data.$t_field.compute_matrix();
                         
                         // 自动推导字段名: map -> map_transform
                         if uniforms.[<$t_field _transform>] != new_matrix {
@@ -188,7 +192,7 @@ macro_rules! impl_material_api {
             /// - 确信材质配置已改变但版本未更新时
             #[inline]
             pub fn notify_pipeline_dirty(&mut self) {
-                self.version = self.version.wrapping_add(1);
+                self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
     };
@@ -216,10 +220,22 @@ macro_rules! impl_material_trait {
         // 2. 实现渲染接口
         impl $crate::resources::material::RenderableMaterialTrait for $struct_name {
             fn shader_name(&self) -> &'static str { $shader_name }
-            fn version(&self) -> u64 { self.version }
-            fn settings(&self) -> &$crate::resources::material::MaterialSettings { &self.settings }
-            fn uniform_buffer(&self) -> &$crate::resources::buffer::BufferRef { self.uniforms.handle() }
-            fn uniform_bytes(&self) -> &[u8] { self.uniforms.as_bytes() }
+            fn version(&self) -> u64 { self.version.load(std::sync::atomic::Ordering::Relaxed) }
+            fn settings(&self) -> $crate::resources::material::MaterialSettings { *self.settings.read() }
+            fn uniform_buffer(&self) -> $crate::resources::buffer::BufferRef { self.uniforms.handle() }
+            // fn uniform_bytes(&self) -> &[u8] { self.uniforms.as_bytes() }
+
+            fn with_uniform_bytes(&self, visitor: &mut dyn FnMut(&[u8])) {
+                use $crate::resources::buffer::GpuData;
+                
+                // 1. 获取读锁 (Guard)
+                let guard = self.uniforms.read();
+                
+                // 2. 将内部数据的切片传给回调函数
+                visitor(guard.as_bytes());
+                
+                // 3. 闭包结束，Guard 销毁，锁释放
+            }
 
             fn shader_defines(&self) -> $crate::resources::shader_defines::ShaderDefines {
                 let mut defines = $crate::resources::shader_defines::ShaderDefines::new();
@@ -228,34 +244,31 @@ macro_rules! impl_material_trait {
                     defines.set($def_key, $def_val);
                 )*
 
-                // 纹理宏定义
+                let tex_data = self.textures.read();
+
                 $(
-                    if self.$field.is_some() {
-                        // 2.1 自动生成开关宏：map -> HAS_MAP
-                        // stringify!(map) -> "map" -> to_uppercase() -> "MAP"
+                    if tex_data.$field.texture.is_some() {
                         let field_upper = stringify!($field).to_uppercase();
                         let has_define_key = format!("HAS_{}", field_upper);
                         defines.set(&has_define_key, "1");
-
-                        // 2.2 自动生成 UV 通道宏：map -> MAP_UV
-                        // 值为 self.map.channel (例如 "0", "1")
-                        if self.$field.channel > 0 {
+                        if tex_data.$field.channel > 0 {
                             let uv_define_key = format!("{}_UV", field_upper);
-                            let uv_define_val = self.$field.channel.to_string();
+                            let uv_define_val = tex_data.$field.channel.to_string();
                             defines.set(&uv_define_key, &uv_define_val);
                         }
                     }
-
                 )*
-                // settings 相关宏定义
-                self.settings.generate_shader_defines(&mut defines);
-
+                
+                // Settings 读锁
+                self.settings.read().generate_shader_defines(&mut defines);
                 defines
             }
 
             fn visit_textures(&self, visitor: &mut dyn FnMut(&$crate::resources::texture::TextureSource)) {
+                // [重构] 获取纹理读锁
+                let tex_data = self.textures.read();
                 $(
-                    if let Some(handle) = &self.$field.texture {
+                    if let Some(handle) = &tex_data.$field.texture {
                         visitor(&$crate::resources::texture::TextureSource::Asset(*handle));
                     }
                 )*
@@ -269,9 +282,11 @@ macro_rules! impl_material_trait {
                     wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX
                 );
 
+                let tex_data = self.textures.read();
+    
                 // Textures
                 $(
-                    if let Some(handle) = &self.$field.texture {
+                    if let Some(handle) = &tex_data.$field.texture {
                         let binding_name = stringify!($field);
                         let tex_source = $crate::resources::texture::TextureSource::Asset(*handle);
 
@@ -284,7 +299,7 @@ macro_rules! impl_material_trait {
                         );
 
                         paste::paste! {
-                            let sampler_source = self.[<$field _sampler>]
+                            let sampler_source = tex_data.[<$field _sampler>]
                                 .or_else(|| Some($crate::resources::texture::SamplerSource::FromTexture(*handle)));
                             
                             builder.add_sampler(

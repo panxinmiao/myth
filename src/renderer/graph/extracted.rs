@@ -131,6 +131,8 @@ impl ExtractedScene {
 
         // let mut collected_meshes = Vec::new();
         // let mut collected_skeleton_keys = HashSet::new();
+        let geo_guard = assets.geometries.read_lock();
+        //let mat_guard = assets.materials.read_lock();
 
         for (node_handle, mesh) in scene.meshes.iter() {
             if !mesh.visible {
@@ -146,17 +148,17 @@ impl ExtractedScene {
             }
 
             let geo_handle = mesh.geometry;
-            let mat_handle = mesh.material;
+            // let mat_handle = mesh.material;
 
-            let Some(geometry) = assets.get_geometry(geo_handle) else {
+            let Some(geometry) = geo_guard.map.get(geo_handle) else {
                 log::warn!("Node {:?} refers to missing Geometry {:?}", node_handle, geo_handle);
                 continue;
             };
 
-            if assets.get_material(mat_handle).is_none() {
-                log::warn!("Node {:?} refers to missing Material {:?}", node_handle, mat_handle);
-                continue;
-            }
+            // if mat_guard.map.get(mat_handle).is_none() {
+            //     log::warn!("Node {:?} refers to missing Material {:?}", node_handle, mat_handle);
+            //     continue;
+            // }
 
             let node_world = node.transform.world_matrix;
             let skin_binding = scene.skins.get(node_handle);

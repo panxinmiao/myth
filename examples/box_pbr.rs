@@ -24,14 +24,14 @@ impl AppHandler for PbrBox {
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
         
         // 创建具体材质类型，便于访问类型特定的方法
-        let mut standard_mat = MeshStandardMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
+        let standard_mat = MeshStandardMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
-        let tex_handle = engine.assets.add_texture(texture);
+        let tex_handle = engine.assets.textures.add(texture);
         standard_mat.set_map(Some(tex_handle));
         
-        let geo_handle = engine.assets.add_geometry(geometry);
+        let geo_handle = engine.assets.geometries.add(geometry);
         // 在最后需要时才转换为通用 Material 类型
-        let mat_handle = engine.assets.add_material(standard_mat);
+        let mat_handle = engine.assets.materials.add(standard_mat.into());
 
         let scene = engine.scene_manager.create_active();
         //let scene = ctx.scenes.active_scene_mut().unwrap();
@@ -53,11 +53,12 @@ impl AppHandler for PbrBox {
                 "examples/assets/Park2/posz.jpg",
                 "examples/assets/Park2/negz.jpg",
             ],
-            three::ColorSpace::Srgb
+            three::ColorSpace::Srgb,
+            true
         ).expect("Failed to load environment map");
 
-        let env_texture = engine.assets.get_texture_mut(env_texture_handle).unwrap();
-        env_texture.generate_mipmaps = true;
+        let env_texture = engine.assets.textures.get(env_texture_handle).unwrap();
+
         scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
 
         // 5. 设置相机

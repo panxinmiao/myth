@@ -21,7 +21,7 @@ impl ResourceManager {
     /// 
     /// 返回 GeometryPrepareResult，包含所有物理资源 ID
     pub(crate) fn prepare_geometry(&mut self, assets: &AssetServer, handle: GeometryHandle) -> Option<GeometryPrepareResult> {
-        let geometry = assets.get_geometry(handle)?;
+        let geometry = assets.geometries.get(handle)?;
 
         // 快速路径：检查是否需要任何更新
         if let Some(gpu_geo) = self.gpu_geometries.get_mut(handle) {
@@ -66,7 +66,7 @@ impl ResourceManager {
         };
 
         if needs_rebuild {
-            self.create_gpu_geometry(geometry, handle);
+            self.create_gpu_geometry(&geometry, handle);
         } else {
             // 仅更新数据版本
             if let Some(gpu_geo) = self.gpu_geometries.get_mut(handle) {

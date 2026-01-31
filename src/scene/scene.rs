@@ -610,9 +610,11 @@ impl Scene {
             }
         }
 
-        let current_data = self.light_storage_buffer.read();
         let cache_ref = self.light_data_cache.borrow();
-        if current_data.as_slice() != cache_ref.as_slice() {
+
+        let needs_update = self.light_storage_buffer.read().as_slice() != cache_ref.as_slice();
+
+        if needs_update {
             self.light_storage_buffer.write().clone_from(&cache_ref);
         }
     }
@@ -630,8 +632,12 @@ impl Scene {
             ..Default::default()
         };
 
-        let current = self.uniforms_buffer.read();
-        if current != &new_uniforms {
+        let needs_update = *self.uniforms_buffer.read() != new_uniforms;
+
+        if needs_update {
+            // .write() 返回 BufferGuard
+            // *guard = ... 会触发 DerefMut 赋值
+            // Guard 销毁时会自动增加 version 并标记 dirty
             *self.uniforms_buffer.write() = new_uniforms;
         }
     }
@@ -714,7 +720,7 @@ impl Scene {
         if mesh.visible == false {
             return None;
         }
-        let geometry = assets.get_geometry(mesh.geometry)?;
+        let geometry = assets.geometries.get(mesh.geometry)?;
 
         // 有骨骼绑定时使用 Skeleton 的包围盒
         if let Some(skeleton_binding) = self.skins.get(node_handle) {

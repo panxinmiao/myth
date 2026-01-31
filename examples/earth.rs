@@ -33,26 +33,26 @@ impl AppHandler for Earth {
 
         // 加载纹理
         let earth_tex_handle = engine.assets.load_texture_from_file(
-            "examples/assets/planets/earth_atmos_4096.jpg", three::ColorSpace::Srgb
+            "examples/assets/planets/earth_atmos_4096.jpg", three::ColorSpace::Srgb, true
         ).expect("Failed to load earth texture");
         let specular_tex_handle = engine.assets.load_texture_from_file(
-            "examples/assets/planets/earth_specular_2048.jpg", three::ColorSpace::Srgb
+            "examples/assets/planets/earth_specular_2048.jpg", three::ColorSpace::Srgb, true
         ).expect("Failed to load specular texture");
         let emssive_tex_handle = engine.assets.load_texture_from_file(
-            "examples/assets/planets/earth_lights_2048.png", three::ColorSpace::Srgb
+            "examples/assets/planets/earth_lights_2048.png", three::ColorSpace::Srgb, true
         ).expect("Failed to load emissive texture");
         let normal_map_handle = engine.assets.load_texture_from_file(
-            "examples/assets/planets/earth_normal_2048.jpg", three::ColorSpace::Linear
+            "examples/assets/planets/earth_normal_2048.jpg", three::ColorSpace::Linear, true
         ).expect("Failed to load normal map");
         let clouds_tex_handle = engine.assets.load_texture_from_file(
-            "examples/assets/planets/earth_clouds_1024.png", three::ColorSpace::Srgb
+            "examples/assets/planets/earth_clouds_1024.png", three::ColorSpace::Srgb, true
         ).expect("Failed to load clouds texture");
 
         if let Some(phong) = mat.as_phong_mut() {
             phong.set_map(Some(earth_tex_handle));
-            phong.specular_map_mut().set_texture(Some(specular_tex_handle));
-            phong.emissive_map_mut().set_texture(Some(emssive_tex_handle));
-            phong.normal_map_mut().set_texture(Some(normal_map_handle));
+            phong.set_specular_map(Some(specular_tex_handle));
+            phong.set_emissive_map(Some(emssive_tex_handle));
+            phong.set_normal_map(Some(normal_map_handle));
             
             phong.set_normal_scale(Vec2::new(0.85, -0.85));
             phong.set_shininess(10.0);
@@ -60,8 +60,8 @@ impl AppHandler for Earth {
             phong.set_emissive_intensity(3.0);
         }
             
-        let geo_handle = engine.assets.add_geometry(geometry);
-        let mat_handle = engine.assets.add_material(mat);
+        let geo_handle = engine.assets.geometries.add(geometry);
+        let mat_handle = engine.assets.materials.add(mat);
 
         // 云层材质
         let mut cloud_material = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
@@ -72,7 +72,7 @@ impl AppHandler for Earth {
             phong.set_depth_write(false);
             phong.set_side(three::Side::Front);
         }
-        let cloud_material_handle = engine.assets.add_material(cloud_material);
+        let cloud_material_handle = engine.assets.materials.add(cloud_material);
 
         // 2. 创建 Mesh 并加入场景
         let mesh = three::resources::Mesh::new(geo_handle, mat_handle);
@@ -155,8 +155,8 @@ impl AppHandler for Earth {
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
-        App::new()
-        .with_title("Earth")
-        .with_settings(RenderSettings { vsync: false, ..Default::default() })
-        .run::<Earth>()
+    App::new()
+    .with_title("Earth")
+    .with_settings(RenderSettings { vsync: false, ..Default::default() })
+    .run::<Earth>()
 }

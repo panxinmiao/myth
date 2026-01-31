@@ -1,5 +1,5 @@
 use crate::assets::{GeometryHandle, MaterialHandle};
-use crate::resources::buffer::CpuBuffer;
+use crate::resources::buffer::{BufferReadGuard, CpuBuffer};
 use crate::resources::uniforms::MorphUniforms;
 use crate::renderer::core::resources::ResourceIdSet;
 
@@ -68,7 +68,7 @@ impl Mesh {
         }
     }
 
-    pub fn morph_uniforms(&self) -> &MorphUniforms {
+    pub fn morph_uniforms(&self) -> BufferReadGuard<'_, MorphUniforms> {
         self.morph_uniforms.read()
     }
 

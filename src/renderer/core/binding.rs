@@ -107,8 +107,8 @@ impl Bindings for Scene {
         // Binding 1: Environment Uniforms
         builder.add_uniform_buffer(
             "environment",
-            self.uniforms_buffer.handle(),
-            Some(self.uniforms_buffer.as_bytes()),
+            &self.uniforms_buffer.handle(),
+            None,
             wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
             false,
             None,
@@ -120,8 +120,8 @@ impl Bindings for Scene {
         // Binding 2: Light Storage Buffer
         builder.add_storage_buffer(
             "lights",
-            self.light_storage_buffer.handle(),
-            Some(self.light_storage_buffer.as_bytes()),
+            &self.light_storage_buffer.handle(),
+            None,
             true,
             wgpu::ShaderStages::FRAGMENT,
             Some(crate::renderer::core::builder::WgslStructName::Generator(
