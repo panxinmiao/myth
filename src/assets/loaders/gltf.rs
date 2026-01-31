@@ -273,10 +273,10 @@ impl<'a, 'b> LoadContext<'a, 'b> {
     }
 }
 
-/// glTF 加载器
+/// glTF Loader
 /// 
-/// 支持同步和异步加载，输出 `Prefab` 预制体数据结构，
-/// 通过 `Scene::instantiate()` 实例化到场景中。
+/// Supports synchronous and asynchronous loading, outputs `Prefab` data structure,
+/// instantiated into the scene via `Scene::instantiate()`.
 pub struct GltfLoader {
     assets: Arc<AssetServer>,
     reader: AssetReaderVariant,
@@ -292,7 +292,7 @@ pub struct GltfLoader {
 }
 
 impl GltfLoader {
-    /// 同步加载入口（向后兼容）
+    /// Synchronous load entry point (backwards compatible)
     pub fn load(
         path: &std::path::Path,
         assets: &AssetServer
@@ -300,7 +300,7 @@ impl GltfLoader {
         Self::load_sync(path.to_string_lossy().as_ref(), assets.clone())
     }
 
-    /// 同步加载（内部创建运行时）
+    /// Synchronous load (creates runtime internally)
     pub fn load_sync(
         source: &str,
         assets: impl Into<Arc<AssetServer>>
@@ -309,7 +309,7 @@ impl GltfLoader {
         rt.block_on(Self::load_async(source, assets))
     }
 
-    /// 异步加载入口 - 返回 Prefab 而非 NodeHandle
+    /// Async load entry point - returns Prefab instead of NodeHandle
     pub async fn load_async(
         source: &str,
         assets: impl Into<Arc<AssetServer>>

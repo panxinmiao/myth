@@ -12,7 +12,7 @@ wgpu = "28.0.0"
 raw-window-handle = "0.6"
 winit = { version = "0.30", optional = true }
 
-bytemuck = { version = "1.24", features = ["derive", "min_const_generics"]}
+bytemuck = { version = "1.25.0", features = ["derive", "min_const_generics"]}
 glam = { version = "0.31.0" , features = ["bytemuck"] }
 slotmap = { version = "1.1.1", features = ["serde"] }
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
@@ -22,7 +22,7 @@ rust-embed = "8.11.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 
-image = "0.25"
+image = {version = "0.25" }
 gltf = {version = "1.4.1", features =[
     "extensions", "KHR_materials_pbrSpecularGlossiness", 
     "KHR_materials_specular" , "KHR_materials_emissive_strength", 

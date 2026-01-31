@@ -1,93 +1,93 @@
-//! 资源句柄系统 (Asset Handle System)
+//! Asset Handle System
 //!
-//! 提供引用计数的资源句柄，防止资源在使用时被意外卸载。
+//! Provides reference-counted asset handles to prevent assets from being accidentally unloaded while in use.
 //!
-//! # 设计原则
-//! - 使用 Arc 进行引用计数，自动追踪资源使用情况
-//! - 强句柄 (StrongHandle) 保持资源存活
-//! - 弱句柄 (WeakHandle) 不阻止资源释放，用于缓存等场景
-//! - 与现有的 SlotMap 句柄系统兼容
+//! # Design Principles
+//! - Uses Arc for reference counting to automatically track asset usage
+//! - Strong handles (StrongHandle) keep assets alive
+//! - Weak handles (WeakHandle) don't prevent asset release, suitable for caching scenarios
+//! - Compatible with existing SlotMap handle system
 
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 
-/// 资源状态追踪器
+/// Asset state tracker
 /// 
-/// 用于追踪资源的引用计数和生命周期状态
+/// Tracks reference counts and lifecycle state of assets
 #[derive(Debug)]
 pub struct AssetTracker {
-    /// 强引用计数
+    /// Strong reference count
     strong_count: AtomicU32,
-    /// 弱引用计数
+    /// Weak reference count
     weak_count: AtomicU32,
-    /// 资源是否已被标记为待删除
+    /// Whether the asset has been marked for deletion
     marked_for_deletion: AtomicU32,
 }
 
 impl AssetTracker {
-    /// 创建新的追踪器
+    /// Creates a new tracker
     pub fn new() -> Self {
         Self {
-            strong_count: AtomicU32::new(1), // 初始引用
+            strong_count: AtomicU32::new(1), // Initial reference
             weak_count: AtomicU32::new(0),
             marked_for_deletion: AtomicU32::new(0),
         }
     }
 
-    /// 增加强引用
+    /// Increments strong reference count
     #[inline]
     pub fn add_strong(&self) -> u32 {
         self.strong_count.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// 减少强引用，返回剩余计数
+    /// Decrements strong reference count, returns remaining count
     #[inline]
     pub fn release_strong(&self) -> u32 {
         let prev = self.strong_count.fetch_sub(1, Ordering::Release);
         if prev == 1 {
-            // 确保之前的写入对其他线程可见
+            // Ensure previous writes are visible to other threads
             std::sync::atomic::fence(Ordering::Acquire);
         }
         prev - 1
     }
 
-    /// 获取当前强引用计数
+    /// Gets current strong reference count
     #[inline]
     pub fn strong_count(&self) -> u32 {
         self.strong_count.load(Ordering::Relaxed)
     }
 
-    /// 增加弱引用
+    /// Increments weak reference count
     #[inline]
     pub fn add_weak(&self) -> u32 {
         self.weak_count.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// 减少弱引用
+    /// Decrements weak reference count
     #[inline]
     pub fn release_weak(&self) -> u32 {
         self.weak_count.fetch_sub(1, Ordering::Release).saturating_sub(1)
     }
 
-    /// 获取当前弱引用计数
+    /// Gets current weak reference count
     #[inline]
     pub fn weak_count(&self) -> u32 {
         self.weak_count.load(Ordering::Relaxed)
     }
 
-    /// 标记资源待删除
+    /// Marks the asset for deletion
     pub fn mark_for_deletion(&self) {
         self.marked_for_deletion.store(1, Ordering::Release);
     }
 
-    /// 检查资源是否被标记待删除
+    /// Checks whether the asset is marked for deletion
     #[inline]
     pub fn is_marked_for_deletion(&self) -> bool {
         self.marked_for_deletion.load(Ordering::Acquire) != 0
     }
 
-    /// 检查资源是否可以被安全释放
-    /// 只有当强引用为0且被标记删除时才能释放
+    /// Checks whether the asset can be safely released
+    /// Can only be released when strong reference count is 0 and marked for deletion
     #[inline]
     pub fn can_be_released(&self) -> bool {
         self.strong_count() == 0 && self.is_marked_for_deletion()
@@ -100,35 +100,35 @@ impl Default for AssetTracker {
     }
 }
 
-/// 强资源句柄
+/// Strong asset handle
 /// 
-/// 持有此句柄会阻止资源被释放。
-/// 当所有强句柄都被丢弃后，资源才会被标记为可释放。
+/// Holding this handle prevents the asset from being released.
+/// The asset will only be marked as releasable after all strong handles are dropped.
 pub struct StrongHandle<K: Copy> {
     key: K,
     tracker: Arc<AssetTracker>,
 }
 
 impl<K: Copy> StrongHandle<K> {
-    /// 创建新的强句柄
+    /// Creates a new strong handle
     pub fn new(key: K, tracker: Arc<AssetTracker>) -> Self {
         tracker.add_strong();
         Self { key, tracker }
     }
 
-    /// 获取底层的键
+    /// Gets the underlying key
     #[inline]
     pub fn key(&self) -> K {
         self.key
     }
 
-    /// 获取当前引用计数
+    /// Gets the current reference count
     #[inline]
     pub fn ref_count(&self) -> u32 {
         self.tracker.strong_count()
     }
 
-    /// 降级为弱句柄
+    /// Downgrades to a weak handle
     pub fn downgrade(&self) -> WeakHandle<K> {
         self.tracker.add_weak();
         WeakHandle {
@@ -154,32 +154,32 @@ impl<K: Copy> Drop for StrongHandle<K> {
     }
 }
 
-/// 弱资源句柄
+/// Weak asset handle
 /// 
-/// 不阻止资源被释放，适用于缓存等场景。
-/// 使用前需要尝试升级为强句柄。
+/// Does not prevent the asset from being released, suitable for caching scenarios.
+/// Must attempt to upgrade to a strong handle before use.
 pub struct WeakHandle<K: Copy> {
     key: K,
     tracker: Arc<AssetTracker>,
 }
 
 impl<K: Copy> WeakHandle<K> {
-    /// 获取底层的键
+    /// Gets the underlying key
     #[inline]
     pub fn key(&self) -> K {
         self.key
     }
 
-    /// 尝试升级为强句柄
+    /// Attempts to upgrade to a strong handle
     /// 
-    /// 如果资源已被标记删除或强引用为0，则返回 None
+    /// Returns None if the asset is marked for deletion or strong reference count is 0
     pub fn upgrade(&self) -> Option<StrongHandle<K>> {
-        // 检查是否已被标记删除
+        // Check if already marked for deletion
         if self.tracker.is_marked_for_deletion() {
             return None;
         }
 
-        // 尝试原子地增加强引用
+        // Try to atomically increment strong reference count
         let mut current = self.tracker.strong_count.load(Ordering::Relaxed);
         loop {
             if current == 0 {
@@ -202,7 +202,7 @@ impl<K: Copy> WeakHandle<K> {
         }
     }
 
-    /// 检查资源是否仍然有效
+    /// Checks whether the asset is still valid
     #[inline]
     pub fn is_valid(&self) -> bool {
         !self.tracker.is_marked_for_deletion() && self.tracker.strong_count() > 0
@@ -225,9 +225,9 @@ impl<K: Copy> Drop for WeakHandle<K> {
     }
 }
 
-/// 资源条目
+/// Asset entry
 /// 
-/// 将资源与其追踪器关联
+/// Associates an asset with its tracker
 pub struct TrackedAsset<T> {
     pub asset: T,
     pub tracker: Arc<AssetTracker>,
@@ -241,23 +241,23 @@ impl<T> TrackedAsset<T> {
         }
     }
 
-    /// 创建对此资源的强句柄
+    /// Creates a strong handle for this asset
     pub fn create_handle<K: Copy>(&self, key: K) -> StrongHandle<K> {
         StrongHandle::new(key, Arc::clone(&self.tracker))
     }
 
-    /// 获取引用计数
+    /// Gets the reference count
     #[inline]
     pub fn ref_count(&self) -> u32 {
         self.tracker.strong_count()
     }
 
-    /// 标记资源待删除
+    /// Marks the asset for deletion
     pub fn mark_for_deletion(&self) {
         self.tracker.mark_for_deletion();
     }
 
-    /// 检查是否可以安全释放
+    /// Checks whether it can be safely released
     #[inline]
     pub fn can_be_released(&self) -> bool {
         self.tracker.can_be_released()
@@ -307,14 +307,14 @@ mod tests {
         let weak = strong.downgrade();
         assert!(weak.is_valid());
         
-        // 升级应该成功
+        // Upgrade should succeed
         let upgraded = weak.upgrade();
         assert!(upgraded.is_some());
         
         drop(strong);
         drop(upgraded.unwrap());
         
-        // 现在只剩初始引用，标记删除后升级应该失败
+        // Now only initial reference remains, upgrade should fail after marking for deletion
         tracker.mark_for_deletion();
         assert!(!weak.is_valid());
         assert!(weak.upgrade().is_none());

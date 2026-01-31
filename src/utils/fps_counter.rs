@@ -24,11 +24,11 @@ impl FpsCounter {
         self.last_update = now;
         self.accumulated_time += delta;
 
-        // 每 1 秒 (1000ms) 更新一次统计
+        // Update statistics every 1 second (1000ms)
         if self.accumulated_time.as_secs_f32() >= 1.0 {
             self.current_fps = self.frame_count as f32 / self.accumulated_time.as_secs_f32();
             
-            // 重置计数器
+            // Reset counter
             self.accumulated_time = Duration::new(0, 0);
             self.frame_count = 0;
             

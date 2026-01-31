@@ -1,24 +1,57 @@
-//! Shader 宏定义系统
+//! Shader Macro Definition System
 //!
-//! 提供统一的、高性能的 Shader 宏定义管理。
-//! 基于字符串驻留 (Interning) + 哈希缓存实现 O(1) 的宏列表比较。
+//! Provides a unified, high-performance shader macro management system.
+//! Uses string interning and hash caching for O(1) macro set comparison.
+//!
+//! # Architecture
+//!
+//! The system uses [`Symbol`] (interned strings) for both keys and values,
+//! providing:
+//!
+//! - **Memory efficiency**: Duplicate strings share storage
+//! - **Fast comparison**: Symbol comparison is just integer comparison
+//! - **Consistent hashing**: Same macro sets always produce same hashes
+//!
+//! # Usage
+//!
+//! ```rust,ignore
+//! use three::resources::ShaderDefines;
+//!
+//! let mut defines = ShaderDefines::new();
+//! defines.set("HAS_NORMAL_MAP", "1");
+//! defines.set("MAX_LIGHTS", "8");
+//!
+//! // Fast hash for pipeline cache lookup
+//! let hash = defines.compilation_hash();
+//! ```
+//!
+//! # Integration with Materials
+//!
+//! Materials implement [`RenderableMaterialTrait::shader_defines`] to declare
+//! their required shader macros based on current state (e.g., enabled textures).
 
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
 use crate::utils::interner::{self, Symbol};
 
-/// Shader 宏定义集合
-/// 
-/// 内部使用有序的 `Vec<(Symbol, Symbol)>` 存储宏定义，
-/// 确保相同的宏集合产生相同的哈希值。
+/// A collection of shader macro definitions.
+///
+/// Internally uses an ordered `Vec<(Symbol, Symbol)>` to store definitions,
+/// ensuring that identical macro sets produce identical hash values.
+///
+/// # Performance
+///
+/// - Insertion/lookup: O(log n) due to binary search
+/// - Hash computation: O(n) but cached
+/// - Comparison: O(1) when using cached hashes
 #[derive(Debug, Clone, Default)]
 pub struct ShaderDefines {
     defines: Vec<(Symbol, Symbol)>,
 }
 
 impl ShaderDefines {
-    /// 创建空的宏定义集合
+    /// Create empty shader defines collection
     #[inline]
     pub fn new() -> Self {
         Self {
@@ -26,7 +59,7 @@ impl ShaderDefines {
         }
     }
 
-    /// 创建具有预分配容量的宏定义集合
+    /// Create shader defines collection with pre-allocated capacity
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
@@ -34,16 +67,16 @@ impl ShaderDefines {
         }
     }
 
-    /// 设置宏定义（自动保持排序）
+    /// Set shader define (maintains sorted order)
     /// 
-    /// 如果 key 已存在，更新其 value；否则插入新条目。
+    /// If key exists, updates its value; otherwise inserts new entry.
     pub fn set(&mut self, key: &str, value: &str) {
         let key_sym = interner::intern(key);
         let value_sym = interner::intern(value);
         self.set_symbol(key_sym, value_sym);
     }
 
-    /// 使用 Symbol 设置宏定义（内部方法，更高效）
+    /// Set shader define using Symbol (internal method, more efficient)
     #[inline]
     pub fn set_symbol(&mut self, key: Symbol, value: Symbol) {
         match self.defines.binary_search_by_key(&key, |&(k, _)| k) {
@@ -56,7 +89,7 @@ impl ShaderDefines {
         }
     }
 
-    /// 移除宏定义
+    /// Remove shader define
     pub fn remove(&mut self, key: &str) -> bool {
         if let Some(key_sym) = interner::get(key) {
             self.remove_symbol(key_sym)
@@ -65,7 +98,7 @@ impl ShaderDefines {
         }
     }
 
-    /// 使用 Symbol 移除宏定义
+    /// Remove shader define using Symbol
     #[inline]
     pub fn remove_symbol(&mut self, key: Symbol) -> bool {
         if let Ok(idx) = self.defines.binary_search_by_key(&key, |&(k, _)| k) {
@@ -76,23 +109,23 @@ impl ShaderDefines {
         }
     }
 
-    /// 检查是否包含某个宏定义
+    /// Check if contains a shader define
     pub fn contains(&self, key: &str) -> bool {
         interner::get(key).map_or(false, |key_sym| self.contains_symbol(key_sym))
     }
 
-    /// 使用 Symbol 检查是否包含某个宏定义
+    /// Check if contains a shader define using Symbol
     #[inline]
     pub fn contains_symbol(&self, key: Symbol) -> bool {
         self.defines.binary_search_by_key(&key, |&(k, _)| k).is_ok()
     }
 
-    /// 获取宏定义的值
+    /// Get shader define value
     pub fn get(&self, key: &str) -> Option<&str> {
         interner::get(key).and_then(|key_sym| self.get_symbol(key_sym))
     }
 
-    /// 使用 Symbol 获取宏定义的值
+    /// Get shader define value using Symbol
     #[inline]
     pub fn get_symbol(&self, key: Symbol) -> Option<&'static str> {
         self.defines
@@ -101,37 +134,37 @@ impl ShaderDefines {
             .map(|idx| interner::resolve(self.defines[idx].1))
     }
 
-    /// 清空所有宏定义
+    /// Clear all shader defines
     #[inline]
     pub fn clear(&mut self) {
         self.defines.clear();
     }
 
-    /// 获取宏定义数量
+    /// Get shader defines count
     #[inline]
     pub fn len(&self) -> usize {
         self.defines.len()
     }
 
-    /// 检查是否为空
+    /// Check if empty
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.defines.is_empty()
     }
 
-    /// 迭代所有宏定义 (以 Symbol 形式)
+    /// Iterate all shader defines (as Symbols)
     #[inline]
     pub fn iter(&self) -> impl Iterator<Item = &(Symbol, Symbol)> {
         self.defines.iter()
     }
 
-    /// 迭代所有宏定义 (以字符串形式)
+    /// Iterate all shader defines (as strings)
     #[inline]
     pub fn iter_strings(&self) -> impl Iterator<Item = (&'static str, &'static str)> + '_ {
         self.defines.iter().map(|&(k, v)| (interner::resolve(k), interner::resolve(v)))
     }
 
-    /// 转换为 BTreeMap (用于模板渲染)
+    /// Convert to BTreeMap (for template rendering)
     pub fn to_map(&self) -> BTreeMap<String, String> {
         self.defines
             .iter()
@@ -139,23 +172,23 @@ impl ShaderDefines {
             .collect()
     }
 
-    /// 合并另一个 ShaderDefines 的宏定义
+    /// Merge shader defines from another ShaderDefines
     /// 
-    /// 如果有冲突，other 中的值会覆盖 self 中的值。
+    /// If there are conflicts, values from other will override values in self.
     pub fn merge(&mut self, other: &ShaderDefines) {
         for &(key, value) in &other.defines {
             self.set_symbol(key, value);
         }
     }
 
-    /// 创建合并后的新 ShaderDefines
+    /// Create a new merged ShaderDefines
     pub fn merged_with(&self, other: &ShaderDefines) -> ShaderDefines {
         let mut result = self.clone();
         result.merge(other);
         result
     }
 
-    /// 计算内容哈希（用于缓存）
+    /// Compute content hash (for caching)
     pub fn compute_hash(&self) -> u64 {
         use std::hash::BuildHasher;
         let mut hasher = rustc_hash::FxBuildHasher.build_hasher();
@@ -163,7 +196,7 @@ impl ShaderDefines {
         hasher.finish()
     }
 
-    /// 获取内部的 defines 引用（用于直接访问）
+    /// Get internal defines reference (for direct access)
     #[inline]
     pub fn as_slice(&self) -> &[(Symbol, Symbol)] {
         &self.defines
@@ -184,7 +217,7 @@ impl PartialEq for ShaderDefines {
 
 impl Eq for ShaderDefines {}
 
-/// 从宏定义列表创建 ShaderDefines
+/// Create ShaderDefines from list of macro definitions
 impl From<&[(&str, &str)]> for ShaderDefines {
     fn from(defines: &[(&str, &str)]) -> Self {
         let mut result = Self::with_capacity(defines.len());
@@ -219,12 +252,12 @@ mod tests {
         defines.set("A", "1");
         defines.set("C", "1");
         
-        // 验证内部按 Symbol (整数ID) 排序，保证哈希一致性
-        // 注意：Symbol 顺序取决于 intern 顺序，不是字符串字典序
+        // Verify internal sorting by Symbol (integer ID), ensuring hash consistency
+        // Note: Symbol order depends on intern order, not string lexicographic order
         let symbols: Vec<_> = defines.iter().map(|(k, _)| k).collect();
         assert!(symbols.windows(2).all(|w| w[0] < w[1]), "Symbols should be sorted by numeric value");
         
-        // 验证所有 key 都存在
+        // Verify all keys exist
         assert!(defines.contains("A"));
         assert!(defines.contains("B"));
         assert!(defines.contains("C"));
@@ -243,7 +276,7 @@ mod tests {
         d1.merge(&d2);
         
         assert_eq!(d1.get("A"), Some("1"));
-        assert_eq!(d1.get("B"), Some("3")); // 被覆盖
+        assert_eq!(d1.get("B"), Some("3")); // Overwritten
         assert_eq!(d1.get("C"), Some("4"));
     }
 

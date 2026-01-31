@@ -1,13 +1,13 @@
-//! 渲染提取阶段 (Extract Phase)
+//! Render Extract Phase
 //!
-//! 在渲染开始前，从 Scene 中提取当前帧所需的精简数据。
-//! Extract 完成后，Scene 就可以被释放，后续渲染准备工作不再依赖 Scene 的借用。
+//! Before rendering begins, extract minimal data needed for the current frame from the Scene.
+//! After extraction is complete, the Scene can be released and subsequent render preparation doesn't depend on Scene's borrow.
 //!
-//! # 设计原则
-//! - 只复制渲染所需的"精简数据"，不复制实际的 Mesh/Material 资源
-//! - 视锥剔除前置，只提取可见物体
-//! - 使用 Copy 类型尽可能减少开销
-//! - 携带缓存 ID 以避免每帧重复查找
+//! # Design Principles
+//! - Only copy "minimal data" needed for rendering, don't copy actual Mesh/Material resources
+//! - Front-load frustum culling, only extract visible objects
+//! - Use Copy types to minimize overhead
+//! - Carry cache IDs to avoid repeated lookups each frame
 
 use std::collections::HashSet;
 
@@ -20,49 +20,45 @@ use crate::scene::{NodeHandle, Scene, SkeletonKey};
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::scene::camera::RenderCamera;
 
-/// 精简的渲染项，只包含 GPU 需要的数据
+/// Minimal render item, containing only data needed by GPU
 /// 
-/// 使用 Clone 而非 Copy，因为 SkinBinding 包含非 Copy 类型
+/// Uses Clone instead of Copy because SkinBinding contains non-Copy types
 #[derive(Clone)]
 pub struct ExtractedRenderItem {
-    /// 节点句柄（用于调试和回写缓存）
+    /// Node handle (for debugging and cache write-back)
     pub node_handle: NodeHandle,
-    /// 世界变换矩阵 (64 bytes)
+    /// World transform matrix (64 bytes)
     pub world_matrix: Mat4,
 
     pub object_bind_group: BindGroupContext,
-    /// 几何体句柄 (8 bytes)
+    /// Geometry handle (8 bytes)
     pub geometry: GeometryHandle,
-    /// 材质句柄 (8 bytes)
+    /// Material handle (8 bytes)
     pub material: MaterialHandle,
 
     pub item_variant_flags: u32,
 
     pub item_shader_defines: ShaderDefines,
 
-    /// 到相机的距离平方（用于排序）
+    /// Squared distance to camera (for sorting)
     pub distance_sq: f32,
 
-    // 缓存的 BindGroup ID（快速路径）
-    // pub cached_bind_group_id: Option<u64>,
-    // /// 缓存的 Pipeline ID（快速路径）
-    // pub cached_pipeline_id: Option<u16>,
 }
 
-/// 提取的骨骼数据
+/// Extracted skeleton data
 #[derive(Clone)]
 pub struct ExtractedSkeleton {
     pub skeleton_key: SkeletonKey,
 }
 
-/// 提取的场景数据
+/// Extracted scene data
 /// 
-/// 这是一个轻量级的结构，只包含当前帧渲染所需的最小数据集。
-/// 在 Extract 阶段填充，之后可以安全地释放 Scene 的借用。
+/// This is a lightweight structure containing only the minimal dataset needed for current frame rendering.
+/// Populated during Extract phase, after which the Scene borrow can be safely released.
 pub struct ExtractedScene {
-    /// 可见的渲染项列表（已经过视锥剔除）
+    /// List of visible render items (already frustum culled)
     pub render_items: Vec<ExtractedRenderItem>,
-    /// 场景的 Shader 宏定义
+    /// Scene's shader macro definitions
     pub scene_defines: ShaderDefines,
     pub scene_id: u32,
     pub background: Option<glam::Vec4>,
@@ -79,7 +75,7 @@ struct CollectedMesh {
 }
 
 impl ExtractedScene {
-    /// 创建空的提取场景
+    /// Creates an empty extracted scene
     pub fn new() -> Self {
         Self {
             render_items: Vec::new(),
@@ -92,7 +88,7 @@ impl ExtractedScene {
         }
     }
 
-    /// 预分配容量
+    /// Pre-allocates capacity
     pub fn with_capacity(item_capacity: usize) -> Self {
         Self {
             render_items: Vec::with_capacity(item_capacity),
@@ -105,7 +101,7 @@ impl ExtractedScene {
         }
     }
 
-    /// 清空数据以便重用
+    /// Clear data for reuse
     pub fn clear(&mut self) {
         self.render_items.clear();
         // self.skeletons.clear();
@@ -117,20 +113,20 @@ impl ExtractedScene {
         self.collected_skeleton_keys.clear();
     }
 
-    /// 复用当前实例的内存，从 Scene 中提取数据
+    /// Reuse current instance memory, extract data from Scene
     pub fn extract_into(&mut self, scene: &mut Scene, camera: &RenderCamera, assets: &AssetServer, resource_manager: &mut ResourceManager) {
         self.clear();
         self.extract_render_items(scene, camera, assets , resource_manager);
         self.extract_environment(scene);
     }
 
-    /// 提取可见的渲染项
+    /// Extract visible render items
     fn extract_render_items(&mut self, scene: &mut Scene, camera: &RenderCamera, assets: &AssetServer, resource_manager: &mut ResourceManager) {
         let frustum = camera.frustum;
         let camera_pos = camera.position;
 
         // =========================================================
-        // 阶段 1：视锥剔除 & 收集 (持有读锁)
+        // Phase 1: Frustum culling & collection (holding read lock)
         // =========================================================
         {
 
@@ -160,27 +156,27 @@ impl ExtractedScene {
                 let node_world = node.transform.world_matrix;
                 let skin_binding = scene.skins.get(node_handle);
 
-                // 视锥剔除：根据是否有骨骼绑定选择不同的包围盒
+                // Frustum culling: select different bounding box based on skeleton binding
                 let is_visible = if let Some(binding) = skin_binding {
-                    // 有骨骼绑定：使用 Skeleton 的包围盒
+                    // Has skeleton binding: use Skeleton's bounding box
                     if let Some(skeleton) = scene.skeleton_pool.get(binding.skeleton) {
                         if let Some(local_bounds) = skeleton.local_bounds() {
                             let world_bounds = local_bounds.transform(&node_world);
                             frustum.intersects_box(world_bounds.min, world_bounds.max)
                         } else {
-                            // 包围盒尚未计算，默认可见
+                            // Bounding box not yet computed, default to visible
                             true
                         }
                     } else {
                         true
                     }
                 } else {
-                    // 无骨骼绑定：使用 Geometry 的包围盒
+                    // No skeleton binding: use Geometry's bounding box
                     if let Some(bbox) = geometry.bounding_box.read().as_ref() {
                         let world_bounds = bbox.transform(&node_world);
                         frustum.intersects_box(world_bounds.min, world_bounds.max)
                     } else if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
-                        // 回退到包围球
+                        // Fallback to bounding sphere
                         let scale = node.transform.scale.max_element();
                         let center = node_world.transform_point3(bs.center);
                         frustum.intersects_sphere(center, bs.radius * scale)
@@ -207,20 +203,20 @@ impl ExtractedScene {
         }
 
         // =========================================================
-        // 阶段 2：准备资源 (无锁状态)
+        // Phase 2: Prepare resources (no lock held)
         // =========================================================
 
-        // 准备骨骼数据
+        // Prepare skeleton data
         for skeleton_key in &self.collected_skeleton_keys {
             if let Some(skeleton) = scene.skeleton_pool.get(*skeleton_key){
                 resource_manager.prepare_skeleton(skeleton);
             }
         }
 
-        // 确保模型缓冲区容量
+        // Ensure model buffer capacity
         resource_manager.ensure_model_buffer_capacity(self.collected_meshes.len());
 
-        // 更新并填充渲染项
+        // Update and populate render items
         for collected_mesh in &self.collected_meshes {
             let node_handle = collected_mesh.node_handle;
 
@@ -277,7 +273,7 @@ impl ExtractedScene {
 
 
 
-    /// 提取环境数据
+    /// Extract environment data
     fn extract_environment(&mut self, scene: &Scene) {
         // self.background = scene.background;
         self.scene_defines = scene.shader_defines();
@@ -285,13 +281,13 @@ impl ExtractedScene {
         self.envvironment = scene.environment.clone();
     }
 
-    /// 获取渲染项数量
+    /// Get render item count
     #[inline]
     pub fn render_item_count(&self) -> usize {
         self.render_items.len()
     }
 
-    /// 检查是否为空
+    /// Check if empty
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.render_items.is_empty()
@@ -310,10 +306,10 @@ mod tests {
 
     #[test]
     fn test_extracted_render_item_size() {
-        // 确保结构体大小合理
+        // Ensure struct size is reasonable
         let size = std::mem::size_of::<ExtractedRenderItem>();
         println!("ExtractedRenderItem size: {} bytes", size);
-        // 应该在合理范围内（不超过 256 bytes）
+        // Should be within reasonable range (not exceeding 256 bytes)
         assert!(size < 256, "ExtractedRenderItem is too large: {} bytes", size);
     }
 }

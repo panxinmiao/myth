@@ -3,16 +3,16 @@ use std::borrow::Cow;
 use uuid::Uuid;
 
 
-/// [新增] 纯栈上渲染相机对象 (POD)
-/// todo : 考虑直接满足std140对齐要求?
+/// [New] Pure stack-based render camera object (POD)
+/// TODO: Consider directly satisfying std140 alignment requirements?
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct RenderCamera {
     pub view_matrix: Mat4,
     pub projection_matrix: Mat4,
     pub view_projection_matrix: Mat4,
-    pub position: Vec3A, // 世界坐标位置，Lighting 需要
-    pub frustum: Frustum, // 剔除需要
+    pub position: Vec3A, // World position, needed for lighting
+    pub frustum: Frustum, // Needed for culling
     pub near: f32,
     pub far: f32,
 }
@@ -23,7 +23,7 @@ pub struct Camera {
     pub uuid: Uuid,
     pub name: Cow<'static, str>,
 
-    // === 投影属性 (Projection Only) ===
+    // === Projection Properties (Projection Only) ===
     pub projection_type: ProjectionType,
     pub fov: f32,
     pub aspect: f32,
@@ -31,7 +31,7 @@ pub struct Camera {
     pub far: f32,
     pub ortho_size: f32, 
 
-    // 缓存的矩阵 renderer只读
+    // Cached matrices (read-only for renderer)
     pub(crate) world_matrix: Affine3A,
     pub(crate) view_matrix: Mat4,
     pub(crate) projection_matrix: Mat4,
@@ -71,7 +71,7 @@ impl Camera {
     pub fn update_projection_matrix(&mut self){
         self.projection_matrix =  match self.projection_type {
             ProjectionType::Perspective => {
-                // glam 的 perspective_rh 默认是为了 WGPU/Vulkan 设计的 (0 to 1)
+                // glam's perspective_rh is designed for WGPU/Vulkan (0 to 1) by default
                 Mat4::perspective_infinite_reverse_rh(self.fov, self.aspect, self.near)
             }
             ProjectionType::Orthographic => {
@@ -104,9 +104,9 @@ impl Camera {
             view_matrix: self.view_matrix,
             projection_matrix: self.projection_matrix,
             view_projection_matrix: self.view_projection_matrix,
-            // 从世界矩阵提取位置 (Translation)
+            // Extract position from world matrix (Translation)
             position: self.world_matrix.translation.into(),
-            frustum: self.frustum, // Frustum 也是 Copy 的
+            frustum: self.frustum, // Frustum is also Copy
             near: self.near,
             far: self.far,
         }
@@ -128,8 +128,8 @@ impl Frustum {
         ];
         
         let mut planes = [Vec4::ZERO; 6];
-        // 提取公式: https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
-        // Gribb-Hartmann 方法
+        // Extraction formula: https://www.gamedevs.org/uploads/fast-extraction-viewing-frustum-planes-from-world-view-projection-matrix.pdf
+        // Gribb-Hartmann method
         
         // Left:   row4 + row1
         planes[0] = rows[3] + rows[0];
@@ -140,35 +140,28 @@ impl Frustum {
         // Top:    row4 - row2
         planes[3] = rows[3] - rows[1];
 
-        // [Reverse-Z] Near Plane 对应 NDC z = 1.0
-        // 剔除条件: z_c / w_c > 1.0 (比近平面更近)
-        // 保留条件: z_c <= w_c => w_c - z_c >= 0
+        // [Reverse-Z] Near Plane corresponds to NDC z = 1.0
+        // Cull condition: z_c / w_c > 1.0 (closer than near plane)
+        // Keep condition: z_c <= w_c => w_c - z_c >= 0
         planes[4] = rows[3] - rows[2]; // Near
 
-        // 无限远
+        // Infinite far
         planes[5] = Vec4::new(0.0, 0.0, 0.0, 0.0);
 
-        // Normalize
-        // for plane in &mut planes {
-        //     let length = Vec3::new(plane.x, plane.y, plane.z).length();
-        //     if length > 0.0 {
-        //         *plane /= length;
-        //     }
-        // }
 
         // Normalize with Safety Check
         for (i, plane) in planes.iter_mut().enumerate() {
-            // 跳过 Far Plane 的归一化，防止 NaN
+            // Skip Far Plane normalization to prevent NaN
             if i == 5 { continue; }
 
             let length = Vec3::new(plane.x, plane.y, plane.z).length();
-            // 增加 epsilon 检查防止除以 0
+            // Add epsilon check to prevent division by zero
             if length > 1e-6 {
                 *plane /= length;
             } else {
-                // 如果法线长度为0（异常情况），让该平面失效（永远不剔除）
-                // 设置为 0,0,0,0，这样 dot(center) + 0 < -r 永远为 false (0 < negative) 吗？
-                // 不，0 < -r (r>0) 是 false。所以物体可见。安全。
+                // If normal length is 0 (abnormal case), invalidate the plane (never cull)
+                // Set to 0,0,0,0, so dot(center) + 0 < -r is always false (0 < negative)?
+                // No, 0 < -r (r>0) is false. So the object is visible. Safe.
                 *plane = Vec4::ZERO; 
             }
         }
@@ -176,13 +169,13 @@ impl Frustum {
         Self { planes }
     }
 
-    // 简单的球体相交检测
+    // Simple sphere intersection test
     pub fn intersects_sphere(&self, center: Vec3, radius: f32) -> bool {
         for (i, plane) in self.planes.iter().enumerate() {
-            // [可选] 显式跳过 Far Plane (index 5)
+            // [Optional] Explicitly skip Far Plane (index 5)
             if i == 5 { continue; }
             
-            // 如果平面是零向量（无效平面），直接跳过
+            // If plane is a zero vector (invalid plane), skip it
             if plane.x == 0.0 && plane.y == 0.0 && plane.z == 0.0 {
                 continue;
             }
@@ -195,20 +188,20 @@ impl Frustum {
         true
     }
 
-    /// AABB 与视锥体相交检测
-    /// 使用平面-AABB 测试，如果 AABB 完全在任意平面外侧则返回 false
+    /// AABB vs frustum intersection test
+    /// Uses plane-AABB test, returns false if AABB is completely outside any plane
     pub fn intersects_box(&self, min: Vec3, max: Vec3) -> bool {
         for (i, plane) in self.planes.iter().enumerate() {
-            // 跳过 Far Plane
+            // Skip Far Plane
             if i == 5 { continue; }
             
-            // 如果平面是零向量（无效平面），直接跳过
+            // If plane is a zero vector (invalid plane), skip it
             if plane.x == 0.0 && plane.y == 0.0 && plane.z == 0.0 {
                 continue;
             }
 
-            // 找到 AABB 上距离平面最近的点（p-vertex）
-            // 如果这个点在平面外侧，则整个 AABB 都在外侧
+            // Find the point on AABB closest to the plane (p-vertex)
+            // If this point is outside the plane, the entire AABB is outside
             let p = Vec3::new(
                 if plane.x >= 0.0 { max.x } else { min.x },
                 if plane.y >= 0.0 { max.y } else { min.y },

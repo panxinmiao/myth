@@ -1,13 +1,27 @@
-//! 核心资源定义模块
-//! 
-//! 包含渲染所需的核心数据结构，不依赖于 GPU 实现：
-//! - Mesh: 网格对象
-//! - Material: 材质定义
-//! - Texture: 纹理配置
-//! - Image: 图像数据
-//! - Geometry: 几何数据
-//! - Buffer: 通用缓冲区数据
-//! - Uniforms: 着色器统一变量
+//! Core Resource Definitions
+//!
+//! This module contains CPU-side data structures for rendering resources.
+//! These types are GPU-agnostic and define the logical representation of
+//! rendering data before it's uploaded to the GPU.
+//!
+//! # Module Structure
+//!
+//! - [`mesh`] - Mesh objects combining geometry and materials
+//! - [`geometry`] - Vertex data and attributes (positions, normals, UVs, etc.)
+//! - [`material`] - Material definitions (Standard, Physical, Phong, Basic)
+//! - [`texture`] - Texture configuration and sampling parameters
+//! - [`image`] - Raw image data storage
+//! - [`buffer`] - Generic CPU buffer with version tracking
+//! - [`uniforms`] - Shader uniform data structures
+//! - [`shader_defines`] - Dynamic shader macro system
+//! - [`primitives`] - Built-in geometry primitives (Box, Sphere, Plane, etc.)
+//!
+//! # Design Principles
+//!
+//! - **CPU-side only**: No direct GPU dependencies in this module
+//! - **Version tracking**: Resources track changes for efficient GPU sync
+//! - **Handle-based references**: Use SlotMap handles for safe resource references
+//! - **Shared ownership**: Use `Arc` for data that may be shared across objects
 
 pub mod mesh;
 pub mod texture;

@@ -1,22 +1,37 @@
-//! WGPU 上下文
+//! wgpu Context
 //!
-//! WgpuContext 只持有 device, queue, surface, config
-//! 负责 Resize 和 Present
+//! The [`WgpuContext`] holds core GPU handles: device, queue, surface, and config.
+//! It is responsible for window surface management and resize handling.
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::errors::{Result, ThreeError};
 use crate::renderer::settings::RenderSettings;
 
-/// WGPU 核心上下文
+/// Core wgpu context holding GPU handles.
+///
+/// This struct owns the fundamental wgpu resources needed for rendering:
+/// - `device`: GPU device for resource creation
+/// - `queue`: Command submission queue
+/// - `surface`: Window surface for presentation
+/// - `config`: Surface configuration (format, present mode, etc.)
+///
+/// It also manages the depth buffer texture which is recreated on resize.
 pub struct WgpuContext {
+    /// The wgpu device for GPU operations
     pub device: wgpu::Device,
+    /// The command queue for submitting work
     pub queue: wgpu::Queue,
+    /// The window surface for presentation
     pub surface: wgpu::Surface<'static>,
+    /// Surface configuration
     pub config: wgpu::SurfaceConfiguration,
-    
+
+    /// Depth buffer format
     pub depth_format: wgpu::TextureFormat,
+    /// Depth buffer texture view (recreated on resize)
     pub depth_texture_view: wgpu::TextureView,
+    /// Clear color for the frame
     pub clear_color: wgpu::Color,
 }
 
@@ -114,19 +129,20 @@ impl WgpuContext {
         texture.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
+    /// Returns the surface color format.
     pub fn color_format(&self) -> wgpu::TextureFormat {
         self.config.format
     }
 
-    /// 获取深度纹理视图
-    /// 
-    /// 深度纹理在 resize 时自动重建，此方法直接返回当前视图引用。
+    /// Returns the depth texture view.
+    ///
+    /// The depth texture is automatically recreated on resize.
     #[inline]
     pub fn get_depth_view(&self) -> &wgpu::TextureView {
         &self.depth_texture_view
     }
 
-    /// 获取当前 Surface 尺寸
+    /// Returns the current surface dimensions.
     #[inline]
     pub fn size(&self) -> (u32, u32) {
         (self.config.width, self.config.height)

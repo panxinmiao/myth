@@ -1,3 +1,42 @@
+//! Asset Loading and Management System
+//!
+//! This module provides centralized asset storage and loading capabilities:
+//!
+//! - [`AssetServer`]: Central registry for all asset types
+//! - [`AssetStorage`]: Generic storage for asset collections
+//! - [`Prefab`]: Scene prefab system for instancing
+//! - Loaders for various formats (glTF, textures, HDR)
+//!
+//! # Supported Formats
+//!
+//! - **glTF/GLB**: Full glTF 2.0 support including PBR materials, animations, and skinning
+//! - **Images**: PNG, JPEG, and other formats via the `image` crate
+//! - **HDR**: High Dynamic Range environment maps (Equirectangular format)
+//!
+//! # Handle System
+//!
+//! All assets are referenced via strongly-typed handles:
+//! - [`GeometryHandle`]: References to geometry data
+//! - [`MaterialHandle`]: References to material instances
+//! - [`TextureHandle`]: References to texture assets
+//! - [`SamplerHandle`]: References to sampler configurations
+//!
+//! These handles are lightweight (8 bytes) and can be freely copied.
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! // Load a texture
+//! let handle = assets.load_texture_from_file("diffuse.png", ColorSpace::Srgb, true)?;
+//!
+//! // Load HDR environment
+//! let env_handle = assets.load_hdr_texture("environment.hdr")?;
+//!
+//! // Load glTF model (returns a Prefab)
+//! let prefab = GltfLoader::load(&assets, "model.gltf").await?;
+//! prefab.instantiate(&mut scene);
+//! ```
+
 pub mod server;
 pub mod loaders;
 pub mod skeleton_asset;
@@ -58,8 +97,17 @@ pub fn load_texture_from_file(path: impl AsRef<Path>, color_space: ColorSpace) -
     Ok(texture)
 }
 
-/// 加载 HDR 格式的环境贴图 (Equirectangular format)
-/// 返回一个 2D 纹理，格式为 Rgba16Float，可用于 IBL
+/// Loads an HDR environment map in Equirectangular format.
+///
+/// Returns a 2D texture with Rgba16Float format suitable for IBL.
+///
+/// # Arguments
+///
+/// * `path` - Path to the HDR file
+///
+/// # Returns
+///
+/// A texture that can be used for image-based lighting.
 pub fn load_hdr_texture(path: impl AsRef<Path>) -> anyhow::Result<crate::resources::texture::Texture> {
     let img = image::open(&path).context("Failed to open HDR file")?;
     
@@ -124,7 +172,7 @@ pub fn load_cube_texture_from_files(paths: [impl AsRef<Path>; 6], color_space: C
         face_data.push(data);
     }
     
-    // 合并六个面的数据
+    // Merge all six faces' data
     let mut combined_data = Vec::with_capacity((width * height * 4 * 6) as usize);
     for face in face_data.iter() {
         combined_data.extend_from_slice(face);

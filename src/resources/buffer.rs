@@ -28,8 +28,8 @@ pub struct BufferRef {
     #[cfg(debug_assertions)]
     label: Cow<'static, str>,
     pub usage: wgpu::BufferUsages,
-    pub size: usize, // 记录大小，用于创建时的参考
-    pub version: u64, // 版本号，用于追踪内容变更
+    pub size: usize, // Recorded size, used as reference during creation
+    pub version: u64, // Version number, used to track content changes
 }
 
 impl BufferRef {
@@ -46,31 +46,31 @@ impl BufferRef {
         }
     }
     
-    /// 辅助构造：根据数据长度创建句柄
+    /// Helper constructor: create handle based on data length
     pub fn from_data<T: Pod>(data: &[T], usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         let size = std::mem::size_of_val(data);
         Self::new(size, usage, label)
     }
 
-    /// 辅助构造：从字节数组创建句柄
+    /// Helper constructor: create handle from byte array
     pub fn from_bytes(data: &[u8], usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         Self::new(data.len(), usage, label)
     }
 
-    /// 创建空句柄
+    /// Create an empty handle
     pub fn empty(usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         Self::new(0, usage, label)
     }
 
-    /// 创建指定容量的句柄
+    /// Create a handle with specified capacity
     pub fn with_capacity(capacity: usize, usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         Self::new(capacity, usage, label)
     }
 
-    /// 创建具有指定 ID 的句柄（用于全局资源管理）
+    /// Create a handle with a specified ID (for global resource management)
     /// 
-    /// 注意：此方法允许指定固定的 ID，用于需要稳定引用的全局资源。
-    /// 普通使用场景应使用 `new()` 方法让系统自动分配 ID。
+    /// Note: This method allows specifying a fixed ID for global resources that need stable references.
+    /// For normal use cases, use `new()` to let the system automatically allocate an ID.
     pub fn with_fixed_id(id: u64, size: usize, usage: wgpu::BufferUsages, version: u64, _label: Option<&str>) -> Self {
         Self {
             id,
@@ -105,7 +105,7 @@ pub struct BufferGuard<'a, T: GpuData> {
 }
 
 impl<'a, T: GpuData> BufferGuard<'a, T> {
-    // 允许用户手动取消版本更新
+    // Allow user to manually skip version update
     pub fn skip_sync(&mut self) {
         self.changed = false;
     }
@@ -134,7 +134,7 @@ impl<'a, T: GpuData> Drop for BufferGuard<'a, T> {
 }
 
 
-/// 内部可变状态：只有这些数据需要被锁保护
+/// Internal mutable state: only these data need lock protection
 #[derive(Debug)]
 struct CpuBufferState<T: GpuData> {
     data: T,
@@ -144,25 +144,25 @@ struct CpuBufferState<T: GpuData> {
 
 #[derive(Debug)]
 pub struct CpuBuffer<T: GpuData> {
-    // 1. 不可变元数据 (Immutable Metadata) - 放在锁外，支持无锁访问
+    // 1. Immutable Metadata - placed outside the lock, supports lock-free access
     id: u64,
     usage: wgpu::BufferUsages,
     #[cfg(debug_assertions)]
     label: Cow<'static, str>,
 
-    // 2. 可变状态 (Mutable State) - 放在锁内
+    // 2. Mutable State - placed inside the lock
     inner: RwLock<CpuBufferState<T>>,
 }
 
 impl<T: GpuData + Clone> Clone for CpuBuffer<T> {
     fn clone(&self) -> Self {
-        // 1. 获取读锁，拿到当前数据的引用
+        // 1. Acquire read lock to get reference to current data
         let guard = self.inner.read();
-        // 2. 构造新的 CpuBuffer，克隆数据
+        // 2. Construct new CpuBuffer with cloned data
         Self::new(
             guard.data.clone(), 
             self.usage, 
-            self.label() // 复用 Label
+            self.label() // Reuse Label
         )
     }
 }
@@ -171,27 +171,23 @@ impl<T: GpuData> CpuBuffer<T> {
     pub fn new(data: T, usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         let size = data.byte_size();
 
-        // 先创建 BufferRef 主要是为了复用它的 ID 生成逻辑
+        // Create BufferRef first mainly to reuse its ID generation logic
         let base_ref = BufferRef::new(size, usage, label);
 
         Self {
-            // 提取不可变元数据到外层
+            // Extract immutable metadata to outer layer
             id: base_ref.id,
             usage: base_ref.usage,
             #[cfg(debug_assertions)]
             label: base_ref.label,
 
-            // 初始化内部可变状态
+            // Initialize internal mutable state
             inner: RwLock::new(CpuBufferState {
                 data,
                 version: 0,
                 size,
             }),
         }
-
-        // let mut buffer = BufferRef::new(size, usage, label);
-        // buffer.version = 0;
-        // Self { data, buffer }
     }
 
     pub fn default() -> Self 
@@ -212,19 +208,8 @@ impl<T: GpuData> CpuBuffer<T> {
         Self::new(T::default(), wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, label)
     }
 
-    // pub fn read(&self) -> &T {
-    //     &self.data
-    // }
 
-    // pub fn write(&mut self) -> BufferGuard<'_, T> {
-    //     BufferGuard { buffer: self }
-    // }
-    
-    // pub fn handle(&self) -> &BufferRef {
-    //     &self.buffer
-    // }
-
-    // === 不需要锁的操作 ===
+    // === Lock-free operations ===
     pub fn id(&self) -> u64 {
         self.id
     }
@@ -240,7 +225,7 @@ impl<T: GpuData> CpuBuffer<T> {
         { None }
     }
 
-    // === 需要锁的操作 ===
+    // === Operations requiring lock ===
 
     pub fn size(&self) -> usize {
         self.inner.read().size
@@ -250,17 +235,13 @@ impl<T: GpuData> CpuBuffer<T> {
         self.inner.read().version
     }
 
-    /// 获取数据读锁
-    /// 注意：返回的 Guard 只能访问 data
+    /// Acquire data read lock
     pub fn read(&self) -> BufferReadGuard<'_, T> {
         BufferReadGuard {
             guard: self.inner.read()
         }
     }
-
-    // 为了让 deref 能够工作，我们需要一个小技巧或者让用户手动访问 .data
-    // 鉴于 CpuBufferState 对外不可见，建议让用户通过 read().data 访问，或者自定义 ReadGuard
-
+    /// Acquire data write lock
     pub fn write(&self) -> BufferGuard<'_, T> {
         BufferGuard {
             guard: self.inner.write(),
@@ -268,9 +249,8 @@ impl<T: GpuData> CpuBuffer<T> {
         }
     }
 
-    /// 获取当前的 BufferRef 快照
-    /// 注意：这里由返回 `&BufferRef` 改为了返回 `BufferRef` (值类型)
-    /// 因为版本号在锁里，我们必须现场构造一个新的 BufferRef
+    /// Get a snapshot of the current BufferRef
+    /// Since version number is inside the lock, we must construct a new BufferRef on the spot
     pub fn handle(&self) -> BufferRef {
         let state = self.inner.read();
         BufferRef {
@@ -282,10 +262,6 @@ impl<T: GpuData> CpuBuffer<T> {
             version: state.version,
         }
     }
-
-    // pub fn as_bytes(&self) -> &[u8] {
-    //     self.data.as_bytes()
-    // }
 }
 
 pub struct BufferReadGuard<'a, T: GpuData> {
@@ -298,20 +274,3 @@ impl<'a, T: GpuData> std::ops::Deref for BufferReadGuard<'a, T> {
         &self.guard.data
     }
 }
-
-// impl<T: GpuData> std::ops::Deref for CpuBuffer<T> {
-//     type Target = T;
-//     fn deref(&self) -> &Self::Target {
-//         &self.data
-//     }
-// }
-
-// impl<T: GpuData> GpuData for CpuBuffer<T> {
-//     fn as_bytes(&self) -> &[u8] {
-//         self.data.as_bytes()
-//     }
-    
-//     fn byte_size(&self) -> usize {
-//         self.data.byte_size()
-//     }
-// }

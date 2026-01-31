@@ -1,9 +1,48 @@
-//! 渲染器模块
+//! Rendering System
 //!
-//! 负责将 Scene 绘制到屏幕，采用 Core - Graph - Pipeline 分层架构：
-//! - core: WGPU 上下文封装（Device, Queue, Surface, ResourceManager）
-//! - graph: 渲染管线组织（RenderFrame, Pass, Sort, FrameBuilder）
-//! - pipeline: PSO 缓存与构建
+//! This module handles all GPU rendering operations using a layered architecture:
+//!
+//! - **[`core`]**: wgpu context wrapper (Device, Queue, Surface, ResourceManager)
+//! - **[`graph`]**: Render frame organization (RenderFrame, RenderNode, FrameBuilder)
+//! - **[`pipeline`]**: Shader compilation and pipeline caching (L1/L2 cache strategy)
+//!
+//! # Architecture Overview
+//!
+//! ```text
+//! ┌───────────────────────────────────────────────┐
+//! │                  FrameComposer                  │
+//! │          (High-level rendering API)             │
+//! ├───────────────────────────────────────────────┤
+//! │     RenderGraph     │     RenderFrame           │
+//! │   (Node execution)  │  (Scene extraction)       │
+//! ├───────────────────────────────────────────────┤
+//! │   PipelineCache    │    ResourceManager        │
+//! │  (Shader/PSO cache) │  (GPU resource lifecycle) │
+//! ├───────────────────────────────────────────────┤
+//! │                   WgpuContext                   │
+//! │            (Device, Queue, Surface)             │
+//! └───────────────────────────────────────────────┘
+//! ```
+//!
+//! # Rendering Pipeline
+//!
+//! Each frame goes through these phases:
+//!
+//! 1. **Extract**: Scene data is extracted into GPU-friendly format
+//! 2. **Prepare**: Resources are uploaded/updated on GPU
+//! 3. **Queue**: Render commands are sorted and batched
+//! 4. **Render**: Commands are executed via render passes
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! // Start a frame
+//! if let Some(composer) = renderer.begin_frame(scene, camera, assets, time) {
+//!     composer
+//!         .add_node(RenderStage::UI, &ui_pass)
+//!         .render();
+//! }
+//! ```
 
 pub mod core;
 pub mod graph;
@@ -22,14 +61,27 @@ use self::graph::{FrameComposer, RenderFrame};
 use self::pipeline::PipelineCache;
 use self::settings::RenderSettings;
 
-/// 主渲染器
+/// The main renderer responsible for GPU rendering operations.
+///
+/// The renderer manages the complete rendering pipeline including:
+/// - GPU context (device, queue, surface)
+/// - Resource management (buffers, textures, bind groups)
+/// - Pipeline caching (shader compilation, PSO creation)
+/// - Frame rendering (scene extraction, command submission)
+///
+/// # Lifecycle
+///
+/// 1. Create with [`Renderer::new`] (no GPU resources allocated)
+/// 2. Initialize GPU with [`Renderer::init`]
+/// 3. Render frames with [`Renderer::begin_frame`]
+/// 4. Clean up with [`Renderer::maybe_prune`]
 pub struct Renderer {
     settings: RenderSettings,
     context: Option<RendererState>,
     size: [u32; 2],
 }
 
-/// 渲染器内部状态
+/// Internal renderer state
 struct RendererState {
     wgpu_ctx: WgpuContext,
     resource_manager: ResourceManager,
@@ -38,7 +90,10 @@ struct RendererState {
 }
 
 impl Renderer {
-    /// 阶段 1: 创建配置 (无 GPU 资源)
+    /// Phase 1: Create configuration (no GPU resources yet).
+    ///
+    /// This only stores the render settings. GPU resources are
+    /// allocated when [`init`](Self::init) is called.
     pub fn new(settings: RenderSettings) -> Self {
         Self {
             settings,
@@ -47,7 +102,13 @@ impl Renderer {
         }
     }
 
-    /// 阶段 2: 初始化 GPU 上下文 (接受任何窗口句柄)
+    /// Phase 2: Initialize GPU context with window handle.
+    ///
+    /// This method:
+    /// 1. Creates the wgpu instance and adapter
+    /// 2. Requests a device with required features/limits
+    /// 3. Configures the surface for presentation
+    /// 4. Initializes resource manager and pipeline cache
     pub async fn init<W>(&mut self, window: W, width: u32, height: u32) -> Result<()>
     where
         W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static,
@@ -58,17 +119,17 @@ impl Renderer {
 
         self.size = [width, height];
 
-        // 1. 创建 WGPU 上下文
+        // 1. Create WGPU context
         let wgpu_ctx = WgpuContext::new(window, &self.settings, width, height).await?;
 
-        // 2. 初始化资源管理器
+        // 2. Initialize resource manager
         let resource_manager =
             ResourceManager::new(wgpu_ctx.device.clone(), wgpu_ctx.queue.clone());
 
-        // 3. 创建渲染帧管理器
+        // 3. Create render frame manager
         let render_frame = RenderFrame::new(wgpu_ctx.device.clone());
 
-        // 4. 组装状态
+        // 4. Assemble state
         self.context = Some(RendererState {
             wgpu_ctx,
             resource_manager,
@@ -87,19 +148,20 @@ impl Renderer {
         }
     }
 
-    /// 开始构建一帧渲染
+    /// Begins building a new frame for rendering.
     ///
-    /// 返回 `FrameComposer`，提供链式 API 配置渲染管线。
+    /// Returns a [`FrameComposer`] that provides a chainable API for
+    /// configuring the render pipeline.
     ///
-    /// # 新 API 用法
+    /// # Usage
     ///
-    /// ```ignore
-    /// // 方式 1：使用默认内置 Pass
+    /// ```rust,ignore
+    /// // Method 1: Use default built-in passes
     /// if let Some(composer) = renderer.begin_frame(scene, camera, assets, time) {
     ///     composer.render();
     /// }
     ///
-    /// // 方式 2：自定义渲染管线（链式调用）
+    /// // Method 2: Custom pipeline with chained nodes
     /// if let Some(composer) = renderer.begin_frame(scene, camera, assets, time) {
     ///     composer
     ///         .add_node(RenderStage::UI, &ui_pass)
@@ -108,10 +170,10 @@ impl Renderer {
     /// }
     /// ```
     ///
-    /// # 返回
+    /// # Returns
     ///
-    /// 返回 `Some(FrameComposer)` 如果成功准备帧，否则返回 `None`
-    /// （例如窗口尺寸为 0 或资源未就绪）。
+    /// Returns `Some(FrameComposer)` if frame preparation succeeds,
+    /// or `None` if rendering should be skipped (e.g., window size is 0).
     pub fn begin_frame<'a>(
         &'a mut self,
         scene: &'a mut Scene,
@@ -125,7 +187,7 @@ impl Renderer {
 
         let state = self.context.as_mut()?;
 
-        // Prepare 阶段：提取场景、准备内置 Pass
+        // Prepare phase: extract scene, prepare built-in passes
         state.render_frame.extract_and_prepare(
             //&mut state.wgpu_ctx,
             &mut state.resource_manager,
@@ -136,7 +198,7 @@ impl Renderer {
             time,
         );
 
-        // 返回 FrameComposer，延迟 Surface 获取到 render() 调用
+        // Return FrameComposer, defer Surface acquisition to render() call
         Some(FrameComposer::new(
             &mut state.wgpu_ctx,
             &mut state.resource_manager,
@@ -149,42 +211,43 @@ impl Renderer {
         ))
     }
     
-    /// 定期清理资源
-    /// 
-    /// 建议在每帧渲染后调用。
+    /// Performs periodic resource cleanup.
+    ///
+    /// Should be called after each frame to release unused GPU resources.
+    /// Uses internal heuristics to avoid expensive cleanup every frame.
     pub fn maybe_prune(&mut self) {
         if let Some(state) = &mut self.context {
             state.render_frame.maybe_prune(&mut state.resource_manager);
         }
     }
 
-    // === 公开方法：用于外部插件 (如 UI Pass) ===
+    // === Public Methods: For External Plugins (e.g., UI Pass) ===
 
-    /// 获取 wgpu Device 引用
-    /// 
-    /// 用于外部插件初始化 GPU 资源
+    /// Returns a reference to the wgpu Device.
+    ///
+    /// Useful for external plugins to initialize GPU resources.
     pub fn device(&self) -> Option<&wgpu::Device> {
         self.context.as_ref().map(|s| &s.wgpu_ctx.device)
     }
 
-    /// 获取 wgpu Queue 引用
-    /// 
-    /// 用于外部插件提交命令
+    /// Returns a reference to the wgpu Queue.
+    ///
+    /// Useful for external plugins to submit commands.
     pub fn queue(&self) -> Option<&wgpu::Queue> {
         self.context.as_ref().map(|s| &s.wgpu_ctx.queue)
     }
 
-    /// 获取 Surface 纹理格式
-    /// 
-    /// 用于外部插件配置渲染管线
+    /// Returns the surface texture format.
+    ///
+    /// Useful for external plugins to configure render pipelines.
     pub fn surface_format(&self) -> Option<wgpu::TextureFormat> {
         self.context.as_ref().map(|s| s.wgpu_ctx.config.format)
     }
 
-    /// 获取 WgpuContext 的引用
-    /// 
-    /// 用于外部插件访问底层 GPU 资源（Device, Queue, Surface 等）
-    /// 注意：仅在 Renderer 初始化后可用
+    /// Returns a reference to the WgpuContext.
+    ///
+    /// For external plugins that need access to low-level GPU resources.
+    /// Only available after renderer initialization.
     pub fn wgpu_ctx(&self) -> Option<&WgpuContext> {
         self.context.as_ref().map(|s| &s.wgpu_ctx)
     }

@@ -5,7 +5,7 @@ new_key_type! {
     pub struct SceneHandle;
 }
 
-/// 负责管理场景生命周期的子系统
+/// Subsystem responsible for managing scene lifecycle
 pub struct SceneManager {
     scenes: SlotMap<SceneHandle, Scene>,
     active_scene: Option<SceneHandle>,
@@ -20,12 +20,12 @@ impl SceneManager {
         }
     }
 
-    /// 创建一个新场景，返回其句柄
+    /// Creates a new scene and returns its handle
     pub fn create_scene(&mut self) -> SceneHandle {
         self.scenes.insert(Scene::new())
     }
 
-    /// 删除场景（带安全检查）
+    /// Removes a scene (with safety checks)
     pub fn remove_scene(&mut self, handle: SceneHandle) {
         if self.active_scene == Some(handle) {
             self.active_scene = None;
@@ -34,7 +34,7 @@ impl SceneManager {
         self.scenes.remove(handle);
     }
 
-    /// 设置当前激活场景
+    /// Sets the currently active scene
     pub fn set_active(&mut self, handle: SceneHandle) {
         if self.scenes.contains_key(handle) {
             self.active_scene = Some(handle);
@@ -43,37 +43,37 @@ impl SceneManager {
         }
     }
 
-    /// 创建并设置一个新的激活场景，返回其可变引用
+    /// Creates and sets a new active scene, returning its mutable reference
     pub fn create_active(&mut self) -> &mut Scene {
         let handle = self.create_scene();
         self.set_active(handle);
         self.get_scene_mut(handle).unwrap()
     }
 
-    /// 获取当前激活场景的句柄
+    /// Gets the handle of the currently active scene
     #[must_use]
     pub fn active_handle(&self) -> Option<SceneHandle> {
         self.active_scene
     }
 
-    /// 获取任意场景的引用
+    /// Gets a reference to any scene
     #[must_use]
     pub fn get_scene(&self, handle: SceneHandle) -> Option<&Scene> {
         self.scenes.get(handle)
     }
 
-    /// 获取任意场景的可变引用
+    /// Gets a mutable reference to any scene
     pub fn get_scene_mut(&mut self, handle: SceneHandle) -> Option<&mut Scene> {
         self.scenes.get_mut(handle)
     }
 
-    /// 获取当前激活场景
+    /// Gets the currently active scene
     #[must_use]
     pub fn active_scene(&self) -> Option<&Scene> {
         self.active_scene.and_then(|h| self.scenes.get(h))
     }
 
-    /// 获取当前激活的场景（可变引用）
+    /// Gets the currently active scene (mutable reference)
     pub fn active_scene_mut(&mut self) -> Option<&mut Scene> {
         self.active_scene.and_then(|h| self.scenes.get_mut(h))
     }

@@ -1,10 +1,34 @@
-//! 渲染管线模块
+//! Pipeline Management and Shader Compilation
 //!
-//! 管理着色器编译和管线状态：
-//! - PipelineCache: 管线缓存（L1快速缓存 + L2规范缓存）
-//! - vertex: 顶点布局生成
-//! - shader_gen: 着色器代码生成
-//! - shader_manager: 着色器模板管理
+//! This module manages shader compilation and render pipeline state:
+//!
+//! - [`PipelineCache`]: Two-level pipeline cache (L1 fast lookup + L2 canonical cache)
+//! - [`PipelineKey`]: Unique identifier for pipeline configurations
+//! - Vertex layout generation
+//! - Shader template compilation with macro preprocessing
+//!
+//! # Caching Strategy
+//!
+//! The pipeline cache uses a two-level strategy:
+//!
+//! - **L1 Cache**: Fast hash-based lookup for common pipeline configurations
+//! - **L2 Cache**: Canonical storage indexed by full pipeline descriptor
+//!
+//! This approach minimizes shader recompilation while supporting dynamic
+//! shader macro combinations from materials.
+//!
+//! # Shader System
+//!
+//! Shaders use a template system with Jinja2-style macros:
+//!
+//! ```wgsl
+//! {% if HAS_NORMAL_MAP %}
+//! let normal = sample_normal_map(...);
+//! {% endif %}
+//! ```
+//!
+//! Materials declare their required macros via `shader_defines()`, which
+//! are passed to the shader compiler.
 
 pub mod cache;
 pub mod vertex;

@@ -28,20 +28,20 @@ pub fn create_sphere(options: SphereOptions) -> Geometry {
     let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
-    // 生成顶点数据
+    // Generate vertex data
     for y in 0..=height_segments {
         let v_ratio = y as f32 / height_segments as f32;
-        // 纬度角度：从 0 到 PI (南极到北极)
+        // Latitude angle: from 0 to PI (south pole to north pole)
         let theta = v_ratio * PI; 
         
-        // y 坐标 (Y-up)
+        // y coordinate (Y-up)
         let py = -radius * (theta.cos()); 
-        // 当前纬度圈的半径
+        // Radius of current latitude ring
         let ring_radius = radius * (theta.sin());
 
         for x in 0..=width_segments {
             let u_ratio = x as f32 / width_segments as f32;
-            // 经度角度：从 0 到 2PI
+            // Longitude angle: from 0 to 2*PI
             let phi = u_ratio * 2.0 * PI;
 
             let px = -ring_radius * phi.cos();
@@ -49,7 +49,7 @@ pub fn create_sphere(options: SphereOptions) -> Geometry {
 
             positions.push([px, py, pz]);
 
-            // 法线就是归一化的位置向量
+            // Normal is the normalized position vector
             let nx = px / radius;
             let ny = py / radius;
             let nz = pz / radius;
@@ -60,8 +60,8 @@ pub fn create_sphere(options: SphereOptions) -> Geometry {
         }
     }
 
-    // 生成索引
-    // 每一格由两个三角形组成
+    // Generate indices
+    // Each grid cell consists of two triangles
     let stride = width_segments + 1;
     for y in 0..height_segments {
         for x in 0..width_segments {
@@ -70,14 +70,14 @@ pub fn create_sphere(options: SphereOptions) -> Geometry {
             let v2 = (y + 1) * stride + x;
             let v3 = v2 + 1;
 
-            // 如果不是最后一圈（南极点不需要第一个三角形，但为了算法简单通常不做特殊剔除，退化三角形会被GPU忽略）
+            // If not the last row (south pole doesn't need the first triangle, but for simplicity we usually don't do special culling, degenerate triangles will be ignored by the GPU)
             if y != 0 || true { 
                 indices.push(v0 as u16);
                 indices.push(v1 as u16);
                 indices.push(v2 as u16);
             }
             
-            // 如果不是第一圈（北极点）
+            // If not the first row (north pole)
             if y != height_segments - 1 || true {
                 indices.push(v1 as u16);
                 indices.push(v3 as u16);

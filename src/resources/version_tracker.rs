@@ -1,4 +1,4 @@
-/// 版本追踪器 - 用于标记资源变化
+/// Version tracker - used to mark resource changes
 #[derive(Debug, Clone, Copy, Default)]
 pub struct ChangeTracker {
     version: u64,
@@ -9,18 +9,18 @@ impl ChangeTracker {
         Self { version: 0 }
     }
 
-    /// 标记为已修改，版本号+1
+    /// Marks as modified, increments version by 1
     pub fn changed(&mut self) {
         self.version = self.version.wrapping_add(1);
     }
     
-    /// 获取当前版本号
+    /// Gets the current version number
     pub fn version(&self) -> u64 {
         self.version
     }
 }
 
-/// 可变守卫 - 当作用域结束时自动更新版本号
+/// Mutable guard - automatically updates version when scope ends
 pub struct MutGuard<'a, T> {
     data: &'a mut T,
     version: &'a mut u64,
@@ -46,7 +46,7 @@ impl<'a, T> std::ops::DerefMut for MutGuard<'a, T> {
     }
 }
 
-// 关键：当 Guard 销毁时，自动增加版本号
+// Key: when Guard is dropped, automatically increment version number
 impl<'a, T> Drop for MutGuard<'a, T> {
     fn drop(&mut self) {
         *self.version = self.version.wrapping_add(1);

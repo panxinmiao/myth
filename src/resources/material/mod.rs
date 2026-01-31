@@ -21,14 +21,20 @@ use glam::{Mat3A, Vec2, Vec4};
 use uuid::Uuid;
 
 // ============================================================================
-// TextureSlot 架构
+// TextureSlot Architecture
 // ============================================================================
 
-/// 纹理变换参数
+/// UV texture transformation parameters.
+///
+/// Defines offset, rotation, and scale transformations applied to
+/// texture coordinates before sampling.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextureTransform {
+    /// UV offset (translation)
     pub offset: Vec2,
+    /// Rotation angle in radians
     pub rotation: f32,
+    /// UV scale factor
     pub scale: Vec2,
 }
 
@@ -43,15 +49,36 @@ impl Default for TextureTransform {
     }
 }
 
-/// 纹理槽位：封装纹理引用与变换参数
+/// A texture slot that holds a texture reference and its UV transformation.
+///
+/// This is the primary way materials reference textures. Each slot can optionally
+/// contain a texture handle and UV transformation parameters.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// // Create a slot with a texture
+/// let slot = TextureSlot::new(texture_handle);
+///
+/// // Create a slot with custom transform
+/// let slot = TextureSlot::with_transform(texture_handle, TextureTransform {
+///     offset: Vec2::new(0.5, 0.0),
+///     rotation: 0.0,
+///     scale: Vec2::ONE,
+/// });
+/// ```
 #[derive(Clone, Debug, Default)]
 pub struct TextureSlot {
+    /// The texture handle (None if no texture is assigned)
     pub texture: Option<TextureHandle>,
+    /// UV transformation applied to this texture
     pub transform: TextureTransform,
+    /// UV channel index (for meshes with multiple UV sets)
     pub channel: u8,
 }
 
 impl TextureSlot {
+    /// Creates a new texture slot with default transform.
     #[inline]
     pub fn new(handle: TextureHandle) -> Self {
         Self {
@@ -61,6 +88,7 @@ impl TextureSlot {
         }
     }
 
+    /// Creates a new texture slot with a custom transform.
     #[inline]
     pub fn with_transform(handle: TextureHandle, transform: TextureTransform) -> Self {
         Self {
@@ -70,15 +98,18 @@ impl TextureSlot {
         }
     }
 
-    /// 计算 UV 变换矩阵 (3x3)
-    /// 变换顺序: Translate * Rotate * Scale
+    /// Computes the UV transformation matrix (3x3).
+    ///
+    /// Transform order: Translate * Rotate * Scale
+    ///
+    /// The resulting matrix is in column-major order for WGSL compatibility.
     #[inline]
     pub fn compute_matrix(&self) -> Mat3A {
         let (s, c) = (-self.transform.rotation).sin_cos();
         let sx = self.transform.scale.x;
         let sy = self.transform.scale.y;
         
-        // 列主序矩阵 (Column-Major):
+        // Column-major matrix:
         // | sx*c   -sy*s   tx |
         // | sx*s    sy*c   ty |
         // |  0       0      1 |
@@ -98,8 +129,8 @@ impl TextureSlot {
     pub fn is_none(&self) -> bool {
         self.texture.is_none()
     }
-    
-    /// 设置纹理
+
+    /// Sets the texture handle.
     #[inline]
     pub fn set_texture(&mut self, handle: Option<TextureHandle>) {
         self.texture = handle;
@@ -107,13 +138,15 @@ impl TextureSlot {
 }
 
 // ============================================================================
-// TextureSlotGuard - 纹理槽位修改守卫
+// TextureSlotGuard - Texture Slot Modification Guard
 // ============================================================================
 
-/// 纹理槽位修改守卫
-/// 
-/// 当纹理的有/无状态发生变化时（影响 Shader 宏），自动递增版本号。
-/// 使用 RAII 模式确保版本控制的正确性。
+/// RAII guard for texture slot modifications.
+///
+/// When the texture presence state changes (affecting shader macros),
+/// automatically increments the material version number.
+///
+/// This ensures pipeline cache invalidation when textures are added or removed.
 pub struct TextureSlotGuard<'a> {
     slot: &'a mut TextureSlot,
     version: &'a mut u64,
@@ -121,7 +154,7 @@ pub struct TextureSlotGuard<'a> {
 }
 
 impl<'a> TextureSlotGuard<'a> {
-    /// 创建纹理槽位守卫
+    /// Creates a new texture slot guard.
     #[inline]
     pub fn new(slot: &'a mut TextureSlot, version: &'a mut u64) -> Self {
         let was_some = slot.texture.is_some();
@@ -193,60 +226,95 @@ impl From<Option<TextureSource>> for TextureSlot {
 }
 
 
-/// [普通用户接口]
-/// 所有材质都实现的标记 Trait。
-/// 用户平时使用时，只需将其视为 `dyn Material`。
+/// Base trait for all material types.
+///
+/// This is the user-facing interface for materials. For everyday use,
+/// simply treat materials as `dyn Material`.
+///
+/// # Note
+///
+/// Users typically don't need to implement this trait directly.
+/// Use the built-in material types or implement [`RenderableMaterialTrait`]
+/// for custom materials.
 pub trait MaterialTrait: Any + Send + Sync + std::fmt::Debug {
+    /// Returns self as `Any` for downcasting.
     fn as_any(&self) -> &dyn Any;
+    /// Returns mutable self as `Any` for downcasting.
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
 
 
-/// [高级接口] 渲染系统接口
-/// 
-/// 普通用户不需要导入此 Trait。
-/// 只有在自定义新材质类型，或编写渲染管线时才需要使用。
+/// Advanced rendering interface for materials.
+///
+/// This trait is for internal use by the rendering system and for
+/// implementing custom material types. Regular users don't need to
+/// import or use this trait directly.
+///
+/// # Implementing Custom Materials
+///
+/// To create a custom material type:
+///
+/// 1. Implement [`MaterialTrait`] for basic type support
+/// 2. Implement this trait for rendering capabilities
+/// 3. Define your uniform struct with `#[repr(C)]` and `bytemuck`
+/// 4. Create a corresponding shader template
+///
+/// See `MeshStandardMaterial` for a reference implementation.
 pub trait RenderableMaterialTrait: MaterialTrait {
-    /// 着色器模板名称
+    /// Returns the shader template name.
     fn shader_name(&self) -> &'static str;
-    /// 材质版本号（用于缓存失效）
+    /// Returns the material version (used for cache invalidation).
     fn version(&self) -> u64;
-    /// 获取材质的 Shader 宏定义
+    /// Returns shader macro definitions based on current material state.
     fn shader_defines(&self) -> ShaderDefines;
-    /// 材质渲染设置
+    /// Returns material rendering settings.
     fn settings(&self) -> MaterialSettings;
-    
-    /// 访问所有纹理
+
+    /// Visits all textures used by this material.
     fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource));
-    /// 定义 GPU 资源绑定
+    /// Defines GPU resource bindings for this material.
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>);
-    /// 获取 Uniform 缓冲区引用
+    /// Returns a reference to the uniform buffer.
     fn uniform_buffer(&self) -> BufferRef;
-    // 获取 Uniform 数据字节
-    // fn uniform_bytes(&self) -> &[u8];
+    /// Provides uniform data bytes to the callback.
     fn with_uniform_bytes(&self, f: &mut dyn FnMut(&[u8]));
 }
 
+/// Face culling mode for rendering.
 #[derive(PartialEq, Eq, Clone, Debug, Copy)]
 pub enum Side {
+    /// Render only front faces (counter-clockwise winding)
     Front,
+    /// Render only back faces (clockwise winding)
     Back,
+    /// Render both faces (no culling)
     Double,
 }
 
+/// Alpha blending mode for transparency handling.
 #[derive(PartialEq, Clone, Debug, Copy)]
 pub enum AlphaMode {
+    /// Fully opaque, no transparency
     Opaque,
-    Mask(f32), // alpha cutoff
+    /// Alpha cutoff (discard pixels below threshold)
+    Mask(f32),
+    /// Standard alpha blending
     Blend,
 }
 
-/// 材质设置 - 对应 Pipeline 变化
+/// Material render state settings.
+///
+/// These settings affect the GPU pipeline configuration and may
+/// cause pipeline cache misses when changed.
 #[derive(PartialEq, Clone, Debug, Copy)]
 pub struct MaterialSettings {
+    /// Alpha blending mode
     pub alpha_mode: AlphaMode,
+    /// Whether to write to depth buffer
     pub depth_write: bool,
+    /// Whether to perform depth testing
     pub depth_test: bool,
+    /// Face culling mode
     pub side: Side,
 }
 
@@ -262,7 +330,10 @@ impl Default for MaterialSettings {
 }
 
 impl MaterialSettings {
-    /// 生成 Shader 宏定义
+    /// Generates shader macro definitions from settings.
+    ///
+    /// This is called internally by the rendering system to configure
+    /// shader compilation based on material settings.
     pub(crate) fn generate_shader_defines(&self, defines: &mut ShaderDefines) {
         // Alpha Mode
         match self.alpha_mode {
@@ -279,9 +350,10 @@ impl MaterialSettings {
 
     }
 }
-/// Settings 修改守卫
-/// 
-/// 当 Settings 发生变化时自动递增材质版本号，用于 Pipeline 缓存检测
+/// RAII guard for material settings modifications.
+///
+/// Automatically increments the material version when settings change,
+/// triggering pipeline cache invalidation.
 pub struct SettingsGuard<'a> {
     guard: RwLockWriteGuard<'a, MaterialSettings>,
     version: &'a AtomicU64,
@@ -293,7 +365,7 @@ impl<'a> SettingsGuard<'a> {
         guard: RwLockWriteGuard<'a, MaterialSettings>, 
         version: &'a AtomicU64
     ) -> Self {
-        // 保存快照 (MaterialSettings 必须实现 Clone)
+        // Save snapshot (MaterialSettings must implement Clone)
         let initial_settings = guard.clone();
         Self {
             guard,
@@ -325,20 +397,32 @@ impl<'a> Drop for SettingsGuard<'a> {
 }
 
 // ============================================================================
-// 核心材质枚举 (Material Data Enum)
+// Core Material Enum (Material Data Enum)
 // ============================================================================
 
-/// 材质数据枚举
-/// 
-/// 采用"静态分发 + 动态逃生舱"的混合策略：
-/// - 内置材质（Basic/Phong/Standard/Physical）使用静态分发，保证高性能
-/// - Custom 变体允许用户扩展自定义材质，通过 dyn Trait 动态分发
+/// Material data enum with hybrid dispatch strategy.
+///
+/// Uses "static dispatch + dynamic escape hatch" approach:
+/// - Built-in materials (Basic/Phong/Standard/Physical) use static dispatch for performance
+/// - Custom variant allows user-defined materials via dynamic dispatch
+///
+/// # Built-in Materials
+///
+/// - [`MeshBasicMaterial`]: Unlit, flat-shaded material
+/// - [`MeshPhongMaterial`]: Classic Blinn-Phong shading
+/// - [`MeshStandardMaterial`]: PBR metallic-roughness workflow
+/// - [`MeshPhysicalMaterial`]: Advanced PBR with clearcoat, transmission, etc.
 #[derive(Debug)]
 pub enum MaterialType {
+    /// Unlit material (no lighting calculations)
     Basic(MeshBasicMaterial),
+    /// Classic Blinn-Phong shading model
     Phong(MeshPhongMaterial),
+    /// PBR metallic-roughness material
     Standard(MeshStandardMaterial),
+    /// Advanced PBR material with additional features
     Physical(MeshPhysicalMaterial),
+    /// User-defined custom material
     Custom(Box<dyn RenderableMaterialTrait>),
 }
 
@@ -447,7 +531,7 @@ impl RenderableMaterialTrait for MaterialType {
 }
 
 impl MaterialType {
-    /// 尝试向下转型为具体类型（用于 Custom 材质）
+    /// Tries to downcast to a concrete type (for Custom materials)
     pub fn as_custom<T: MaterialTrait + 'static>(&self) -> Option<&T> {
         match self {
             Self::Custom(m) => m.as_any().downcast_ref::<T>(),
@@ -455,7 +539,7 @@ impl MaterialType {
         }
     }
 
-    /// 尝试向下转型为具体类型的可变引用（用于 Custom 材质）
+    /// Tries to downcast to a mutable reference of concrete type (for Custom materials)
     pub fn as_custom_mut<T: MaterialTrait + 'static>(&mut self) -> Option<&mut T> {
         match self {
             Self::Custom(m) => m.as_any_mut().downcast_mut::<T>(),
@@ -465,7 +549,7 @@ impl MaterialType {
 }
 
 // ============================================================================
-// 材质主结构 (Material Wrapper)
+// Material Main Struct (Material Wrapper)
 // ============================================================================
 
 #[derive(Debug)]
@@ -484,12 +568,12 @@ impl Material {
         }
     }
 
-    /// 从自定义材质创建 Material
+    /// Creates a Material from a custom material
     pub fn new_custom<T: RenderableMaterialTrait + 'static>(custom_material: T) -> Self {
         Self::new(MaterialType::Custom(Box::new(custom_material)))
     }
 
-    // 辅助构造方法
+    // Helper constructors
     pub fn new_basic(color: Vec4) -> Self {
         Self::from(MeshBasicMaterial::new(color))
     }
@@ -506,23 +590,23 @@ impl Material {
         Self::from(MeshPhysicalMaterial::new(color))
     }
 
-    /// 暴露渲染行为接口
+    /// Exposes the rendering behavior interface
     #[inline]
     pub fn as_renderable(&self) -> &dyn RenderableMaterialTrait {
         &self.data
     }
 
-    /// 获取自定义材质的引用
+    /// Gets a reference to the custom material
     pub fn as_custom<T: MaterialTrait + 'static>(&self) -> Option<&T> {
         self.data.as_custom::<T>()
     }
 
-    /// 获取自定义材质的可变引用
+    /// Gets a mutable reference to the custom material
     pub fn as_custom_mut<T: MaterialTrait + 'static>(&mut self) -> Option<&mut T> {
         self.data.as_custom_mut::<T>()
     }
 
-    // 类型转换辅助方法
+    // Type conversion helper methods
     pub fn as_basic(&self) -> Option<&MeshBasicMaterial> {
         match &self.data {
             MaterialType::Basic(m) => Some(m),
@@ -591,7 +675,7 @@ impl Material {
         self.data.as_any_mut()
     }
 
-    // 代理方法
+    // Proxy methods
     #[inline]
     pub(crate) fn shader_name(&self) -> &'static str { 
         self.data.shader_name() 
@@ -607,7 +691,7 @@ impl Material {
         self.data.settings()
     }
     
-    // 便捷访问器
+    // Convenience accessors
     // #[inline]
     // pub fn transparent(&self) -> bool {
     //     self.settings().transparent
@@ -632,7 +716,7 @@ impl Material {
         self.settings().side
     }
 
-    /// 定义 GPU 资源绑定（代理到内部数据）
+    /// Defines GPU resource bindings (delegates to internal data)
     #[inline]
     pub fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
         self.data.define_bindings(builder)
@@ -652,7 +736,7 @@ impl Material {
 }
 
 // ============================================================================
-// 语法糖：允许从具体材质直接转为通用材质
+// Syntax Sugar: Allows direct conversion from concrete material to generic Material
 // ============================================================================
 
 impl From<MeshBasicMaterial> for Material {

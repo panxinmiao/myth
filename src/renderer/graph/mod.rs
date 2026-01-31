@@ -1,17 +1,23 @@
-//! 渲染管线组织
+//! Render Graph and Frame Management
 //!
-//! 提供：
-//! - RenderFrame: 每帧渲染逻辑管理
-//! - RenderState: 渲染状态（相机、时间等）
-//! - TrackedRenderPass: 带状态追踪的渲染通道
-//! - RenderItem/RenderCommand: 渲染数据结构
-//! - ExtractedScene: 提取阶段的场景数据
-//! - RenderGraph: 渲染图执行器
-//! - RenderNode: 渲染节点 Trait
-//! - RenderContext: 渲染上下文
-//! - RenderStage: 渲染阶段定义
-//! - FrameBuilder: 帧构建器
-//! - FrameComposer: 帧合成器（链式 API）
+//! This module handles per-frame rendering organization:
+//!
+//! - [`RenderFrame`]: Per-frame render logic management
+//! - [`RenderState`]: Render state (camera, time, etc.)
+//! - [`TrackedRenderPass`]: Render pass with state tracking
+//! - [`ExtractedScene`]: Scene data extracted for GPU rendering
+//! - [`RenderGraph`]: Render graph executor
+//! - [`RenderNode`]: Render node trait for custom passes
+//! - [`RenderStage`]: Render stage definitions (Opaque, Transparent, UI, etc.)
+//! - [`FrameBuilder`]: Frame construction utilities
+//! - [`FrameComposer`]: Chainable API for frame composition
+//!
+//! # Frame Lifecycle
+//!
+//! 1. **Extract**: Scene data is copied into GPU-friendly format
+//! 2. **Prepare**: Resources are uploaded and bind groups created
+//! 3. **Queue**: Render items are sorted by material/distance
+//! 4. **Render**: Render nodes execute their passes
 
 pub mod builder;
 pub mod composer;

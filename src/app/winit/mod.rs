@@ -1,3 +1,57 @@
+//! Winit-based Application Framework
+//!
+//! This module provides a complete application framework built on top of the
+//! [winit](https://crates.io/crates/winit) cross-platform windowing library.
+//!
+//! # Overview
+//!
+//! The framework consists of:
+//!
+//! - [`App`]: Builder for configuring and launching applications
+//! - [`AppHandler`]: Trait that users implement to define application behavior
+//! - [`AppRunner`]: Internal event loop handler (not exposed publicly)
+//!
+//! # Usage
+//!
+//! 1. Implement [`AppHandler`] for your application struct
+//! 2. Use [`App`] builder to configure window settings
+//! 3. Call [`App::run`] to start the event loop
+//!
+//! # Example
+//!
+//! ```rust,ignore
+//! use three::app::winit::{App, AppHandler};
+//! use three::engine::{ThreeEngine, FrameState};
+//! use std::sync::Arc;
+//! use winit::window::Window;
+//!
+//! struct GameApp {
+//!     // Your game state here
+//! }
+//!
+//! impl AppHandler for GameApp {
+//!     fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self {
+//!         // Initialize scene, load assets, etc.
+//!         GameApp {}
+//!     }
+//!
+//!     fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+//!         // Update game logic
+//!     }
+//!
+//!     fn compose_frame<'a>(&'a self, composer: FrameComposer<'a>) {
+//!         // Add custom render passes if needed
+//!         composer.render();
+//!     }
+//! }
+//!
+//! fn main() -> anyhow::Result<()> {
+//!     App::new()
+//!         .with_title("My Game")
+//!         .run::<GameApp>()
+//! }
+//! ```
+
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -12,10 +66,59 @@ use crate::renderer::settings::RenderSettings;
 
 pub mod input_adapter;
 
-/// 用户程序必须实现的 Trait
+/// Trait for defining application behavior.
+///
+/// Implement this trait to create your application. The framework will call
+/// these methods at appropriate times during the application lifecycle.
+///
+/// # Lifecycle
+///
+/// 1. [`init`](Self::init) - Called once when the window is created
+/// 2. [`on_event`](Self::on_event) - Called for each window event
+/// 3. [`update`](Self::update) - Called each frame before rendering
+/// 4. [`compose_frame`](Self::compose_frame) - Called to configure the render pipeline
+///
+/// # Example
+///
+/// ```rust,ignore
+/// impl AppHandler for MyApp {
+///     fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self {
+///         // Load assets, create scene
+///         MyApp { /* ... */ }
+///     }
+///
+///     fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+///         // Update animations, physics, etc.
+///     }
+/// }
+/// ```
 pub trait AppHandler: Sized + 'static {
+    /// Initializes the application.
+    ///
+    /// Called once after the window is created and the renderer is initialized.
+    /// Use this to set up your scene, load assets, and prepare the initial state.
+    ///
+    /// # Arguments
+    ///
+    /// * `_ctx` - Mutable reference to the engine instance
+    /// * `_window` - Reference to the window (for querying size, etc.)
     fn init(_ctx: &mut ThreeEngine, _window: &Arc<Window>) -> Self;
 
+    /// Handles window events.
+    ///
+    /// Called for each window event before the engine processes it.
+    /// Return `true` to consume the event (prevent default handling),
+    /// or `false` to allow normal processing.
+    ///
+    /// # Arguments
+    ///
+    /// * `_engine` - Mutable reference to the engine
+    /// * `_window` - Reference to the window
+    /// * `_event` - The window event to handle
+    ///
+    /// # Returns
+    ///
+    /// `true` if the event was consumed, `false` otherwise.
     fn on_event(
         &mut self,
         _engine: &mut ThreeEngine,
@@ -25,16 +128,30 @@ pub trait AppHandler: Sized + 'static {
         false
     }
 
+    /// Updates application state.
+    ///
+    /// Called once per frame before rendering. Use this for game logic,
+    /// animations, physics updates, etc.
+    ///
+    /// # Arguments
+    ///
+    /// * `_engine` - Mutable reference to the engine
+    /// * `_window` - Reference to the window
+    /// * `_frame` - Frame timing information
     fn update(&mut self, _engine: &mut ThreeEngine, _window: &Arc<Window>, _frame: &FrameState) {}
 
-    /// 配置渲染管线
+    /// Configures the render pipeline for this frame.
     ///
-    /// 通过链式 API 添加自定义渲染节点到帧合成器。
-    /// 默认实现只渲染内置 Pass。
+    /// Override this method to add custom render passes (UI, post-processing, etc.).
+    /// The default implementation only renders the built-in forward pass.
     ///
-    /// # 示例
+    /// # Arguments
     ///
-    /// ```ignore
+    /// * `composer` - The frame composer for adding render nodes
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
     /// fn compose_frame<'a>(&'a self, composer: FrameComposer<'a>) {
     ///     composer
     ///         .add_node(RenderStage::UI, &self.ui_pass)
@@ -47,7 +164,10 @@ pub trait AppHandler: Sized + 'static {
     }
 }
 
-/// 默认的空 Handler
+/// A minimal no-op handler for testing or as a template.
+///
+/// This handler does nothing but can be used to verify that
+/// the engine initializes and runs correctly.
 pub struct DefaultHandler;
 
 impl AppHandler for DefaultHandler {
@@ -57,13 +177,29 @@ impl AppHandler for DefaultHandler {
     fn update(&mut self, _engine: &mut ThreeEngine, _window: &Arc<Window>, _frame: &FrameState) {}
 }
 
-/// App 构建器
+/// Application builder for configuring and launching the engine.
+///
+/// Use the builder pattern to configure window settings, then call
+/// [`run`](Self::run) to start the application.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// App::new()
+///     .with_title("My 3D Application")
+///     .with_settings(RenderSettings {
+///         vsync: true,
+///         ..Default::default()
+///     })
+///     .run::<MyHandler>()?;
+/// ```
 pub struct App {
     title: String,
     render_settings: RenderSettings,
 }
 
 impl App {
+    /// Creates a new application builder with default settings.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -72,22 +208,40 @@ impl App {
         }
     }
 
+    /// Sets the window title.
+    ///
+    /// # Arguments
+    ///
+    /// * `title` - The window title to display
     #[must_use]
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
         self.title = title.into();
         self
     }
 
+    /// Sets the render settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `settings` - Custom render configuration
     #[must_use]
     pub fn with_settings(mut self, settings: RenderSettings) -> Self {
         self.render_settings = settings;
         self
     }
 
-    /// 运行应用
+    /// Runs the application with the specified handler.
+    ///
+    /// This method blocks until the application exits. The event loop
+    /// takes ownership of the current thread.
+    ///
+    /// # Type Parameters
+    ///
+    /// * `H` - The application handler type implementing [`AppHandler`]
     ///
     /// # Errors
-    /// 如果事件循环创建或运行失败则返回错误。
+    ///
+    /// Returns an error if event loop creation or execution fails.
     pub fn run<H: AppHandler>(self) -> anyhow::Result<()> {
         let event_loop = EventLoop::new()?;
         event_loop.set_control_flow(ControlFlow::Poll);
@@ -103,7 +257,10 @@ impl Default for App {
     }
 }
 
-/// 实际的应用运行器（Winit 适配器）
+/// Internal application runner that implements winit's ApplicationHandler.
+///
+/// This struct manages the application lifecycle including window creation,
+/// event handling, and frame rendering.
 struct AppRunner<H: AppHandler> {
     title: String,
     render_settings: RenderSettings,
@@ -172,18 +329,18 @@ impl<H: AppHandler> AppRunner<H> {
 
         let render_camera = cam.extract_render_camera();
 
-        // 使用新的链式 FrameComposer API
+        // Use new chained FrameComposer API
         if let Some(composer) = engine.renderer.begin_frame(
             scene,
             &render_camera,
             &engine.assets,
             engine.time,
         ) {
-            // 用户通过 compose_frame 链式添加节点
+            // User adds nodes via compose_frame chaining
             user_state.compose_frame(composer);
         }
 
-        // 定期清理资源
+        // Periodically clean up resources
         engine.renderer.maybe_prune();
     }
 }
@@ -241,7 +398,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         };
 
         if !consumed {
-            // 使用 adapter 将 winit 事件翻译为引擎 Input
+            // Use adapter to translate winit events to engine Input
             input_adapter::process_window_event(&mut engine.input, &event);
 
             match event {

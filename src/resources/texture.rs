@@ -6,14 +6,16 @@ use wgpu::{TextureFormat, TextureDimension, TextureViewDimension, AddressMode};
 use crate::{assets::{TextureHandle, server::SamplerHandle}, resources::image::Image};
 
 
-/// 允许材质使用来自 AssetServer 的资源文件，
-/// 或者来自渲染管线生成的内部附件（Render Targets）。
+/// Texture source specifier.
+///
+/// Allows materials to reference textures from the AssetServer or
+/// internal render target attachments.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TextureSource {
-    /// 来自 AssetServer 的资源，需要版本追踪和自动上传
+    /// Asset from AssetServer (with version tracking and automatic upload)
     Asset(TextureHandle),
-    /// 纯 GPU 资源（如 Render Target），直接使用其 Resource ID (image_id)
-    /// 这个 ID 通常由 RenderGraph 或 TexturePool 分配
+    /// Pure GPU resource (e.g., Render Target), directly using its Resource ID
+    /// This ID is typically assigned by RenderGraph or TexturePool
     Attachment(u64, TextureViewDimension),
 }
 
@@ -30,23 +32,24 @@ impl From<TextureHandle> for Option<TextureSource> {
 }
 
 
-/// 描述纹理绑定时应使用的采样器策略。
+/// Sampler source strategy for texture binding.
+///
+/// Specifies which sampler to use when binding a texture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SamplerSource {
-    /// 自动匹配：使用与特定 TextureAsset 关联的采样器设置
-    /// ResourceManager 会查找该 TextureHandle 对应的元数据中的采样器
+    /// Automatic matching: Uses the sampler settings associated with the texture asset.
+    /// ResourceManager looks up the sampler from the TextureHandle's metadata.
     FromTexture(TextureHandle),
-    
-    /// 显式指定：使用某个具体的 Sampler Asset
+
+    /// Explicit specification: Uses a specific Sampler Asset.
     Asset(SamplerHandle),
-    
-    /// 系统默认：使用默认的 Filtering 采样器 (Linear + Repeat)
-    /// 适用于 Render Target / Attachment
+
+
     Default,
 
 }
 
-// 语法糖：允许直接从 TextureHandle 推导 SamplerSource (兼容旧习惯)
+// Syntactic sugar: allows deriving SamplerSource directly from TextureHandle
 impl From<TextureHandle> for SamplerSource {
     fn from(handle: TextureHandle) -> Self {
         Self::FromTexture(handle)
@@ -78,9 +81,9 @@ pub struct TextureSampler {
     pub min_filter: wgpu::FilterMode,
     pub mipmap_filter: wgpu::MipmapFilterMode,
 
-    // 高级功能：比较函数 (用于 Shadow Map PCF)
+    /// Advanced: comparison function (for Shadow Map PCF)
     pub compare: Option<wgpu::CompareFunction>,
-    // 高级功能：各向异性过滤等级 (1 = 关闭)
+    /// Advanced: anisotropic filtering level (1 = disabled)
     pub anisotropy_clamp: u16,
 
 }
@@ -109,7 +112,7 @@ impl From<&Sampler> for TextureSampler {
 
 
 // ============================================================================
-// Sampler Asset (独立采样器资源)
+// Sampler Asset (standalone sampler resource)
 // ============================================================================
 
 #[derive(Debug, Clone)]
@@ -119,7 +122,7 @@ pub struct Sampler {
     #[cfg(debug_assertions)]
     pub name: Option<Cow<'static, str>>,
     
-    /// 核心采样参数
+    /// Core sampling parameters
     pub descriptor: TextureSampler,
 }
 
@@ -145,53 +148,12 @@ impl Sampler {
     }
 }
 
-// 既然 TextureSampler 实现了 Default，Sampler 也可以实现
+// Since TextureSampler implements Default, Sampler can implement it too
 impl Default for Sampler {
     fn default() -> Self {
         Self::new(TextureSampler::default())
     }
 }
-
-// #[derive(Debug, Clone, Copy)]
-// pub struct TextureTransform {
-//     pub offset: Vec2,
-//     pub repeat: Vec2,
-//     pub rotation: f32,
-//     pub center: Vec2,
-// }
-
-// impl Default for TextureTransform {
-//     fn default() -> Self {
-//         Self {
-//             offset: Vec2::ZERO,
-//             repeat: Vec2::ONE,
-//             rotation: 0.0,
-//             center: Vec2::new(0.5, 0.5),
-//         }
-//     }
-// }
-
-// impl TextureTransform {
-//     /// 获取 3x3 UV 变换矩阵
-//     pub fn get_matrix(&self) -> Mat3 {
-//         let c = self.rotation.cos();
-//         let s = self.rotation.sin();
-//         let ox = self.offset.x;
-//         let oy = self.offset.y;
-//         let rx = self.repeat.x;
-//         let ry = self.repeat.y;
-//         let cx = self.center.x;
-//         let cy = self.center.y;
-
-//         Mat3::from_cols_array(&[
-//             c * rx,             s * rx,             0.0,
-//             -s * ry,            c * ry,             0.0,
-//             (c * -cx + s * -cy + cx) * rx + ox,
-//             (-s * -cx + c * -cy + cy) * ry + oy,
-//             1.0
-//         ])
-//     }
-// }
 
 // ============================================================================
 // 2. Texture Asset
@@ -217,7 +179,7 @@ pub struct Texture {
 }
 
 impl Texture {
-    /// 基础构造：从现有 Image 创建 Texture
+    /// Creates a Texture from an existing Image.
     pub fn new(_name: Option<&str>, image: Image, view_dimension: TextureViewDimension) -> Self {
         Self {
             uuid: Uuid::new_v4(),
@@ -234,7 +196,7 @@ impl Texture {
         }
     }
 
-    /// 辅助构造：创建 2D 纹理 (自动创建 Image)
+    /// Creates a 2D texture (automatically creates the Image).
     pub fn new_2d(name: Option<&str>, width: u32, height: u32, data: Option<Vec<u8>>, format: TextureFormat) -> Self {
         let image = Image::new(
             name, width, height, 1, 
@@ -244,15 +206,15 @@ impl Texture {
         Self::new(name, image, TextureViewDimension::D2)
     }
 
-    /// 辅助构造：创建 Cube Map
+    /// Creates a Cube Map texture.
     pub fn new_cube(name: Option<&str>, size: u32, data: Option<Vec<u8>>, format: TextureFormat) -> Self {
         let image = Image::new(
             name, size, size, 6, // 6 layers
-            TextureDimension::D2, // 物理维度是 2D
+            TextureDimension::D2, // Physical dimension is 2D
             format, data
         );
         let mut tex = Self::new(name, image, TextureViewDimension::Cube);
-        // Cube Map 默认使用 Clamp 采样
+        // Cube maps default to Clamp sampling
         tex.sampler.address_mode_u = AddressMode::ClampToEdge;
         tex.sampler.address_mode_v = AddressMode::ClampToEdge;
         tex.sampler.address_mode_w = AddressMode::ClampToEdge;
@@ -285,7 +247,7 @@ impl Texture {
         }
     }
 
-    /// 辅助：创建纯色纹理 (1x1)
+    /// Creates a solid color texture (1x1).
     pub fn create_solid_color(name: Option<&str>, color: [u8; 4]) -> Texture {
         Self::new_2d(name, 1, 1, Some(color.to_vec()), wgpu::TextureFormat::Rgba8UnormSrgb)
     }
@@ -295,16 +257,16 @@ impl Texture {
     }
 
 
-    /// 创建一个棋盘格测试纹理
+    /// Creates a checkerboard test texture.
     pub fn create_checkerboard(name: Option<&str>, width: u32, height: u32, check_size: u32) -> Self {
         let mut data = Vec::with_capacity((width * height * 4) as usize);
         
-        let color_a = [255, 255, 255, 255]; // 白
-        let color_b = [0, 0, 0, 255];       // 黑 (或者用粉色 [255, 0, 255, 255] 方便调试)
+        let color_a = [255, 255, 255, 255]; // White
+        let color_b = [0, 0, 0, 255];       // Black (or use pink [255, 0, 255, 255] for debugging)
 
         for y in 0..height {
             for x in 0..width {
-                // 简单的异或逻辑生成棋盘格
+                // Simple XOR logic to generate checkerboard pattern
                 let cx = x / check_size;
                 let cy = y / check_size;
                 let is_a = (cx + cy).is_multiple_of(2);

@@ -28,76 +28,117 @@ use crate::scene::{NodeHandle, SkeletonKey};
 static NEXT_SCENE_ID: AtomicU32 = AtomicU32::new(1);
 
 
-/// 场景逻辑接口
-/// 允许用户定义随场景生命周期更新的行为脚本。
+/// Trait for scene update logic.
+///
+/// Allows users to define custom behavior scripts that update
+/// along with the scene lifecycle each frame.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// struct RotateScript {
+///     target: NodeHandle,
+///     speed: f32,
+/// }
+///
+/// impl SceneLogic for RotateScript {
+///     fn update(&mut self, scene: &mut Scene, input: &Input, dt: f32) {
+///         if let Some(node) = scene.get_node_mut(self.target) {
+///             node.transform.rotation *= Quat::from_rotation_y(self.speed * dt);
+///         }
+///     }
+/// }
+/// ```
 pub trait SceneLogic: Send + Sync + 'static {
+    /// Called each frame to update scene state.
     fn update(&mut self, scene: &mut Scene, input: &Input, dt: f32);
 }
 
-// 语法糖：允许直接使用闭包作为逻辑
+/// Syntactic sugar: allows using closures directly as scene logic.
 pub struct CallbackLogic<F>(pub F);
-impl<F> SceneLogic for CallbackLogic<F> 
-where F: FnMut(&mut Scene, &Input, f32) + Send + Sync + 'static 
+impl<F> SceneLogic for CallbackLogic<F>
+where F: FnMut(&mut Scene, &Input, f32) + Send + Sync + 'static
 {
     fn update(&mut self, scene: &mut Scene, input: &Input, dt: f32) {
         (self.0)(scene, input, dt)
     }
 }
 
-/// 场景图结构
-/// 
-/// Scene 是纯数据层，存储场景图逻辑和组件数据。
-/// 使用 SlotMap + SecondaryMap 实现高性能组件化存储。
-/// 
-/// 设计原则：
-/// - `nodes`: 核心节点数据（层级关系和变换），使用 SlotMap 存储
-/// - 密集组件（names, meshes）使用 SecondaryMap
-/// - 稀疏组件（cameras, lights, skins）使用 SparseSecondaryMap
+/// The scene graph container.
+///
+/// Scene is the pure data layer that stores scene graph hierarchy and component data.
+/// Uses SlotMap + SecondaryMap for high-performance component-based storage.
+///
+/// # Storage Layout
+///
+/// - `nodes`: Core node data (hierarchy and transforms) using SlotMap
+/// - Dense components (names, meshes): Use SecondaryMap
+/// - Sparse components (cameras, lights, skins): Use SparseSecondaryMap
+///
+/// # Example
+///
+/// ```rust,ignore
+/// let mut scene = Scene::new();
+///
+/// // Create nodes
+/// let root = scene.create_node_with_name("Root");
+/// let child = scene.create_node_with_name("Child");
+/// scene.attach(child, root);
+///
+/// // Add mesh component
+/// scene.set_mesh(child, Mesh::new(geometry, material));
+/// ```
 pub struct Scene {
+    /// Unique scene identifier
     pub id: u32,
 
-    // === 核心节点存储 ===
+    // === Core Node Storage ===
+    /// All nodes in the scene (SlotMap for O(1) access)
     pub nodes: SlotMap<NodeHandle, Node>,
+    /// Root-level nodes (no parent)
     pub root_nodes: Vec<NodeHandle>,
 
-    // === 密集组件 (大多数节点都有) ===
-    /// 节点名称 - 几乎所有节点都有名字
+    // === Dense Components (most nodes have these) ===
+    /// Node names - almost all nodes have a name
     pub names: SecondaryMap<NodeHandle, Cow<'static, str>>,
 
-    // === 稀疏组件 (只有少数节点有) ===
-    /// 网格组件 - 直接存储 Mesh 到节点
+    // === Sparse Components (only some nodes have these) ===
+    /// Mesh components stored directly on nodes
     pub meshes: SparseSecondaryMap<NodeHandle, Mesh>,
-    /// 相机组件 - 直接存储 Camera 到节点
+    /// Camera components stored directly on nodes
     pub cameras: SparseSecondaryMap<NodeHandle, Camera>,
-    /// 灯光组件 - 直接存储 Light 到节点
+    /// Light components stored directly on nodes
     pub lights: SparseSecondaryMap<NodeHandle, Light>,
-    /// 骨骼蒙皮绑定
+    /// Skeletal skin bindings
     pub skins: SparseSecondaryMap<NodeHandle, SkinBinding>,
-    /// 形变权重
+    /// Morph target weights
     pub morph_weights: SparseSecondaryMap<NodeHandle, Vec<f32>>,
-    /// 动画混合器组件（稀疏存储，只有角色根节点有动画）
+    /// Animation mixer components (sparse, only character roots have animations)
     pub animation_mixers: SparseSecondaryMap<NodeHandle, AnimationMixer>,
 
     morph_target_nodes: Vec<NodeHandle>,
 
-    // === 资源池 (只保留真正需要共享的资源) ===
-    /// Skeleton 是真正的共享资源，多个角色可能引用同一个骨架定义
+    // === Resource Pools (only truly shared resources) ===
+    /// Skeleton is a shared resource - multiple characters may reference the same skeleton definition
     pub skeleton_pool: SlotMap<SkeletonKey, Skeleton>,
 
-    // === 环境和全局设置 ===
+    // === Environment and Global Settings ===
+    /// Scene environment settings (skybox, IBL)
     pub environment: Environment,
+    /// Background color (None for transparent)
     pub background: Option<Vec4>,
+    /// Currently active camera for rendering
     pub active_camera: Option<NodeHandle>,
 
-    // === GPU 资源描述 ===
+    // === GPU Resource Descriptors ===
     pub(crate) light_storage_buffer: CpuBuffer<Vec<GpuLightStorage>>,
     pub(crate) uniforms_buffer: CpuBuffer<EnvironmentUniforms>,
     light_data_cache: RefCell<Vec<GpuLightStorage>>,
 
-    /// Scene shader_defines 缓存：(environment_version, cached_defines)
+    /// Scene shader_defines cache: (environment_version, cached_defines)
     cached_shader_defines: RefCell<Option<(u64, ShaderDefines)>>,
 
-    // === 场景逻辑系统 ===
+    // === Scene Logic System ===
     pub(crate) logics: Vec<Box<dyn SceneLogic>>,
 }
 
@@ -115,10 +156,10 @@ impl Scene {
             nodes: SlotMap::with_key(),
             root_nodes: Vec::new(),
 
-            // 密集组件
+            // Dense components
             names: SecondaryMap::new(),
 
-            // 稀疏组件（直接存储组件）
+            // Sparse components (direct storage)
             meshes: SparseSecondaryMap::new(),
             cameras: SparseSecondaryMap::new(),
             lights: SparseSecondaryMap::new(),
@@ -127,7 +168,7 @@ impl Scene {
             morph_target_nodes: Vec::with_capacity(16),
             animation_mixers: SparseSecondaryMap::new(),
 
-            // 资源池（仅保留真正共享的资源）
+            // Resource pools (only truly shared resources)
             skeleton_pool: SlotMap::with_key(),
 
             environment: Environment::new(),
@@ -155,33 +196,33 @@ impl Scene {
     }
 
     // ========================================================================
-    // 节点管理 API
+    // Node Management API
     // ========================================================================
 
-    /// 创建一个新节点并返回句柄
+    /// Creates a new node and returns its handle.
     pub fn create_node(&mut self) -> NodeHandle {
         self.nodes.insert(Node::new())
     }
 
-    /// 创建一个带名称的新节点
+    /// Creates a new node with a name.
     pub fn create_node_with_name(&mut self, name: &str) -> NodeHandle {
         let handle = self.nodes.insert(Node::new());
         self.names.insert(handle, Cow::Owned(name.to_string()));
         handle
     }
 
-    /// 添加一个节点到场景 (默认放在根节点)
+    /// Adds a node to the scene (defaults to root level).
     pub fn add_node(&mut self, node: Node) -> NodeHandle {
         let handle = self.nodes.insert(node);
         self.root_nodes.push(handle);
         handle
     }
 
-    /// 添加一个节点作为指定父节点的子节点
+    /// Adds a node as a child of the specified parent.
     pub fn add_to_parent(&mut self, child: Node, parent_handle: NodeHandle) -> NodeHandle {
         let handle = self.nodes.insert(child);
 
-        // 建立父子关系
+        // Establish parent-child relationship
         if let Some(parent) = self.nodes.get_mut(parent_handle) {
             parent.children.push(handle);
         }
@@ -192,13 +233,13 @@ impl Scene {
         handle
     }
 
-    /// 移除节点 (递归移除所有子节点)
+    /// Removes a node and all its descendants recursively.
     pub fn remove_node(&mut self, handle: NodeHandle) {
-        // 1. 收集需要删除的所有节点（深度优先）
+        // 1. Collect all nodes to remove (depth-first)
         let mut to_remove = Vec::new();
         self.collect_subtree(handle, &mut to_remove);
 
-        // 2. 处理父节点关系
+        // 2. Handle parent relationship
         if let Some(node) = self.nodes.get(handle) {
             if let Some(parent_handle) = node.parent {
                 if let Some(parent) = self.nodes.get_mut(parent_handle) {
@@ -209,7 +250,7 @@ impl Scene {
             }
         }
 
-        // 3. 删除所有节点及其组件
+        // 3. Remove all nodes and their components
         for node_handle in to_remove {
             self.meshes.remove(node_handle);
             self.cameras.remove(node_handle);
@@ -223,7 +264,7 @@ impl Scene {
         }
     }
 
-    /// 收集子树中的所有节点
+    /// Collects all nodes in a subtree (depth-first).
     fn collect_subtree(&self, handle: NodeHandle, result: &mut Vec<NodeHandle>) {
         result.push(handle);
         if let Some(node) = self.nodes.get(handle) {
@@ -233,7 +274,7 @@ impl Scene {
         }
     }
 
-    /// 建立父子关系 (Attach)
+    /// Attaches a node as a child of another (establishes parent-child relationship).
     pub fn attach(&mut self, child_handle: NodeHandle, parent_handle: NodeHandle) {
         if child_handle == parent_handle {
             log::warn!("Cannot attach node to itself!");
@@ -267,78 +308,78 @@ impl Scene {
         }
     }
 
-    /// 获取只读引用
+    /// Returns a read-only reference to a node.
     #[inline]
     pub fn get_node(&self, handle: NodeHandle) -> Option<&Node> {
         self.nodes.get(handle)
     }
 
-    /// 获取可变引用
+    /// Returns a mutable reference to a node.
     #[inline]
     pub fn get_node_mut(&mut self, handle: NodeHandle) -> Option<&mut Node> {
         self.nodes.get_mut(handle)
     }
 
     // ========================================================================
-    // 组件管理 API (ECS 风格)
+    // Component Management API (ECS-style)
     // ========================================================================
 
-    /// 设置节点名称
+    /// Sets the name for a node.
     pub fn set_name(&mut self, handle: NodeHandle, name: &str) {
         self.names.insert(handle, Cow::Owned(name.to_string()));
     }
 
-    /// 获取节点名称
+    /// Returns the name of a node.
     pub fn get_name(&self, handle: NodeHandle) -> Option<&str> {
         self.names.get(handle).map(|s| s.as_ref())
     }
 
-    /// 为节点设置 Mesh 组件
+    /// Sets the mesh component for a node.
     pub fn set_mesh(&mut self, handle: NodeHandle, mesh: Mesh) {
         self.meshes.insert(handle, mesh);
     }
 
-    /// 获取节点的 Mesh 组件引用
+    /// Gets a reference to the node's Mesh component
     pub fn get_mesh(&self, handle: NodeHandle) -> Option<&Mesh> {
         self.meshes.get(handle)
     }
 
-    /// 获取节点的 Mesh 组件可变引用
+    /// Gets a mutable reference to the node's Mesh component
     pub fn get_mesh_mut(&mut self, handle: NodeHandle) -> Option<&mut Mesh> {
         self.meshes.get_mut(handle)
     }
 
-    /// 为节点设置 Camera 组件
+    /// Sets the Camera component for a node
     pub fn set_camera(&mut self, handle: NodeHandle, camera: Camera) {
         self.cameras.insert(handle, camera);
     }
 
-    /// 获取节点的 Camera 组件引用
+    /// Gets a reference to the node's Camera component
     pub fn get_camera(&self, handle: NodeHandle) -> Option<&Camera> {
         self.cameras.get(handle)
     }
 
-    /// 获取节点的 Camera 组件可变引用
+    /// Gets a mutable reference to the node's Camera component
     pub fn get_camera_mut(&mut self, handle: NodeHandle) -> Option<&mut Camera> {
         self.cameras.get_mut(handle)
     }
 
-    /// 为节点设置 Light 组件
+    /// Sets the Light component for a node
     pub fn set_light(&mut self, handle: NodeHandle, light: Light) {
         self.lights.insert(handle, light);
     }
 
-    /// 获取节点的 Light 组件引用
+    /// Gets a reference to the node's Light component
     pub fn get_light(&self, handle: NodeHandle) -> Option<&Light> {
         self.lights.get(handle)
     }
 
-    /// 获取节点的 Light 组件可变引用
+    /// Gets a mutable reference to the node's Light component
     pub fn get_light_mut(&mut self, handle: NodeHandle) -> Option<&mut Light> {
         self.lights.get_mut(handle)
     }
 
-    /// 为节点绑定骨架
+    /// Binds a skeleton to a node
     pub fn bind_skeleton(&mut self, handle: NodeHandle, skeleton_key: SkeletonKey, bind_mode: BindMode) {
         if let Some(node) = self.nodes.get(handle) {
             let bind_matrix_inv = node.transform.world_matrix.inverse();
@@ -350,27 +391,27 @@ impl Scene {
         }
     }
 
-    /// 获取节点的骨骼绑定
+    /// Gets the node's skin binding
     pub fn get_skin(&self, handle: NodeHandle) -> Option<&SkinBinding> {
         self.skins.get(handle)
     }
 
-    /// 设置形变权重
+    /// Sets morph weights
     pub fn set_morph_weights(&mut self, handle: NodeHandle, weights: Vec<f32>) {
         self.morph_weights.insert(handle, weights);
     }
 
-    /// 获取形变权重
+    /// Gets morph weights
     pub fn get_morph_weights(&self, handle: NodeHandle) -> Option<&Vec<f32>> {
         self.morph_weights.get(handle)
     }
 
-    /// 获取可变形变权重引用
+    /// Gets a mutable reference to morph weights
     pub fn get_morph_weights_mut(&mut self, handle: NodeHandle) -> Option<&mut Vec<f32>> {
         self.morph_weights.get_mut(handle)
     }
 
-    /// 设置节点的形变权重（从 POD 数据）
+    /// Sets morph weights for a node (from POD data)
     pub fn set_morph_weights_from_pod(&mut self, handle: NodeHandle, data: &crate::animation::values::MorphWeightData) {
         let weights = self.morph_weights.entry(handle)
             .unwrap()
@@ -383,7 +424,7 @@ impl Scene {
     }
 
     // ========================================================================
-    // 迭代场景中所有活跃的灯光
+    // Iterate over all active lights in the scene
     // ========================================================================
     
     pub fn iter_active_lights(&self) -> impl Iterator<Item = (&Light, &Affine3A)> {
@@ -394,38 +435,38 @@ impl Scene {
     }
 
     // ========================================================================
-    // 组件查询 API
+    // Component Query API
     // ========================================================================
 
-    /// 获取主相机的 (Transform, Camera) 组合
+    /// Gets the (Transform, Camera) bundle for the main camera
     pub fn query_main_camera_bundle(&mut self) -> Option<(&mut Transform, &mut Camera)> {
         let node_handle = self.active_camera?;
         self.query_camera_bundle(node_handle)
     }
 
     pub fn query_camera_bundle(&mut self, node_handle: NodeHandle) -> Option<(&mut Transform, &mut Camera)> {
-        // 检查是否存在相机组件
+        // Check if camera component exists
         if !self.cameras.contains_key(node_handle) {
             return None;
         }
         
-        // 使用指针以避免同时借用 nodes 和 cameras 的冲突
+        // Use pointers to avoid simultaneous borrow conflict between nodes and cameras
         let transform_ptr = self.nodes.get_mut(node_handle)
             .map(|n| &mut n.transform as *mut Transform)?;
         let camera = self.cameras.get_mut(node_handle)?;
         
-        // SAFETY: transform 和 camera 是不相交的内存区域
+        // SAFETY: transform and camera are disjoint memory regions
         unsafe { Some((&mut *transform_ptr, camera)) }
     }
 
-    /// 查询指定节点的 Transform 和 Light
+    /// Queries the Transform and Light for a specified node
     pub fn query_light_bundle(&mut self, node_handle: NodeHandle) -> Option<(&mut Transform, &Light)> {
         let light = self.lights.get(node_handle)?;
         let transform = &mut self.nodes.get_mut(node_handle)?.transform;
         Some((transform, light))
     }
 
-    /// 查询指定节点的 Transform 和 Mesh
+    /// Queries the Transform and Mesh for a specified node
     pub fn query_mesh_bundle(&mut self, node_handle: NodeHandle) -> Option<(&mut Transform, &Mesh)> {
         let mesh = self.meshes.get(node_handle)?;
         let transform = &mut self.nodes.get_mut(node_handle)?.transform;
@@ -433,10 +474,10 @@ impl Scene {
     }
 
     // ========================================================================
-    // 矩阵更新流水线
+    // Matrix Update Pipeline
     // ========================================================================
 
-    /// 更新整个场景的世界矩阵
+    /// Updates world matrices for the entire scene
     pub fn update_matrix_world(&mut self) {
         transform_system::update_hierarchy_iterative(
             &mut self.nodes,
@@ -445,7 +486,7 @@ impl Scene {
         );
     }
 
-    /// 更新指定子树的世界矩阵
+    /// Updates world matrices for a specified subtree
     pub fn update_subtree(&mut self, root_handle: NodeHandle) {
         transform_system::update_subtree(
             &mut self.nodes,
@@ -455,7 +496,7 @@ impl Scene {
     }
 
     // ========================================================================
-    // 资源管理 API
+    // Resource Management API
     // ========================================================================
 
     pub fn add_mesh(&mut self, mesh: Mesh) -> NodeHandle {
@@ -476,15 +517,15 @@ impl Scene {
         self.skeleton_pool.insert(skeleton)
     }
 
-    /// 实例化 Prefab 到场景中
+    /// Instantiates a Prefab into the scene
     /// 
-    /// 将 Prefab 中的节点树、骨骼、动画实例化为场景对象。
-    /// 返回根节点句柄和创建的所有节点句柄映射。
+    /// Instantiates the node tree, skeletons, and animations from the Prefab as scene objects.
+    /// Returns the root node handle and a mapping of all created node handles.
     pub fn instantiate(&mut self, prefab: &Prefab) -> NodeHandle {
         let node_count = prefab.nodes.len();
         let mut node_map: Vec<NodeHandle> = Vec::with_capacity(node_count);
         
-        // Pass 1: 创建所有节点并映射索引
+        // Pass 1: Create all nodes and map indices
         for p_node in &prefab.nodes {
             let handle = self.create_node();
             
@@ -507,7 +548,7 @@ impl Scene {
             node_map.push(handle);
         }
 
-        // Pass 2: 建立层级关系
+        // Pass 2: Establish hierarchy relationships
         for (i, p_node) in prefab.nodes.iter().enumerate() {
             let parent_handle = node_map[i];
             for &child_idx in &p_node.children_indices {
@@ -518,7 +559,7 @@ impl Scene {
             }
         }
 
-        // Pass 3: 重建骨骼
+        // Pass 3: Rebuild skeletons
         let mut skeleton_keys: Vec<SkeletonKey> = Vec::with_capacity(prefab.skeletons.len());
         for p_skel in &prefab.skeletons {
             let bones: Vec<NodeHandle> = p_skel.bone_indices.iter()
@@ -535,7 +576,7 @@ impl Scene {
             skeleton_keys.push(skel_key);
         }
 
-        // Pass 4: 绑定骨骼到节点
+        // Pass 4: Bind skeletons to nodes
         for (i, p_node) in prefab.nodes.iter().enumerate() {
             if let Some(skin_idx) = p_node.skin_index {
                 if let Some(&skel_key) = skeleton_keys.get(skin_idx) {
@@ -545,7 +586,7 @@ impl Scene {
             }
         }
 
-        // Pass 5: 创建虚拟根节点并挂载所有顶层节点
+        // Pass 5: Create virtual root node and mount all top-level nodes
         let root_handle = self.create_node_with_name("gltf_root");
         self.root_nodes.push(root_handle);
         
@@ -555,7 +596,7 @@ impl Scene {
             }
         }
 
-        // Pass 6: 创建动画混合器并绑定动画
+        // Pass 6: Create animation mixer and bind animations
         if !prefab.animations.is_empty() {
             let mut mixer = AnimationMixer::new();
             
@@ -604,13 +645,13 @@ impl Scene {
         node_handle
     }
 
-    /// 计算场景的 Shader 宏定义
+    /// Computes the scene's shader macro definitions
     /// 
-    /// 使用内部缓存机制，仅当 Environment 版本变化时才重新计算。
+    /// Uses internal caching mechanism, only recalculates when Environment version changes.
     pub fn shader_defines(&self) -> ShaderDefines {
         let env_version = self.environment.version();
 
-        // 快速路径：检查缓存
+        // Fast path: check cache
         {
             let cache = self.cached_shader_defines.borrow();
             if let Some((cached_version, cached_defines)) = cache.as_ref() {
@@ -620,13 +661,13 @@ impl Scene {
             }
         }
 
-        // 慢速路径：重新计算
+        // Slow path: recalculate
         let mut defines = ShaderDefines::new();
         if self.environment.has_env_map() {
             defines.set("HAS_ENV_MAP", "1");
         }
 
-        // 更新缓存
+        // Update cache
         *self.cached_shader_defines.borrow_mut() = Some((env_version, defines.clone()));
 
         defines
@@ -635,46 +676,46 @@ impl Scene {
 
 
     // ========================================================================
-    // 场景更新以及逻辑系统
+    // Scene Update and Logic System
     // ========================================================================
 
     pub fn add_logic<L: SceneLogic>(&mut self, logic: L) {
         self.logics.push(Box::new(logic));
     }
 
-    /// 快捷方法：添加闭包逻辑 (用于快速原型)
+    /// Shortcut method: Add closure logic (for quick prototyping)
     pub fn on_update<F>(&mut self, f: F) 
     where F: FnMut(&mut Scene, &Input, f32) + Send + Sync + 'static 
     {
         self.add_logic(CallbackLogic(f));
     }
 
-    /// 更新场景状态（每帧调用）
+    /// Updates scene state (called every frame)
     pub fn update(&mut self, input: &Input, dt: f32) {
-        // 1. 执行用户脚本（Gameplay）
+        // 1. Execute user scripts (Gameplay)
         let mut logics = std::mem::take(&mut self.logics);
         for logic in &mut logics {
             logic.update(self, input, dt);
         }
         self.logics.append(&mut logics);
 
-        // 2. 动画系统更新（修改节点 Transform）
+        // 2. Animation system update (modifies node Transform)
         AnimationSystem::update(self, dt);
 
-        // 3. 执行引擎内部系统（Transform、Skeleton、Morph）
+        // 3. Execute internal engine systems (Transform, Skeleton, Morph)
         self.update_matrix_world();
         self.update_skeletons();
         self.sync_morph_weights();
         self.sync_gpu_buffers();
     }
 
-    /// 同步 GPU Buffer 数据
+    /// Syncs GPU Buffer data
     pub fn sync_gpu_buffers(&mut self) {
         self.sync_light_buffer();
         self.sync_environment_buffer();
     }
 
-    /// 同步灯光数据到 GPU Buffer
+    /// Syncs light data to GPU Buffer
     fn sync_light_buffer(&mut self) {
         {
             let mut cache = self.light_data_cache.borrow_mut();
@@ -721,7 +762,7 @@ impl Scene {
         }
     }
 
-    /// 同步环境数据到 GPU Buffer
+    /// Syncs environment data to GPU Buffer
     fn sync_environment_buffer(&mut self) {
         let env = &self.environment;
         let light_count = self.lights.len();
@@ -737,15 +778,15 @@ impl Scene {
         let needs_update = *self.uniforms_buffer.read() != new_uniforms;
 
         if needs_update {
-            // .write() 返回 BufferGuard
-            // *guard = ... 会触发 DerefMut 赋值
-            // Guard 销毁时会自动增加 version 并标记 dirty
+            // .write() returns BufferGuard
+            // *guard = ... triggers DerefMut assignment
+            // When Guard is destroyed, it automatically increments version and marks dirty
             *self.uniforms_buffer.write() = new_uniforms;
         }
     }
 
     // ========================================================================
-    // GPU 资源访问接口
+    // GPU Resource Access Interface
     // ========================================================================
 
     pub fn light_storage(&self) -> &CpuBuffer<Vec<GpuLightStorage>> {
@@ -772,7 +813,7 @@ impl Scene {
         for (skeleton_id, root_inv) in tasks {
             if let Some(skeleton) = self.skeleton_pool.get_mut(skeleton_id) {
                 skeleton.compute_joint_matrices(&self.nodes, root_inv);
-                // 惰性计算包围盒（仅在首次需要时计算）
+                // Lazy compute bounding box (only computed when first needed)
                 if skeleton.local_bounds.is_none() {
                     skeleton.compute_local_bounds(&self.nodes);
                 }
@@ -824,14 +865,14 @@ impl Scene {
         }
         let geometry = assets.geometries.get(mesh.geometry)?;
 
-        // 有骨骼绑定时使用 Skeleton 的包围盒
+        // When there's a skeleton binding, use Skeleton's bounding box
         if let Some(skeleton_binding) = self.skins.get(node_handle) {
             if let Some(skeleton) = self.skeleton_pool.get(skeleton_binding.skeleton) {
                 return skeleton.compute_tight_world_bounds(&self.nodes);
             }
         }
 
-        // 无骨骼绑定时使用 Geometry 的包围盒
+        // When there's no skeleton binding, use Geometry's bounding box
         let local_bbox = if let Some(bbox) = geometry.bounding_box.read().as_ref() {
             *bbox
         } else {
@@ -858,12 +899,12 @@ impl Scene {
         combined_bbox
     }
 
-    /// 开始构建一个节点
+    /// Starts building a node
     pub fn build_node(&mut self, name: &str) -> NodeBuilder<'_> {
         NodeBuilder::new(self, name)
     }
 
-    /// 根据名称查找节点
+    /// Finds a node by name
     pub fn find_node_by_name(&self, name: &str) -> Option<NodeHandle> {
         for (handle, node_name) in &self.names {
             if node_name.as_ref() == name {
@@ -873,7 +914,7 @@ impl Scene {
         None
     }
 
-    /// 获取节点的全局变换矩阵
+    /// Gets the global transform matrix of a node
     pub fn get_global_transform(&self, handle: NodeHandle) -> Affine3A {
         self.nodes.get(handle)
             .map(|n| n.transform.world_matrix)
@@ -931,12 +972,12 @@ impl<'a> NodeBuilder<'a> {
     pub fn build(self) -> NodeHandle {
         let handle = self.handle;
 
-        // 设置 Mesh 组件
+        // Set Mesh component
         if let Some(mesh) = self.mesh {
             self.scene.meshes.insert(handle, mesh);
         }
 
-        // 处理父子关系
+        // Handle parent-child relationship
         if let Some(parent) = self.parent {
             self.scene.attach(handle, parent);
         } else {

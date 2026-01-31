@@ -1,24 +1,25 @@
-//! glTF Viewer 示例 (基于 App 模块)
+//! glTF Viewer Example (Based on App Module)
 //!
-//! 一个交互式的 glTF/glb 文件查看器，演示如何将 egui 作为外部插件集成。
-//! 事实上，目前这个示例有一些特权，因为为了支持Inspector, 它直接访问了引擎的内部数据结构。
-//! 未来，随着引擎的发展，它有可能成为引擎的编辑器/调试器的原型。
+//! An interactive glTF/glb file viewer demonstrating how to integrate egui as an external plugin.
+//! In fact, this example currently has some privileges because to support the Inspector,
+//! it directly accesses the engine's internal data structures.
+//! In the future, as the engine evolves, it may become a prototype for the engine's editor/debugger.
 //! 
-//! 功能：
-//! - 通过文件对话框加载本地 glTF/glb 文件
-//! - 支持加载 KhronosGroup glTF-Sample-Assets 远程资源
-//! - 动画播放控制（播放/暂停、速度调节）
-//! - 场景 Inspector（节点树、材质、纹理查看）
-//! - 相机轨道控制
-//! - FPS 显示
+//! Features:
+//! - Load local glTF/glb files via file dialog
+//! - Support loading KhronosGroup glTF-Sample-Assets remote resources
+//! - Animation playback control (play/pause, speed adjustment)
+//! - Scene Inspector (node tree, material, texture viewer)
+//! - Camera orbit control
+//! - FPS display
 //!
-//! 运行：cargo run --example gltf_viewer --release
+//! Run: cargo run --example gltf_viewer --release
 //! 
-//! # 架构说明
-//! 这个示例展示了 "UI as a Plugin" 模式：
-//! - `UiPass` 实现了 `RenderNode` trait，可以注入到 RenderGraph
-//! - 通过 `configure_render_pipeline()` 方法将 UI Pass 注入到 UI 阶段
-//! - 引擎核心完全不依赖 egui
+//! # Architecture Notes
+//! This example demonstrates the "UI as a Plugin" pattern:
+//! - `UiPass` implements `RenderNode` trait, can be injected into RenderGraph
+//! - Inject UI Pass into UI stage via `configure_render_pipeline()` method
+//! - Engine core does not depend on egui at all
 
 mod ui_pass;
 
@@ -47,13 +48,13 @@ use ui_pass::UiPass;
 use winit::window::Window;
 
 // ============================================================================
-// 远程模型资源
+// Remote Model Resources
 // ============================================================================
 
 const BASE_URL: &str = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main";
 const MODEL_LIST_URL: &str = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/model-index.json";
 
-/// 远程模型描述
+/// Remote model description
 #[derive(Debug, Clone, serde::Deserialize)]
 pub struct ModelInfo {
     pub name: String,
@@ -65,7 +66,7 @@ pub struct ModelInfo {
     pub tags: Vec<String>,
 }
 
-/// 加载状态
+/// Loading state
 #[derive(Debug, Clone, PartialEq)]
 enum LoadingState {
     Idle,
@@ -74,7 +75,7 @@ enum LoadingState {
     Error(String),
 }
 
-/// 模型源类型
+/// Model source type
 #[derive(Debug, Clone)]
 enum ModelSource {
     Local(PathBuf),
@@ -82,10 +83,10 @@ enum ModelSource {
 }
 
 // ============================================================================
-// Inspector 相关数据结构
+// Inspector Related Data Structures
 // ============================================================================
 
-/// Inspector 中的可选目标类型
+/// Target type selectable in Inspector
 #[derive(Debug, Clone, PartialEq)]
 enum InspectorTarget {
     Node(NodeHandle),
@@ -93,14 +94,14 @@ enum InspectorTarget {
     Texture(TextureHandle),
 }
 
-/// 收集的材质信息
+/// Collected material information
 #[derive(Debug, Clone)]
 struct MaterialInfo {
     pub handle: MaterialHandle,
     pub name: String,
 }
 
-/// 收集的纹理信息
+/// Collected texture information
 #[derive(Debug, Clone)]
 struct TextureInfo {
     pub handle: TextureHandle,
@@ -108,91 +109,91 @@ struct TextureInfo {
 }
 
 // ============================================================================
-// glTF Viewer 主结构
+// glTF Viewer Main Structure
 // ============================================================================
 
-/// glTF Viewer 应用状态
+/// glTF Viewer application state
 struct GltfViewer {
-    /// UI Pass (egui 渲染)
+    /// UI Pass (egui rendering)
     ui_pass: UiPass,
     
-    /// 当前加载的模型根节点
+    /// Currently loaded model root node
     gltf_node: Option<NodeHandle>,
-    /// 可用的动画列表
+    /// List of available animations
     animations: Vec<String>,
-    /// 当前选中的动画索引
+    /// Currently selected animation index
     current_animation: usize,
-    /// 是否正在播放动画
+    /// Whether animation is playing
     is_playing: bool,
-    /// 动画播放速度
+    /// Animation playback speed
     playback_speed: f32,
-    /// 轨道控制器
+    /// Orbit controller
     controls: OrbitControls,
-    /// FPS 计数器
+    /// FPS counter
     fps_counter: FpsCounter,
-    /// 当前 FPS
+    /// Current FPS
     current_fps: f32,
-    /// 模型文件路径或名称（显示用）
+    /// Model file path or name (for display)
     model_name: Option<String>,
-    /// 是否需要重新加载模型
+    /// Whether model needs to be reloaded
     pending_load: Option<ModelSource>,
 
 
-    // === 文件对话框相关 ===
-    /// 文件对话框接收端
+    // === File Dialog Related ===
+    /// File dialog receiver
     file_dialog_rx: Receiver<PathBuf>,
-    /// 文件对话框发送端
+    /// File dialog sender
     file_dialog_tx: Sender<PathBuf>,
     
-    // === 远程模型相关 ===
-    /// 远程模型列表
+    // === Remote Model Related ===
+    /// Remote model list
     model_list: Vec<ModelInfo>,
-    /// 当前选中的远程模型索引
+    /// Currently selected remote model index
     selected_model_index: usize,
-    /// 加载状态
+    /// Loading state
     loading_state: LoadingState,
-    /// 异步加载结果接收器
+    /// Async load result receiver
     load_receiver: Option<Receiver<LoadResult>>,
-    /// 异步加载请求发送器
+    /// Async load request sender
     load_sender: Sender<LoadResult>,
-    /// 首选的 glTF 变体（按优先级）
+    /// Preferred glTF variants (by priority)
     preferred_variants: Vec<&'static str>,
     
-    // === 异步 Prefab 加载 ===
-    /// Prefab 加载结果接收器
+    // === Async Prefab Loading ===
+    /// Prefab load result receiver
     prefab_receiver: Receiver<PrefabLoadResult>,
-    /// Prefab 加载发送器
+    /// Prefab load sender
     prefab_sender: Sender<PrefabLoadResult>,
     
-    // === Inspector 相关 ===
-    /// 是否显示 Inspector
+    // === Inspector Related ===
+    /// Whether to show Inspector
     show_inspector: bool,
-    /// 当前 Inspector 选中的目标
+    /// Current Inspector selected target
     inspector_target: Option<InspectorTarget>,
-    /// 收集到的材质列表
+    /// Collected material list
     inspector_materials: Vec<MaterialInfo>,
-    /// 收集到的纹理列表
+    /// Collected texture list
     inspector_textures: Vec<TextureInfo>,
     
-    // === 渲染设置 ===
-    /// IBL 开关
+    // === Render Settings ===
+    /// IBL toggle
     ibl_enabled: bool,
 }
 
-/// 异步 Prefab 加载结果
+/// Async Prefab load result
 struct PrefabLoadResult {
     prefab: SharedPrefab,
     display_name: String,
 }
 
-/// 异步加载结果
+/// Async load result
 enum LoadResult {
     ModelList(Result<Vec<ModelInfo>, String>),
 }
 
 impl AppHandler for GltfViewer {
     fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self {
-        // 1. 创建 UI Pass
+        // 1. Create UI Pass
         let wgpu_ctx = engine.renderer.wgpu_ctx().expect("Renderer not initialized");
         let ui_pass = UiPass::new(
             &wgpu_ctx.device,

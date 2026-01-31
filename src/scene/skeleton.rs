@@ -8,11 +8,11 @@ use crate::{resources::buffer::CpuBuffer, scene::{Node, NodeHandle, SkeletonKey}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BindMode {
-    /// 骨骼跟随节点移动 (最常用，如角色蒙皮)
-    /// 此时 inverse_bind_matrix = node.world_matrix.inverse()
+    /// Bones follow node movement (most common, e.g., character skinning)
+    /// In this case, inverse_bind_matrix = node.world_matrix.inverse()
     Attached,
-    /// 骨骼与节点分离 (特殊用途)
-    /// 此时使用绑定时记录的静态 inverse_matrix
+    /// Bones are detached from nodes (special use cases)
+    /// In this case, uses the static inverse_matrix recorded at bind time
     Detached,
 }
 
@@ -20,7 +20,7 @@ pub enum BindMode {
 pub struct SkinBinding {
     pub skeleton: SkeletonKey,
     pub bind_mode: BindMode,
-    /// 绑定时的逆矩阵快照 (用于 Detached 模式)
+    /// Inverse matrix snapshot at bind time (used for Detached mode)
     pub bind_matrix_inv: Affine3A, 
 }
 
@@ -29,25 +29,25 @@ pub struct Skeleton {
     pub id: Uuid,
     pub name: String,
 
-    // === 核心数据 ===
-    // 骨骼列表：有序排列，对应 shader 中的 joint index
-    // bones[i] 对应的就是 shader 中的 joints[i]
+    // === Core Data ===
+    // Bone list: ordered array, corresponds to joint index in shader
+    // bones[i] corresponds to joints[i] in shader
     pub bones: Vec<NodeHandle>, 
 
-    // 逆绑定矩阵 (Inverse Bind Matrices)
-    // 这是静态数据，从 glTF 加载后通常不会变
-    // 作用：把顶点从 Mesh 空间变换到 骨骼局部空间
+    // Inverse Bind Matrices
+    // This is static data, typically unchanged after loading from glTF
+    // Purpose: transforms vertices from Mesh space to bone local space
     pub(crate) inverse_bind_matrices: Vec<Affine3A>,
 
-    // === 包围盒数据 (用于视锥剔除) ===
-    /// 局部空间包围盒 (相对于根骨骼)
+    // === Bounding Box Data (for frustum culling) ===
+    /// Local space bounding box (relative to root bone)
     pub(crate) local_bounds: Option<BoundingBox>,
-    /// 根骨骼索引 (通常是 bones[0])
+    /// Root bone index (usually bones[0])
     pub(crate) root_bone_index: usize,
 
-    // === 运行时数据 ===
-    // 最终计算出的矩阵数组，每一帧都会更新
-    // 数据流向：这里的 data -> copy to GPU Uniform Buffer
+    // === Runtime Data ===
+    // Final computed matrix array, updated every frame
+    // Data flow: data here -> copy to GPU Uniform Buffer
     pub(crate) joint_matrices: CpuBuffer<Vec<Mat4>>,
 }
 
@@ -72,26 +72,26 @@ impl Skeleton {
         }
     }
 
-    /// 获取局部空间包围盒（惰性计算）
+    /// Gets the local space bounding box (lazy computed)
     #[inline]
     pub fn local_bounds(&self) -> Option<&BoundingBox> {
         self.local_bounds.as_ref()
     }
 
-    /// 获取根骨骼节点句柄
+    /// Gets the root bone node handle
     #[inline]
     pub fn root_bone(&self) -> Option<NodeHandle> {
         self.bones.get(self.root_bone_index).copied()
     }
 
-    /// 计算骨骼的局部空间包围盒
-    /// 基于骨骼的绑定姿态位置，计算相对于根骨骼的包围盒
+    /// Computes the local space bounding box for bones
+    /// Based on bone bind pose positions, calculates bounding box relative to root bone
     pub fn compute_local_bounds(&mut self, nodes: &SlotMap<NodeHandle, Node>) {
         if self.bones.is_empty() {
             return;
         }
 
-        // 获取根骨骼的世界矩阵逆矩阵
+        // Get the inverse of the root bone's world matrix
         let root_bone_handle = self.bones[self.root_bone_index];
         let Some(root_node) = nodes.get(root_bone_handle) else {
             return;
@@ -125,8 +125,8 @@ impl Skeleton {
     }
 
 
-    /// 计算当前姿态下的精确世界包围盒 (不带 Padding，实时遍历所有骨骼)
-    /// 用于相机聚焦 (Frame Object)
+    /// Computes the precise world bounding box for the current pose (no padding, iterates all bones in real-time)
+    /// Used for camera framing (Frame Object)
     pub fn compute_tight_world_bounds(&self, nodes: &SlotMap<NodeHandle, Node>) -> Option<BoundingBox> {
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
@@ -148,7 +148,7 @@ impl Skeleton {
         }
     }
 
-    /// 获取世界空间包围盒
+    /// Gets the world space bounding box
     #[inline]
     pub fn world_bounds(&self, nodes: &SlotMap<NodeHandle, Node>) -> Option<BoundingBox> {
         let local_bounds = self.local_bounds.as_ref()?;
@@ -157,29 +157,29 @@ impl Skeleton {
         Some(local_bounds.transform(&root_node.transform.world_matrix))
     }
 
-    /// 更新骨骼矩阵
+    /// Updates bone matrices
     /// 
-    /// # 参数
-    /// * `nodes`: 全局节点存储，我们需要从中读取每个 bone 的 world_matrix
-    /// * `root_matrix_inv`: SkinnedMesh 所在节点的世界矩阵的逆矩阵
-    ///                      (用于将骨骼变换转换回 Mesh 的局部空间)
+    /// # Arguments
+    /// * `nodes`: Global node storage, from which we read each bone's world_matrix
+    /// * `root_matrix_inv`: Inverse of the world matrix of the node containing the SkinnedMesh
+    ///                      (used to transform bone transforms back to Mesh local space)
     pub fn compute_joint_matrices(
         &mut self, 
         nodes: &SlotMap<NodeHandle, Node>,
         root_matrix_inv: Affine3A
     ) {
         for (i, &bone_handle) in self.bones.iter().enumerate() {
-            // 1. 获取当前骨骼在这一帧的世界变换 (由场景图系统计算好的)
+            // 1. Get current bone's world transform for this frame (computed by scene graph system)
             let Some(bone_node) = nodes.get(bone_handle) else {
                 continue;
             };
             let bone_world_matrix = bone_node.transform.world_matrix;
 
-            // 2. 获取对应的逆绑定矩阵
+            // 2. Get the corresponding inverse bind matrix
             let ibm = self.inverse_bind_matrices[i];
 
-            // 3. 计算最终的 Joint Matrix
-            // 顺序很重要：先应用 IBM (变回骨骼局部)，再应用当前骨骼世界变换，最后(可选)抵消 Mesh 自身变换
+            // 3. Compute the final Joint Matrix
+            // Order matters: first apply IBM (transform to bone local), then apply current bone world transform, finally (optionally) cancel Mesh's own transform
             self.joint_matrices.write()[i] = (root_matrix_inv * bone_world_matrix * ibm).into();
         }
     }

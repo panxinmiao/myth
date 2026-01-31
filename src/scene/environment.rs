@@ -1,32 +1,32 @@
-//! Environment - 纯数据结构
+//! Environment - Pure data structure
 //! 
-//! 描述 IBL/天空盒配置
+//! Describes IBL/skybox configuration
 
 use crate::resources::texture::{Texture, TextureSource};
 
-/// IBL 环境贴图配置
+/// IBL environment map configuration
 #[derive(Clone, Debug)]
 pub struct Environment {
-    /// 用户设置的原始环境贴图 (可能是 2D HDR 或 Cube)
+    /// User-set original environment map (may be 2D HDR or Cube)
     pub source_env_map: Option<TextureSource>,
-    /// 标准化后的 CubeMap 源
-    /// 如果 source_env_map 是 Cube，则此字段等于 source_env_map
-    /// 如果 source_env_map 是 2D，则此字段指向转换后的 CubeMap
+    /// Normalized CubeMap source
+    /// If source_env_map is Cube, this field equals source_env_map
+    /// If source_env_map is 2D, this field points to the converted CubeMap
     pub(crate) processed_env_map: Option<TextureSource>,
-    /// 预过滤的环境贴图 (PMREM, 用于 PBR Specular IBL)
+    /// Pre-filtered environment map (PMREM, used for PBR Specular IBL)
     pub pmrem_map: Option<TextureSource>,
-    /// BRDF LUT 贴图
+    /// BRDF LUT texture
     pub brdf_lut: Option<TextureSource>,
-    /// 环境贴图的最大 mip 级别 (用于 roughness LOD)
+    /// Maximum mip level of environment map (used for roughness LOD)
     pub env_map_max_mip_level: f32,
-    /// 环境光强度
+    /// Environment light intensity
     pub intensity: f32,
-    /// 环境贴图旋转角度 (弧度)
+    /// Environment map rotation angle (radians)
     pub rotation: f32,
-    /// 环境光颜色 (ambient)
+    /// Environment ambient color
     pub ambient_color: glam::Vec3,
 
-    /// 版本号（用于追踪影响 Pipeline 的变化）
+    /// Version number (used to track changes affecting Pipeline)
     version: u64,
 }
 
@@ -64,13 +64,13 @@ impl Environment {
         }
     }
 
-    /// 获取版本号
+    /// Gets the version number
     #[inline]
     pub fn version(&self) -> u64 {
         self.version
     }
     
-    /// 设置环境贴图
+    /// Sets the environment map
     pub fn set_env_map(&mut self, texture_bundle: Option<(TextureSource, &Texture)>) {
         let new_handle = texture_bundle.map(|(h, _)| h);
         let was_some = self.source_env_map.is_some();
@@ -82,36 +82,36 @@ impl Environment {
             self.pmrem_map = None; 
             self.env_map_max_mip_level = 0.0;
 
-            // 有/无状态变化影响 shader_defines
+            // Presence/absence state change affects shader_defines
             if was_some != is_some {
                 self.version = self.version.wrapping_add(1);
             }
         }
     }
     
-    /// 设置 BRDF LUT
+    /// Sets the BRDF LUT
     pub fn set_brdf_lut(&mut self, handle: Option<TextureSource>) {
         self.brdf_lut = handle;
     }
     
-    /// 设置环境光强度
+    /// Sets the environment light intensity
     pub fn set_intensity(&mut self, intensity: f32) {
         self.intensity = intensity;
     }
     
-    /// 设置环境光颜色
+    /// Sets the environment ambient color
     pub fn set_ambient_color(&mut self, color: glam::Vec3) {
         self.ambient_color = color;
     }
     
-    /// 是否有有效的环境贴图
+    /// Whether there is a valid environment map
     pub fn has_env_map(&self) -> bool {
         self.source_env_map.is_some()
     }
     
-    /// 获取处理后的环境贴图 (用于 Skybox 等需要 CubeMap 的地方)
-    /// 只返回 processed_env_map，不回退到 source_env_map
-    /// 因为 source_env_map 可能是 2D 纹理，而 Skybox 需要 CubeMap
+    /// Gets the processed environment map (for Skybox and other places requiring CubeMap)
+    /// Only returns processed_env_map, does not fall back to source_env_map
+    /// Because source_env_map might be a 2D texture, while Skybox requires CubeMap
     pub fn get_processed_env_map(&self) -> Option<&TextureSource> {
         self.processed_env_map.as_ref()
     }

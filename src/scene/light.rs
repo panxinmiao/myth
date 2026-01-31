@@ -37,7 +37,7 @@ pub struct SpotLight {
     pub outer_cone: f32,
 }
 
-// 高层抽象：场景中的光源组件
+// High-level abstraction: light component in the scene
 #[derive(Debug, Clone)]
 pub enum LightKind {
     Directional(DirectionalLight),
@@ -49,7 +49,7 @@ pub enum LightKind {
 pub struct Light {
     pub uuid: Uuid,
     pub color: Vec3,
-    pub intensity: f32, // 建议：明确单位，例如 PBR 中 Point 用 Candela，Directional 用 Lux
+    pub intensity: f32, // Suggestion: specify units, e.g. in PBR: Point uses Candela, Directional uses Lux
     pub kind: LightKind,
 
     pub shadow: Option<ShadowConfig>,

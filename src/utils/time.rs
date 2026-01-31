@@ -1,14 +1,19 @@
 use std::time::{Duration, Instant};
 
+/// Timer for tracking frame timing and elapsed time.
 pub struct Timer {
     start_time: Instant,
     last_update: Instant,
+    /// Time since last tick
     pub delta: Duration,
+    /// Total elapsed time since creation
     pub elapsed: Duration,
+    /// Total number of ticks
     pub frame_count: u64,
 }
 
 impl Timer {
+    /// Creates a new timer starting from now.
     pub fn new() -> Self {
         let now = Instant::now();
         Self {
@@ -20,7 +25,7 @@ impl Timer {
         }
     }
 
-    /// 引擎内部调用：打点
+    /// Updates the timer (called internally by the engine each frame).
     pub fn tick(&mut self) {
         let now = Instant::now();
         self.delta = now - self.last_update;

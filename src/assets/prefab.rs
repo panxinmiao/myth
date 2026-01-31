@@ -6,18 +6,18 @@ use crate::animation::clip::AnimationClip;
 use crate::resources::mesh::Mesh;
 use crate::scene::transform::Transform;
 
-/// 预制体节点：只包含数据，使用索引引用子节点
+/// Prefab node: contains only data, uses indices to reference child nodes
 #[derive(Debug, Clone)]
 pub struct PrefabNode {
     pub name: Option<String>,
     pub transform: Transform,
-    /// 子节点在 Prefab.nodes 中的索引
+    /// Child node indices in Prefab.nodes
     pub children_indices: Vec<usize>,
-    /// Mesh 组件（如有）
+    /// Mesh component (if any)
     pub mesh: Option<Mesh>,
-    /// 引用的骨骼索引（在 Prefab.skeletons 中）
+    /// Referenced skeleton index (in Prefab.skeletons)
     pub skin_index: Option<usize>,
-    /// 形变权重（如有）
+    /// Morph weights (if any)
     pub morph_weights: Option<Vec<f32>>,
 }
 
@@ -40,31 +40,31 @@ impl Default for PrefabNode {
     }
 }
 
-/// 预制体骨架数据
+/// Prefab skeleton data
 #[derive(Debug, Clone)]
 pub struct PrefabSkeleton {
     pub name: String,
-    /// 根骨骼在 bones 中的索引
+    /// Root bone index in bones
     pub root_bone_index: usize,
-    /// 骨骼节点索引（指向 Prefab.nodes 的索引）
+    /// Bone node indices (pointing to Prefab.nodes indices)
     pub bone_indices: Vec<usize>,
-    /// 逆绑定矩阵
+    /// Inverse bind matrices
     pub inverse_bind_matrices: Vec<Affine3A>,
 }
 
-/// 预制体：从 glTF 等资源文件解析出的中间数据结构
+/// Prefab: intermediate data structure parsed from resource files like glTF
 /// 
-/// Prefab 是线程安全的纯数据结构，不包含任何 NodeHandle 或 Scene 引用。
-/// 通过 `Scene::instantiate()` 方法可以将 Prefab 实例化为场景节点。
+/// Prefab is a thread-safe pure data structure that doesn't contain any NodeHandle or Scene references.
+/// Use `Scene::instantiate()` method to instantiate a Prefab into scene nodes.
 #[derive(Debug, Clone)]
 pub struct Prefab {
-    /// 扁平化存储的所有节点
+    /// All nodes stored in a flat array
     pub nodes: Vec<PrefabNode>,
-    /// 根节点在 nodes 中的索引
+    /// Root node indices in nodes
     pub root_indices: Vec<usize>,
-    /// 骨骼数据
+    /// Skeleton data
     pub skeletons: Vec<PrefabSkeleton>,
-    /// 动画数据
+    /// Animation data
     pub animations: Vec<AnimationClip>,
 }
 
@@ -85,5 +85,5 @@ impl Default for Prefab {
     }
 }
 
-/// 线程安全的 Prefab 引用
+/// Thread-safe Prefab reference
 pub type SharedPrefab = Arc<Prefab>;

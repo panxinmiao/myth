@@ -6,13 +6,13 @@ use std::collections::HashSet;
 
 
 // ============================================================================
-// 1. 类型映射 Trait (Rust Type -> WGSL Type String)
+// 1. Type Mapping Trait (Rust Type -> WGSL Type String)
 // ============================================================================
 pub trait WgslType {
     fn wgsl_type_name() -> Cow<'static, str>;
 
     fn collect_wgsl_defs(_defs: &mut Vec<String>, _inserted: &mut HashSet<String>) {
-        // 默认实现为空（针对 f32, vec3 等基础类型）
+        // Default implementation is empty (for primitive types like f32, vec3, etc.)
     }
 }
 impl WgslType for f32 { fn wgsl_type_name() -> Cow<'static, str> { "f32".into() } }
@@ -29,7 +29,7 @@ impl WgslType for Mat3A { fn wgsl_type_name() -> Cow<'static, str> { "mat3x3<f32
 impl WgslType for UVec4 { fn wgsl_type_name() -> Cow<'static, str> { "vec4<u32>".into() } }
 
 
-/// 专门用于 Uniform Buffer 的数组包装器
+/// Array wrapper specifically for Uniform Buffer
 #[repr(transparent)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UniformArray<T: Pod, const N: usize>(pub [T; N]);
@@ -37,10 +37,10 @@ pub struct UniformArray<T: Pod, const N: usize>(pub [T; N]);
 unsafe impl<T: Pod, const N: usize> Zeroable for UniformArray<T, N> {}
 unsafe impl<T: Pod, const N: usize> Pod for UniformArray<T, N> {}
 
-// 1. 实现 WgslType：自动生成 array<T, N>
+// 1. Implement WgslType: auto-generate array<T, N>
 impl<T: WgslType + Pod, const N: usize> WgslType for UniformArray<T, N> {
     fn wgsl_type_name() -> Cow<'static, str> {
-        // 动态生成包含长度的 WGSL 类型字符串
+        // Dynamically generate WGSL type string with length
         format!("array<{}, {}>", T::wgsl_type_name(), N).into()
     }
 
@@ -49,14 +49,14 @@ impl<T: WgslType + Pod, const N: usize> WgslType for UniformArray<T, N> {
     }
 }
 
-// 2. 实现 Default：自动初始化数组
+// 2. Implement Default: auto-initialize array
 impl<T: Default + Pod + Copy, const N: usize> Default for UniformArray<T, N> {
     fn default() -> Self {
         Self([T::default(); N])
     }
 }
 
-// 3. 实现 Deref：让它用起来像普通数组
+// 3. Implement Deref: make it behave like a regular array
 impl<T: Pod, const N: usize> Deref for UniformArray<T, N> {
     type Target = [T; N];
     fn deref(&self) -> &Self::Target { &self.0 }
@@ -66,7 +66,7 @@ impl<T: Pod, const N: usize> DerefMut for UniformArray<T, N> {
     fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
 }
 
-// 4. 便捷构造函数
+// 4. Convenience constructors
 impl<T: Pod, const N: usize> UniformArray<T, N> {
     pub fn new(arr: [T; N]) -> Self {
         Self(arr)
@@ -84,12 +84,12 @@ pub trait WgslStruct: Pod + Zeroable {
 }
 
 // ============================================================================
-// 2. 宏定义 (Single Source of Truth)
+// 2. Macro Definition (Single Source of Truth)
 // ============================================================================
 
 macro_rules! define_gpu_data_struct {
     // --------------------------------------------------------
-    // 入口模式
+    // Entry pattern
     // --------------------------------------------------------
     (
         $(#[$meta:meta])* struct $name:ident {
@@ -98,31 +98,31 @@ macro_rules! define_gpu_data_struct {
             ),* $(,)?
         }
     ) => {
-        // 1. 生成 Rust Struct
+        // 1. Generate Rust Struct
         define_gpu_data_struct!(@def_struct 
             $(#[$meta])* struct $name { 
                 $( $vis $field_name : $field_type ),* }
         );
 
-        // 2. 生成 Default 实现
+        // 2. Generate Default implementation
         define_gpu_data_struct!(@impl_default 
             $name { 
                 $( $field_name : $field_type $(= $default_val)? ),* }
         );
 
-        // 3. 生成 WgslType 实现 (支持作为嵌套字段)
+        // 3. Generate WgslType implementation (supports nested fields)
         define_gpu_data_struct!(@impl_wgsl_type 
             $name { 
                 $( $field_name : $field_type ),* }
         );
 
-        // 4. 生成 UniformBlock 实现 (顶层入口)
+        // 4. Generate UniformBlock implementation (top-level entry)
         define_gpu_data_struct!(@impl_uniform_block 
             $name { 
                 $( $field_name : $field_type ),* }
         );
 
-        // 5. 生成GpuData实现
+        // 5. Generate GpuData implementation
         define_gpu_data_struct!(@impl_gpu_data 
             $name { 
                 $( $field_name : $field_type ),* }
@@ -152,7 +152,7 @@ macro_rules! define_gpu_data_struct {
 
 
     // --------------------------------------------------------
-    // 新增规则: 生成 WGSL 结构体定义逻辑 (供内部和外部使用)
+    // Rule: Generate WGSL struct definition logic (for internal and external use)
     // --------------------------------------------------------
     (@gen_body $name_str:expr, { $( $vis:vis$field_name:ident : $field_type:ty ),* }) => {{
         let mut code = format!("struct {} {{\n", $name_str);
@@ -170,7 +170,7 @@ macro_rules! define_gpu_data_struct {
     }};
 
     // --------------------------------------------------------
-    // 内部规则 3: 实现 WgslType (让该结构体可以被嵌套)
+    // Internal rule 3: Implement WgslType (allows struct to be nested)
     // --------------------------------------------------------
     (@impl_wgsl_type $name:ident { $( $vis:vis $field_name:ident : $field_type:ty ),* }) => {
         impl WgslType for $name {
@@ -179,12 +179,12 @@ macro_rules! define_gpu_data_struct {
             }
 
             fn collect_wgsl_defs(defs: &mut Vec<String>, inserted: &mut std::collections::HashSet<String>) {
-                // 1. 递归收集所有字段的定义 (依赖优先)
+                // 1. Recursively collect all field definitions (dependencies first)
                 $(
                     <$field_type as WgslType>::collect_wgsl_defs(defs, inserted);
                 )*
 
-                // 2. 生成自身的定义
+                // 2. Generate own definition
                 let my_name = stringify!($name);
                 if !inserted.contains(my_name) {
                     let my_def = define_gpu_data_struct!(@gen_body my_name, { $( $field_name : $field_type ),* });
@@ -196,7 +196,7 @@ macro_rules! define_gpu_data_struct {
     };
 
     // --------------------------------------------------------
-    // 内部规则 4: 实现 UniformBlock (顶层调用)
+    // Internal rule 4: Implement UniformBlock (top-level call)
     // --------------------------------------------------------
     (@impl_uniform_block $name:ident { $( $vis:vis $field_name:ident : $field_type:ty ),* }) => {
         impl crate::resources::uniforms::WgslStruct for $name {
@@ -204,15 +204,15 @@ macro_rules! define_gpu_data_struct {
                 let mut defs = Vec::new();
                 let mut inserted = std::collections::HashSet::new();
 
-                // 1. 收集所有字段的依赖 (例如 LightData)
+                // 1. Collect all field dependencies (e.g. LightData)
                 $(
                     <$field_type as WgslType>::collect_wgsl_defs(&mut defs, &mut inserted);
                 )*
 
-                // 2. 生成顶层结构体 (使用传入的 struct_name，可能被重命名)
+                // 2. Generate top-level struct (using passed struct_name, may be renamed)
                 let top_def = define_gpu_data_struct!(@gen_body struct_name, { $( $vis $field_name : $field_type ),* });
                 
-                // 3. 拼接所有内容
+                // 3. Concatenate all content
                 defs.push(top_def);
                 defs.join("\n")
             }
@@ -237,11 +237,11 @@ macro_rules! define_gpu_data_struct {
 
 }
 // ============================================================================
-// 3. Gpu Data Struct 定义 (std140)  (在此处修改，两端自动同步)
+// 3. GPU Data Struct Definitions (std140) (Modify here, both ends sync automatically)
 // ============================================================================
 
 define_gpu_data_struct!(
-    /// 动态模型 Uniforms (每个对象更新)
+    /// Dynamic Model Uniforms (updated per object)
     struct DynamicModelUniforms {
         pub world_matrix: Mat4,       //64
         pub world_matrix_inverse: Mat4,  //64
@@ -253,7 +253,7 @@ define_gpu_data_struct!(
 
 
 define_gpu_data_struct!(
-    /// 全局 Uniforms (每个 Frame 更新)
+    /// Global Uniforms (updated per frame)
     struct RenderStateUniforms {
         pub view_projection: Mat4 = Mat4::IDENTITY,
         pub view_projection_inverse: Mat4 = Mat4::IDENTITY,
@@ -265,7 +265,7 @@ define_gpu_data_struct!(
 
 
 define_gpu_data_struct!(
-    /// 全局 Uniforms (每个 Frame 更新)
+    /// Global Uniforms (updated per frame)
     struct EnvironmentUniforms {
         pub ambient_light: Vec3 = Vec3::ZERO,
         pub num_lights: u32 = 0,
@@ -295,7 +295,7 @@ define_gpu_data_struct!(
     struct MeshPhongUniforms {
         pub color: Vec4 = Vec4::ONE,
 
-        pub specular: Vec3 = Vec3::splat(0.06667),  // 0x111111. 代表了非金属（电介质）材料，如塑料、岩石或水
+        pub specular: Vec3 = Vec3::splat(0.06667),  // 0x111111. Represents non-metallic (dielectric) materials like plastic, rock, or water
         pub opacity: f32 = 1.0,
 
         pub emissive: Vec3 = Vec3::ZERO,
@@ -333,7 +333,7 @@ define_gpu_data_struct!(
         pub specular: Vec3 = Vec3::ONE,               // 12
         pub specular_intensity: f32 = 0.0,    // 4
 
-        // 使用优化后的 Mat3A (48 bytes)
+        // Using optimized Mat3A (48 bytes)
         pub map_transform: Mat3A = Mat3A::IDENTITY,         
         pub normal_map_transform: Mat3A = Mat3A::IDENTITY,   
         pub roughness_map_transform: Mat3A = Mat3A::IDENTITY,
@@ -369,7 +369,7 @@ define_gpu_data_struct!(
         pub clearcoat_roughness: f32 = 0.0,   // 4
         pub clearcoat_normal_scale: Vec2 = Vec2::ONE, // 8
 
-        // 使用优化后的 Mat3A (48 bytes)
+        // Using optimized Mat3A (48 bytes)
         pub map_transform: Mat3A = Mat3A::IDENTITY,         
         pub normal_map_transform: Mat3A = Mat3A::IDENTITY,   
         pub roughness_map_transform: Mat3A = Mat3A::IDENTITY,
@@ -414,7 +414,7 @@ define_gpu_data_struct!(
         pub flags: u32,
         pub _pad: u32,
         
-        // 32 个目标形态的权重和索引，打包到 Vec4 中以满足 Uniform buffer 16 字节对齐要求
+        // 32 morph target weights and indices, packed into Vec4 to satisfy Uniform buffer 16-byte alignment requirement
         // weights[0] = Vec4(w0, w1, w2, w3), weights[1] = Vec4(w4, w5, w6, w7), ...
         pub weights: UniformArray<Vec4, 8>, 
         pub indices: UniformArray<UVec4, 8>, 

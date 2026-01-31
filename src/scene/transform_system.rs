@@ -1,18 +1,19 @@
-//! 变换系统 (Transform System)
+//! Transform System
 //!
-//! 负责场景图的矩阵层级更新，与 Scene 解耦以避免借用冲突。
-//! 这是一个独立的系统，只需要借用 nodes SlotMap 和 root_nodes 列表。
+//! Handles scene graph matrix hierarchy updates, decoupled from Scene to avoid
+//! borrow conflicts. This is an independent system that only needs to borrow
+//! the nodes SlotMap and root_nodes list.
 //!
-//! # 并行化准备
-//! 
-//! 场景图更新可以按层级（BFS顺序）分批并行化：
-//! 1. 第一层：所有根节点（无依赖，可并行）
-//! 2. 第二层：根节点的所有直接子节点（依赖第一层结果，本层内可并行）
-//! 3. ...以此类推
+//! # Parallelization Strategy
 //!
-//! 使用 `build_level_order_batches` 预计算层级批次，然后可以：
-//! - 单线程顺序执行各批次
-//! - 使用 rayon 对每批次内的节点并行处理
+//! Scene graph updates can be parallelized in batches by level (BFS order):
+//! 1. Level 0: All root nodes (no dependencies, can run in parallel)
+//! 2. Level 1: Direct children of root nodes (depend on level 0, parallelizable within level)
+//! 3. ...and so on
+//!
+//! Use `build_level_order_batches` to precompute level batches, then you can:
+//! - Execute batches sequentially on a single thread
+//! - Use rayon to parallelize nodes within each batch
 
 use glam::Affine3A;
 use slotmap::{SlotMap, SparseSecondaryMap};
@@ -21,12 +22,12 @@ use crate::scene::node::Node;
 use crate::scene::camera::Camera;
 use crate::scene::NodeHandle;
 
-/// 层级批次信息，用于并行化处理
+/// Level-order batch information for parallelization.
 #[derive(Debug, Default)]
 pub struct LevelOrderBatches {
-    /// 每一层的节点列表，batches[0] 是根节点层，batches[1] 是第一层子节点...
+    /// Node lists per level. batches[0] contains root nodes, batches[1] contains first-level children, etc.
     pub batches: Vec<Vec<NodeHandle>>,
-    /// 每个节点对应的父节点索引（用于查找父世界矩阵）
+    /// Parent node handle for each node (used to lookup parent world matrix).
     pub parent_indices: Vec<Option<NodeHandle>>,
 }
 
@@ -35,7 +36,7 @@ impl LevelOrderBatches {
         Self::default()
     }
     
-    /// 清空并复用内存
+    /// Clears and reuses memory.
     pub fn clear(&mut self) {
         for batch in &mut self.batches {
             batch.clear();
@@ -43,29 +44,29 @@ impl LevelOrderBatches {
         self.parent_indices.clear();
     }
     
-    /// 获取总节点数
+    /// Gets the total number of nodes.
     pub fn total_nodes(&self) -> usize {
         self.batches.iter().map(|b| b.len()).sum()
     }
     
-    /// 获取层级深度
+    /// Gets the hierarchy depth.
     pub fn depth(&self) -> usize {
         self.batches.len()
     }
 }
 
-/// 构建按层级排序的节点批次（BFS顺序）
-/// 
-/// 这个函数将场景图按层级展开，使得：
-/// - 同一层级的节点在同一个批次中，可以并行处理
-/// - 不同层级按顺序处理，确保父节点先于子节点更新
-/// 
-/// # 并行化策略
+/// Builds level-ordered node batches (BFS order).
+///
+/// This function flattens the scene graph by level so that:
+/// - Nodes at the same level are in the same batch and can be processed in parallel
+/// - Different levels are processed sequentially to ensure parents are updated before children
+///
+/// # Parallelization Strategy
 /// ```ignore
 /// for batch in batches.iter() {
-///     // 每个 batch 内的节点可以并行处理
+///     // Nodes within each batch can be processed in parallel
 ///     batch.par_iter().for_each(|node_handle| {
-///         // 安全：同层级节点互不依赖
+///         // Safe: nodes at the same level don't depend on each other
 ///         update_single_node(...);
 ///     });
 /// }
@@ -81,11 +82,11 @@ pub fn build_level_order_batches(
         return;
     }
     
-    // 第一层：根节点
+    // Level 0: root nodes
     let mut current_level: Vec<NodeHandle> = roots.to_vec();
     
     while !current_level.is_empty() {
-        // 收集下一层节点
+        // Collect next level nodes
         let mut next_level = Vec::new();
         
         for &node_handle in &current_level {
@@ -96,7 +97,7 @@ pub fn build_level_order_batches(
             }
         }
         
-        // 保存当前层
+        // Save current level
         if output.batches.len() <= output.depth() {
             output.batches.push(current_level);
         } else {
@@ -107,14 +108,14 @@ pub fn build_level_order_batches(
         current_level = next_level;
     }
     
-    // 移除空批次
+    // Remove empty batches
     output.batches.retain(|b| !b.is_empty());
 }
 
-/// 使用预计算的批次进行层级更新（为并行化准备）
-/// 
-/// 当前是单线程版本，但结构已经为 rayon 并行做好准备。
-/// 启用并行只需将内层循环改为 `par_iter`。
+/// Uses precomputed batches for hierarchy updates (prepared for parallelization).
+///
+/// This is currently a single-threaded version, but the structure is ready for rayon parallelization.
+/// To enable parallelization, simply change the inner loop to `par_iter`.
 pub fn update_hierarchy_batched(
     nodes: &mut SlotMap<NodeHandle, Node>,
     cameras: &mut SparseSecondaryMap<NodeHandle, Camera>,
@@ -122,7 +123,7 @@ pub fn update_hierarchy_batched(
 ) {
     for (level, batch) in batches.batches.iter().enumerate() {
         for &node_handle in batch {
-            // 获取父世界矩阵
+            // Get parent world matrix
             let parent_world = if let Some(node) = nodes.get(node_handle) {
                 if let Some(parent_handle) = node.parent {
                     nodes.get(parent_handle)
@@ -135,7 +136,7 @@ pub fn update_hierarchy_batched(
                 continue;
             };
             
-            // 更新当前节点
+            // Update current node
             if let Some(node) = nodes.get_mut(node_handle) {
                 let local_changed = node.transform.update_local_matrix();
                 let parent_changed = level > 0;
@@ -144,7 +145,7 @@ pub fn update_hierarchy_batched(
                     let new_world = parent_world * *node.transform.local_matrix();
                     node.transform.set_world_matrix(new_world);
                     
-                    // 同步更新相机
+                    // Synchronously update camera
                     if let Some(camera) = cameras.get_mut(node_handle) {
                         camera.update_view_projection(&new_world);
                     }
@@ -154,17 +155,19 @@ pub fn update_hierarchy_batched(
     }
 }
 
-/// 更新整个场景层级的世界矩阵
-/// 
-/// # 参数
-/// * `nodes` - 节点 SlotMap 的可变引用
-/// * `cameras` - 相机 SlotMap 的可变引用（用于同步更新相机的视图投影矩阵）
-/// * `camera_components` - 节点到相机的组件映射
-/// * `roots` - 根节点句柄列表
-/// 
-/// # 设计说明
-/// 这个函数只借用必要的数据结构，而不是整个 Scene，
-/// 从而避免了 "上帝对象" 导致的借用冲突问题。
+/// Updates world matrices for the entire scene hierarchy.
+///
+/// # Arguments
+///
+/// * `nodes` - Mutable reference to the nodes SlotMap
+/// * `cameras` - Mutable reference to the cameras SlotMap (for synchronous view-projection matrix updates)
+/// * `camera_components` - Component mapping from nodes to cameras
+/// * `roots` - List of root node handles
+///
+/// # Design Notes
+///
+/// This function only borrows the necessary data structures instead of the entire Scene,
+/// thus avoiding borrow conflicts caused by "god object" patterns.
 pub fn update_hierarchy(
     nodes: &mut SlotMap<NodeHandle, Node>,
     cameras: &mut SparseSecondaryMap<NodeHandle, Camera>,
@@ -175,10 +178,10 @@ pub fn update_hierarchy(
     }
 }
 
-/// 递归更新节点变换（迭代优化版本）
-/// 
-/// 使用显式栈替代递归调用，避免深层级场景的栈溢出风险，
-/// 同时减少重复借用开销。
+/// Recursively updates node transforms (iterative optimized version).
+///
+/// Uses an explicit stack instead of recursive calls to avoid stack overflow risks
+/// in deeply nested scenes, while also reducing repeated borrow overhead.
 pub fn update_hierarchy_iterative(
     nodes: &mut SlotMap<NodeHandle, Node>,
     cameras: &mut SparseSecondaryMap<NodeHandle, Camera>,
@@ -191,7 +194,7 @@ pub fn update_hierarchy_iterative(
     }
     
     while let Some((node_handle, parent_world_matrix, parent_changed)) = stack.pop() {
-        // --- 阶段 1: 可变借用，处理更新逻辑 ---
+        // --- Phase 1: Mutable borrow, handle update logic ---
         let (current_world, world_needs_update) = {
             let Some(node) = nodes.get_mut(node_handle) else {
                 continue;
@@ -211,12 +214,12 @@ pub fn update_hierarchy_iterative(
             
             (node.transform.world_matrix, world_needs_update)
         }; 
-        // 这里的闭包/作用域结束，`node` 的可变借用生命周期结束
+        // Closure/scope ends here, `node`'s mutable borrow lifetime ends
         
-        // --- 阶段 2: 不可变借用，高效收集子节点 ---
-        // [修复] 将查找移到循环外，只进行一次 SlotMap 查找
+        // --- Phase 2: Immutable borrow, efficiently collect child nodes ---
+        // [Fix] Move lookup outside the loop, only perform one SlotMap lookup
         if let Some(node) = nodes.get(node_handle) {
-            // 直接遍历 slice，无需重复 get
+            // Directly iterate over slice, no need for repeated get
             for &child_handle in node.children.iter().rev() {
                 stack.push((child_handle, current_world, world_needs_update));
             }
@@ -224,7 +227,7 @@ pub fn update_hierarchy_iterative(
     }
 }
 
-/// 递归更新单个节点及其子树（保留原始递归版本作为参考）
+/// Recursively updates a single node and its subtree (original recursive version kept for reference)
 fn update_transform_recursive(
     nodes: &mut SlotMap<NodeHandle, Node>,
     cameras: &mut SparseSecondaryMap<NodeHandle, Camera>,
@@ -232,56 +235,56 @@ fn update_transform_recursive(
     parent_world_matrix: Affine3A,
     parent_changed: bool,
 ) {
-    // 阶段 1: 处理当前节点
+    // Phase 1: Process current node
     let (current_world_matrix, children_handles, world_needs_update) = {
         let Some(node) = nodes.get_mut(node_handle) else {
             return;
         };
         
-        // 1. 智能更新局部矩阵
+        // 1. Smartly update local matrix
         let local_changed = node.transform.update_local_matrix();
         
-        // 2. 决定是否更新世界矩阵
+        // 2. Decide whether to update world matrix
         let world_needs_update = local_changed || parent_changed;
         
         if world_needs_update {
             let new_world = parent_world_matrix * *node.transform.local_matrix();
             node.transform.set_world_matrix(new_world);
             
-            // 同步更新相机
+            // Synchronously update camera
             if let Some(camera) = cameras.get_mut(node_handle) {
                 camera.update_view_projection(&new_world);
             }
         }
         
-        // 收集必要信息，避免后续借用冲突
+        // Collect necessary info to avoid later borrow conflicts
         let world = node.transform.world_matrix;
         let children: Vec<NodeHandle> = node.children.clone();
         
         (world, children, world_needs_update)
     };
     
-    // 阶段 2: 递归处理子节点
+    // Phase 2: Recursively process child nodes
     for child_handle in children_handles {
         update_transform_recursive(nodes, cameras, child_handle, current_world_matrix, world_needs_update);
     }
 }
 
-/// 仅更新单个节点的局部矩阵（不递归）
-/// 用于需要立即刷新单个节点的场景
+/// Updates only a single node's local matrix (non-recursive)
+/// Used for scenarios that require immediate refresh of a single node
 #[inline]
 pub fn update_single_node_local(node: &mut Node) -> bool {
     node.transform.update_local_matrix()
 }
 
-/// 从指定节点开始向下更新子树
-/// 用于局部更新场景图的一部分
+/// Updates the subtree downward starting from the specified node
+/// Used for partial updates of a portion of the scene graph
 pub fn update_subtree(
     nodes: &mut SlotMap<NodeHandle, Node>,
     cameras: &mut SparseSecondaryMap<NodeHandle, Camera>,
     root_handle: NodeHandle,
 ) {
-    // 获取父节点的世界矩阵（如果有的话）
+    // Get parent node's world matrix (if exists)
     let parent_world = if let Some(node) = nodes.get(root_handle) {
         if let Some(parent_handle) = node.parent {
             nodes.get(parent_handle)
@@ -307,7 +310,7 @@ mod tests {
         let mut nodes: SlotMap<NodeHandle, Node> = SlotMap::with_key();
         let mut cameras: SparseSecondaryMap<NodeHandle, Camera> = SparseSecondaryMap::new();
         
-        // 创建简单的父子层级
+        // Create a simple parent-child hierarchy
         let mut parent = Node::new();
         parent.transform.position = Vec3::new(1.0, 0.0, 0.0);
         let parent_handle = nodes.insert(parent);
@@ -317,15 +320,15 @@ mod tests {
         child.parent = Some(parent_handle);
         let child_handle = nodes.insert(child);
         
-        // 建立父子关系
+        // Establish parent-child relationship
         nodes.get_mut(parent_handle).unwrap().children.push(child_handle);
         
         let roots = vec![parent_handle];
         
-        // 执行更新
+        // Execute update
         update_hierarchy(&mut nodes, &mut cameras, &roots);
         
-        // 验证子节点的世界位置
+        // Verify child node's world position
         let child_world_pos = nodes.get(child_handle).unwrap().transform.world_matrix.translation;
         assert!((child_world_pos.x - 1.0).abs() < 1e-5);
         assert!((child_world_pos.y - 1.0).abs() < 1e-5);

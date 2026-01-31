@@ -1,6 +1,6 @@
-//! Forward 渲染 Pass
+//! Forward Render Pass
 //!
-//! 实现前向渲染管线的主要绘制逻辑。
+//! Implements the main drawing logic for the forward rendering pipeline.
 
 use std::cell::RefCell;
 use glam::Mat3A;
@@ -14,25 +14,21 @@ use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::resources::material::{AlphaMode, Side};
 use crate::resources::uniforms::DynamicModelUniforms;
 
-/// Forward 渲染 Pass
+/// Forward Render Pass
 /// 
-/// 执行标准的前向渲染流程：
-/// 1. 准备并排序渲染命令
-/// 2. 开始渲染通道
-/// 3. 绘制不透明物体（前向后排序）
-/// 4. 绘制透明物体（后向前排序）
+/// Executes the standard forward rendering pipeline:
+/// 1. Prepare and sort render commands
+/// 2. Begin render pass
+/// 3. Draw opaque objects (front-to-back sorting)
+/// 4. Draw transparent objects (back-to-front sorting)
 /// 
-/// # 设计说明
-/// 使用 `RefCell` 提供内部可变性，使得 `RenderNode::run(&self, ...)` 
-/// 能够修改内部命令列表。这是 Rust 中常见的内部可变性模式。
-/// 
-/// # 性能考虑
-/// - 命令列表预分配并复用内存，避免每帧分配
-/// - `RefCell` 的运行时借用检查开销极小（单线程场景下约等于一次原子操作）
-/// - 使用 `TrackedRenderPass` 避免冗余状态切换
-/// - Pipeline 和 BindGroup 缓存减少 GPU 状态变更
+/// # Performance Considerations
+/// - Command lists are pre-allocated and reuse memory, avoiding per-frame allocations
+/// - `RefCell` runtime borrow check overhead is minimal (roughly equivalent to one atomic operation in single-threaded scenarios)
+/// - Uses `TrackedRenderPass` to avoid redundant state changes
+/// - Pipeline and BindGroup caching reduces GPU state changes
 pub struct ForwardRenderPass {
-    /// 清屏颜色
+    /// Clear color
     pub clear_color: wgpu::Color,
 
     commands : RefCell<CommandsBundle>,
@@ -46,7 +42,7 @@ impl ForwardRenderPass {
         }
     }
 
-    /// 准备并排序渲染命令
+    /// Prepare and sort render commands
     fn prepare_and_sort_commands(&self, ctx: &mut RenderContext) {
         // let mut opaque = self.commands.borrow_mut().opaque_commands;
         // let mut transparent = self.commands.borrow_mut().transparent_commands;
@@ -91,8 +87,8 @@ impl ForwardRenderPass {
                 continue;
             };
 
-            // 使用版本号构建快速缓存 Key
-            // 注意：scene_id 的哈希计算已被缓存优化，成本较低
+            // Build fast cache key using version numbers
+            // Note: scene_id hash computation is optimized for caching, cost is low
             let fast_key = FastPipelineKey {
                 material_handle: item.material,
                 material_version: gpu_material.version,
@@ -102,12 +98,12 @@ impl ForwardRenderPass {
                 global_state_id: gpu_world.id,
             };
 
-            // ========== 热路径优化：先检查 L1 缓存 ==========
+            // ========== Hot Path Optimization: Check L1 Cache First ==========
             let (pipeline, pipeline_id) = if let Some(p) = ctx.pipeline_cache.get_pipeline_fast(fast_key) {
-                // L1 缓存命中：直接使用已缓存的 Pipeline，无需计算 shader_defines
+                // L1 cache hit: Directly use cached Pipeline, no need to compute shader_defines
                 p.clone()
             } else {
-                // L1 缓存未命中：需要完整计算 shader_defines 以构建/查找 Pipeline
+                // L1 cache miss: Need full shader_defines computation to build/find Pipeline
                 let geo_defines = geometry.shader_defines();
 
                 let mat_defines = material.shader_defines();
@@ -182,7 +178,7 @@ impl ForwardRenderPass {
         commands_bundle.sort_commands();
     }
 
-    /// 上传动态 Uniform 数据
+    /// Upload dynamic Uniform data
     fn upload_dynamic_uniforms(&self, ctx: &mut RenderContext) {
         let mut cmds = self.commands.borrow_mut();
         if cmds.is_empty() {
@@ -224,7 +220,7 @@ impl ForwardRenderPass {
         ctx.resource_manager.upload_model_buffer();
     }
 
-    /// 执行绘制列表
+    /// Execute draw list
     fn draw_list<'pass>(
         ctx: &'pass RenderContext,
         pass: &mut TrackedRenderPass<'pass>,
@@ -274,18 +270,18 @@ impl RenderNode for ForwardRenderPass {
     }
 
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-        // 1. 准备渲染命令（通过 RefCell 获取内部可变性）
+        // 1. Prepare render commands (using RefCell for interior mutability)
         self.prepare_and_sort_commands(ctx);
 
-        // 2. 上传动态 Uniform
+        // 2. Upload dynamic Uniform
         self.upload_dynamic_uniforms(ctx);
 
-        // 3. 获取深度视图
+        // 3. Get depth view
         let depth_view = ctx.wgpu_ctx.get_depth_view();
 
-        // 4. 开始渲染通道并执行绘制
+        // 4. Begin render pass and execute drawing
         {
-            // 获取不可变借用（必须在 TrackedRenderPass 之前声明以保证生命周期）
+            // Get immutable borrow (must be declared before TrackedRenderPass to ensure lifetime)
             let commands_bundle = self.commands.borrow();
 
             let pass_desc = wgpu::RenderPassDescriptor {
@@ -302,7 +298,7 @@ impl RenderNode for ForwardRenderPass {
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth_view,
                     depth_ops: Some(wgpu::Operations {
-                        // Reverse Z 清除为 0.0（远裁剪面）
+                        // Reverse Z: Clear to 0.0 (far clipping plane)
                         load: wgpu::LoadOp::Clear(0.0),
                         store: wgpu::StoreOp::Store,
                     }),

@@ -32,12 +32,12 @@ pub struct Attribute {
 static NEXT_ATTR_VERSION: AtomicU64 = AtomicU64::new(1);
 
 impl Attribute {
-    /// 创建 Planar (非交错) 属性
+    /// Creates a Planar (non-interleaved) attribute
     pub fn new_planar<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
         let raw_data = bytemuck::cast_slice(data).to_vec();
         let size = raw_data.len();
         
-        // 创建句柄
+        // Create handle
         let buffer_ref = BufferRef::new(
             size,
             BufferUsages::VERTEX | BufferUsages::COPY_DST, 
@@ -56,7 +56,7 @@ impl Attribute {
         }
     }
 
-    /// 创建 Instance 属性
+    /// Creates an Instance attribute
     pub fn new_instanced<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
         let raw_data = bytemuck::cast_slice(data).to_vec();
         let size = raw_data.len();
@@ -79,8 +79,8 @@ impl Attribute {
         }
     }
 
-    /// 创建 Interleaved (交错) 属性
-    /// 多个 Attribute 可以共享同一个 BufferRef 和 data (Arc)
+    /// Creates an Interleaved attribute
+    /// Multiple Attributes can share the same BufferRef and data (Arc)
     pub fn new_interleaved(
         buffer: BufferRef, 
         data: Option<Arc<Vec<u8>>>,
@@ -102,28 +102,28 @@ impl Attribute {
         }
     }
 
-    /// 原地更新数据 (保留 ID，复用显存)
-    /// 使用 Arc::make_mut 实现 Copy-On-Write
+    /// Updates data in-place (preserves ID, reuses GPU memory)
+    /// Uses Arc::make_mut to implement Copy-On-Write
     pub fn update_data<T: bytemuck::Pod>(&mut self, new_data: &[T]) {
         if let Some(arc_vec) = &mut self.data {
-            // Arc::make_mut：如果只有一个引用，直接修改；否则克隆后修改
+            // Arc::make_mut: modifies directly if only one reference; otherwise clones then modifies
             let vec = Arc::make_mut(arc_vec);
             
             let bytes: &[u8] = bytemuck::cast_slice(new_data);
             
-            // 如果长度变了，需要调整 Vec
+            // If length changed, need to resize the Vec
             if vec.len() != bytes.len() {
                 vec.resize(bytes.len(), 0);
             }
             vec.copy_from_slice(bytes);
             
-            // 更新元数据
+            // Update metadata
             self.count = new_data.len() as u32;
             self.version = NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed);
         }
     }
 
-    /// 局部更新属性数据
+    /// Partially updates attribute data
     pub fn update_region<T: bytemuck::Pod>(
         &mut self, 
         offset_bytes: u64, 
@@ -136,7 +136,7 @@ impl Attribute {
             let start = offset_bytes as usize;
             let end = start + bytes.len();
             
-            // 边界检查
+            // Bounds check
             if end <= vec.len() {
                 vec[start..end].copy_from_slice(bytes);
                 self.version = NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed);
@@ -229,7 +229,7 @@ impl BoundingBox {
         let mut new_max = Vec3::splat(f32::NEG_INFINITY);
 
         for point in corners {
-            // 假设 Affine3A 可以直接 transform_point3
+            // Assuming Affine3A can directly transform_point3
             let transformed = matrix.transform_point3(point);
             new_min = new_min.min(transformed);
             new_max = new_max.max(transformed);
@@ -238,7 +238,7 @@ impl BoundingBox {
         Self { min: new_min, max: new_max }
     }
     
-    // 简单的膨胀方法
+    // Simple inflation method
     pub fn inflate(&self, amount: f32) -> Self {
         Self {
             min: self.min * Vec3::splat(1.0 - amount),
@@ -270,21 +270,21 @@ pub struct Geometry {
 
     pub morph_target_names: Vec<String>,
 
-    /// Morph Target Storage Buffers (紧凑 f32 存储)
-    /// 布局: [ Target 0 所有顶点 | Target 1 所有顶点 | ... ]
-    /// 每个顶点存储 3 个 f32 (Position/Normal/Tangent displacement)
+    /// Morph Target Storage Buffers (compact f32 storage)
+    /// Layout: [ Target 0 all vertices | Target 1 all vertices | ... ]
+    /// Each vertex stores 3 f32 values (Position/Normal/Tangent displacement)
     pub morph_position_buffer: Option<BufferRef>,
     pub morph_normal_buffer: Option<BufferRef>,
     pub morph_tangent_buffer: Option<BufferRef>,
     
-    /// Morph Target 数据 (CPU 端保持以支持上传)
+    /// Morph Target data (kept on CPU side to support uploading)
     morph_position_data: Option<Vec<f32>>,
     morph_normal_data: Option<Vec<f32>>,
     morph_tangent_data: Option<Vec<f32>>,
     
-    /// 每个 Target 的顶点数
+    /// Vertex count per target
     pub morph_vertex_count: u32,
-    /// Morph Target 数量
+    /// Morph target count
     pub morph_target_count: u32,
 
     pub topology: PrimitiveTopology,
@@ -293,7 +293,7 @@ pub struct Geometry {
     pub bounding_box: RwLock<Option<BoundingBox>>,
     pub bounding_sphere: RwLock<Option<BoundingSphere>>,
 
-    /// ShaderDefines 缓存：(layout_version, cached_defines)
+    /// ShaderDefines cache: (layout_version, cached_defines)
     cached_shader_defines: RwLock<Option<(u64, ShaderDefines)>>,
 }
 
@@ -399,11 +399,11 @@ impl Geometry {
         self.data_version = self.data_version.wrapping_add(1);
     }
 
-    /// 从 morph_attributes 构建紧凑的 Storage Buffers
-    /// 布局: [ Target 0 所有顶点 | Target 1 所有顶点 | ... ]
-    /// 每个顶点存储 3 个 f32 (compact Vec3)
+    /// Builds compact Storage Buffers from morph_attributes
+    /// Layout: [ Target 0 all vertices | Target 1 all vertices | ... ]
+    /// Each vertex stores 3 f32 values (compact Vec3)
     pub fn build_morph_storage_buffers(&mut self) {
-        // 获取 position morph targets
+        // Get position morph targets
         let position_attrs = self.morph_attributes.get("position");
         
         if position_attrs.is_none() || position_attrs.unwrap().is_empty() {
@@ -413,7 +413,7 @@ impl Geometry {
         let position_attrs = position_attrs.unwrap();
         let target_count = position_attrs.len();
         
-        // 获取每个 target 的顶点数 (假设所有 target 顶点数相同)
+        // Get vertex count per target (assuming all targets have the same vertex count)
         let vertex_count = position_attrs.first()
             .map(|attr| attr.count)
             .unwrap_or(0);
@@ -425,14 +425,14 @@ impl Geometry {
         self.morph_target_count = target_count as u32;
         self.morph_vertex_count = vertex_count;
         
-        // 构建 position storage buffer (Target-Major 布局)
-        // 总大小 = target_count * vertex_count * 3 floats
+        // Build position storage buffer (Target-Major layout)
+        // Total size = target_count * vertex_count * 3 floats
         let total_floats = target_count * vertex_count as usize * 3;
         let mut position_data: Vec<f32> = Vec::with_capacity(total_floats);
         
         for attr in position_attrs {
             if let Some(data) = &attr.data {
-                // 将 [u8] 转换为 [f32]
+                // Convert [u8] to [f32]
                 let floats: &[f32] = bytemuck::cast_slice(data.as_slice());
                 position_data.extend_from_slice(floats);
             }
@@ -448,7 +448,7 @@ impl Geometry {
             self.morph_position_data = Some(position_data);
         }
         
-        // 构建 normal storage buffer (如果有)
+        // Build normal storage buffer (if available)
         if let Some(normal_attrs) = self.morph_attributes.get("normal") {
             if !normal_attrs.is_empty() {
                 let mut normal_data: Vec<f32> = Vec::with_capacity(total_floats);
@@ -472,7 +472,7 @@ impl Geometry {
             }
         }
         
-        // 构建 tangent storage buffer (如果有)
+        // Build tangent storage buffer (if available)
         if let Some(tangent_attrs) = self.morph_attributes.get("tangent") {
             if !tangent_attrs.is_empty() {
                 let mut tangent_data: Vec<f32> = Vec::with_capacity(total_floats);
@@ -499,22 +499,22 @@ impl Geometry {
         self.data_version = self.data_version.wrapping_add(1);
     }
     
-    /// 获取 morph position 数据的字节切片
+    /// Gets the byte slice of morph position data
     pub fn morph_position_bytes(&self) -> Option<&[u8]> {
         self.morph_position_data.as_ref().map(|d| bytemuck::cast_slice(d.as_slice()))
     }
     
-    /// 获取 morph normal 数据的字节切片
+    /// Gets the byte slice of morph normal data
     pub fn morph_normal_bytes(&self) -> Option<&[u8]> {
         self.morph_normal_data.as_ref().map(|d| bytemuck::cast_slice(d.as_slice()))
     }
     
-    /// 获取 morph tangent 数据的字节切片
+    /// Gets the byte slice of morph tangent data
     pub fn morph_tangent_bytes(&self) -> Option<&[u8]> {
         self.morph_tangent_data.as_ref().map(|d| bytemuck::cast_slice(d.as_slice()))
     }
     
-    /// 检查是否有 morph targets
+    /// Checks if morph targets exist
     pub fn has_morph_targets(&self) -> bool {
         self.morph_target_count > 0 && self.morph_position_buffer.is_some()
     }
@@ -568,13 +568,13 @@ impl Geometry {
     }
 
     pub fn compute_vertex_normals(&mut self) {
-        // 1. 获取位置属性 (必须存在)
+        // 1. Get position attribute (must exist)
         let pos_attr = match self.attributes.get("position") {
             Some(attr) => attr,
             None => return,
         };
         
-        // 获取位置数据引用
+        // Get position data reference
         let pos_bytes = match &pos_attr.data {
             Some(data) => data.as_ref(),
             None => return,
@@ -587,14 +587,14 @@ impl Geometry {
         let pos_count = pos_attr.count as usize;
         let mut normals = vec![Vec3::ZERO; pos_count];
 
-        // 辅助函数：解析位置
+        // Helper function: parse position
         let pos_stride = pos_attr.stride as usize;
         let pos_offset = pos_attr.offset as usize;
         
-        // 这一步只是为了方便读取，和之前一样
+        // This step is just for convenience reading, same as before
         let get_pos = |i: usize| -> Vec3 {
             let start = pos_offset + i * pos_stride;
-            // 边界检查，防止恶意数据导致的 panic
+            // Bounds check to prevent panic from malicious data
             if start + 12 > pos_bytes.len() { return Vec3::ZERO; }
             
             let slice = &pos_bytes[start..start + 12];
@@ -603,26 +603,26 @@ impl Geometry {
         };
 
         let mut accumulate_triangle = |i0: usize, i1: usize, i2: usize| {
-            // 简单的越界保护
+            // Simple out of bounds protection
             if i0 >= pos_count || i1 >= pos_count || i2 >= pos_count { return; }
 
             let v0 = get_pos(i0);
             let v1 = get_pos(i1);
             let v2 = get_pos(i2);
 
-            // 面积加权法线 (Area Weighted)
-            // 叉积的模长 = 2 * 三角形面积
+            // Area weighted normal
+            // Cross product magnitude = 2 * triangle area
             let face_normal = (v1 - v0).cross(v2 - v0);
 
-            // 累加
+            // Accumulate
             normals[i0] += face_normal;
             normals[i1] += face_normal;
             normals[i2] += face_normal;
         };
 
-        // 2. 检查索引属性是否存在
+        // 2. Check if index attribute exists
         if let Some(index_attr) = &self.index_attribute {
-            // === 情况 A: Indexed Geometry (有索引) ===
+            // === Case A: Indexed Geometry ===
             if let Some(index_bytes) = &index_attr.data {
                 let index_bytes = index_bytes.as_ref();
                 
@@ -639,27 +639,27 @@ impl Geometry {
                             accumulate_triangle(chunk[0] as usize, chunk[1] as usize, chunk[2] as usize);
                         }
                     },
-                    _ => {} // 不支持的索引格式
+                    _ => {} // Unsupported index format
                 }
             }
         } else {
-            // === 情况 B: Non-Indexed Geometry (无索引) ===
-            // 假定顶点是每 3 个组成一个三角形 (TRIANGLES 拓扑)
-            // 直接遍历 0..pos_count
+            // === Case B: Non-Indexed Geometry ===
+            // Assumes vertices form triangles in groups of 3 (TRIANGLES topology)
+            // Iterate directly over 0..pos_count
             for i in (0..pos_count).step_by(3) {
-                // 确保最后不够 3 个顶点时不处理
+                // Ensure we don't process when fewer than 3 vertices remain
                 if i + 2 < pos_count {
                     accumulate_triangle(i, i + 1, i + 2);
                 }
             }
         }
 
-        // 3. 最后统一归一化
+        // 3. Normalize all at the end
         for n in normals.iter_mut() {
             *n = n.normalize_or_zero();
         }
 
-        // 4. 创建属性并存回
+        // 4. Create attribute and store back
         let normal_attr = Attribute::new_planar(&normals, VertexFormat::Float32x3);
         self.set_attribute("normal", normal_attr);
     }
@@ -685,11 +685,11 @@ impl Geometry {
 
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
-        // 移除 sum_pos，不再需要计算平均值
+        // Removed sum_pos, no longer need to calculate average
         // let mut sum_pos = Vec3::ZERO; 
         let mut valid_points_count = 0;
 
-        // Pass 1: 计算 AABB (Min/Max)
+        // Pass 1: Compute AABB (Min/Max)
         for i in 0..count {
             let start = offset + i * stride;
             let end = start + 12;
@@ -711,15 +711,15 @@ impl Geometry {
 
         if valid_points_count == 0 { return; }
 
-        // 更新 BoundingBox
+        // Update BoundingBox
         *self.bounding_box.write() = Some(BoundingBox { min, max });
 
-        // 使用 AABB 的几何中心作为球心
+        // Use AABB geometric center as sphere center
         let aabb_center = (min + max) * 0.5;
         
         let mut max_dist_sq = 0.0;
 
-        // Pass 2: 基于新的中心计算半径
+        // Pass 2: Compute radius based on the new center
         for i in 0..count {
             let start = offset + i * stride;
             let end = start + 12;
@@ -729,7 +729,7 @@ impl Geometry {
                     let vals: &[f32; 3] = bytemuck::cast_ref(bytes);
                     let vec = Vec3::from_array(*vals);
                     
-                    // 计算到 AABB 中心的距离
+                    // Calculate distance to AABB center
                     let dist_sq = vec.distance_squared(aabb_center);
                     if dist_sq > max_dist_sq {
                         max_dist_sq = dist_sq;
@@ -746,13 +746,13 @@ impl Geometry {
         });
     }
 
-    /// 设置交错属性 (Interleaved Attributes)
-    /// 从一个交错数组中创建多个共享同一个 Buffer 的 Attribute
+    /// Sets interleaved attributes
+    /// Creates multiple Attributes sharing the same Buffer from an interleaved array
     pub fn set_interleaved_attributes(
         &mut self,
-        interleaved_data: Vec<u8>, // 原始交错数据
+        interleaved_data: Vec<u8>, // Raw interleaved data
         stride: u64,
-        attributes: Vec<(&str, VertexFormat, u64)> // (名字, 格式, 偏移量)
+        attributes: Vec<(&str, VertexFormat, u64)> // (name, format, offset)
     ) {
         let shared_data = Arc::new(interleaved_data);
         let count = (shared_data.len() as u64 / stride) as u32;
@@ -782,7 +782,7 @@ impl Geometry {
         self.data_version = self.data_version.wrapping_add(1);
     }
 
-    /// 局部更新属性数据
+    /// Partially updates attribute data
     pub fn update_attribute_region<T: bytemuck::Pod>(
         &mut self, 
         name: &str, 
@@ -795,12 +795,12 @@ impl Geometry {
         }
     }
 
-    /// 计算几何体的 Shader 宏定义
+    /// Computes the geometry's shader macro definitions
     /// 
-    /// 使用内部缓存机制，仅当 `layout_version` 发生变化时才重新计算。
-    /// 这避免了热路径上的 Map 遍历开销。
+    /// Uses internal caching mechanism, only recalculates when `layout_version` changes.
+    /// This avoids Map traversal overhead on the hot path.
     pub fn shader_defines(&self) -> ShaderDefines {
-        // 快速路径：检查缓存
+        // Fast path: check cache
         {
             let cache = self.cached_shader_defines.read();
             if let Some((cached_version, cached_defines)) = cache.as_ref() {
@@ -810,7 +810,7 @@ impl Geometry {
             }
         }
 
-        // 慢速路径：重新计算
+        // Slow path: recalculate
         let mut defines = ShaderDefines::new();
         
         for name in self.attributes.keys() {
@@ -818,7 +818,7 @@ impl Geometry {
             defines.set(&macro_name, "1");
         }
         
-        // Morph Target 特性检测
+        // Morph Target feature detection
         if self.has_morph_targets() {
             defines.set("HAS_MORPH_TARGETS", "1");
             
@@ -830,7 +830,7 @@ impl Geometry {
             }
         }
 
-        // Skinning 特性检测
+        // Skinning feature detection
         let has_joints = self.attributes.contains_key("joints");
         let has_weights = self.attributes.contains_key("weights");
         
@@ -838,7 +838,7 @@ impl Geometry {
             defines.set("SUPPORT_SKINNING", "1");
         }
 
-        // 更新缓存
+        // Update cache
         *self.cached_shader_defines.write() = Some((self.layout_version, defines.clone()));
 
         defines
