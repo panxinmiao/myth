@@ -216,6 +216,9 @@ impl RenderNode for IBLComputePass {
                     ctx.resource_manager.internal_resources.get(id).unwrap()
                 }
             };
+
+            let mip_levels = (EQUIRECT_CUBE_SIZE as f32).log2().floor() as u32 + 1;
+            let format = wgpu::TextureFormat::Rgba16Float;
             
             let cube_texture = ctx.wgpu_ctx.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Env Equirect2Cube"),
@@ -225,15 +228,17 @@ impl RenderNode for IBLComputePass {
                     depth_or_array_layers: 6 
                 },
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba16Float,
-                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-                mip_level_count: 1,
+                format: format,
+                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                mip_level_count: mip_levels,
                 sample_count: 1,
                 view_formats: &[],
             });
 
             let dest_view = cube_texture.create_view(&wgpu::TextureViewDescriptor {
                 dimension: Some(wgpu::TextureViewDimension::D2Array),
+                mip_level_count: Some(1),
+                base_mip_level: 0,
                 ..Default::default()
             });
 
@@ -277,6 +282,14 @@ impl RenderNode for IBLComputePass {
                 let group_count = (EQUIRECT_CUBE_SIZE + 7) / 8;
                 cpass.dispatch_workgroups(group_count, group_count, 6);
             }
+
+            // generate mipmaps for the cubemap
+            ctx.resource_manager.mipmap_generator.generate(
+                &ctx.wgpu_ctx.device, 
+                encoder, 
+                &cube_texture, 
+                mip_levels
+            );
 
             Some(cube_texture)
         } else {
