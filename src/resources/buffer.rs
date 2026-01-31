@@ -101,6 +101,14 @@ impl BufferRef {
 
 pub struct BufferGuard<'a, T: GpuData> {
     guard: RwLockWriteGuard<'a, CpuBufferState<T>>,
+    pub(crate) changed: bool,
+}
+
+impl<'a, T: GpuData> BufferGuard<'a, T> {
+    // 允许用户手动取消版本更新
+    pub fn skip_sync(&mut self) {
+        self.changed = false;
+    }
 }
 
 impl<'a, T: GpuData> std::ops::Deref for BufferGuard<'a, T> {
@@ -118,8 +126,10 @@ impl<'a, T: GpuData> std::ops::DerefMut for BufferGuard<'a, T> {
 
 impl<'a, T: GpuData> Drop for BufferGuard<'a, T> {
     fn drop(&mut self) {
-        self.guard.version = self.guard.version.wrapping_add(1);
-        self.guard.size = self.guard.data.byte_size();
+        if self.changed {
+            self.guard.version = self.guard.version.wrapping_add(1);
+            self.guard.size = self.guard.data.byte_size();
+        }
     }
 }
 
@@ -254,6 +264,7 @@ impl<T: GpuData> CpuBuffer<T> {
     pub fn write(&self) -> BufferGuard<'_, T> {
         BufferGuard {
             guard: self.inner.write(),
+            changed: true,
         }
     }
 

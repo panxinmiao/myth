@@ -1,5 +1,5 @@
-use std::cell::RefCell;
 use std::sync::Arc;
+use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
@@ -290,11 +290,11 @@ pub struct Geometry {
     pub topology: PrimitiveTopology,
     pub draw_range: Range<u32>,
 
-    pub bounding_box: RefCell<Option<BoundingBox>>,
-    pub bounding_sphere: RefCell<Option<BoundingSphere>>,
+    pub bounding_box: RwLock<Option<BoundingBox>>,
+    pub bounding_sphere: RwLock<Option<BoundingSphere>>,
 
     /// ShaderDefines 缓存：(layout_version, cached_defines)
-    cached_shader_defines: RefCell<Option<(u64, ShaderDefines)>>,
+    cached_shader_defines: RwLock<Option<(u64, ShaderDefines)>>,
 }
 
 impl Default for Geometry {
@@ -324,9 +324,9 @@ impl Geometry {
             morph_target_count: 0,
             topology: PrimitiveTopology::TriangleList,
             draw_range: 0..u32::MAX,
-            bounding_box: RefCell::new(None),
-            bounding_sphere: RefCell::new(None),
-            cached_shader_defines: RefCell::new(None),
+            bounding_box: RwLock::new(None),
+            bounding_sphere: RwLock::new(None),
+            cached_shader_defines: RwLock::new(None),
         }
     }
 
@@ -712,7 +712,7 @@ impl Geometry {
         if valid_points_count == 0 { return; }
 
         // 更新 BoundingBox
-        *self.bounding_box.borrow_mut() = Some(BoundingBox { min, max });
+        *self.bounding_box.write() = Some(BoundingBox { min, max });
 
         // 使用 AABB 的几何中心作为球心
         let aabb_center = (min + max) * 0.5;
@@ -740,7 +740,7 @@ impl Geometry {
             }
         }
 
-        *self.bounding_sphere.borrow_mut() = Some(BoundingSphere {
+        *self.bounding_sphere.write() = Some(BoundingSphere {
             center: aabb_center,
             radius: max_dist_sq.sqrt(),
         });
@@ -802,7 +802,7 @@ impl Geometry {
     pub fn shader_defines(&self) -> ShaderDefines {
         // 快速路径：检查缓存
         {
-            let cache = self.cached_shader_defines.borrow();
+            let cache = self.cached_shader_defines.read();
             if let Some((cached_version, cached_defines)) = cache.as_ref() {
                 if *cached_version == self.layout_version {
                     return cached_defines.clone();
@@ -839,7 +839,7 @@ impl Geometry {
         }
 
         // 更新缓存
-        *self.cached_shader_defines.borrow_mut() = Some((self.layout_version, defines.clone()));
+        *self.cached_shader_defines.write() = Some((self.layout_version, defines.clone()));
 
         defines
     }

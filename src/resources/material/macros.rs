@@ -88,7 +88,22 @@ macro_rules! impl_material_api {
                 paste::paste! {
                     #[doc = $u_doc]
                     pub fn [<set_ $u_field>](&mut self, value: $u_type) {
-                        self.uniforms.write().$u_field = value;
+                        // self.uniforms.write().$u_field = value;
+                        // 1. 快速路径：获取读锁 (Shared Lock)，开销极小
+                        if self.uniforms.read().$u_field == value {
+                            return;
+                        }
+
+                        // 2. 慢速路径：确实需要修改，才获取写锁
+                        let mut guard = self.uniforms.write();
+                        // 双重检查 (Double-Check)，防止并发修改覆盖
+                        if guard.$u_field != value {
+                            guard.$u_field = value;
+                            // Guard Drop 时会自动 version++
+                        } else {
+                            // 值一样，跳过同步
+                            guard.skip_sync();
+                        }
                     }
                 }
 

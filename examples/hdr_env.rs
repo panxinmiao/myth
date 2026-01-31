@@ -40,11 +40,11 @@ impl AppHandler for HdrEnvDemo {
         let gltf_path = std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
         println!("Loading glTF model from: {}", gltf_path.display());
         
-        let gltf_node = GltfLoader::load(
+        let prefab = GltfLoader::load(
             gltf_path,
-            &mut engine.assets,
-            scene
+            &engine.assets
         ).expect("Failed to load glTF model");
+        let gltf_node = scene.instantiate(&prefab);
 
         println!("Successfully loaded root node: {:?}", gltf_node);
 

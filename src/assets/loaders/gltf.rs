@@ -5,15 +5,13 @@ use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
 use tokio::runtime::Runtime;
 use futures::future::try_join_all;
 use crate::resources::material::AlphaMode;
-use crate::{AnimationAction, AnimationMixer, Binder};
 use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler, TextureSlot, TextureTransform};
 use crate::resources::geometry::{Geometry, Attribute};
 use crate::resources::texture::Texture;
 use crate::resources::buffer::BufferRef;
-use crate::scene::{NodeHandle, Scene, SkeletonKey};
-use crate::scene::skeleton::{Skeleton, BindMode};
 use crate::assets::{AssetServer, TextureHandle, MaterialHandle, GeometryHandle};
 use crate::assets::io::AssetReaderVariant;
+use crate::assets::prefab::{Prefab, PrefabNode, PrefabSkeleton};
 use crate::animation::clip::{AnimationClip, Track, TrackMeta, TrackData};
 use crate::animation::tracks::{KeyframeTrack, InterpolationMode};
 use crate::animation::binding::TargetPath;
@@ -21,7 +19,7 @@ use crate::animation::values::MorphWeightData;
 use crate::resources::mesh::MAX_MORPH_TARGETS;
 use wgpu::{BufferUsages, PrimitiveTopology, TextureFormat, VertexFormat, VertexStepMode};
 use anyhow::Context;
-use serde_json::{Value};
+use serde_json::Value;
 
 use std::sync::OnceLock;
 
@@ -34,20 +32,15 @@ fn get_global_runtime() -> &'static Runtime {
 
 fn decode_data_uri(uri: &str) -> anyhow::Result<Vec<u8>> {
     if uri.starts_with("data:") {
-        // 找到逗号位置
         let comma = uri.find(',').ok_or_else(|| anyhow::anyhow!("Invalid Data URI"))?;
-        
-        // 检查是否是 base64
         let header = &uri[0..comma];
         let data = &uri[comma + 1..];
 
         if header.ends_with(";base64") {
-            // 需要 base64 crate
             use base64::{Engine as _, engine::general_purpose};
             let bytes = general_purpose::STANDARD.decode(data)?;
             Ok(bytes)
         } else {
-            // Todo: 百分号解码 (URL decode)
             Err(anyhow::anyhow!("Unsupported Data URI encoding (only base64 supported)"))
         }
     } else {
@@ -55,11 +48,7 @@ fn decode_data_uri(uri: &str) -> anyhow::Result<Vec<u8>> {
     }
 }
 
-/// 从 JSON 扩展数据中解析 KHR_texture_transform
-fn parse_transform_from_json(texture_slot: &mut TextureSlot,
-    transform_val: &Value
-) {
-
+fn parse_transform_from_json(texture_slot: &mut TextureSlot, transform_val: &Value) {
     if let Some(offset) = transform_val.get("offset").and_then(|v| v.as_array()) {
         let x = offset.get(0).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
         let y = offset.get(1).and_then(|v| v.as_f64()).unwrap_or(0.0) as f32;
@@ -79,13 +68,9 @@ fn parse_transform_from_json(texture_slot: &mut TextureSlot,
     if let Some(tex_coord) = transform_val.get("texCoord").and_then(|v| v.as_u64()) {
         texture_slot.channel = tex_coord as u8;
     }
-    
 }
 
-
-/// 预处理 glTF 数据，修复不兼容的字段
 fn sanitize_gltf_data(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
-    // 检查魔数，判断是否为 GLB
     if data.starts_with(b"glTF") {
         sanitize_glb(data)
     } else {
@@ -93,7 +78,6 @@ fn sanitize_gltf_data(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     }
 }
 
-/// 修复纯 JSON 数据
 fn sanitize_json(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     let mut root: Value = serde_json::from_slice(data)
         .context("Failed to parse GLTF JSON for sanitization")?;
@@ -106,76 +90,58 @@ fn sanitize_json(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     }
 }
 
-/// 修复 GLB 数据 (需要解包 Chunk 0，修补后再重新打包)
 fn sanitize_glb(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     if data.len() < 12 { return Ok(Cow::Borrowed(data)); }
     
-    // 读取头部
     let version = u32::from_le_bytes(data[4..8].try_into()?);
-    if version != 2 { return Ok(Cow::Borrowed(data)); } // 只处理 v2
+    if version != 2 { return Ok(Cow::Borrowed(data)); }
 
-    // 读取 Chunk 0 (JSON)
     let chunk0_len = u32::from_le_bytes(data[12..16].try_into()?) as usize;
     let chunk0_type = u32::from_le_bytes(data[16..20].try_into()?);
     
-    // Chunk Type 0x4E4F534A 是 "JSON"
     if chunk0_type != 0x4E4F534A { return Ok(Cow::Borrowed(data)); }
 
     let json_bytes = &data[20..20 + chunk0_len];
     
-    // 尝试修复 JSON
     let mut root: Value = serde_json::from_slice(json_bytes)?;
     if !patch_json_value(&mut root) {
         return Ok(Cow::Borrowed(data));
     }
 
-    // --- 重新打包 GLB ---
     let new_json_bytes = serde_json::to_vec(&root)?;
-    
-    // 计算 Padding (4字节对齐)
     let padding = (4 - (new_json_bytes.len() % 4)) % 4;
     let new_chunk0_len = new_json_bytes.len() + padding;
     
-    // 构建新 GLB
     let mut new_glb = Vec::with_capacity(data.len() + (new_chunk0_len as isize - chunk0_len as isize).abs() as usize);
     
-    // 1. Header (12 bytes)
-    new_glb.extend_from_slice(&data[0..8]); // Magic + Version
-    // Total Length 稍后回填
+    new_glb.extend_from_slice(&data[0..8]);
     new_glb.extend_from_slice(&[0, 0, 0, 0]); 
 
-    // 2. Chunk 0 Header
     new_glb.extend_from_slice(&(new_chunk0_len as u32).to_le_bytes());
     new_glb.extend_from_slice(&chunk0_type.to_le_bytes());
 
-    // 3. Chunk 0 Data
     new_glb.extend_from_slice(&new_json_bytes);
-    for _ in 0..padding { new_glb.push(0x20); } // JSON padding 用空格填充
+    for _ in 0..padding { new_glb.push(0x20); }
 
-    // 4. 剩余 Chunks (直接拷贝)
     let rest_offset = 20 + chunk0_len;
     if rest_offset < data.len() {
         new_glb.extend_from_slice(&data[rest_offset..]);
     }
 
-    // 5. 修正 Total Length (Header offset 8)
     let total_len = new_glb.len() as u32;
     new_glb[8..12].copy_from_slice(&total_len.to_le_bytes());
 
     Ok(Cow::Owned(new_glb))
 }
 
-/// 执行具体的修补逻辑
 fn patch_json_value(root: &mut Value) -> bool {
     let mut changed = false;
 
-    // 修复 1: 移除没有 'node' 的 animation channels
     if let Some(anims) = root.get_mut("animations").and_then(|v| v.as_array_mut()) {
         for anim in anims {
             if let Some(channels) = anim.get_mut("channels").and_then(|v| v.as_array_mut()) {
                 let old_len = channels.len();
                 channels.retain(|ch| {
-                    // 检查 target.node 是否存在
                     ch.get("target")
                         .and_then(|t| t.get("node"))
                         .is_some()
@@ -190,7 +156,6 @@ fn patch_json_value(root: &mut Value) -> bool {
 
     changed
 }
-
 
 struct IntermediateTexture {
     name: Option<String>,
@@ -236,7 +201,7 @@ impl InterleaveChannel {
 }
 
 pub struct LoadContext<'a, 'b> {
-    pub assets: &'a mut AssetServer,
+    pub assets: &'a AssetServer,
     pub material_map: &'a [MaterialHandle],
     intermediate_textures: &'a [IntermediateTexture],
     created_textures: &'a mut HashMap<TextureCacheKey, TextureHandle>,
@@ -250,10 +215,6 @@ pub trait GltfExtensionParser {
         Ok(())
     }
 
-    fn on_load_node(&mut self, _ctx: &mut LoadContext, _gltf_node: &gltf::Node, _scene: &mut Scene, _node_handle: NodeHandle, _extension_value: &Value) -> anyhow::Result<()> {
-        Ok(())
-    }
-
     fn setup_texture_map_from_extension(&mut self, ctx: &mut LoadContext, tex_info: &Value, texture_slot: &mut TextureSlot, is_srgb: bool) {
         if let Some(index) = tex_info.get("index").and_then(|v| v.as_u64()) {
             let Some(tex_handle) = ctx.get_or_create_texture(index as usize, is_srgb).ok() else {
@@ -261,7 +222,6 @@ pub trait GltfExtensionParser {
             };
             texture_slot.texture = Some(tex_handle);
             texture_slot.channel = tex_info.get("texCoord").and_then(|v| v.as_u64()).unwrap_or(0) as u8;
-            
 
             if let Some(transform) = tex_info.get("extensions")
                 .and_then(|exts| exts.get("KHR_texture_transform")){
@@ -313,45 +273,48 @@ impl<'a, 'b> LoadContext<'a, 'b> {
     }
 }
 
-pub struct GltfLoader<'a> {
-    assets: &'a mut AssetServer,
-    scene: &'a mut Scene,
+/// glTF 加载器
+/// 
+/// 支持同步和异步加载，输出 `Prefab` 预制体数据结构，
+/// 通过 `Scene::instantiate()` 实例化到场景中。
+pub struct GltfLoader {
+    assets: Arc<AssetServer>,
     reader: AssetReaderVariant,
     
     intermediate_textures: Vec<IntermediateTexture>,
     created_textures: HashMap<TextureCacheKey, TextureHandle>,
     material_map: Vec<MaterialHandle>,
-    node_mapping: Vec<NodeHandle>,
     default_material: Option<MaterialHandle>,
-    extensions: HashMap<String, Box<dyn GltfExtensionParser>>,
+    extensions: HashMap<String, Box<dyn GltfExtensionParser + Send>>,
+    
+    prefab_nodes: Vec<PrefabNode>,
+    prefab_skeletons: Vec<PrefabSkeleton>,
 }
 
-impl<'a> GltfLoader<'a> {
+impl GltfLoader {
     /// 同步加载入口（向后兼容）
     pub fn load(
         path: &std::path::Path,
-        assets: &'a mut AssetServer,
-        scene: &'a mut Scene
-    ) -> anyhow::Result<NodeHandle> {
-        Self::load_sync(path.to_string_lossy().as_ref(), assets, scene)
+        assets: &AssetServer
+    ) -> anyhow::Result<Arc<Prefab>> {
+        Self::load_sync(path.to_string_lossy().as_ref(), assets.clone())
     }
 
     /// 同步加载（内部创建运行时）
     pub fn load_sync(
         source: &str,
-        assets: &'a mut AssetServer,
-        scene: &'a mut Scene
-    ) -> anyhow::Result<NodeHandle> {
+        assets: impl Into<Arc<AssetServer>>
+    ) -> anyhow::Result<Arc<Prefab>> {
         let rt = get_global_runtime();
-        rt.block_on(Self::load_async(source, assets, scene))
+        rt.block_on(Self::load_async(source, assets))
     }
 
-    /// 异步加载入口
+    /// 异步加载入口 - 返回 Prefab 而非 NodeHandle
     pub async fn load_async(
         source: &str,
-        assets: &'a mut AssetServer,
-        scene: &'a mut Scene
-    ) -> anyhow::Result<NodeHandle> {
+        assets: impl Into<Arc<AssetServer>>
+    ) -> anyhow::Result<Arc<Prefab>> {
+        let assets = assets.into();
         let reader = AssetReaderVariant::from_source(source)?;
         let file_name = AssetReaderVariant::source_filename(source);
         
@@ -373,14 +336,14 @@ impl<'a> GltfLoader<'a> {
 
         let mut loader = Self {
             assets,
-            scene,
             reader: reader.clone(),
             intermediate_textures: Vec::new(),
             created_textures: HashMap::new(),
             material_map: Vec::new(),
-            node_mapping: Vec::with_capacity(gltf.nodes().count()),
             extensions: HashMap::new(),
             default_material: None,
+            prefab_nodes: Vec::with_capacity(gltf.nodes().count()),
+            prefab_skeletons: Vec::new(),
         };
 
         loader.register_extension(Box::new(KhrMaterialsPbrSpecularGlossiness));
@@ -413,66 +376,21 @@ impl<'a> GltfLoader<'a> {
         loader.load_textures_async(&gltf, &buffers).await?;
         loader.load_materials(&gltf)?;
 
-        for node in gltf.nodes() {
-            let handle = loader.create_node_shallow(&node)?;
-            loader.node_mapping.push(handle);
-        }
+        let prefab = loader.build_prefab(&gltf, &buffers)?;
 
-        let root_handle = loader.scene.create_node_with_name("gltf_root");
-        loader.scene.root_nodes.push(root_handle);
-
-        for node in gltf.nodes() {
-            let parent_handle = loader.node_mapping[node.index()];
-            
-            if node.children().len() > 0 {
-                for child in node.children() {
-                    let child_handle = loader.node_mapping[child.index()];
-                    loader.scene.attach(child_handle, parent_handle);
-                }
-            }
-        }
-        
-        if let Some(default_scene) = gltf.default_scene().or_else(|| gltf.scenes().next()) {
-            for node in default_scene.nodes() {
-                let node_handle = loader.node_mapping[node.index()];
-                loader.scene.attach(node_handle, root_handle);
-            }
-        }
-
-        let skeleton_keys = loader.load_skins(&gltf, &buffers)?;
-
-        for node in gltf.nodes() {
-            loader.bind_node_mesh_and_skin(&node, &buffers, &skeleton_keys)?;
-        }
-
-        let animations = loader.load_animations(&gltf, &buffers)?;
-
-        let mut mixer = AnimationMixer::new();
-        for clip in animations {
-            let bindings = Binder::bind(loader.scene, root_handle, &clip);
-            
-            let mut action = AnimationAction::new(clip.into());
-            action.bindings = bindings;
-            action.enabled = false; 
-            action.weight = 0.0;
-            
-            mixer.add_action(action);
-        }
-        loader.scene.animation_mixers.insert(root_handle, mixer);
-
-        Ok(root_handle)
+        Ok(Arc::new(prefab))
     }
 
-    fn register_extension(&mut self, ext: Box<dyn GltfExtensionParser>) {
+    fn register_extension(&mut self, ext: Box<dyn GltfExtensionParser + Send>) {
         self.extensions.insert(ext.name().to_string(), ext);
     }
 
     fn get_default_material(&mut self) -> MaterialHandle {
         if let Some(mat) = &self.default_material {
-            mat.clone()
+            *mat
         } else {
             let mat = self.assets.materials.add(Material::new_standard(Vec4::ONE));
-            self.default_material = Some(mat.clone());
+            self.default_material = Some(mat);
             mat
         }
     }
@@ -493,17 +411,14 @@ impl<'a> GltfLoader<'a> {
                 gltf::buffer::Source::Uri(uri) => {
                     let uri = uri.to_string();
                     if uri.starts_with("data:") {
-                        // Data URI
                         tasks.push(tokio::spawn(async move {
                             decode_data_uri(&uri) 
                         }));
                     } else {
-                        // 正常的网络/文件路径
                         tasks.push(tokio::spawn(async move {
                             reader.read_bytes(&uri).await
                         }));
                     }
-
                 }
             }
         }
@@ -521,11 +436,9 @@ impl<'a> GltfLoader<'a> {
         let mut tasks: Vec<_> = Vec::new();
 
         for (index, texture) in gltf.textures().enumerate() {
-
             let sampler = texture.sampler();
             let mut generate_mipmaps = false;
 
-            // 1. 准备 Sampler 数据 (这部分逻辑保持不变，为了 Move 进闭包，需要由所有权)
             let engine_sampler = TextureSampler {
                 mag_filter: sampler.mag_filter().map(|f| match f {
                     gltf::texture::MagFilter::Nearest => wgpu::FilterMode::Nearest,
@@ -567,7 +480,6 @@ impl<'a> GltfLoader<'a> {
             let name = texture.name().map(|s| s.to_string());
             let reader = self.reader.clone();
 
-            // 2. 准备数据源 (Clone 数据以移入任务)
             let img_source = texture.source().source();
             let (uri_opt, buffer_data) = match img_source {
                 gltf::image::Source::Uri { uri, .. } => (Some(uri.to_string()), None),
@@ -578,9 +490,7 @@ impl<'a> GltfLoader<'a> {
                 }
             };
 
-            // 3. Spawn 组合任务：下载 + 解码
             tasks.push(tokio::spawn(async move {
-                // A. 下载 / 获取数据
                 let img_bytes = if let Some(uri) = uri_opt {
                     if uri.starts_with("data:") {
                         decode_data_uri(&uri)?
@@ -591,14 +501,12 @@ impl<'a> GltfLoader<'a> {
                     buffer_data.unwrap()
                 };
 
-                // B. 并发解码 (CPU 密集型，使用 spawn_blocking 避免阻塞异步运行时)
                 let img_data = tokio::task::spawn_blocking(move || {
                     image::load_from_memory(&img_bytes)
                         .with_context(|| format!("Failed to decode texture {}", index))
                         .map(|img| img.to_rgba8())
-                }).await??; // 解两层 Result: JoinError 和 anyhow::Result
+                }).await??;
 
-                // C. 直接构造结果
                 Ok(IntermediateTexture {
                     name,
                     width: img_data.width(),
@@ -608,15 +516,11 @@ impl<'a> GltfLoader<'a> {
                     generate_mipmaps,
                 })
             }));
-
         }
 
-        // 4. 等待所有任务完成
         let results: Vec<anyhow::Result<IntermediateTexture>> = try_join_all(tasks).await?;
 
-        // 5. 填入结果
         for res in results {
-            // res 是 anyhow::Result<IntermediateTexture>
             self.intermediate_textures.push(res?);
         }
 
@@ -682,15 +586,10 @@ impl<'a> GltfLoader<'a> {
     fn load_materials(&mut self, gltf: &gltf::Gltf) -> anyhow::Result<()> {
         for material in gltf.materials() {
             let pbr = material.pbr_metallic_roughness();
-
             let base_color_factor = Vec4::from_array(pbr.base_color_factor());
-
-
             let mat = MeshPhysicalMaterial::new(base_color_factor);
 
-
             {
-
                 let mut uniforms = mat.uniforms.write();
                 let mut textures = mat.textures.write();
                 let mut settings = mat.settings.write();
@@ -699,7 +598,6 @@ impl<'a> GltfLoader<'a> {
                 uniforms.roughness = pbr.roughness_factor();
                 uniforms.emissive = Vec3::from_array(material.emissive_factor());
 
-                
                 if let Some(info) = pbr.base_color_texture() {
                     self.setup_texture_map(&mut textures.map, &info, true)?;
                 }
@@ -714,13 +612,10 @@ impl<'a> GltfLoader<'a> {
                     textures.normal_map.texture = Some(tex_handle);
                     textures.normal_map.channel = info.tex_coord() as u8;
                     uniforms.normal_scale = Vec2::splat(info.scale());
-                    // mat.set_normal_scale(Vec2::splat(info.scale()));
-
 
                     let json_material = material.index()
                         .and_then(|i| gltf.document.materials().nth(i));
 
-                    // [修复]: 从 JSON 中补全 transform
                     if let Some(json_mat) = json_material {
                         if let Some(json_normal) = &json_mat.normal_texture() {
                             if let Some(transform_val) = json_normal.extensions()
@@ -740,7 +635,6 @@ impl<'a> GltfLoader<'a> {
                     let json_material = material.index()
                         .and_then(|i| gltf.document.materials().nth(i));
 
-                    // [修复]: 从 JSON 中补全 transform
                     if let Some(json_mat) = json_material {
                         if let Some(json_occlusion) = &json_mat.occlusion_texture() {
                             if let Some(transform_val) = json_occlusion.extensions()
@@ -755,7 +649,6 @@ impl<'a> GltfLoader<'a> {
                     self.setup_texture_map(&mut textures.emissive_map, &info, true)?;
                 }
 
-                // mat.set_side(if material.double_sided() { crate::resources::material::Side::Double } else { crate::resources::material::Side::Front });
                 settings.side = if material.double_sided() { crate::resources::material::Side::Double } else { crate::resources::material::Side::Front };
         
                 let alpha_mode = match material.alpha_mode() {
@@ -767,22 +660,17 @@ impl<'a> GltfLoader<'a> {
                     gltf::material::AlphaMode::Blend => AlphaMode::Blend,
                 };
 
-                // mat.set_alpha_mode(alpha_mode);
                 settings.alpha_mode = alpha_mode;
 
                 if let Some(info) = material.emissive_strength() {
-                    // mat.set_emissive_intensity(info);
                     uniforms.emissive_intensity = info;
                 }
 
                 if let Some(info) = material.ior() {
-                    // mat.set_ior(info);
                     uniforms.ior = info;
                 }
 
                 if let Some(specular) = material.specular() {
-                    // mat.set_specular_color(Vec3::from_array(specular.specular_color_factor()));
-                    // mat.set_specular_intensity(specular.specular_factor());
                     uniforms.specular_color = Vec3::from_array(specular.specular_color_factor());
                     uniforms.specular_intensity = specular.specular_factor();
 
@@ -794,17 +682,15 @@ impl<'a> GltfLoader<'a> {
                         self.setup_texture_map(&mut textures.specular_intensity_map, &info, false)?;
                     }
                 }
-
             }
 
             let mut engine_mat = Material::from(mat);
-
             engine_mat.name = material.name().map(|s| Cow::Owned(s.to_string()));
 
             if material.pbr_specular_glossiness().is_some() {
                 if let Some(handler) = self.extensions.get_mut("KHR_materials_pbrSpecularGlossiness") {
                     let mut ctx = LoadContext {
-                        assets: &mut self.assets, 
+                        assets: &self.assets, 
                         material_map: &self.material_map,
                         intermediate_textures: &self.intermediate_textures,
                         created_textures: &mut self.created_textures,
@@ -816,7 +702,7 @@ impl<'a> GltfLoader<'a> {
 
             if let Some(extensions_map) = material.extensions() {
                 let mut ctx = LoadContext {
-                    assets: &mut self.assets, 
+                    assets: &self.assets, 
                     material_map: &self.material_map,
                     intermediate_textures: &self.intermediate_textures,
                     created_textures: &mut self.created_textures,
@@ -840,42 +726,58 @@ impl<'a> GltfLoader<'a> {
         Ok(())
     }
 
-    fn create_node_shallow(&mut self, node: &gltf::Node) -> anyhow::Result<NodeHandle> {
-        let node_name = node.name()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| format!("Node_{}", node.index()));
-        let handle = self.scene.create_node_with_name(node_name.as_str());
-
-        if let Some(engine_node) = self.scene.get_node_mut(handle) {
-            let (t, r, s) = node.transform().decomposed();
-            engine_node.transform.position = Vec3::from_array(t);
-            engine_node.transform.rotation = Quat::from_array(r);
-            engine_node.transform.scale = Vec3::from_array(s);
+    fn build_prefab(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<Prefab> {
+        for node in gltf.nodes() {
+            let prefab_node = self.create_prefab_node(&node)?;
+            self.prefab_nodes.push(prefab_node);
         }
 
-        if let Some(extensions_map) = node.extensions() {
-            let mut ctx = LoadContext {
-                assets: &mut self.assets,
-                material_map: &self.material_map,
-                intermediate_textures: &self.intermediate_textures,
-                created_textures: &mut self.created_textures,
-                _phantom: std::marker::PhantomData,
-            };
-            for (name, value) in extensions_map {
-                if let Some(handler) = self.extensions.get_mut(name) {
-                    handler.on_load_node(&mut ctx, &node, self.scene, handle, value)?;
-                }
+        for node in gltf.nodes() {
+            let parent_idx = node.index();
+            for child in node.children() {
+                self.prefab_nodes[parent_idx].children_indices.push(child.index());
             }
         }
-        
-        Ok(handle)
+
+        self.load_skins(gltf, buffers)?;
+
+        for node in gltf.nodes() {
+            self.bind_node_mesh_and_skin(&node, buffers)?;
+        }
+
+        let root_indices: Vec<usize> = if let Some(default_scene) = gltf.default_scene().or_else(|| gltf.scenes().next()) {
+            default_scene.nodes().map(|n| n.index()).collect()
+        } else {
+            Vec::new()
+        };
+
+        let animations = self.load_animations(gltf, buffers)?;
+
+        Ok(Prefab {
+            nodes: std::mem::take(&mut self.prefab_nodes),
+            root_indices,
+            skeletons: std::mem::take(&mut self.prefab_skeletons),
+            animations,
+        })
     }
 
-    fn load_skins(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<Vec<SkeletonKey>> {
-        let mut skeleton_keys = Vec::new();
+    fn create_prefab_node(&self, node: &gltf::Node) -> anyhow::Result<PrefabNode> {
+        let node_name = node.name().map(|s| s.to_string());
+        
+        let mut prefab_node = PrefabNode::new();
+        prefab_node.name = node_name;
 
+        let (t, r, s) = node.transform().decomposed();
+        prefab_node.transform.position = Vec3::from_array(t);
+        prefab_node.transform.rotation = Quat::from_array(r);
+        prefab_node.transform.scale = Vec3::from_array(s);
+
+        Ok(prefab_node)
+    }
+
+    fn load_skins(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<()> {
         for skin in gltf.skins() {
-            let name = skin.name().unwrap_or("Skeleton");
+            let name = skin.name().unwrap_or("Skeleton").to_string();
             
             let reader = skin.reader(|buffer| Some(&buffers[buffer.index()]));
             let ibms: Vec<Affine3A> = if let Some(iter) = reader.read_inverse_bind_matrices() {
@@ -887,9 +789,7 @@ impl<'a> GltfLoader<'a> {
                 vec![Affine3A::IDENTITY; skin.joints().count()]
             };
 
-            let bones: Vec<NodeHandle> = skin.joints()
-                .map(|node| self.node_mapping[node.index()]) 
-                .collect();
+            let bone_indices: Vec<usize> = skin.joints().map(|node| node.index()).collect();
 
             let joints: Vec<_> = skin.joints().collect();
             let joint_indices: std::collections::HashSet<usize> = joints.iter().map(|n| n.index()).collect();
@@ -919,13 +819,15 @@ impl<'a> GltfLoader<'a> {
                 0 
             };
 
-            let skeleton = Skeleton::new(name, bones, ibms, root_bone_index);
-    
-            let key = self.scene.skeleton_pool.insert(skeleton); 
-            skeleton_keys.push(key);
+            self.prefab_skeletons.push(PrefabSkeleton {
+                name,
+                root_bone_index,
+                bone_indices,
+                inverse_bind_matrices: ibms,
+            });
         }
 
-        Ok(skeleton_keys)
+        Ok(())
     }
     
     fn build_engine_mesh(
@@ -960,9 +862,8 @@ impl<'a> GltfLoader<'a> {
         &mut self,
         node: &gltf::Node,
         buffers: &[Vec<u8>],
-        skeleton_keys: &[SkeletonKey]
     ) -> anyhow::Result<()> {
-        let engine_node_handle = self.node_mapping[node.index()];
+        let node_idx = node.index();
 
         if let Some(mesh) = node.mesh() {
             let primitives: Vec<_> = mesh.primitives().collect();
@@ -971,23 +872,32 @@ impl<'a> GltfLoader<'a> {
                 0 => {},
                 1 => {
                     let engine_mesh = self.build_engine_mesh(&primitives[0], buffers)?;
-                    self.scene.set_mesh(engine_node_handle, engine_mesh);
+                    self.prefab_nodes[node_idx].mesh = Some(engine_mesh);
                 }
                 _ => {
-                    for primitive in primitives {
-                        let engine_mesh = self.build_engine_mesh(&primitive, buffers)?;
+                    let base_idx = self.prefab_nodes.len();
+                    let parent_name = self.prefab_nodes[node_idx].name.clone();
+                    
+                    for (i, primitive) in primitives.iter().enumerate() {
+                        let engine_mesh = self.build_engine_mesh(primitive, buffers)?;
                         
-                        let sub_node_handle = self.scene.create_node();
-                        self.scene.attach(sub_node_handle, engine_node_handle);
-                        self.scene.set_mesh(sub_node_handle, engine_mesh);
+                        let mut sub_node = PrefabNode::new();
+                        sub_node.name = Some(format!("{}_{}", 
+                            parent_name.as_deref().unwrap_or("node"), i));
+                        sub_node.mesh = Some(engine_mesh);
+                        
+                        self.prefab_nodes.push(sub_node);
+                    }
+                    
+                    for i in 0..primitives.len() {
+                        self.prefab_nodes[node_idx].children_indices.push(base_idx + i);
                     }
                 }
             }
         }
 
         if let Some(skin) = node.skin() {
-            let skeleton_key = skeleton_keys[skin.index()];
-            self.scene.bind_skeleton(engine_node_handle, skeleton_key, BindMode::Attached);
+            self.prefab_nodes[node_idx].skin_index = Some(skin.index());
         }
 
         Ok(())
@@ -1071,10 +981,8 @@ impl<'a> GltfLoader<'a> {
             return Ok(self.assets.geometries.add(geometry));
         }
 
-        // positions 属性是必须的
         geometry.set_attribute("position", Attribute::new_planar(&positions, VertexFormat::Float32x3));
 
-        // 设置索引
         if let Some(iter) = reader.read_indices() {
             let indices: Vec<u32> = iter.into_u32().collect();
             geometry.set_indices_u32(&indices);
@@ -1084,8 +992,7 @@ impl<'a> GltfLoader<'a> {
 
         if let Some(iter) = reader.read_normals() {
             surface_channels.push(InterleaveChannel::from_iter("normal", iter, VertexFormat::Float32x3));
-        }else{
-            // 如果没有法线，则计算法线
+        } else {
             geometry.compute_vertex_normals();
         }
         
@@ -1134,8 +1041,6 @@ impl<'a> GltfLoader<'a> {
             }
         }
 
-
-
         let get_buffer_data = |buffer: gltf::Buffer| -> Option<&[u8]> {
             buffers.get(buffer.index()).map(|v| v.as_slice())
         };
@@ -1175,11 +1080,11 @@ impl<'a> GltfLoader<'a> {
         geometry.topology = match primitive.mode() {
             gltf::mesh::Mode::Points => PrimitiveTopology::PointList,
             gltf::mesh::Mode::Lines => PrimitiveTopology::LineList,
-            gltf::mesh::Mode::LineLoop => PrimitiveTopology::LineList, // TODO: LineLoop not directly supported
+            gltf::mesh::Mode::LineLoop => PrimitiveTopology::LineList,
             gltf::mesh::Mode::LineStrip => PrimitiveTopology::LineStrip,
             gltf::mesh::Mode::Triangles => PrimitiveTopology::TriangleList,
             gltf::mesh::Mode::TriangleStrip => PrimitiveTopology::TriangleStrip,
-            gltf::mesh::Mode::TriangleFan => PrimitiveTopology::TriangleList, // TODO: TriangleFan not directly supported
+            gltf::mesh::Mode::TriangleFan => PrimitiveTopology::TriangleList,
         };
         geometry.build_morph_storage_buffers();
         geometry.compute_bounding_volume();

@@ -1,11 +1,13 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
 use slotmap::{SlotMap, SecondaryMap, SparseSecondaryMap};
 use glam::{Affine3A, Vec3, Vec4}; 
 use crate::AssetServer;
-use crate::animation::{AnimationMixer, AnimationSystem};
+use crate::animation::{AnimationMixer, AnimationSystem, AnimationAction, Binder};
+use crate::assets::prefab::Prefab;
 use crate::resources::{BoundingBox, Input};
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::shader_defines::ShaderDefines;
@@ -474,6 +476,106 @@ impl Scene {
         self.skeleton_pool.insert(skeleton)
     }
 
+    /// 实例化 Prefab 到场景中
+    /// 
+    /// 将 Prefab 中的节点树、骨骼、动画实例化为场景对象。
+    /// 返回根节点句柄和创建的所有节点句柄映射。
+    pub fn instantiate(&mut self, prefab: &Prefab) -> NodeHandle {
+        let node_count = prefab.nodes.len();
+        let mut node_map: Vec<NodeHandle> = Vec::with_capacity(node_count);
+        
+        // Pass 1: 创建所有节点并映射索引
+        for p_node in &prefab.nodes {
+            let handle = self.create_node();
+            
+            if let Some(name) = &p_node.name {
+                self.set_name(handle, name);
+            }
+            
+            if let Some(node) = self.get_node_mut(handle) {
+                node.transform = p_node.transform.clone();
+            }
+            
+            if let Some(mesh) = &p_node.mesh {
+                self.set_mesh(handle, mesh.clone());
+            }
+            
+            if let Some(weights) = &p_node.morph_weights {
+                self.set_morph_weights(handle, weights.clone());
+            }
+            
+            node_map.push(handle);
+        }
+
+        // Pass 2: 建立层级关系
+        for (i, p_node) in prefab.nodes.iter().enumerate() {
+            let parent_handle = node_map[i];
+            for &child_idx in &p_node.children_indices {
+                if child_idx < node_map.len() {
+                    let child_handle = node_map[child_idx];
+                    self.attach(child_handle, parent_handle);
+                }
+            }
+        }
+
+        // Pass 3: 重建骨骼
+        let mut skeleton_keys: Vec<SkeletonKey> = Vec::with_capacity(prefab.skeletons.len());
+        for p_skel in &prefab.skeletons {
+            let bones: Vec<NodeHandle> = p_skel.bone_indices.iter()
+                .filter_map(|&idx| node_map.get(idx).copied())
+                .collect();
+            
+            let skeleton = Skeleton::new(
+                &p_skel.name,
+                bones,
+                p_skel.inverse_bind_matrices.clone(),
+                p_skel.root_bone_index,
+            );
+            let skel_key = self.add_skeleton(skeleton);
+            skeleton_keys.push(skel_key);
+        }
+
+        // Pass 4: 绑定骨骼到节点
+        for (i, p_node) in prefab.nodes.iter().enumerate() {
+            if let Some(skin_idx) = p_node.skin_index {
+                if let Some(&skel_key) = skeleton_keys.get(skin_idx) {
+                    let node_handle = node_map[i];
+                    self.bind_skeleton(node_handle, skel_key, BindMode::Attached);
+                }
+            }
+        }
+
+        // Pass 5: 创建虚拟根节点并挂载所有顶层节点
+        let root_handle = self.create_node_with_name("gltf_root");
+        self.root_nodes.push(root_handle);
+        
+        for &root_idx in &prefab.root_indices {
+            if let Some(&node_handle) = node_map.get(root_idx) {
+                self.attach(node_handle, root_handle);
+            }
+        }
+
+        // Pass 6: 创建动画混合器并绑定动画
+        if !prefab.animations.is_empty() {
+            let mut mixer = AnimationMixer::new();
+            
+            for clip in &prefab.animations {
+                let bindings = Binder::bind(self, root_handle, clip);
+                
+                let mut action = AnimationAction::new(Arc::new(clip.clone()));
+                action.bindings = bindings;
+                action.enabled = false;
+                action.weight = 0.0;
+                
+                mixer.add_action(action);
+            }
+            
+            self.animation_mixers.insert(root_handle, mixer);
+        }
+
+        root_handle
+    }
+
     pub fn add_camera(&mut self, camera: Camera) -> NodeHandle {
         let node_handle = self.create_node_with_name("Camera");
         self.cameras.insert(node_handle, camera);
@@ -730,11 +832,11 @@ impl Scene {
         }
 
         // 无骨骼绑定时使用 Geometry 的包围盒
-        let local_bbox = if let Some(bbox) = geometry.bounding_box.borrow().as_ref() {
+        let local_bbox = if let Some(bbox) = geometry.bounding_box.read().as_ref() {
             *bbox
         } else {
             geometry.compute_bounding_volume();
-            *geometry.bounding_box.borrow().as_ref()?
+            *geometry.bounding_box.read().as_ref()?
         };
 
         Some(local_bbox.transform(&node.transform.world_matrix))

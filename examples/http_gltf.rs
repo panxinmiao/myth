@@ -73,8 +73,9 @@ impl AppHandler for HttpGltfExample {
             
             let scene = engine.scene_manager.active_scene_mut().unwrap();
             
-            match GltfLoader::load_sync(url, &mut engine.assets, scene) {
-                Ok(_root_handle) => {
+            match GltfLoader::load_sync(url, engine.assets.clone()) {
+                Ok(prefab) => {
+                    scene.instantiate(&prefab);
                     println!("Successfully loaded model from network!");
                 }
                 Err(e) => {

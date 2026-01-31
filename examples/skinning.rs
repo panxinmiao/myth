@@ -66,10 +66,9 @@ impl AppHandler for SkinningDemo {
         println!("Loading glTF model from: {:?}", gltf_path);
         
         // 这里加一个简单的错误处理，防止路径错误直接崩溃不好调试
-        let gltf_node = match GltfLoader::load(
+        let prefab = match GltfLoader::load(
             gltf_path,
-            &mut engine.assets,
-            scene
+            &engine.assets
         ) {
             Ok(res) => res,
             Err(e) => {
@@ -78,6 +77,7 @@ impl AppHandler for SkinningDemo {
                 panic!("Failed to load model");
             }
         };
+        let gltf_node = scene.instantiate(&prefab);
 
         println!("Successfully loaded root node: {:?}", gltf_node);
 

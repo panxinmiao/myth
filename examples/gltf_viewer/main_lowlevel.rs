@@ -240,8 +240,9 @@ impl GltfViewer {
         self.state.gltf_node = None;
         self.state.animations.clear();
         // 加载新模型
-        match GltfLoader::load(path, &mut self.assets, &mut self.scene) {
-            Ok(gltf_node) => {
+        match GltfLoader::load(path, &self.assets) {
+            Ok(prefab) => {
+                let gltf_node = self.scene.instantiate(&prefab);
                 self.state.gltf_node = Some(gltf_node);
                 self.state.model_path = Some(path.clone());
                 self.state.current_animation = 0;

@@ -4,6 +4,7 @@ pub mod skeleton_asset;
 pub mod handle;
 pub mod io;
 pub mod storage;
+pub mod prefab;
 
 pub use server::{
     AssetServer,
@@ -13,6 +14,7 @@ pub use server::{
 #[cfg(feature = "gltf")]
 pub use loaders::GltfLoader;
 pub use handle::{AssetTracker, StrongHandle, WeakHandle, TrackedAsset};
+pub use prefab::{Prefab, PrefabNode, PrefabSkeleton, SharedPrefab};
 pub use io::{AssetReader, AssetReaderVariant, FileAssetReader};
 #[cfg(feature = "http")]
 pub use io::HttpAssetReader;

@@ -179,10 +179,10 @@ impl ExtractedScene {
                 }
             } else {
                 // 无骨骼绑定：使用 Geometry 的包围盒
-                if let Some(bbox) = geometry.bounding_box.borrow().as_ref() {
+                if let Some(bbox) = geometry.bounding_box.read().as_ref() {
                     let world_bounds = bbox.transform(&node_world);
                     frustum.intersects_box(world_bounds.min, world_bounds.max)
-                } else if let Some(bs) = geometry.bounding_sphere.borrow().as_ref() {
+                } else if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
                     // 回退到包围球
                     let scale = node.transform.scale.max_element();
                     let center = node_world.transform_point3(bs.center);

@@ -34,7 +34,7 @@ use three::resources::texture::TextureSource;
 use winit::event::WindowEvent;
 
 use three::app::winit::{App, AppHandler};
-use three::assets::{GltfLoader, MaterialHandle, TextureHandle};
+use three::assets::{GltfLoader, MaterialHandle, TextureHandle, SharedPrefab};
 use three::scene::{Camera, NodeHandle, light};
 use three::renderer::graph::RenderStage;
 use three::renderer::settings::{RenderSettings};
@@ -156,6 +156,12 @@ struct GltfViewer {
     /// 首选的 glTF 变体（按优先级）
     preferred_variants: Vec<&'static str>,
     
+    // === 异步 Prefab 加载 ===
+    /// Prefab 加载结果接收器
+    prefab_receiver: Receiver<PrefabLoadResult>,
+    /// Prefab 加载发送器
+    prefab_sender: Sender<PrefabLoadResult>,
+    
     // === Inspector 相关 ===
     /// 是否显示 Inspector
     show_inspector: bool,
@@ -169,6 +175,12 @@ struct GltfViewer {
     // === 渲染设置 ===
     /// IBL 开关
     ibl_enabled: bool,
+}
+
+/// 异步 Prefab 加载结果
+struct PrefabLoadResult {
+    prefab: SharedPrefab,
+    display_name: String,
 }
 
 /// 异步加载结果
@@ -228,8 +240,8 @@ impl AppHandler for GltfViewer {
 
         // 5. 创建异步通道
         let (tx, rx) = channel();
-
         let (file_dialog_tx, file_dialog_rx) = channel();
+        let (prefab_tx, prefab_rx) = channel();
 
         let mut viewer = Self {
             ui_pass,
@@ -255,6 +267,10 @@ impl AppHandler for GltfViewer {
             load_receiver: Some(rx),
             load_sender: tx,
             preferred_variants: vec!["glTF-Binary", "glTF-Embedded", "glTF"],
+            
+            // Prefab 异步加载
+            prefab_receiver: prefab_rx,
+            prefab_sender: prefab_tx,
             
             // Inspector
             show_inspector: false,
@@ -354,7 +370,8 @@ impl GltfViewer {
     }
 
     /// 处理异步加载结果
-    fn process_load_results(&mut self, _engine: &mut ThreeEngine) {
+    fn process_load_results(&mut self, engine: &mut ThreeEngine) {
+        // 处理模型列表加载结果
         if let Some(rx) = &self.load_receiver {
             while let Ok(result) = rx.try_recv() {
                 match result {
@@ -371,17 +388,23 @@ impl GltfViewer {
             }
         }
 
+        // 处理 Prefab 加载结果 - 实例化到场景中
+        while let Ok(result) = self.prefab_receiver.try_recv() {
+            // 实例化新模型
+            self.instantiate_prefab(engine, result);
+        }
+
         while let Ok(path) = self.file_dialog_rx.try_recv() {
             self.pending_load = Some(ModelSource::Local(path));
         }
     }
 
-    /// 加载模型（本地或远程）
-    fn load_model(&mut self, source: ModelSource, engine: &mut ThreeEngine) {
+    /// 将加载完成的 Prefab 实例化到场景
+    fn instantiate_prefab(&mut self, engine: &mut ThreeEngine, result: PrefabLoadResult) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
-        
+
         // 清理旧模型
         if let Some(gltf_node) = self.gltf_node {
             scene.remove_node(gltf_node);
@@ -391,6 +414,49 @@ impl GltfViewer {
         self.inspector_materials.clear();
         self.inspector_textures.clear();
         self.inspector_target = None;
+
+        // 实例化新模型
+        let gltf_node = scene.instantiate(&result.prefab);
+        
+        self.gltf_node = Some(gltf_node);
+        self.model_name = Some(result.display_name.clone());
+        self.current_animation = 0;
+
+        // 获取动画列表并自动播放
+        if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
+            self.animations = mixer.list_animations();
+            if let Some(clip_name) = self.animations.first() {
+                mixer.play(clip_name);
+            }
+        }
+
+        // 更新子树变换
+        scene.update_subtree(gltf_node);
+        
+        // 调整相机以适应模型
+        if let Some(bbox) = scene.get_bbox_of_node(gltf_node, &engine.assets) {
+            let center = bbox.center();
+            let radius = bbox.size().length() * 0.5;
+            if let Some((_transform, camera)) = scene.query_main_camera_bundle() {
+                camera.near = radius / 100.0;
+                camera.update_projection_matrix();
+                self.controls.set_target(center);
+                self.controls.set_position(center + Vec3::new(0.0, radius, radius * 2.5));
+            }
+        }
+
+        // 收集 Inspector 数据
+        self.collect_inspector_targets(engine, gltf_node);
+        
+        self.loading_state = LoadingState::Idle;
+        log::info!("Instantiated model: {}", result.display_name);
+    }
+
+    /// 加载模型（本地或远程） - 真正的异步加载
+    fn load_model(&mut self, source: ModelSource, engine: &mut ThreeEngine) {
+        let Some(_scene) = engine.scene_manager.active_scene_mut() else {
+            return;
+        };
 
         // 获取加载路径
         let (load_path, display_name) = match &source {
@@ -410,47 +476,23 @@ impl GltfViewer {
 
         self.loading_state = LoadingState::LoadingModel(display_name.clone());
 
-        // 执行加载
-        match GltfLoader::load_sync(&load_path, &mut engine.assets, scene) {
-            Ok(gltf_node) => {
-                self.gltf_node = Some(gltf_node);
-                self.model_name = Some(display_name);
-                self.current_animation = 0;
-
-                // 获取动画列表并自动播放
-                if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
-                    self.animations = mixer.list_animations();
-                    if let Some(clip_name) = self.animations.first() {
-                        mixer.play(clip_name);
-                    }
+        // 异步加载 - 在子线程中执行，不阻塞主线程
+        let assets = engine.assets.clone();
+        let prefab_tx = self.prefab_sender.clone();
+        
+        thread::spawn(move || {
+            match GltfLoader::load_sync(&load_path, assets) {
+                Ok(prefab) => {
+                    let _ = prefab_tx.send(PrefabLoadResult {
+                        prefab,
+                        display_name,
+                    });
                 }
-
-                // 更新子树变换
-                scene.update_subtree(gltf_node);
-                
-                // 调整相机以适应模型
-                if let Some(bbox) = scene.get_bbox_of_node(gltf_node, &engine.assets) {
-                    let center = bbox.center();
-                    let radius = bbox.size().length() * 0.5;
-                    if let Some((_transform, camera)) = scene.query_main_camera_bundle() {
-                        camera.near = radius / 100.0;
-                        camera.update_projection_matrix();
-                        self.controls.set_target(center);
-                        self.controls.set_position(center + Vec3::new(0.0, radius, radius * 2.5));
-                    }
+                Err(e) => {
+                    log::error!("Failed to load model: {}", e);
                 }
-
-                // 收集 Inspector 数据
-                self.collect_inspector_targets(engine, gltf_node);
-                
-                self.loading_state = LoadingState::Idle;
-                log::info!("Loaded model: {}", load_path);
             }
-            Err(e) => {
-                self.loading_state = LoadingState::Error(format!("{}", e));
-                log::error!("Failed to load model: {}", e);
-            }
-        }
+        });
     }
 
     /// 从选中的远程模型构建 URL
@@ -757,7 +799,7 @@ impl GltfViewer {
     }
 
     /// 渲染 Inspector 面板
-    fn render_inspector(&mut self, ctx: &egui::Context, assets: &mut AssetServer, scene: &mut Scene) {
+    fn render_inspector(&mut self, ctx: &egui::Context, assets: &AssetServer, scene: &mut Scene) {
         let Some(gltf_node) = self.gltf_node else {
             return;
         };
@@ -888,7 +930,7 @@ impl GltfViewer {
     }
 
     /// 渲染节点详情
-    fn render_node_details(&self, ui: &mut egui::Ui, scene: &mut three::Scene, node: NodeHandle, assets: &mut AssetServer) {
+    fn render_node_details(&self, ui: &mut egui::Ui, scene: &mut three::Scene, node: NodeHandle, assets: &AssetServer) {
         let Some(node_data) = scene.get_node(node) else {
             ui.label("Node not found");
             return;
@@ -967,7 +1009,7 @@ impl GltfViewer {
     }
 
     /// 渲染材质详情
-    fn render_material_details(&mut self, ui: &mut egui::Ui, assets: &mut AssetServer, handle: MaterialHandle) {
+    fn render_material_details(&mut self, ui: &mut egui::Ui, assets: &AssetServer, handle: MaterialHandle) {
         let Some(material) = assets.materials.get(handle) else {
             ui.label("Material not found");
             return;
@@ -1154,7 +1196,7 @@ impl GltfViewer {
     }
 
     /// 渲染纹理详情
-    fn render_texture_details(&self, ui: &mut egui::Ui, assets: &mut AssetServer, handle: TextureHandle) {
+    fn render_texture_details(&self, ui: &mut egui::Ui, assets: &AssetServer, handle: TextureHandle) {
         let Some(texture) = assets.textures.get(handle) else {
             ui.label("Texture not found");
             return;
