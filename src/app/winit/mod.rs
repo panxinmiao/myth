@@ -460,8 +460,10 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
             .expect("Element is not a canvas");
 
         // Get canvas size
-        let width = canvas.client_width() as u32;
-        let height = canvas.client_height() as u32;
+        let window = web_sys::window().unwrap();
+        let dpr = window.device_pixel_ratio();
+        let width = (canvas.client_width() as f64 * dpr) as u32;
+        let height = (canvas.client_height() as f64 * dpr) as u32;
         canvas.set_width(width);
         canvas.set_height(height);
 
@@ -493,6 +495,8 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                     log::info!("WebGPU initialization successful");
                     let user_state = H::init(&mut engine, &window_clone);
                     init_state.borrow_mut().result = Some((engine, user_state));
+
+                    window_clone.request_redraw();
                 }
                 Err(e) => {
                     log::error!("Fatal Renderer Error: {}", e);
@@ -522,12 +526,6 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                     match self.init_state.try_borrow_mut() {
                         Ok(mut state) => state.try_take_result(),
                         Err(_) => {
-                            // Already borrowed (init in progress), try again later
-                            if let WindowEvent::RedrawRequested = event {
-                                if let Some(w) = &self.window {
-                                    w.request_redraw();
-                                }
-                            }
                             return;
                         }
                     }
@@ -548,12 +546,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                     self.user_state = Some(user_state);
                     log::info!("Engine initialization completed, starting render loop");
                 } else {
-                    // Still initializing, request another redraw to check again
-                    if let WindowEvent::RedrawRequested = event {
-                        if let Some(w) = &self.window {
-                            w.request_redraw();
-                        }
-                    }
+                    // Still initializing
                     return;
                 }
             }
@@ -604,8 +597,10 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(window) = &self.window {
-            window.request_redraw();
+        if self.engine.is_some() {
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
         }
     }
 }

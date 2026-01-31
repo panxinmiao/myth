@@ -6,113 +6,130 @@ edition = "2024"
 [lib]
 crate-type = ["cdylib", "rlib"]
 
+# =================================================================
+# 核心通用依赖 (Core Dependencies)
+# =================================================================
 [dependencies]
-wgpu = "28.0.0"
+# 图形与数学
+wgpu = { version = "28.0", features = ["wgsl"] } #
+glam = { version = "0.31.0", features = ["bytemuck", "scalar-math"] }
+bytemuck = { version = "1.25.0", features = ["derive", "min_const_generics"] }
 
-raw-window-handle = "0.6"
+# 窗口与输入
 winit = { version = "0.30", optional = true }
+raw-window-handle = "0.6"
 
-bytemuck = { version = "1.25.0", features = ["derive", "min_const_generics"]}
-glam = { version = "0.31.0" , features = ["bytemuck"] }
-slotmap = { version = "1.1.1", features = ["serde"] }
-xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
-
-minijinja = {version ="2.15.1", features = ["loader", "custom_syntax"] }
-rust-embed = "8.11.0"
+# 资源与序列化
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-
-image = {version = "0.25" }
-gltf = {version = "1.4.1", features =[
+image = { version = "0.25" }
+gltf = { version = "1.4.1", features = [
     "extensions", "KHR_materials_pbrSpecularGlossiness", 
-    "KHR_materials_specular" , "KHR_materials_emissive_strength", 
-    "KHR_materials_ior", "KHR_texture_transform"],  optional = true}
+    "KHR_materials_specular", "KHR_materials_emissive_strength", 
+    "KHR_materials_ior", "KHR_texture_transform"
+], optional = true }
 base64 = "0.22"
 
-paste = "1.0"
-
-pollster = "0.4" 
-env_logger = "0.11"
-log = "0.4"
+# 工具库
 anyhow = "1.0"
-thiserror = "2.0.18"
+thiserror = "2.0"
+log = "0.4"
+env_logger = "0.11"
+pollster = "0.4"
+paste = "1.0"
+once_cell = "1.20"
 uuid = { version = "1.20.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
 md5 = "0.8.0"
-lasso = { version = "0.7", features = ["multi-threaded"] }
-once_cell = "1.20"
-
-rustc-hash = "2.1.1"
-smallvec = "1.15"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
+slotmap = { version = "1.1.1", features = ["serde"] } 
+smallvec = "1.13"
 half = "2.4"
-
+rustc-hash = "2.1.1" 
+lasso = { version = "0.7", features = ["multi-threaded"] } 
+parking_lot = { version = "0.12", features = ["deadlock_detection"] } 
 futures = "0.3"
 
+# 模板引擎
+minijinja = { version = "2.15.1", features = ["loader", "custom_syntax"] }
+rust-embed = "8.11.0"
+
+# =================================================================
+# Native 平台 (Windows, Linux, macOS)
+# =================================================================
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.43", features = ["fs", "rt-multi-thread", "macros"] }
-reqwest = { version = "0.13.1", default-features = false, features = ["default-tls"], optional = true }
-parking_lot = { version = "0.12", features = ["deadlock_detection"] }
-lasso = { version = "0.7", features = ["multi-threaded"] }
+reqwest = { version = "0.13.1", default-features = false, features = ["default-tls"], optional = true } # 修正版本为常用稳定版
 
+# =================================================================
+# Web (WASM) 平台
+# =================================================================
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-parking_lot = { version = "0.12" }
-lasso = { version = "0.7" }
-console_error_panic_hook = "0.1.6"
-console_log = "1.0"
-wgpu = { version = "28.0", features = ["webgpu", "webgl"]}
+# Web 特定库
 wasm-bindgen = "0.2.108"
 wasm-bindgen-futures = "0.4.58"
-web-time = "1.1"
-glam = { version = "0.31.0", features = ["bytemuck", "scalar-math"] }
 web-sys = { version = "0.3.85", features = [
-    "Document",
-    "Window",
-    "Element",
-    "HtmlCanvasElement",
-    "HtmlInputElement",
-    "Location",
-    "Request",
-    "RequestInit",
-    "RequestMode",
-    "Response",
-    "Headers",
-    "File",
-    "FileList",
-    "FileReader",
-    "Blob",
-    "ProgressEvent",
+    "Document", "Window", "Element", "HtmlCanvasElement", "HtmlInputElement",
+    "Location", "Request", "RequestInit", "RequestMode", "Response", "Headers",
+    "File", "FileList", "FileReader", "Blob", "ProgressEvent", "console"
 ]}
 js-sys = "0.3.85"
-getrandom = { version = "0.2", features = ["js"] }
+web-time = "1.1" # 替代 std::time
+
+# 日志与Panic处理
+console_error_panic_hook = "0.1.7"
+console_log = "1.0"
+
+wgpu = { version = "28.0", features = ["webgpu", "webgl"] }
+
+parking_lot = { version = "0.12", features = [] }
+lasso = { version = "0.7", features = [] } 
+
+# =================================================================
+# 开发依赖 (Dev Dependencies) & Egui
+# =================================================================
+[dev-dependencies]
+# 在这里放通用的 dev 依赖
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
+rfd = "0.17.2" 
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = "0.3"
+
+# --- Egui 统一配置  ---
+
+# Native Egui
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.egui]
+git = "https://github.com/emilk/egui.git"
+rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.egui-wgpu]
+git = "https://github.com/emilk/egui.git"
+rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67"
+features = ["winit"]
+
+[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.egui-winit]
+git = "https://github.com/emilk/egui.git"
+rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67"
+
+# WASM Egui
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies.egui]
+git = "https://github.com/emilk/egui.git"
+rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67"
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies.egui-wgpu]
+git = "https://github.com/emilk/egui.git"
+rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67"
+features = ["winit"]
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies.egui-winit]
+git = "https://github.com/emilk/egui.git"
+rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67"
+default-features = false
+features = ["links"]
 
 [features]
-default = ["winit", "gltf", "http"]  
+default = ["winit", "gltf", "http"]
 winit = ["dep:winit"]
 gltf = ["dep:gltf"]
 http = ["dep:reqwest"]
-
-
-[dev-dependencies]
-# egui = "0.33"
-# egui-winit = "0.33"
-# egui-wgpu = "0.33"
-
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-egui = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67" }
-egui-wgpu = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67", features = ["winit"] }
-egui-winit = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67" }
-rfd = "0.17.2"
-
-
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-egui = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67" }
-egui-wgpu = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67", features = ["winit"] }
-egui-winit = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67", default-features = false, features = ["links", "wayland", "x11"] }
-wasm-bindgen-test = "0.3"
-
-[[example]]
-name = "gltf_viewer"
-path = "examples/gltf_viewer/main.rs"
-
-[[example]]
-name = "gltf_viewer_lowlevel"
-path = "examples/gltf_viewer/main_lowlevel.rs"
