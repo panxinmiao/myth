@@ -34,8 +34,7 @@ impl AppHandler for HdrEnvDemo {
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
 
-        let env_texture = engine.assets.textures.get(env_texture_handle).unwrap();
-        scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
+        scene.environment.set_env_map(Some(env_texture_handle));
         scene.environment.set_intensity(1.0);
 
         // 2. 添加灯光
@@ -48,7 +47,7 @@ impl AppHandler for HdrEnvDemo {
         
         let prefab = GltfLoader::load(
             gltf_path,
-            &engine.assets
+            engine.assets.clone()
         ).expect("Failed to load glTF model");
         let gltf_node = scene.instantiate(&prefab);
 

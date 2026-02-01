@@ -62,10 +62,6 @@ pub use io::FileAssetReader;
 #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
 pub use io::HttpAssetReader;
 
-#[cfg(target_arch = "wasm32")]
-pub use io::WasmHttpReader;
-
-
 use image::GenericImageView;
 use std::path::Path;
 use anyhow::Context;
@@ -82,6 +78,7 @@ pub fn load_image_from_file(path: impl AsRef<Path>) -> anyhow::Result<(Vec<u8>, 
     Ok((data, width, height))
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum ColorSpace {
     Srgb,
     Linear,
@@ -115,7 +112,7 @@ pub fn load_texture_from_file(path: impl AsRef<Path>, color_space: ColorSpace) -
 /// # Returns
 ///
 /// A texture that can be used for image-based lighting.
-pub fn load_hdr_texture(path: impl AsRef<Path>) -> anyhow::Result<crate::resources::texture::Texture> {
+pub fn load_hdr_texture_from_file(path: impl AsRef<Path>) -> anyhow::Result<crate::resources::texture::Texture> {
     let img = image::open(&path).context("Failed to open HDR file")?;
     
     let width = img.width();

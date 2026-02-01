@@ -66,8 +66,6 @@ fn shader_loader(name: &str) -> Result<Option<String>, Error> {
         }
     }
 
-    // rust_embed 统一使用 '/' 作为路径分隔符
-    //let normalized_filename = filename.replace('\\', "/");
     if let Some(file) = ShaderAssets::get(&filename)
         && let Ok(source) = std::str::from_utf8(file.data.as_ref()) {
             return Ok(Some(source.to_string()));

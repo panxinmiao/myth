@@ -42,9 +42,6 @@ impl MeshBasicMaterial {
 
             textures: RwLock::new(MeshBasicTextureSet::default()),
 
-            // map: TextureSlot::default(),
-            // map_sampler: None,
-
             auto_sync_texture_to_uniforms: false,
         }
     }

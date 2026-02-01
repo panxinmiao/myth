@@ -2,7 +2,7 @@
 //! 
 //! Describes IBL/skybox configuration
 
-use crate::resources::texture::{Texture, TextureSource};
+use crate::resources::texture::{TextureSource};
 
 /// IBL environment map configuration
 #[derive(Clone, Debug)]
@@ -71,13 +71,14 @@ impl Environment {
     }
     
     /// Sets the environment map
-    pub fn set_env_map(&mut self, texture_bundle: Option<(TextureSource, &Texture)>) {
-        let new_handle = texture_bundle.map(|(h, _)| h);
-        let was_some = self.source_env_map.is_some();
-        let is_some = new_handle.is_some();
+    pub fn set_env_map(&mut self, texture_handle: Option<impl Into<TextureSource>>) {
 
-        if self.source_env_map != new_handle {
-            self.source_env_map = new_handle;
+        let was_some = self.source_env_map.is_some();
+        let is_some = texture_handle.is_some();
+
+        let texture_handle = texture_handle.map(|h| h.into());
+        if self.source_env_map != texture_handle {
+            self.source_env_map = texture_handle;
             self.processed_env_map = None;
             self.pmrem_map = None; 
             self.env_map_max_mip_level = 0.0;

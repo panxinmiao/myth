@@ -2,7 +2,6 @@ use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
-#[cfg(not(target_arch = "wasm32"))]
 use futures::future::try_join_all;
 use crate::resources::material::AlphaMode;
 use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler, TextureSlot, TextureTransform};
@@ -10,7 +9,7 @@ use crate::resources::geometry::{Geometry, Attribute};
 use crate::resources::texture::Texture;
 use crate::resources::buffer::BufferRef;
 use crate::assets::{AssetServer, TextureHandle, MaterialHandle, GeometryHandle};
-use crate::assets::io::AssetReaderVariant;
+use crate::assets::io::{AssetReaderVariant, AssetSource};
 use crate::assets::prefab::{Prefab, PrefabNode, PrefabSkeleton};
 use crate::animation::clip::{AnimationClip, Track, TrackMeta, TrackData};
 use crate::animation::tracks::{KeyframeTrack, InterpolationMode};
@@ -28,6 +27,7 @@ use tokio::runtime::Runtime;
 use std::sync::OnceLock;
 
 #[cfg(not(target_arch = "wasm32"))]
+// 仅用于同步加载的全局 Runtime
 fn get_global_runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| {
@@ -177,6 +177,12 @@ struct TextureCacheKey {
     is_srgb: bool,
 }
 
+// 辅助结构体，方便传递解码结果
+struct DecodedImage {
+    width: u32,
+    height: u32,
+    data: Vec<u8>,
+}
 struct InterleaveChannel {
     name: String,
     data: Vec<u8>,
@@ -297,57 +303,12 @@ pub struct GltfLoader {
 }
 
 impl GltfLoader {
-    /// Synchronous load entry point (backwards compatible) - Native only
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn load(
-        path: &std::path::Path,
-        assets: &AssetServer
-    ) -> anyhow::Result<Arc<Prefab>> {
-        Self::load_sync(path.to_string_lossy().as_ref(), assets.clone())
-    }
-
-    /// Synchronous load (creates runtime internally) - Native only
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn load_sync(
-        source: &str,
-        assets: impl Into<Arc<AssetServer>>
-    ) -> anyhow::Result<Arc<Prefab>> {
-        let rt = get_global_runtime();
-        rt.block_on(Self::load_async(source, assets))
-    }
-
-    /// Load from in-memory bytes (GLB format only)
-    /// 
-    /// This is useful for loading files selected via browser file picker on WASM,
-    /// or for loading embedded resources.
-    pub async fn load_from_bytes(
-        gltf_bytes: Vec<u8>,
-        assets: impl Into<Arc<AssetServer>>
-    ) -> anyhow::Result<Arc<Prefab>> {
-        let assets = assets.into();
-        
-        let sanitized_bytes = sanitize_gltf_data(&gltf_bytes)
-            .context("Failed to sanitize glTF data")?;
-
-        let gltf = match gltf::Gltf::from_slice_without_validation(&sanitized_bytes) {
-            Ok(g) => g,
-            Err(err) => {
-                log::error!("GLTF Parse Error Details: {:?}", err);
-                return Err(anyhow::anyhow!("Failed to parse glTF: {}", err));
-            }
-        };
-
-        // For GLB files loaded from bytes, all buffers should be embedded (blob)
-        // For external URI references, we cannot load them without a reader
-        let buffers = Self::load_buffers_from_embedded(&gltf)?;
-
-        // Create a dummy reader (won't be used for GLB files with embedded data)
-        // But textures might still reference external URIs, which will fail
-        #[cfg(not(target_arch = "wasm32"))]
-        let reader = AssetReaderVariant::File(Arc::new(crate::assets::io::FileAssetReader::new(".")));
-        #[cfg(target_arch = "wasm32")]
-        let reader = AssetReaderVariant::WasmHttp(Arc::new(crate::assets::io::WasmHttpReader::new(".")?));
-
+    
+    fn new_loader(
+        assets: Arc<AssetServer>,
+        reader: AssetReaderVariant,
+        gltf: &gltf::Gltf,
+    ) -> Self {
         let mut loader = Self {
             assets,
             reader,
@@ -360,141 +321,12 @@ impl GltfLoader {
             prefab_skeletons: Vec::new(),
         };
 
+        // Register core extensions
         loader.register_extension(Box::new(KhrMaterialsPbrSpecularGlossiness));
         loader.register_extension(Box::new(KhrMaterialsClearcoat));
+        loader.register_extension(Box::new(KhrMaterialsSheen));
 
-        // Load textures from embedded buffer views
-        loader.load_textures_from_buffers(&gltf, &buffers).await?;
-        loader.load_materials(&gltf)?;
-
-        let prefab = loader.build_prefab(&gltf, &buffers)?;
-
-        Ok(Arc::new(prefab))
-    }
-
-    /// Load buffers from embedded data only (GLB blob + data URIs)
-    fn load_buffers_from_embedded(gltf: &gltf::Gltf) -> anyhow::Result<Vec<Vec<u8>>> {
-        let mut buffers = Vec::new();
-
-        for buffer in gltf.buffers() {
-            let data = match buffer.source() {
-                gltf::buffer::Source::Bin => {
-                    gltf.blob.clone().ok_or_else(|| anyhow::anyhow!("Missing GLB blob - this method only supports GLB files with embedded data"))?
-                }
-                gltf::buffer::Source::Uri(uri) => {
-                    if uri.starts_with("data:") {
-                        decode_data_uri(uri)?
-                    } else {
-                        return Err(anyhow::anyhow!("External buffer URI '{}' not supported when loading from bytes. Use GLB format with embedded data.", uri));
-                    }
-                }
-            };
-            buffers.push(data);
-        }
-        
-        Ok(buffers)
-    }
-
-    /// Load textures from buffer views (for load_from_bytes)
-    async fn load_textures_from_buffers(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<()> {
-        for (_index, texture) in gltf.textures().enumerate() {
-            let (engine_sampler, generate_mipmaps) = Self::create_texture_sampler(&texture);
-            let name = texture.name().map(|s| s.to_string());
-
-            let img_source = texture.source().source();
-            let img_bytes = match img_source {
-                gltf::image::Source::Uri { uri, .. } => {
-                    if uri.starts_with("data:") {
-                        decode_data_uri(uri)?
-                    } else {
-                        return Err(anyhow::anyhow!("External texture URI '{}' not supported when loading from bytes", uri));
-                    }
-                }
-                gltf::image::Source::View { view, .. } => {
-                    let start = view.offset();
-                    let end = start + view.length();
-                    buffers[view.buffer().index()][start..end].to_vec()
-                }
-            };
-
-            let (image_data, width, height, _format) = Self::decode_image_sync(&img_bytes)?;
-
-            self.intermediate_textures.push(IntermediateTexture {
-                name,
-                sampler: engine_sampler,
-                image_data,
-                width,
-                height,
-                generate_mipmaps,
-            });
-        }
-
-        Ok(())
-    }
-
-    /// Sync image decode helper
-    fn decode_image_sync(img_bytes: &[u8]) -> anyhow::Result<(Vec<u8>, u32, u32, TextureFormat)> {
-        let img = image::load_from_memory(img_bytes)
-            .context("Failed to decode image")?;
-
-        let (width, height) = (img.width(), img.height());
-        
-        let (rgba, format) = match img {
-            image::DynamicImage::ImageRgba8(img) => (img.into_raw(), TextureFormat::Rgba8UnormSrgb),
-            image::DynamicImage::ImageRgb8(img) => {
-                let rgba = image::DynamicImage::ImageRgb8(img).into_rgba8();
-                (rgba.into_raw(), TextureFormat::Rgba8UnormSrgb)
-            }
-            image::DynamicImage::ImageLuma8(img) => {
-                let rgba = image::DynamicImage::ImageLuma8(img).into_rgba8();
-                (rgba.into_raw(), TextureFormat::Rgba8UnormSrgb)
-            }
-            other => (other.into_rgba8().into_raw(), TextureFormat::Rgba8UnormSrgb),
-        };
-
-        Ok((rgba, width, height, format))
-    }
-
-    /// Async load entry point - returns Prefab instead of NodeHandle
-    pub async fn load_async(
-        source: &str,
-        assets: impl Into<Arc<AssetServer>>
-    ) -> anyhow::Result<Arc<Prefab>> {
-        let assets = assets.into();
-        let reader = AssetReaderVariant::from_source(source)?;
-        let file_name = AssetReaderVariant::source_filename(source);
-        
-        let gltf_bytes = reader.read_bytes(file_name).await
-            .with_context(|| format!("Failed to read glTF file: {}", source))?;
-        
-        let sanitized_bytes = sanitize_gltf_data(&gltf_bytes)
-            .context("Failed to sanitize glTF data")?;
-
-        let gltf = match gltf::Gltf::from_slice_without_validation(&sanitized_bytes) {
-            Ok(g) => g,
-            Err(err) => {
-                log::error!("GLTF Parse Error Details: {:?}", err);
-                return Err(anyhow::anyhow!("Failed to parse glTF: {}", err));
-            }
-        };
-
-        let buffers = Self::load_buffers_async(&gltf, &reader).await?;
-
-        let mut loader = Self {
-            assets,
-            reader: reader.clone(),
-            intermediate_textures: Vec::new(),
-            created_textures: HashMap::new(),
-            material_map: Vec::new(),
-            extensions: HashMap::new(),
-            default_material: None,
-            prefab_nodes: Vec::with_capacity(gltf.nodes().count()),
-            prefab_skeletons: Vec::new(),
-        };
-
-        loader.register_extension(Box::new(KhrMaterialsPbrSpecularGlossiness));
-        loader.register_extension(Box::new(KhrMaterialsClearcoat));
-
+        // Validation / Logging
         let mut supported_ext = loader.extensions.keys().cloned().collect::<Vec<_>>();
         supported_ext.extend([
             "KHR_materials_emissive_strength".to_string(),
@@ -519,16 +351,101 @@ impl GltfLoader {
             log::warn!("glTF uses unsupported extensions: {:?}, display may not be correct", used_not_supported);
         }
 
-        loader.load_textures_async(&gltf, &buffers).await?;
-        loader.load_materials(&gltf)?;
-
-        let prefab = loader.build_prefab(&gltf, &buffers)?;
-
-        Ok(Arc::new(prefab))
+        loader
     }
 
     fn register_extension(&mut self, ext: Box<dyn GltfExtensionParser + Send>) {
         self.extensions.insert(ext.name().to_string(), ext);
+    }
+
+    async fn load_inner(mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<Arc<Prefab>> {
+        self.load_textures_async(gltf, buffers).await?;
+        self.load_materials(gltf)?;
+        let prefab = self.build_prefab(gltf, buffers)?;
+        Ok(Arc::new(prefab))
+    }
+
+    /// Synchronous load entry point (backwards compatible) - Native only
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load(
+        source: impl AssetSource,
+        assets: impl Into<Arc<AssetServer>>
+    ) -> anyhow::Result<Arc<Prefab>> {
+        Self::load_sync(source, assets)
+    }
+
+    /// Synchronous load (creates runtime internally) - Native only
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_sync(
+        source: impl AssetSource,
+        assets: impl Into<Arc<AssetServer>>
+    ) -> anyhow::Result<Arc<Prefab>> {
+        let rt = get_global_runtime();
+        rt.block_on(Self::load_async(source, assets))
+    }
+
+    /// Load asynchronously from a source URI (File path or HTTP URL)
+    pub async fn load_async(
+        source: impl AssetSource,
+        assets: impl Into<Arc<AssetServer>>
+    ) -> anyhow::Result<Arc<Prefab>> {
+        let reader = AssetReaderVariant::new(&source)?;
+        let filename = source.filename().unwrap_or(std::borrow::Cow::Borrowed("unknown"));
+        
+        let gltf_bytes = reader.read_bytes(&filename).await
+            .with_context(|| format!("Failed to read glTF file: {}", source.uri()))?;
+        
+        // 1. Parse glTF
+        let gltf = Self::parse_gltf_bytes(&gltf_bytes)?;
+
+        // 2. Load Buffers
+        let buffers = Self::load_buffers_async(&gltf, &reader).await?;
+
+        // 3. Init Loader
+        let loader = Self::new_loader(assets.into(), reader, &gltf);
+
+        // 4. Execute common loading pipeline
+        loader.load_inner(&gltf, &buffers).await
+    }
+
+    /// Load from in-memory bytes (GLB or JSON)
+    pub async fn load_from_bytes(
+        gltf_bytes: Vec<u8>,
+        assets: impl Into<Arc<AssetServer>>
+    ) -> anyhow::Result<Arc<Prefab>> {
+        // 1. Parse glTF
+        let gltf = Self::parse_gltf_bytes(&gltf_bytes)?;
+
+        // 2. Create a dummy reader. 
+        // For load_from_bytes, we generally expect resources to be embedded (GLB) or Data URIs.
+        // (unless we are in a context where "." makes sense).
+        // #[cfg(not(target_arch = "wasm32"))]
+        let s = ".".to_string();
+        let reader = AssetReaderVariant::new(&s)?;
+        // #[cfg(target_arch = "wasm32")]
+        // let reader = AssetReaderVariant::new(".")?;
+
+        // 3. Load Buffers (Using common async logic)
+        let buffers = Self::load_buffers_async(&gltf, &reader).await?;
+
+        // 4. Init Loader
+        let loader = Self::new_loader(assets.into(), reader, &gltf);
+
+        // 5. Execute common loading pipeline
+        loader.load_inner(&gltf, &buffers).await
+    }
+
+    fn parse_gltf_bytes(bytes: &[u8]) -> anyhow::Result<gltf::Gltf> {
+        let sanitized_bytes = sanitize_gltf_data(bytes)
+            .context("Failed to sanitize glTF data")?;
+
+        match gltf::Gltf::from_slice_without_validation(&sanitized_bytes) {
+            Ok(g) => Ok(g),
+            Err(err) => {
+                log::error!("GLTF Parse Error Details: {:?}", err);
+                Err(anyhow::anyhow!("Failed to parse glTF: {}", err))
+            }
+        }
     }
 
     fn get_default_material(&mut self) -> MaterialHandle {
@@ -541,73 +458,39 @@ impl GltfLoader {
         }
     }
 
-    /// Load buffers asynchronously - Native version using tokio::spawn
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Load buffers asynchronously
     async fn load_buffers_async(gltf: &gltf::Gltf, reader: &AssetReaderVariant) -> anyhow::Result<Vec<Vec<u8>>> {
         let mut tasks = Vec::new();
 
         for buffer in gltf.buffers() {
             let reader = reader.clone();
             let blob = gltf.blob.clone();
-            
-            match buffer.source() {
-                gltf::buffer::Source::Bin => {
-                    tasks.push(tokio::spawn(async move {
+
+
+            let future = async move {
+                match buffer.source() {
+                    gltf::buffer::Source::Bin => {
                         blob.ok_or_else(|| anyhow::anyhow!("Missing GLB blob"))
-                    }));
-                }
-                gltf::buffer::Source::Uri(uri) => {
-                    let uri = uri.to_string();
-                    if uri.starts_with("data:") {
-                        tasks.push(tokio::spawn(async move {
-                            decode_data_uri(&uri) 
-                        }));
-                    } else {
-                        tasks.push(tokio::spawn(async move {
-                            reader.read_bytes(&uri).await
-                        }));
                     }
-                }
-            }
-        }
-
-        let results = try_join_all(tasks).await?;
-        
-        let mut buffers = Vec::with_capacity(results.len());
-        for res in results {
-            buffers.push(res?);
-        }
-        Ok(buffers)
-    }
-
-    /// Load buffers asynchronously - WASM version (sequential, no tokio::spawn)
-    #[cfg(target_arch = "wasm32")]
-    async fn load_buffers_async(gltf: &gltf::Gltf, reader: &AssetReaderVariant) -> anyhow::Result<Vec<Vec<u8>>> {
-        let mut buffers = Vec::new();
-
-        for buffer in gltf.buffers() {
-            let data = match buffer.source() {
-                gltf::buffer::Source::Bin => {
-                    gltf.blob.clone().ok_or_else(|| anyhow::anyhow!("Missing GLB blob"))?
-                }
-                gltf::buffer::Source::Uri(uri) => {
-                    if uri.starts_with("data:") {
-                        decode_data_uri(uri)?
-                    } else {
-                        reader.read_bytes(uri).await?
+                    gltf::buffer::Source::Uri(uri) => {
+                        if uri.starts_with("data:") {
+                            decode_data_uri(uri)
+                        } else {
+                            reader.read_bytes(uri).await
+                        }
                     }
                 }
             };
-            buffers.push(data);
+            tasks.push(future);
         }
-        
-        Ok(buffers)
+
+        try_join_all(tasks).await
+
     }
 
     /// Load textures asynchronously - Native version using tokio::spawn
-    #[cfg(not(target_arch = "wasm32"))]
     async fn load_textures_async(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<()> {
-        let mut tasks: Vec<_> = Vec::new();
+        let mut futures = Vec::new();
 
         for (index, texture) in gltf.textures().enumerate() {
             let (engine_sampler, generate_mipmaps) = Self::create_texture_sampler(&texture);
@@ -616,16 +499,24 @@ impl GltfLoader {
             let reader = self.reader.clone();
 
             let img_source = texture.source().source();
-            let (uri_opt, buffer_data) = match img_source {
-                gltf::image::Source::Uri { uri, .. } => (Some(uri.to_string()), None),
+
+            let uri_opt = match img_source {
+                gltf::image::Source::Uri { uri, .. } => Some(uri.to_string()),
+                _ => None,
+            };
+            
+            let buffer_view_data = match img_source {
                 gltf::image::Source::View { view, .. } => {
                     let start = view.offset();
                     let end = start + view.length();
-                    (None, Some(buffers[view.buffer().index()][start..end].to_vec()))
-                }
+                    Some(buffers[view.buffer().index()][start..end].to_vec())
+                },
+                _ => None,
             };
 
-            tasks.push(tokio::spawn(async move {
+            // 创建加载和解码任务
+            let future = async move {
+                // 1. 获取字节流 (IO)
                 let img_bytes = if let Some(uri) = uri_opt {
                     if uri.starts_with("data:") {
                         decode_data_uri(&uri)?
@@ -633,74 +524,54 @@ impl GltfLoader {
                         reader.read_bytes(&uri).await?
                     }
                 } else {
-                    buffer_data.unwrap()
+                    buffer_view_data.unwrap()
                 };
 
+                // 2. 解码图片 (CPU 密集型)
+                // Native: 放入 blocking 线程池
+                #[cfg(not(target_arch = "wasm32"))]
                 let img_data = tokio::task::spawn_blocking(move || {
-                    image::load_from_memory(&img_bytes)
-                        .with_context(|| format!("Failed to decode texture {}", index))
-                        .map(|img| img.to_rgba8())
+                    Self::decode_image_cpu_work(&img_bytes, index)
                 }).await??;
 
-                Ok(IntermediateTexture {
+                // WASM: 直接在当前线程执行 (或者未来接入 WebWorker)
+                #[cfg(target_arch = "wasm32")]
+                let img_data = Self::decode_image_cpu_work(&img_bytes, index)?;
+
+                Ok::<IntermediateTexture, anyhow::Error>(IntermediateTexture {
                     name,
-                    width: img_data.width(),
-                    height: img_data.height(),
-                    image_data: img_data.into_vec(),
+                    width: img_data.width,
+                    height: img_data.height,
+                    image_data: img_data.data,
                     sampler: engine_sampler,
                     generate_mipmaps,
                 })
-            }));
+            };
+
+            futures.push(future);
+
         }
 
-        let results: Vec<anyhow::Result<IntermediateTexture>> = try_join_all(tasks).await?;
+        let results = try_join_all(futures).await?;
 
         for res in results {
-            self.intermediate_textures.push(res?);
+            self.intermediate_textures.push(res);
         }
 
         Ok(())
     }
 
-    /// Load textures asynchronously - WASM version (sequential)
-    #[cfg(target_arch = "wasm32")]
-    async fn load_textures_async(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<()> {
-        for (index, texture) in gltf.textures().enumerate() {
-            let (engine_sampler, generate_mipmaps) = Self::create_texture_sampler(&texture);
 
-            let name = texture.name().map(|s| s.to_string());
-
-            let img_source = texture.source().source();
-            let img_bytes = match img_source {
-                gltf::image::Source::Uri { uri, .. } => {
-                    if uri.starts_with("data:") {
-                        decode_data_uri(uri)?
-                    } else {
-                        self.reader.read_bytes(uri).await?
-                    }
-                }
-                gltf::image::Source::View { view, .. } => {
-                    let start = view.offset();
-                    let end = start + view.length();
-                    buffers[view.buffer().index()][start..end].to_vec()
-                }
-            };
-
-            let img_data = image::load_from_memory(&img_bytes)
-                .with_context(|| format!("Failed to decode texture {}", index))?
-                .to_rgba8();
-
-            self.intermediate_textures.push(IntermediateTexture {
-                name,
-                width: img_data.width(),
-                height: img_data.height(),
-                image_data: img_data.into_vec(),
-                sampler: engine_sampler,
-                generate_mipmaps,
-            });
-        }
-
-        Ok(())
+    // 纯 CPU 解码逻辑，剥离出来方便在不同上下文调用
+    fn decode_image_cpu_work(img_bytes: &[u8], index: usize) -> anyhow::Result<DecodedImage> {
+         let img = image::load_from_memory(img_bytes)
+             .with_context(|| format!("Failed to decode texture {}", index))?;
+         let rgba = img.to_rgba8();
+         Ok(DecodedImage {
+             width: rgba.width(),
+             height: rgba.height(),
+             data: rgba.into_vec(),
+         })
     }
 
     /// Helper function to create texture sampler from glTF texture
@@ -1594,6 +1465,59 @@ impl GltfExtensionParser for KhrMaterialsClearcoat {
 
         if let Some(clearcoat_normal_tex_info) = clearcoat_info.get("clearcoatNormalTexture") {
             self.setup_texture_map_from_extension(ctx, clearcoat_normal_tex_info, &mut textures.clearcoat_normal_map, false);
+        }
+
+        Ok(())
+    }
+}
+
+
+struct KhrMaterialsSheen;
+
+impl GltfExtensionParser for KhrMaterialsSheen {
+    fn name(&self) -> &str {
+        "KHR_materials_sheen"
+    }
+
+    fn on_load_material(&mut self, ctx: &mut LoadContext, _gltf_mat: &gltf::Material, engine_mat: &mut Material, extension_value: &Value) -> anyhow::Result<()> {
+        let sheen_info = extension_value.as_object()
+            .ok_or_else(|| anyhow::anyhow!("Invalid sheen extension data"))?;
+
+        let sheen_color_factor = sheen_info.get("sheenColorFactor")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| {
+                if arr.len() == 3 {
+                    Some(Vec3::new(
+                        arr[0].as_f64().unwrap_or(0.0) as f32,
+                        arr[1].as_f64().unwrap_or(0.0) as f32,
+                        arr[2].as_f64().unwrap_or(0.0) as f32,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(Vec3::ZERO);
+
+        let sheen_roughness_factor = sheen_info.get("sheenRoughnessFactor")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+
+        let physical_mat: &mut MeshPhysicalMaterial = engine_mat.as_any_mut().downcast_mut().ok_or_else(|| anyhow::anyhow!("Material is not MeshPhysicalMaterial"))?;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.sheen_color = sheen_color_factor;
+            uniforms.sheen_roughness = sheen_roughness_factor;
+        }
+
+        let mut textures = physical_mat.textures.write();
+
+        if let Some(sheen_color_tex_info) = sheen_info.get("sheenColorTexture") {
+            self.setup_texture_map_from_extension(ctx, sheen_color_tex_info, &mut textures.sheen_color_map, true);
+        }
+
+        if let Some(sheen_roughness_tex_info) = sheen_info.get("sheenRoughnessTexture") {
+            self.setup_texture_map_from_extension(ctx, sheen_roughness_tex_info, &mut textures.sheen_roughness_map, false);
         }
 
         Ok(())

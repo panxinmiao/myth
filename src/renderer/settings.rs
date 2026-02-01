@@ -90,7 +90,7 @@ pub struct RenderSettings {
     /// `Depth32Float` is recommended for reverse-Z rendering (better precision).
     /// `Depth24PlusStencil8` can be used if stencil buffer is needed.
     pub depth_format: wgpu::TextureFormat,
-    
+
     /// Enable vertical synchronization (VSync).
     ///
     /// When `true`, the framerate is capped to the display refresh rate,

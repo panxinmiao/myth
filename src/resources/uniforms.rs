@@ -457,26 +457,29 @@ define_gpu_data_struct!(
 
 define_gpu_data_struct!(
     struct MeshPhysicalUniforms {
-        pub color: Vec4 = Vec4::ONE,           // 16
+        pub color: Vec4 = Vec4::ONE,          // 16
 
-        pub emissive: Vec3 = Vec3::ZERO,       // 12
+        pub emissive: Vec3 = Vec3::ZERO,      // 12
         pub emissive_intensity: f32 = 1.0,    // 4
 
-        pub roughness: f32 = 1.0,             // 4  
+        pub roughness: f32 = 1.0,            // 4  
         pub metalness: f32 = 0.0,            // 4
         pub opacity: f32 = 1.0,              // 4
-        pub alpha_test: f32 = 0.0,   // 4 
+        pub alpha_test: f32 = 0.0,           // 4 
 
         pub normal_scale: Vec2 = Vec2::ONE,   // 8
-        pub ao_map_intensity: f32 = 1.0,     // 4
+        pub ao_map_intensity: f32 = 1.0,      // 4
         pub ior: f32 = 1.5,                   // 4
 
-        pub specular_color: Vec3 = Vec3::ONE,       // 12
-        pub specular_intensity: f32 = 0.0,    // 4
+        pub specular_color: Vec3 = Vec3::ONE,  // 12
+        pub specular_intensity: f32 = 0.0,     // 4
 
-        pub clearcoat: f32 = 0.0,             // 4
-        pub clearcoat_roughness: f32 = 0.0,   // 4
-        pub clearcoat_normal_scale: Vec2 = Vec2::ONE, // 8
+        pub clearcoat: f32 = 0.0,                       // 4
+        pub clearcoat_roughness: f32 = 0.0,             // 4
+        pub clearcoat_normal_scale: Vec2 = Vec2::ONE,   // 8
+
+        pub sheen_color: Vec3 = Vec3::ZERO,             // 12
+        pub sheen_roughness: f32 = 1.0,                 // 4
 
         // Using optimized Mat3Uniform (48 bytes)
         pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,         
@@ -490,6 +493,9 @@ define_gpu_data_struct!(
         pub clearcoat_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub clearcoat_normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub clearcoat_roughness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub sheen_color_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub sheen_roughness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY
+
     }
 );
 

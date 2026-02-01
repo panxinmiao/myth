@@ -44,7 +44,7 @@ impl AppHandler for PbrBox {
         scene.add_light(light);
 
         // 4. 加载环境贴图
-        let env_texture_handle = engine.assets.load_cube_texture_from_files(
+        let env_texture_handle = engine.assets.load_cube_texture(
             [
                 "examples/assets/Park2/posx.jpg",
                 "examples/assets/Park2/negx.jpg",
@@ -57,9 +57,7 @@ impl AppHandler for PbrBox {
             true
         ).expect("Failed to load environment map");
 
-        let env_texture = engine.assets.textures.get(env_texture_handle).unwrap();
-
-        scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
+        scene.environment.set_env_map(Some(env_texture_handle));
 
         // 5. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);

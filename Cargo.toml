@@ -30,6 +30,9 @@ gltf = { version = "1.4.1", features = [
 ], optional = true }
 base64 = "0.22"
 
+# 网络 (通用)
+reqwest = { version = "0.13.1", default-features = false, optional = true }
+
 # 工具库
 anyhow = "1.0"
 thiserror = "2.0"
@@ -39,7 +42,6 @@ pollster = "0.4"
 paste = "1.0"
 once_cell = "1.20"
 uuid = { version = "1.20.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
-md5 = "0.8.0"
 xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 slotmap = { version = "1.1.1", features = ["serde"] } 
 smallvec = "1.13"
@@ -58,7 +60,7 @@ rust-embed = "8.11.0"
 # =================================================================
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 tokio = { version = "1.43", features = ["fs", "rt-multi-thread", "macros"] }
-reqwest = { version = "0.13.1", default-features = false, features = ["default-tls"], optional = true } # 修正版本为常用稳定版
+reqwest = { version = "0.13.1", features = ["default-tls", "stream"]} 
 
 # =================================================================
 # Web (WASM) 平台
@@ -79,6 +81,7 @@ web-time = "1.1" # 替代 std::time
 console_error_panic_hook = "0.1.7"
 console_log = "1.0"
 
+rust-embed = { version = "8.11.0", features = ["debug-embed"] }
 wgpu = { version = "28.0", features = ["webgpu", "webgl"] }
 
 parking_lot = { version = "0.12", features = [] }
@@ -88,10 +91,7 @@ lasso = { version = "0.7", features = [] }
 # 开发依赖 (Dev Dependencies) & Egui
 # =================================================================
 [dev-dependencies]
-# 在这里放通用的 dev 依赖
-
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-rfd = "0.17.2" 
+rfd = { version = "0.17.2" }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"

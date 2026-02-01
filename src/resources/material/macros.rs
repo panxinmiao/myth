@@ -210,6 +210,29 @@ macro_rules! impl_material_api {
                 self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
+
+        impl Clone for $struct_name {
+            fn clone(&self) -> Self {
+                use std::sync::atomic::Ordering;
+                Self {
+                    // 1. Uniforms: CpuBuffer
+                    uniforms: self.uniforms.clone(),
+
+                    // 2. Settings: 读锁 -> 拷贝数据 -> 新锁
+                    settings: parking_lot::RwLock::new(self.settings.read().clone()),
+
+                    // 3. Textures: 读锁 -> 拷贝数据 -> 新锁
+                    textures: parking_lot::RwLock::new(self.textures.read().clone()),
+
+                    // 4. Version: 原子读取 -> 新原子变量
+                    version: std::sync::atomic::AtomicU64::new(
+                        self.version.load(Ordering::Relaxed)
+                    ),
+
+                    auto_sync_texture_to_uniforms: self.auto_sync_texture_to_uniforms,
+                }
+            }
+        }
     };
 }
 

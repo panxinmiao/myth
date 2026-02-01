@@ -105,9 +105,9 @@ pub trait AppHandler: Sized + 'static {
     ///
     /// # Arguments
     ///
-    /// * `_ctx` - Mutable reference to the engine instance
-    /// * `_window` - Reference to the window (for querying size, etc.)
-    fn init(_ctx: &mut ThreeEngine, _window: &Arc<Window>) -> Self;
+    /// * `engine` - Mutable reference to the engine instance
+    /// * `window` - Reference to the window (for querying size, etc.)
+    fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self;
 
     /// Handles window events.
     ///
@@ -117,18 +117,19 @@ pub trait AppHandler: Sized + 'static {
     ///
     /// # Arguments
     ///
-    /// * `_engine` - Mutable reference to the engine
-    /// * `_window` - Reference to the window
-    /// * `_event` - The window event to handle
+    /// * `engine` - Mutable reference to the engine
+    /// * `window` - Reference to the window
+    /// * `event` - The window event to handle
     ///
     /// # Returns
     ///
     /// `true` if the event was consumed, `false` otherwise.
+    #[allow(unused_variables)]
     fn on_event(
         &mut self,
-        _engine: &mut ThreeEngine,
-        _window: &Arc<Window>,
-        _event: &WindowEvent,
+        engine: &mut ThreeEngine,
+        window: &Arc<Window>,
+        event: &WindowEvent,
     ) -> bool {
         false
     }
@@ -140,10 +141,11 @@ pub trait AppHandler: Sized + 'static {
     ///
     /// # Arguments
     ///
-    /// * `_engine` - Mutable reference to the engine
-    /// * `_window` - Reference to the window
-    /// * `_frame` - Frame timing information
-    fn update(&mut self, _engine: &mut ThreeEngine, _window: &Arc<Window>, _frame: &FrameState) {}
+    /// * `engine` - Mutable reference to the engine
+    /// * `window` - Reference to the window
+    /// * `frame` - Frame timing information
+    #[allow(unused_variables)]
+    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {}
 
     /// Configures the render pipeline for this frame.
     ///

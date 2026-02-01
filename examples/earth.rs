@@ -32,19 +32,19 @@ impl AppHandler for Earth {
         let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         // 加载纹理
-        let earth_tex_handle = engine.assets.load_texture_from_file(
+        let earth_tex_handle = engine.assets.load_texture(
             "examples/assets/planets/earth_atmos_4096.jpg", three::ColorSpace::Srgb, true
         ).expect("Failed to load earth texture");
-        let specular_tex_handle = engine.assets.load_texture_from_file(
+        let specular_tex_handle = engine.assets.load_texture(
             "examples/assets/planets/earth_specular_2048.jpg", three::ColorSpace::Srgb, true
         ).expect("Failed to load specular texture");
-        let emssive_tex_handle = engine.assets.load_texture_from_file(
+        let emssive_tex_handle = engine.assets.load_texture(
             "examples/assets/planets/earth_lights_2048.png", three::ColorSpace::Srgb, true
         ).expect("Failed to load emissive texture");
-        let normal_map_handle = engine.assets.load_texture_from_file(
+        let normal_map_handle = engine.assets.load_texture(
             "examples/assets/planets/earth_normal_2048.jpg", three::ColorSpace::Linear, true
         ).expect("Failed to load normal map");
-        let clouds_tex_handle = engine.assets.load_texture_from_file(
+        let clouds_tex_handle = engine.assets.load_texture(
             "examples/assets/planets/earth_clouds_1024.png", three::ColorSpace::Srgb, true
         ).expect("Failed to load clouds texture");
 

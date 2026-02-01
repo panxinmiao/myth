@@ -33,6 +33,8 @@ pub struct WgpuContext {
     pub depth_texture_view: wgpu::TextureView,
     /// Clear color for the frame
     pub clear_color: wgpu::Color,
+
+    pub view_format: wgpu::TextureFormat,
 }
 
 impl WgpuContext {
@@ -59,6 +61,21 @@ impl WgpuContext {
             .await
             .map_err(|e| ThreeError::AdapterRequestFailed(e.to_string()))?;
 
+        // ===  查询 Surface 支持的格式 ===
+        let caps = surface.get_capabilities(&adapter);
+        
+        // 打印调试信息，查看当前平台支持哪些格式
+        log::info!("Surface Supported Formats: {:?}", caps.formats);
+
+        // 优先选择 sRGB 格式 (Native)，如果没有 (Web)，则选择第一个可用格式 (通常是 Linear)
+        // 注意：在 Web 上，这里肯定找不到 Srgb 格式，会回退到 caps.formats[0]
+        let surface_format = caps.formats.iter()
+            .copied()
+            .find(|f| f.is_srgb())
+            .unwrap_or(caps.formats[0]);
+
+        log::info!("Selected Surface Format: {:?}", surface_format);
+
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
@@ -69,17 +86,25 @@ impl WgpuContext {
             })
             .await?;
 
-        let mut config = surface
-            .get_default_config(&adapter, width, height)
-            .ok_or_else(|| {
-                ThreeError::AdapterRequestFailed("Surface not supported by adapter".to_string())
-            })?;
+        let view_format = surface_format.add_srgb_suffix();
 
-        config.present_mode = if settings.vsync {
+        let present_mode = if settings.vsync {
             wgpu::PresentMode::AutoVsync
         } else {
             wgpu::PresentMode::AutoNoVsync
         };
+
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width,
+            height,
+            desired_maximum_frame_latency: 2,
+            present_mode: present_mode,
+            alpha_mode: wgpu::CompositeAlphaMode::Auto,
+            view_formats: vec![view_format],
+        };
+
         surface.configure(&device, &config);
 
         let depth_texture_view =
@@ -93,6 +118,7 @@ impl WgpuContext {
             depth_format: settings.depth_format,
             depth_texture_view,
             clear_color: settings.clear_color,
+            view_format: view_format,
         })
     }
 

@@ -21,7 +21,7 @@ struct HttpGltfExample {
 impl AppHandler for HttpGltfExample {
     fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
         // 1. 加载环境贴图 (PBR 需要 IBL)
-        let env_texture_handle = engine.assets.load_cube_texture_from_files(
+        let env_texture_handle = engine.assets.load_cube_texture(
             [
                 "examples/assets/Park2/posx.jpg",
                 "examples/assets/Park2/negx.jpg",
@@ -37,9 +37,7 @@ impl AppHandler for HttpGltfExample {
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
 
-        let env_texture = engine.assets.textures.get(env_texture_handle).unwrap();
-
-        scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
+        scene.environment.set_env_map(Some(env_texture_handle));
 
         // 2. 添加灯光
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);

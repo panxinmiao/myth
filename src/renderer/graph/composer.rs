@@ -163,9 +163,14 @@ impl<'a> FrameComposer<'a> {
             }
         };
 
+        let view_format = self.wgpu_ctx.view_format;
+
         let view = output
             .texture
-            .create_view(&wgpu::TextureViewDescriptor::default());
+            .create_view(&wgpu::TextureViewDescriptor{
+                format: Some(view_format),
+                ..Default::default()
+            });
 
         // 2. 构建 RenderContext
         let mut ctx = RenderContext {

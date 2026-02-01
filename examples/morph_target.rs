@@ -24,7 +24,7 @@ impl AppHandler for MorphTargetDemo {
         scene.add_light(light);
         scene.environment.set_ambient_color(Vec3::splat(0.3));
         // 加载环境贴图
-        let env_texture_handle = engine.assets.load_cube_texture_from_files(
+        let env_texture_handle = engine.assets.load_cube_texture(
             [
                 "examples/assets/Park2/posx.jpg",
                 "examples/assets/Park2/negx.jpg",
@@ -37,9 +37,7 @@ impl AppHandler for MorphTargetDemo {
             true
         ).expect("Failed to load environment map");
 
-        let env_texture = engine.assets.textures.get(env_texture_handle).unwrap();
-
-        scene.environment.set_env_map(Some((env_texture_handle.into(), &env_texture)));
+        scene.environment.set_env_map(Some(env_texture_handle));
 
         // 2. 加载 glTF 模型 (带 Morph Target)
         let gltf_path = std::path::Path::new("examples/assets/facecap.glb");
@@ -47,7 +45,7 @@ impl AppHandler for MorphTargetDemo {
         
         let prefab = GltfLoader::load(
             gltf_path,
-            &engine.assets
+            engine.assets.clone()
         ).expect("Failed to load glTF model");
         let gltf_node = scene.instantiate(&prefab);
 

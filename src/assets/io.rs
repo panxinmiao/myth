@@ -1,19 +1,16 @@
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use std::{borrow::Cow, sync::Arc};
 
 /// 资产读取器 Trait
 /// 支持本地文件和网络资源的异步读取
-#[cfg(not(target_arch = "wasm32"))]
 pub trait AssetReader: Send + Sync {
     /// 异步读取资源字节流
+    #[cfg(not(target_arch = "wasm32"))]
     fn read_bytes(&self, uri: &str) -> impl std::future::Future<Output = anyhow::Result<Vec<u8>>> + Send;
-}
 
-/// WASM 版本的 AssetReader - 不要求 Send
-#[cfg(target_arch = "wasm32")]
-pub trait AssetReader: Send + Sync {
-    /// 异步读取资源字节流
+    /// WASM 下 Future 不需要 Send
+    #[cfg(target_arch = "wasm32")]
     fn read_bytes(&self, uri: &str) -> impl std::future::Future<Output = anyhow::Result<Vec<u8>>>;
 }
 
@@ -50,14 +47,15 @@ impl AssetReader for FileAssetReader {
     }
 }
 
-/// HTTP 网络读取器 (条件编译 - 仅 Native)
-#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+/// HTTP 网络读取器
+/// reqwest 跨平台特性 (Native 使用 tokio, WASM 使用 fetch)
+#[cfg(all(feature = "http"))]
 pub struct HttpAssetReader {
     root_url: reqwest::Url,
     client: reqwest::Client,
 }
 
-#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "http"))]
 impl HttpAssetReader {
     pub fn new(url_str: &str) -> anyhow::Result<Self> {
         let url = reqwest::Url::parse(url_str)?;
@@ -72,12 +70,16 @@ impl HttpAssetReader {
             url
         };
 
+        let client = reqwest::Client::builder();
+
+        // Native 平台特定的超时设置等
+        #[cfg(not(target_arch = "wasm32"))]
+        let client = client.timeout(std::time::Duration::from_secs(30));
+
         
         Ok(Self {
             root_url,
-            client: reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
-            .build()?,
+            client: client.build()?,
         })
     }
 
@@ -87,7 +89,7 @@ impl HttpAssetReader {
     }
 }
 
-#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "http"))]
 impl AssetReader for HttpAssetReader {
     async fn read_bytes(&self, uri: &str) -> anyhow::Result<Vec<u8>> {
         let url = self.root_url.join(uri)?;
@@ -100,108 +102,65 @@ impl AssetReader for HttpAssetReader {
     }
 }
 
-/// WASM HTTP 读取器 (使用 web-sys fetch API)
-#[cfg(target_arch = "wasm32")]
-pub struct WasmHttpReader {
-    root_url: String,
-}
-
-#[cfg(target_arch = "wasm32")]
-impl WasmHttpReader {
-    pub fn new(url_str: &str) -> anyhow::Result<Self> {
-        // 计算根 URL（移除文件名部分）
-        let root_url = if !url_str.ends_with('/') {
-            url_str.rsplit_once('/').map(|(base, _)| format!("{}/", base)).unwrap_or_else(|| url_str.to_string())
-        } else {
-            url_str.to_string()
-        };
-        
-        Ok(Self { root_url })
-    }
-
-    #[inline]
-    pub fn root_url(&self) -> &str {
-        &self.root_url
-    }
-}
-
-#[cfg(target_arch = "wasm32")]
-impl AssetReader for WasmHttpReader {
-    async fn read_bytes(&self, uri: &str) -> anyhow::Result<Vec<u8>> {
-        use wasm_bindgen::JsCast;
-        use wasm_bindgen_futures::JsFuture;
-        use web_sys::{Request, RequestInit, RequestMode, Response};
-        
-        let url = format!("{}{}", self.root_url, uri);
-        
-        let window = web_sys::window().ok_or_else(|| anyhow::anyhow!("No window found"))?;
-        
-        let opts = RequestInit::new();
-        opts.set_method("GET");
-        opts.set_mode(RequestMode::Cors);
-        
-        let request = Request::new_with_str_and_init(&url, &opts)
-            .map_err(|e| anyhow::anyhow!("Failed to create request: {:?}", e))?;
-        
-        let resp_value = JsFuture::from(window.fetch_with_request(&request))
-            .await
-            .map_err(|e| anyhow::anyhow!("Fetch failed: {:?}", e))?;
-        
-        let resp: Response = resp_value.dyn_into()
-            .map_err(|_| anyhow::anyhow!("Response is not a Response object"))?;
-        
-        if !resp.ok() {
-            return Err(anyhow::anyhow!("HTTP error: {}", resp.status()));
-        }
-        
-        let array_buffer = JsFuture::from(
-            resp.array_buffer().map_err(|e| anyhow::anyhow!("Failed to get array buffer: {:?}", e))?
-        )
-        .await
-        .map_err(|e| anyhow::anyhow!("Failed to read response: {:?}", e))?;
-        
-        let uint8_array = js_sys::Uint8Array::new(&array_buffer);
-        Ok(uint8_array.to_vec())
-    }
-}
-
 /// 资产读取器变体枚举
-/// 避免 trait object 的运行时开销
 #[derive(Clone)]
 pub enum AssetReaderVariant {
     #[cfg(not(target_arch = "wasm32"))]
     File(Arc<FileAssetReader>),
-    #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+    #[cfg(all(feature = "http"))]
     Http(Arc<HttpAssetReader>),
-    #[cfg(target_arch = "wasm32")]
-    WasmHttp(Arc<WasmHttpReader>),
 }
 
 impl AssetReaderVariant {
     /// 从路径或 URL 自动创建合适的读取器
-    pub fn from_source(source: &str) -> anyhow::Result<Self> {
+    pub fn new(source: &impl AssetSource) -> anyhow::Result<Self> {
+
+        let uri = source.uri();
+
         #[cfg(not(target_arch = "wasm32"))]
         {
-            if source.starts_with("http://") || source.starts_with("https://") {
+            if source.is_http() {
                 #[cfg(feature = "http")]
                 {
-                    Ok(Self::Http(Arc::new(HttpAssetReader::new(source)?)))
+                    Ok(Self::Http(Arc::new(HttpAssetReader::new(&uri)?)))
                 }
                 #[cfg(not(feature = "http"))]
                 {
-                    Err(anyhow::anyhow!(
-                        "HTTP feature is not enabled. Enable it with `features = [\"http\"]`"
-                    ))
+                    Err(anyhow::anyhow!("HTTP feature is not enabled"))
                 }
             } else {
-                Ok(Self::File(Arc::new(FileAssetReader::new(source))))
+                // 如果不是 HTTP，默认走文件系统
+                Ok(Self::File(Arc::new(FileAssetReader::new(uri.as_ref()))))
             }
         }
         
         #[cfg(target_arch = "wasm32")]
         {
-            // On WASM, always use HTTP reader (fetch API)
-            Ok(Self::WasmHttp(Arc::new(WasmHttpReader::new(source)?)))
+            // WASM 统一走 HTTP 读取
+            #[cfg(not(feature = "http"))]
+            {
+                return Err(anyhow::anyhow!("HTTP feature is not enabled"));
+            }
+
+            let full_uri = if !source.is_http() {
+                let window = web_sys::window()
+                    .ok_or_else(|| anyhow::anyhow!("No window found"))?;
+                
+                let location = window.location();
+                let href = location.href()
+                    .map_err(|e| anyhow::anyhow!("Failed to get href: {:?}", e))?;
+
+                let base = reqwest::Url::parse(&href)
+                    .map_err(|e| anyhow::anyhow!("Invalid base URL: {}", e))?;
+                
+                base.join(&uri)
+                    .map_err(|e| anyhow::anyhow!("Failed to join URL: {}", e))?
+                    .to_string()
+            } else {
+                uri.to_string()
+            };
+
+            Ok(Self::Http(Arc::new(HttpAssetReader::new(&full_uri)?)))
         }
     }
 
@@ -210,22 +169,126 @@ impl AssetReaderVariant {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Self::File(r) => r.read_bytes(uri).await,
-            #[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+            #[cfg(all(feature = "http"))]
             Self::Http(r) => r.read_bytes(uri).await,
-            #[cfg(target_arch = "wasm32")]
-            Self::WasmHttp(r) => r.read_bytes(uri).await,
         }
     }
 
-    /// 获取基础路径的文件名部分
-    pub fn source_filename(source: &str) -> &str {
-        if source.starts_with("http://") || source.starts_with("https://") {
-            source.rsplit('/').next().unwrap_or(source)
-        } else {
-            std::path::Path::new(source)
-                .file_name()
-                .and_then(|s| s.to_str())
-                .unwrap_or(source)
-        }
+}
+
+
+pub trait AssetSource: std::fmt::Debug + Send + Sync {
+    fn uri(&self) -> Cow<'_, str>;
+
+    fn filename(&self) -> Option<Cow<'_, str>>;
+
+    fn is_http(&self) -> bool;
+}
+
+impl AssetSource for str {
+    fn uri(&self) -> Cow<'_, str> {
+        Cow::Borrowed(self)
+    }
+
+    fn filename(&self) -> Option<Cow<'_, str>> {
+        // 简单的 URL/路径 分割逻辑
+        // 如果是 URL "http://example.com/foo/bar.png" -> "bar.png"
+        // 如果是 路径 "assets/bar.png" -> "bar.png"
+        let name = self.rsplit('/').next().unwrap_or(self);
+        // 处理可能存在的 URL query 参数 "bar.png?v=1" -> "bar.png"
+        let name = name.split('?').next().unwrap_or(name);
+        if name.is_empty() { None } else { Some(Cow::Borrowed(name)) }
+    }
+
+    fn is_http(&self) -> bool {
+        self.starts_with("http://") || self.starts_with("https://")
+    }
+}
+
+impl AssetSource for String {
+    fn uri(&self) -> Cow<'_, str> {
+        Cow::Borrowed(self)
+    }
+
+    fn filename(&self) -> Option<Cow<'_, str>> {
+        self.as_str().filename()
+    }
+
+    fn is_http(&self) -> bool {
+        self.as_str().is_http()
+    }
+}
+
+impl AssetSource for &str {
+    fn uri(&self) -> Cow<'_, str> {
+        Cow::Borrowed(*self)
+    }
+    fn filename(&self) -> Option<Cow<'_, str>> {
+        (**self).filename()
+    }
+    fn is_http(&self) -> bool {
+        (**self).is_http()
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AssetSource for Path {
+    fn uri(&self) -> Cow<'_, str> {
+        // 将系统路径转换为通用 URI 格式 (正斜杠)
+        Cow::Owned(self.to_string_lossy().replace('\\', "/"))
+    }
+
+    fn filename(&self) -> Option<Cow<'_, str>> {
+        self.file_name().map(|s| s.to_string_lossy())
+    }
+
+    fn is_http(&self) -> bool {
+        false 
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AssetSource for &Path {
+    fn uri(&self) -> Cow<'_, str> {
+        // 将系统路径转换为通用 URI 格式 (正斜杠)
+        Cow::Owned(self.to_string_lossy().replace('\\', "/"))
+    }
+
+    fn filename(&self) -> Option<Cow<'_, str>> {
+        self.file_name().map(|s| s.to_string_lossy())
+    }
+
+    fn is_http(&self) -> bool {
+        false 
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AssetSource for PathBuf {
+    fn uri(&self) -> Cow<'_, str> {
+        Cow::Owned(self.to_string_lossy().replace('\\', "/"))
+    }
+
+    fn filename(&self) -> Option<Cow<'_, str>> {
+        self.file_name().map(|s| s.to_string_lossy())
+    }
+
+    fn is_http(&self) -> bool {
+        false
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl AssetSource for &PathBuf {
+    fn uri(&self) -> Cow<'_, str> {
+        Cow::Owned(self.to_string_lossy().replace('\\', "/"))
+    }
+
+    fn filename(&self) -> Option<Cow<'_, str>> {
+        self.file_name().map(|s| s.to_string_lossy())
+    }
+
+    fn is_http(&self) -> bool {
+        false
     }
 }

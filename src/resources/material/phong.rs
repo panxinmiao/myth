@@ -33,15 +33,6 @@ pub struct MeshPhongMaterial {
 
     pub(crate) textures: RwLock<MeshPhongTextureSet>,
 
-    // pub(crate) map: TextureSlot,
-    // pub map_sampler: Option<SamplerSource>,
-    // pub(crate) normal_map: TextureSlot,
-    // pub normal_map_sampler: Option<SamplerSource>,
-    // pub(crate) specular_map: TextureSlot,
-    // pub specular_map_sampler: Option<SamplerSource>,
-    // pub(crate) emissive_map: TextureSlot,
-    // pub emissive_map_sampler: Option<SamplerSource>,
-
     pub auto_sync_texture_to_uniforms: bool,
 }
 
@@ -59,15 +50,6 @@ impl MeshPhongMaterial {
             version: AtomicU64::new(0),
 
             textures: RwLock::new(MeshPhongTextureSet::default()),
-
-            // map: TextureSlot::default(),
-            // map_sampler: None,
-            // normal_map: TextureSlot::default(),
-            // normal_map_sampler: None,
-            // specular_map: TextureSlot::default(),
-            // specular_map_sampler: None,
-            // emissive_map: TextureSlot::default(),
-            // emissive_map_sampler: None,
 
             auto_sync_texture_to_uniforms: false,
         }
