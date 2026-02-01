@@ -1,6 +1,6 @@
 use uuid::Uuid;
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(debug_assertions)]
+// #[cfg(debug_assertions)]
 use std::borrow::Cow;
 use wgpu::{TextureFormat, TextureDimension, TextureViewDimension, AddressMode};
 use crate::{assets::{TextureHandle, server::SamplerHandle}, resources::image::Image};
@@ -163,8 +163,8 @@ impl Default for Sampler {
 pub struct Texture {
     pub uuid: Uuid,
 
-    #[cfg(debug_assertions)]
-    name: Cow<'static, str>,
+    // #[cfg(debug_assertions)]
+    pub name: Option<Cow<'static, str>>,
     
     pub image: Image,
 
@@ -180,13 +180,11 @@ pub struct Texture {
 
 impl Texture {
     /// Creates a Texture from an existing Image.
-    pub fn new(_name: Option<&str>, image: Image, view_dimension: TextureViewDimension) -> Self {
+    pub fn new(name: Option<&str>, image: Image, view_dimension: TextureViewDimension) -> Self {
         Self {
             uuid: Uuid::new_v4(),
-            #[cfg(debug_assertions)]
-            name: _name
-                .map(|s| Cow::Owned(s.to_string()))
-                .unwrap_or(Cow::Borrowed("Unnamed Texture")),
+            // #[cfg(debug_assertions)]
+            name: name.map(|s| Cow::Owned(s.to_string())),
             image,
             view_dimension,
             sampler: TextureSampler::default(),
@@ -236,15 +234,19 @@ impl Texture {
         self.version.load(Ordering::Relaxed)
     }
 
+    // pub fn name(&self) -> Option<&str> {
+    //     #[cfg(debug_assertions)]
+    //     {
+    //         Some(&self.name)
+    //     }
+    //     #[cfg(not(debug_assertions))]
+    //     {
+    //         None
+    //     }
+    // }
+
     pub fn name(&self) -> Option<&str> {
-        #[cfg(debug_assertions)]
-        {
-            Some(&self.name)
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            None
-        }
+        self.name.as_deref()
     }
 
     /// Creates a solid color texture (1x1).

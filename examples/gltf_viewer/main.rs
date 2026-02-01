@@ -35,7 +35,7 @@ use three::resources::texture::TextureSource;
 use winit::event::WindowEvent;
 
 use three::app::winit::{App, AppHandler};
-use three::assets::{GltfLoader, MaterialHandle, TextureHandle, SharedPrefab};
+use three::assets::{GltfLoader, MaterialHandle, SharedPrefab, TextureHandle};
 use three::scene::{Camera, NodeHandle, light};
 use three::renderer::graph::RenderStage;
 use three::renderer::settings::{RenderSettings};
@@ -138,9 +138,6 @@ struct GltfViewer {
     current_fps: f32,
     /// Model file path or name (for display)
     model_name: Option<String>,
-    /// Whether model needs to be reloaded
-    pending_load: Option<ModelSource>,
-
 
     // === File Dialog Related ===
     /// File dialog receiver
@@ -280,7 +277,6 @@ impl AppHandler for GltfViewer {
             fps_counter: FpsCounter::new(),
             current_fps: 0.0,
             model_name: None,
-            pending_load: None,
 
             // === 文件对话框相关 ===
             file_dialog_rx,
@@ -332,13 +328,14 @@ impl AppHandler for GltfViewer {
     }
 
     fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
-        // 0. 处理异步加载结果
-        self.process_load_results(engine);
-        
+
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
-        
+
+        // 0. 处理异步加载结果
+        self.process_load_results(scene, &engine.assets);
+
         // 1. 更新 FPS
         if let Some(fps) = self.fps_counter.update() {
             self.current_fps = fps;
@@ -365,13 +362,11 @@ impl AppHandler for GltfViewer {
 
         // 4. 构建 UI
         self.ui_pass.begin_frame(window);
+        let egui_ctx = self.ui_pass.context().clone();
+        self.handle_drag_and_drop(&egui_ctx, engine.assets.clone());
         self.render_ui(engine);
         self.ui_pass.end_frame(window);
 
-        // 5. 处理待加载的模型
-        if let Some(source) = self.pending_load.take() {
-            self.load_model(source, engine);
-        }
     }
 
     fn compose_frame<'a>(&'a self, composer: three::renderer::graph::FrameComposer<'a>) {
@@ -401,7 +396,7 @@ impl GltfViewer {
     }
 
     /// 处理异步加载结果
-    fn process_load_results(&mut self, engine: &mut ThreeEngine) {
+    fn process_load_results(&mut self, scene: &mut Scene, assets: &AssetServer) {
         // 处理模型列表加载结果
         if let Some(rx) = &self.load_receiver {
             while let Ok(result) = rx.try_recv() {
@@ -424,10 +419,8 @@ impl GltfViewer {
         if let Some(rx) = &self.hdr_receiver {
             if let Ok(texture) = rx.try_recv() {
                 log::info!("Applying HDR environment map");
-                if let Some(scene) = engine.scene_manager.active_scene_mut() {
-                    scene.environment.set_env_map(Some(texture));
-                    scene.environment.set_intensity(1.0);
-                }
+                scene.environment.set_env_map(Some(texture));
+                scene.environment.set_intensity(1.0);
             }
         }
         
@@ -435,27 +428,24 @@ impl GltfViewer {
         // 处理 Prefab 加载结果 - 实例化到场景中
         while let Ok(result) = self.prefab_receiver.try_recv() {
             // 实例化新模型
-            self.instantiate_prefab(engine, result);
+            self.instantiate_prefab(scene, assets , result);
         }
 
         // Native: 处理文件对话框结果
         #[cfg(not(target_arch = "wasm32"))]
         while let Ok(path) = self.file_dialog_rx.try_recv() {
-            self.pending_load = Some(ModelSource::Local(path));
+            self.load_model(ModelSource::Local(path), assets.clone());
         }
 
         // WASM: 处理浏览器文件选择结果
         #[cfg(target_arch = "wasm32")]
         while let Ok((name, data)) = self.file_dialog_rx.try_recv() {
-            self.pending_load = Some(ModelSource::Local(name, data));
+            self.load_model(ModelSource::Local(name, data), assets.clone());
         }
     }
 
     /// 将加载完成的 Prefab 实例化到场景
-    fn instantiate_prefab(&mut self, engine: &mut ThreeEngine, result: PrefabLoadResult) {
-        let Some(scene) = engine.scene_manager.active_scene_mut() else {
-            return;
-        };
+    fn instantiate_prefab(&mut self, scene: &mut Scene, assets: &AssetServer, result: PrefabLoadResult) {
 
         // 清理旧模型
         if let Some(gltf_node) = self.gltf_node {
@@ -486,7 +476,7 @@ impl GltfViewer {
         scene.update_subtree(gltf_node);
         
         // 调整相机以适应模型
-        if let Some(bbox) = scene.get_bbox_of_node(gltf_node, &engine.assets) {
+        if let Some(bbox) = scene.get_bbox_of_node(gltf_node, assets) {
             let center = bbox.center();
             let radius = bbox.size().length() * 0.5;
             if let Some((_transform, camera)) = scene.query_main_camera_bundle() {
@@ -498,19 +488,15 @@ impl GltfViewer {
         }
 
         // 收集 Inspector 数据
-        self.collect_inspector_targets(engine, gltf_node);
+        self.collect_inspector_targets(scene, assets, gltf_node);
         
         self.loading_state = LoadingState::Idle;
         log::info!("Instantiated model: {}", result.display_name);
     }
 
     /// 加载模型（本地或远程） - 真正的异步加载
-    fn load_model(&mut self, source: ModelSource, engine: &mut ThreeEngine) {
-        let Some(_scene) = engine.scene_manager.active_scene_mut() else {
-            return;
-        };
+    fn load_model(&mut self, source: ModelSource, assets: AssetServer) {
 
-        let assets = engine.assets.clone();
         let prefab_tx = self.prefab_sender.clone();
 
         // 处理不同的加载源
@@ -593,19 +579,71 @@ impl GltfViewer {
         
         None
     }
+    
+    /// 处理全局拖拽事件 (Native & WASM)
+    fn handle_drag_and_drop(&mut self, ctx: &egui::Context, assets: AssetServer) {
+        // 1. 检查是否有文件正在悬停 (可选：显示视觉提示)
+        if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
+            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("file_drop_overlay")));
+            let screen_rect = ctx.content_rect();
+            
+            // 绘制半透明覆盖层提示用户松手
+            painter.rect_filled(
+                screen_rect,
+                0.0,
+                egui::Color32::from_black_alpha(100),
+            );
+            painter.text(
+                screen_rect.center(),
+                egui::Align2::CENTER_CENTER,
+                "📂 Drop glTF/GLB file here",
+                egui::FontId::proportional(32.0),
+                egui::Color32::WHITE,
+            );
+        }
+
+        // 2. 检查是否有文件被放下
+        ctx.input(|i| {
+            if !i.raw.dropped_files.is_empty() {
+                // 取最后一个拖入的文件（如果用户一次拖多个，通常只加载一个）
+                if let Some(file) = i.raw.dropped_files.last() {
+                    self.process_dropped_file(file, assets);
+                }
+            }
+        });
+    }
+    
+    /// 将 egui 的 DroppedFile 转换为 ModelSource
+    fn process_dropped_file(&mut self, file: &egui::DroppedFile, assets: AssetServer) {
+        // Native 平台：使用文件路径
+        #[cfg(not(target_arch = "wasm32"))]
+        if let Some(path) = &file.path {
+            log::info!("File dropped (Native): {:?}", path);
+            self.load_model(ModelSource::Local(path.clone()), assets);
+        }
+
+        // WASM 平台：使用文件字节数据
+        // egui 在 Web 上会自动读取数据到 file.bytes (需要 features = ["persistence"] 或默认开启)
+        #[cfg(target_arch = "wasm32")]
+        if let Some(bytes) = &file.bytes {
+            log::info!("File dropped (WASM): {}, {} bytes", file.name, bytes.len());
+            self.load_model(ModelSource::Local(file.name.clone(), bytes.to_vec()), assets);
+        } else {
+            // 如果在 Native 拖拽但没拿到 path，或者 WASM 没拿到 bytes
+            log::warn!("Dropped file has no data. Native path: {:?}, Bytes present: {}", file.path, file.bytes.is_some());
+        }
+    }
+    
 
     // ========================================================================
     // Inspector 数据收集
     // ========================================================================
 
     /// 收集场景中的材质和纹理信息
-    fn collect_inspector_targets(&mut self, engine: &ThreeEngine, root: NodeHandle) {
+    fn collect_inspector_targets(&mut self, scene: &Scene, assets: &AssetServer, root: NodeHandle) {
         self.inspector_materials.clear();
         self.inspector_textures.clear();
-        
-        let Some(scene) = engine.scene_manager.active_scene() else {
-            return;
-        };
+
         
         let mut visited_materials = std::collections::HashSet::new();
         let mut visited_textures = std::collections::HashSet::new();
@@ -625,7 +663,7 @@ impl GltfViewer {
                 if !visited_materials.contains(&mat_handle) {
                     visited_materials.insert(mat_handle);
                     
-                    let mat_name = engine.assets.materials.get(mat_handle)
+                    let mat_name = assets.materials.get(mat_handle)
                         .and_then(|m| m.name.clone())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| format!("Material_{:?}", mat_handle));
@@ -636,8 +674,8 @@ impl GltfViewer {
                     });
                     
                     // 收集材质使用的纹理
-                    if let Some(material) = engine.assets.materials.get(mat_handle) {
-                        self.collect_textures_from_material(&material, &mat_name, &mut visited_textures);
+                    if let Some(material) = assets.materials.get(mat_handle) {
+                        self.collect_textures_from_material(&material, &mat_name, assets, &mut visited_textures);
                     }
                 }
             }
@@ -649,6 +687,7 @@ impl GltfViewer {
         &mut self, 
         material: &three::Material, 
         mat_name: &str,
+        assets: &AssetServer,
         visited: &mut std::collections::HashSet<TextureHandle>
     ) {
         // 使用通用方式收集纹理：通过 visit_textures trait 方法
@@ -663,9 +702,14 @@ impl GltfViewer {
         });
         
         for (i, tex_handle) in collected.into_iter().enumerate() {
+            let texture_name = assets.textures.get(tex_handle)
+                .and_then(|t| t.name.clone())
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("{}:texture_{}", mat_name, i));
+    
             self.inspector_textures.push(TextureInfo {
                 handle: tex_handle,
-                name: format!("{}:texture_{}", mat_name, i),
+                name: texture_name,
             });
         }
     }
@@ -676,24 +720,22 @@ impl GltfViewer {
 
     fn render_ui(&mut self, engine: &mut ThreeEngine) {
         let egui_ctx = self.ui_pass.context().clone();
+
+        let Some(scene) = engine.scene_manager.active_scene_mut() else {
+            return;
+        };
         
         // 主控制面板
-        self.render_control_panel(&egui_ctx, engine);
+        self.render_control_panel(&egui_ctx, scene, &engine.assets);
         
         // Inspector 面板
         if self.show_inspector {
-            let Some(scene) = engine.scene_manager.active_scene_mut() else {
-                return;
-            };
-            self.render_inspector(&egui_ctx, &mut engine.assets, scene);
+            self.render_inspector(&egui_ctx,scene, &engine.assets);
         }
     }
 
     /// 渲染主控制面板
-    fn render_control_panel(&mut self, ctx: &egui::Context, engine: &mut ThreeEngine) {
-        let Some(scene) = engine.scene_manager.active_scene_mut() else {
-            return;
-        };
+    fn render_control_panel(&mut self, ctx: &egui::Context, scene: &mut Scene, assets: &AssetServer) {
 
         egui::Window::new("Control Panel")
             .default_pos([10.0, 10.0])
@@ -728,7 +770,7 @@ impl GltfViewer {
 
                             if ui.button("Load").clicked() {
                                 if let Some(url) = self.build_remote_url(self.selected_model_index) {
-                                    self.pending_load = Some(ModelSource::Remote(url));
+                                    self.load_model(ModelSource::Remote(url), assets.clone());
                                 }
                             }
                         });
@@ -891,7 +933,7 @@ impl GltfViewer {
     }
 
     /// 渲染 Inspector 面板
-    fn render_inspector(&mut self, ctx: &egui::Context, assets: &AssetServer, scene: &mut Scene) {
+    fn render_inspector(&mut self, ctx: &egui::Context, scene: &mut Scene, assets: &AssetServer) {
         let Some(gltf_node) = self.gltf_node else {
             return;
         };
@@ -908,21 +950,23 @@ impl GltfViewer {
                     columns[0].push_id("inspector_tree", |ui| {
                         let available_height = ui.available_height();
 
-                        egui::ScrollArea::vertical()
+                        egui::ScrollArea::both()
                             .id_salt("inspector_tree")
                             .min_scrolled_height(available_height)
-                            // .max_height(450.0)
                             .show(ui, |ui| {
-                                // ui.set_min_width(250.0);
                                 ui.set_min_width(ui.available_width());
 
-                                // 节点树
-                                ui.collapsing("📦 Nodes", |ui| {
+                                egui::CollapsingHeader::new("📦 Nodes")
+                                .id_salt("nodes_tree")
+                                .default_open(true)
+                                .show(ui, |ui| {
                                     self.render_node_tree(ui, scene, gltf_node, 0);
                                 });
                                 
-                                // 材质列表
-                                ui.collapsing("🎨 Materials", |ui| {
+                                egui::CollapsingHeader::new("🎨 Materials")
+                                .id_salt("materials_list")
+                                .default_open(true)
+                                .show(ui, |ui| {
                                     for mat_info in &self.inspector_materials {
                                         let is_selected = self.inspector_target == Some(InspectorTarget::Material(mat_info.handle));
                                         if ui.selectable_label(is_selected, &mat_info.name).clicked() {
@@ -930,9 +974,11 @@ impl GltfViewer {
                                         }
                                     }
                                 });
-                                
-                                // 纹理列表
-                                ui.collapsing("🖼 Textures", |ui| {
+
+                                egui::CollapsingHeader::new("🖼 Textures")
+                                .id_salt("textures_list")
+                                .default_open(true)
+                                .show(ui, |ui| {
                                     for tex_info in &self.inspector_textures {
                                         let is_selected = self.inspector_target == Some(InspectorTarget::Texture(tex_info.handle));
                                         if ui.selectable_label(is_selected, &tex_info.name).clicked() {
@@ -1256,18 +1302,17 @@ impl GltfViewer {
                                                     if ui.button(name).clicked() {
                                                         self.inspector_target = Some(InspectorTarget::Texture(*tex_handle));
                                                     }
-                                                    // TODO: 显示纹理名称, 需要重构 AssetServer 多线程+轻量句柄
 
-                                                    // if let Some(tex) = assets.get_texture(*tex_handle) {
-                                                    //     let tex_name = tex.name()
-                                                    //         .map(|s| s.to_string())
-                                                    //         .unwrap_or_else(|| format!("Texture_{:?}", tex_handle));
-                                                    //     if ui.button(&tex_name).clicked() {
-                                                    //         self.inspector_target = Some(InspectorTarget::Texture(*tex_handle));
-                                                    //     }
-                                                    // } else {
-                                                    //     ui.label("None");
-                                                    // }
+                                                    if let Some(tex) = assets.textures.get(*tex_handle) {
+                                                        let tex_name = tex.name()
+                                                            .map(|s| s.to_string())
+                                                            .unwrap_or_else(|| format!("Texture_{}", name));
+                                                        if ui.button(&tex_name).clicked() {
+                                                            self.inspector_target = Some(InspectorTarget::Texture(*tex_handle));
+                                                        }
+                                                    } else {
+                                                        ui.label("None");
+                                                    }
                                                 }
                                                 _ => {
                                                     ui.label("Non-asset texture");
@@ -1296,7 +1341,8 @@ impl GltfViewer {
 
         let name = texture.name()
             .map(|s| s.to_string())
-            .unwrap_or_else(|| "Unnamed Texture".to_string());
+            .unwrap_or_else(|| "Unnamed".to_string());
+
         ui.heading(format!("🖼 {}", name));
         ui.separator();
 
