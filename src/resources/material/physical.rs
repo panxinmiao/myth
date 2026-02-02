@@ -51,6 +51,7 @@ pub struct MeshPhysicalTextureSet {
     pub sheen_roughness_map: TextureSlot,
     pub iridescence_map: TextureSlot,
     pub iridescence_thickness_map: TextureSlot,
+    pub anisotropy_map: TextureSlot,
 
     pub map_sampler: Option<SamplerSource>,
     pub normal_map_sampler: Option<SamplerSource>,
@@ -67,6 +68,7 @@ pub struct MeshPhysicalTextureSet {
     pub sheen_roughness_map_sampler: Option<SamplerSource>,
     pub iridescence_map_sampler: Option<SamplerSource>,
     pub iridescence_thickness_map_sampler: Option<SamplerSource>,
+    pub anisotropy_map_sampler: Option<SamplerSource>,
 }
 
 
@@ -169,6 +171,16 @@ impl MeshPhysicalMaterial {
         self
     }
 
+    pub fn with_anisotropy(self, anisotropy: f32, rotation: f32) -> Self {
+        {
+            let mut uniforms = self.uniforms_mut();
+            let direction = Vec2::new(rotation.cos(), rotation.sin()) * anisotropy;
+            uniforms.anisotropy_vector = direction;
+        }
+        self.toggle_feature(PhysicalFeatures::ANISOTROPY, true);
+        self
+    }
+
 }
 
 impl_material_api!(
@@ -194,11 +206,12 @@ impl_material_api!(
         (sheen_color,         Vec3,  "The sheen tint. Default is (0, 0, 0), black."),
         (sheen_roughness,     f32,   "The sheen roughness. Default is 1.0."),
 
-        (iridescence,              f32,  "The intensity of the iridescence layer, simulating RGB color shift based on the angle between the surface and the viewer."),
-        (iridescence_ior,          f32,  "The strength of the iridescence RGB color shift effect, represented by an index-of-refraction. Default is 1.3."),
+        (iridescence,               f32,  "The intensity of the iridescence layer, simulating RGB color shift based on the angle between the surface and the viewer."),
+        (iridescence_ior,           f32,  "The strength of the iridescence RGB color shift effect, represented by an index-of-refraction. Default is 1.3."),
         (iridescence_thickness_min, f32,  "The minimum thickness of the thin-film layer given in nanometers. Default is 100 nm."),
         (iridescence_thickness_max, f32,  "The maximum thickness of the thin-film layer given in nanometers. Default is 400 nm."),
 
+        // (anisotropy_vector,      Vec2, "Anisotropy direction vector."),
 
     ],
     textures: [
@@ -217,6 +230,7 @@ impl_material_api!(
         (sheen_roughness_map,    "The sheen roughness map."),
         (iridescence_map,        "The iridescence map."),
         (iridescence_thickness_map, "The iridescence thickness map."),
+        (anisotropy_map,         "The anisotropy map."),
     ],
     manual_clone_fields: {
         features: |s: &Self| parking_lot::RwLock::new(s.features.read().clone())
@@ -243,6 +257,7 @@ impl_material_trait!(
         sheen_roughness_map,
         iridescence_map,
         iridescence_thickness_map,
+        anisotropy_map,
     ]
 );
 

@@ -59,7 +59,7 @@ pub use io::{AssetReader, AssetReaderVariant};
 #[cfg(not(target_arch = "wasm32"))]
 pub use io::FileAssetReader;
 
-#[cfg(all(feature = "http", not(target_arch = "wasm32")))]
+#[cfg(all(feature = "http"))]
 pub use io::HttpAssetReader;
 
 use image::GenericImageView;

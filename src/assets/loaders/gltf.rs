@@ -222,7 +222,8 @@ pub struct LoadContext<'a, 'b> {
 pub trait GltfExtensionParser {
     fn name(&self) -> &str;
 
-    fn on_load_material(&mut self, _ctx: &mut LoadContext, _gltf_mat: &gltf::Material, _engine_mat: &mut Material, _extension_value: &Value) -> anyhow::Result<()> {
+    #[allow(unused_variables)]
+    fn on_load_material(&mut self, ctx: &mut LoadContext, gltf_mat: &gltf::Material, engine_mat: &MeshPhysicalMaterial, extension_value: &Value) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -326,6 +327,7 @@ impl GltfLoader {
         loader.register_extension(Box::new(KhrMaterialsClearcoat));
         loader.register_extension(Box::new(KhrMaterialsSheen));
         loader.register_extension(Box::new(KhrMaterialsIridescence));
+        loader.register_extension(Box::new(KhrMaterialsAnisotropy));
 
         // Validation / Logging
         let mut supported_ext = loader.extensions.keys().cloned().collect::<Vec<_>>();
@@ -778,8 +780,7 @@ impl GltfLoader {
                 }
             }
 
-            let mut engine_mat = Material::from(mat);
-            engine_mat.name = material.name().map(|s| Cow::Owned(s.to_string()));
+
 
             if material.pbr_specular_glossiness().is_some() {
                 if let Some(handler) = self.extensions.get_mut("KHR_materials_pbrSpecularGlossiness") {
@@ -790,7 +791,7 @@ impl GltfLoader {
                         created_textures: &mut self.created_textures,
                         _phantom: std::marker::PhantomData,
                     };
-                    handler.on_load_material(&mut ctx, &material, &mut engine_mat, &Value::Null)?;
+                    handler.on_load_material(&mut ctx, &material, &mat, &Value::Null)?;
                 }
             }
 
@@ -805,14 +806,16 @@ impl GltfLoader {
 
                 for (name, value) in extensions_map {
                     if let Some(handler) = self.extensions.get_mut(name) {
-                        handler.on_load_material(&mut ctx, &material, &mut engine_mat, value)?;
+                        handler.on_load_material(&mut ctx, &material, &mat, value)?;
                     }
                 }
             }
 
-            let physical_mat = engine_mat.as_any_mut().downcast_mut::<MeshPhysicalMaterial>().unwrap();
-            physical_mat.flush_texture_transforms();
-            physical_mat.notify_pipeline_dirty();
+            mat.flush_texture_transforms();
+            mat.notify_pipeline_dirty();
+
+            let mut engine_mat = Material::from(mat);
+            engine_mat.name = material.name().map(|s| Cow::Owned(s.to_string()));
 
             let handle = self.assets.materials.add(engine_mat);
             self.material_map.push(handle);
@@ -1315,11 +1318,9 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         "KHR_materials_pbrSpecularGlossiness"
     }
 
-    fn on_load_material(&mut self, ctx: &mut LoadContext, gltf_mat: &gltf::Material, engine_mat: &mut Material, _extension_value: &Value) -> anyhow::Result<()> {
+    fn on_load_material(&mut self, ctx: &mut LoadContext, gltf_mat: &gltf::Material, physical_mat: &MeshPhysicalMaterial, _extension_value: &Value) -> anyhow::Result<()> {
         let sg = gltf_mat.pbr_specular_glossiness()
             .ok_or_else(|| anyhow::anyhow!("Material missing pbr_specular_glossiness data"))?;
-
-        let physical_mat: &mut MeshPhysicalMaterial = engine_mat.as_any_mut().downcast_mut().ok_or_else(|| anyhow::anyhow!("Material is not MeshStandardMaterial"))?;
 
         {
             let mut uniforms = physical_mat.uniforms_mut();
@@ -1434,7 +1435,7 @@ impl GltfExtensionParser for KhrMaterialsClearcoat {
         "KHR_materials_clearcoat"
     }
 
-    fn on_load_material(&mut self, ctx: &mut LoadContext, _gltf_mat: &gltf::Material, engine_mat: &mut Material, extension_value: &Value) -> anyhow::Result<()> {
+    fn on_load_material(&mut self, ctx: &mut LoadContext, _gltf_mat: &gltf::Material, physical_mat: &MeshPhysicalMaterial, extension_value: &Value) -> anyhow::Result<()> {
         let clearcoat_info = extension_value.as_object()
             .ok_or_else(|| anyhow::anyhow!("Invalid clearcoat extension data"))?;
 
@@ -1445,8 +1446,6 @@ impl GltfExtensionParser for KhrMaterialsClearcoat {
         let clearcoat_roughness = clearcoat_info.get("clearcoatRoughnessFactor")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0) as f32;
-
-        let physical_mat: &mut MeshPhysicalMaterial = engine_mat.as_any_mut().downcast_mut().ok_or_else(|| anyhow::anyhow!("Material is not MeshPhysicalMaterial"))?;
 
         {
             let mut uniforms = physical_mat.uniforms_mut();
@@ -1481,7 +1480,7 @@ impl GltfExtensionParser for KhrMaterialsSheen {
         "KHR_materials_sheen"
     }
 
-    fn on_load_material(&mut self, ctx: &mut LoadContext, _gltf_mat: &gltf::Material, engine_mat: &mut Material, extension_value: &Value) -> anyhow::Result<()> {
+    fn on_load_material(&mut self, ctx: &mut LoadContext, _gltf_mat: &gltf::Material, physical_mat: &MeshPhysicalMaterial, extension_value: &Value) -> anyhow::Result<()> {
         let sheen_info = extension_value.as_object()
             .ok_or_else(|| anyhow::anyhow!("Invalid sheen extension data"))?;
 
@@ -1503,8 +1502,6 @@ impl GltfExtensionParser for KhrMaterialsSheen {
         let sheen_roughness_factor = sheen_info.get("sheenRoughnessFactor")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0) as f32;
-
-        let physical_mat: &mut MeshPhysicalMaterial = engine_mat.as_any_mut().downcast_mut().ok_or_else(|| anyhow::anyhow!("Material is not MeshPhysicalMaterial"))?;
 
         {
             let mut uniforms = physical_mat.uniforms_mut();
@@ -1535,7 +1532,7 @@ impl GltfExtensionParser for KhrMaterialsIridescence {
         "KHR_materials_iridescence"
     }
 
-    fn on_load_material(&mut self, ctx: &mut LoadContext, _gltf_mat: &gltf::Material, engine_mat: &mut Material, extension_value: &Value) -> anyhow::Result<()> {
+    fn on_load_material(&mut self, ctx: &mut LoadContext, _gltf_mat: &gltf::Material, physical_mat: &MeshPhysicalMaterial, extension_value: &Value) -> anyhow::Result<()> {
         let iridescence_info = extension_value.as_object()
             .ok_or_else(|| anyhow::anyhow!("Invalid iridescence extension data"))?;
 
@@ -1554,8 +1551,6 @@ impl GltfExtensionParser for KhrMaterialsIridescence {
         let iridescence_thickness_max = iridescence_info.get("iridescenceThicknessMax")
             .and_then(|v| v.as_f64())
             .unwrap_or(400.0) as f32;
-
-        let physical_mat: &mut MeshPhysicalMaterial = engine_mat.as_any_mut().downcast_mut().ok_or_else(|| anyhow::anyhow!("Material is not MeshPhysicalMaterial"))?;
 
         {
             let mut uniforms = physical_mat.uniforms_mut();
@@ -1576,6 +1571,43 @@ impl GltfExtensionParser for KhrMaterialsIridescence {
         }
 
         physical_mat.enable_feature(PhysicalFeatures::IRIDESCENCE);
+
+        Ok(())
+    }
+}
+
+struct KhrMaterialsAnisotropy;
+
+impl GltfExtensionParser for KhrMaterialsAnisotropy {
+    fn name(&self) -> &str {
+        "KHR_materials_anisotropy"
+    }
+
+    fn on_load_material(&mut self, ctx: &mut LoadContext, _gltf_mat: &gltf::Material, physical_mat: &MeshPhysicalMaterial, extension_value: &Value) -> anyhow::Result<()> {
+        let anisotropy_info = extension_value.as_object()
+            .ok_or_else(|| anyhow::anyhow!("Invalid anisotropy extension data"))?;
+
+        let anisotropy_strength = anisotropy_info.get("anisotropyStrength")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+
+        let anisotropy_rotation = anisotropy_info.get("anisotropyRotation")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            let direction = Vec2::new(anisotropy_rotation.cos(), anisotropy_rotation.sin()) * anisotropy_strength;
+            uniforms.anisotropy_vector = direction;
+        }
+
+        let mut textures = physical_mat.textures.write();
+
+        if let Some(anisotropy_tex_info) = anisotropy_info.get("anisotropyTexture") {
+            self.setup_texture_map_from_extension(ctx, anisotropy_tex_info, &mut textures.anisotropy_map, false);
+        }
+
+        physical_mat.enable_feature(PhysicalFeatures::ANISOTROPY);
 
         Ok(())
     }

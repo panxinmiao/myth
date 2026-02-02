@@ -437,7 +437,7 @@ define_gpu_data_struct!(
 
         pub normal_scale: Vec2 = Vec2::ONE,    // 8
         pub ao_map_intensity: f32 = 1.0,     // 4
-        pub __padding: f32,   // 4 (8+4+4=16)
+        pub(crate) __padding: f32,   // 4 (8+4+4=16)
 
         pub specular: Vec3 = Vec3::ONE,               // 12
         pub specular_intensity: f32 = 1.0,    // 4
@@ -486,6 +486,9 @@ define_gpu_data_struct!(
         pub iridescence_thickness_min: f32 = 100.0,    // 4
         pub iridescence_thickness_max: f32 = 400.0,    // 4
 
+        pub anisotropy_vector: Vec2 = Vec2::ZERO,      // 8
+        pub(crate) __padding: UniformArray<f32, 2>,    // 8 (8+8=16)
+
         // Using optimized Mat3Uniform (48 bytes)
         pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,         
         pub normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,   
@@ -502,6 +505,7 @@ define_gpu_data_struct!(
         pub sheen_roughness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub iridescence_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub iridescence_thickness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub anisotropy_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
 
     }
 );

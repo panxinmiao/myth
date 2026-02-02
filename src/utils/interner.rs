@@ -104,11 +104,16 @@ pub fn resolve(sym: Symbol) -> Cow<'static, str> {
 /// are already interned, reducing interning operations on hot paths.
 pub fn preload_common_macros() {
     let common = [
-        // Material-related
+        // Physical-based Features
         "USE_IBL",
         "USE_IOR",
         "USE_SPECULAR",
         "USE_CLEARCOAT",
+        "USE_SHEEN",
+        "USE_IRIDESCENCE",
+        "USE_ANISOTROPY",
+        
+        // Material-related
         "HAS_MAP",
         "HAS_NORMAL_MAP",
         "HAS_ROUGHNESS_MAP",
@@ -120,6 +125,7 @@ pub fn preload_common_macros() {
         "HAS_CLEARCOAT_MAP",
         "HAS_CLEARCOAT_ROUGHNESS_MAP",
         "HAS_CLEARCOAT_NORMAL_MAP",
+
         // Geometry-related
         "HAS_UV",
         "HAS_NORMAL",
