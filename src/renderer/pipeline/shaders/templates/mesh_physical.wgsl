@@ -7,6 +7,8 @@
 {$ include 'light_punctual_pars' $}
 {$ include 'bsdf/physical' $}
 
+{$ include 'iridescence' $}
+
 
 @vertex
 fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
@@ -86,7 +88,6 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
         $$ endif
 
     $$ endif
-
 
     // Apply opacity
     diffuse_color.a = diffuse_color.a * u_material.opacity;

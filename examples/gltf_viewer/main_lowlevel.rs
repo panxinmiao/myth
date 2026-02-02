@@ -164,7 +164,7 @@ impl GltfViewer {
 
         // 相机控制
         if let Some((transform, camera)) = self.scene.query_main_camera_bundle() {
-            self.state.controls.update(transform, &self.input, camera.fov.to_degrees(), dt);
+            self.state.controls.update(transform, &self.input, camera.fov, dt);
         }
 
         // UI 逻辑 - 先处理 UI 帧，再渲染 UI

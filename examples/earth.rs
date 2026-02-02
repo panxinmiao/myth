@@ -142,7 +142,7 @@ impl AppHandler for Earth {
 
         // 轨道控制器
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);
+            self.controls.update(transform, &engine.input, camera.fov, frame.dt);
         }
 
         // FPS 显示

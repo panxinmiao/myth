@@ -43,6 +43,7 @@ use three::{AssetServer, OrbitControls, RenderableMaterialTrait, Scene, ThreeEng
 use three::utils::fps_counter::FpsCounter;
 
 use ui_pass::UiPass;
+use winit::keyboard::PhysicalKey;
 use winit::window::Window;
 
 // ============================================================================
@@ -187,6 +188,8 @@ struct GltfViewer {
     ibl_enabled: bool,
     
     hdr_receiver: Option<Receiver<TextureHandle>>,
+
+    show_ui: bool,
 }
 
 /// Async Prefab load result
@@ -222,7 +225,6 @@ impl AppHandler for GltfViewer {
         let asset_server = engine.assets.clone();
         execute_future(async move {
             // AssetSource 会自动处理路径/URL
-            let env_map_path = "blouberg_sunrise_2_1k.hdr";
             // let env_map_path = [
             //     format!("{}{}", ASSET_PATH, "Park2/posx.jpg"),
             //     format!("{}{}", ASSET_PATH, "Park2/negx.jpg"),
@@ -231,10 +233,12 @@ impl AppHandler for GltfViewer {
             //     format!("{}{}", ASSET_PATH, "Park2/posz.jpg"),
             //     format!("{}{}", ASSET_PATH, "Park2/negz.jpg"),
             // ];
-            
-            let full_path = format!("{}{}", ASSET_PATH, env_map_path);
+                
+            let map_path = "royal_esplanade_2k.hdr.jpg";
+            let env_map_path = format!("{}{}", ASSET_PATH, map_path);
 
-            match asset_server.load_hdr_texture_async(full_path).await {
+            // match asset_server.load_cube_texture_async(env_map_path, three::ColorSpace::Srgb, true).await {
+            match asset_server.load_hdr_texture_async(env_map_path).await {
                 Ok(handle) => {
                     log::info!("HDR loaded");
                     let _ = hdr_tx.send(handle); // 发送 Handle 回主线程
@@ -306,6 +310,8 @@ impl AppHandler for GltfViewer {
             ibl_enabled: true,
 
             hdr_receiver: Some(hdr_rx),
+
+            show_ui: true,
         };
 
         // 6. 启动加载远程模型列表
@@ -315,6 +321,20 @@ impl AppHandler for GltfViewer {
     }
 
     fn on_event(&mut self, _engine: &mut ThreeEngine, window: &Arc<Window>, event: &WindowEvent) -> bool {
+
+
+        // Tab 键切换 UI 显示
+        if let WindowEvent::KeyboardInput { event, .. } = event {
+            let PhysicalKey::Code(code) = event.physical_key else {
+                return false;
+            };
+            if code == winit::keyboard::KeyCode::Tab && event.state == winit::event::ElementState::Pressed {
+                self.show_ui = !self.show_ui;
+                return true;
+            }
+
+        }
+
         // UI 优先处理事件
         if self.ui_pass.handle_input(window, event) {
             return true;
@@ -359,22 +379,30 @@ impl AppHandler for GltfViewer {
 
         // 3. 相机控制
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);
+            self.controls.update(transform, &engine.input, camera.fov, frame.dt);
+            // camera.near = self.controls.spherical.radius * 0.01;
+            // camera.update_projection_matrix();
         }
 
         // 4. 构建 UI
-        self.ui_pass.begin_frame(window);
-        let egui_ctx = self.ui_pass.context().clone();
-        self.handle_drag_and_drop(&egui_ctx, engine.assets.clone());
-        self.render_ui(engine);
-        self.ui_pass.end_frame(window);
+        if self.show_ui {
+            self.ui_pass.begin_frame(window);
+            let egui_ctx = self.ui_pass.context().clone();
+            self.handle_drag_and_drop(&egui_ctx, engine.assets.clone());
+            self.render_ui(engine);
+            self.ui_pass.end_frame(window);
+        }
 
     }
 
     fn compose_frame<'a>(&'a self, composer: three::renderer::graph::FrameComposer<'a>) {
-        composer
-            .add_node(RenderStage::UI, &self.ui_pass)
-            .render();
+        if self.show_ui {
+            composer
+                .add_node(RenderStage::UI, &self.ui_pass)
+                .render();
+        }else{
+            composer.render();
+        }
     }
 }
 

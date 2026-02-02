@@ -108,7 +108,7 @@ impl AnimationMixer {
             if let Some(action) = self.actions.get_mut(handle) {
                 action.enabled = true;
                 action.weight = 1.0;
-                action.time = 0.0;
+                // action.time = 0.0;
                 action.paused = false;
             }
 

@@ -481,6 +481,11 @@ define_gpu_data_struct!(
         pub sheen_color: Vec3 = Vec3::ZERO,             // 12
         pub sheen_roughness: f32 = 1.0,                 // 4
 
+        pub iridescence: f32 = 0.0,                    // 4
+        pub iridescence_ior: f32 = 1.3,                // 4
+        pub iridescence_thickness_min: f32 = 100.0,    // 4
+        pub iridescence_thickness_max: f32 = 400.0,    // 4
+
         // Using optimized Mat3Uniform (48 bytes)
         pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,         
         pub normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,   
@@ -494,7 +499,9 @@ define_gpu_data_struct!(
         pub clearcoat_normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub clearcoat_roughness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub sheen_color_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
-        pub sheen_roughness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY
+        pub sheen_roughness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub iridescence_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub iridescence_thickness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
 
     }
 );

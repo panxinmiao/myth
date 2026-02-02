@@ -325,6 +325,7 @@ impl GltfLoader {
         loader.register_extension(Box::new(KhrMaterialsPbrSpecularGlossiness));
         loader.register_extension(Box::new(KhrMaterialsClearcoat));
         loader.register_extension(Box::new(KhrMaterialsSheen));
+        loader.register_extension(Box::new(KhrMaterialsIridescence));
 
         // Validation / Logging
         let mut supported_ext = loader.extensions.keys().cloned().collect::<Vec<_>>();
@@ -1522,6 +1523,59 @@ impl GltfExtensionParser for KhrMaterialsSheen {
         }
 
         physical_mat.enable_feature(PhysicalFeatures::SHEEN);
+
+        Ok(())
+    }
+}
+
+struct KhrMaterialsIridescence;
+
+impl GltfExtensionParser for KhrMaterialsIridescence {
+    fn name(&self) -> &str {
+        "KHR_materials_iridescence"
+    }
+
+    fn on_load_material(&mut self, ctx: &mut LoadContext, _gltf_mat: &gltf::Material, engine_mat: &mut Material, extension_value: &Value) -> anyhow::Result<()> {
+        let iridescence_info = extension_value.as_object()
+            .ok_or_else(|| anyhow::anyhow!("Invalid iridescence extension data"))?;
+
+        let iridescence_factor = iridescence_info.get("iridescenceFactor")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+
+        let iridescence_ior = iridescence_info.get("iridescenceIor")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(1.3) as f32;
+
+        let iridescence_thickness_min = iridescence_info.get("iridescenceThicknessMin")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(100.0) as f32;
+
+        let iridescence_thickness_max = iridescence_info.get("iridescenceThicknessMax")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(400.0) as f32;
+
+        let physical_mat: &mut MeshPhysicalMaterial = engine_mat.as_any_mut().downcast_mut().ok_or_else(|| anyhow::anyhow!("Material is not MeshPhysicalMaterial"))?;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.iridescence = iridescence_factor;
+            uniforms.iridescence_ior = iridescence_ior;
+            uniforms.iridescence_thickness_min = iridescence_thickness_min;
+            uniforms.iridescence_thickness_max = iridescence_thickness_max;
+        }
+
+        let mut textures = physical_mat.textures.write();
+
+        if let Some(iridescence_tex_info) = iridescence_info.get("iridescenceTexture") {
+            self.setup_texture_map_from_extension(ctx, iridescence_tex_info, &mut textures.iridescence_map, false);
+        }
+
+        if let Some(iridescence_thickness_tex_info) = iridescence_info.get("iridescenceThicknessTexture") {
+            self.setup_texture_map_from_extension(ctx, iridescence_thickness_tex_info, &mut textures.iridescence_thickness_map, false);
+        }
+
+        physical_mat.enable_feature(PhysicalFeatures::IRIDESCENCE);
 
         Ok(())
     }

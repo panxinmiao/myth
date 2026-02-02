@@ -49,6 +49,8 @@ pub struct MeshPhysicalTextureSet {
     pub clearcoat_normal_map: TextureSlot,
     pub sheen_color_map: TextureSlot,
     pub sheen_roughness_map: TextureSlot,
+    pub iridescence_map: TextureSlot,
+    pub iridescence_thickness_map: TextureSlot,
 
     pub map_sampler: Option<SamplerSource>,
     pub normal_map_sampler: Option<SamplerSource>,
@@ -63,7 +65,8 @@ pub struct MeshPhysicalTextureSet {
     pub clearcoat_normal_map_sampler: Option<SamplerSource>,
     pub sheen_color_map_sampler: Option<SamplerSource>,
     pub sheen_roughness_map_sampler: Option<SamplerSource>,
-
+    pub iridescence_map_sampler: Option<SamplerSource>,
+    pub iridescence_thickness_map_sampler: Option<SamplerSource>,
 }
 
 
@@ -125,6 +128,14 @@ impl MeshPhysicalMaterial {
         }
     }
 
+    pub fn disable_feature(&self, feature: PhysicalFeatures) {
+         self.toggle_feature(feature, false);
+    }
+
+    pub fn enable_feature(&self, feature: PhysicalFeatures) {
+         self.toggle_feature(feature, true);
+    }
+
     pub fn with_clearcoat(self, factor: f32, roughness: f32) -> Self {
         {
             let mut uniforms = self.uniforms_mut();
@@ -146,12 +157,16 @@ impl MeshPhysicalMaterial {
         self
     }
 
-    pub fn disable_feature(&self, feature: PhysicalFeatures) {
-         self.toggle_feature(feature, false);
-    }
-
-    pub fn enable_feature(&self, feature: PhysicalFeatures) {
-         self.toggle_feature(feature, true);
+    pub fn with_iridescence(self, intensity: f32, ior: f32, thickness_min: f32, thickness_max: f32) -> Self {
+        {
+            let mut uniforms = self.uniforms_mut();
+            uniforms.iridescence = intensity;
+            uniforms.iridescence_ior = ior;
+            uniforms.iridescence_thickness_min = thickness_min;
+            uniforms.iridescence_thickness_max = thickness_max;
+        }
+        self.toggle_feature(PhysicalFeatures::IRIDESCENCE, true);
+        self
     }
 
 }
@@ -169,14 +184,22 @@ impl_material_api!(
         (emissive_intensity,  f32,  "Emissive intensity."),
         (normal_scale,        Vec2, "Normal map scale."),
         (ao_map_intensity,    f32,  "AO map intensity."),
+        (ior,                 f32,  "Index of Refraction."),
         (specular_color,      Vec3, "Specular color."),
         (specular_intensity,  f32,  "Specular intensity."),
+
         (clearcoat,           f32,  "Clearcoat factor."),
         (clearcoat_roughness, f32, "Clearcoat roughness factor."),
-        (ior,                 f32,  "Index of Refraction."),
 
         (sheen_color,         Vec3,  "The sheen tint. Default is (0, 0, 0), black."),
         (sheen_roughness,     f32,   "The sheen roughness. Default is 1.0."),
+
+        (iridescence,              f32,  "The intensity of the iridescence layer, simulating RGB color shift based on the angle between the surface and the viewer."),
+        (iridescence_ior,          f32,  "The strength of the iridescence RGB color shift effect, represented by an index-of-refraction. Default is 1.3."),
+        (iridescence_thickness_min, f32,  "The minimum thickness of the thin-film layer given in nanometers. Default is 100 nm."),
+        (iridescence_thickness_max, f32,  "The maximum thickness of the thin-film layer given in nanometers. Default is 400 nm."),
+
+
     ],
     textures: [
         (map,                    "The color map."),
@@ -192,6 +215,8 @@ impl_material_api!(
         (clearcoat_normal_map,   "The clearcoat normal map."),
         (sheen_color_map,        "The sheen color map."),
         (sheen_roughness_map,    "The sheen roughness map."),
+        (iridescence_map,        "The iridescence map."),
+        (iridescence_thickness_map, "The iridescence thickness map."),
     ],
     manual_clone_fields: {
         features: |s: &Self| parking_lot::RwLock::new(s.features.read().clone())
@@ -216,6 +241,8 @@ impl_material_trait!(
         clearcoat_normal_map,
         sheen_color_map,
         sheen_roughness_map,
+        iridescence_map,
+        iridescence_thickness_map,
     ]
 );
 

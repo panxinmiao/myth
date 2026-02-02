@@ -25,7 +25,7 @@
 //!             .active_scene_mut()
 //!             .and_then(|s| s.query_main_camera_bundle())
 //!         {
-//!             self.orbit.update(transform, &engine.input, camera.fov.to_degrees(), frame.dt);
+//!             self.orbit.update(transform, &engine.input, camera.fov, frame.dt);
 //!         }
 //!     }
 //! }
@@ -99,7 +99,7 @@ impl Spherical {
 /// orbit.max_distance = 50.0;
 ///
 /// // In update loop
-/// orbit.update(&mut camera_transform, &input, fov_degrees, dt);
+/// orbit.update(&mut camera_transform, &input, fov, dt);
 /// ```
 pub struct OrbitControls {
     /// Enable smooth damping for rotation and zoom.
@@ -189,9 +189,9 @@ impl OrbitControls {
     ///
     /// * `transform` - Camera's transform component to modify
     /// * `input` - Current input state
-    /// * `fov_degrees` - Camera field of view in degrees (for pan scaling)
+    /// * `fov` - Camera field of view in radians (for pan scaling)
     /// * `dt` - Delta time in seconds
-    pub fn update(&mut self, transform: &mut Transform, input: &Input, fov_degrees: f32, dt: f32) {
+    pub fn update(&mut self, transform: &mut Transform, input: &Input, fov: f32, dt: f32) {
         let screen_height = input.screen_size().y.max(1.0);
 
         // Rotation
@@ -224,7 +224,7 @@ impl OrbitControls {
             let position = transform.position;
             let offset_dir = position - self.target;
             let target_distance = offset_dir.length();
-            let target_world_height = 2.0 * target_distance * (fov_degrees.to_radians() * 0.5).tan();
+            let target_world_height = 2.0 * target_distance * (fov * 0.5).tan();
 
             let pan_x = -mouse_delta.x * (target_world_height / screen_height) * self.pan_speed;
             let pan_y = mouse_delta.y * (target_world_height / screen_height) * self.pan_speed;

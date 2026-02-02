@@ -46,12 +46,12 @@ pub enum ProjectionType {
 }
 
 impl Camera {
-    pub fn new_perspective(fov: f32, aspect: f32, near: f32) -> Self {
+    pub fn new_perspective(fov_degrees: f32, aspect: f32, near: f32) -> Self {
         let mut cam = Self {
             uuid: Uuid::new_v4(),
             name: Cow::Owned("Camera".to_string()),
             projection_type: ProjectionType::Perspective,
-            fov: fov.to_radians(),
+            fov: fov_degrees.to_radians(),
             aspect,
             near,
             far: f32::INFINITY,

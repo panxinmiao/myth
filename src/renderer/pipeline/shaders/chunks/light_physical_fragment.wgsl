@@ -88,8 +88,8 @@ $$ if USE_IRIDESCENCE is defined
         material.iridescence *= textureSample(t_iridescence_map, s_iridescence_map, varyings.iridescence_map_uv).r;
     $$ endif
 
-    let iridescence_thickness_minimum = u_material.iridescence_thickness_range[0];
-    let iridescence_thickness_maximum = u_material.iridescence_thickness_range[1];
+    let iridescence_thickness_minimum = u_material.iridescence_thickness_min;
+    let iridescence_thickness_maximum = u_material.iridescence_thickness_max;
     $$ if HAS_IRIDESCENCE_THICKNESS_MAP is defined
         material.iridescence_thickness = (iridescence_thickness_maximum - iridescence_thickness_minimum) * textureSample(t_iridescence_thickness_map, s_iridescence_thickness_map, varyings.iridescence_thickness_map_uv).g + iridescence_thickness_minimum;
     $$ else
