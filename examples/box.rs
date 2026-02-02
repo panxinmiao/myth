@@ -18,7 +18,7 @@ impl AppHandler for TexturedBox {
         // 1. 准备资源
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
-        let mut basic_mat = MeshBasicMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
+        let basic_mat = MeshBasicMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         // 2. 将资源添加到 AssetServer
         let tex_handle = engine.assets.textures.add(texture);

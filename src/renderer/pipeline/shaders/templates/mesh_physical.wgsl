@@ -59,12 +59,16 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 
 @fragment
 fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+
+    let face_direction = f32(is_front) * 2.0 - 1.0;
+
     $$ if FLAT_SHADING or HAS_NORMAL is not defined
         let u = dpdx(varyings.world_position);
         let v = dpdy(varyings.world_position);
         var surface_normal = normalize(cross(u, v));
     $$ else
-        var surface_normal = normalize(vec3<f32>(varyings.normal));    
+        var surface_normal = normalize(vec3<f32>(varyings.normal));
+        surface_normal = surface_normal * face_direction;
     $$ endif
 
     $$ if COLOR_MODE == 'normal'
@@ -91,8 +95,6 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     {$ include 'alpha_test' $}
 
     let view = normalize(u_render_state.camera_position - varyings.world_position);  //todo orthographic camera
-
-    let face_direction = f32(is_front) * 2.0 - 1.0;
 
     $$ if HAS_NORMAL_MAP is defined or USE_ANISOTROPY is defined
         $$ if HAS_TANGENT is defined

@@ -82,7 +82,6 @@ impl_material_trait!(
     MeshPhongMaterial,
     "mesh_phong",
     MeshPhongUniforms,
-    default_defines: [],
     textures: [
         map,
         normal_map,

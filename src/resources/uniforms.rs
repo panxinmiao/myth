@@ -440,7 +440,7 @@ define_gpu_data_struct!(
         pub __padding: f32,   // 4 (8+4+4=16)
 
         pub specular: Vec3 = Vec3::ONE,               // 12
-        pub specular_intensity: f32 = 0.0,    // 4
+        pub specular_intensity: f32 = 1.0,    // 4
 
         // Using optimized Mat3Uniform (48 bytes)
         pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,         
@@ -472,7 +472,7 @@ define_gpu_data_struct!(
         pub ior: f32 = 1.5,                   // 4
 
         pub specular_color: Vec3 = Vec3::ONE,  // 12
-        pub specular_intensity: f32 = 0.0,     // 4
+        pub specular_intensity: f32 = 1.0,     // 4
 
         pub clearcoat: f32 = 0.0,                       // 4
         pub clearcoat_roughness: f32 = 0.0,             // 4

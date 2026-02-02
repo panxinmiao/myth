@@ -12,7 +12,8 @@ macro_rules! impl_material_api {
         // Uniforms: (field_name, type, doc)
         uniforms: [ $(($u_field:ident, $u_type:ty, $u_doc:expr)),* $(,)? ],
         // Textures: (field_name, doc)
-        textures: [ $(($t_field:ident, $t_doc:expr)),* $(,)? ]
+        textures: [ $(($t_field:ident, $t_doc:expr)),* $(,)? ],
+        manual_clone_fields: { $($m_field:ident : $m_expr:expr),* $(,)? }
     ) => {
         impl $struct_name {
 
@@ -32,7 +33,7 @@ macro_rules! impl_material_api {
             }
 
 
-            pub fn set_alpha_mode(&mut self, mode: $crate::resources::material::AlphaMode) {
+            pub fn set_alpha_mode(&self, mode: $crate::resources::material::AlphaMode) {
                 self.settings_mut().alpha_mode = mode;
                 // Handle associated Uniform logic
                 if let $crate::resources::material::AlphaMode::Mask(cutoff) = mode {
@@ -45,7 +46,7 @@ macro_rules! impl_material_api {
             }
 
             /// Sets the face culling mode (Front/Back/Double).
-            pub fn set_side(&mut self, side: $crate::resources::material::Side) {
+            pub fn set_side(&self, side: $crate::resources::material::Side) {
                 self.settings_mut().side = side;
             }
             pub fn side(&self) -> $crate::resources::material::Side {
@@ -53,7 +54,7 @@ macro_rules! impl_material_api {
             }
 
             /// Enables or disables depth testing.
-            pub fn set_depth_test(&mut self, depth_test: bool) {
+            pub fn set_depth_test(&self, depth_test: bool) {
                 self.settings_mut().depth_test = depth_test;
             }
             pub fn depth_test(&self) -> bool {
@@ -62,7 +63,7 @@ macro_rules! impl_material_api {
 
             /// Enables or disables depth writing.
             /// For transparent objects, it's usually recommended to disable this.
-            pub fn set_depth_write(&mut self, depth_write: bool) {
+            pub fn set_depth_write(&self, depth_write: bool) {
                 self.settings_mut().depth_write = depth_write;
             }
             pub fn depth_write(&self) -> bool {
@@ -86,7 +87,7 @@ macro_rules! impl_material_api {
             $(
                 paste::paste! {
                     #[doc = $u_doc]
-                    pub fn [<set_ $u_field>](&mut self, value: $u_type) {
+                    pub fn [<set_ $u_field>](&self, value: $u_type) {
                         // self.uniforms.write().$u_field = value;
                         // 1. Fast path: acquire read lock (Shared Lock), minimal overhead
                         if self.uniforms.read().$u_field == value {
@@ -167,7 +168,7 @@ macro_rules! impl_material_api {
             /// Flushes texture transform matrices to Uniforms.
             /// Only writes when values actually change, avoiding unnecessary version bumps.
             /// Returns whether any data was updated.
-            pub fn flush_texture_transforms(&mut self) -> bool {
+            pub fn flush_texture_transforms(&self) -> bool {
                 let mut changed = false;
 
                 let tex_data = self.textures.read();
@@ -189,9 +190,9 @@ macro_rules! impl_material_api {
             }
 
             // --- Batch Config ---
-            pub fn configure<F>(&mut self, f: F)
+            pub fn configure<F>(&self, f: F)
             where
-                F: FnOnce(&mut $uniform_struct)
+                F: FnOnce(&$uniform_struct)
             {
                 let mut guard = self.uniforms.write();
                 f(&mut *guard);
@@ -206,7 +207,7 @@ macro_rules! impl_material_api {
             /// - After directly modifying `pub(crate)` fields (e.g., in loader internal code)
             /// - When you're certain the material configuration has changed but the version hasn't been updated
             #[inline]
-            pub fn notify_pipeline_dirty(&mut self) {
+            pub fn notify_pipeline_dirty(&self) {
                 self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             }
         }
@@ -230,9 +231,31 @@ macro_rules! impl_material_api {
                     ),
 
                     auto_sync_texture_to_uniforms: self.auto_sync_texture_to_uniforms,
+
+                    // 插入自定义字段的克隆逻辑
+                    $(
+                        $m_field: ($m_expr)(self),
+                    )*
                 }
             }
         }
+    };
+
+    // 
+    // Overload without manual_clone_fields
+    (
+        $struct_name:ident, 
+        $uniform_struct:ty,
+        uniforms: [ $($u_args:tt)* ],
+        textures: [ $($t_args:tt)* ]
+    ) => {
+        $crate::impl_material_api!(
+            $struct_name,
+            $uniform_struct,
+            uniforms: [ $($u_args)* ],
+            textures: [ $($t_args)* ],
+            manual_clone_fields: {} 
+        );
     };
 }
 
@@ -245,8 +268,6 @@ macro_rules! impl_material_trait {
         $struct_name:ident,
         $shader_name:expr,
         $uniform_struct:ty,
-        default_defines: [ $(($def_key:expr, $def_val:expr)),* $(,)? ],
-        // Textures: (field_name)
         textures: [ $($field:ident),* $(,)? ]
     ) => {
         // 1. Implement common interface
@@ -277,10 +298,6 @@ macro_rules! impl_material_trait {
 
             fn shader_defines(&self) -> $crate::resources::shader_defines::ShaderDefines {
                 let mut defines = $crate::resources::shader_defines::ShaderDefines::new();
-                // Default macro definitions
-                $(
-                    defines.set($def_key, $def_val);
-                )*
 
                 let tex_data = self.textures.read();
 
@@ -299,6 +316,9 @@ macro_rules! impl_material_trait {
                 
                 // Acquire Settings read lock
                 self.settings.read().generate_shader_defines(&mut defines);
+
+                // Accumulate extra defines from material features
+                self.extra_defines(&mut defines);
                 defines
             }
 

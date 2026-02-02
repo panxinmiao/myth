@@ -50,6 +50,7 @@ rustc-hash = "2.1.1"
 lasso = { version = "0.7", features = ["multi-threaded"] } 
 parking_lot = { version = "0.12", features = ["deadlock_detection"] } 
 futures = "0.3"
+bitflags = "2.10.0"
 
 # 模板引擎
 minijinja = { version = "2.15.1", features = ["loader", "custom_syntax"] }

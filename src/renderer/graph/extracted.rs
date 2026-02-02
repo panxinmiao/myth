@@ -234,7 +234,8 @@ impl ExtractedScene {
             
             let node_world = node.transform.world_matrix;
             let world_matrix = Mat4::from(node_world);
-   
+
+
             let skeleton = collected_mesh.skeleton.and_then(|key| scene.skeleton_pool.get(key).map(|s| s));
             mesh.update_morph_uniforms();
             
@@ -252,19 +253,22 @@ impl ExtractedScene {
                 item_shader_defines.set("HAS_SKINNING", "1");
             }
 
+            let has_negative_scale = world_matrix.determinant() < 0.0;
+            let has_negative_scale_flag = (has_negative_scale as u32) << 0;
+
+            let has_skeleton = skeleton.is_some();
+            let has_skeleton_flag = (has_skeleton as u32) << 1;
+
+            // compose item variant flags (has_negative_scale, has_skeleton)
+            let item_variant_flags = has_negative_scale_flag | has_skeleton_flag;
+
             self.render_items.push(ExtractedRenderItem {
                 node_handle,
                 world_matrix,
                 object_bind_group,
                 geometry: mesh.geometry,
                 material: mesh.material,
-                item_variant_flags: {
-                    // if mesh.morph_targets.len() > 0 {
-                    //     flags |= crate::renderer::pipeline::PipelineItemVariants::HAS_MORPH_TARGETS as u32;
-                    // }
-                    // Todo: Define the flags properly
-                    skeleton.is_some() as u32
-                },
+                item_variant_flags: item_variant_flags,
                 item_shader_defines,
                 distance_sq,
             });
@@ -299,6 +303,7 @@ impl Default for ExtractedScene {
         Self::new()
     }
 }
+
 
 #[cfg(test)]
 mod tests {

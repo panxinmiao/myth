@@ -112,7 +112,7 @@ $$ endif
 
 $$ if USE_SHEEN is defined
 
-    material.sheen_color = u_material.sheen_color.rgb * u_material.sheen;
+    material.sheen_color = u_material.sheen_color.rgb;
 
     $$ if HAS_SHEEN_COLOR_MAP is defined
         material.sheen_color *= textureSample( t_sheen_color_map, s_sheen_color_map, varyings.sheen_color_map_uv).rgb;

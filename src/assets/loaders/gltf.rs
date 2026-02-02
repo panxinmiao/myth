@@ -4,7 +4,7 @@ use std::sync::Arc;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
 use futures::future::try_join_all;
 use crate::resources::material::AlphaMode;
-use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler, TextureSlot, TextureTransform};
+use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler, TextureSlot, TextureTransform, PhysicalFeatures};
 use crate::resources::geometry::{Geometry, Attribute};
 use crate::resources::texture::Texture;
 use crate::resources::buffer::BufferRef;
@@ -452,7 +452,7 @@ impl GltfLoader {
         if let Some(mat) = &self.default_material {
             *mat
         } else {
-            let mat = self.assets.materials.add(Material::new_standard(Vec4::ONE));
+            let mat = self.assets.materials.add(Material::new_physical(Vec4::ONE));
             self.default_material = Some(mat);
             mat
         }
@@ -1467,10 +1467,11 @@ impl GltfExtensionParser for KhrMaterialsClearcoat {
             self.setup_texture_map_from_extension(ctx, clearcoat_normal_tex_info, &mut textures.clearcoat_normal_map, false);
         }
 
+        physical_mat.enable_feature(PhysicalFeatures::CLEARCOAT);
+        
         Ok(())
     }
 }
-
 
 struct KhrMaterialsSheen;
 
@@ -1519,6 +1520,8 @@ impl GltfExtensionParser for KhrMaterialsSheen {
         if let Some(sheen_roughness_tex_info) = sheen_info.get("sheenRoughnessTexture") {
             self.setup_texture_map_from_extension(ctx, sheen_roughness_tex_info, &mut textures.sheen_roughness_map, false);
         }
+
+        physical_mat.enable_feature(PhysicalFeatures::SHEEN);
 
         Ok(())
     }

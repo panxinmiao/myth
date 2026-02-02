@@ -3,10 +3,10 @@ use std::sync::Arc;
 use glam::{Vec3, Vec4, Quat};
 use three::app::winit::{App, AppHandler};
 use three::engine::FrameState;
-use three::resources::{Geometry, MeshStandardMaterial, Mesh, Texture};
+use three::resources::{Geometry, Mesh, Texture};
 use three::scene::{Camera, NodeHandle, light};
 use three::utils::fps_counter::FpsCounter;
-use three::{OrbitControls, ThreeEngine};
+use three::{MeshPhysicalMaterial, OrbitControls, ThreeEngine};
 use three::renderer::settings::RenderSettings;
 use winit::window::Window;
 
@@ -24,7 +24,7 @@ impl AppHandler for PbrBox {
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
         
         // 创建具体材质类型，便于访问类型特定的方法
-        let standard_mat = MeshStandardMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
+        let standard_mat = MeshPhysicalMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         let tex_handle = engine.assets.textures.add(texture);
         standard_mat.set_map(Some(tex_handle));

@@ -34,6 +34,7 @@ pub struct PipelineKey {
     pub color_format: wgpu::TextureFormat,
     pub depth_format: wgpu::TextureFormat,
     pub sample_count: u32,
+    pub front_face: wgpu::FrontFace,
 }
 
 /// L1 缓存 Key: 基于资源 Handle 和物理 Layout ID (极快)
@@ -180,6 +181,7 @@ impl PipelineCache {
             }),
             primitive: wgpu::PrimitiveState {
                 topology: canonical_key.topology,
+                front_face: canonical_key.front_face,
                 cull_mode: canonical_key.cull_mode,
                 ..Default::default()
             },

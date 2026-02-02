@@ -132,6 +132,7 @@ impl ForwardRenderPass {
                     color_format: ctx.wgpu_ctx.view_format,
                     depth_format: ctx.wgpu_ctx.depth_format,
                     sample_count: 1,
+                    front_face: if item.item_variant_flags & 0x1 != 0 { wgpu::FrontFace::Cw } else { wgpu::FrontFace::Ccw },
                 };
 
                 let (pipeline, pipeline_id) = ctx.pipeline_cache.get_pipeline(

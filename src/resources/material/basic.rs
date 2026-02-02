@@ -65,7 +65,6 @@ impl_material_trait!(
     MeshBasicMaterial,
     "mesh_basic",
     MeshBasicUniforms,
-    default_defines: [],
     textures: [
         map,
     ]

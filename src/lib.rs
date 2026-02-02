@@ -156,7 +156,7 @@ pub mod prelude {
     // Resources
     pub use crate::resources::{
         Mesh, Geometry, Material, MaterialType, Texture, Image,
-        MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, MeshPhysicalMaterial,
+        MeshBasicMaterial, MeshPhongMaterial, MeshPhysicalMaterial,
         Side, AlphaMode, TextureSlot,
     };
     
@@ -291,7 +291,7 @@ pub use scene::{Scene, Node, NodeHandle, Camera, Light, Transform};
 // Resources (most common types)
 pub use resources::{
     Mesh, Geometry, Material, MaterialType, Texture, Image,
-    MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, MeshPhysicalMaterial,
+    MeshBasicMaterial, MeshPhongMaterial, MeshPhysicalMaterial,
     Side, AlphaMode,
     // Advanced: Material trait for custom materials
     MaterialTrait, RenderableMaterialTrait, TextureSlot, TextureTransform,

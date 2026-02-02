@@ -38,9 +38,10 @@ pub mod shader_defines;
 pub use mesh::Mesh;
 pub use material::{
     Material, MaterialType, MaterialTrait, RenderableMaterialTrait,
-    MeshBasicMaterial, MeshStandardMaterial, MeshPhongMaterial, MeshPhysicalMaterial, 
-    Side, TextureSlot, TextureTransform, AlphaMode,
+    MeshBasicMaterial, MeshPhongMaterial, MeshPhysicalMaterial, 
+    Side, TextureSlot, TextureTransform, AlphaMode, PhysicalFeatures
 };
+
 pub use buffer::BufferRef;
 pub use geometry::{Attribute, BoundingBox, BoundingSphere, Geometry};
 pub use image::{Image, ImageDescriptor};

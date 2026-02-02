@@ -223,15 +223,17 @@ impl AppHandler for GltfViewer {
         execute_future(async move {
             // AssetSource 会自动处理路径/URL
             let env_map_path = "blouberg_sunrise_2_1k.hdr";
-            // let env_path = [
-            //     "examples/assets/Park2/posx.jpg",
-            //     "examples/assets/Park2/negx.jpg",
-            //     "examples/assets/Park2/posy.jpg",
-            //     "examples/assets/Park2/negy.jpg",
-            //     "examples/assets/Park2/posz.jpg",
-            //     "examples/assets/Park2/negz.jpg",
+            // let env_map_path = [
+            //     format!("{}{}", ASSET_PATH, "Park2/posx.jpg"),
+            //     format!("{}{}", ASSET_PATH, "Park2/negx.jpg"),
+            //     format!("{}{}", ASSET_PATH, "Park2/posy.jpg"),
+            //     format!("{}{}", ASSET_PATH, "Park2/negy.jpg"),
+            //     format!("{}{}", ASSET_PATH, "Park2/posz.jpg"),
+            //     format!("{}{}", ASSET_PATH, "Park2/negz.jpg"),
             // ];
+            
             let full_path = format!("{}{}", ASSET_PATH, env_map_path);
+
             match asset_server.load_hdr_texture_async(full_path).await {
                 Ok(handle) => {
                     log::info!("HDR loaded");
@@ -241,7 +243,7 @@ impl AppHandler for GltfViewer {
             }
         });        
         
-        scene.environment.set_ambient_color(Vec3::splat(0.6));
+        scene.environment.set_ambient_color(Vec3::splat(0.3));
 
         // 3. 添加灯光
         let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0);
@@ -1299,15 +1301,21 @@ impl GltfViewer {
                                         if let Some(s) = source{
                                             match s {
                                                 TextureSource::Asset(tex_handle) => {
-                                                    if ui.button(name).clicked() {
+                                                    if ui.label(name).clicked() {
                                                         self.inspector_target = Some(InspectorTarget::Texture(*tex_handle));
                                                     }
 
                                                     if let Some(tex) = assets.textures.get(*tex_handle) {
                                                         let tex_name = tex.name()
-                                                            .map(|s| s.to_string())
-                                                            .unwrap_or_else(|| format!("Texture_{}", name));
-                                                        if ui.button(&tex_name).clicked() {
+                                                            .or_else(|| {
+                                                                    self.inspector_textures.iter()
+                                                                        .find(|t| t.handle == *tex_handle)
+                                                                        .map(|t| t.name.as_str())
+                                                                })
+                                                                .unwrap_or("Unnamed");
+
+
+                                                        if ui.link(tex_name).clicked() {
                                                             self.inspector_target = Some(InspectorTarget::Texture(*tex_handle));
                                                         }
                                                     } else {
@@ -1339,9 +1347,13 @@ impl GltfViewer {
             return;
         };
 
-        let name = texture.name()
-            .map(|s| s.to_string())
-            .unwrap_or_else(|| "Unnamed".to_string());
+        let name = texture.name() 
+            .or_else(|| {
+                self.inspector_textures.iter()
+                    .find(|t| t.handle == handle)
+                    .map(|t| t.name.as_str())
+            })
+            .unwrap_or("Unnamed");
 
         ui.heading(format!("🖼 {}", name));
         ui.separator();

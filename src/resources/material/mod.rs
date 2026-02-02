@@ -1,14 +1,12 @@
 mod basic;
 mod phong;
-mod standard;
 mod physical;
 mod macros;
+use parking_lot::RwLockWriteGuard;
 
 pub use basic::MeshBasicMaterial;
-use parking_lot::RwLockWriteGuard;
 pub use phong::MeshPhongMaterial;
-pub use standard::MeshStandardMaterial;
-pub use physical::MeshPhysicalMaterial;
+pub use physical::{MeshPhysicalMaterial, PhysicalFeatures};
 
 use std::{any::Any, borrow::Cow, ops::Deref, sync::atomic::{AtomicU64, Ordering}};
 
@@ -279,6 +277,10 @@ pub trait RenderableMaterialTrait: MaterialTrait {
     fn uniform_buffer(&self) -> BufferRef;
     /// Provides uniform data bytes to the callback.
     fn with_uniform_bytes(&self, f: &mut dyn FnMut(&[u8]));
+
+    fn extra_defines(&self, _defines: &mut ShaderDefines) {
+        // Default implementation does nothing
+    }
 }
 
 /// Face culling mode for rendering.
@@ -419,8 +421,6 @@ pub enum MaterialType {
     Basic(MeshBasicMaterial),
     /// Classic Blinn-Phong shading model
     Phong(MeshPhongMaterial),
-    /// PBR metallic-roughness material
-    Standard(MeshStandardMaterial),
     /// Advanced PBR material with additional features
     Physical(MeshPhysicalMaterial),
     /// User-defined custom material
@@ -432,7 +432,6 @@ impl MaterialTrait for MaterialType {
         match self {
             Self::Basic(m) => m.as_any(),
             Self::Phong(m) => m.as_any(),
-            Self::Standard(m) => m.as_any(),
             Self::Physical(m) => m.as_any(),
             Self::Custom(m) => m.as_any(),
         }
@@ -442,7 +441,6 @@ impl MaterialTrait for MaterialType {
         match self {
             Self::Basic(m) => m.as_any_mut(),
             Self::Phong(m) => m.as_any_mut(),
-            Self::Standard(m) => m.as_any_mut(),
             Self::Physical(m) => m.as_any_mut(),
             Self::Custom(m) => m.as_any_mut(),
         }
@@ -454,7 +452,6 @@ impl RenderableMaterialTrait for MaterialType {
         match self {
             Self::Basic(m) => m.shader_name(),
             Self::Phong(m) => m.shader_name(),
-            Self::Standard(m) => m.shader_name(),
             Self::Physical(m) => m.shader_name(),
             Self::Custom(m) => m.shader_name(),
         }
@@ -464,7 +461,6 @@ impl RenderableMaterialTrait for MaterialType {
         match self {
             Self::Basic(m) => m.version(),
             Self::Phong(m) => m.version(),
-            Self::Standard(m) => m.version(),
             Self::Physical(m) => m.version(),
             Self::Custom(m) => m.version(),
         }
@@ -474,7 +470,6 @@ impl RenderableMaterialTrait for MaterialType {
         match self {
             Self::Basic(m) => m.shader_defines(),
             Self::Phong(m) => m.shader_defines(),
-            Self::Standard(m) => m.shader_defines(),
             Self::Physical(m) => m.shader_defines(),
             Self::Custom(m) => m.shader_defines(),
         }
@@ -484,7 +479,6 @@ impl RenderableMaterialTrait for MaterialType {
         match self {
             Self::Basic(m) => m.settings(),
             Self::Phong(m) => m.settings(),
-            Self::Standard(m) => m.settings(),
             Self::Physical(m) => m.settings(),
             Self::Custom(m) => m.settings(),
         }
@@ -494,7 +488,6 @@ impl RenderableMaterialTrait for MaterialType {
         match self {
             Self::Basic(m) => m.visit_textures(visitor),
             Self::Phong(m) => m.visit_textures(visitor),
-            Self::Standard(m) => m.visit_textures(visitor),
             Self::Physical(m) => m.visit_textures(visitor),
             Self::Custom(m) => m.visit_textures(visitor),
         }
@@ -504,7 +497,6 @@ impl RenderableMaterialTrait for MaterialType {
         match self {
             Self::Basic(m) => m.define_bindings(builder),
             Self::Phong(m) => m.define_bindings(builder),
-            Self::Standard(m) => m.define_bindings(builder),
             Self::Physical(m) => m.define_bindings(builder),
             Self::Custom(m) => m.define_bindings(builder),
         }
@@ -514,7 +506,6 @@ impl RenderableMaterialTrait for MaterialType {
         match self {
             Self::Basic(m) => m.uniform_buffer(),
             Self::Phong(m) => m.uniform_buffer(),
-            Self::Standard(m) => m.uniform_buffer(),
             Self::Physical(m) => m.uniform_buffer(),
             Self::Custom(m) => m.uniform_buffer(),
         }
@@ -524,7 +515,6 @@ impl RenderableMaterialTrait for MaterialType {
         match self {
             Self::Basic(m) => m.with_uniform_bytes(visitor),
             Self::Phong(m) => m.with_uniform_bytes(visitor),
-            Self::Standard(m) => m.with_uniform_bytes(visitor),
             Self::Physical(m) => m.with_uniform_bytes(visitor),
             Self::Custom(m) => m.with_uniform_bytes(visitor),
         }
@@ -583,10 +573,6 @@ impl Material {
         Self::from(MeshPhongMaterial::new(color))
     }
 
-    pub fn new_standard(color: Vec4) -> Self {
-        Self::from(MeshStandardMaterial::new(color))
-    }
-
     pub fn new_physical(color: Vec4) -> Self {
         Self::from(MeshPhysicalMaterial::new(color))
     }
@@ -636,19 +622,6 @@ impl Material {
         }
     }
 
-    pub fn as_standard(&self) -> Option<&MeshStandardMaterial> {
-        match &self.data {
-            MaterialType::Standard(m) => Some(m),
-            _ => None,
-        }
-    }
-    
-    pub fn as_standard_mut(&mut self) -> Option<&mut MeshStandardMaterial> {
-        match &mut self.data {
-            MaterialType::Standard(m) => Some(m),
-            _ => None,
-        }
-    }
 
     pub fn as_physical(&self) -> Option<&MeshPhysicalMaterial> {
         match &self.data {
@@ -728,7 +701,6 @@ impl Material {
         match &self.data {
             MaterialType::Basic(m) => m.auto_sync_texture_to_uniforms,
             MaterialType::Phong(m) => m.auto_sync_texture_to_uniforms,
-            MaterialType::Standard(m) => m.auto_sync_texture_to_uniforms,
             MaterialType::Physical(m) => m.auto_sync_texture_to_uniforms,
             MaterialType::Custom(_) => false,
         }
@@ -749,12 +721,6 @@ impl From<MeshBasicMaterial> for Material {
 impl From<MeshPhongMaterial> for Material {
     fn from(data: MeshPhongMaterial) -> Self {
         Material::new(MaterialType::Phong(data))
-    }
-}
-
-impl From<MeshStandardMaterial> for Material {
-    fn from(data: MeshStandardMaterial) -> Self {
-        Material::new(MaterialType::Standard(data))
     }
 }
 

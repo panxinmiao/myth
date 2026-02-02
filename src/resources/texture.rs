@@ -1,6 +1,5 @@
 use uuid::Uuid;
 use std::sync::atomic::{AtomicU64, Ordering};
-// #[cfg(debug_assertions)]
 use std::borrow::Cow;
 use wgpu::{TextureFormat, TextureDimension, TextureViewDimension, AddressMode};
 use crate::{assets::{TextureHandle, server::SamplerHandle}, resources::image::Image};
@@ -118,8 +117,7 @@ impl From<&Sampler> for TextureSampler {
 #[derive(Debug, Clone)]
 pub struct Sampler {
     pub uuid: Uuid,
-    
-    #[cfg(debug_assertions)]
+
     pub name: Option<Cow<'static, str>>,
     
     /// Core sampling parameters
@@ -130,22 +128,16 @@ impl Sampler {
     pub fn new(descriptor: TextureSampler) -> Self {
         Self {
             uuid: Uuid::new_v4(),
-            #[cfg(debug_assertions)]
+            // #[cfg(debug_assertions)]
             name: None,
             descriptor,
         }
     }
 
     pub fn name(&self) -> Option<&str> {
-        #[cfg(debug_assertions)]
-        {
-            self.name.as_deref()
-        }
-        #[cfg(not(debug_assertions))]
-        {
-            None
-        }
+        self.name.as_deref()
     }
+
 }
 
 // Since TextureSampler implements Default, Sampler can implement it too
@@ -233,17 +225,6 @@ impl Texture {
     pub fn version(&self) -> u64 {
         self.version.load(Ordering::Relaxed)
     }
-
-    // pub fn name(&self) -> Option<&str> {
-    //     #[cfg(debug_assertions)]
-    //     {
-    //         Some(&self.name)
-    //     }
-    //     #[cfg(not(debug_assertions))]
-    //     {
-    //         None
-    //     }
-    // }
 
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()

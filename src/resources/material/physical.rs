@@ -2,12 +2,36 @@ use std::sync::atomic::AtomicU64;
 
 use glam::{Vec2, Vec3, Vec4};
 use parking_lot::RwLock;
+use bitflags::bitflags;
 
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::material::{MaterialSettings, TextureSlot};
 use crate::resources::texture::SamplerSource;
 use crate::resources::uniforms::MeshPhysicalUniforms;
-use crate::{impl_material_api, impl_material_trait};
+use crate::{ShaderDefines, impl_material_api, impl_material_trait};
+
+
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct PhysicalFeatures: u32 {
+        const IBL = 1 << 0;
+        const SPECULAR = 1 << 1;
+        const IOR = 1 << 2;
+        const CLEARCOAT = 1 << 3;
+        const SHEEN = 1 << 4;
+        const IRIDESCENCE = 1 << 5;
+        const ANISOTROPY = 1 << 6;
+
+        //
+        const STANDARD_PBR = Self::IBL.bits() | Self::SPECULAR.bits() | Self::IOR.bits();
+    }
+}
+
+impl Default for PhysicalFeatures {
+    fn default() -> Self {
+        Self::STANDARD_PBR
+    }
+}
 
 
 #[derive(Clone, Default, Debug)]
@@ -47,10 +71,11 @@ pub struct MeshPhysicalTextureSet {
 pub struct MeshPhysicalMaterial {
     pub(crate) uniforms: CpuBuffer<MeshPhysicalUniforms>,
     pub(crate) settings: RwLock<MaterialSettings>,
-    pub(crate) version: AtomicU64,
-
     pub(crate) textures: RwLock<MeshPhysicalTextureSet>,
 
+    pub(crate) features: RwLock<PhysicalFeatures>,
+    
+    pub(crate) version: AtomicU64,
     pub auto_sync_texture_to_uniforms: bool,
 }
 
@@ -65,13 +90,70 @@ impl MeshPhysicalMaterial {
                 Some("MeshPhysicalUniforms")
             ),
             settings: RwLock::new(MaterialSettings::default()),
-            version: AtomicU64::new(0),
-
             textures: RwLock::new(MeshPhysicalTextureSet::default()),
-
+            features: RwLock::new(PhysicalFeatures::default()),
+            
+            version: AtomicU64::new(0),
             auto_sync_texture_to_uniforms: false,
         }
     }
+
+    pub(crate) fn extra_defines(&self, defines: &mut ShaderDefines) {
+        let features = *self.features.read();
+
+        if features.contains(PhysicalFeatures::IBL) { defines.set("USE_IBL", "1"); }
+        if features.contains(PhysicalFeatures::CLEARCOAT) { defines.set("USE_CLEARCOAT", "1"); }
+        if features.contains(PhysicalFeatures::IOR) { defines.set("USE_IOR", "1"); }
+        if features.contains(PhysicalFeatures::SPECULAR) { defines.set("USE_SPECULAR", "1"); }
+        if features.contains(PhysicalFeatures::SHEEN) { defines.set("USE_SHEEN", "1"); }
+        if features.contains(PhysicalFeatures::IRIDESCENCE) { defines.set("USE_IRIDESCENCE", "1"); }
+        if features.contains(PhysicalFeatures::ANISOTROPY) { defines.set("USE_ANISOTROPY", "1"); }
+    }
+
+
+    fn toggle_feature(&self, feature: PhysicalFeatures, enabled: bool) {
+        let mut guard = self.features.write();
+        let old = *guard;
+        if enabled {
+            guard.insert(feature);
+        } else {
+            guard.remove(feature);
+        }
+
+        if *guard != old {
+            self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    pub fn with_clearcoat(self, factor: f32, roughness: f32) -> Self {
+        {
+            let mut uniforms = self.uniforms_mut();
+            uniforms.clearcoat = factor;
+            uniforms.clearcoat_roughness = roughness;
+        }
+
+        self.toggle_feature(PhysicalFeatures::CLEARCOAT, true);
+        self
+    }
+
+    pub fn with_sheen(self, color: Vec3, roughness: f32) -> Self {
+        {
+            let mut uniforms = self.uniforms_mut();
+            uniforms.sheen_color = color;
+            uniforms.sheen_roughness = roughness;
+        }
+        self.toggle_feature(PhysicalFeatures::SHEEN, true);
+        self
+    }
+
+    pub fn disable_feature(&self, feature: PhysicalFeatures) {
+         self.toggle_feature(feature, false);
+    }
+
+    pub fn enable_feature(&self, feature: PhysicalFeatures) {
+         self.toggle_feature(feature, true);
+    }
+
 }
 
 impl_material_api!(
@@ -110,20 +192,16 @@ impl_material_api!(
         (clearcoat_normal_map,   "The clearcoat normal map."),
         (sheen_color_map,        "The sheen color map."),
         (sheen_roughness_map,    "The sheen roughness map."),
-    ]
+    ],
+    manual_clone_fields: {
+        features: |s: &Self| parking_lot::RwLock::new(s.features.read().clone())
+    }
 );
 
 impl_material_trait!(
     MeshPhysicalMaterial,
     "mesh_physical",
     MeshPhysicalUniforms,
-    default_defines: [
-        ("USE_IBL", "1"),
-        ("USE_SPECULAR", "1"),
-        ("USE_IOR", "1"),
-        ("USE_CLEARCOAT", "1"),
-        // ("USE_SHEEN", "1"),
-    ],
     textures: [
         map,
         normal_map,
