@@ -77,7 +77,7 @@ impl<'a> RenderContext<'a> {
         
         // 我们可以利用地址比较或 ID 比较，或者简单的 flip_flop 计数器
         let output_idx = self.pp_flip_flop;
-        let output = &self.frame_resources.ping_pong_buffers[output_idx].1;
+        let output = &self.frame_resources.ping_pong_buffers[output_idx];
 
         // 3. 状态流转
         self.current_pp_input = output; // 下一个 Pass 读这个 Output
@@ -110,7 +110,7 @@ pub struct FrameResources {
     
     // 两个纹理交替使用，格式通常与 scene_color 一致
     // 这里全流程 HDR，直到最后上屏
-    pub ping_pong_buffers: [(wgpu::Texture, Tracked<wgpu::TextureView>); 2],
+    pub ping_pong_buffers: [Tracked<wgpu::TextureView>; 2],
 
     pub transmission_view: Tracked<wgpu::TextureView>,
 
@@ -227,7 +227,7 @@ impl FrameResources {
         let scene_color_view = Self::create_texture(
             device,
             size,
-            wgpu::TextureFormat::Rgba16Float,
+            settings.color_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             1,
             "Scene Color Texture",
@@ -237,7 +237,7 @@ impl FrameResources {
         let depth_view = Self::create_texture(
             device,
             size,
-            wgpu::TextureFormat::Depth32Float,
+            settings.depth_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
             1,
             "Depth Texture",
@@ -247,7 +247,7 @@ impl FrameResources {
         let transmission_view = Self::create_texture(
             device,
             size,
-            wgpu::TextureFormat::Rgba16Float,
+            settings.color_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             1,
             "Transmission Texture",
@@ -259,7 +259,7 @@ impl FrameResources {
             Some(Self::create_texture(
                 device,
                 size,
-                wgpu::TextureFormat::Rgba16Float,
+                settings.color_format,
                 wgpu::TextureUsages::RENDER_ATTACHMENT,
                 settings.msaa_samples,
                 "Scene MSAA Color Texture",
@@ -268,12 +268,34 @@ impl FrameResources {
             None
         };
 
+        let ping_pong_texture_0 = Self::create_texture(
+            device,
+            size,
+            settings.color_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            1,
+            "Ping-Pong Texture 0",
+        );
+
+        let ping_pong_texture_1 = Self::create_texture(
+            device,
+            size,
+            settings.color_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            1,
+            "Ping-Pong Texture 1",
+        );      
+
         self.size = size;
         self.scene_color_view = Tracked::new(scene_color_view);
         self.depth_view = Tracked::new(depth_view);
         self.transmission_view = Tracked::new(transmission_view);
         self.screen_bind_group = screen_bind_group;
         self.scene_msaa_view = scene_msaa_view.map(Tracked::new);
+        self.ping_pong_buffers = [
+            Tracked::new(ping_pong_texture_0),
+            Tracked::new(ping_pong_texture_1),
+        ];
 
     }
 
@@ -301,32 +323,8 @@ impl FrameResources {
             scene_color_view: Tracked::new(placeholder_view.clone()),
             depth_view: Tracked::new(placeholder_view.clone()),
             ping_pong_buffers: [
-                (
-                    device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some("Ping-Pong Texture 0"),
-                        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-                        view_formats: &[],
-                    }),
-                    Tracked::new(placeholder_view.clone())
-                ),
-                (
-                    device.create_texture(&wgpu::TextureDescriptor {
-                        label: Some("Ping-Pong Texture 1"),
-                        size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
-                        mip_level_count: 1,
-                        sample_count: 1,
-                        dimension: wgpu::TextureDimension::D2,
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-                        view_formats: &[],
-                    }),
-                    Tracked::new(placeholder_view.clone())
-                ),
+                Tracked::new(placeholder_view.clone()),
+                Tracked::new(placeholder_view.clone()),
             ],
             transmission_view: Tracked::new(placeholder_view.clone()),
             screen_bind_group,

@@ -10,3 +10,4 @@ mod tone_mapping;
 pub use forward::ForwardRenderPass;
 pub use brdf_lut_compute::BRDFLutComputePass;
 pub use ibl_compute::IBLComputePass;
+pub use tone_mapping::ToneMapPass;

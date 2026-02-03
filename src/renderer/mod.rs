@@ -52,7 +52,9 @@ pub mod settings;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::renderer::core::binding::GlobalBindGroupCache;
+use crate::renderer::graph::ForwardRenderPass;
 use crate::renderer::graph::composer::ComposerContext;
+use crate::renderer::graph::passes::{BRDFLutComputePass, IBLComputePass, ToneMapPass};
 use crate::{FrameBuilder, RenderStage};
 use crate::assets::AssetServer;
 use crate::errors::Result;
@@ -90,9 +92,17 @@ struct RendererState {
     wgpu_ctx: WgpuContext,
     resource_manager: ResourceManager,
     pipeline_cache: PipelineCache,
+
     render_frame: RenderFrame,
+
     frame_resources: FrameResources,
     global_bind_group_cache: GlobalBindGroupCache,
+
+    // Built-in passes
+    pub(crate) forward_pass: ForwardRenderPass,
+    pub(crate) tone_mapping_pass: ToneMapPass,
+    pub(crate) brdf_pass: BRDFLutComputePass,
+    pub(crate) ibl_pass: IBLComputePass,
 }
 
 impl Renderer {
@@ -133,7 +143,7 @@ impl Renderer {
             ResourceManager::new(wgpu_ctx.device.clone(), wgpu_ctx.queue.clone());
 
         // 3. Create render frame manager
-        let render_frame = RenderFrame::new(wgpu_ctx.device.clone());
+        let render_frame = RenderFrame::new();
 
         // 4. Create frame resources
         let frame_resources = FrameResources::new(
@@ -145,14 +155,28 @@ impl Renderer {
         // 5. Create global bind group cache
         let global_bind_group_cache = GlobalBindGroupCache::new();
 
+        // build passes
+        let forward_pass: ForwardRenderPass = ForwardRenderPass::new(wgpu::Color::BLACK);
+        let tone_mapping_pass: ToneMapPass = ToneMapPass::new(&wgpu_ctx.device);
+        let brdf_pass: BRDFLutComputePass = BRDFLutComputePass::new(&wgpu_ctx.device);
+        let ibl_pass: IBLComputePass = IBLComputePass::new(&wgpu_ctx.device);
+
         // 4. Assemble state
         self.context = Some(RendererState {
             wgpu_ctx,
             resource_manager,
             pipeline_cache: PipelineCache::new(),
+
             render_frame,
+
             frame_resources,
             global_bind_group_cache,
+
+            forward_pass,
+            tone_mapping_pass,
+            brdf_pass,
+            ibl_pass,
+
         });
 
         log::info!("Renderer Initialized");
@@ -217,32 +241,33 @@ impl Renderer {
             time,
         );
 
-        let RendererState {
-            wgpu_ctx,
-            resource_manager,
-            pipeline_cache,
-            render_frame,     // 将被 Builder 借用
-            frame_resources,  // 将被 Context 借用
-            global_bind_group_cache,
-        } = state;
+        // let RendererState {
+        //     wgpu_ctx,
+        //     resource_manager,
+        //     pipeline_cache,
+        //     render_frame,     // 将被 Builder 借用
+        //     frame_resources,  // 将被 Context 借用
+        //     global_bind_group_cache,
+        // } = state;
 
         let mut frame_builder = FrameBuilder::new();
 
         frame_builder
-            .add_node(RenderStage::PreProcess, &mut render_frame.brdf_pass)
-            .add_node(RenderStage::PreProcess, &mut render_frame.ibl_pass)
-            .add_node(RenderStage::Opaque, &mut render_frame.forward_pass);
+            .add_node(RenderStage::PreProcess, &mut state.brdf_pass)
+            .add_node(RenderStage::PreProcess, &mut state.ibl_pass)
+            .add_node(RenderStage::Opaque, &mut state.forward_pass)
+            .add_node(RenderStage::PostProcess, &mut state.tone_mapping_pass);
 
         let ctx = ComposerContext {
-            wgpu_ctx,
-            resource_manager,
-            pipeline_cache,
+            wgpu_ctx: &mut state.wgpu_ctx,
+            resource_manager: &mut state.resource_manager,
+            pipeline_cache: &mut state.pipeline_cache,
 
-            extracted_scene: &render_frame.extracted_scene,
-            render_state: &render_frame.render_state,
+            extracted_scene: &state.render_frame.extracted_scene,
+            render_state: &state.render_frame.render_state,
 
-            frame_resources,
-            global_bind_group_cache,
+            frame_resources: &mut state.frame_resources,
+            global_bind_group_cache: &mut state.global_bind_group_cache,
 
             scene,
             camera,

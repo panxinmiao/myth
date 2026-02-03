@@ -16,7 +16,7 @@ use serde::Serialize;
 /// 使用 `ShaderDefines` 存储所有来自材质、几何体和场景的宏定义。
 #[derive(Debug, Clone, Default)]
 pub struct ShaderCompilationOptions {
-    defines: ShaderDefines,
+    pub(crate) defines: ShaderDefines,
 }
 
 impl ShaderCompilationOptions {

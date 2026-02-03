@@ -4,7 +4,7 @@ struct Varyings {
 };
 
 @vertex
-fn main(@builtin(vertex_index) index: u32) -> Varyings {
+fn vs_main(@builtin(vertex_index) index: u32) -> Varyings {
     var out: Varyings;
     if (index == u32(0)) {
         out.position = vec4<f32>(-1.0, -1.0, 0.0, 1.0);
@@ -20,8 +20,20 @@ fn main(@builtin(vertex_index) index: u32) -> Varyings {
 
 }
 
-
 {$ include 'tone_mapping_pars' $}
+
+struct Unifromss{
+    exposure: f32,
+};
+
+// bindings
+@group(0) @binding(0)
+var colorTex: texture_2d<f32>;
+@group(0) @binding(1)
+var texSampler: sampler;
+@group(0) @binding(2)
+var<uniform> u_effect: Unifromss;
+
 
 @fragment
 fn fs_main(varyings: Varyings) -> @location(0) vec4<f32> {

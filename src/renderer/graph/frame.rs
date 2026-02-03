@@ -28,10 +28,8 @@ use crate::scene::camera::RenderCamera;
 use crate::scene::Scene;
 
 use super::extracted::ExtractedScene;
-use super::passes::{BRDFLutComputePass, ForwardRenderPass, IBLComputePass};
 use super::render_state::RenderState;
-use super::stage::RenderStage;
-use super::builder::FrameBuilder;
+
 
 /// 渲染排序键 (Pipeline ID + Material ID + Depth)
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -94,39 +92,17 @@ impl RenderKey {
 pub struct RenderFrame {
     pub(crate) render_state: RenderState,
     pub(crate) extracted_scene: ExtractedScene,
-    pub(crate) forward_pass: ForwardRenderPass,
-    pub(crate) brdf_pass: BRDFLutComputePass,
-    pub(crate) ibl_pass: IBLComputePass,
+
 }
 
 impl RenderFrame {
-    pub fn new(device: wgpu::Device) -> Self {
+    pub fn new() -> Self {
         Self {
             render_state: RenderState::new(),
             extracted_scene: ExtractedScene::with_capacity(1024),
-            forward_pass: ForwardRenderPass::new(wgpu::Color::BLACK),
-            brdf_pass: BRDFLutComputePass::new(&device),
-            ibl_pass: IBLComputePass::new(&device),
         }
     }
 
-    /// 获取内置的 BRDF LUT 计算 Pass
-    #[inline]
-    pub fn brdf_pass(&self) -> &BRDFLutComputePass {
-        &self.brdf_pass
-    }
-
-    /// 获取内置的 IBL 计算 Pass
-    #[inline]
-    pub fn ibl_pass(&self) -> &IBLComputePass {
-        &self.ibl_pass
-    }
-
-    /// 获取内置的 Forward 渲染 Pass
-    #[inline]
-    pub fn forward_pass(&self) -> &ForwardRenderPass {
-        &self.forward_pass
-    }
 
     /// 获取渲染状态引用
     #[inline]
@@ -172,18 +148,6 @@ impl RenderFrame {
         resource_manager.prepare_global(assets, scene, &self.render_state);
     }
 
-    /// 将内置 Pass 注入到 `FrameBuilder` 中
-    ///
-    /// 这是一个辅助方法，用于在 `FrameComposer` 创建时注入内置 Pass。
-    /// 返回修改后的 `FrameBuilder` 以支持链式调用。
-    #[inline]
-    pub fn inject_builtin_passes<'a>(&'a mut self, mut builder: FrameBuilder<'a>) -> FrameBuilder<'a> {
-        builder
-            .add_node(RenderStage::PreProcess, &mut self.brdf_pass)
-            .add_node(RenderStage::PreProcess, &mut self.ibl_pass)
-            .add_node(RenderStage::Opaque, &mut self.forward_pass);
-        builder
-    }
 
     /// 定期清理资源
     pub fn maybe_prune(&self, resource_manager: &mut ResourceManager) {

@@ -1,18 +1,18 @@
-$$ if tone_mapping_mode == "linear"
+$$ if TONE_MAPPING_MODE == "LINEAR"
     // exposure only
     fn toneMapping(color: vec3<f32>) -> vec3<f32> {
         return saturate(color);
     }
 $$ endif
 
-$$ if tone_mapping_mode == "reinhard"
+$$ if TONE_MAPPING_MODE == "REINHARD"
     // source: https://www.cs.utah.edu/docs/techreports/2002/pdf/UUCS-02-001.pdf
     fn toneMapping(color: vec3<f32>) -> vec3<f32> {
         return saturate(color / (vec3<f32>(1.0) + color));
     }
 $$ endif
 
-$$ if tone_mapping_mode == "cineon"
+$$ if TONE_MAPPING_MODE == "CINEON"
     // source: http://filmicworlds.com/blog/filmic-tonemapping-operators/
     fn toneMapping(color: vec3<f32>) -> vec3<f32> {
         // filmic operator by Jim Hejl and Richard Burgess-Dawson
@@ -21,7 +21,7 @@ $$ if tone_mapping_mode == "cineon"
     }
 $$ endif
 
-$$ if tone_mapping_mode == "aces_filmic"
+$$ if TONE_MAPPING_MODE == "ACES_FILMIC"
     // source: https://github.com/selfshadow/ltc_code/blob/master/webgl/shaders/ltc/ltc_blit.fs
     fn RRTAndODTFit(v: vec3<f32>) -> vec3<f32> {
         let a = v * (v + vec3<f32>(0.0245786)) - vec3<f32>(0.000090537);
@@ -56,7 +56,7 @@ $$ if tone_mapping_mode == "aces_filmic"
     }
 $$ endif
 
-$$ if tone_mapping_mode == "agx"
+$$ if TONE_MAPPING_MODE == "AGXX"
     // Matrices for rec 2020 <> rec 709 color space conversion
     // matrix provided in row-major order so it has been transposed
     // https://www.itu.int/pub/R-REP-BT.2407-201
@@ -133,7 +133,7 @@ $$ if tone_mapping_mode == "agx"
     }
 $$ endif
 
-$$ if tone_mapping_mode == "neutral"
+$$ if TONE_MAPPING_MODE == "NEUTRAL"
 
     // https://modelviewer.dev/examples/tone-mapping
     fn toneMapping(color: vec3<f32>) -> vec3<f32> {

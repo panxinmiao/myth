@@ -128,9 +128,9 @@ impl ForwardRenderPass {
                     // Reverse Z: Greater for depth test
                     depth_compare: if material.depth_test() { wgpu::CompareFunction::Greater } else { wgpu::CompareFunction::Always },
                     blend_state: if material.alpha_mode() == AlphaMode::Blend { Some(wgpu::BlendState::ALPHA_BLENDING) } else { None },
-                    color_format: ctx.wgpu_ctx.view_format,
+                    color_format: ctx.wgpu_ctx.color_format,
                     depth_format: ctx.wgpu_ctx.depth_format,
-                    sample_count: 1,
+                    sample_count: ctx.wgpu_ctx.msaa_samples,
                     front_face: if item.item_variant_flags & 0x1 != 0 { wgpu::FrontFace::Cw } else { wgpu::FrontFace::Ccw },
                 };
 
@@ -297,7 +297,7 @@ impl RenderNode for ForwardRenderPass {
             let pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Forward Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: ctx.surface_view,
+                    view: &ctx.frame_resources.scene_color_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(self.clear_color),

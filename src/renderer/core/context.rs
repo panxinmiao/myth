@@ -31,6 +31,10 @@ pub struct WgpuContext {
     pub depth_format: wgpu::TextureFormat,
 
     pub view_format: wgpu::TextureFormat,
+
+    pub msaa_samples: u32,
+
+    pub color_format: wgpu::TextureFormat,
 }
 
 impl WgpuContext {
@@ -110,6 +114,8 @@ impl WgpuContext {
             config,
             depth_format: settings.depth_format,
             view_format: view_format,
+            color_format: settings.color_format,
+            msaa_samples: settings.msaa_samples,
         })
     }
 
@@ -146,9 +152,9 @@ impl WgpuContext {
     }
 
     /// Returns the surface color format.
-    pub fn color_format(&self) -> wgpu::TextureFormat {
-        self.config.format
-    }
+    // pub fn color_format(&self) -> wgpu::TextureFormat {
+    //     self.config.format
+    // }
 
     /// Returns the current surface dimensions.
     #[inline]

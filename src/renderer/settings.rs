@@ -105,6 +105,12 @@ pub struct RenderSettings {
     /// Set to 1 to disable MSAA. Common values are 2, 4, or 8.
     /// Higher values improve quality but increase GPU load.
     pub msaa_samples: u32,
+
+    /// The color format used for the main render target.
+    /// This format determines how colors are stored in the framebuffer.
+    /// for HDR rendering, `Rgba16Float` or `Rgba32Float` is recommended.
+    /// For standard rendering, `Bgra8Unorm` is commonly used.
+    pub color_format: wgpu::TextureFormat,
 }
 
 impl Default for RenderSettings {
@@ -117,6 +123,7 @@ impl Default for RenderSettings {
             depth_format: wgpu::TextureFormat::Depth32Float,
             vsync: true,
             msaa_samples: 1,
+            color_format: wgpu::TextureFormat::Rgba16Float,
         }
     }
 }
