@@ -20,15 +20,33 @@
 //! ```
 
 use crate::assets::AssetServer;
+use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::builder::FrameBuilder;
-use crate::renderer::graph::context::RenderContext;
+use crate::renderer::graph::context::{FrameResources, RenderContext};
 use crate::renderer::graph::frame::RenderFrame;
 use crate::renderer::graph::node::RenderNode;
 use crate::renderer::graph::stage::RenderStage;
 use crate::renderer::pipeline::PipelineCache;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
+
+
+
+pub struct ComposerContext<'a> {
+    pub wgpu_ctx: &'a mut WgpuContext,
+    pub resource_manager: &'a mut ResourceManager,
+    pub pipeline_cache: &'a mut PipelineCache,
+    pub render_frame: &'a RenderFrame,
+    pub frame_resources: &'a FrameResources,
+    pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
+
+    // 外部场景数据 todo: refactor
+    pub scene: &'a mut Scene,
+    pub camera: &'a RenderCamera,
+    pub assets: &'a AssetServer,
+    pub time: f32,
+}
 
 /// 帧合成器
 ///
@@ -47,21 +65,7 @@ use crate::scene::camera::RenderCamera;
 /// - 所有字段都是引用，无堆分配开销
 pub struct FrameComposer<'a> {
     // GPU 上下文
-    wgpu_ctx: &'a mut WgpuContext,
-    resource_manager: &'a mut ResourceManager,
-    pipeline_cache: &'a mut PipelineCache,
-
-    // 场景数据（暂时需要可变引用，因为内置 Pass 可能修改 environment）
-    // Todo: IBLComputePass 和 BRDFLutComputePass 需要修改 scene.environment。这是设计上的问题 
-    // 理想情况下，这些 Pass 不应该直接修改 Scene，而应该通过返回值或写入 ResourceManager 的方式来更新。
-    // Fix it !
-    scene: &'a mut Scene,
-    camera: &'a RenderCamera,
-    assets: &'a AssetServer,
-    time: f32,
-
-    // 渲染帧数据（持有内置 Pass 和提取的场景数据）
-    render_frame: &'a RenderFrame,
+    ctx: ComposerContext<'a>,
 
     // 构建器（收集渲染节点）
     builder: FrameBuilder<'a>,
@@ -73,31 +77,11 @@ impl<'a> FrameComposer<'a> {
     /// 内部会自动注入内置 Pass（BRDF LUT、IBL、Forward）。
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
-        wgpu_ctx: &'a mut WgpuContext,
-        resource_manager: &'a mut ResourceManager,
-        pipeline_cache: &'a mut PipelineCache,
-        render_frame: &'a mut RenderFrame,
-        scene: &'a mut Scene,
-        camera: &'a RenderCamera,
-        assets: &'a AssetServer,
-        time: f32,
+        builder: FrameBuilder<'a>,
+        ctx: ComposerContext<'a>
     ) -> Self {
-        // 创建 Builder 并注入内置 Pass
-        let mut builder = FrameBuilder::new();
-        builder
-            .add_node(RenderStage::PreProcess, render_frame.brdf_pass())
-            .add_node(RenderStage::PreProcess, render_frame.ibl_pass())
-            .add_node(RenderStage::Opaque, render_frame.forward_pass());
-
         Self {
-            wgpu_ctx,
-            resource_manager,
-            pipeline_cache,
-            render_frame,
-            scene,
-            camera,
-            assets,
-            time,
+            ctx,
             builder,
         }
     }
@@ -120,7 +104,7 @@ impl<'a> FrameComposer<'a> {
     ///     .render();
     /// ```
     #[inline]
-    pub fn add_node(mut self, stage: RenderStage, node: &'a dyn RenderNode) -> Self {
+    pub fn add_node(mut self, stage: RenderStage, node: &'a mut dyn RenderNode) -> Self {
         self.builder.add_node(stage, node);
         self
     }
@@ -131,11 +115,14 @@ impl<'a> FrameComposer<'a> {
     ///
     /// ```ignore
     /// composer
-    ///     .add_nodes(RenderStage::PostProcess, &[&bloom, &fxaa, &tone_mapping])
+    ///     .add_nodes(RenderStage::PostProcess, &[&mut bloom, &mut fxaa, &mut tone_mapping])
     ///     .render();
     /// ```
     #[inline]
-    pub fn add_nodes(mut self, stage: RenderStage, nodes: &[&'a dyn RenderNode]) -> Self {
+    pub fn add_nodes<I>(mut self, stage: RenderStage, nodes: I) -> Self 
+    where 
+        I: IntoIterator<Item = &'a mut dyn RenderNode>
+    {
         self.builder.add_nodes(stage, nodes);
         self
     }
@@ -154,7 +141,7 @@ impl<'a> FrameComposer<'a> {
     /// 此方法消费 `self`，调用后 `FrameComposer` 不可再使用。
     pub fn render(self) {
         // 1. 获取 Surface Texture（延迟到最后一刻，减少持有时间）
-        let output = match self.wgpu_ctx.surface.get_current_texture() {
+        let output = match self.ctx.wgpu_ctx.surface.get_current_texture() {
             Ok(output) => output,
             Err(wgpu::SurfaceError::Lost) => return,
             Err(e) => {
@@ -163,7 +150,7 @@ impl<'a> FrameComposer<'a> {
             }
         };
 
-        let view_format = self.wgpu_ctx.view_format;
+        let view_format = self.ctx.wgpu_ctx.view_format;
 
         let view = output
             .texture
@@ -173,24 +160,29 @@ impl<'a> FrameComposer<'a> {
             });
 
         // 2. 构建 RenderContext
-        let mut ctx = RenderContext {
-            wgpu_ctx: self.wgpu_ctx,
-            resource_manager: self.resource_manager,
-            pipeline_cache: self.pipeline_cache,
-            assets: self.assets,
-            scene: self.scene,
-            camera: self.camera,
+        let mut render_ctx = RenderContext {
+            wgpu_ctx: self.ctx.wgpu_ctx,
+            resource_manager: self.ctx.resource_manager,
+            pipeline_cache: self.ctx.pipeline_cache,
+            assets: self.ctx.assets,
+            scene: self.ctx.scene,
+            camera: self.ctx.camera,
             surface_view: &view,
-            render_state: self.render_frame.render_state(),
-            extracted_scene: self.render_frame.extracted_scene(),
-            time: self.time,
+            render_state: self.ctx.render_frame.render_state(),
+            extracted_scene: self.ctx.render_frame.extracted_scene(),
+            frame_resources: &self.ctx.frame_resources,
+            time: self.ctx.time,
+
+            global_bind_group_cache: self.ctx.global_bind_group_cache,
+            current_pp_input: &self.ctx.frame_resources.scene_color_view,
+            pp_flip_flop: 0,
         };
 
         // 3. Builder 转换为排序后的 RenderGraph
         let graph = self.builder.build();
 
         // 4. 执行渲染图
-        graph.execute(&mut ctx);
+        graph.execute(&mut render_ctx);
 
         // 5. Present
         output.present();

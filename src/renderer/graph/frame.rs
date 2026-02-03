@@ -94,9 +94,9 @@ impl RenderKey {
 pub struct RenderFrame {
     render_state: RenderState,
     extracted_scene: ExtractedScene,
-    forward_pass: ForwardRenderPass,
-    brdf_pass: BRDFLutComputePass,
-    ibl_pass: IBLComputePass,
+    pub(crate) forward_pass: ForwardRenderPass,
+    pub(crate) brdf_pass: BRDFLutComputePass,
+    pub(crate) ibl_pass: IBLComputePass,
 }
 
 impl RenderFrame {
@@ -153,12 +153,9 @@ impl RenderFrame {
     ///
     /// 此方法不获取 Surface，Surface 获取延迟到 `FrameComposer::render()` 中，
     /// 以减少 SwapChain Buffer 的持有时间。
-    #[allow(clippy::too_many_arguments)]
     pub fn extract_and_prepare(
         &mut self,
-        // _wgpu_ctx: &mut crate::renderer::core::WgpuContext,
         resource_manager: &mut ResourceManager,
-        // _pipeline_cache: &mut crate::renderer::pipeline::PipelineCache,
         scene: &mut Scene,
         camera: &RenderCamera,
         assets: &AssetServer,
@@ -180,11 +177,11 @@ impl RenderFrame {
     /// 这是一个辅助方法，用于在 `FrameComposer` 创建时注入内置 Pass。
     /// 返回修改后的 `FrameBuilder` 以支持链式调用。
     #[inline]
-    pub fn inject_builtin_passes<'a>(&'a self, mut builder: FrameBuilder<'a>) -> FrameBuilder<'a> {
+    pub fn inject_builtin_passes<'a>(&'a mut self, mut builder: FrameBuilder<'a>) -> FrameBuilder<'a> {
         builder
-            .add_node(RenderStage::PreProcess, &self.brdf_pass)
-            .add_node(RenderStage::PreProcess, &self.ibl_pass)
-            .add_node(RenderStage::Opaque, &self.forward_pass);
+            .add_node(RenderStage::PreProcess, &mut self.brdf_pass)
+            .add_node(RenderStage::PreProcess, &mut self.ibl_pass)
+            .add_node(RenderStage::Opaque, &mut self.forward_pass);
         builder
     }
 

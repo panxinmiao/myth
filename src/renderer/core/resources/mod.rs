@@ -27,6 +27,7 @@ mod material;
 mod binding;
 mod mipmap;
 mod resource_ids;
+mod tracked;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -48,6 +49,7 @@ use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 
 pub use allocator::ModelBufferAllocator;
 pub use resource_ids::{EnsureResult, ResourceIdSet, BindGroupFingerprint, hash_layout_entries, ResourceId};
+pub use tracked::Tracked;
 
 static NEXT_GPU_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
 

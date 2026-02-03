@@ -2,6 +2,9 @@
 //!
 //! 定义 BindGroup 的资源类型和绑定 Trait
 
+use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
+
 use crate::assets::TextureHandle;
 use crate::resources::texture::{SamplerSource, TextureSource};
 use crate::{Mesh, Scene};
@@ -175,5 +178,55 @@ impl Bindings for Scene {
             wgpu::ShaderStages::FRAGMENT
         );
             
+    }
+}
+
+
+
+pub struct GlobalBindGroupCache {
+    cache: FxHashMap<BindGroupKey, wgpu::BindGroup>,
+}
+
+impl GlobalBindGroupCache {
+    pub fn new() -> Self {
+        Self {
+            cache: FxHashMap::default(),
+        }
+    }
+
+    pub fn get_or_create(
+        &mut self,
+        key: BindGroupKey,
+        factory: impl FnOnce() -> wgpu::BindGroup,
+    ) -> &wgpu::BindGroup {
+        self.cache.entry(key).or_insert_with(factory)
+    }
+
+    /// 在 Resize 时调用，彻底清空
+    pub fn clear(&mut self) {
+        self.cache.clear();
+    }
+}
+
+
+/// 全局 BindGroup 缓存键
+/// 包含 Layout 的唯一标识 + 所有绑定资源的唯一标识
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BindGroupKey {
+    layout_id: u64,      
+    resources: SmallVec<[u64; 8]>,
+}
+
+impl BindGroupKey {
+    pub fn new(layout_id: u64) -> Self {
+        Self {
+            layout_id,
+            resources: SmallVec::with_capacity(8), // 预估常见大小
+        }
+    }
+
+    pub fn with_resource(mut self, id: u64) -> Self {
+        self.resources.push(id);
+        self
     }
 }

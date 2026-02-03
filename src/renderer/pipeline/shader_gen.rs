@@ -95,9 +95,7 @@ pub struct ShaderGenerator;
 impl ShaderGenerator {
     pub fn generate_shader(
         vertex_input_code: &str,
-        global_binding_code: &str,
-        object_binding_code: &str,
-        material_binding_code: &str,
+        binding_code: &str,
         template_name: &str,
         options: &ShaderCompilationOptions,
     ) -> String {
@@ -105,16 +103,12 @@ impl ShaderGenerator {
         let allocator = LocationAllocator::new();
         let loc_value = Value::from_object(allocator);
 
-        let binding_code = format!("{}\n{}\n{}", global_binding_code, material_binding_code, object_binding_code);
-
         let ctx = ShaderContext {
             defines: options.to_template_map(),
             vertex_input_code: Some(vertex_input_code),
             binding_code: &binding_code,
             loc: loc_value,
         };
-
-        let template_name = format!("templates/{}", template_name);
 
         let template = env.get_template(&template_name)
             .expect("Shader template not found");
@@ -124,4 +118,5 @@ impl ShaderGenerator {
 
         format!("// === Auto-generated Unified Shader ===\n{}", source)
     }
+
 }

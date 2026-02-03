@@ -5,6 +5,7 @@
 mod forward;
 mod brdf_lut_compute;
 mod ibl_compute;
+mod tone_mapping;
 
 pub use forward::ForwardRenderPass;
 pub use brdf_lut_compute::BRDFLutComputePass;

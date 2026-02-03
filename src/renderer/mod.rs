@@ -51,8 +51,12 @@ pub mod settings;
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
+use crate::renderer::core::binding::GlobalBindGroupCache;
+use crate::renderer::graph::composer::ComposerContext;
+use crate::{FrameBuilder, RenderStage};
 use crate::assets::AssetServer;
 use crate::errors::Result;
+use crate::renderer::graph::context::FrameResources;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
@@ -78,7 +82,7 @@ use self::settings::RenderSettings;
 pub struct Renderer {
     settings: RenderSettings,
     context: Option<RendererState>,
-    size: [u32; 2],
+    size: (u32, u32),
 }
 
 /// Internal renderer state
@@ -87,6 +91,8 @@ struct RendererState {
     resource_manager: ResourceManager,
     pipeline_cache: PipelineCache,
     render_frame: RenderFrame,
+    frame_resources: FrameResources,
+    global_bind_group_cache: GlobalBindGroupCache,
 }
 
 impl Renderer {
@@ -98,7 +104,7 @@ impl Renderer {
         Self {
             settings,
             context: None,
-            size: [0, 0],
+            size: (0, 0),
         }
     }
 
@@ -117,7 +123,7 @@ impl Renderer {
             return Ok(());
         }
 
-        self.size = [width, height];
+        self.size = (width, height);
 
         // 1. Create WGPU context
         let wgpu_ctx = WgpuContext::new(window, &self.settings, width, height).await?;
@@ -129,12 +135,24 @@ impl Renderer {
         // 3. Create render frame manager
         let render_frame = RenderFrame::new(wgpu_ctx.device.clone());
 
+        // 4. Create frame resources
+        let frame_resources = FrameResources::new(
+            &wgpu_ctx.device,
+            &self.settings,
+            (width, height),
+        );
+
+        // 5. Create global bind group cache
+        let global_bind_group_cache = GlobalBindGroupCache::new();
+
         // 4. Assemble state
         self.context = Some(RendererState {
             wgpu_ctx,
             resource_manager,
             pipeline_cache: PipelineCache::new(),
             render_frame,
+            frame_resources,
+            global_bind_group_cache,
         });
 
         log::info!("Renderer Initialized");
@@ -142,9 +160,10 @@ impl Renderer {
     }
 
     pub fn resize(&mut self, width: u32, height: u32, _scale_factor: f32) {
-        self.size = [width, height];
+        self.size = (width, height);
         if let Some(state) = &mut self.context {
             state.wgpu_ctx.resize(width, height);
+            state.frame_resources.resize(&state.wgpu_ctx.device,  &self.settings, (width, height));
         }
     }
 
@@ -181,7 +200,7 @@ impl Renderer {
         assets: &'a AssetServer,
         time: f32,
     ) -> Option<FrameComposer<'a>> {
-        if self.size[0] == 0 || self.size[1] == 0 {
+        if self.size.0 == 0 || self.size.1 == 0 {
             return None;
         }
 
@@ -198,16 +217,40 @@ impl Renderer {
             time,
         );
 
-        // Return FrameComposer, defer Surface acquisition to render() call
-        Some(FrameComposer::new(
-            &mut state.wgpu_ctx,
-            &mut state.resource_manager,
-            &mut state.pipeline_cache,
-            &mut state.render_frame,
+        let RendererState {
+            wgpu_ctx,
+            resource_manager,
+            pipeline_cache,
+            render_frame,     // 将被 Builder 借用
+            frame_resources,  // 将被 Context 借用
+            global_bind_group_cache,
+        } = state;
+
+        let mut frame_builder = FrameBuilder::new();
+
+        frame_builder
+            .add_node(RenderStage::PreProcess, &mut render_frame.brdf_pass)
+            .add_node(RenderStage::PreProcess, &mut render_frame.ibl_pass)
+            .add_node(RenderStage::Opaque, &mut render_frame.forward_pass);
+
+        let ctx = ComposerContext {
+            wgpu_ctx,
+            resource_manager,
+            pipeline_cache,
+            render_frame,
+            frame_resources,
+            global_bind_group_cache,
+
             scene,
             camera,
             assets,
             time,
+        };
+
+        // Return FrameComposer, defer Surface acquisition to render() call
+        Some(FrameComposer::new(
+            frame_builder,
+            ctx,
         ))
     }
     

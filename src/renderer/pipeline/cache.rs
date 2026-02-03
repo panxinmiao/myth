@@ -14,6 +14,7 @@ use xxhash_rust::xxh3::xxh3_128;
 use crate::renderer::core::BindGroupContext;
 use crate::assets::{GeometryHandle, MaterialHandle};
 
+use crate::renderer::graph::context::FrameResources;
 use crate::renderer::pipeline::shader_gen::{ShaderGenerator, ShaderCompilationOptions};
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 use crate::renderer::core::resources::{GpuGlobalState, GpuMaterial};
@@ -101,16 +102,22 @@ impl PipelineCache {
         gpu_material: &GpuMaterial,
         object_bind_group: &BindGroupContext,
         gpu_world: &GpuGlobalState,
+        frame_resources: Option<&FrameResources>,
     ) -> (wgpu::RenderPipeline, u16) {
         if let Some(cached) = self.canonical_cache.get(&canonical_key) {
             return cached.clone();
         }
 
+        let mut binding_code = format!("{}\n{}\n{}", &gpu_world.binding_wgsl, &gpu_material.binding_wgsl, &object_bind_group.binding_wgsl);
+
+        if let Some(frame_resources) = frame_resources {
+            let frame_binding_code = &frame_resources.screen_bindings_code;
+            binding_code = format!("{}\n{}", binding_code, frame_binding_code);
+        }
+
         let shader_source = ShaderGenerator::generate_shader(
             &vertex_layout.vertex_input_code,
-            &gpu_world.binding_wgsl,
-            &gpu_material.binding_wgsl,
-            &object_bind_group.binding_wgsl,
+            &binding_code,
             template_name,
             options,
         );
@@ -148,13 +155,20 @@ impl PipelineCache {
             })
         );
 
+        let mut bind_group_layouts: smallvec::SmallVec<[&wgpu::BindGroupLayout; 4]> = smallvec::SmallVec::with_capacity(4);
+
+        bind_group_layouts.push(&gpu_world.layout);
+        bind_group_layouts.push(&gpu_material.layout);
+        bind_group_layouts.push(&object_bind_group.layout);
+
+        if let Some(frame_resources) = frame_resources {
+            bind_group_layouts
+                .push(&frame_resources.screen_bind_group_layout);
+        }
+
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &[
-                &gpu_world.layout,
-                &gpu_material.layout,
-                &object_bind_group.layout
-            ],
+            bind_group_layouts: &bind_group_layouts,
             immediate_size: 0,
         });
 
@@ -192,7 +206,11 @@ impl PipelineCache {
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: canonical_key.sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             multiview_mask: None,
             cache: None,
         });

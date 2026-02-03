@@ -2,7 +2,6 @@
 //!
 //! Implements the main drawing logic for the forward rendering pipeline.
 
-use std::cell::RefCell;
 use log::{warn, error};
 use slotmap::Key;
 
@@ -30,25 +29,25 @@ pub struct ForwardRenderPass {
     /// Clear color
     pub clear_color: wgpu::Color,
 
-    commands : RefCell<CommandsBundle>,
+    commands_bundle : CommandsBundle,
 }
 
 impl ForwardRenderPass {
     pub fn new(clear_color: wgpu::Color) -> Self {
         Self {
             clear_color,
-            commands: RefCell::new(CommandsBundle::new()),
+            commands_bundle: CommandsBundle::new(),
         }
     }
 
     /// Prepare and sort render commands
-    fn prepare_and_sort_commands(&self, ctx: &mut RenderContext) {
+    fn prepare_and_sort_commands(&mut self, ctx: &mut RenderContext) {
         // let mut opaque = self.commands.borrow_mut().opaque_commands;
         // let mut transparent = self.commands.borrow_mut().transparent_commands;
 
-        let mut commands_bundle = self.commands.borrow_mut();
+        // let mut commands_bundle = self.commands.borrow_mut();
 
-        commands_bundle.clear();
+        self.commands_bundle.clear();
 
 
         let Some(gpu_world) = ctx.resource_manager.get_global_state(ctx.render_state.id, ctx.extracted_scene.scene_id) else {
@@ -56,8 +55,8 @@ impl ForwardRenderPass {
             return;
         };
 
-        commands_bundle.gpu_global_bind_group_id =gpu_world.bind_group_id;
-        commands_bundle.gpu_global_bind_group = Some(gpu_world.bind_group.clone());
+        self.commands_bundle.gpu_global_bind_group_id =gpu_world.bind_group_id;
+        self.commands_bundle.gpu_global_bind_group = Some(gpu_world.bind_group.clone());
 
         let geo_guard = ctx.assets.geometries.read_lock();
         let mat_guard = ctx.assets.materials.read_lock();
@@ -135,15 +134,23 @@ impl ForwardRenderPass {
                     front_face: if item.item_variant_flags & 0x1 != 0 { wgpu::FrontFace::Cw } else { wgpu::FrontFace::Ccw },
                 };
 
+                let use_transmission = material.use_transmission();
+
+                let framme_resources = match use_transmission {
+                    true => Some(ctx.frame_resources),
+                    false => None,
+                };
+
                 let (pipeline, pipeline_id) = ctx.pipeline_cache.get_pipeline(
                     &ctx.wgpu_ctx.device,
                     material.shader_name(),
                     canonical_key,
                     &options,
                     &gpu_geometry.layout_info,
-                    gpu_material,
-                    object_bind_group,
-                    &gpu_world,
+                    gpu_material,   // group 1: material_bind_group
+                    object_bind_group,    // group 2: object_bind_group
+                    &gpu_world,    // group 0: global_bind_group
+                    framme_resources,    // group 3: screen_bind_group
                 );
 
                 ctx.pipeline_cache.insert_pipeline_fast(fast_key, (pipeline.clone(), pipeline_id));
@@ -169,23 +176,23 @@ impl ForwardRenderPass {
             };
 
             if is_transparent {
-                commands_bundle.insert_transparent(cmd);
+                self.commands_bundle.insert_transparent(cmd);
             } else {
-                commands_bundle.insert_opaque(cmd);
+                self.commands_bundle.insert_opaque(cmd);
             }
         }
 
-        commands_bundle.sort_commands();
+        self.commands_bundle.sort_commands();
     }
 
     /// Upload dynamic Uniform data
-    fn upload_dynamic_uniforms(&self, ctx: &mut RenderContext) {
-        let mut cmds = self.commands.borrow_mut();
-        if cmds.is_empty() {
+    fn upload_dynamic_uniforms(&mut self, ctx: &mut RenderContext) {
+
+        if self.commands_bundle.is_empty() {
             return;
         }
 
-        let opaque = &mut cmds.opaque_commands;
+        let opaque = &mut self.commands_bundle.opaque_commands;
 
         for cmd in opaque.iter_mut() {
             let world_matrix_inverse = cmd.model_matrix.inverse();
@@ -201,7 +208,7 @@ impl ForwardRenderPass {
             cmd.dynamic_offset = offset;
         }
 
-        let transparent = &mut cmds.transparent_commands;
+        let transparent = &mut self.commands_bundle.transparent_commands;
 
         for cmd in transparent.iter_mut() {
             let world_matrix_inverse = cmd.model_matrix.inverse();
@@ -269,20 +276,23 @@ impl RenderNode for ForwardRenderPass {
         "Forward Pass"
     }
 
-    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+    fn prepare(&mut self, ctx: &mut RenderContext) {
         // 1. Prepare render commands (using RefCell for interior mutability)
         self.prepare_and_sort_commands(ctx);
 
         // 2. Upload dynamic Uniform
         self.upload_dynamic_uniforms(ctx);
+    }
+
+    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
 
         // 3. Get depth view
-        let depth_view = ctx.wgpu_ctx.get_depth_view();
+        let depth_view = &ctx.frame_resources.depth_view;
 
         // 4. Begin render pass and execute drawing
         {
             // Get immutable borrow (must be declared before TrackedRenderPass to ensure lifetime)
-            let commands_bundle = self.commands.borrow();
+            let commands_bundle = &self.commands_bundle;
 
             let pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Forward Render Pass"),

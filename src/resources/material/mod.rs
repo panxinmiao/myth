@@ -706,6 +706,28 @@ impl Material {
         }
     }
 
+    #[inline]
+    pub fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource)) {
+        self.data.visit_textures(visitor)
+    }
+
+    #[inline]
+    pub fn uniform_buffer(&self) -> BufferRef {
+        self.data.uniform_buffer()
+    }
+
+    #[inline]
+    pub fn with_uniform_bytes(&self, f: &mut dyn FnMut(&[u8])) {
+        self.data.with_uniform_bytes(f)
+    }
+
+    #[inline]
+    pub(crate) fn use_transmission(&self) -> bool {
+        match &self.data {
+            MaterialType::Physical(m) => m.features.read().contains(PhysicalFeatures::TRANSMISSION),
+            _ => false,
+        }
+    }
 }
 
 // ============================================================================

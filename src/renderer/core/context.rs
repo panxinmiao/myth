@@ -29,10 +29,6 @@ pub struct WgpuContext {
 
     /// Depth buffer format
     pub depth_format: wgpu::TextureFormat,
-    /// Depth buffer texture view (recreated on resize)
-    pub depth_texture_view: wgpu::TextureView,
-    /// Clear color for the frame
-    pub clear_color: wgpu::Color,
 
     pub view_format: wgpu::TextureFormat,
 }
@@ -107,17 +103,12 @@ impl WgpuContext {
 
         surface.configure(&device, &config);
 
-        let depth_texture_view =
-            Self::create_depth_texture(&device, &config, settings.depth_format);
-
         Ok(Self {
             device,
             queue,
             surface,
             config,
             depth_format: settings.depth_format,
-            depth_texture_view,
-            clear_color: settings.clear_color,
             view_format: view_format,
         })
     }
@@ -127,7 +118,6 @@ impl WgpuContext {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
-            self.depth_texture_view = Self::create_depth_texture(&self.device, &self.config, self.depth_format);
         }
     }
 
@@ -158,14 +148,6 @@ impl WgpuContext {
     /// Returns the surface color format.
     pub fn color_format(&self) -> wgpu::TextureFormat {
         self.config.format
-    }
-
-    /// Returns the depth texture view.
-    ///
-    /// The depth texture is automatically recreated on resize.
-    #[inline]
-    pub fn get_depth_view(&self) -> &wgpu::TextureView {
-        &self.depth_texture_view
     }
 
     /// Returns the current surface dimensions.

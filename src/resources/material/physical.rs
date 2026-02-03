@@ -21,6 +21,7 @@ bitflags! {
         const SHEEN = 1 << 4;
         const IRIDESCENCE = 1 << 5;
         const ANISOTROPY = 1 << 6;
+        const TRANSMISSION = 1 << 7;
 
         //
         const STANDARD_PBR = Self::IBL.bits() | Self::SPECULAR.bits() | Self::IOR.bits();
@@ -239,7 +240,7 @@ impl_material_api!(
 
 impl_material_trait!(
     MeshPhysicalMaterial,
-    "mesh_physical",
+    "template/mesh_physical",
     MeshPhysicalUniforms,
     textures: [
         map,

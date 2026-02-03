@@ -11,14 +11,13 @@ use super::context::RenderContext;
 /// 渲染节点条目
 /// 
 /// 存储节点引用及其所属阶段，用于排序和执行。
-#[derive(Clone, Copy)]
 struct NodeEntry<'a> {
     /// 渲染阶段
     stage: RenderStage,
     /// 阶段内的插入顺序（用于稳定排序）
     order: u16,
     /// 节点引用
-    node: &'a dyn RenderNode,
+    node: &'a mut dyn RenderNode,
 }
 
 /// 帧构建器
@@ -100,7 +99,7 @@ impl<'a> FrameBuilder<'a> {
     /// 
     /// 返回 `&mut Self` 以支持链式调用。
     #[inline]
-    pub fn add_node(&mut self, stage: RenderStage, node: &'a dyn RenderNode) -> &mut Self {
+    pub fn add_node(&mut self, stage: RenderStage, node: &'a mut dyn RenderNode) -> &mut Self {
         self.nodes.push(NodeEntry {
             stage,
             order: self.next_order,
@@ -114,9 +113,13 @@ impl<'a> FrameBuilder<'a> {
     /// 
     /// 适用于添加多个后处理效果或多个 UI 层。
     #[inline]
-    pub fn add_nodes(&mut self, stage: RenderStage, nodes: &[&'a dyn RenderNode]) -> &mut Self {
+    pub fn add_nodes<I>(&mut self, stage: RenderStage, nodes: I) -> &mut Self 
+    where 
+        I: IntoIterator<Item = &'a mut dyn RenderNode>
+    {
         for node in nodes {
-            self.add_node(stage, *node);
+            // 这里 node 已经是 &'a mut dyn RenderNode 了，直接移动进去
+            self.add_node(stage, node);
         }
         self
     }
@@ -149,23 +152,23 @@ impl<'a> FrameBuilder<'a> {
     /// 1. 按 `RenderStage` 排序（PreProcess → UI）
     /// 2. 同阶段内按添加顺序排序
     /// 3. 构建 `RenderGraph` 并执行
-    pub fn execute(mut self, ctx: &mut RenderContext) {
-        if self.nodes.is_empty() {
-            return;
-        }
+    // pub fn execute(mut self, ctx: &mut RenderContext) {
+    //     if self.nodes.is_empty() {
+    //         return;
+    //     }
         
-        // 排序：先按阶段，再按插入顺序
-        self.nodes.sort_unstable_by_key(|e| (e.stage.order(), e.order));
+    //     // 排序：先按阶段，再按插入顺序
+    //     self.nodes.sort_unstable_by_key(|e| (e.stage.order(), e.order));
         
-        // 构建 RenderGraph
-        let mut graph = RenderGraph::with_capacity(self.nodes.len());
-        for entry in &self.nodes {
-            graph.add_node(entry.node);
-        }
+    //     // 构建 RenderGraph
+    //     let mut graph = RenderGraph::with_capacity(self.nodes.len());
+    //     for entry in &self.nodes {
+    //         graph.add_node(entry.node);
+    //     }
         
-        // 执行
-        graph.execute(ctx);
-    }
+    //     // 执行
+    //     graph.execute(ctx);
+    // }
     
     /// 构建 RenderGraph 但不执行（用于调试或延迟执行）
     /// 
@@ -176,7 +179,10 @@ impl<'a> FrameBuilder<'a> {
         self.nodes.sort_unstable_by_key(|e| (e.stage.order(), e.order));
         
         let mut graph = RenderGraph::with_capacity(self.nodes.len());
-        for entry in &self.nodes {
+
+        for entry in self.nodes.into_iter() {
+            // 现在我们可以把 entry.node (即 &'a mut dyn RenderNode) 
+            // 移动(Move) 进 graph 中了
             graph.add_node(entry.node);
         }
         
@@ -204,23 +210,23 @@ mod tests {
     
     #[test]
     fn test_builder_chaining() {
-        let node_a = DummyNode("A");
-        let node_b = DummyNode("B");
+        let mut node_a = DummyNode("A");
+        let mut node_b = DummyNode("B");
         
         let mut builder = FrameBuilder::new();
         builder
-            .add_node(RenderStage::Opaque, &node_a)
-            .add_node(RenderStage::UI, &node_b);
+            .add_node(RenderStage::Opaque, &mut node_a)
+            .add_node(RenderStage::UI, &mut node_b);
         
         assert_eq!(builder.node_count(), 2);
     }
     
     #[test]
     fn test_stage_detection() {
-        let node = DummyNode("Test");
+        let mut node = DummyNode("Test");
         
         let mut builder = FrameBuilder::new();
-        builder.add_node(RenderStage::PostProcess, &node);
+        builder.add_node(RenderStage::PostProcess, &mut node);
         
         assert!(builder.has_stage(RenderStage::PostProcess));
         assert!(!builder.has_stage(RenderStage::UI));

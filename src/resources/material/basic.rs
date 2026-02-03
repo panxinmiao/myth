@@ -63,7 +63,7 @@ impl_material_api!(
 
 impl_material_trait!(
     MeshBasicMaterial,
-    "mesh_basic",
+    "template/mesh_basic",
     MeshBasicUniforms,
     textures: [
         map,

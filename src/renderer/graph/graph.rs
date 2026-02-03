@@ -3,6 +3,8 @@
 //! `RenderGraph` 管理渲染节点的执行顺序。
 //! 采用瞬态图设计，每帧创建新的图实例，只存储节点引用。
 
+use smallvec::SmallVec;
+
 use super::node::RenderNode;
 use super::context::RenderContext;
 
@@ -20,7 +22,7 @@ use super::context::RenderContext;
 /// - 每帧重建图的开销约等于几次指针 push，可忽略不计
 /// - 后续可扩展为 DAG 结构以支持并行编码
 pub struct RenderGraph<'a> {
-    nodes: Vec<&'a dyn RenderNode>,
+    nodes: SmallVec<[&'a mut dyn RenderNode; 8]>,
 }
 
 impl<'a> Default for RenderGraph<'a> {
@@ -33,21 +35,27 @@ impl<'a> RenderGraph<'a> {
     /// 创建空的渲染图
     #[inline]
     pub fn new() -> Self {
-        Self { nodes: Vec::new() }
+        Self { nodes: SmallVec::new() }
     }
 
     /// 预分配节点容量
     #[inline]
     pub fn with_capacity(capacity: usize) -> Self {
-        Self { nodes: Vec::with_capacity(capacity) }
+        Self { nodes: SmallVec::with_capacity(capacity) }
     }
 
     /// 添加渲染节点引用
     /// 
     /// 节点按添加顺序执行。
     #[inline]
-    pub fn add_node(&mut self, node: &'a dyn RenderNode) {
+    pub fn add_node(&mut self, node: &'a mut dyn RenderNode) {
         self.nodes.push(node);
+    }
+
+    pub fn prepare(&mut self, ctx: &mut RenderContext) {
+        for node in &mut self.nodes {
+            node.prepare(ctx);
+        }
     }
 
     /// 执行渲染图

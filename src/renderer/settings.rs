@@ -98,6 +98,13 @@ pub struct RenderSettings {
     /// When `false`, the framerate is uncapped, which may cause tearing
     /// but reduces input latency.
     pub vsync: bool,
+
+
+    /// Number of samples for multi-sample anti-aliasing (MSAA).
+    ///
+    /// Set to 1 to disable MSAA. Common values are 2, 4, or 8.
+    /// Higher values improve quality but increase GPU load.
+    pub msaa_samples: u32,
 }
 
 impl Default for RenderSettings {
@@ -109,6 +116,7 @@ impl Default for RenderSettings {
             clear_color: wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
             depth_format: wgpu::TextureFormat::Depth32Float,
             vsync: true,
+            msaa_samples: 1,
         }
     }
 }

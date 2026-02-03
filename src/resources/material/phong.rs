@@ -80,7 +80,7 @@ impl_material_api!(
 
 impl_material_trait!(
     MeshPhongMaterial,
-    "mesh_phong",
+    "template/mesh_phong",
     MeshPhongUniforms,
     textures: [
         map,
