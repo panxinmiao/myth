@@ -6,7 +6,6 @@
 use super::node::RenderNode;
 use super::stage::RenderStage;
 use super::graph::RenderGraph;
-use super::context::RenderContext;
 
 /// 渲染节点条目
 /// 
@@ -194,6 +193,7 @@ impl<'a> FrameBuilder<'a> {
 mod tests {
     use super::*;
     use wgpu::CommandEncoder;
+    use super::super::context::RenderContext;
     
     /// 测试用的空节点
     struct DummyNode(&'static str);
@@ -202,7 +202,6 @@ mod tests {
         fn name(&self) -> &str {
             self.0
         }
-        
         fn run(&self, _ctx: &mut RenderContext, _encoder: &mut CommandEncoder) {
             // 空实现
         }

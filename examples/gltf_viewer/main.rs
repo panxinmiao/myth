@@ -395,10 +395,10 @@ impl AppHandler for GltfViewer {
 
     }
 
-    fn compose_frame<'a>(&'a self, composer: three::renderer::graph::FrameComposer<'a>) {
+    fn compose_frame<'a>(&'a mut self, composer: three::renderer::graph::FrameComposer<'a>) {
         if self.show_ui {
             composer
-                .add_node(RenderStage::UI, &self.ui_pass)
+                .add_node(RenderStage::UI, &mut self.ui_pass)
                 .render();
         }else{
             composer.render();

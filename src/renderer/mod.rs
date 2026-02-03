@@ -237,7 +237,10 @@ impl Renderer {
             wgpu_ctx,
             resource_manager,
             pipeline_cache,
-            render_frame,
+
+            extracted_scene: &render_frame.extracted_scene,
+            render_state: &render_frame.render_state,
+
             frame_resources,
             global_bind_group_cache,
 

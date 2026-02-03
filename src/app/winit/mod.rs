@@ -159,14 +159,15 @@ pub trait AppHandler: Sized + 'static {
     /// # Example
     ///
     /// ```rust,ignore
-    /// fn compose_frame<'a>(&'a self, composer: FrameComposer<'a>) {
+    /// fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
     ///     composer
-    ///         .add_node(RenderStage::UI, &self.ui_pass)
-    ///         .add_node(RenderStage::PostProcess, &self.bloom_pass)
+    ///         .add_node(RenderStage::UI, &mut self.ui_pass)
+    ///         .add_node(RenderStage::PostProcess, &mut self.bloom_pass)
     ///         .render();
     /// }
     /// ```
-    fn compose_frame<'a>(&'a self, composer: FrameComposer<'a>) {
+
+    fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
         composer.render();
     }
 }
@@ -371,7 +372,7 @@ impl<H: AppHandler> AppRunner<H> {
     }
 
     fn render_frame(&mut self) {
-        let (Some(engine), Some(user_state)) = (&mut self.engine, &self.user_state) else {
+        let (Some(engine), Some(user_state)) = (&mut self.engine, &mut self.user_state) else {
             return;
         };
 

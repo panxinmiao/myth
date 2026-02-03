@@ -92,8 +92,8 @@ impl RenderKey {
 /// - 命令列表在 Pass 内部管理，避免跨帧分配
 /// - `FrameComposer` 每帧创建，但开销极低（仅 Vec 指针操作）
 pub struct RenderFrame {
-    render_state: RenderState,
-    extracted_scene: ExtractedScene,
+    pub(crate) render_state: RenderState,
+    pub(crate) extracted_scene: ExtractedScene,
     pub(crate) forward_pass: ForwardRenderPass,
     pub(crate) brdf_pass: BRDFLutComputePass,
     pub(crate) ibl_pass: IBLComputePass,

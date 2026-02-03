@@ -20,11 +20,12 @@
 //! ```
 
 use crate::assets::AssetServer;
+use crate::render::RenderState;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::{ResourceManager, WgpuContext};
+use crate::renderer::graph::ExtractedScene;
 use crate::renderer::graph::builder::FrameBuilder;
 use crate::renderer::graph::context::{FrameResources, RenderContext};
-use crate::renderer::graph::frame::RenderFrame;
 use crate::renderer::graph::node::RenderNode;
 use crate::renderer::graph::stage::RenderStage;
 use crate::renderer::pipeline::PipelineCache;
@@ -37,7 +38,10 @@ pub struct ComposerContext<'a> {
     pub wgpu_ctx: &'a mut WgpuContext,
     pub resource_manager: &'a mut ResourceManager,
     pub pipeline_cache: &'a mut PipelineCache,
-    pub render_frame: &'a RenderFrame,
+
+    pub extracted_scene: &'a ExtractedScene,
+    pub render_state: &'a RenderState,
+
     pub frame_resources: &'a FrameResources,
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
 
@@ -168,8 +172,8 @@ impl<'a> FrameComposer<'a> {
             scene: self.ctx.scene,
             camera: self.ctx.camera,
             surface_view: &view,
-            render_state: self.ctx.render_frame.render_state(),
-            extracted_scene: self.ctx.render_frame.extracted_scene(),
+            render_state: self.ctx.render_state,
+            extracted_scene: self.ctx.extracted_scene,
             frame_resources: &self.ctx.frame_resources,
             time: self.ctx.time,
 
@@ -179,7 +183,9 @@ impl<'a> FrameComposer<'a> {
         };
 
         // 3. Builder 转换为排序后的 RenderGraph
-        let graph = self.builder.build();
+        let mut graph = self.builder.build();
+
+        graph.prepare(&mut render_ctx);
 
         // 4. 执行渲染图
         graph.execute(&mut render_ctx);

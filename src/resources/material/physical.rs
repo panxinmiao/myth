@@ -240,7 +240,7 @@ impl_material_api!(
 
 impl_material_trait!(
     MeshPhysicalMaterial,
-    "template/mesh_physical",
+    "templates/mesh_physical",
     MeshPhysicalUniforms,
     textures: [
         map,
