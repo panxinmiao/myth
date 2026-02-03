@@ -29,26 +29,46 @@ pub struct ForwardRenderPass {
     /// Clear color
     pub clear_color: wgpu::Color,
 
+    pub(crate) output_to_screen: bool,
+
     commands_bundle : CommandsBundle,
 }
 
 impl ForwardRenderPass {
-    pub fn new(clear_color: wgpu::Color) -> Self {
+    pub fn new(clear_color: wgpu::Color, output_to_screen: bool) -> Self {
         Self {
             clear_color,
             commands_bundle: CommandsBundle::new(),
+            output_to_screen,
+        }
+    }
+
+    // color view, resolve view
+    fn get_render_target<'a>(&self, ctx: &'a RenderContext) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>,) {
+        let target_view = if self.output_to_screen {
+            ctx.surface_view
+        } else {
+            &ctx.frame_resources.scene_color_view[0]
+        };
+        
+        let is_msaa = ctx.wgpu_ctx.msaa_samples > 1;
+    
+        if is_msaa {
+            let msaa_view = ctx.frame_resources.scene_msaa_view.as_ref().expect("MSAA view missing");
+            ( msaa_view, Some(target_view) )
+        } else {
+            ( target_view, None )
         }
     }
 
     /// Prepare and sort render commands
     fn prepare_and_sort_commands(&mut self, ctx: &mut RenderContext) {
-        // let mut opaque = self.commands.borrow_mut().opaque_commands;
-        // let mut transparent = self.commands.borrow_mut().transparent_commands;
 
-        // let mut commands_bundle = self.commands.borrow_mut();
+        let (render_target, resolve_target) = self.get_render_target(ctx);
+        self.commands_bundle.color_view = Some(render_target.clone());
+        self.commands_bundle.resolve_target = resolve_target.cloned();
 
         self.commands_bundle.clear();
-
 
         let Some(gpu_world) = ctx.resource_manager.get_global_state(ctx.render_state.id, ctx.extracted_scene.scene_id) else {
             error!("Render Environment missing for render_state_id {}, scene_id {}", ctx.render_state.id, ctx.extracted_scene.scene_id);
@@ -106,8 +126,6 @@ impl ForwardRenderPass {
 
                 let mat_defines = material.shader_defines();
 
-                // let object_defines = item.item_shader_defines;
-
                 let options = ShaderCompilationOptions::from_merged(
                     &mat_defines,
                     &geo_defines,
@@ -128,7 +146,7 @@ impl ForwardRenderPass {
                     // Reverse Z: Greater for depth test
                     depth_compare: if material.depth_test() { wgpu::CompareFunction::Greater } else { wgpu::CompareFunction::Always },
                     blend_state: if material.alpha_mode() == AlphaMode::Blend { Some(wgpu::BlendState::ALPHA_BLENDING) } else { None },
-                    color_format: ctx.wgpu_ctx.color_format,
+                    color_format: ctx.get_output_format(self.output_to_screen()),
                     depth_format: ctx.wgpu_ctx.depth_format,
                     sample_count: ctx.wgpu_ctx.msaa_samples,
                     front_face: if item.item_variant_flags & 0x1 != 0 { wgpu::FrontFace::Cw } else { wgpu::FrontFace::Ccw },
@@ -181,6 +199,8 @@ impl ForwardRenderPass {
                 self.commands_bundle.insert_opaque(cmd);
             }
         }
+
+
 
         self.commands_bundle.sort_commands();
     }
@@ -276,6 +296,11 @@ impl RenderNode for ForwardRenderPass {
         "Forward Pass"
     }
 
+    #[inline]
+    fn output_to_screen(&self) -> bool {
+        self.output_to_screen
+    }
+
     fn prepare(&mut self, ctx: &mut RenderContext) {
         // 1. Prepare render commands (using RefCell for interior mutability)
         self.prepare_and_sort_commands(ctx);
@@ -289,6 +314,13 @@ impl RenderNode for ForwardRenderPass {
         // 3. Get depth view
         let depth_view = &ctx.frame_resources.depth_view;
 
+        let Some(color_view) = &self.commands_bundle.color_view else {
+            log::error!("ForwardRenderPass: color_view missing");
+            return;
+        };
+
+        let resolve_view = self.commands_bundle.resolve_target.as_ref();
+
         // 4. Begin render pass and execute drawing
         {
             // Get immutable borrow (must be declared before TrackedRenderPass to ensure lifetime)
@@ -297,8 +329,8 @@ impl RenderNode for ForwardRenderPass {
             let pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Forward Render Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &ctx.frame_resources.scene_color_view,
-                    resolve_target: None,
+                    view: color_view,
+                    resolve_target: resolve_view,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(self.clear_color),
                         store: wgpu::StoreOp::Store,
@@ -359,6 +391,8 @@ struct CommandsBundle {
     transparent_commands: Vec<RenderCommand>,
     gpu_global_bind_group_id: u64,
     gpu_global_bind_group: Option<wgpu::BindGroup>,
+    color_view: Option<wgpu::TextureView>,
+    resolve_target: Option<wgpu::TextureView>,
 }
 
 impl CommandsBundle {
@@ -368,6 +402,8 @@ impl CommandsBundle {
             transparent_commands: Vec::with_capacity(128),
             gpu_global_bind_group_id: 0,
             gpu_global_bind_group: None,
+            color_view: None,
+            resolve_target: None,
         }
     }
 

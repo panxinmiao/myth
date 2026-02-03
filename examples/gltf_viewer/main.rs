@@ -214,7 +214,7 @@ impl AppHandler for GltfViewer {
         let wgpu_ctx = engine.renderer.wgpu_ctx().expect("Renderer not initialized");
         let ui_pass = UiPass::new(
             &wgpu_ctx.device,
-            wgpu_ctx.view_format,
+            wgpu_ctx.surface_view_format,
             window,
         );
 

@@ -30,11 +30,13 @@ pub struct WgpuContext {
     /// Depth buffer format
     pub depth_format: wgpu::TextureFormat,
 
-    pub view_format: wgpu::TextureFormat,
+    pub surface_view_format: wgpu::TextureFormat,
 
     pub msaa_samples: u32,
 
     pub color_format: wgpu::TextureFormat,
+
+    pub straightforward: bool,
 }
 
 impl WgpuContext {
@@ -113,9 +115,10 @@ impl WgpuContext {
             surface,
             config,
             depth_format: settings.depth_format,
-            view_format: view_format,
+            surface_view_format: view_format,
             color_format: settings.color_format,
             msaa_samples: settings.msaa_samples,
+            straightforward: settings.straightforward,
         })
     }
 

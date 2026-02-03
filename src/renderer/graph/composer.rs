@@ -154,14 +154,15 @@ impl<'a> FrameComposer<'a> {
             }
         };
 
-        let view_format = self.ctx.wgpu_ctx.view_format;
+        let view_format = self.ctx.wgpu_ctx.surface_view_format;
 
-        let view = output
+        let surface_view = output
             .texture
             .create_view(&wgpu::TextureViewDescriptor{
                 format: Some(view_format),
                 ..Default::default()
             });
+
 
         // 2. 构建 RenderContext
         let mut render_ctx = RenderContext {
@@ -171,15 +172,15 @@ impl<'a> FrameComposer<'a> {
             assets: self.ctx.assets,
             scene: self.ctx.scene,
             camera: self.ctx.camera,
-            surface_view: &view,
+            surface_view: &surface_view,
             render_state: self.ctx.render_state,
             extracted_scene: self.ctx.extracted_scene,
             frame_resources: &self.ctx.frame_resources,
             time: self.ctx.time,
 
             global_bind_group_cache: self.ctx.global_bind_group_cache,
-            current_pp_input: &self.ctx.frame_resources.scene_color_view,
-            pp_flip_flop: 0,
+            // current_color_texture_view: &self.ctx.frame_resources.scene_color_view[0],
+            color_view_flip_flop: 0,
         };
 
         // 3. Builder 转换为排序后的 RenderGraph

@@ -84,12 +84,6 @@ pub struct RenderSettings {
     ///
     /// This color is used to clear the framebuffer at the start of each frame.
     pub clear_color: wgpu::Color,
-    
-    /// Depth buffer texture format.
-    ///
-    /// `Depth32Float` is recommended for reverse-Z rendering (better precision).
-    /// `Depth24PlusStencil8` can be used if stencil buffer is needed.
-    pub depth_format: wgpu::TextureFormat,
 
     /// Enable vertical synchronization (VSync).
     ///
@@ -99,17 +93,32 @@ pub struct RenderSettings {
     /// but reduces input latency.
     pub vsync: bool,
 
-
     /// Number of samples for multi-sample anti-aliasing (MSAA).
     ///
     /// Set to 1 to disable MSAA. Common values are 2, 4, or 8.
     /// Higher values improve quality but increase GPU load.
     pub msaa_samples: u32,
 
+    /// Depth buffer texture format.
+    ///
+    /// `Depth32Float` is recommended for reverse-Z rendering (better precision).
+    /// `Depth24PlusStencil8` can be used if stencil buffer is needed.
+    pub depth_format: wgpu::TextureFormat,
+
+    /// Whether to use straightforward rendering mode.
+    /// 
+    /// if true, the main scene will be rendered directly to the screen surface,
+    /// bypassing intermediate render targets and post-processing.
+    /// This can improve performance for simple scenes without effects.
+    pub straightforward: bool,
+
     /// The color format used for the main render target.
+    /// 
     /// This format determines how colors are stored in the framebuffer.
     /// for HDR rendering, `Rgba16Float` or `Rgba32Float` is recommended.
     /// For standard rendering, `Bgra8Unorm` is commonly used.
+    /// Note, if `straightforward` is true, this configuuration will be ignored,
+    /// and the format will match the surface's preferred format.
     pub color_format: wgpu::TextureFormat,
 }
 
@@ -120,10 +129,11 @@ impl Default for RenderSettings {
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             clear_color: wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
-            depth_format: wgpu::TextureFormat::Depth32Float,
             vsync: true,
             msaa_samples: 1,
+            depth_format: wgpu::TextureFormat::Depth32Float,
             color_format: wgpu::TextureFormat::Rgba16Float,
+            straightforward: true,
         }
     }
 }

@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use rustc_hash::FxHashMap;
 
-use crate::{ShaderDefines, render::{RenderContext, RenderNode, core::WgpuContext}, renderer::{core::{binding::BindGroupKey, resources::Tracked}, pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator}}, resources::buffer::{CpuBuffer, GpuData}};
+use crate::{ShaderDefines, render::{RenderContext, RenderNode}, renderer::{core::{binding::BindGroupKey, resources::Tracked}, pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator}}, resources::buffer::{CpuBuffer, GpuData}};
 
 
 
@@ -73,23 +73,13 @@ pub struct ToneMapPass {
     // 运行时状态 (Prepare 阶段生成，Run 阶段使用)
     current_bind_group: Option<wgpu::BindGroup>,
     current_pipeline: Option<wgpu::RenderPipeline>,
+
+    // target_view: Option<wgpu::TextureView>,
+
 }
 
 impl ToneMapPass {
     pub fn new(device: &wgpu::Device) -> Self {
-
-        // let shader_code = ShaderGenerator::generate_shader(
-        //     "",
-        //     "",
-        //     "passes/tone_mapping",
-        //     &Default::default(),
-        // );
-
-        // let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        //     label: Some("Tone Map Shader"),
-        //     source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(&shader_code)),
-        // });
-
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Tone Map Layout"),
             entries: &[
@@ -144,6 +134,7 @@ impl ToneMapPass {
             pipeline_cache: FxHashMap::default(),
             current_pipeline: None,
             current_bind_group: None,
+            // target_view: None,
         }
 
     }
@@ -166,7 +157,7 @@ impl ToneMapPass {
     }
 
 
-    fn get_or_create_pipeline(&mut self, ctx: &WgpuContext) -> wgpu::RenderPipeline {
+    fn get_or_create_pipeline(&mut self, device: &wgpu::Device, view_format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
         if let Some(pipeline) = self.pipeline_cache.get(&self.current_mode) {
             return pipeline.clone();
         }
@@ -189,20 +180,20 @@ impl ToneMapPass {
             &options,
         );
 
-        let shader = ctx.device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some(&format!("ToneMap Shader {:?}", self.current_mode)),
             source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_code)),
         });
 
-        // 3. 创建 Pipeline Layout (复用 self.layout)
-        let pipeline_layout = ctx.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+        // 3.  创建 Pipeline Layout (复用 self.layout)
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Tone Map Pipeline Layout"),
             bind_group_layouts: &[&self.layout],
             immediate_size: 0,
         });
 
         // 4. 创建 Pipeline
-        let pipeline = ctx.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(&format!("ToneMap Pipeline {:?}", self.current_mode)),
             layout: Some(&pipeline_layout),
             vertex: wgpu::VertexState {
@@ -215,7 +206,7 @@ impl ToneMapPass {
                 module: &shader,
                 entry_point: Some("fs_main"),
                 targets: &[Some(wgpu::ColorTargetState {
-                    format: ctx.view_format,
+                    format: view_format,
                     blend: Some(wgpu::BlendState::REPLACE),
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
@@ -238,10 +229,21 @@ impl ToneMapPass {
 
 impl RenderNode for ToneMapPass {
 
+    #[inline]
+    fn output_to_screen(&self) -> bool {
+        true
+    }
+
     fn prepare(&mut self, ctx: &mut RenderContext) {
         // let (input, output) = ctx.acquire_post_process_io();
 
-        let input_view = ctx.current_post_process_output();
+        let (input_view, _out_view) = ctx.acquire_pass_io();
+
+        // if self.output_to_screen() {
+        //     self.target_view = Some(ctx.surface_view.clone());
+        // } else {
+        //     self.target_view = Some(out_view.clone());
+        // }
 
         let gpu_buffer_id = ctx.resource_manager.ensure_buffer_id(&self.uniforms);
 
@@ -280,7 +282,7 @@ impl RenderNode for ToneMapPass {
         self.current_bind_group = Some(bind_group.clone());
 
         if self.current_pipeline.is_none() {
-            self.current_pipeline = Some(self.get_or_create_pipeline(&ctx.wgpu_ctx));
+            self.current_pipeline = Some(self.get_or_create_pipeline(&ctx.wgpu_ctx.device, ctx.get_output_format(self.output_to_screen())));
         }
 
     }
@@ -288,17 +290,20 @@ impl RenderNode for ToneMapPass {
 
 
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-        //todo: 分离两个阶段。
-        // self.prepare(ctx);
+
+        // let Some(target_view) = &self.target_view else {
+        //     log::error!("ToneMapPass missing target_view");
+        //     return;
+        // };
 
         // 输出到 Surface (屏幕)
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("Final ToneMap Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: ctx.surface_view, 
-                resolve_target: None,
+                view: ctx.surface_view,    // We assume tone mapping always outputs to screen
+                resolve_target: None,   
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    load: wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
@@ -314,8 +319,6 @@ impl RenderNode for ToneMapPass {
                 pass.set_bind_group(0, bg, &[]);
             }
         } 
-        // pass.set_pipeline(&self.pipeline);
-        // pass.set_bind_group(0, &ctx.frame_resources.screen_bind_group, &[]);
         pass.draw(0..3, 0..1); // 全屏三角形
 
     }

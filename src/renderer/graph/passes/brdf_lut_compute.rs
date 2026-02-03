@@ -56,6 +56,10 @@ impl BRDFLutComputePass {
 impl RenderNode for BRDFLutComputePass {
     fn name(&self) -> &str { "BRDF LUT Gen" }
 
+    fn output_to_screen(&self) -> bool {
+        false
+    }
+
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
         // 检查是否已经生成过 BRDF LUT
         if ctx.scene.environment.brdf_lut.is_some() {

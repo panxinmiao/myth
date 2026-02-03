@@ -147,8 +147,9 @@ impl Renderer {
 
         // 4. Create frame resources
         let frame_resources = FrameResources::new(
-            &wgpu_ctx.device,
-            &self.settings,
+            &wgpu_ctx,
+            // &self.settings,
+
             (width, height),
         );
 
@@ -156,7 +157,7 @@ impl Renderer {
         let global_bind_group_cache = GlobalBindGroupCache::new();
 
         // build passes
-        let forward_pass: ForwardRenderPass = ForwardRenderPass::new(wgpu::Color::BLACK);
+        let forward_pass: ForwardRenderPass = ForwardRenderPass::new(wgpu::Color::BLACK, self.settings.straightforward);
         let tone_mapping_pass: ToneMapPass = ToneMapPass::new(&wgpu_ctx.device);
         let brdf_pass: BRDFLutComputePass = BRDFLutComputePass::new(&wgpu_ctx.device);
         let ibl_pass: IBLComputePass = IBLComputePass::new(&wgpu_ctx.device);
@@ -187,7 +188,7 @@ impl Renderer {
         self.size = (width, height);
         if let Some(state) = &mut self.context {
             state.wgpu_ctx.resize(width, height);
-            state.frame_resources.resize(&state.wgpu_ctx.device,  &self.settings, (width, height));
+            state.frame_resources.resize(&state.wgpu_ctx,(width, height));
         }
     }
 
@@ -232,14 +233,30 @@ impl Renderer {
 
         // Prepare phase: extract scene, prepare built-in passes
         state.render_frame.extract_and_prepare(
-            //&mut state.wgpu_ctx,
             &mut state.resource_manager,
-            //&mut state.pipeline_cache,
             scene,
             camera,
             assets,
             time,
         );
+
+        // let straight = self.settings.straightforward;
+
+        // === 1. 决定渲染目标 ===
+        // let (scene_target_view, scene_target_format) = if straight {
+        //     // A. 后处理模式：画到中间 HDR 纹理
+        //     // 直连模式：直接画到 Surface (注意：此时没有 ToneMap，必须是 sRGB)
+        //     (
+        //         &surface_view,
+        //         self.settings.surface_format // 通常是 Bgra8UnormSrgb
+        //     )
+        // } else {
+        //     // B. 后处理模式：画到中间 HDR 纹理
+        //     (
+        //         &surface_view, // 注意：这里需要想办法把 surface_view 传进去或者在 Context 里处理
+        //         self.settings.color_format
+        //     )
+        // };
 
         // let RendererState {
         //     wgpu_ctx,
@@ -255,8 +272,11 @@ impl Renderer {
         frame_builder
             .add_node(RenderStage::PreProcess, &mut state.brdf_pass)
             .add_node(RenderStage::PreProcess, &mut state.ibl_pass)
-            .add_node(RenderStage::Opaque, &mut state.forward_pass)
-            .add_node(RenderStage::PostProcess, &mut state.tone_mapping_pass);
+            .add_node(RenderStage::Opaque, &mut state.forward_pass);
+
+        if !self.settings.straightforward {
+            frame_builder.add_node(RenderStage::PostProcess, &mut state.tone_mapping_pass);
+        }
 
         let ctx = ComposerContext {
             wgpu_ctx: &mut state.wgpu_ctx,

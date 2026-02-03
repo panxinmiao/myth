@@ -102,18 +102,18 @@ impl PipelineCache {
         gpu_material: &GpuMaterial,
         object_bind_group: &BindGroupContext,
         gpu_world: &GpuGlobalState,
-        frame_resources: Option<&FrameResources>,
+        _frame_resources: Option<&FrameResources>,
     ) -> (wgpu::RenderPipeline, u16) {
         if let Some(cached) = self.canonical_cache.get(&canonical_key) {
             return cached.clone();
         }
 
-        let mut binding_code = format!("{}\n{}\n{}", &gpu_world.binding_wgsl, &gpu_material.binding_wgsl, &object_bind_group.binding_wgsl);
+        let binding_code = format!("{}\n{}\n{}", &gpu_world.binding_wgsl, &gpu_material.binding_wgsl, &object_bind_group.binding_wgsl);
 
-        if let Some(frame_resources) = frame_resources {
-            let frame_binding_code = &frame_resources.screen_bindings_code;
-            binding_code = format!("{}\n{}", binding_code, frame_binding_code);
-        }
+        // if let Some(frame_resources) = frame_resources {
+        //     let frame_binding_code = &frame_resources.screen_bindings_code;
+        //     binding_code = format!("{}\n{}", binding_code, frame_binding_code);
+        // }
 
         let shader_source = ShaderGenerator::generate_shader(
             &vertex_layout.vertex_input_code,
@@ -161,10 +161,10 @@ impl PipelineCache {
         bind_group_layouts.push(&gpu_material.layout);
         bind_group_layouts.push(&object_bind_group.layout);
 
-        if let Some(frame_resources) = frame_resources {
-            bind_group_layouts
-                .push(&frame_resources.screen_bind_group_layout);
-        }
+        // if let Some(frame_resources) = frame_resources {
+        //     bind_group_layouts
+        //         .push(&frame_resources.screen_bind_group_layout);
+        // }
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),

@@ -23,6 +23,11 @@ pub trait RenderNode {
     /// 返回节点名称，用于调试和性能分析
     fn name(&self) -> &str;
 
+    #[inline]
+    fn output_to_screen(&self) -> bool{
+        false
+    }
+
     fn prepare(&mut self, _ctx: &mut RenderContext) {}
     
     /// 执行渲染逻辑
