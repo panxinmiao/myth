@@ -90,11 +90,11 @@ $$ if USE_TRANSMISSION is defined
         material.dispersion = u_material.dispersion;
     $$ endif
 
-    $$ if USE_TRANSMISSION_MAP is defined
+    $$ if HAS_TRANSMISSION_MAP is defined
         material.transmission *= textureSample(t_transmission_map, s_transmission_map, varyings.transmission_map_uv ).r;
     $$ endif
 
-    $$ if USE_THICKNESS_MAP is defined
+    $$ if HAS_THICKNESS_MAP is defined
         material.thickness *= textureSample(t_thickness_map, s_thickness_map, varyings.thickness_map_uv).g;
     $$ endif
 

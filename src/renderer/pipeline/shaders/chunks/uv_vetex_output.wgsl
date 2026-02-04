@@ -66,3 +66,11 @@ $$ if HAS_SHEEN_ROUGHNESS_MAP is defined
     @location({{ loc.next() }}) sheen_roughness_map_uv: vec2<f32>,
 $$ endif
 
+$$ if HAS_TRANSMISSION_MAP is defined
+    @location({{ loc.next() }}) transmission_map_uv: vec2<f32>,
+$$ endif
+
+$$ if HAS_THICKNESS_MAP is defined
+    @location({{ loc.next() }}) thickness_map_uv: vec2<f32>,
+$$ endif
+

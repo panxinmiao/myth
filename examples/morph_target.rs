@@ -112,6 +112,6 @@ impl AppHandler for MorphTargetDemo {
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     App::new()
-        .with_settings(RenderSettings { vsync: false, ..Default::default() })
+        .with_settings(RenderSettings { vsync: false, enable_hdr: false, ..Default::default() })
         .run::<MorphTargetDemo>()
 }

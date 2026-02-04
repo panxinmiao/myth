@@ -66,4 +66,12 @@ $$ if HAS_SHEEN_ROUGHNESS_MAP is defined
     out.sheen_roughness_map_uv = (u_material.sheen_roughness_map_transform * vec3<f32>(in.uv{{SHEEN_ROUGHNESS_MAP_UV or ''}}, 1.0)).xy;
 $$ endif
 
+$$ if HAS_TRANSMISSION_MAP is defined
+    out.transmission_map_uv = (u_material.transmission_map_transform * vec3<f32>(in.uv{{TRANSMISSION_MAP_UV or ''}}, 1.0)).xy;
+$$ endif
+
+$$ if HAS_THICKNESS_MAP is defined
+    out.thickness_map_uv = (u_material.thickness_map_transform * vec3<f32>(in.uv{{THICKNESS_MAP_UV or ''}}, 1.0)).xy;
+$$ endif
+
 

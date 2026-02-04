@@ -190,10 +190,10 @@ impl Renderer {
         let cull_pass = SceneCullPass::new();
         
         // Simple Path (LDR)
-        let simple_forward_pass = SimpleForwardPass::new(wgpu::Color::BLACK);
+        let simple_forward_pass = SimpleForwardPass::new(self.settings.clear_color);
         
         // PBR Path (HDR)
-        let opaque_pass = OpaquePass::new(wgpu::Color::BLACK);
+        let opaque_pass = OpaquePass::new(self.settings.clear_color);
         let transparent_pass = TransparentPass::new();
         let transmission_copy_pass = TransmissionCopyPass::new();
         

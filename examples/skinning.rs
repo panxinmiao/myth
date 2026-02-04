@@ -128,6 +128,6 @@ fn main() -> anyhow::Result<()> {
     env_logger::init();
     App::new()
         // 开启 VSync 可以避免 GPU 满载啸叫，但在测试性能时可以关掉
-        .with_settings(RenderSettings { vsync: false, ..Default::default() }) 
+        .with_settings(RenderSettings { vsync: false, enable_hdr: false, ..Default::default() }) 
         .run::<SkinningDemo>()
 }

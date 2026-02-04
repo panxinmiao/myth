@@ -487,11 +487,11 @@ define_gpu_data_struct!(
         pub iridescence_thickness_max: f32 = 400.0,    // 4
 
         pub anisotropy_vector: Vec2 = Vec2::ZERO,      // 8
-        pub transmission: f32 = 1.0,               // 4
+        pub transmission: f32 = 0.0,               // 4
         pub thickness: f32 = 0.0,                  // 4
 
         pub attenuation_color: Vec3 = Vec3::ONE,   // 12
-        pub attenuation_distance: f32 = -1.0, // 4
+        pub attenuation_distance: f32 = -1.0,     // 4    -1 (infinite)
 
         pub dispersion: f32 = 0.0,                 // 4
         pub(crate) __padding1: f32,          // 4

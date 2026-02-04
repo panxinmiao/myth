@@ -26,7 +26,7 @@ image = { version = "0.25" }
 gltf = { version = "1.4.1", features = [
     "extensions", "KHR_materials_pbrSpecularGlossiness", 
     "KHR_materials_specular", "KHR_materials_emissive_strength", 
-    "KHR_materials_ior", "KHR_texture_transform"
+    "KHR_materials_ior", "KHR_texture_transform",
 ], optional = true }
 base64 = "0.22"
 

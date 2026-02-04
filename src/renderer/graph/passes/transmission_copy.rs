@@ -54,7 +54,6 @@ impl RenderNode for TransmissionCopyPass {
             return;
         }
 
-
         // Transmission 需要 HDR 模式
         if !ctx.wgpu_ctx.enable_hdr {
             log::warn!(
@@ -73,6 +72,34 @@ impl RenderNode for TransmissionCopyPass {
 
         // 获取源纹理（场景颜色缓冲）
         let color_view = ctx.get_scene_render_target_view();
+
+        let is_msaa = ctx.wgpu_ctx.msaa_samples > 1;
+
+        if is_msaa {
+            // 如果开启了 MSAA，OpaquePass 尚未 Resolve，数据还在 MSAA View 中。
+            // 我们需要手动执行一次 Resolve，将不透明物体的结果保存到 color_view 中。
+            if let Some(msaa_view) = &ctx.frame_resources.scene_msaa_view {
+                let pass_desc = wgpu::RenderPassDescriptor {
+                    label: Some("Transmission MSAA Resolve"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: msaa_view, // 源：MSAA 缓冲
+                        resolve_target: Some(color_view), // 目标：普通纹理
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load, // 加载已有内容
+                            store: wgpu::StoreOp::Store, // 必须 Store！因为 TransparentPass 还要继续在上面画
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None, // 不需要深度，只是 Resolve 颜色
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                };
+
+                // 执行一个空的 RenderPass 来触发 Resolve
+                let _ = encoder.begin_render_pass(&pass_desc);
+            }
+        }
 
         // 执行纹理拷贝
         encoder.copy_texture_to_texture(

@@ -1509,7 +1509,13 @@ fn main() -> anyhow::Result<()> {
     
     App::new()
         .with_title("glTF Viewer")
-        .with_settings(RenderSettings { vsync: false, ..Default::default() })
+        .with_settings(RenderSettings { 
+            vsync: false, 
+            clear_color: wgpu::Color { r: 0.1, g: 0.1, b: 0.1, a: 1.0 },
+            enable_hdr: true,    // 启用 HDR 渲染
+            msaa_samples: 4,    // 4x MSAA 抗锯齿
+            ..Default::default() 
+        })
         .run::<GltfViewer>()
 }
 

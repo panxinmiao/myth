@@ -295,6 +295,9 @@ impl FrameResources {
         if self.size == size {
             return;
         }
+        if size.0 == 0 || size.1 == 0 {
+            return;
+        }
 
         self.size = size;
 
