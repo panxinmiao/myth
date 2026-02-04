@@ -54,6 +54,7 @@ impl SceneCullPass {
         let sample_count = ctx.wgpu_ctx.msaa_samples;
         let render_state_id = ctx.render_state.id;
         let scene_id = ctx.extracted_scene.scene_id;
+        let pipeline_settings_version = ctx.wgpu_ctx.pipeline_settings_version;
 
         // 获取 render_lists 的可变引用
         let render_lists = &mut ctx.render_frame.render_lists;
@@ -110,6 +111,7 @@ impl SceneCullPass {
                 geometry_version: geometry.layout_version(),
                 instance_variants: item.item_variant_flags,
                 global_state_id: gpu_world.id,
+                pipeline_settings_version,
             };
 
             // ========== Hot Path Optimization: Check L1 Cache First ==========

@@ -34,6 +34,7 @@ pub mod version_tracker;
 pub mod material;
 pub mod input;
 pub mod shader_defines;
+pub mod tone_mapping;
 
 pub use mesh::Mesh;
 pub use material::{
@@ -48,4 +49,5 @@ pub use image::{Image, ImageDescriptor};
 pub use input::{ButtonState, Input, Key, MouseButton};
 pub use shader_defines::ShaderDefines;
 pub use texture::{Texture, TextureSampler};
+pub use tone_mapping::{ToneMappingMode, ToneMappingSettings};
 pub use uniforms::{WgslType, Mat3Uniform};

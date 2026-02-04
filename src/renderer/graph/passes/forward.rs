@@ -109,6 +109,7 @@ impl ForwardRenderPass {
                 geometry_version: geometry.layout_version(),
                 instance_variants: item.item_variant_flags,
                 global_state_id: gpu_world.id,
+                pipeline_settings_version: ctx.wgpu_ctx.pipeline_settings_version,
             };
 
             // ========== Hot Path Optimization: Check L1 Cache First ==========

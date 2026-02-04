@@ -373,6 +373,86 @@ impl Renderer {
         }
     }
 
+    // === Runtime Settings API ===
+
+    /// Returns whether HDR rendering is currently enabled.
+    ///
+    /// HDR rendering uses floating-point render targets and tone mapping
+    /// for high dynamic range lighting.
+    #[inline]
+    pub fn is_hdr_enabled(&self) -> bool {
+        self.settings.enable_hdr
+    }
+
+    /// Enables or disables HDR rendering at runtime.
+    ///
+    /// When HDR is enabled:
+    /// - Scene is rendered to a floating-point HDR buffer
+    /// - Tone mapping pass converts HDR to LDR for display
+    /// - `ToneMappingSettings` in Scene become effective
+    ///
+    /// When HDR is disabled:
+    /// - Scene is rendered directly to the screen
+    /// - No tone mapping is applied
+    ///
+    /// Note: This change takes effect on the next frame.
+    pub fn set_hdr_enabled(&mut self, enabled: bool) {
+        if self.settings.enable_hdr != enabled {
+            self.settings.enable_hdr = enabled;
+            if let Some(state) = &mut self.context {
+                state.wgpu_ctx.enable_hdr = enabled;
+                // Increment pipeline settings version to invalidate L1 cache
+                state.wgpu_ctx.pipeline_settings_version += 1;
+                // Force recreation of frame resources (HDR textures)
+                let size = state.wgpu_ctx.size();
+                state.frame_resources.force_recreate(&state.wgpu_ctx, size);
+                // Clear L2 cache since settings have changed
+                state.pipeline_cache.clear();
+            }
+        }
+    }
+
+    /// Returns the current MSAA sample count.
+    ///
+    /// Common values: 1 (disabled), 4, 8.
+    #[inline]
+    pub fn msaa_samples(&self) -> u32 {
+        self.settings.msaa_samples
+    }
+
+    /// Sets the MSAA sample count at runtime.
+    ///
+    /// Higher values provide better anti-aliasing quality but use more GPU memory
+    /// and bandwidth. Common values are:
+    /// - 1: MSAA disabled
+    /// - 4: Good balance of quality and performance
+    /// - 8: High quality (may impact performance)
+    ///
+    /// Note: This requires recreation of render targets and takes effect on resize
+    /// or the next frame.
+    pub fn set_msaa_samples(&mut self, samples: u32) {
+        if self.settings.msaa_samples != samples {
+            let samples = samples.clamp(1, 8);
+            self.settings.msaa_samples = samples;
+            if let Some(state) = &mut self.context {
+                state.wgpu_ctx.msaa_samples = samples;
+                // Increment pipeline settings version to invalidate L1 cache
+                state.wgpu_ctx.pipeline_settings_version += 1;
+                // Force recreation of frame resources
+                let size = state.wgpu_ctx.size();
+                state.frame_resources.force_recreate(&state.wgpu_ctx, size);
+                // Clear L2 cache since settings have changed
+                state.pipeline_cache.clear();
+            }
+        }
+    }
+
+    /// Returns a reference to the current render settings.
+    #[inline]
+    pub fn settings(&self) -> &RenderSettings {
+        &self.settings
+    }
+
     // === Public Methods: For External Plugins (e.g., UI Pass) ===
 
     /// Returns a reference to the wgpu Device.

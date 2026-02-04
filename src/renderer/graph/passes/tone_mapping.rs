@@ -1,44 +1,39 @@
+//! Tone Mapping Post-Processing Pass
+//!
+//! This pass converts HDR (High Dynamic Range) rendering output to LDR (Low Dynamic Range)
+//! for display on standard monitors. It reads configuration from `Scene.tone_mapping` using
+//! a data-driven approach with version tracking for efficient GPU synchronization.
+//!
+//! # Data Flow
+//!
+//! ```text
+//! Scene.tone_mapping (Source of Truth)
+//!        │
+//!        ▼  (version check in prepare())
+//! ToneMapPass (cached state + GPU resources)
+//!        │
+//!        ▼
+//! Final Surface Output
+//! ```
+
 use std::borrow::Cow;
 
 use rustc_hash::FxHashMap;
 
-use crate::{ShaderDefines, render::{RenderContext, RenderNode}, renderer::{core::{binding::BindGroupKey, resources::Tracked}, pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator}}, resources::buffer::{CpuBuffer, GpuData}};
+use crate::resources::tone_mapping::ToneMappingMode;
+use crate::ShaderDefines;
+use crate::render::{RenderContext, RenderNode};
+use crate::renderer::core::{binding::BindGroupKey, resources::Tracked};
+use crate::renderer::pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator};
+use crate::resources::buffer::{CpuBuffer, GpuData};
 
-
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum ToneMappingMode {
-    Linear,
-    NEUTRAL,
-    Reinhard,
-    Cineon,
-    ACESFilmic,
-    AGXX,
-}
-
-impl ToneMappingMode {
-    pub fn apply_to_defines(&self, defines: &mut ShaderDefines) {
-        match self {
-            Self::Linear => defines.set("TONE_MAPPING_MODE", "LINEAR"),
-            Self::Reinhard => defines.set("TONE_MAPPING_MODE", "REINHARD"),
-            Self::Cineon => defines.set("TONE_MAPPING_MODE", "CINEON"),
-            Self::ACESFilmic => defines.set("TONE_MAPPING_MODE", "ACES_FILMIC"),
-            Self::NEUTRAL => defines.set("TONE_MAPPING_MODE", "NEUTRAL"),
-            Self::AGXX => defines.set("TONE_MAPPING_MODE", "AGXX"),
-        }
-        
-    }
-}
-
-
-// 定义 Uniform 数据
+/// GPU uniform data for tone mapping shader.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ToneMapUniforms {
     pub exposure: f32,
     pub _pad: [u32; 3],
 }
-
 
 impl Default for ToneMapUniforms {
     fn default() -> Self {
@@ -59,47 +54,72 @@ impl GpuData for ToneMapUniforms {
     }
 }
 
+/// Tone mapping post-processing pass.
+///
+/// This pass is a pure "executor" that pulls configuration from `Scene.tone_mapping`.
+/// It uses version tracking to minimize GPU updates:
+///
+/// - Uniform buffer is only updated when `ToneMappingSettings.version` changes
+/// - Pipeline is only rebuilt when the tone mapping mode changes
+///
+/// # Performance
+///
+/// - Pipeline caching by mode (typically 1-2 pipelines active)
+/// - Version-based dirty checking (O(1) comparison)
+/// - BindGroup caching via global cache
 pub struct ToneMapPass {
-    // 资源
+    // === GPU Resources ===
+    /// Bind group layout for tone mapping
     layout: Tracked<wgpu::BindGroupLayout>,
+    /// Linear sampler for input texture
     sampler: Tracked<wgpu::Sampler>,
-    
-    pub uniforms: CpuBuffer<ToneMapUniforms>,
+    /// Uniform buffer (exposure, etc.)
+    uniforms: CpuBuffer<ToneMapUniforms>,
 
+    // === Cache State ===
+    /// Currently active tone mapping mode (mirrors Scene.tone_mapping.mode)
     current_mode: ToneMappingMode,
-    
-    pipeline_cache: FxHashMap<ToneMappingMode, wgpu::RenderPipeline>,
+    /// Cached pipelines by (mode, output_format) to handle HDR toggle correctly
+    pipeline_cache: FxHashMap<(ToneMappingMode, wgpu::TextureFormat), wgpu::RenderPipeline>,
 
-    // 运行时状态 (Prepare 阶段生成，Run 阶段使用)
+    // === Runtime State (set during prepare, used during run) ===
+    /// Current frame's bind group
     current_bind_group: Option<wgpu::BindGroup>,
+    /// Current frame's pipeline
     current_pipeline: Option<wgpu::RenderPipeline>,
 
-    // target_view: Option<wgpu::TextureView>,
-
+    // === Version Tracking ===
+    /// Last known version from Scene.tone_mapping
+    last_settings_version: u64,
 }
 
 impl ToneMapPass {
+    /// Creates a new tone mapping pass.
+    ///
+    /// This initializes GPU resources but does not configure any settings.
+    /// Settings are pulled from `Scene.tone_mapping` during each frame's prepare phase.
     pub fn new(device: &wgpu::Device) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("Tone Map Layout"),
+            label: Some("ToneMap Layout"),
             entries: &[
+                // Binding 0: Input HDR texture
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Texture { 
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true }, 
-                        view_dimension: wgpu::TextureViewDimension::D2, 
-                        multisampled: false 
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
                     count: None,
                 },
+                // Binding 1: Sampler
                 wgpu::BindGroupLayoutEntry {
                     binding: 1,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
-
                 // Binding 2: Uniforms
                 wgpu::BindGroupLayoutEntry {
                     binding: 2,
@@ -116,7 +136,6 @@ impl ToneMapPass {
 
         let tracked_layout = Tracked::new(bind_group_layout);
 
-        // 创建 Sampler
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("ToneMap Sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -124,59 +143,52 @@ impl ToneMapPass {
             ..Default::default()
         });
 
-        let uniforms = CpuBuffer::new(ToneMapUniforms::default(), wgpu::BufferUsages::UNIFORM, Some("ToneMap Uniforms"));
+        let uniforms = CpuBuffer::new(
+            ToneMapUniforms::default(),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            Some("ToneMap Uniforms"),
+        );
 
         Self {
             layout: tracked_layout,
             sampler: Tracked::new(sampler),
             uniforms,
-            current_mode: ToneMappingMode::NEUTRAL,
+            current_mode: ToneMappingMode::default(),
             pipeline_cache: FxHashMap::default(),
             current_pipeline: None,
             current_bind_group: None,
-            // target_view: None,
-        }
-
-    }
-
-    pub fn set_exposure(&mut self, exposure: f32) {
-        let data = self.uniforms.read();
-        if (data.exposure - exposure).abs() > 1e-5 {
-            drop(data); // 释放锁
-            let mut data = self.uniforms.write();
-            data.exposure = exposure;
-            // self.uniform_version += 1; // 标记变化
+            // Set to MAX to ensure first frame always triggers update
+            last_settings_version: u64::MAX,
         }
     }
 
-    pub fn set_mode(&mut self, mode: ToneMappingMode) {
-        if self.current_mode != mode {
-            self.current_mode = mode;
-            self.current_pipeline = None; // 标记需要更新 Pipeline
-        }
-    }
-
-
-    fn get_or_create_pipeline(&mut self, device: &wgpu::Device, view_format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
-        if let Some(pipeline) = self.pipeline_cache.get(&self.current_mode) {
+    /// Gets or creates a pipeline for the current tone mapping mode.
+    fn get_or_create_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        view_format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
+        let cache_key = (self.current_mode, view_format);
+        
+        // Check cache first
+        if let Some(pipeline) = self.pipeline_cache.get(&cache_key) {
             return pipeline.clone();
         }
 
-        // 缓存未命中，开始编译
-        
-        // 1. 准备宏定义
+        // Cache miss - compile new pipeline
+        log::debug!("Compiling ToneMap pipeline for mode {:?}, format {:?}", self.current_mode, view_format);
+
+        // 1. Prepare shader defines
         let mut defines = ShaderDefines::new();
         self.current_mode.apply_to_defines(&mut defines);
 
-        // 2. 生成 Shader 代码
-        let options = ShaderCompilationOptions {
-             defines
-        };
+        // 2. Generate shader code
+        let options = ShaderCompilationOptions { defines };
 
         let shader_code = ShaderGenerator::generate_shader(
-            "", // vertex code snippet (empty implies full file or default)
-            "", // binding code (empty)
-            "passes/tone_mapping", // template name
+            "",                     // vertex snippet (use default)
+            "",                     // binding code (use default)
+            "passes/tone_mapping",  // template name
             &options,
         );
 
@@ -185,14 +197,14 @@ impl ToneMapPass {
             source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_code)),
         });
 
-        // 3.  创建 Pipeline Layout (复用 self.layout)
+        // 3. Create pipeline layout
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Tone Map Pipeline Layout"),
+            label: Some("ToneMap Pipeline Layout"),
             bind_group_layouts: &[&self.layout],
             immediate_size: 0,
         });
 
-        // 4. 创建 Pipeline
+        // 4. Create render pipeline
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(&format!("ToneMap Pipeline {:?}", self.current_mode)),
             layout: Some(&pipeline_layout),
@@ -219,45 +231,66 @@ impl ToneMapPass {
             cache: None,
         });
 
-        // 存入缓存
-        self.pipeline_cache.insert(self.current_mode, pipeline.clone());
+        // Store in cache
+        self.pipeline_cache.insert(cache_key, pipeline.clone());
         pipeline
     }
-
-
 }
 
 impl RenderNode for ToneMapPass {
-
-    // #[inline]
-    // fn output_to_screen(&self) -> bool {
-    //     true
-    // }
-
     fn prepare(&mut self, ctx: &mut RenderContext) {
-        // 1. 获取 ping-pong 索引
-        // ToneMapPass 直接输出到屏幕，不需要翻转 color_view_flip_flop
+        // =====================================================================
+        // 1. Sync settings from Scene (data-driven approach)
+        // =====================================================================
+        let settings = &ctx.scene.tone_mapping;
+        let current_version = settings.version();
+
+        // Version check: only update when Scene settings have changed
+        if self.last_settings_version != current_version {
+            // A. Sync uniform data (exposure)
+            {
+                let mut data = self.uniforms.write();
+                data.exposure = settings.exposure;
+            }
+
+            // B. Handle mode change (triggers pipeline rebuild)
+            if self.current_mode != settings.mode {
+                self.current_mode = settings.mode;
+                self.current_pipeline = None;
+            }
+
+            // C. Update local version
+            self.last_settings_version = current_version;
+        }
+
+        // =====================================================================
+        // 2. Prepare GPU resources
+        // =====================================================================
+
+        // Get ping-pong index (ToneMapPass outputs to screen, doesn't flip)
         let current_idx = ctx.color_view_flip_flop;
-        
+
         let input_view_tracked = &ctx.frame_resources.scene_color_view[current_idx];
         let input_view_id = input_view_tracked.id();
 
-        // 2. 确保 buffer 资源准备好
+        // Ensure buffer is ready
         let gpu_buffer_id = ctx.resource_manager.ensure_buffer_id(&self.uniforms);
         let cpu_buffer_id = self.uniforms.id();
 
-        // 3. 构建 BindGroup 缓存 key
+        // Build BindGroup cache key
         let key = BindGroupKey::new(self.layout.id())
             .with_resource(input_view_id)
             .with_resource(self.sampler.id())
             .with_resource(gpu_buffer_id);
 
-        // 4. 获取或创建 BindGroup
-        // 注意：这里需要分开获取各个资源以避免借用冲突
+        // Get or create BindGroup
         let bind_group = if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
             cached.clone()
         } else {
-            let gpu_buffer = ctx.resource_manager.gpu_buffers.get(&cpu_buffer_id)
+            let gpu_buffer = ctx
+                .resource_manager
+                .gpu_buffers
+                .get(&cpu_buffer_id)
                 .expect("GpuBuffer must exist after ensure_buffer_id");
 
             let input_view = &ctx.frame_resources.scene_color_view[current_idx];
@@ -287,21 +320,22 @@ impl RenderNode for ToneMapPass {
 
         self.current_bind_group = Some(bind_group);
 
+        // =====================================================================
+        // 3. Ensure pipeline exists
+        // =====================================================================
         if self.current_pipeline.is_none() {
-            self.current_pipeline = Some(self.get_or_create_pipeline(&ctx.wgpu_ctx.device, ctx.wgpu_ctx.surface_view_format));
+            self.current_pipeline = Some(
+                self.get_or_create_pipeline(&ctx.wgpu_ctx.device, ctx.wgpu_ctx.surface_view_format),
+            );
         }
-
     }
 
-
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-
-        // 输出到 Surface (屏幕)
         let pass_desc = wgpu::RenderPassDescriptor {
-            label: Some("Final ToneMap Pass"),
+            label: Some("ToneMap Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: ctx.surface_view,    // We assume tone mapping always outputs to screen
-                resolve_target: None,   
+                view: ctx.surface_view,
+                resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),
                     store: wgpu::StoreOp::Store,
@@ -318,11 +352,12 @@ impl RenderNode for ToneMapPass {
             if let Some(bg) = &self.current_bind_group {
                 pass.set_bind_group(0, bg, &[]);
             }
-        } 
-        pass.draw(0..3, 0..1); // 全屏三角形
+        }
 
+        // Draw fullscreen triangle
+        pass.draw(0..3, 0..1);
     }
-    
+
     fn name(&self) -> &str {
         "Tone Mapping Pass"
     }

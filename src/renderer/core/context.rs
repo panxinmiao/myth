@@ -35,6 +35,10 @@ pub struct WgpuContext {
     pub msaa_samples: u32,
 
     pub enable_hdr: bool,
+
+    /// Version counter for pipeline-affecting settings (HDR, MSAA).
+    /// Incremented when these settings change, used to invalidate L1 pipeline cache.
+    pub pipeline_settings_version: u64,
 }
 
 impl WgpuContext {
@@ -116,6 +120,7 @@ impl WgpuContext {
             surface_view_format: view_format,
             msaa_samples: settings.msaa_samples,
             enable_hdr: settings.enable_hdr,
+            pipeline_settings_version: 0,
         })
     }
 

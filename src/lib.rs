@@ -297,6 +297,8 @@ pub use resources::{
     MaterialTrait, RenderableMaterialTrait, TextureSlot, TextureTransform,
     // Geometry primitives
     ShaderDefines, Attribute,
+    // Tone mapping
+    ToneMappingMode, ToneMappingSettings,
 };
 
 // Primitives - Geometry creation functions

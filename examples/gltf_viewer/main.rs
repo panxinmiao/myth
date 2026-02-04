@@ -39,6 +39,7 @@ use three::assets::{GltfLoader, MaterialHandle, SharedPrefab, TextureHandle};
 use three::scene::{Camera, NodeHandle, light};
 use three::renderer::graph::RenderStage;
 use three::renderer::settings::{RenderSettings};
+use three::ToneMappingMode;
 use three::{AssetServer, OrbitControls, RenderableMaterialTrait, Scene, ThreeEngine};
 use three::utils::fps_counter::FpsCounter;
 
@@ -186,6 +187,10 @@ struct GltfViewer {
     // === Render Settings ===
     /// IBL toggle
     ibl_enabled: bool,
+    /// HDR rendering toggle (cached from renderer)
+    hdr_enabled: bool,
+    /// MSAA sample count (cached from renderer)
+    msaa_samples: u32,
     
     hdr_receiver: Option<Receiver<TextureHandle>>,
 
@@ -308,6 +313,8 @@ impl AppHandler for GltfViewer {
             
             // 渲染设置
             ibl_enabled: true,
+            hdr_enabled: true,  // Match RenderSettings in main()
+            msaa_samples: 4,     // Match RenderSettings in main()
 
             hdr_receiver: Some(hdr_rx),
 
@@ -756,7 +763,7 @@ impl GltfViewer {
         };
         
         // 主控制面板
-        self.render_control_panel(&egui_ctx, scene, &engine.assets);
+        self.render_control_panel(&egui_ctx, scene, &engine.assets, &mut engine.renderer);
         
         // Inspector 面板
         if self.show_inspector {
@@ -765,7 +772,7 @@ impl GltfViewer {
     }
 
     /// 渲染主控制面板
-    fn render_control_panel(&mut self, ctx: &egui::Context, scene: &mut Scene, assets: &AssetServer) {
+    fn render_control_panel(&mut self, ctx: &egui::Context, scene: &mut Scene, assets: &AssetServer, renderer: &mut three::Renderer) {
 
         egui::Window::new("Control Panel")
             .default_pos([10.0, 10.0])
@@ -940,9 +947,77 @@ impl GltfViewer {
 
                 // ===== 渲染设置 =====
                 ui.collapsing("⚙ Rendering", |ui| {
+                    // --- HDR 渲染 ---
+                    if ui.checkbox(&mut self.hdr_enabled, "HDR Rendering").changed() {
+                        renderer.set_hdr_enabled(self.hdr_enabled);
+                    }
+                    
+                    // --- MSAA 抗锯齿 ---
+                    ui.horizontal(|ui| {
+                        ui.label("MSAA:");
+                        let msaa_options = [1u32, 4];
+                        egui::ComboBox::from_id_salt("msaa_selector")
+                            .width(60.0)
+                            .selected_text(if self.msaa_samples == 1 { 
+                                "Off".to_string() 
+                            } else { 
+                                format!("{}x", self.msaa_samples) 
+                            })
+                            .show_ui(ui, |ui| {
+                                for &samples in &msaa_options {
+                                    let label = if samples == 1 { "Off".to_string() } else { format!("{}x", samples) };
+                                    if ui.selectable_value(&mut self.msaa_samples, samples, label).changed() {
+                                        renderer.set_msaa_samples(self.msaa_samples);
+                                    }
+                                }
+                            });
+                    });
+                    
+                    ui.separator();
+                    
+                    // --- IBL 环境贴图 ---
                     if ui.checkbox(&mut self.ibl_enabled, "IBL (Environment Map)").changed() {
-                        // 切换 IBL 需要重新设置环境贴图
                         scene.environment.set_intensity(if self.ibl_enabled { 1.0 } else { 0.0 });
+                    }
+                    
+                    ui.separator();
+                    
+                    // --- Tone Mapping 设置 (仅在 HDR 模式下可用) ---
+                    ui.add_enabled_ui(self.hdr_enabled, |ui| {
+                        ui.label("Tone Mapping:");
+                        
+                        // 曝光度
+                        ui.horizontal(|ui| {
+                            ui.label("Exposure:");
+                            let mut exposure = scene.tone_mapping.exposure;
+                            if ui.add(egui::Slider::new(&mut exposure, 0.1..=5.0)
+                                .step_by(0.1)
+                                .logarithmic(true))
+                                .changed() 
+                            {
+                                scene.tone_mapping.set_exposure(exposure);
+                            }
+                        });
+                        
+                        // 模式选择
+                        ui.horizontal(|ui| {
+                            ui.label("Mode:");
+                            let current_mode = scene.tone_mapping.mode;
+                            egui::ComboBox::from_id_salt("tone_mapping_mode")
+                                .width(120.0)
+                                .selected_text(current_mode.name())
+                                .show_ui(ui, |ui| {
+                                    for mode in ToneMappingMode::all() {
+                                        if ui.selectable_label(current_mode == *mode, mode.name()).clicked() {
+                                            scene.tone_mapping.set_mode(*mode);
+                                        }
+                                    }
+                                });
+                        });
+                    });
+                    
+                    if !self.hdr_enabled {
+                        ui.label("ℹ Enable HDR to configure tone mapping");
                     }
                 });
 

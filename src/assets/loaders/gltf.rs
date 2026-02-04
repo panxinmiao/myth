@@ -75,6 +75,7 @@ fn parse_transform_from_json(texture_slot: &mut TextureSlot, transform_val: &Val
     }
 }
 
+#[allow(dead_code)]
 fn sanitize_gltf_data(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     if data.starts_with(b"glTF") {
         sanitize_glb(data)
@@ -83,6 +84,7 @@ fn sanitize_gltf_data(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     }
 }
 
+#[allow(dead_code)]
 fn sanitize_json(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     let mut root: Value = serde_json::from_slice(data)
         .context("Failed to parse GLTF JSON for sanitization")?;
@@ -95,6 +97,7 @@ fn sanitize_json(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     }
 }
 
+#[allow(dead_code)]
 fn sanitize_glb(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     if data.len() < 12 { return Ok(Cow::Borrowed(data)); }
     
@@ -139,6 +142,7 @@ fn sanitize_glb(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     Ok(Cow::Owned(new_glb))
 }
 
+#[allow(dead_code)]
 fn patch_json_value(root: &mut Value) -> bool {
     let mut changed = false;
 
@@ -442,10 +446,10 @@ impl GltfLoader {
     }
 
     fn parse_gltf_bytes(bytes: &[u8]) -> anyhow::Result<gltf::Gltf> {
-        let sanitized_bytes = sanitize_gltf_data(bytes)
-            .context("Failed to sanitize glTF data")?;
+        // let sanitized_bytes = sanitize_gltf_data(bytes)
+        //     .context("Failed to sanitize glTF data")?;
 
-        match gltf::Gltf::from_slice_without_validation(&sanitized_bytes) {
+        match gltf::Gltf::from_slice_without_validation(bytes) {
             Ok(g) => Ok(g),
             Err(err) => {
                 log::error!("GLTF Parse Error Details: {:?}", err);
@@ -1205,7 +1209,9 @@ impl GltfLoader {
             for channel in anim.channels() {
                 let reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
                 let target = channel.target();
-                let gltf_node = target.node();
+                let Some(gltf_node) = target.node() else { 
+                    log::warn!("Animation target node is missing(Maybe use\"KHR_animation_pointer\"),  skipping channel for now.");
+                    continue; };
                 
                 let node_name = gltf_node.name().map(|s| s.to_string())
                     .unwrap_or_else(|| format!("Node_{}", gltf_node.index()));

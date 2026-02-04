@@ -290,6 +290,19 @@ impl FrameResources {
         })
     }
 
+    /// Forces recreation of all frame resources regardless of size.
+    /// 
+    /// Call this when render settings change (HDR mode, MSAA) that require
+    /// texture format or sample count changes.
+    pub fn force_recreate(&mut self, wgpu_ctx: &WgpuContext, size: (u32, u32)) {
+        if size.0 == 0 || size.1 == 0 {
+            return;
+        }
+        // Reset size to force recreation
+        self.size = (0, 0);
+        self.resize(wgpu_ctx, size);
+    }
+
     pub fn resize(&mut self, wgpu_ctx: &WgpuContext, size: (u32, u32)){
 
         if self.size == size {
@@ -301,13 +314,23 @@ impl FrameResources {
 
         self.size = size;
 
-        // Depth Texture
+        // 确定实际渲染时的采样数
+        // - MSAA 开启时：渲染到 MSAA 纹理（sample_count = msaa_samples），resolve 到颜色纹理
+        // - MSAA 关闭时：直接渲染到颜色纹理（sample_count = 1）
+        // 深度纹理的采样数必须与颜色渲染目标一致
+        let render_sample_count = if wgpu_ctx.msaa_samples > 1 {
+            wgpu_ctx.msaa_samples
+        } else {
+            1
+        };
+
+        // Depth Texture - 采样数必须与渲染目标一致
         let depth_view = Self::create_texture(
             &wgpu_ctx.device,
             size,
             wgpu_ctx.depth_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
-            wgpu_ctx.msaa_samples,
+            render_sample_count,
             1,
             "Depth Texture",
         );
@@ -342,6 +365,7 @@ impl FrameResources {
         }
 
         // MSAA Texture
+        // 当 MSAA 关闭时，必须清除 scene_msaa_view
         if wgpu_ctx.msaa_samples > 1 {
             // 创建 MSAA 纹理, 格式与主颜色纹理(Resolve target)相同
 
@@ -362,6 +386,9 @@ impl FrameResources {
             );
             self.scene_msaa_view = Some(Tracked::new(scene_msaa_view));
 
+        } else {
+            // MSAA 关闭时，清除 MSAA 纹理
+            self.scene_msaa_view = None;
         }
 
         if self.transmission_view.is_some() {

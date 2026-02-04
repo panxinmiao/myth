@@ -59,6 +59,9 @@ pub struct FastPipelineKey {
     /// GPU World state ID
     pub global_state_id: u32,
 
+    /// Pipeline settings version (HDR, MSAA changes)
+    /// This ensures cache invalidation when these settings change
+    pub pipeline_settings_version: u64,
 }
 
 pub struct PipelineCache {
@@ -82,6 +85,17 @@ impl PipelineCache {
             module_cache: FxHashMap::default(),
             next_id: 0,
         }
+    }
+
+    /// Clears all cached pipelines.
+    /// 
+    /// Call this when render settings change (MSAA, HDR) that affect pipeline compatibility.
+    /// Shader modules are preserved since they don't depend on these settings.
+    pub fn clear(&mut self) {
+        self.fast_cache.clear();
+        self.canonical_cache.clear();
+        // Note: module_cache is NOT cleared since shader code doesn't depend on MSAA/HDR settings
+        // This saves expensive shader recompilation
     }
 
     pub fn get_pipeline_fast(&self, fast_key: FastPipelineKey) -> Option<&(wgpu::RenderPipeline, u16)> {

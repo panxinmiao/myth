@@ -11,6 +11,7 @@ use crate::assets::prefab::Prefab;
 use crate::resources::{BoundingBox, Input};
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::shader_defines::ShaderDefines;
+use crate::resources::tone_mapping::ToneMappingSettings;
 use crate::resources::uniforms::{EnvironmentUniforms, GpuLightStorage};
 use crate::resources::mesh::MAX_MORPH_TARGETS;
 use crate::scene::node::Node;
@@ -125,6 +126,8 @@ pub struct Scene {
     // === Environment and Global Settings ===
     /// Scene environment settings (skybox, IBL)
     pub environment: Environment,
+    /// Tone mapping settings (exposure, mode)
+    pub tone_mapping: ToneMappingSettings,
     /// Background color (None for transparent)
     pub background: Option<Vec4>,
     /// Currently active camera for rendering
@@ -172,6 +175,7 @@ impl Scene {
             skeleton_pool: SlotMap::with_key(),
 
             environment: Environment::new(),
+            tone_mapping: ToneMappingSettings::default(),
             background: Some(Vec4::new(0.0, 0.0, 0.0, 1.0)),
 
             active_camera: None,
