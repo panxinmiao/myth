@@ -177,12 +177,15 @@ impl SceneCullPass {
                 };
 
             let mat_id = item.material.data().as_ffi() as u32;
-            let is_transparent = material.alpha_mode() == AlphaMode::Blend;
-            let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq, is_transparent);
 
-            if material.use_transmission() {
+            let has_transmission = material.use_transmission();
+            if has_transmission {
                 use_transmission = true;
             }
+
+            let is_transparent = material.alpha_mode() == AlphaMode::Blend || has_transmission;
+            let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq, is_transparent);
+
 
             let cmd = RenderCommand {
                 object_bind_group: object_bind_group.clone(),
