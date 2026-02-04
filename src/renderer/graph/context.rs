@@ -314,7 +314,7 @@ impl FrameResources {
                 &wgpu_ctx.device,
                 size,
                 crate::renderer::HDR_TEXTURE_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                 1,
                 "Ping-Pong Texture 0",
             );
@@ -323,7 +323,7 @@ impl FrameResources {
                 &wgpu_ctx.device,
                 size,
                 crate::renderer::HDR_TEXTURE_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                 1,
                 "Ping-Pong Texture 1",
             );

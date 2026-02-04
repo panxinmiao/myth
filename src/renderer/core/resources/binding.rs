@@ -213,7 +213,7 @@ impl ResourceManager {
             &model_buffer_ref, 
             None, 
             min_binding_size, 
-            ShaderStages::VERTEX
+            ShaderStages::VERTEX | ShaderStages::FRAGMENT
         );
         mesh.define_bindings(&mut builder);
         geometry.define_bindings(&mut builder);

@@ -311,6 +311,9 @@ impl Renderer {
         let use_hdr_path = self.settings.enable_hdr;
 
         if use_hdr_path {
+            
+            state.frame_resources
+                .ensure_transmission_resource(&state.wgpu_ctx.device);
             // === PBR Path (HDR) ===
             
             // Opaque rendering

@@ -54,6 +54,7 @@ impl RenderNode for TransmissionCopyPass {
             return;
         }
 
+
         // Transmission 需要 HDR 模式
         if !ctx.wgpu_ctx.enable_hdr {
             log::warn!(

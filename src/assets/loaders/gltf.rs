@@ -328,6 +328,9 @@ impl GltfLoader {
         loader.register_extension(Box::new(KhrMaterialsSheen));
         loader.register_extension(Box::new(KhrMaterialsIridescence));
         loader.register_extension(Box::new(KhrMaterialsAnisotropy));
+        loader.register_extension(Box::new(KhrMaterialsTransmission));
+        loader.register_extension(Box::new(KhrMaterialsVolume));
+        loader.register_extension(Box::new(KhrMaterialsDispersion));
 
         // Validation / Logging
         let mut supported_ext = loader.extensions.keys().cloned().collect::<Vec<_>>();
@@ -1608,6 +1611,112 @@ impl GltfExtensionParser for KhrMaterialsAnisotropy {
         }
 
         physical_mat.enable_feature(PhysicalFeatures::ANISOTROPY);
+
+        Ok(())
+    }
+}
+
+struct KhrMaterialsTransmission;
+
+impl GltfExtensionParser for KhrMaterialsTransmission {
+    fn name(&self) -> &str {
+        "KHR_materials_transmission"
+    }
+
+    fn on_load_material(&mut self, ctx: &mut LoadContext, _gltf_mat: &gltf::Material, physical_mat: &MeshPhysicalMaterial, extension_value: &Value) -> anyhow::Result<()> {
+        let transmission_info = extension_value.as_object()
+            .ok_or_else(|| anyhow::anyhow!("Invalid transmission extension data"))?;
+
+        let transmission_factor = transmission_info.get("transmissionFactor")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.transmission = transmission_factor;
+        }
+
+        let mut textures = physical_mat.textures.write();
+
+        if let Some(transmission_tex_info) = transmission_info.get("transmissionTexture") {
+            self.setup_texture_map_from_extension(ctx, transmission_tex_info, &mut textures.transmission_map, false);
+        }
+        physical_mat.enable_feature(PhysicalFeatures::TRANSMISSION);
+        Ok(())
+    }
+}
+
+struct KhrMaterialsVolume;
+
+impl GltfExtensionParser for KhrMaterialsVolume {
+    fn name(&self) -> &str {
+        "KHR_materials_volume"
+    }
+
+    fn on_load_material(&mut self, ctx: &mut LoadContext, _gltf_mat: &gltf::Material, physical_mat: &MeshPhysicalMaterial, extension_value: &Value) -> anyhow::Result<()> {
+        let volume_info = extension_value.as_object()
+            .ok_or_else(|| anyhow::anyhow!("Invalid volume extension data"))?;
+
+        let thickness_factor = volume_info.get("thicknessFactor")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+
+        let attenuation_color = volume_info.get("attenuationColor")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| {
+                if arr.len() == 3 {
+                    Some(Vec3::new(
+                        arr[0].as_f64().unwrap_or(1.0) as f32,
+                        arr[1].as_f64().unwrap_or(1.0) as f32,
+                        arr[2].as_f64().unwrap_or(1.0) as f32,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(Vec3::ONE);
+
+        let attenuation_distance = volume_info.get("attenuationDistance")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(f32::INFINITY as f64) as f32;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.thickness = thickness_factor;
+            uniforms.attenuation_color = attenuation_color;
+            uniforms.attenuation_distance = attenuation_distance;
+        }
+
+        let mut textures = physical_mat.textures.write();
+
+        if let Some(thickness_tex_info) = volume_info.get("thicknessTexture") {
+            self.setup_texture_map_from_extension(ctx, thickness_tex_info, &mut textures.thickness_map, false);
+        }
+
+        Ok(())
+    }   
+    
+}
+
+struct KhrMaterialsDispersion;
+
+impl GltfExtensionParser for KhrMaterialsDispersion {
+    fn name(&self) -> &str {
+        "KHR_materials_dispersion"
+    }
+
+    fn on_load_material(&mut self, _ctx: &mut LoadContext, _gltf_mat: &gltf::Material, physical_mat: &MeshPhysicalMaterial, extension_value: &Value) -> anyhow::Result<()> {
+        let dispersion_info = extension_value.as_object()
+            .ok_or_else(|| anyhow::anyhow!("Invalid dispersion extension data"))?;
+
+        let dispersion_factor = dispersion_info.get("dispersionFactor")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0) as f32;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.dispersion = dispersion_factor;
+        }
 
         Ok(())
     }

@@ -489,6 +489,14 @@ define_gpu_data_struct!(
         pub anisotropy_vector: Vec2 = Vec2::ZERO,      // 8
         pub(crate) __padding: UniformArray<f32, 2>,    // 8 (8+8=16)
 
+        pub transmission: f32 = 0.0,               // 4
+        pub thickness: f32 = 0.0,                  // 4
+        pub attenuation_distance: f32 = f32::INFINITY, // 4
+        pub dispersion: f32 = 0.0,                 // 4
+
+        pub attenuation_color: Vec3 = Vec3::ONE,   // 12
+        pub(crate) __padding2: f32,                // 4 
+
         // Using optimized Mat3Uniform (48 bytes)
         pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,         
         pub normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,   
@@ -506,7 +514,8 @@ define_gpu_data_struct!(
         pub iridescence_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub iridescence_thickness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub anisotropy_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
-
+        pub transmission_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub thickness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
     }
 );
 

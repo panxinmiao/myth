@@ -53,6 +53,8 @@ pub struct MeshPhysicalTextureSet {
     pub iridescence_map: TextureSlot,
     pub iridescence_thickness_map: TextureSlot,
     pub anisotropy_map: TextureSlot,
+    pub transmission_map: TextureSlot,
+    pub thickness_map: TextureSlot,
 
     pub map_sampler: Option<SamplerSource>,
     pub normal_map_sampler: Option<SamplerSource>,
@@ -70,6 +72,9 @@ pub struct MeshPhysicalTextureSet {
     pub iridescence_map_sampler: Option<SamplerSource>,
     pub iridescence_thickness_map_sampler: Option<SamplerSource>,
     pub anisotropy_map_sampler: Option<SamplerSource>,
+
+    pub transmission_map_sampler: Option<SamplerSource>,
+    pub thickness_map_sampler: Option<SamplerSource>,
 }
 
 
@@ -114,6 +119,7 @@ impl MeshPhysicalMaterial {
         if features.contains(PhysicalFeatures::SHEEN) { defines.set("USE_SHEEN", "1"); }
         if features.contains(PhysicalFeatures::IRIDESCENCE) { defines.set("USE_IRIDESCENCE", "1"); }
         if features.contains(PhysicalFeatures::ANISOTROPY) { defines.set("USE_ANISOTROPY", "1"); }
+        if features.contains(PhysicalFeatures::TRANSMISSION) { defines.set("USE_TRANSMISSION", "1"); }
     }
 
 
@@ -182,6 +188,19 @@ impl MeshPhysicalMaterial {
         self
     }
 
+    pub fn with_transmission(self, transmission: f32, thickness: f32, attenuation_distance: f32, attenuation_color: Vec3, dispersion: f32) -> Self {
+        {
+            let mut uniforms = self.uniforms_mut();
+            uniforms.transmission = transmission;
+            uniforms.thickness = thickness;
+            uniforms.attenuation_distance = attenuation_distance;
+            uniforms.attenuation_color = attenuation_color;
+            uniforms.dispersion = dispersion;
+        }
+        self.toggle_feature(PhysicalFeatures::TRANSMISSION, true);
+        self
+    }
+
 }
 
 impl_material_api!(
@@ -212,7 +231,11 @@ impl_material_api!(
         (iridescence_thickness_min, f32,  "The minimum thickness of the thin-film layer given in nanometers. Default is 100 nm."),
         (iridescence_thickness_max, f32,  "The maximum thickness of the thin-film layer given in nanometers. Default is 400 nm."),
 
-        // (anisotropy_vector,      Vec2, "Anisotropy direction vector."),
+        (transmission,            f32,  "The transmission factor controlling the amount of light that passes through the surface."),
+        (thickness,               f32,  "The thickness of the object used for subsurface absorption."),
+        (attenuation_distance,    f32,  "The distance that light travels through the material before it is absorbed."),
+        (dispersion,              f32,  "The amount of chromatic dispersion in the transmitted light."),
+        (attenuation_color,       Vec3, "The color that light is attenuated towards as it passes through the material."),
 
     ],
     textures: [
@@ -232,6 +255,8 @@ impl_material_api!(
         (iridescence_map,        "The iridescence map."),
         (iridescence_thickness_map, "The iridescence thickness map."),
         (anisotropy_map,         "The anisotropy map."),
+        (transmission_map,       "The transmission map."),
+        (thickness_map,          "The thickness map."),
     ],
     manual_clone_fields: {
         features: |s: &Self| parking_lot::RwLock::new(s.features.read().clone())
@@ -259,6 +284,8 @@ impl_material_trait!(
         iridescence_map,
         iridescence_thickness_map,
         anisotropy_map,
+        transmission_map,
+        thickness_map,
     ]
 );
 

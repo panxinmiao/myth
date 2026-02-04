@@ -114,7 +114,7 @@ fn volume_attenuation( transmission_distance: f32, attenuation_color: vec3f, att
 
 fn getIBLVolumeRefraction( n: vec3f, v: vec3f, roughness: f32, diffuse_color: vec3f,
     specular_color: vec3f, specular_f90: f32, position: vec3f, model_matrix: mat4x4f,
-    view_matrix: mat4x4f, proj_matrix: mat4x4f, dispersion: f32, ior: f32, thickness: f32,
+    view_proj_matrix: mat4x4f, dispersion: f32, ior: f32, thickness: f32,
     attenuation_color: vec3f, attenuation_distance: f32 ) -> vec4f {
 
     var transmitted_light: vec4f;
@@ -130,7 +130,7 @@ fn getIBLVolumeRefraction( n: vec3f, v: vec3f, roughness: f32, diffuse_color: ve
             let refracted_ray_exit = position + transmission_ray;
 
             // Project refracted vector on the framebuffer, while mapping to normalized device coordinates.
-            let ndc_pos = proj_matrix * view_matrix * vec4f( refracted_ray_exit, 1.0 );
+            let ndc_pos = view_proj_matrix * vec4f( refracted_ray_exit, 1.0 );
             var refraction_coords = ndc_pos.xy / ndc_pos.w;
             refraction_coords += 1.0;
             refraction_coords /= 2.0;
@@ -153,7 +153,7 @@ fn getIBLVolumeRefraction( n: vec3f, v: vec3f, roughness: f32, diffuse_color: ve
         let refracted_ray_exit = position + transmission_ray;
 
         // Project refracted vector on the framebuffer, while mapping to normalized device coordinates.
-        let ndc_pos = proj_matrix * view_matrix * vec4f( refracted_ray_exit, 1.0 );
+        let ndc_pos = view_proj_matrix * vec4f( refracted_ray_exit, 1.0 );
         var refraction_coords = ndc_pos.xy / ndc_pos.w;
         refraction_coords += 1.0;
         refraction_coords /= 2.0;

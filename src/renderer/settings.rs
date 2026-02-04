@@ -124,7 +124,7 @@ impl Default for RenderSettings {
             vsync: true,
             msaa_samples: 1,
             depth_format: wgpu::TextureFormat::Depth32Float,
-            enable_hdr: false,
+            enable_hdr: true,
         }
     }
 }

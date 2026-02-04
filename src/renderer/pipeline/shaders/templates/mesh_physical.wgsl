@@ -225,16 +225,16 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     var total_specular = reflected_light.direct_specular + reflected_light.indirect_specular;
 
     $$ if USE_TRANSMISSION is defined
-        let pos = varyings.world_pos;
-        let v = normalize(u_stdinfo.cam_transform_inv[3].xyz - pos);
+        let pos = varyings.world_position;
+        let v = normalize(u_render_state.camera_position - pos);
         let n = surface_normal;
-        let model_matrix = u_wobject.world_transform;
-        let view_matrix = u_stdinfo.cam_transform;
-        let projection_matrix = u_stdinfo.projection_transform;
+        let model_matrix = u_model.world_matrix;
+        // let view_matrix = u_render_state.view_matrix;
+        let view_projection_matrix = u_render_state.view_projection;
 
         let transmitted = getIBLVolumeRefraction(
             n, v, material.roughness, material.diffuse_color, material.specular_color, material.specular_f90,
-            pos, model_matrix, view_matrix, projection_matrix, material.dispersion, material.ior, material.thickness,
+            pos, model_matrix, view_projection_matrix, material.dispersion, material.ior, material.thickness,
             material.attenuation_color, material.attenuation_distance );
 
         material.transmission_alpha = mix( material.transmission_alpha, transmitted.a, material.transmission );
