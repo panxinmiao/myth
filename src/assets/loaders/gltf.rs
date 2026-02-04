@@ -1678,7 +1678,7 @@ impl GltfExtensionParser for KhrMaterialsVolume {
 
         let attenuation_distance = volume_info.get("attenuationDistance")
             .and_then(|v| v.as_f64())
-            .unwrap_or(f32::INFINITY as f64) as f32;
+            .unwrap_or(-1.0 as f64) as f32;
 
         {
             let mut uniforms = physical_mat.uniforms_mut();
@@ -1717,6 +1717,8 @@ impl GltfExtensionParser for KhrMaterialsDispersion {
             let mut uniforms = physical_mat.uniforms_mut();
             uniforms.dispersion = dispersion_factor;
         }
+
+        physical_mat.enable_feature(PhysicalFeatures::DISPERSION);
 
         Ok(())
     }

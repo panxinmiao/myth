@@ -94,5 +94,11 @@ impl RenderNode for TransmissionCopyPass {
                 depth_or_array_layers: 1,
             },
         );
+
+        ctx.resource_manager.mipmap_generator.generate(
+            &ctx.wgpu_ctx.device, 
+            encoder, 
+            &transmission_view.texture(), 
+        );
     }
 }

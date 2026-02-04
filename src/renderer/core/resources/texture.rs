@@ -202,7 +202,7 @@ impl ResourceManager {
                 if !gpu_img.mipmaps_generated {
                     let gpu_img_mut = self.gpu_images.get_mut(&image_id).unwrap();
                     let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Mipmap Gen") });
-                    self.mipmap_generator.generate(&self.device, &mut encoder, &gpu_img_mut.texture, gpu_img_mut.mip_level_count);
+                    self.mipmap_generator.generate(&self.device, &mut encoder, &gpu_img_mut.texture);
                     self.queue.submit(Some(encoder.finish()));
                     gpu_img_mut.mipmaps_generated = true;
                 }

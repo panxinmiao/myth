@@ -126,7 +126,8 @@ impl MipmapGenerator {
         }).clone()
     }
 
-    pub fn generate(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, texture: &wgpu::Texture, mip_count: u32) {
+    pub fn generate(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, texture: &wgpu::Texture) {
+        let mip_count = texture.mip_level_count();
         if mip_count < 2 { return; }
 
         let format = texture.format();

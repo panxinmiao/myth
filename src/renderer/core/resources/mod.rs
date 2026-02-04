@@ -38,7 +38,7 @@ use core::ops::Range;
 use rustc_hash::FxHashMap;
 
 use crate::assets::server::SamplerHandle;
-use crate::renderer::core::resources::mipmap::MipmapGenerator;
+
 use crate::resources::texture::TextureSampler;
 
 use crate::scene::SkeletonKey;
@@ -48,6 +48,7 @@ use crate::assets::{GeometryHandle, MaterialHandle, TextureHandle};
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 
 pub use allocator::ModelBufferAllocator;
+pub use crate::renderer::core::resources::mipmap::MipmapGenerator;
 pub use resource_ids::{EnsureResult, ResourceIdSet, BindGroupFingerprint, hash_layout_entries, ResourceId};
 pub use tracked::Tracked;
 

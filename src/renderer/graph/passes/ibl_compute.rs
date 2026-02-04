@@ -288,7 +288,6 @@ impl RenderNode for IBLComputePass {
                 &ctx.wgpu_ctx.device, 
                 encoder, 
                 &cube_texture, 
-                mip_levels
             );
 
             Some(cube_texture)

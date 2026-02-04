@@ -101,7 +101,7 @@ fn get_transmission_sample( frag_coord: vec2f, roughness: f32, ior: f32 ) -> vec
 }
 
 fn volume_attenuation( transmission_distance: f32, attenuation_color: vec3f, attenuation_distance: f32 ) -> vec3f {
-    if (attenuation_distance == 0.0) {
+    if (attenuation_distance <= 0.0) {
         // Attenuation distance is +∞, i.e. the transmitted color is not attenuated at all.
         return vec3f( 1.0 );
     } else {

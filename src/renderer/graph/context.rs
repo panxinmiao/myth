@@ -208,6 +208,7 @@ impl FrameResources {
             wgpu::TextureFormat::Rgba8Unorm,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             1,
+        1,
             "Placeholder Texture",
         );
 
@@ -246,6 +247,7 @@ impl FrameResources {
         format: wgpu::TextureFormat, 
         usage: wgpu::TextureUsages, 
         sample_count: u32,
+        mip_level_count: u32,
         label: &str
     ) -> wgpu::TextureView {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -255,7 +257,7 @@ impl FrameResources {
                 height: size.1,
                 depth_or_array_layers: 1,
             },
-            mip_level_count: 1,
+            mip_level_count: mip_level_count,
             sample_count: sample_count,
             dimension: wgpu::TextureDimension::D2,
             format,
@@ -303,6 +305,7 @@ impl FrameResources {
             wgpu_ctx.depth_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
             wgpu_ctx.msaa_samples,
+            1,
             "Depth Texture",
         );
         self.depth_view = Tracked::new(depth_view);
@@ -316,6 +319,7 @@ impl FrameResources {
                 crate::renderer::HDR_TEXTURE_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                 1,
+                1,
                 "Ping-Pong Texture 0",
             );
 
@@ -324,6 +328,7 @@ impl FrameResources {
                 size,
                 crate::renderer::HDR_TEXTURE_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                1,
                 1,
                 "Ping-Pong Texture 1",
             );
@@ -349,6 +354,7 @@ impl FrameResources {
                 masaa_target_fromat,
                 wgpu::TextureUsages::RENDER_ATTACHMENT,
                 wgpu_ctx.msaa_samples,
+                1,
                 "Scene MSAA Color Texture",
             );
             self.scene_msaa_view = Some(Tracked::new(scene_msaa_view));
@@ -356,6 +362,7 @@ impl FrameResources {
         }
 
         if self.transmission_view.is_some() {
+            let mip_level_count = ((size.0.max(size.1) as f32).log2().floor() as u32) + 1;
             // 1. 创建纹理 (Tracked::new 会生成新 ID)
             let texture_view = Self::create_texture(
                 &wgpu_ctx.device,
@@ -363,6 +370,7 @@ impl FrameResources {
                 crate::renderer::HDR_TEXTURE_FORMAT,
                 wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 1,
+                mip_level_count,
                 "Transmission Texture"
             );
             let tracked_view = Tracked::new(texture_view);
@@ -391,13 +399,16 @@ impl FrameResources {
     }
 
     pub fn ensure_transmission_resource(&mut self, device: &wgpu::Device) -> &wgpu::BindGroup {
+        
         if self.transmission_view.is_none() {
+            let mip_level_count = ((self.size.0.max(self.size.1) as f32).log2().floor() as u32) + 1;
             let texture_view = Self::create_texture(
                 device,
                 self.size,
                 crate::renderer::HDR_TEXTURE_FORMAT,
                 wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 1,
+                mip_level_count,
                 "Transmission Texture"
             );
             let tracked_view = Tracked::new(texture_view);
