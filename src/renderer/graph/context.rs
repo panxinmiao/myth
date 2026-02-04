@@ -10,6 +10,7 @@ use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::pipeline::PipelineCache;
 use crate::assets::AssetServer;
 use crate::renderer::graph::{RenderState, ExtractedScene};
+use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::core::resources::Tracked;
 
 /// 渲染上下文
@@ -40,6 +41,8 @@ pub struct RenderContext<'a> {
     pub render_state: &'a RenderState,
     /// 提取的场景数据
     pub extracted_scene: &'a ExtractedScene,
+    /// 渲染列表（由 SceneCullPass 填充，供各个绘制 Pass 消费）
+    pub render_frame: RenderFrameRef<'a>,
     /// 帧资源
     pub frame_resources: &'a FrameResources,
     /// 当前时间
@@ -55,6 +58,13 @@ pub struct RenderContext<'a> {
     pub(crate) color_view_flip_flop: usize,
 }
 
+/// RenderFrame 的可变引用包装
+/// 
+/// 用于在 RenderContext 中安全地访问 RenderLists
+pub struct RenderFrameRef<'a> {
+    pub render_lists: &'a mut RenderLists,
+}
+
 
 impl<'a> RenderContext<'a> {
     /// 获取 Post Process 的 Input 和 Output
@@ -67,7 +77,7 @@ impl<'a> RenderContext<'a> {
     /// 供下一个 Pass 使用。
     pub fn acquire_pass_io(
         &mut self
-    ) -> (&'a Tracked<wgpu::TextureView>, &'a wgpu::TextureView) {
+    ) -> (&Tracked<wgpu::TextureView>, &wgpu::TextureView) {
 
         let current_idx = self.color_view_flip_flop;
     
@@ -83,7 +93,7 @@ impl<'a> RenderContext<'a> {
         (input, output)
     }
 
-    pub fn get_scene_render_target_view(&self) -> &'a wgpu::TextureView {
+    pub fn get_scene_render_target_view(&self) -> &wgpu::TextureView {
         // 逻辑：如果是直连模式 ? Surface : SceneColor[0]
         if self.wgpu_ctx.enable_hdr {
             &self.frame_resources.scene_color_view[0]

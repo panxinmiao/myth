@@ -32,6 +32,8 @@ use crate::renderer::pipeline::PipelineCache;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
+use super::context::RenderFrameRef;
+use super::frame::RenderLists;
 
 
 pub struct ComposerContext<'a> {
@@ -44,6 +46,9 @@ pub struct ComposerContext<'a> {
 
     pub frame_resources: &'a FrameResources,
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
+
+    /// 渲染列表（由 SceneCullPass 填充）
+    pub render_lists: &'a mut RenderLists,
 
     // 外部场景数据 todo: refactor
     pub scene: &'a mut Scene,
@@ -175,7 +180,10 @@ impl<'a> FrameComposer<'a> {
             surface_view: &surface_view,
             render_state: self.ctx.render_state,
             extracted_scene: self.ctx.extracted_scene,
-            frame_resources: &self.ctx.frame_resources,
+            render_frame: RenderFrameRef {
+                render_lists: self.ctx.render_lists,
+            },
+            frame_resources: self.ctx.frame_resources,
             time: self.ctx.time,
 
             global_bind_group_cache: self.ctx.global_bind_group_cache,

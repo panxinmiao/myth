@@ -54,7 +54,11 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::graph::ForwardRenderPass;
 use crate::renderer::graph::composer::ComposerContext;
-use crate::renderer::graph::passes::{BRDFLutComputePass, IBLComputePass, ToneMapPass};
+use crate::renderer::graph::frame::RenderLists;
+use crate::renderer::graph::passes::{
+    BRDFLutComputePass, IBLComputePass, ToneMapPass, SceneCullPass,
+    SimpleForwardPass, OpaquePass, TransparentPass, TransmissionCopyPass,
+};
 use crate::{FrameBuilder, RenderStage};
 use crate::assets::AssetServer;
 use crate::errors::Result;
@@ -99,15 +103,35 @@ struct RendererState {
     pipeline_cache: PipelineCache,
 
     render_frame: RenderFrame,
+    /// 渲染列表（与 render_frame 分离以避免借用冲突）
+    render_lists: RenderLists,
 
     frame_resources: FrameResources,
     global_bind_group_cache: GlobalBindGroupCache,
 
-    // Built-in passes
-    pub(crate) forward_pass: ForwardRenderPass,
-    pub(crate) tone_mapping_pass: ToneMapPass,
+    // ===== Built-in passes =====
+    
+    // Data Preparation
+    pub(crate) cull_pass: SceneCullPass,
+    
+    // Simple Path (LDR)
+    pub(crate) simple_forward_pass: SimpleForwardPass,
+    
+    // PBR Path (HDR)
+    pub(crate) opaque_pass: OpaquePass,
+    pub(crate) transparent_pass: TransparentPass,
+    pub(crate) transmission_copy_pass: TransmissionCopyPass,
+    
+    // Compute Passes
     pub(crate) brdf_pass: BRDFLutComputePass,
     pub(crate) ibl_pass: IBLComputePass,
+    
+    // Post Processing
+    pub(crate) tone_mapping_pass: ToneMapPass,
+    
+    // Legacy (to be removed after migration)
+    #[allow(dead_code)]
+    pub(crate) forward_pass: ForwardRenderPass,
 }
 
 impl Renderer {
@@ -161,27 +185,49 @@ impl Renderer {
         // 5. Create global bind group cache
         let global_bind_group_cache = GlobalBindGroupCache::new();
 
-        // build passes
-        let forward_pass: ForwardRenderPass = ForwardRenderPass::new(wgpu::Color::BLACK);
-        let tone_mapping_pass: ToneMapPass = ToneMapPass::new(&wgpu_ctx.device);
-        let brdf_pass: BRDFLutComputePass = BRDFLutComputePass::new(&wgpu_ctx.device);
-        let ibl_pass: IBLComputePass = IBLComputePass::new(&wgpu_ctx.device);
+        // Build passes
+        // Data Preparation
+        let cull_pass = SceneCullPass::new();
+        
+        // Simple Path (LDR)
+        let simple_forward_pass = SimpleForwardPass::new(wgpu::Color::BLACK);
+        
+        // PBR Path (HDR)
+        let opaque_pass = OpaquePass::new(wgpu::Color::BLACK);
+        let transparent_pass = TransparentPass::new();
+        let transmission_copy_pass = TransmissionCopyPass::new();
+        
+        // Compute Passes
+        let brdf_pass = BRDFLutComputePass::new(&wgpu_ctx.device);
+        let ibl_pass = IBLComputePass::new(&wgpu_ctx.device);
+        
+        // Post Processing
+        let tone_mapping_pass = ToneMapPass::new(&wgpu_ctx.device);
+        
+        // Legacy
+        let forward_pass = ForwardRenderPass::new(wgpu::Color::BLACK);
 
-        // 4. Assemble state
+        // 6. Assemble state
         self.context = Some(RendererState {
             wgpu_ctx,
             resource_manager,
             pipeline_cache: PipelineCache::new(),
 
             render_frame,
+            render_lists: RenderLists::new(),
 
             frame_resources,
             global_bind_group_cache,
 
-            forward_pass,
-            tone_mapping_pass,
+            cull_pass,
+            simple_forward_pass,
+            opaque_pass,
+            transparent_pass,
+            transmission_copy_pass,
             brdf_pass,
             ibl_pass,
+            tone_mapping_pass,
+            forward_pass,
 
         });
 
@@ -247,15 +293,47 @@ impl Renderer {
 
         let mut frame_builder = FrameBuilder::new();
 
+        // ========================================
+        // 1. 公共准备阶段 (PreProcess)
+        // ========================================
         frame_builder
             .add_node(RenderStage::PreProcess, &mut state.brdf_pass)
             .add_node(RenderStage::PreProcess, &mut state.ibl_pass)
-            .add_node(RenderStage::Opaque, &mut state.forward_pass);
+            .add_node(RenderStage::PreProcess, &mut state.cull_pass);
 
-        if self.settings.enable_hdr {
+        // ========================================
+        // 2. 路径选择：HDR (PBR Path) vs LDR (Simple Path)
+        // ========================================
+        // 
+        // PBR Path: OpaquePass → [TransmissionCopyPass] → TransparentPass → ToneMapPass
+        // Simple Path: SimpleForwardPass (直接输出到 Surface)
+        //
+        let use_hdr_path = self.settings.enable_hdr;
+
+        if use_hdr_path {
+            // === PBR Path (HDR) ===
+            
+            // Opaque rendering
+            frame_builder.add_node(RenderStage::Opaque, &mut state.opaque_pass);
+            
+            // Transmission copy (conditional)
+            // 注意：TransmissionCopyPass 内部会检查 use_transmission 标志
+            // 如果场景中没有使用 Transmission 的材质，此 Pass 会提前返回
+            frame_builder.add_node(RenderStage::Opaque, &mut state.transmission_copy_pass);
+            
+            // Transparent rendering
+            frame_builder.add_node(RenderStage::Transparent, &mut state.transparent_pass);
+            
+            // Tone mapping (HDR → LDR)
             frame_builder.add_node(RenderStage::PostProcess, &mut state.tone_mapping_pass);
+        } else {
+            // === Simple Path (LDR) ===
+            frame_builder.add_node(RenderStage::Opaque, &mut state.simple_forward_pass);
         }
 
+        // ========================================
+        // 3. 构建 ComposerContext
+        // ========================================
         let ctx = ComposerContext {
             wgpu_ctx: &mut state.wgpu_ctx,
             resource_manager: &mut state.resource_manager,
@@ -266,6 +344,8 @@ impl Renderer {
 
             frame_resources: &mut state.frame_resources,
             global_bind_group_cache: &mut state.global_bind_group_cache,
+
+            render_lists: &mut state.render_lists,
 
             scene,
             camera,

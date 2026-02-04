@@ -11,6 +11,7 @@
 //! - [`RenderStage`]: Render stage definitions (Opaque, Transparent, UI, etc.)
 //! - [`FrameBuilder`]: Frame construction utilities
 //! - [`FrameComposer`]: Chainable API for frame composition
+//! - [`RenderLists`]: Sorted render command lists
 //!
 //! # Frame Lifecycle
 //!
@@ -35,7 +36,7 @@ pub use builder::FrameBuilder;
 pub use composer::FrameComposer;
 pub use context::RenderContext;
 pub use extracted::{ExtractedRenderItem, ExtractedScene, ExtractedSkeleton};
-pub use frame::RenderFrame;
+pub use frame::{RenderFrame, RenderLists, RenderCommand, RenderKey};
 pub use graph::RenderGraph;
 pub use node::RenderNode;
 pub use pass::TrackedRenderPass;

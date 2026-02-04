@@ -194,6 +194,14 @@ impl GlobalBindGroupCache {
         }
     }
 
+    pub fn get(&self, key: &BindGroupKey) -> Option<&wgpu::BindGroup> {
+        self.cache.get(key)
+    }
+
+    pub fn insert(&mut self, key: BindGroupKey, bind_group: wgpu::BindGroup) {
+        self.cache.insert(key, bind_group);
+    }
+
     pub fn get_or_create(
         &mut self,
         key: BindGroupKey,

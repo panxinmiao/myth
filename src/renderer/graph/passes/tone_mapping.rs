@@ -235,24 +235,34 @@ impl RenderNode for ToneMapPass {
     // }
 
     fn prepare(&mut self, ctx: &mut RenderContext) {
+        // 1. 获取 ping-pong 索引
+        // ToneMapPass 直接输出到屏幕，不需要翻转 color_view_flip_flop
+        let current_idx = ctx.color_view_flip_flop;
+        
+        let input_view_tracked = &ctx.frame_resources.scene_color_view[current_idx];
+        let input_view_id = input_view_tracked.id();
 
-        let (input_view, _out_view) = ctx.acquire_pass_io();
-
+        // 2. 确保 buffer 资源准备好
         let gpu_buffer_id = ctx.resource_manager.ensure_buffer_id(&self.uniforms);
-
         let cpu_buffer_id = self.uniforms.id();
 
+        // 3. 构建 BindGroup 缓存 key
         let key = BindGroupKey::new(self.layout.id())
-            .with_resource(input_view.id())
+            .with_resource(input_view_id)
             .with_resource(self.sampler.id())
             .with_resource(gpu_buffer_id);
 
-        let bind_group = ctx.global_bind_group_cache.get_or_create(key, || {
-
+        // 4. 获取或创建 BindGroup
+        // 注意：这里需要分开获取各个资源以避免借用冲突
+        let bind_group = if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
+            cached.clone()
+        } else {
             let gpu_buffer = ctx.resource_manager.gpu_buffers.get(&cpu_buffer_id)
                 .expect("GpuBuffer must exist after ensure_buffer_id");
 
-            ctx.wgpu_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            let input_view = &ctx.frame_resources.scene_color_view[current_idx];
+
+            let new_bind_group = ctx.wgpu_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("ToneMap BindGroup"),
                 layout: &self.layout,
                 entries: &[
@@ -269,10 +279,13 @@ impl RenderNode for ToneMapPass {
                         resource: gpu_buffer.buffer.as_entire_binding(),
                     },
                 ],
-            })
-        });
+            });
 
-        self.current_bind_group = Some(bind_group.clone());
+            ctx.global_bind_group_cache.insert(key, new_bind_group.clone());
+            new_bind_group
+        };
+
+        self.current_bind_group = Some(bind_group);
 
         if self.current_pipeline.is_none() {
             self.current_pipeline = Some(self.get_or_create_pipeline(&ctx.wgpu_ctx.device, ctx.wgpu_ctx.surface_view_format));
