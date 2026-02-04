@@ -67,6 +67,11 @@ use self::graph::{FrameComposer, RenderFrame};
 use self::pipeline::PipelineCache;
 use self::settings::RenderSettings;
 
+/// HDR 纹理格式
+/// 
+/// 用于高动态范围渲染目标, 中间缓冲区的格式
+pub const HDR_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
 /// The main renderer responsible for GPU rendering operations.
 ///
 /// The renderer manages the complete rendering pipeline including:
@@ -157,7 +162,7 @@ impl Renderer {
         let global_bind_group_cache = GlobalBindGroupCache::new();
 
         // build passes
-        let forward_pass: ForwardRenderPass = ForwardRenderPass::new(wgpu::Color::BLACK, self.settings.straightforward);
+        let forward_pass: ForwardRenderPass = ForwardRenderPass::new(wgpu::Color::BLACK);
         let tone_mapping_pass: ToneMapPass = ToneMapPass::new(&wgpu_ctx.device);
         let brdf_pass: BRDFLutComputePass = BRDFLutComputePass::new(&wgpu_ctx.device);
         let ibl_pass: IBLComputePass = IBLComputePass::new(&wgpu_ctx.device);
@@ -240,33 +245,6 @@ impl Renderer {
             time,
         );
 
-        // let straight = self.settings.straightforward;
-
-        // === 1. 决定渲染目标 ===
-        // let (scene_target_view, scene_target_format) = if straight {
-        //     // A. 后处理模式：画到中间 HDR 纹理
-        //     // 直连模式：直接画到 Surface (注意：此时没有 ToneMap，必须是 sRGB)
-        //     (
-        //         &surface_view,
-        //         self.settings.surface_format // 通常是 Bgra8UnormSrgb
-        //     )
-        // } else {
-        //     // B. 后处理模式：画到中间 HDR 纹理
-        //     (
-        //         &surface_view, // 注意：这里需要想办法把 surface_view 传进去或者在 Context 里处理
-        //         self.settings.color_format
-        //     )
-        // };
-
-        // let RendererState {
-        //     wgpu_ctx,
-        //     resource_manager,
-        //     pipeline_cache,
-        //     render_frame,     // 将被 Builder 借用
-        //     frame_resources,  // 将被 Context 借用
-        //     global_bind_group_cache,
-        // } = state;
-
         let mut frame_builder = FrameBuilder::new();
 
         frame_builder
@@ -274,7 +252,7 @@ impl Renderer {
             .add_node(RenderStage::PreProcess, &mut state.ibl_pass)
             .add_node(RenderStage::Opaque, &mut state.forward_pass);
 
-        if !self.settings.straightforward {
+        if self.settings.enable_hdr {
             frame_builder.add_node(RenderStage::PostProcess, &mut state.tone_mapping_pass);
         }
 

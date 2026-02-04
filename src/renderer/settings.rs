@@ -107,19 +107,11 @@ pub struct RenderSettings {
 
     /// Whether to use straightforward rendering mode.
     /// 
-    /// if true, the main scene will be rendered directly to the screen surface,
+    /// if false, the main scene will be rendered directly to the screen surface,
     /// bypassing intermediate render targets and post-processing.
     /// This can improve performance for simple scenes without effects.
-    pub straightforward: bool,
+    pub enable_hdr: bool,
 
-    /// The color format used for the main render target.
-    /// 
-    /// This format determines how colors are stored in the framebuffer.
-    /// for HDR rendering, `Rgba16Float` or `Rgba32Float` is recommended.
-    /// For standard rendering, `Bgra8Unorm` is commonly used.
-    /// Note, if `straightforward` is true, this configuuration will be ignored,
-    /// and the format will match the surface's preferred format.
-    pub color_format: wgpu::TextureFormat,
 }
 
 impl Default for RenderSettings {
@@ -130,10 +122,9 @@ impl Default for RenderSettings {
             required_limits: wgpu::Limits::default(),
             clear_color: wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
             vsync: true,
-            msaa_samples: 1,
+            msaa_samples: 4,
             depth_format: wgpu::TextureFormat::Depth32Float,
-            color_format: wgpu::TextureFormat::Rgba16Float,
-            straightforward: true,
+            enable_hdr: true,
         }
     }
 }

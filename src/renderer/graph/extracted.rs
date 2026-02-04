@@ -63,6 +63,7 @@ pub struct ExtractedScene {
     pub scene_id: u32,
     pub background: Option<glam::Vec4>,
     pub envvironment: Environment,
+    pub has_transmission: bool,
 
     collected_meshes: Vec<CollectedMesh>,
     collected_skeleton_keys: HashSet<SkeletonKey>,
@@ -83,6 +84,7 @@ impl ExtractedScene {
             scene_id: 0,
             background: None,
             envvironment: Environment::default(),
+            has_transmission: false,
             collected_meshes: Vec::new(),
             collected_skeleton_keys: HashSet::default(),
         }
@@ -96,6 +98,7 @@ impl ExtractedScene {
             scene_id: 0,
             background: None,
             envvironment: Environment::default(),
+            has_transmission: false,
             collected_meshes: Vec::with_capacity(item_capacity),
             collected_skeleton_keys: HashSet::default(),
         }

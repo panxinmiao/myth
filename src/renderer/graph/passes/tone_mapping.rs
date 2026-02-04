@@ -229,21 +229,14 @@ impl ToneMapPass {
 
 impl RenderNode for ToneMapPass {
 
-    #[inline]
-    fn output_to_screen(&self) -> bool {
-        true
-    }
+    // #[inline]
+    // fn output_to_screen(&self) -> bool {
+    //     true
+    // }
 
     fn prepare(&mut self, ctx: &mut RenderContext) {
-        // let (input, output) = ctx.acquire_post_process_io();
 
         let (input_view, _out_view) = ctx.acquire_pass_io();
-
-        // if self.output_to_screen() {
-        //     self.target_view = Some(ctx.surface_view.clone());
-        // } else {
-        //     self.target_view = Some(out_view.clone());
-        // }
 
         let gpu_buffer_id = ctx.resource_manager.ensure_buffer_id(&self.uniforms);
 
@@ -282,19 +275,13 @@ impl RenderNode for ToneMapPass {
         self.current_bind_group = Some(bind_group.clone());
 
         if self.current_pipeline.is_none() {
-            self.current_pipeline = Some(self.get_or_create_pipeline(&ctx.wgpu_ctx.device, ctx.get_output_format(self.output_to_screen())));
+            self.current_pipeline = Some(self.get_or_create_pipeline(&ctx.wgpu_ctx.device, ctx.wgpu_ctx.surface_view_format));
         }
 
     }
 
 
-
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-
-        // let Some(target_view) = &self.target_view else {
-        //     log::error!("ToneMapPass missing target_view");
-        //     return;
-        // };
 
         // 输出到 Surface (屏幕)
         let pass_desc = wgpu::RenderPassDescriptor {

@@ -83,39 +83,33 @@ impl<'a> RenderContext<'a> {
         (input, output)
     }
 
-    // pub fn get_scene_view_target(&self) -> &'a wgpu::TextureView {
-    //     if self.render_state.post_process_enabled {
-    //         &self.frame_resources.scene_color_view[self.color_view_flip_flop]
-    //     } else {
-    //         self.surface_view
-    //     }
-    // }
-    
-    // /// 获取当前的渲染目标
-    // pub fn current_render_target(&self) -> &'a wgpu::TextureView {
-    //     &self.frame_resources.scene_color_view[self.color_view_flip_flop]
-    // }
+    pub fn get_scene_render_target_view(&self) -> &'a wgpu::TextureView {
+        // 逻辑：如果是直连模式 ? Surface : SceneColor[0]
+        if self.wgpu_ctx.enable_hdr {
+            &self.frame_resources.scene_color_view[0]
+        } else {
+            self.surface_view
+        }
+    }
 
-    // #[inline]
-    // pub fn get_render_target(
+    // pub fn get_output_format(
     //     &self,
     //     output_to_screen: bool,
-    // ) -> &'a wgpu::TextureView{
+    // ) -> wgpu::TextureFormat {
     //     if output_to_screen {
-    //         &self.surface_view
+    //         self.wgpu_ctx.surface_view_format
     //     } else {
-    //         &self.frame_resources.scene_color_view[self.color_view_flip_flop]
+    //         self.wgpu_ctx.color_format
     //     }
     // }
 
-    pub fn get_output_format(
-        &self,
-        output_to_screen: bool,
-    ) -> wgpu::TextureFormat {
-        if output_to_screen {
-            self.wgpu_ctx.surface_view_format
+    pub fn get_scene_render_target_format(&self) -> wgpu::TextureFormat {
+        if self.wgpu_ctx.enable_hdr {
+            // 强制使用 HDR 格式 (推荐 Rgba16Float)
+            // wgpu::TextureFormat::Rgba16Float 
+            crate::renderer::HDR_TEXTURE_FORMAT
         } else {
-            self.wgpu_ctx.color_format
+            self.wgpu_ctx.surface_view_format
         }
     }
 
@@ -149,36 +143,94 @@ pub struct FrameResources {
     // 深度缓冲
     pub depth_view: Tracked<wgpu::TextureView>,
 
+    pub transmission_view: Option<Tracked<wgpu::TextureView>>,
 
-    // === Ping-Pong 缓冲 (Post Process) ===
-    
-    // 两个纹理交替使用，格式通常与 scene_color 一致
-    // 这里全流程 HDR，直到最后上屏
-    // pub ping_pong_buffers: [Tracked<wgpu::TextureView>; 2],
-
-    // pub transmission_view: Tracked<wgpu::TextureView>,
-
-    // pub screen_bind_group: wgpu::BindGroup, // Set 3
-    // pub screen_bind_group_layout: wgpu::BindGroupLayout,
-
-    // pub screen_bindings_code: String,
-
+    pub screen_bind_group: Tracked<wgpu::BindGroup>,
+    pub screen_bind_group_layout: Tracked<wgpu::BindGroupLayout>,
+    screen_sampler: Tracked<wgpu::Sampler>,
     size: (u32, u32),
 }
 
 impl FrameResources {
 
     pub fn new(wgpu_ctx: &WgpuContext, size: (u32, u32)) -> Self {
+        let device = &wgpu_ctx.device;
+
+        // 1. 创建 Layout
+        let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Screen/Transmission Layout"),
+            entries: &[
+                // Binding 0: Transmission Texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                // Binding 1: Sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        // 2. 创建通用采样器
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Transmission Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+
+
+        let placeholder_view = Self::create_texture(
+            device,
+            (1, 1),
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            1,
+            "Placeholder Texture",
+        );
+
+        // 2. 创建初始 BindGroup (指向 Dummy)
+        let initial_bind_group = Self::create_bind_group(
+            &wgpu_ctx.device, 
+            &layout, 
+            &placeholder_view, 
+            &sampler
+        );
+
+        let mut resources = Self {
+            size: (0, 0),
+
+            depth_view: Tracked::new(placeholder_view.clone()),
+            scene_msaa_view: None,
+            scene_color_view: [
+                Tracked::new(placeholder_view.clone()),
+                Tracked::new(placeholder_view.clone()),
+            ],
+
+            transmission_view: None,
+            screen_bind_group: Tracked::new(initial_bind_group),
+            screen_bind_group_layout: Tracked::new(layout),
+            screen_sampler: Tracked::new(sampler),
+        };
         
-        // let screen_bind_group_layout = Self::create_sreen_bind_group_layout(device);
-        
-        let mut resources = Self::create_placeholders(&wgpu_ctx.device);
         resources.resize(&wgpu_ctx, size);
         resources
         
     }
 
-    pub fn create_texture(
+    fn create_texture(
         device: &wgpu::Device,
         size: (u32, u32), 
         format: wgpu::TextureFormat, 
@@ -204,71 +256,35 @@ impl FrameResources {
         view
     }
 
-    
-
-    // fn create_sreen_bind_group_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
-    //     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-    //         label: Some("Screen Space Bind Group Layout"),
-    //         entries: &[
-    //             // Transmission Color Texture
-    //             wgpu::BindGroupLayoutEntry {
-    //                 binding: 0,
-    //                 visibility: wgpu::ShaderStages::FRAGMENT,
-    //                 ty: wgpu::BindingType::Texture {
-    //                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
-    //                     view_dimension: wgpu::TextureViewDimension::D2,
-    //                     multisampled: false,
-    //                 },
-    //                 count: None,
-    //             },
-    //             // Transmission Color Sampler
-    //             wgpu::BindGroupLayoutEntry {
-    //                 binding: 1,
-    //                 visibility: wgpu::ShaderStages::FRAGMENT,
-    //                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-    //                 count: None,
-    //             },
-    //         ],
-    //     })
-    // }
-
-    // fn create_screen_bind_group(
-    //     device: &wgpu::Device,
-    //     layout: &wgpu::BindGroupLayout,
-    //     transmission_view: &wgpu::TextureView,
-    // ) -> wgpu::BindGroup {
-    //     device.create_bind_group(&wgpu::BindGroupDescriptor {
-    //         label: Some("Screen Bind Group"),
-    //         layout,
-    //         entries: &[
-    //             // Transmission Texture
-    //             wgpu::BindGroupEntry {
-    //                 binding: 0,
-    //                 resource: wgpu::BindingResource::TextureView(transmission_view),
-    //             },
-    //             // Transmission Sampler
-    //             wgpu::BindGroupEntry {
-    //                 binding: 1,
-    //                 resource: wgpu::BindingResource::Sampler(&device.create_sampler(&wgpu::SamplerDescriptor {
-    //                     label: Some("Screen Transmission Sampler"),
-    //                     address_mode_u: wgpu::AddressMode::ClampToEdge,
-    //                     address_mode_v: wgpu::AddressMode::ClampToEdge,
-    //                     address_mode_w: wgpu::AddressMode::ClampToEdge,
-    //                     mag_filter: wgpu::FilterMode::Linear,
-    //                     min_filter: wgpu::FilterMode::Linear,
-    //                     mipmap_filter: wgpu::MipmapFilterMode::Linear,
-    //                     ..Default::default()
-    //                 })),
-    //             },
-    //         ],
-    //     })
-    // }
+    fn create_bind_group(
+        device: &wgpu::Device,
+        layout: &wgpu::BindGroupLayout,
+        texture_view: &wgpu::TextureView,
+        sampler: &wgpu::Sampler,
+    ) -> wgpu::BindGroup {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Screen/Transmission BindGroup"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(texture_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+            ],
+        })
+    }
 
     pub fn resize(&mut self, wgpu_ctx: &WgpuContext, size: (u32, u32)){
 
         if self.size == size {
             return;
         }
+
+        self.size = size;
 
         // Depth Texture
         let depth_view = Self::create_texture(
@@ -282,12 +298,12 @@ impl FrameResources {
         self.depth_view = Tracked::new(depth_view);
 
         // Scene Color Texture(s) (ping-pong)
-        if !wgpu_ctx.straightforward {
+        if wgpu_ctx.enable_hdr {
             // 非直接渲染模式，创建两个 ping-pong 纹理
             let ping_pong_texture_0 = Self::create_texture(
                 &wgpu_ctx.device,
                 size,
-                wgpu_ctx.color_format,
+                crate::renderer::HDR_TEXTURE_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 1,
                 "Ping-Pong Texture 0",
@@ -296,7 +312,7 @@ impl FrameResources {
             let ping_pong_texture_1 = Self::create_texture(
                 &wgpu_ctx.device,
                 size,
-                wgpu_ctx.color_format,
+                crate::renderer::HDR_TEXTURE_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 1,
                 "Ping-Pong Texture 1",
@@ -311,10 +327,10 @@ impl FrameResources {
         if wgpu_ctx.msaa_samples > 1 {
             // 创建 MSAA 纹理, 格式与主颜色纹理(Resolve target)相同
 
-            let masaa_target_fromat = if wgpu_ctx.straightforward{
-                wgpu_ctx.surface_view_format
+            let masaa_target_fromat = if wgpu_ctx.enable_hdr{
+                crate::renderer::HDR_TEXTURE_FORMAT
             } else {
-                wgpu_ctx.color_format
+                wgpu_ctx.surface_view_format
             };
 
             let scene_msaa_view =Self::create_texture(
@@ -329,43 +345,75 @@ impl FrameResources {
 
         }
 
-        self.size = size;
+        if self.transmission_view.is_some() {
+            // 1. 创建纹理 (Tracked::new 会生成新 ID)
+            let texture_view = Self::create_texture(
+                &wgpu_ctx.device,
+                size,
+                crate::renderer::HDR_TEXTURE_FORMAT,
+                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                1,
+                "Transmission Texture"
+            );
+            let tracked_view = Tracked::new(texture_view);
 
-    }
+            // 2. 立即创建 BindGroup (显式管理)
+            // 这里我们不做 Cache 查找，直接 New 一个，反正 Texture 变了 BindGroup 必须变
+            let bind_group = wgpu_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Screen BindGroup"),
+                layout: &self.screen_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&tracked_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.screen_sampler),
+                    },
+                ],
+            });
 
-
-    fn create_placeholders(device: &wgpu::Device) -> Self {
-        Self::create_dummy_instance(device) 
-    }
-    
-    // 仅用于 new 初始化，防止 uninitialized 错误
-    fn create_dummy_instance(device: &wgpu::Device) -> Self {
-        let placeholder_view = Self::create_texture(
-            device,
-            (1, 1),
-            wgpu::TextureFormat::Rgba8Unorm,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            1,
-            "Placeholder Texture",
-        );
-
-        // let screen_bind_group_layout = Self::create_sreen_bind_group_layout(device);
-        // let screen_bind_group = Self::create_screen_bind_group(device, &screen_bind_group_layout, &placeholder_view);
-
-        Self {
-            depth_view: Tracked::new(placeholder_view.clone()),
-            scene_msaa_view: None,
-            scene_color_view: [
-                Tracked::new(placeholder_view.clone()),
-                Tracked::new(placeholder_view.clone()),
-            ],
-            // screen_bind_group,
-            // screen_bind_group_layout,
-            // screen_bindings_code: String::new(),
-            size: (0, 0),
+            self.transmission_view = Some(tracked_view);
+            self.screen_bind_group = Tracked::new(bind_group);
         }
+
     }
 
+    pub fn ensure_transmission_resource(&mut self, device: &wgpu::Device) -> &wgpu::BindGroup {
+        if self.transmission_view.is_none() {
+            let texture_view = Self::create_texture(
+                device,
+                self.size,
+                crate::renderer::HDR_TEXTURE_FORMAT,
+                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                1,
+                "Transmission Texture"
+            );
+            let tracked_view = Tracked::new(texture_view);
+
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Screen BindGroup"),
+                layout: &self.screen_bind_group_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&tracked_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.screen_sampler),
+                    },
+                ],
+            });
+
+            self.transmission_view = Some(tracked_view);
+            self.screen_bind_group = Tracked::new(bind_group);
+        }
+
+        &self.screen_bind_group
+
+    }
 }
 
 

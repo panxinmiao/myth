@@ -102,7 +102,7 @@ impl PipelineCache {
         gpu_material: &GpuMaterial,
         object_bind_group: &BindGroupContext,
         gpu_world: &GpuGlobalState,
-        _frame_resources: Option<&FrameResources>,
+        frame_resources: &FrameResources,
     ) -> (wgpu::RenderPipeline, u16) {
         if let Some(cached) = self.canonical_cache.get(&canonical_key) {
             return cached.clone();
@@ -155,20 +155,10 @@ impl PipelineCache {
             })
         );
 
-        let mut bind_group_layouts: smallvec::SmallVec<[&wgpu::BindGroupLayout; 4]> = smallvec::SmallVec::with_capacity(4);
-
-        bind_group_layouts.push(&gpu_world.layout);
-        bind_group_layouts.push(&gpu_material.layout);
-        bind_group_layouts.push(&object_bind_group.layout);
-
-        // if let Some(frame_resources) = frame_resources {
-        //     bind_group_layouts
-        //         .push(&frame_resources.screen_bind_group_layout);
-        // }
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
-            bind_group_layouts: &bind_group_layouts,
+            bind_group_layouts: &[&gpu_world.layout, &gpu_material.layout, &object_bind_group.layout, &frame_resources.screen_bind_group_layout],
             immediate_size: 0,
         });
 

@@ -34,9 +34,7 @@ pub struct WgpuContext {
 
     pub msaa_samples: u32,
 
-    pub color_format: wgpu::TextureFormat,
-
-    pub straightforward: bool,
+    pub enable_hdr: bool,
 }
 
 impl WgpuContext {
@@ -116,9 +114,8 @@ impl WgpuContext {
             config,
             depth_format: settings.depth_format,
             surface_view_format: view_format,
-            color_format: settings.color_format,
             msaa_samples: settings.msaa_samples,
-            straightforward: settings.straightforward,
+            enable_hdr: settings.enable_hdr,
         })
     }
 

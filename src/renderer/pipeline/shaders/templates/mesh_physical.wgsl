@@ -9,6 +9,9 @@
 
 {$ include 'iridescence' $}
 
+$$ if USE_TRANSMISSION is defined
+    {$ include 'transmission' $}
+$$ endif
 
 @vertex
 fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
@@ -90,7 +93,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     $$ endif
 
     // Apply opacity
-    diffuse_color.a = diffuse_color.a * u_material.opacity;
+    var opacity = diffuse_color.a * u_material.opacity;
 
     // alpha test
     {$ include 'alpha_test' $}
@@ -217,8 +220,31 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
         $$ endif
     $$ endif
 
+
+    var total_diffuse = reflected_light.direct_diffuse + reflected_light.indirect_diffuse;
+    var total_specular = reflected_light.direct_specular + reflected_light.indirect_specular;
+
+    $$ if USE_TRANSMISSION is defined
+        let pos = varyings.world_pos;
+        let v = normalize(u_stdinfo.cam_transform_inv[3].xyz - pos);
+        let n = surface_normal;
+        let model_matrix = u_wobject.world_transform;
+        let view_matrix = u_stdinfo.cam_transform;
+        let projection_matrix = u_stdinfo.projection_transform;
+
+        let transmitted = getIBLVolumeRefraction(
+            n, v, material.roughness, material.diffuse_color, material.specular_color, material.specular_f90,
+            pos, model_matrix, view_matrix, projection_matrix, material.dispersion, material.ior, material.thickness,
+            material.attenuation_color, material.attenuation_distance );
+
+        material.transmission_alpha = mix( material.transmission_alpha, transmitted.a, material.transmission );
+
+        total_diffuse = mix( total_diffuse, transmitted.rgb, material.transmission );
+    $$ endif
+
+
     // Combine direct and indirect light
-    var out_color = reflected_light.direct_diffuse + reflected_light.direct_specular + reflected_light.indirect_diffuse + reflected_light.indirect_specular;
+    var out_color = total_diffuse + total_specular;
 
     var emissive_color = u_material.emissive.rgb * u_material.emissive_intensity;
     $$ if HAS_EMISSIVE_MAP is defined
@@ -239,7 +265,14 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
         out_color = out_color * (1.0 - material.clearcoat * fcc) + (clearcoat_specular_direct + clearcoat_specular_indirect) * material.clearcoat;
     $$ endif
 
-    
+    $$ if OPAQUE is defined
+        opacity = 1.0;
+    $$ endif
+
+    $$ if USE_TRANSMISSION is defined
+        opacity *= material.transmission_alpha;
+    $$ endif
+
     // let start_compression = 0.8 - 0.04;
     // let desaturation = 0.15;
 
@@ -263,5 +296,5 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     //     out_color =  mix(mapped_color, vec3<f32>(new_peak), g);
     // }
 
-    return vec4<f32>(out_color, diffuse_color.a);
+    return vec4<f32>(out_color, opacity);
 }
