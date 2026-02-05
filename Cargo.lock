@@ -2214,7 +2214,6 @@ dependencies = [
  "lasso",
  "log",
  "minijinja",
- "once_cell",
  "parking_lot",
  "paste",
  "pollster",

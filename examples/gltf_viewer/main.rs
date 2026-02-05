@@ -31,8 +31,6 @@ use std::sync::mpsc::{channel, Receiver, Sender};
 #[cfg(target_arch = "wasm32")]
 use std::sync::Mutex;
 #[cfg(target_arch = "wasm32")]
-use once_cell::sync::Lazy;
-#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 use myth_engine::prelude::*;
@@ -50,7 +48,7 @@ use winit::event::WindowEvent;
 
 
 #[cfg(target_arch = "wasm32")]
-static DROP_SENDER: Lazy<Mutex<Option<Sender<(String, Vec<u8>)>>>> = Lazy::new(|| Mutex::new(None));
+static DROP_SENDER: std::sync::LazyLock<Mutex<Option<Sender<(String, Vec<u8>)>>>> = std::sync::LazyLock::new(|| Mutex::new(None));
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]

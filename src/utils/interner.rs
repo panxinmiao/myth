@@ -8,8 +8,6 @@ use std::borrow::Cow;
 use lasso::Spur;
 
 #[cfg(not(target_arch = "wasm32"))]
-use once_cell::sync::Lazy;
-#[cfg(not(target_arch = "wasm32"))]
 use lasso::ThreadedRodeo;
 
 #[cfg(target_arch = "wasm32")]
@@ -19,7 +17,7 @@ use lasso::Rodeo;
 
 /// Global string interner instance (Native - thread-safe)
 #[cfg(not(target_arch = "wasm32"))]
-static INTERNER: Lazy<ThreadedRodeo> = Lazy::new(ThreadedRodeo::new);
+static INTERNER: std::sync::LazyLock<ThreadedRodeo> = std::sync::LazyLock::new(ThreadedRodeo::new);
 
 
 #[cfg(target_arch = "wasm32")]
