@@ -1,11 +1,11 @@
-use std::sync::Arc;
+use core::ops::Range;
+use glam::{Affine3A, Vec3, Vec4};
 use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
-use wgpu::{PrimitiveTopology, VertexFormat, VertexStepMode, BufferUsages};
-use glam::{Affine3A, Vec3, Vec4};
-use core::ops::Range;
+use wgpu::{BufferUsages, PrimitiveTopology, VertexFormat, VertexStepMode};
 
 use crate::resources::buffer::BufferRef;
 use crate::resources::primitives;
@@ -15,13 +15,13 @@ use crate::resources::shader_defines::ShaderDefines;
 #[derive(Debug, Clone)]
 pub struct Attribute {
     pub buffer: BufferRef,
-    
+
     /// CPU-side data shared via Arc (supports interleaved buffers)
     pub data: Option<Arc<Vec<u8>>>,
 
     /// Data version for change detection
     pub version: u64,
-    
+
     pub format: VertexFormat,
     pub offset: u64,
     pub count: u32,
@@ -36,12 +36,12 @@ impl Attribute {
     pub fn new_planar<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
         let raw_data = bytemuck::cast_slice(data).to_vec();
         let size = raw_data.len();
-        
+
         // Create handle
         let buffer_ref = BufferRef::new(
             size,
-            BufferUsages::VERTEX | BufferUsages::COPY_DST, 
-            Some("GeometryVertexAttr")
+            BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            Some("GeometryVertexAttr"),
         );
 
         Self {
@@ -60,11 +60,11 @@ impl Attribute {
     pub fn new_instanced<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
         let raw_data = bytemuck::cast_slice(data).to_vec();
         let size = raw_data.len();
-        
+
         let buffer_ref = BufferRef::new(
             size,
-            BufferUsages::VERTEX | BufferUsages::COPY_DST, 
-            Some("GeometryInstanceAttr")
+            BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            Some("GeometryInstanceAttr"),
         );
 
         Self {
@@ -80,43 +80,43 @@ impl Attribute {
     }
 
     /// Creates an Interleaved attribute
-    /// Multiple Attributes can share the same BufferRef and data (Arc)
+    /// Multiple Attributes can share the same `BufferRef` and data (Arc)
     pub fn new_interleaved(
-        buffer: BufferRef, 
+        buffer: BufferRef,
         data: Option<Arc<Vec<u8>>>,
-        format: VertexFormat, 
-        offset: u64, 
+        format: VertexFormat,
+        offset: u64,
         count: u32,
         stride: u64,
-        step_mode: VertexStepMode
+        step_mode: VertexStepMode,
     ) -> Self {
-        Self { 
-            buffer, 
+        Self {
+            buffer,
             data,
             version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
-            format, 
-            offset, 
-            count, 
-            stride, 
-            step_mode 
+            format,
+            offset,
+            count,
+            stride,
+            step_mode,
         }
     }
 
     /// Updates data in-place (preserves ID, reuses GPU memory)
-    /// Uses Arc::make_mut to implement Copy-On-Write
+    /// Uses `Arc::make_mut` to implement Copy-On-Write
     pub fn update_data<T: bytemuck::Pod>(&mut self, new_data: &[T]) {
         if let Some(arc_vec) = &mut self.data {
             // Arc::make_mut: modifies directly if only one reference; otherwise clones then modifies
             let vec = Arc::make_mut(arc_vec);
-            
+
             let bytes: &[u8] = bytemuck::cast_slice(new_data);
-            
+
             // If length changed, need to resize the Vec
             if vec.len() != bytes.len() {
                 vec.resize(bytes.len(), 0);
             }
             vec.copy_from_slice(bytes);
-            
+
             // Update metadata
             self.count = new_data.len() as u32;
             self.version = NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed);
@@ -124,18 +124,14 @@ impl Attribute {
     }
 
     /// Partially updates attribute data
-    pub fn update_region<T: bytemuck::Pod>(
-        &mut self, 
-        offset_bytes: u64, 
-        new_data: &[T]
-    ) {
+    pub fn update_region<T: bytemuck::Pod>(&mut self, offset_bytes: u64, new_data: &[T]) {
         if let Some(arc_vec) = &mut self.data {
             let vec = Arc::make_mut(arc_vec);
             let bytes = bytemuck::cast_slice(new_data);
-            
+
             let start = offset_bytes as usize;
             let end = start + bytes.len();
-            
+
             // Bounds check
             if end <= vec.len() {
                 vec[start..end].copy_from_slice(bytes);
@@ -144,13 +140,14 @@ impl Attribute {
         }
     }
 
+    #[must_use]
     pub fn read_vec3(&self, i: u32) -> Option<Vec3> {
         if self.format != VertexFormat::Float32x3 {
             return None;
         }
         let stride = self.stride as usize;
         let offset = self.offset as usize + (i as usize) * stride;
-        
+
         if let Some(data) = &self.data {
             let slice = data.as_ref();
             if offset + 12 <= slice.len() {
@@ -162,13 +159,14 @@ impl Attribute {
         None
     }
 
+    #[must_use]
     pub fn read_vec4(&self, i: u32) -> Option<Vec4> {
         if self.format != VertexFormat::Float32x4 {
             return None;
         }
         let stride = self.stride as usize;
         let offset = self.offset as usize + (i as usize) * stride;
-        
+
         if let Some(data) = &self.data {
             let slice = data.as_ref();
             if offset + 16 <= slice.len() {
@@ -180,11 +178,15 @@ impl Attribute {
         None
     }
 
-    pub fn read<T>(&self, i: u32) -> Option<T> where T: bytemuck::Pod {
+    #[must_use]
+    pub fn read<T>(&self, i: u32) -> Option<T>
+    where
+        T: bytemuck::Pod,
+    {
         let stride = self.stride as usize;
         let offset = self.offset as usize + (i as usize) * stride;
         let size = std::mem::size_of::<T>();
-        
+
         if let Some(data) = &self.data {
             let slice = data.as_ref();
             if offset + size <= slice.len() {
@@ -204,8 +206,15 @@ pub struct BoundingBox {
 }
 
 impl BoundingBox {
-    pub fn center(&self) -> Vec3 { (self.min + self.max) * 0.5 }
-    pub fn size(&self) -> Vec3 { self.max - self.min }
+    #[must_use]
+    pub fn center(&self) -> Vec3 {
+        (self.min + self.max) * 0.5
+    }
+    #[must_use]
+    pub fn size(&self) -> Vec3 {
+        self.max - self.min
+    }
+    #[must_use]
     pub fn union(&self, other: &BoundingBox) -> BoundingBox {
         BoundingBox {
             min: self.min.min(other.min),
@@ -213,6 +222,7 @@ impl BoundingBox {
         }
     }
 
+    #[must_use]
     pub fn transform(&self, matrix: &Affine3A) -> Self {
         let corners = [
             Vec3::new(self.min.x, self.min.y, self.min.z),
@@ -235,10 +245,14 @@ impl BoundingBox {
             new_max = new_max.max(transformed);
         }
 
-        Self { min: new_min, max: new_max }
+        Self {
+            min: new_min,
+            max: new_max,
+        }
     }
-    
+
     // Simple inflation method
+    #[must_use]
     pub fn inflate(&self, amount: f32) -> Self {
         Self {
             min: self.min * Vec3::splat(1.0 - amount),
@@ -256,7 +270,7 @@ pub struct BoundingSphere {
 #[derive(Debug)]
 pub struct Geometry {
     pub uuid: Uuid,
-    
+
     // vertex lay out versioning
     layout_version: u64,
     // vertex buffers versioning
@@ -276,12 +290,12 @@ pub struct Geometry {
     pub morph_position_buffer: Option<BufferRef>,
     pub morph_normal_buffer: Option<BufferRef>,
     pub morph_tangent_buffer: Option<BufferRef>,
-    
+
     /// Morph Target data (kept on CPU side to support uploading)
     morph_position_data: Option<Vec<f32>>,
     morph_normal_data: Option<Vec<f32>>,
     morph_tangent_data: Option<Vec<f32>>,
-    
+
     /// Vertex count per target
     pub morph_vertex_count: u32,
     /// Morph target count
@@ -293,7 +307,7 @@ pub struct Geometry {
     pub bounding_box: RwLock<Option<BoundingBox>>,
     pub bounding_sphere: RwLock<Option<BoundingSphere>>,
 
-    /// ShaderDefines cache: (layout_version, cached_defines)
+    /// `ShaderDefines` cache: (`layout_version`, `cached_defines`)
     cached_shader_defines: RwLock<Option<(u64, ShaderDefines)>>,
 }
 
@@ -304,6 +318,7 @@ impl Default for Geometry {
 }
 
 impl Geometry {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             uuid: Uuid::new_v4(),
@@ -347,12 +362,12 @@ impl Geometry {
     pub fn attributes(&self) -> &FxHashMap<String, Attribute> {
         &self.attributes
     }
-    
+
     // Index attribute accessors
     pub fn index_attribute(&self) -> Option<&Attribute> {
         self.index_attribute.as_ref()
     }
-    
+
     pub fn index_attribute_mut(&mut self) -> &mut Option<Attribute> {
         self.structure_version = self.structure_version.wrapping_add(1);
         self.data_version = self.data_version.wrapping_add(1);
@@ -367,7 +382,7 @@ impl Geometry {
         };
 
         self.attributes.insert(name.to_string(), attr);
-        
+
         if layout_changed {
             self.layout_version = self.layout_version.wrapping_add(1);
         }
@@ -394,42 +409,43 @@ impl Geometry {
     }
 
     pub fn add_morph_attribute(&mut self, morph_name: &str, attr: Attribute) {
-        let entry = self.morph_attributes.entry(morph_name.to_string()).or_insert_with(Vec::new);
+        let entry = self
+            .morph_attributes
+            .entry(morph_name.to_string())
+            .or_default();
         entry.push(attr);
         self.data_version = self.data_version.wrapping_add(1);
     }
 
-    /// Builds compact Storage Buffers from morph_attributes
+    /// Builds compact Storage Buffers from `morph_attributes`
     /// Layout: [ Target 0 all vertices | Target 1 all vertices | ... ]
     /// Each vertex stores 3 f32 values (compact Vec3)
     pub fn build_morph_storage_buffers(&mut self) {
         // Get position morph targets
         let position_attrs = self.morph_attributes.get("position");
-        
+
         if position_attrs.is_none() || position_attrs.unwrap().is_empty() {
             return;
         }
-        
+
         let position_attrs = position_attrs.unwrap();
         let target_count = position_attrs.len();
-        
+
         // Get vertex count per target (assuming all targets have the same vertex count)
-        let vertex_count = position_attrs.first()
-            .map(|attr| attr.count)
-            .unwrap_or(0);
-        
+        let vertex_count = position_attrs.first().map_or(0, |attr| attr.count);
+
         if vertex_count == 0 {
             return;
         }
-        
+
         self.morph_target_count = target_count as u32;
         self.morph_vertex_count = vertex_count;
-        
+
         // Build position storage buffer (Target-Major layout)
         // Total size = target_count * vertex_count * 3 floats
         let total_floats = target_count * vertex_count as usize * 3;
         let mut position_data: Vec<f32> = Vec::with_capacity(total_floats);
-        
+
         for attr in position_attrs {
             if let Some(data) = &attr.data {
                 // Convert [u8] to [f32]
@@ -437,83 +453,89 @@ impl Geometry {
                 position_data.extend_from_slice(floats);
             }
         }
-        
+
         if !position_data.is_empty() {
             let buffer_size = position_data.len() * std::mem::size_of::<f32>();
             self.morph_position_buffer = Some(BufferRef::new(
                 buffer_size,
                 BufferUsages::STORAGE | BufferUsages::COPY_DST,
-                Some("MorphPositionStorage")
+                Some("MorphPositionStorage"),
             ));
             self.morph_position_data = Some(position_data);
         }
-        
+
         // Build normal storage buffer (if available)
-        if let Some(normal_attrs) = self.morph_attributes.get("normal") {
-            if !normal_attrs.is_empty() {
-                let mut normal_data: Vec<f32> = Vec::with_capacity(total_floats);
-                
-                for attr in normal_attrs {
-                    if let Some(data) = &attr.data {
-                        let floats: &[f32] = bytemuck::cast_slice(data.as_slice());
-                        normal_data.extend_from_slice(floats);
-                    }
-                }
-                
-                if !normal_data.is_empty() {
-                    let buffer_size = normal_data.len() * std::mem::size_of::<f32>();
-                    self.morph_normal_buffer = Some(BufferRef::new(
-                        buffer_size,
-                        BufferUsages::STORAGE | BufferUsages::COPY_DST,
-                        Some("MorphNormalStorage")
-                    ));
-                    self.morph_normal_data = Some(normal_data);
+        if let Some(normal_attrs) = self.morph_attributes.get("normal")
+            && !normal_attrs.is_empty()
+        {
+            let mut normal_data: Vec<f32> = Vec::with_capacity(total_floats);
+
+            for attr in normal_attrs {
+                if let Some(data) = &attr.data {
+                    let floats: &[f32] = bytemuck::cast_slice(data.as_slice());
+                    normal_data.extend_from_slice(floats);
                 }
             }
+
+            if !normal_data.is_empty() {
+                let buffer_size = normal_data.len() * std::mem::size_of::<f32>();
+                self.morph_normal_buffer = Some(BufferRef::new(
+                    buffer_size,
+                    BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                    Some("MorphNormalStorage"),
+                ));
+                self.morph_normal_data = Some(normal_data);
+            }
         }
-        
+
         // Build tangent storage buffer (if available)
-        if let Some(tangent_attrs) = self.morph_attributes.get("tangent") {
-            if !tangent_attrs.is_empty() {
-                let mut tangent_data: Vec<f32> = Vec::with_capacity(total_floats);
-                
-                for attr in tangent_attrs {
-                    if let Some(data) = &attr.data {
-                        let floats: &[f32] = bytemuck::cast_slice(data.as_slice());
-                        tangent_data.extend_from_slice(floats);
-                    }
-                }
-                
-                if !tangent_data.is_empty() {
-                    let buffer_size = tangent_data.len() * std::mem::size_of::<f32>();
-                    self.morph_tangent_buffer = Some(BufferRef::new(
-                        buffer_size,
-                        BufferUsages::STORAGE | BufferUsages::COPY_DST,
-                        Some("MorphTangentStorage")
-                    ));
-                    self.morph_tangent_data = Some(tangent_data);
+        if let Some(tangent_attrs) = self.morph_attributes.get("tangent")
+            && !tangent_attrs.is_empty()
+        {
+            let mut tangent_data: Vec<f32> = Vec::with_capacity(total_floats);
+
+            for attr in tangent_attrs {
+                if let Some(data) = &attr.data {
+                    let floats: &[f32] = bytemuck::cast_slice(data.as_slice());
+                    tangent_data.extend_from_slice(floats);
                 }
             }
+
+            if !tangent_data.is_empty() {
+                let buffer_size = tangent_data.len() * std::mem::size_of::<f32>();
+                self.morph_tangent_buffer = Some(BufferRef::new(
+                    buffer_size,
+                    BufferUsages::STORAGE | BufferUsages::COPY_DST,
+                    Some("MorphTangentStorage"),
+                ));
+                self.morph_tangent_data = Some(tangent_data);
+            }
         }
-        
+
         self.data_version = self.data_version.wrapping_add(1);
     }
-    
+
     /// Gets the byte slice of morph position data
     pub fn morph_position_bytes(&self) -> Option<&[u8]> {
-        self.morph_position_data.as_ref().map(|d| bytemuck::cast_slice(d.as_slice()))
+        self.morph_position_data
+            .as_ref()
+            .map(|d| bytemuck::cast_slice(d.as_slice()))
     }
-    
+
     /// Gets the byte slice of morph normal data
     pub fn morph_normal_bytes(&self) -> Option<&[u8]> {
-        self.morph_normal_data.as_ref().map(|d| bytemuck::cast_slice(d.as_slice()))
+        self.morph_normal_data
+            .as_ref()
+            .map(|d| bytemuck::cast_slice(d.as_slice()))
     }
-    
+
     /// Gets the byte slice of morph tangent data
     pub fn morph_tangent_bytes(&self) -> Option<&[u8]> {
-        self.morph_tangent_data.as_ref().map(|d| bytemuck::cast_slice(d.as_slice()))
+        self.morph_tangent_data
+            .as_ref()
+            .map(|d| bytemuck::cast_slice(d.as_slice()))
     }
-    
+
     /// Checks if morph targets exist
     pub fn has_morph_targets(&self) -> bool {
         self.morph_target_count > 0 && self.morph_position_buffer.is_some()
@@ -522,11 +544,11 @@ impl Geometry {
     pub fn set_indices(&mut self, indices: &[u16]) {
         let raw_data = bytemuck::cast_slice(indices).to_vec();
         let size = raw_data.len();
-        
+
         let buffer_ref = BufferRef::new(
             size,
-            BufferUsages::INDEX | BufferUsages::COPY_DST, 
-            Some("IndexBuffer")
+            BufferUsages::INDEX | BufferUsages::COPY_DST,
+            Some("IndexBuffer"),
         );
 
         self.index_attribute = Some(Attribute {
@@ -546,11 +568,11 @@ impl Geometry {
     pub fn set_indices_u32(&mut self, indices: &[u32]) {
         let raw_data = bytemuck::cast_slice(indices).to_vec();
         let size = raw_data.len();
-        
+
         let buffer_ref = BufferRef::new(
             size,
-            BufferUsages::INDEX | BufferUsages::COPY_DST, 
-            Some("IndexBuffer")
+            BufferUsages::INDEX | BufferUsages::COPY_DST,
+            Some("IndexBuffer"),
         );
 
         self.index_attribute = Some(Attribute {
@@ -573,7 +595,7 @@ impl Geometry {
             Some(attr) => attr,
             None => return,
         };
-        
+
         // Get position data reference
         let pos_bytes = match &pos_attr.data {
             Some(data) => data.as_ref(),
@@ -590,13 +612,15 @@ impl Geometry {
         // Helper function: parse position
         let pos_stride = pos_attr.stride as usize;
         let pos_offset = pos_attr.offset as usize;
-        
+
         // This step is just for convenience reading, same as before
         let get_pos = |i: usize| -> Vec3 {
             let start = pos_offset + i * pos_stride;
             // Bounds check to prevent panic from malicious data
-            if start + 12 > pos_bytes.len() { return Vec3::ZERO; }
-            
+            if start + 12 > pos_bytes.len() {
+                return Vec3::ZERO;
+            }
+
             let slice = &pos_bytes[start..start + 12];
             let vals: &[f32; 3] = bytemuck::cast_slice(slice).try_into().unwrap_or(&[0.0; 3]);
             Vec3::from_array(*vals)
@@ -604,7 +628,9 @@ impl Geometry {
 
         let mut accumulate_triangle = |i0: usize, i1: usize, i2: usize| {
             // Simple out of bounds protection
-            if i0 >= pos_count || i1 >= pos_count || i2 >= pos_count { return; }
+            if i0 >= pos_count || i1 >= pos_count || i2 >= pos_count {
+                return;
+            }
 
             let v0 = get_pos(i0);
             let v1 = get_pos(i1);
@@ -625,20 +651,28 @@ impl Geometry {
             // === Case A: Indexed Geometry ===
             if let Some(index_bytes) = &index_attr.data {
                 let index_bytes = index_bytes.as_ref();
-                
+
                 match index_attr.format {
                     VertexFormat::Uint16 => {
                         let u16s: &[u16] = bytemuck::cast_slice(index_bytes);
                         for chunk in u16s.chunks_exact(3) {
-                            accumulate_triangle(chunk[0] as usize, chunk[1] as usize, chunk[2] as usize);
+                            accumulate_triangle(
+                                chunk[0] as usize,
+                                chunk[1] as usize,
+                                chunk[2] as usize,
+                            );
                         }
-                    },
+                    }
                     VertexFormat::Uint32 => {
                         let u32s: &[u32] = bytemuck::cast_slice(index_bytes);
                         for chunk in u32s.chunks_exact(3) {
-                            accumulate_triangle(chunk[0] as usize, chunk[1] as usize, chunk[2] as usize);
+                            accumulate_triangle(
+                                chunk[0] as usize,
+                                chunk[1] as usize,
+                                chunk[2] as usize,
+                            );
                         }
-                    },
+                    }
                     _ => {} // Unsupported index format
                 }
             }
@@ -655,7 +689,7 @@ impl Geometry {
         }
 
         // 3. Normalize all at the end
-        for n in normals.iter_mut() {
+        for n in &mut normals {
             *n = n.normalize_or_zero();
         }
 
@@ -674,7 +708,7 @@ impl Geometry {
             Some(arc_data) => arc_data.as_ref().clone(),
             None => return,
         };
-        
+
         let stride = pos_attr.stride as usize;
         let offset = pos_attr.offset as usize;
         let count = pos_attr.count as usize;
@@ -686,7 +720,7 @@ impl Geometry {
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
         // Removed sum_pos, no longer need to calculate average
-        // let mut sum_pos = Vec3::ZERO; 
+        // let mut sum_pos = Vec3::ZERO;
         let mut valid_points_count = 0;
 
         // Pass 1: Compute AABB (Min/Max)
@@ -695,40 +729,42 @@ impl Geometry {
             let end = start + 12;
 
             if let Some(slice) = data.get(start..end) {
-                if let Ok(bytes) = slice.try_into() as Result<&[u8; 12], _>{
+                if let Ok(bytes) = slice.try_into() as Result<&[u8; 12], _> {
                     let vals: &[f32; 3] = bytemuck::cast_ref(bytes);
                     let vec = Vec3::from_array(*vals);
 
                     min = min.min(vec);
                     max = max.max(vec);
-                    // sum_pos += vec; 
+                    // sum_pos += vec;
                     valid_points_count += 1;
                 }
             } else {
-                break; 
+                break;
             }
         }
 
-        if valid_points_count == 0 { return; }
+        if valid_points_count == 0 {
+            return;
+        }
 
         // Update BoundingBox
         *self.bounding_box.write() = Some(BoundingBox { min, max });
 
         // Use AABB geometric center as sphere center
         let aabb_center = (min + max) * 0.5;
-        
+
         let mut max_dist_sq = 0.0;
 
         // Pass 2: Compute radius based on the new center
         for i in 0..count {
             let start = offset + i * stride;
             let end = start + 12;
-            
+
             if let Some(slice) = data.get(start..end) {
-                if let Ok(bytes) = slice.try_into() as Result<&[u8; 12], _>{
+                if let Ok(bytes) = slice.try_into() as Result<&[u8; 12], _> {
                     let vals: &[f32; 3] = bytemuck::cast_ref(bytes);
                     let vec = Vec3::from_array(*vals);
-                    
+
                     // Calculate distance to AABB center
                     let dist_sq = vec.distance_squared(aabb_center);
                     if dist_sq > max_dist_sq {
@@ -736,7 +772,7 @@ impl Geometry {
                     }
                 }
             } else {
-                break; 
+                break;
             }
         }
 
@@ -752,7 +788,7 @@ impl Geometry {
         &mut self,
         interleaved_data: Vec<u8>, // Raw interleaved data
         stride: u64,
-        attributes: Vec<(&str, VertexFormat, u64)> // (name, format, offset)
+        attributes: Vec<(&str, VertexFormat, u64)>, // (name, format, offset)
     ) {
         let shared_data = Arc::new(interleaved_data);
         let count = (shared_data.len() as u64 / stride) as u32;
@@ -760,14 +796,14 @@ impl Geometry {
         let shared_buffer_ref = BufferRef::new(
             shared_data.len(),
             wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            Some("InterleavedBuffer")
+            Some("InterleavedBuffer"),
         );
 
         // Create attributes sharing the same buffer and data
         for (name, format, offset) in attributes {
             let attr = Attribute {
-                buffer: shared_buffer_ref.clone(), 
-                data: Some(shared_data.clone()), 
+                buffer: shared_buffer_ref.clone(),
+                data: Some(shared_data.clone()),
 
                 version: 0,
                 format,
@@ -784,10 +820,10 @@ impl Geometry {
 
     /// Partially updates attribute data
     pub fn update_attribute_region<T: bytemuck::Pod>(
-        &mut self, 
-        name: &str, 
-        offset_bytes: u64, 
-        data: &[T]
+        &mut self,
+        name: &str,
+        offset_bytes: u64,
+        data: &[T],
     ) {
         if let Some(attr) = self.attributes.get_mut(name) {
             attr.update_region(offset_bytes, data);
@@ -796,32 +832,32 @@ impl Geometry {
     }
 
     /// Computes the geometry's shader macro definitions
-    /// 
+    ///
     /// Uses internal caching mechanism, only recalculates when `layout_version` changes.
     /// This avoids Map traversal overhead on the hot path.
     pub fn shader_defines(&self) -> ShaderDefines {
         // Fast path: check cache
         {
             let cache = self.cached_shader_defines.read();
-            if let Some((cached_version, cached_defines)) = cache.as_ref() {
-                if *cached_version == self.layout_version {
-                    return cached_defines.clone();
-                }
+            if let Some((cached_version, cached_defines)) = cache.as_ref()
+                && *cached_version == self.layout_version
+            {
+                return cached_defines.clone();
             }
         }
 
         // Slow path: recalculate
         let mut defines = ShaderDefines::new();
-        
+
         for name in self.attributes.keys() {
             let macro_name = format!("HAS_{}", name.to_uppercase());
             defines.set(&macro_name, "1");
         }
-        
+
         // Morph Target feature detection
         if self.has_morph_targets() {
             defines.set("HAS_MORPH_TARGETS", "1");
-            
+
             if self.morph_normal_buffer.is_some() {
                 defines.set("HAS_MORPH_NORMALS", "1");
             }
@@ -833,7 +869,7 @@ impl Geometry {
         // Skinning feature detection
         let has_joints = self.attributes.contains_key("joints");
         let has_weights = self.attributes.contains_key("weights");
-        
+
         if has_joints && has_weights {
             defines.set("SUPPORT_SKINNING", "1");
         }
@@ -844,10 +880,12 @@ impl Geometry {
         defines
     }
 
+    #[must_use]
     pub fn new_box(width: f32, height: f32, depth: f32) -> Self {
         primitives::create_box(width, height, depth)
     }
 
+    #[must_use]
     pub fn new_sphere(radius: f32) -> Self {
         primitives::create_sphere(primitives::SphereOptions {
             radius,
@@ -855,6 +893,7 @@ impl Geometry {
         })
     }
 
+    #[must_use]
     pub fn new_plane(width: f32, height: f32) -> Self {
         primitives::create_plane(primitives::PlaneOptions {
             width,

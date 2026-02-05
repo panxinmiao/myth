@@ -7,12 +7,12 @@
 //! RenderLists.transparent → TransparentPass → HDR Scene Color
 //! ```
 //!
-//! # RenderPass 配置
-//! - LoadOp: Load (继承 OpaquePass 的结果)
-//! - StoreOp: Store (保留结果供后处理使用)
+//! # `RenderPass` 配置
+//! - `LoadOp`: Load (继承 `OpaquePass` 的结果)
+//! - `StoreOp`: Store (保留结果供后处理使用)
 //!
 //! # 注意
-//! 此 Pass 在 OpaquePass 和可选的 TransmissionCopyPass 之后执行。
+//! 此 Pass 在 `OpaquePass` 和可选的 `TransmissionCopyPass` 之后执行。
 
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::{RenderContext, RenderNode, TrackedRenderPass};
@@ -24,10 +24,11 @@ use crate::renderer::graph::{RenderContext, RenderNode, TrackedRenderPass};
 ///
 /// # 性能考虑
 /// - 命令列表按 Depth (Back-to-Front) 排序，确保正确的 Alpha 混合
-/// - 如果有 Transmission 效果，此 Pass 在 TransmissionCopyPass 之后执行
+/// - 如果有 Transmission 效果，此 Pass 在 `TransmissionCopyPass` 之后执行
 pub struct TransparentPass;
 
 impl TransparentPass {
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -109,7 +110,7 @@ impl Default for TransparentPass {
 }
 
 impl RenderNode for TransparentPass {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Transparent Pass"
     }
 

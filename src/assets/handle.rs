@@ -4,15 +4,15 @@
 //!
 //! # Design Principles
 //! - Uses Arc for reference counting to automatically track asset usage
-//! - Strong handles (StrongHandle) keep assets alive
-//! - Weak handles (WeakHandle) don't prevent asset release, suitable for caching scenarios
-//! - Compatible with existing SlotMap handle system
+//! - Strong handles (`StrongHandle`) keep assets alive
+//! - Weak handles (`WeakHandle`) don't prevent asset release, suitable for caching scenarios
+//! - Compatible with existing `SlotMap` handle system
 
-use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU32, Ordering};
 
 /// Asset state tracker
-/// 
+///
 /// Tracks reference counts and lifecycle state of assets
 #[derive(Debug)]
 pub struct AssetTracker {
@@ -26,6 +26,7 @@ pub struct AssetTracker {
 
 impl AssetTracker {
     /// Creates a new tracker
+    #[must_use]
     pub fn new() -> Self {
         Self {
             strong_count: AtomicU32::new(1), // Initial reference
@@ -66,7 +67,9 @@ impl AssetTracker {
     /// Decrements weak reference count
     #[inline]
     pub fn release_weak(&self) -> u32 {
-        self.weak_count.fetch_sub(1, Ordering::Release).saturating_sub(1)
+        self.weak_count
+            .fetch_sub(1, Ordering::Release)
+            .saturating_sub(1)
     }
 
     /// Gets current weak reference count
@@ -101,7 +104,7 @@ impl Default for AssetTracker {
 }
 
 /// Strong asset handle
-/// 
+///
 /// Holding this handle prevents the asset from being released.
 /// The asset will only be marked as releasable after all strong handles are dropped.
 pub struct StrongHandle<K: Copy> {
@@ -155,7 +158,7 @@ impl<K: Copy> Drop for StrongHandle<K> {
 }
 
 /// Weak asset handle
-/// 
+///
 /// Does not prevent the asset from being released, suitable for caching scenarios.
 /// Must attempt to upgrade to a strong handle before use.
 pub struct WeakHandle<K: Copy> {
@@ -171,7 +174,7 @@ impl<K: Copy> WeakHandle<K> {
     }
 
     /// Attempts to upgrade to a strong handle
-    /// 
+    ///
     /// Returns None if the asset is marked for deletion or strong reference count is 0
     pub fn upgrade(&self) -> Option<StrongHandle<K>> {
         // Check if already marked for deletion
@@ -226,7 +229,7 @@ impl<K: Copy> Drop for WeakHandle<K> {
 }
 
 /// Asset entry
-/// 
+///
 /// Associates an asset with its tracker
 pub struct TrackedAsset<T> {
     pub asset: T,
@@ -303,17 +306,17 @@ mod tests {
     fn test_weak_handle_upgrade() {
         let tracker = Arc::new(AssetTracker::new());
         let strong: StrongHandle<u32> = StrongHandle::new(42, Arc::clone(&tracker));
-        
+
         let weak = strong.downgrade();
         assert!(weak.is_valid());
-        
+
         // Upgrade should succeed
         let upgraded = weak.upgrade();
         assert!(upgraded.is_some());
-        
+
         drop(strong);
         drop(upgraded.unwrap());
-        
+
         // Now only initial reference remains, upgrade should fail after marking for deletion
         tracker.mark_for_deletion();
         assert!(!weak.is_valid());
@@ -325,10 +328,10 @@ mod tests {
         let tracked = TrackedAsset::new("Hello".to_string());
         assert_eq!(tracked.ref_count(), 1);
         assert_eq!(*tracked, "Hello");
-        
+
         let handle = tracked.create_handle(0u32);
         assert_eq!(tracked.ref_count(), 2);
-        
+
         drop(handle);
         assert_eq!(tracked.ref_count(), 1);
     }

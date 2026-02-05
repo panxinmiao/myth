@@ -4,9 +4,9 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use crate::resources::uniforms::RenderStateUniforms;
 use crate::resources::buffer::CpuBuffer;
-use crate::scene::camera::{RenderCamera};
+use crate::resources::uniforms::RenderStateUniforms;
+use crate::scene::camera::RenderCamera;
 
 static NEXT_RENDER_STATE_ID: AtomicU32 = AtomicU32::new(0);
 
@@ -28,7 +28,7 @@ impl RenderState {
             uniforms: CpuBuffer::new(
                 RenderStateUniforms::default(),
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("RenderState Uniforms")
+                Some("RenderState Uniforms"),
             ),
         }
     }
@@ -37,7 +37,9 @@ impl RenderState {
         &self.uniforms
     }
 
-    pub fn uniforms_mut(&mut self) -> crate::resources::buffer::BufferGuard<'_, RenderStateUniforms> {
+    pub fn uniforms_mut(
+        &mut self,
+    ) -> crate::resources::buffer::BufferGuard<'_, RenderStateUniforms> {
         self.uniforms.write()
     }
 

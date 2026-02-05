@@ -1,8 +1,8 @@
-use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(debug_assertions)]
-use std::borrow::Cow;
 use bytemuck::Pod;
 use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+#[cfg(debug_assertions)]
+use std::borrow::Cow;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -15,20 +15,20 @@ impl<T: Pod> GpuData for Vec<T> {
     fn as_bytes(&self) -> &[u8] {
         bytemuck::cast_slice(self)
     }
-    
+
     fn byte_size(&self) -> usize {
         std::mem::size_of::<T>() * self.len()
     }
 }
 
-/// BufferRef: lightweight handle (id, label, usage, size). No CPU data owned.
+/// `BufferRef`: lightweight handle (id, label, usage, size). No CPU data owned.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BufferRef {
     pub id: u64,
     #[cfg(debug_assertions)]
     label: Cow<'static, str>,
     pub usage: wgpu::BufferUsages,
-    pub size: usize, // Recorded size, used as reference during creation
+    pub size: usize,  // Recorded size, used as reference during creation
     pub version: u64, // Version number, used to track content changes
 }
 
@@ -37,15 +37,15 @@ impl BufferRef {
         Self {
             id: NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed),
             #[cfg(debug_assertions)]
-            label: _label
-                .map(|s| Cow::Owned(s.to_string()))
-                .unwrap_or(Cow::Borrowed("Unnamed Buffer")),
+            label: _label.map_or(Cow::Borrowed("Unnamed Buffer"), |s| {
+                Cow::Owned(s.to_string())
+            }),
             usage,
             size,
             version: 0,
         }
     }
-    
+
     /// Helper constructor: create handle based on data length
     pub fn from_data<T: Pod>(data: &[T], usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         let size = std::mem::size_of_val(data);
@@ -53,39 +53,56 @@ impl BufferRef {
     }
 
     /// Helper constructor: create handle from byte array
+    #[must_use]
     pub fn from_bytes(data: &[u8], usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         Self::new(data.len(), usage, label)
     }
 
     /// Create an empty handle
+    #[must_use]
     pub fn empty(usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         Self::new(0, usage, label)
     }
 
     /// Create a handle with specified capacity
+    #[must_use]
     pub fn with_capacity(capacity: usize, usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         Self::new(capacity, usage, label)
     }
 
     /// Create a handle with a specified ID (for global resource management)
-    /// 
+    ///
     /// Note: This method allows specifying a fixed ID for global resources that need stable references.
     /// For normal use cases, use `new()` to let the system automatically allocate an ID.
-    pub fn with_fixed_id(id: u64, size: usize, usage: wgpu::BufferUsages, version: u64, _label: Option<&str>) -> Self {
+    #[must_use]
+    pub fn with_fixed_id(
+        id: u64,
+        size: usize,
+        usage: wgpu::BufferUsages,
+        version: u64,
+        _label: Option<&str>,
+    ) -> Self {
         Self {
             id,
             #[cfg(debug_assertions)]
-            label: _label
-                .map(|s| Cow::Owned(s.to_string()))
-                .unwrap_or(Cow::Borrowed("Unnamed Buffer")),
+            label: _label.map_or(Cow::Borrowed("Unnamed Buffer"), |s| {
+                Cow::Owned(s.to_string())
+            }),
             usage,
             size,
             version,
         }
     }
 
-    pub fn id(&self) -> u64 { self.id }
-    pub fn usage(&self) -> wgpu::BufferUsages { self.usage }
+    #[must_use]
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+    #[must_use]
+    pub fn usage(&self) -> wgpu::BufferUsages {
+        self.usage
+    }
+    #[must_use]
     pub fn label(&self) -> Option<&str> {
         #[cfg(debug_assertions)]
         {
@@ -96,7 +113,10 @@ impl BufferRef {
             None
         }
     }
-    pub fn size(&self) -> usize { self.size }
+    #[must_use]
+    pub fn size(&self) -> usize {
+        self.size
+    }
 }
 
 pub struct BufferGuard<'a, T: GpuData> {
@@ -104,27 +124,27 @@ pub struct BufferGuard<'a, T: GpuData> {
     pub(crate) changed: bool,
 }
 
-impl<'a, T: GpuData> BufferGuard<'a, T> {
+impl<T: GpuData> BufferGuard<'_, T> {
     // Allow user to manually skip version update
     pub fn skip_sync(&mut self) {
         self.changed = false;
     }
 }
 
-impl<'a, T: GpuData> std::ops::Deref for BufferGuard<'a, T> {
+impl<T: GpuData> std::ops::Deref for BufferGuard<'_, T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.guard.data
     }
 }
 
-impl<'a, T: GpuData> std::ops::DerefMut for BufferGuard<'a, T> {
+impl<T: GpuData> std::ops::DerefMut for BufferGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.guard.data
     }
 }
 
-impl<'a, T: GpuData> Drop for BufferGuard<'a, T> {
+impl<T: GpuData> Drop for BufferGuard<'_, T> {
     fn drop(&mut self) {
         if self.changed {
             self.guard.version = self.guard.version.wrapping_add(1);
@@ -132,7 +152,6 @@ impl<'a, T: GpuData> Drop for BufferGuard<'a, T> {
         }
     }
 }
-
 
 /// Internal mutable state: only these data need lock protection
 #[derive(Debug)]
@@ -160,9 +179,9 @@ impl<T: GpuData + Clone> Clone for CpuBuffer<T> {
         let guard = self.inner.read();
         // 2. Construct new CpuBuffer with cloned data
         Self::new(
-            guard.data.clone(), 
-            self.usage, 
-            self.label() // Reuse Label
+            guard.data.clone(),
+            self.usage,
+            self.label(), // Reuse Label
         )
     }
 }
@@ -190,24 +209,41 @@ impl<T: GpuData> CpuBuffer<T> {
         }
     }
 
-    pub fn default() -> Self 
-    where T: Default 
+    #[must_use]
+    pub fn default() -> Self
+    where
+        T: Default,
     {
-        Self::new(T::default(), wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, None)
+        Self::new(
+            T::default(),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            None,
+        )
     }
 
-    pub fn new_uniform(label: Option<&str>) -> Self 
-    where T: Default 
+    #[must_use]
+    pub fn new_uniform(label: Option<&str>) -> Self
+    where
+        T: Default,
     {
-        Self::new(T::default(), wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, label)
+        Self::new(
+            T::default(),
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            label,
+        )
     }
 
-    pub fn new_storage(label: Option<&str>) -> Self 
-    where T: Default 
+    #[must_use]
+    pub fn new_storage(label: Option<&str>) -> Self
+    where
+        T: Default,
     {
-        Self::new(T::default(), wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST, label)
+        Self::new(
+            T::default(),
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            label,
+        )
     }
-
 
     // === Lock-free operations ===
     pub fn id(&self) -> u64 {
@@ -220,9 +256,13 @@ impl<T: GpuData> CpuBuffer<T> {
 
     pub fn label(&self) -> Option<&str> {
         #[cfg(debug_assertions)]
-        { Some(&self.label) }
+        {
+            Some(&self.label)
+        }
         #[cfg(not(debug_assertions))]
-        { None }
+        {
+            None
+        }
     }
 
     // === Operations requiring lock ===
@@ -238,7 +278,7 @@ impl<T: GpuData> CpuBuffer<T> {
     /// Acquire data read lock
     pub fn read(&self) -> BufferReadGuard<'_, T> {
         BufferReadGuard {
-            guard: self.inner.read()
+            guard: self.inner.read(),
         }
     }
     /// Acquire data write lock
@@ -249,8 +289,8 @@ impl<T: GpuData> CpuBuffer<T> {
         }
     }
 
-    /// Get a snapshot of the current BufferRef
-    /// Since version number is inside the lock, we must construct a new BufferRef on the spot
+    /// Get a snapshot of the current `BufferRef`
+    /// Since version number is inside the lock, we must construct a new `BufferRef` on the spot
     pub fn handle(&self) -> BufferRef {
         let state = self.inner.read();
         BufferRef {
@@ -268,7 +308,7 @@ pub struct BufferReadGuard<'a, T: GpuData> {
     guard: RwLockReadGuard<'a, CpuBufferState<T>>,
 }
 
-impl<'a, T: GpuData> std::ops::Deref for BufferReadGuard<'a, T> {
+impl<T: GpuData> std::ops::Deref for BufferReadGuard<'_, T> {
     type Target = T;
     fn deref(&self) -> &Self::Target {
         &self.guard.data

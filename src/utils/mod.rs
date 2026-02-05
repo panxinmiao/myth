@@ -21,11 +21,11 @@
 //! assert_eq!(sym1, sym2); // O(1) comparison
 //! ```
 
-pub mod orbit_control;
 pub mod fps_counter;
 pub mod interner;
+pub mod orbit_control;
 pub mod time;
 
+pub use fps_counter::FpsCounter;
 pub use interner::Symbol;
 pub use orbit_control::OrbitControls;
-pub use fps_counter::FpsCounter;

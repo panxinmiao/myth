@@ -68,24 +68,24 @@ pub struct RenderSettings {
     /// - `HighPerformance`: Prefer discrete/dedicated GPU
     /// - `LowPower`: Prefer integrated GPU
     pub power_preference: wgpu::PowerPreference,
-    
+
     /// Required wgpu features that must be supported by the adapter.
     ///
     /// The engine will fail to initialize if these features are not available.
     /// Use with caution on WebGPU targets where feature support varies.
     pub required_features: wgpu::Features,
-    
+
     /// Required wgpu limits that must be supported by the adapter.
     ///
     /// Limits define maximum resource sizes, binding counts, etc.
     pub required_limits: wgpu::Limits,
-    
+
     /// Background clear color for the main render target.
     ///
     /// This color is used to clear the framebuffer at the start of each frame.
     pub clear_color: wgpu::Color,
 
-    /// Enable vertical synchronization (VSync).
+    /// Enable vertical synchronization (`VSync`).
     ///
     /// When `true`, the framerate is capped to the display refresh rate,
     /// reducing screen tearing and power consumption.
@@ -106,12 +106,11 @@ pub struct RenderSettings {
     pub depth_format: wgpu::TextureFormat,
 
     /// Whether to use straightforward rendering mode.
-    /// 
+    ///
     /// if false, the main scene will be rendered directly to the screen surface,
     /// bypassing intermediate render targets and post-processing.
     /// This can improve performance for simple scenes without effects.
     pub enable_hdr: bool,
-
 }
 
 impl Default for RenderSettings {
@@ -120,7 +119,12 @@ impl Default for RenderSettings {
             power_preference: wgpu::PowerPreference::HighPerformance,
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
-            clear_color: wgpu::Color { r: 0.0, g: 0.0, b: 0.0, a: 1.0 },
+            clear_color: wgpu::Color {
+                r: 0.0,
+                g: 0.0,
+                b: 0.0,
+                a: 1.0,
+            },
             vsync: true,
             msaa_samples: 1,
             depth_format: wgpu::TextureFormat::Depth32Float,

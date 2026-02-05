@@ -9,8 +9,8 @@
 //! ```
 //!
 //! # 执行时机
-//! - 在 OpaquePass 之后
-//! - 在 TransparentPass 之前
+//! - 在 `OpaquePass` 之后
+//! - 在 `TransparentPass` 之前
 //!
 //! # 注意
 //! - 此 Pass 不使用 RenderPass，直接使用 `encoder.copy_texture_to_texture`
@@ -30,6 +30,7 @@ use crate::renderer::graph::{RenderContext, RenderNode};
 pub struct TransmissionCopyPass;
 
 impl TransmissionCopyPass {
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -42,7 +43,7 @@ impl Default for TransmissionCopyPass {
 }
 
 impl RenderNode for TransmissionCopyPass {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Transmission Copy Pass"
     }
 
@@ -56,17 +57,13 @@ impl RenderNode for TransmissionCopyPass {
 
         // Transmission 需要 HDR 模式
         if !ctx.wgpu_ctx.enable_hdr {
-            log::warn!(
-                "TransmissionCopyPass: Transmission requires HDR mode, skipping"
-            );
+            log::warn!("TransmissionCopyPass: Transmission requires HDR mode, skipping");
             return;
         }
 
         // 检查 Transmission 纹理是否存在
         let Some(transmission_view) = &ctx.frame_resources.transmission_view else {
-            log::warn!(
-                "TransmissionCopyPass: transmission_view missing, skipping"
-            );
+            log::warn!("TransmissionCopyPass: transmission_view missing, skipping");
             return;
         };
 
@@ -82,10 +79,10 @@ impl RenderNode for TransmissionCopyPass {
                 let pass_desc = wgpu::RenderPassDescriptor {
                     label: Some("Transmission MSAA Resolve"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: msaa_view, // 源：MSAA 缓冲
+                        view: msaa_view,                  // 源：MSAA 缓冲
                         resolve_target: Some(color_view), // 目标：普通纹理
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load, // 加载已有内容
+                            load: wgpu::LoadOp::Load,    // 加载已有内容
                             store: wgpu::StoreOp::Store, // 必须 Store！因为 TransparentPass 还要继续在上面画
                         },
                         depth_slice: None,
@@ -123,9 +120,9 @@ impl RenderNode for TransmissionCopyPass {
         );
 
         ctx.resource_manager.mipmap_generator.generate(
-            &ctx.wgpu_ctx.device, 
-            encoder, 
-            &transmission_view.texture(), 
+            &ctx.wgpu_ctx.device,
+            encoder,
+            transmission_view.texture(),
         );
     }
 }

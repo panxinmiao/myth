@@ -1,7 +1,7 @@
-pub mod sphere;
-pub mod plane;
 pub mod box_shape;
+pub mod plane;
+pub mod sphere;
 
 pub use box_shape::create_box;
-pub use sphere::{create_sphere, SphereOptions};
-pub use plane::{create_plane, PlaneOptions};
+pub use plane::{PlaneOptions, create_plane};
+pub use sphere::{SphereOptions, create_sphere};

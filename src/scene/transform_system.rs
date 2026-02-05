@@ -2,7 +2,7 @@
 //!
 //! Handles scene graph matrix hierarchy updates, decoupled from Scene to avoid
 //! borrow conflicts. This is an independent system that only needs to borrow
-//! the nodes SlotMap and root_nodes list.
+//! the nodes `SlotMap` and `root_nodes` list.
 //!
 //! # Parallelization Strategy
 //!
@@ -18,9 +18,9 @@
 use glam::Affine3A;
 use slotmap::{SlotMap, SparseSecondaryMap};
 
-use crate::scene::node::Node;
-use crate::scene::camera::Camera;
 use crate::scene::NodeHandle;
+use crate::scene::camera::Camera;
+use crate::scene::node::Node;
 
 /// Level-order batch information for parallelization.
 #[derive(Debug, Default)]
@@ -32,10 +32,11 @@ pub struct LevelOrderBatches {
 }
 
 impl LevelOrderBatches {
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Clears and reuses memory.
     pub fn clear(&mut self) {
         for batch in &mut self.batches {
@@ -43,13 +44,15 @@ impl LevelOrderBatches {
         }
         self.parent_indices.clear();
     }
-    
+
     /// Gets the total number of nodes.
+    #[must_use]
     pub fn total_nodes(&self) -> usize {
-        self.batches.iter().map(|b| b.len()).sum()
+        self.batches.iter().map(std::vec::Vec::len).sum()
     }
-    
+
     /// Gets the hierarchy depth.
+    #[must_use]
     pub fn depth(&self) -> usize {
         self.batches.len()
     }
@@ -77,18 +80,18 @@ pub fn build_level_order_batches(
     output: &mut LevelOrderBatches,
 ) {
     output.clear();
-    
+
     if roots.is_empty() {
         return;
     }
-    
+
     // Level 0: root nodes
     let mut current_level: Vec<NodeHandle> = roots.to_vec();
-    
+
     while !current_level.is_empty() {
         // Collect next level nodes
         let mut next_level = Vec::new();
-        
+
         for &node_handle in &current_level {
             if let Some(node) = nodes.get(node_handle) {
                 for &child_handle in &node.children {
@@ -96,7 +99,7 @@ pub fn build_level_order_batches(
                 }
             }
         }
-        
+
         // Save current level
         if output.batches.len() <= output.depth() {
             output.batches.push(current_level);
@@ -104,10 +107,10 @@ pub fn build_level_order_batches(
             let idx = output.depth();
             output.batches[idx] = current_level;
         }
-        
+
         current_level = next_level;
     }
-    
+
     // Remove empty batches
     output.batches.retain(|b| !b.is_empty());
 }
@@ -126,25 +129,25 @@ pub fn update_hierarchy_batched(
             // Get parent world matrix
             let parent_world = if let Some(node) = nodes.get(node_handle) {
                 if let Some(parent_handle) = node.parent {
-                    nodes.get(parent_handle)
-                        .map(|p| p.transform.world_matrix)
-                        .unwrap_or(Affine3A::IDENTITY)
+                    nodes
+                        .get(parent_handle)
+                        .map_or(Affine3A::IDENTITY, |p| p.transform.world_matrix)
                 } else {
                     Affine3A::IDENTITY
                 }
             } else {
                 continue;
             };
-            
+
             // Update current node
             if let Some(node) = nodes.get_mut(node_handle) {
                 let local_changed = node.transform.update_local_matrix();
                 let parent_changed = level > 0;
-                
+
                 if local_changed || parent_changed {
                     let new_world = parent_world * *node.transform.local_matrix();
                     node.transform.set_world_matrix(new_world);
-                    
+
                     // Synchronously update camera
                     if let Some(camera) = cameras.get_mut(node_handle) {
                         camera.update_view_projection(&new_world);
@@ -159,8 +162,8 @@ pub fn update_hierarchy_batched(
 ///
 /// # Arguments
 ///
-/// * `nodes` - Mutable reference to the nodes SlotMap
-/// * `cameras` - Mutable reference to the cameras SlotMap (for synchronous view-projection matrix updates)
+/// * `nodes` - Mutable reference to the nodes `SlotMap`
+/// * `cameras` - Mutable reference to the cameras `SlotMap` (for synchronous view-projection matrix updates)
 /// * `camera_components` - Component mapping from nodes to cameras
 /// * `roots` - List of root node handles
 ///
@@ -188,34 +191,34 @@ pub fn update_hierarchy_iterative(
     roots: &[NodeHandle],
 ) {
     let mut stack: Vec<(NodeHandle, Affine3A, bool)> = Vec::with_capacity(64);
-    
+
     for &root_handle in roots.iter().rev() {
         stack.push((root_handle, Affine3A::IDENTITY, false));
     }
-    
+
     while let Some((node_handle, parent_world_matrix, parent_changed)) = stack.pop() {
         // --- Phase 1: Mutable borrow, handle update logic ---
         let (current_world, world_needs_update) = {
             let Some(node) = nodes.get_mut(node_handle) else {
                 continue;
             };
-            
+
             let local_changed = node.transform.update_local_matrix();
             let world_needs_update = local_changed || parent_changed;
-            
+
             if world_needs_update {
                 let new_world = parent_world_matrix * *node.transform.local_matrix();
                 node.transform.set_world_matrix(new_world);
-                
+
                 if let Some(camera) = cameras.get_mut(node_handle) {
                     camera.update_view_projection(&new_world);
                 }
             }
-            
+
             (node.transform.world_matrix, world_needs_update)
-        }; 
+        };
         // Closure/scope ends here, `node`'s mutable borrow lifetime ends
-        
+
         // --- Phase 2: Immutable borrow, efficiently collect child nodes ---
         // [Fix] Move lookup outside the loop, only perform one SlotMap lookup
         if let Some(node) = nodes.get(node_handle) {
@@ -240,33 +243,39 @@ fn update_transform_recursive(
         let Some(node) = nodes.get_mut(node_handle) else {
             return;
         };
-        
+
         // 1. Smartly update local matrix
         let local_changed = node.transform.update_local_matrix();
-        
+
         // 2. Decide whether to update world matrix
         let world_needs_update = local_changed || parent_changed;
-        
+
         if world_needs_update {
             let new_world = parent_world_matrix * *node.transform.local_matrix();
             node.transform.set_world_matrix(new_world);
-            
+
             // Synchronously update camera
             if let Some(camera) = cameras.get_mut(node_handle) {
                 camera.update_view_projection(&new_world);
             }
         }
-        
+
         // Collect necessary info to avoid later borrow conflicts
         let world = node.transform.world_matrix;
         let children: Vec<NodeHandle> = node.children.clone();
-        
+
         (world, children, world_needs_update)
     };
-    
+
     // Phase 2: Recursively process child nodes
     for child_handle in children_handles {
-        update_transform_recursive(nodes, cameras, child_handle, current_world_matrix, world_needs_update);
+        update_transform_recursive(
+            nodes,
+            cameras,
+            child_handle,
+            current_world_matrix,
+            world_needs_update,
+        );
     }
 }
 
@@ -287,16 +296,16 @@ pub fn update_subtree(
     // Get parent node's world matrix (if exists)
     let parent_world = if let Some(node) = nodes.get(root_handle) {
         if let Some(parent_handle) = node.parent {
-            nodes.get(parent_handle)
-                .map(|p| p.transform.world_matrix)
-                .unwrap_or(Affine3A::IDENTITY)
+            nodes
+                .get(parent_handle)
+                .map_or(Affine3A::IDENTITY, |p| p.transform.world_matrix)
         } else {
             Affine3A::IDENTITY
         }
     } else {
         return;
     };
-    
+
     update_transform_recursive(nodes, cameras, root_handle, parent_world, true);
 }
 
@@ -304,32 +313,41 @@ pub fn update_subtree(
 mod tests {
     use super::*;
     use glam::Vec3;
-    
+
     #[test]
     fn test_hierarchy_update() {
         let mut nodes: SlotMap<NodeHandle, Node> = SlotMap::with_key();
         let mut cameras: SparseSecondaryMap<NodeHandle, Camera> = SparseSecondaryMap::new();
-        
+
         // Create a simple parent-child hierarchy
         let mut parent = Node::new();
         parent.transform.position = Vec3::new(1.0, 0.0, 0.0);
         let parent_handle = nodes.insert(parent);
-        
+
         let mut child = Node::new();
         child.transform.position = Vec3::new(0.0, 1.0, 0.0);
         child.parent = Some(parent_handle);
         let child_handle = nodes.insert(child);
-        
+
         // Establish parent-child relationship
-        nodes.get_mut(parent_handle).unwrap().children.push(child_handle);
-        
+        nodes
+            .get_mut(parent_handle)
+            .unwrap()
+            .children
+            .push(child_handle);
+
         let roots = vec![parent_handle];
-        
+
         // Execute update
         update_hierarchy(&mut nodes, &mut cameras, &roots);
-        
+
         // Verify child node's world position
-        let child_world_pos = nodes.get(child_handle).unwrap().transform.world_matrix.translation;
+        let child_world_pos = nodes
+            .get(child_handle)
+            .unwrap()
+            .transform
+            .world_matrix
+            .translation;
         assert!((child_world_pos.x - 1.0).abs() < 1e-5);
         assert!((child_world_pos.y - 1.0).abs() < 1e-5);
     }

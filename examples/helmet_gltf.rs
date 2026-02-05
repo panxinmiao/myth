@@ -16,18 +16,21 @@ struct HelmetGltf {
 impl AppHandler for HelmetGltf {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 加载环境贴图 (PBR 需要 IBL)
-        let env_texture_handle = engine.assets.load_cube_texture(
-            [
-                "examples/assets/Park2/posx.jpg",
-                "examples/assets/Park2/negx.jpg",
-                "examples/assets/Park2/posy.jpg",
-                "examples/assets/Park2/negy.jpg",
-                "examples/assets/Park2/posz.jpg",
-                "examples/assets/Park2/negz.jpg",
-            ],
-            ColorSpace::Srgb,
-            true
-        ).expect("Failed to load environment map");
+        let env_texture_handle = engine
+            .assets
+            .load_cube_texture(
+                [
+                    "examples/assets/Park2/posx.jpg",
+                    "examples/assets/Park2/negx.jpg",
+                    "examples/assets/Park2/posy.jpg",
+                    "examples/assets/Park2/negy.jpg",
+                    "examples/assets/Park2/posz.jpg",
+                    "examples/assets/Park2/negz.jpg",
+                ],
+                ColorSpace::Srgb,
+                true,
+            )
+            .expect("Failed to load environment map");
 
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
@@ -38,13 +41,12 @@ impl AppHandler for HelmetGltf {
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
         scene.add_light(light);
         // 3. 加载 glTF 模型
-        let gltf_path = std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
+        let gltf_path =
+            std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
         println!("Loading glTF model from: {}", gltf_path.display());
-        
-        let prefab = GltfLoader::load(
-            gltf_path,
-            engine.assets.clone()
-        ).expect("Failed to load glTF model");
+
+        let prefab =
+            GltfLoader::load(gltf_path, engine.assets.clone()).expect("Failed to load glTF model");
         let gltf_node = scene.instantiate(&prefab);
 
         println!("Successfully loaded root node: {:?}", gltf_node);
@@ -68,12 +70,13 @@ impl AppHandler for HelmetGltf {
     }
 
     fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
-        let Some(scene) = engine.scene_manager.active_scene_mut() else{
+        let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
         // 轨道控制器
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
-            self.controls.update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
+            self.controls
+                .update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
         }
 
         // FPS 显示
@@ -81,12 +84,14 @@ impl AppHandler for HelmetGltf {
             window.set_title(&format!("glTF PBR Demo - FPS: {:.0}", fps));
         }
     }
-
 }
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     App::new()
-        .with_settings(RenderSettings { vsync: false, ..Default::default() })
+        .with_settings(RenderSettings {
+            vsync: false,
+            ..Default::default()
+        })
         .run::<HelmetGltf>()
 }

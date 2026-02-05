@@ -1,7 +1,7 @@
 //! Simple Forward Render Pass
 //!
 //! 简化版 Forward Pass，用于 LDR/非 HDR 渲染路径。
-//! 在单个 RenderPass 中依次绘制不透明和透明物体。
+//! 在单个 `RenderPass` 中依次绘制不透明和透明物体。
 //!
 //! # 数据流
 //! ```text
@@ -19,7 +19,7 @@ use crate::renderer::graph::{RenderContext, RenderNode, TrackedRenderPass};
 
 /// Simple Forward Render Pass
 ///
-/// 在单个 RenderPass 中完成所有绘制：
+/// 在单个 `RenderPass` 中完成所有绘制：
 /// 1. Clear 颜色和深度缓冲
 /// 2. 绘制不透明物体（Front-to-Back）
 /// 3. 绘制透明物体（Back-to-Front）
@@ -33,13 +33,14 @@ pub struct SimpleForwardPass {
 }
 
 impl SimpleForwardPass {
+    #[must_use]
     pub fn new(clear_color: wgpu::Color) -> Self {
         Self { clear_color }
     }
 
     /// 获取渲染目标
-    /// 
-    /// 返回 (color_view, resolve_view)
+    ///
+    /// 返回 (`color_view`, `resolve_view`)
     fn get_render_target<'a>(
         &self,
         ctx: &'a RenderContext,
@@ -116,7 +117,7 @@ impl Default for SimpleForwardPass {
 }
 
 impl RenderNode for SimpleForwardPass {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Simple Forward Pass"
     }
 

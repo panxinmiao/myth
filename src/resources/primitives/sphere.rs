@@ -1,6 +1,6 @@
-use crate::resources::geometry::{Geometry, Attribute};
-use wgpu::VertexFormat;
+use crate::resources::geometry::{Attribute, Geometry};
 use std::f32::consts::PI;
+use wgpu::VertexFormat;
 
 pub struct SphereOptions {
     pub radius: f32,
@@ -18,6 +18,7 @@ impl Default for SphereOptions {
     }
 }
 
+#[must_use]
 pub fn create_sphere(options: SphereOptions) -> Geometry {
     let radius = options.radius;
     let width_segments = options.width_segments.max(3);
@@ -32,10 +33,10 @@ pub fn create_sphere(options: SphereOptions) -> Geometry {
     for y in 0..=height_segments {
         let v_ratio = y as f32 / height_segments as f32;
         // Latitude angle: from 0 to PI (south pole to north pole)
-        let theta = v_ratio * PI; 
-        
+        let theta = v_ratio * PI;
+
         // y coordinate (Y-up)
-        let py = -radius * (theta.cos()); 
+        let py = -radius * (theta.cos());
         // Radius of current latitude ring
         let ring_radius = radius * (theta.sin());
 
@@ -71,12 +72,12 @@ pub fn create_sphere(options: SphereOptions) -> Geometry {
             let v3 = v2 + 1;
 
             // If not the last row (south pole doesn't need the first triangle, but for simplicity we usually don't do special culling, degenerate triangles will be ignored by the GPU)
-            if y != 0 || true { 
+            if y != 0 || true {
                 indices.push(v0 as u16);
                 indices.push(v1 as u16);
                 indices.push(v2 as u16);
             }
-            
+
             // If not the first row (north pole)
             if y != height_segments - 1 || true {
                 indices.push(v1 as u16);
@@ -87,8 +88,14 @@ pub fn create_sphere(options: SphereOptions) -> Geometry {
     }
 
     let mut geo = Geometry::new();
-    geo.set_attribute("position", Attribute::new_planar(&positions, VertexFormat::Float32x3));
-    geo.set_attribute("normal", Attribute::new_planar(&normals, VertexFormat::Float32x3));
+    geo.set_attribute(
+        "position",
+        Attribute::new_planar(&positions, VertexFormat::Float32x3),
+    );
+    geo.set_attribute(
+        "normal",
+        Attribute::new_planar(&normals, VertexFormat::Float32x3),
+    );
     geo.set_attribute("uv", Attribute::new_planar(&uvs, VertexFormat::Float32x2));
     geo.set_indices(&indices);
 

@@ -3,30 +3,29 @@ use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use slotmap::{SlotMap, SecondaryMap, SparseSecondaryMap};
-use glam::{Affine3A, Vec3, Vec4}; 
 use crate::AssetServer;
-use crate::animation::{AnimationMixer, AnimationSystem, AnimationAction, Binder};
+use crate::animation::{AnimationAction, AnimationMixer, AnimationSystem, Binder};
 use crate::assets::prefab::Prefab;
-use crate::resources::{BoundingBox, Input};
 use crate::resources::buffer::CpuBuffer;
+use crate::resources::mesh::Mesh;
 use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::tone_mapping::ToneMappingSettings;
 use crate::resources::uniforms::{EnvironmentUniforms, GpuLightStorage};
+use crate::resources::{BoundingBox, Input};
+use crate::scene::camera::Camera;
+use crate::scene::environment::Environment;
+use crate::scene::light::Light;
+use crate::scene::light::LightKind;
 use crate::scene::node::Node;
 use crate::scene::skeleton::{BindMode, Skeleton, SkinBinding};
 use crate::scene::transform::Transform;
 use crate::scene::transform_system;
-use crate::scene::light::LightKind;
-use crate::resources::mesh::Mesh;
-use crate::scene::camera::Camera;
-use crate::scene::light::Light;
-use crate::scene::environment::Environment;
+use glam::{Affine3A, Vec3, Vec4};
+use slotmap::{SecondaryMap, SlotMap, SparseSecondaryMap};
 
 use crate::scene::{NodeHandle, SkeletonKey};
 
 static NEXT_SCENE_ID: AtomicU32 = AtomicU32::new(1);
-
 
 /// Trait for scene update logic.
 ///
@@ -57,10 +56,11 @@ pub trait SceneLogic: Send + Sync + 'static {
 /// Syntactic sugar: allows using closures directly as scene logic.
 pub struct CallbackLogic<F>(pub F);
 impl<F> SceneLogic for CallbackLogic<F>
-where F: FnMut(&mut Scene, &Input, f32) + Send + Sync + 'static
+where
+    F: FnMut(&mut Scene, &Input, f32) + Send + Sync + 'static,
 {
     fn update(&mut self, scene: &mut Scene, input: &Input, dt: f32) {
-        (self.0)(scene, input, dt)
+        (self.0)(scene, input, dt);
     }
 }
 
@@ -71,13 +71,13 @@ pub struct SplitPrimitiveTag;
 /// The scene graph container.
 ///
 /// Scene is the pure data layer that stores scene graph hierarchy and component data.
-/// Uses SlotMap + SecondaryMap for high-performance component-based storage.
+/// Uses `SlotMap` + `SecondaryMap` for high-performance component-based storage.
 ///
 /// # Storage Layout
 ///
-/// - `nodes`: Core node data (hierarchy and transforms) using SlotMap
-/// - Dense components (names, meshes): Use SecondaryMap
-/// - Sparse components (cameras, lights, skins): Use SparseSecondaryMap
+/// - `nodes`: Core node data (hierarchy and transforms) using `SlotMap`
+/// - Dense components (names, meshes): Use `SecondaryMap`
+/// - Sparse components (cameras, lights, skins): Use `SparseSecondaryMap`
 ///
 /// # Example
 ///
@@ -97,7 +97,7 @@ pub struct Scene {
     pub id: u32,
 
     // === Core Node Storage ===
-    /// All nodes in the scene (SlotMap for O(1) access)
+    /// All nodes in the scene (`SlotMap` for O(1) access)
     pub nodes: SlotMap<NodeHandle, Node>,
     /// Root-level nodes (no parent)
     pub root_nodes: Vec<NodeHandle>,
@@ -141,7 +141,7 @@ pub struct Scene {
     pub(crate) uniforms_buffer: CpuBuffer<EnvironmentUniforms>,
     light_data_cache: RefCell<Vec<GpuLightStorage>>,
 
-    /// Scene shader_defines cache: (environment_version, cached_defines)
+    /// Scene `shader_defines` cache: (`environment_version`, `cached_defines`)
     cached_shader_defines: RefCell<Option<(u64, ShaderDefines)>>,
 
     // === Scene Logic System ===
@@ -339,7 +339,7 @@ impl Scene {
 
     /// Returns the name of a node.
     pub fn get_name(&self, handle: NodeHandle) -> Option<&str> {
-        self.names.get(handle).map(|s| s.as_ref())
+        self.names.get(handle).map(std::convert::AsRef::as_ref)
     }
 
     /// Sets the mesh component for a node.
@@ -388,14 +388,22 @@ impl Scene {
     }
 
     /// Binds a skeleton to a node
-    pub fn bind_skeleton(&mut self, handle: NodeHandle, skeleton_key: SkeletonKey, bind_mode: BindMode) {
+    pub fn bind_skeleton(
+        &mut self,
+        handle: NodeHandle,
+        skeleton_key: SkeletonKey,
+        bind_mode: BindMode,
+    ) {
         if let Some(node) = self.nodes.get(handle) {
             let bind_matrix_inv = node.transform.world_matrix.inverse();
-            self.skins.insert(handle, SkinBinding {
-                skeleton: skeleton_key,
-                bind_mode,
-                bind_matrix_inv,
-            });
+            self.skins.insert(
+                handle,
+                SkinBinding {
+                    skeleton: skeleton_key,
+                    bind_mode,
+                    bind_matrix_inv,
+                },
+            );
         }
     }
 
@@ -420,11 +428,13 @@ impl Scene {
     }
 
     /// Sets morph weights for a node (from POD data)
-    pub fn set_morph_weights_from_pod(&mut self, handle: NodeHandle, data: &crate::animation::values::MorphWeightData) {
-        let weights = self.morph_weights.entry(handle)
-            .unwrap()
-            .or_insert_with(|| Vec::new());
-        
+    pub fn set_morph_weights_from_pod(
+        &mut self,
+        handle: NodeHandle,
+        data: &crate::animation::values::MorphWeightData,
+    ) {
+        let weights = self.morph_weights.entry(handle).unwrap().or_default();
+
         if weights.len() != data.weights.len() {
             weights.resize(data.weights.len(), 0.0);
         }
@@ -434,7 +444,7 @@ impl Scene {
     // ========================================================================
     // Iterate over all active lights in the scene
     // ========================================================================
-    
+
     pub fn iter_active_lights(&self) -> impl Iterator<Item = (&Light, &Affine3A)> {
         self.lights.iter().filter_map(move |(node_handle, light)| {
             let node = self.nodes.get(node_handle)?;
@@ -452,30 +462,41 @@ impl Scene {
         self.query_camera_bundle(node_handle)
     }
 
-    pub fn query_camera_bundle(&mut self, node_handle: NodeHandle) -> Option<(&mut Transform, &mut Camera)> {
+    pub fn query_camera_bundle(
+        &mut self,
+        node_handle: NodeHandle,
+    ) -> Option<(&mut Transform, &mut Camera)> {
         // Check if camera component exists
         if !self.cameras.contains_key(node_handle) {
             return None;
         }
-        
+
         // Use pointers to avoid simultaneous borrow conflict between nodes and cameras
-        let transform_ptr = self.nodes.get_mut(node_handle)
-            .map(|n| &mut n.transform as *mut Transform)?;
+        let transform_ptr = self
+            .nodes
+            .get_mut(node_handle)
+            .map(|n| &raw mut n.transform)?;
         let camera = self.cameras.get_mut(node_handle)?;
-        
+
         // SAFETY: transform and camera are disjoint memory regions
         unsafe { Some((&mut *transform_ptr, camera)) }
     }
 
     /// Queries the Transform and Light for a specified node
-    pub fn query_light_bundle(&mut self, node_handle: NodeHandle) -> Option<(&mut Transform, &Light)> {
+    pub fn query_light_bundle(
+        &mut self,
+        node_handle: NodeHandle,
+    ) -> Option<(&mut Transform, &Light)> {
         let light = self.lights.get(node_handle)?;
         let transform = &mut self.nodes.get_mut(node_handle)?.transform;
         Some((transform, light))
     }
 
     /// Queries the Transform and Mesh for a specified node
-    pub fn query_mesh_bundle(&mut self, node_handle: NodeHandle) -> Option<(&mut Transform, &Mesh)> {
+    pub fn query_mesh_bundle(
+        &mut self,
+        node_handle: NodeHandle,
+    ) -> Option<(&mut Transform, &Mesh)> {
         let mesh = self.meshes.get(node_handle)?;
         let transform = &mut self.nodes.get_mut(node_handle)?.transform;
         Some((transform, mesh))
@@ -496,11 +517,7 @@ impl Scene {
 
     /// Updates world matrices for a specified subtree
     pub fn update_subtree(&mut self, root_handle: NodeHandle) {
-        transform_system::update_subtree(
-            &mut self.nodes,
-            &mut self.cameras,
-            root_handle,
-        );
+        transform_system::update_subtree(&mut self.nodes, &mut self.cameras, root_handle);
     }
 
     // ========================================================================
@@ -526,29 +543,29 @@ impl Scene {
     }
 
     /// Instantiates a Prefab into the scene
-    /// 
+    ///
     /// Instantiates the node tree, skeletons, and animations from the Prefab as scene objects.
     /// Returns the root node handle and a mapping of all created node handles.
     pub fn instantiate(&mut self, prefab: &Prefab) -> NodeHandle {
         let node_count = prefab.nodes.len();
         let mut node_map: Vec<NodeHandle> = Vec::with_capacity(node_count);
-        
+
         // Pass 1: Create all nodes and map indices
         for p_node in &prefab.nodes {
             let handle = self.create_node();
-            
+
             if let Some(name) = &p_node.name {
                 self.set_name(handle, name);
             }
-            
+
             if let Some(node) = self.get_node_mut(handle) {
                 node.transform = p_node.transform.clone();
             }
-            
+
             if let Some(mesh) = &p_node.mesh {
                 self.set_mesh(handle, mesh.clone());
             }
-            
+
             if let Some(weights) = &p_node.morph_weights {
                 self.set_morph_weights(handle, weights.clone());
             }
@@ -556,7 +573,7 @@ impl Scene {
             if p_node.is_split_primitive {
                 self.mark_as_split_primitive(handle);
             }
-            
+
             node_map.push(handle);
         }
 
@@ -574,10 +591,12 @@ impl Scene {
         // Pass 3: Rebuild skeletons
         let mut skeleton_keys: Vec<SkeletonKey> = Vec::with_capacity(prefab.skeletons.len());
         for p_skel in &prefab.skeletons {
-            let bones: Vec<NodeHandle> = p_skel.bone_indices.iter()
+            let bones: Vec<NodeHandle> = p_skel
+                .bone_indices
+                .iter()
                 .filter_map(|&idx| node_map.get(idx).copied())
                 .collect();
-            
+
             let skeleton = Skeleton::new(
                 &p_skel.name,
                 bones,
@@ -590,18 +609,18 @@ impl Scene {
 
         // Pass 4: Bind skeletons to nodes
         for (i, p_node) in prefab.nodes.iter().enumerate() {
-            if let Some(skin_idx) = p_node.skin_index {
-                if let Some(&skel_key) = skeleton_keys.get(skin_idx) {
-                    let node_handle = node_map[i];
-                    self.bind_skeleton(node_handle, skel_key, BindMode::Attached);
-                }
+            if let Some(skin_idx) = p_node.skin_index
+                && let Some(&skel_key) = skeleton_keys.get(skin_idx)
+            {
+                let node_handle = node_map[i];
+                self.bind_skeleton(node_handle, skel_key, BindMode::Attached);
             }
         }
 
         // Pass 5: Create virtual root node and mount all top-level nodes
         let root_handle = self.create_node_with_name("gltf_root");
         self.root_nodes.push(root_handle);
-        
+
         for &root_idx in &prefab.root_indices {
             if let Some(&node_handle) = node_map.get(root_idx) {
                 self.attach(node_handle, root_handle);
@@ -611,18 +630,18 @@ impl Scene {
         // Pass 6: Create animation mixer and bind animations
         if !prefab.animations.is_empty() {
             let mut mixer = AnimationMixer::new();
-            
+
             for clip in &prefab.animations {
                 let bindings = Binder::bind(self, root_handle, clip);
-                
+
                 let mut action = AnimationAction::new(Arc::new(clip.clone()));
                 action.bindings = bindings;
                 action.enabled = false;
                 action.weight = 0.0;
-                
+
                 mixer.add_action(action);
             }
-            
+
             self.animation_mixers.insert(root_handle, mixer);
         }
 
@@ -662,7 +681,7 @@ impl Scene {
     }
 
     /// Computes the scene's shader macro definitions
-    /// 
+    ///
     /// Uses internal caching mechanism, only recalculates when Environment version changes.
     pub fn shader_defines(&self) -> ShaderDefines {
         let env_version = self.environment.version();
@@ -670,10 +689,10 @@ impl Scene {
         // Fast path: check cache
         {
             let cache = self.cached_shader_defines.borrow();
-            if let Some((cached_version, cached_defines)) = cache.as_ref() {
-                if *cached_version == env_version {
-                    return cached_defines.clone();
-                }
+            if let Some((cached_version, cached_defines)) = cache.as_ref()
+                && *cached_version == env_version
+            {
+                return cached_defines.clone();
             }
         }
 
@@ -689,8 +708,6 @@ impl Scene {
         defines
     }
 
-
-
     // ========================================================================
     // Scene Update and Logic System
     // ========================================================================
@@ -700,8 +717,9 @@ impl Scene {
     }
 
     /// Shortcut method: Add closure logic (for quick prototyping)
-    pub fn on_update<F>(&mut self, f: F) 
-    where F: FnMut(&mut Scene, &Input, f32) + Send + Sync + 'static 
+    pub fn on_update<F>(&mut self, f: F)
+    where
+        F: FnMut(&mut Scene, &Input, f32) + Send + Sync + 'static,
     {
         self.add_logic(CallbackLogic(f));
     }
@@ -838,28 +856,27 @@ impl Scene {
     }
 
     pub fn sync_morph_weights(&mut self) {
+        for (handle, weights) in &self.morph_weights {
+            if weights.is_empty() {
+                continue;
+            }
 
-        for (handle, weights) in &self.morph_weights {         
-
-            if weights.is_empty() { continue; }
-            
             let weights_slice = weights.as_slice();
-            
+
             if let Some(mesh) = self.meshes.get_mut(handle) {
                 mesh.set_morph_target_influences(weights_slice);
                 mesh.update_morph_uniforms();
             } else if let Some(node) = self.nodes.get(handle) {
                 for &child_handle in &node.children {
                     // 广播给拥有 SplitPrimitiveTag 的节点
-                    if self.split_primitive_tags.contains_key(child_handle) {
-                        if let Some(child_mesh) = self.meshes.get_mut(child_handle) {
-                            child_mesh.set_morph_target_influences(weights_slice);
-                            child_mesh.update_morph_uniforms();
-                        }
+                    if self.split_primitive_tags.contains_key(child_handle)
+                        && let Some(child_mesh) = self.meshes.get_mut(child_handle)
+                    {
+                        child_mesh.set_morph_target_influences(weights_slice);
+                        child_mesh.update_morph_uniforms();
                     }
                 }
             }
-            
         }
     }
 
@@ -873,22 +890,26 @@ impl Scene {
         self.get_node(handle)
     }
 
-    fn get_bbox_of_one_node(&self, node_handle: NodeHandle, assets: &AssetServer) -> Option<BoundingBox> {
+    fn get_bbox_of_one_node(
+        &self,
+        node_handle: NodeHandle,
+        assets: &AssetServer,
+    ) -> Option<BoundingBox> {
         let node = self.get_node(node_handle)?;
-        if node.visible == false {
+        if !node.visible {
             return None;
         }
         let mesh = self.meshes.get(node_handle)?;
-        if mesh.visible == false {
+        if !mesh.visible {
             return None;
         }
         let geometry = assets.geometries.get(mesh.geometry)?;
 
         // When there's a skeleton binding, use Skeleton's bounding box
-        if let Some(skeleton_binding) = self.skins.get(node_handle) {
-            if let Some(skeleton) = self.skeleton_pool.get(skeleton_binding.skeleton) {
-                return skeleton.compute_tight_world_bounds(&self.nodes);
-            }
+        if let Some(skeleton_binding) = self.skins.get(node_handle)
+            && let Some(skeleton) = self.skeleton_pool.get(skeleton_binding.skeleton)
+        {
+            return skeleton.compute_tight_world_bounds(&self.nodes);
         }
 
         // When there's no skeleton binding, use Geometry's bounding box
@@ -902,7 +923,11 @@ impl Scene {
         Some(local_bbox.transform(&node.transform.world_matrix))
     }
 
-    pub fn get_bbox_of_node(&self, node_handle: NodeHandle, assets: &AssetServer) -> Option<BoundingBox> {
+    pub fn get_bbox_of_node(
+        &self,
+        node_handle: NodeHandle,
+        assets: &AssetServer,
+    ) -> Option<BoundingBox> {
         let mut combined_bbox = self.get_bbox_of_one_node(node_handle, assets);
 
         let node = self.get_node(node_handle)?;
@@ -935,9 +960,9 @@ impl Scene {
 
     /// Gets the global transform matrix of a node
     pub fn get_global_transform(&self, handle: NodeHandle) -> Affine3A {
-        self.nodes.get(handle)
-            .map(|n| n.transform.world_matrix)
-            .unwrap_or(Affine3A::IDENTITY)
+        self.nodes
+            .get(handle)
+            .map_or(Affine3A::IDENTITY, |n| n.transform.world_matrix)
     }
 }
 
@@ -964,6 +989,7 @@ impl<'a> NodeBuilder<'a> {
         }
     }
 
+    #[must_use]
     pub fn with_position(self, x: f32, y: f32, z: f32) -> Self {
         if let Some(node) = self.scene.nodes.get_mut(self.handle) {
             node.transform.position = glam::Vec3::new(x, y, z);
@@ -971,6 +997,7 @@ impl<'a> NodeBuilder<'a> {
         self
     }
 
+    #[must_use]
     pub fn with_scale(self, s: f32) -> Self {
         if let Some(node) = self.scene.nodes.get_mut(self.handle) {
             node.transform.scale = glam::Vec3::splat(s);
@@ -978,11 +1005,13 @@ impl<'a> NodeBuilder<'a> {
         self
     }
 
+    #[must_use]
     pub fn with_parent(mut self, parent: NodeHandle) -> Self {
         self.parent = Some(parent);
         self
     }
 
+    #[must_use]
     pub fn with_mesh(mut self, mesh: Mesh) -> Self {
         self.mesh = Some(mesh);
         self

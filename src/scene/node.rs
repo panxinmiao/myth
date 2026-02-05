@@ -1,6 +1,6 @@
-use glam::Affine3A;
 use crate::scene::NodeHandle;
 use crate::scene::transform::Transform;
+use glam::Affine3A;
 
 /// A minimal scene node containing only essential hot data.
 ///
@@ -41,6 +41,7 @@ pub struct Node {
 
 impl Node {
     /// Creates a new node with default transform and visibility.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             parent: None,
@@ -55,6 +56,7 @@ impl Node {
     /// This matrix transforms local coordinates to world coordinates.
     /// It is automatically updated by the transform system each frame.
     #[inline]
+    #[must_use]
     pub fn world_matrix(&self) -> &Affine3A {
         &self.transform.world_matrix
     }

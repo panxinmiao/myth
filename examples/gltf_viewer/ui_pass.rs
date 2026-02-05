@@ -13,16 +13,19 @@
 use std::cell::RefCell;
 
 use rustc_hash::FxHashMap;
-use winit::window::Window;
-use winit::event::WindowEvent;
 use wgpu::{Device, TextureFormat};
+use winit::event::WindowEvent;
+use winit::window::Window;
 
-use myth_engine::{assets::TextureHandle, renderer::graph::{RenderContext, RenderNode}};
+use myth_engine::{
+    assets::TextureHandle,
+    renderer::graph::{RenderContext, RenderNode},
+};
 
 /// UI 渲染 Pass
-/// 
+///
 /// 封装 egui 的完整生命周期，作为 RenderNode 注入到引擎中。
-/// 
+///
 /// # 使用流程
 /// 1. 创建: `UiPass::new(device, format, window)`
 /// 2. 每帧循环:
@@ -38,14 +41,13 @@ pub struct UiPass {
     state: RefCell<egui_winit::State>,
     /// wgpu 渲染器
     renderer: RefCell<egui_wgpu::Renderer>,
-    
+
     /// 每帧的绘制数据
     clipped_primitives: RefCell<Vec<egui::ClippedPrimitive>>,
     /// 纹理变化
     textures_delta: RefCell<egui::TexturesDelta>,
     /// 屏幕描述符
     screen_descriptor: RefCell<egui_wgpu::ScreenDescriptor>,
-
 
     // === 延迟注册系统， 提供给外部App访问内部纹理的方法 ===
     /// 待处理的纹理请求队列
@@ -54,40 +56,27 @@ pub struct UiPass {
     texture_map: RefCell<FxHashMap<TextureHandle, egui::TextureId>>,
     /// 记录 GPU 资源 ID 用于失效检测 (Handle -> GpuImageId)
     gpu_resource_ids: RefCell<FxHashMap<TextureHandle, u64>>,
-
 }
 
 impl UiPass {
     /// 创建新的 UI Pass
-    /// 
+    ///
     /// # 参数
     /// - `device`: wgpu 设备
     /// - `output_format`: 输出纹理格式
     /// - `window`: 窗口引用
-    pub fn new(
-        device: &Device,
-        output_format: TextureFormat,
-        window: &Window,
-    ) -> Self {
+    pub fn new(device: &Device, output_format: TextureFormat, window: &Window) -> Self {
         let size = window.inner_size();
         let egui_ctx = egui::Context::default();
-        
+
         // egui_winit 初始化
         let id = egui_ctx.viewport_id();
-        let state = egui_winit::State::new(
-            egui_ctx.clone(),
-            id,
-            window,
-            None,
-            None,
-            None,
-        );
+        let state = egui_winit::State::new(egui_ctx.clone(), id, window, None, None, None);
 
         // 类型转换 (wgpu 版本兼容)
-        let output_format_egui: egui_wgpu::wgpu::TextureFormat = unsafe {
-            std::mem::transmute(output_format)
-        };
-        
+        let output_format_egui: egui_wgpu::wgpu::TextureFormat =
+            unsafe { std::mem::transmute(output_format) };
+
         let renderer = egui_wgpu::Renderer::new(
             unsafe { std::mem::transmute::<&Device, &egui_wgpu::wgpu::Device>(device) },
             output_format_egui,
@@ -115,7 +104,7 @@ impl UiPass {
     // === CPU 侧公开 API ===
 
     /// 处理输入事件
-    /// 
+    ///
     /// 返回 `true` 表示事件被 UI 消耗，应用不应再处理
     pub fn handle_input(&self, window: &Window, event: &WindowEvent) -> bool {
         // Use try_borrow_mut to avoid panic on WASM when events re-enter
@@ -124,7 +113,11 @@ impl UiPass {
             Err(_) => return false, // RefCell already borrowed, skip this event
         };
 
-        if let WindowEvent::MouseInput { state: winit::event::ElementState::Released, .. } = event {
+        if let WindowEvent::MouseInput {
+            state: winit::event::ElementState::Released,
+            ..
+        } = event
+        {
             return false;
         }
 
@@ -155,24 +148,19 @@ impl UiPass {
         }
     }
 
-
     pub fn register_native_texture(
-        &self, 
-        device: &wgpu::Device, 
-        view: &wgpu::TextureView, 
-        filter: wgpu::FilterMode
+        &self,
+        device: &wgpu::Device,
+        view: &wgpu::TextureView,
+        filter: wgpu::FilterMode,
     ) -> egui::TextureId {
-
         let device_egui: &egui_wgpu::wgpu::Device = unsafe { std::mem::transmute(device) };
         let view_egui: &egui_wgpu::wgpu::TextureView = unsafe { std::mem::transmute(view) };
 
-        self.renderer.borrow_mut().register_native_texture(
-            device_egui,
-            view_egui,
-            filter
-        )
+        self.renderer
+            .borrow_mut()
+            .register_native_texture(device_egui, view_egui, filter)
     }
-
 
     /// 每帧开始时调用
     pub fn begin_frame(&self, window: &Window) {
@@ -184,7 +172,7 @@ impl UiPass {
     }
 
     /// 用户 UI 构建完成后调用
-    /// 
+    ///
     /// 会生成绘制数据供 GPU 阶段使用
     pub fn end_frame(&self, window: &Window) {
         let egui::FullOutput {
@@ -204,15 +192,14 @@ impl UiPass {
             *delta = textures_delta;
         }
         if let Ok(mut primitives) = self.clipped_primitives.try_borrow_mut() {
-            *primitives = self.egui_ctx.tessellate(
-                shapes, 
-                self.egui_ctx.pixels_per_point()
-            );
+            *primitives = self
+                .egui_ctx
+                .tessellate(shapes, self.egui_ctx.pixels_per_point());
         }
     }
 
     /// 获取 egui 上下文
-    /// 
+    ///
     /// 用于构建 UI
     pub fn context(&self) -> &egui::Context {
         &self.egui_ctx
@@ -240,7 +227,7 @@ impl UiPass {
 }
 
 /// 实现 RenderNode trait
-/// 
+///
 /// 这使得 UiPass 可以被注入到 RenderGraph 中，由引擎统一调度
 impl RenderNode for UiPass {
     fn name(&self) -> &str {
@@ -248,7 +235,6 @@ impl RenderNode for UiPass {
     }
 
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-
         // === 1. 处理延迟纹理注册 (使用 Swap & Drain 模式避免死锁) ===
         // 将请求队列移出 RefCell，避免持有锁时调用外部系统
         let pending_requests: Vec<TextureHandle> = {
@@ -262,20 +248,20 @@ impl RenderNode for UiPass {
 
         if !pending_requests.is_empty() {
             let resources = &ctx.resource_manager;
-            
+
             for handle in pending_requests {
                 let mut registered = false;
-                
+
                 // 尝试获取资源 (不持有 texture_requests 锁)
                 if let Some(binding) = resources.get_texture_binding(handle) {
                     let image_id = binding.cpu_image_id;
-                    
+
                     if let Some(gpu_image) = resources.get_image(image_id) {
                         // 注册纹理 (短暂持有 renderer 锁)
                         let id = self.register_native_texture(
-                            &ctx.wgpu_ctx.device, 
-                            &gpu_image.default_view, 
-                            wgpu::FilterMode::Linear
+                            &ctx.wgpu_ctx.device,
+                            &gpu_image.default_view,
+                            wgpu::FilterMode::Linear,
                         );
 
                         // 更新映射表 (短暂持有各自的锁)
@@ -285,11 +271,11 @@ impl RenderNode for UiPass {
                         if let Ok(mut gpu_ids) = self.gpu_resource_ids.try_borrow_mut() {
                             gpu_ids.insert(handle, gpu_image.id);
                         }
-                        
+
                         registered = true;
                     }
                 }
-                
+
                 if !registered {
                     remaining_requests.push(handle);
                 }
@@ -303,7 +289,6 @@ impl RenderNode for UiPass {
             }
         }
 
-
         let device = &ctx.wgpu_ctx.device;
         let queue = &ctx.wgpu_ctx.queue;
         let view = ctx.surface_view;
@@ -311,7 +296,8 @@ impl RenderNode for UiPass {
         // 转换为 egui_wgpu 版本的类型
         let device_egui: &egui_wgpu::wgpu::Device = unsafe { std::mem::transmute(device) };
         let queue_egui: &egui_wgpu::wgpu::Queue = unsafe { std::mem::transmute(queue) };
-        let encoder_egui: &mut egui_wgpu::wgpu::CommandEncoder = unsafe { std::mem::transmute(encoder) };
+        let encoder_egui: &mut egui_wgpu::wgpu::CommandEncoder =
+            unsafe { std::mem::transmute(encoder) };
         let view_egui: &egui_wgpu::wgpu::TextureView = unsafe { std::mem::transmute(view) };
 
         // 尝试获取渲染器锁，添加防重入保护
@@ -322,7 +308,7 @@ impl RenderNode for UiPass {
                 return;
             }
         };
-        
+
         let paint_jobs = match self.clipped_primitives.try_borrow() {
             Ok(jobs) => jobs,
             Err(_) => return,
@@ -343,31 +329,32 @@ impl RenderNode for UiPass {
 
         // 2. 更新几何缓冲
         renderer.update_buffers(
-            device_egui, 
-            queue_egui, 
-            encoder_egui, 
-            &paint_jobs, 
-            &screen_desc
+            device_egui,
+            queue_egui,
+            encoder_egui,
+            &paint_jobs,
+            &screen_desc,
         );
 
         // 3. 录制绘制命令
         {
-            let mut rpass = encoder_egui.begin_render_pass(&egui_wgpu::wgpu::RenderPassDescriptor {
-                label: Some("egui Pass"),
-                color_attachments: &[Some(egui_wgpu::wgpu::RenderPassColorAttachment {
-                    view: view_egui,
-                    resolve_target: None,
-                    ops: egui_wgpu::wgpu::Operations {
-                        load: egui_wgpu::wgpu::LoadOp::Load, // 覆盖在原画面上
-                        store: egui_wgpu::wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
+            let mut rpass =
+                encoder_egui.begin_render_pass(&egui_wgpu::wgpu::RenderPassDescriptor {
+                    label: Some("egui Pass"),
+                    color_attachments: &[Some(egui_wgpu::wgpu::RenderPassColorAttachment {
+                        view: view_egui,
+                        resolve_target: None,
+                        ops: egui_wgpu::wgpu::Operations {
+                            load: egui_wgpu::wgpu::LoadOp::Load, // 覆盖在原画面上
+                            store: egui_wgpu::wgpu::StoreOp::Store,
+                        },
+                        depth_slice: None,
+                    })],
+                    depth_stencil_attachment: None,
+                    timestamp_writes: None,
+                    occlusion_query_set: None,
+                    multiview_mask: None,
+                });
 
             renderer.render(&mut rpass, &paint_jobs, &screen_desc);
         }
@@ -376,7 +363,7 @@ impl RenderNode for UiPass {
         for id in &textures_delta.free {
             renderer.free_texture(id);
         }
-        
+
         // 清空 delta 防止重复处理
         textures_delta.set.clear();
         textures_delta.free.clear();

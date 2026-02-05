@@ -19,29 +19,30 @@ impl AppHandler for MorphTargetDemo {
         scene.add_light(light);
         scene.environment.set_ambient_color(Vec3::splat(0.3));
         // 加载环境贴图
-        let env_texture_handle = engine.assets.load_cube_texture(
-            [
-                "examples/assets/Park2/posx.jpg",
-                "examples/assets/Park2/negx.jpg",
-                "examples/assets/Park2/posy.jpg",
-                "examples/assets/Park2/negy.jpg",
-                "examples/assets/Park2/posz.jpg",
-                "examples/assets/Park2/negz.jpg",
-            ],
-            ColorSpace::Srgb,
-            true
-        ).expect("Failed to load environment map");
+        let env_texture_handle = engine
+            .assets
+            .load_cube_texture(
+                [
+                    "examples/assets/Park2/posx.jpg",
+                    "examples/assets/Park2/negx.jpg",
+                    "examples/assets/Park2/posy.jpg",
+                    "examples/assets/Park2/negy.jpg",
+                    "examples/assets/Park2/posz.jpg",
+                    "examples/assets/Park2/negz.jpg",
+                ],
+                ColorSpace::Srgb,
+                true,
+            )
+            .expect("Failed to load environment map");
 
         scene.environment.set_env_map(Some(env_texture_handle));
 
         // 2. 加载 glTF 模型 (带 Morph Target)
         let gltf_path = std::path::Path::new("examples/assets/facecap.glb");
         println!("Loading glTF model from: {}", gltf_path.display());
-        
-        let prefab = GltfLoader::load(
-            gltf_path,
-            engine.assets.clone()
-        ).expect("Failed to load glTF model");
+
+        let prefab =
+            GltfLoader::load(gltf_path, engine.assets.clone()).expect("Failed to load glTF model");
         let gltf_node = scene.instantiate(&prefab);
 
         println!("Successfully loaded root node: {:?}", gltf_node);
@@ -56,18 +57,15 @@ impl AppHandler for MorphTargetDemo {
                 println!(" - {}", anim_name);
             }
             mixer.play("Key|Take 001|BaseLayer");
-
         }
-
 
         // 输出 Mesh Morph Target 信息
         for (node_handle, mesh) in scene.meshes.iter() {
             if let Some(geometry) = engine.assets.geometries.get(mesh.geometry) {
                 if geometry.has_morph_targets() {
-                    println!("Node {:?} has mesh with {} morph targets, {} vertices per target",
-                        node_handle,
-                        geometry.morph_target_count,
-                        geometry.morph_vertex_count
+                    println!(
+                        "Node {:?} has mesh with {} morph targets, {} vertices per target",
+                        node_handle, geometry.morph_target_count, geometry.morph_vertex_count
                     );
                 }
             }
@@ -90,12 +88,13 @@ impl AppHandler for MorphTargetDemo {
     }
 
     fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
-        let Some(scene) = engine.scene_manager.active_scene_mut() else{
+        let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
 
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
-            self.controls.update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
+            self.controls
+                .update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
         }
 
         if let Some(fps) = self.fps_counter.update() {
@@ -107,6 +106,10 @@ impl AppHandler for MorphTargetDemo {
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     App::new()
-        .with_settings(RenderSettings { vsync: false, enable_hdr: false, ..Default::default() })
+        .with_settings(RenderSettings {
+            vsync: false,
+            enable_hdr: false,
+            ..Default::default()
+        })
         .run::<MorphTargetDemo>()
 }

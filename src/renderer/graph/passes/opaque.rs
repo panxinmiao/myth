@@ -7,9 +7,9 @@
 //! RenderLists.opaque → OpaquePass → HDR Scene Color
 //! ```
 //!
-//! # RenderPass 配置
-//! - LoadOp: Clear (清空颜色和深度)
-//! - StoreOp: Store (保留结果供后续 Pass 使用)
+//! # `RenderPass` 配置
+//! - `LoadOp`: Clear (清空颜色和深度)
+//! - `StoreOp`: Store (保留结果供后续 Pass 使用)
 
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::{RenderContext, RenderNode, TrackedRenderPass};
@@ -28,6 +28,7 @@ pub struct OpaquePass {
 }
 
 impl OpaquePass {
+    #[must_use]
     pub fn new(clear_color: wgpu::Color) -> Self {
         Self { clear_color }
     }
@@ -109,7 +110,7 @@ impl Default for OpaquePass {
 }
 
 impl RenderNode for OpaquePass {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Opaque Pass"
     }
 

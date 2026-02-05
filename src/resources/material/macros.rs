@@ -7,7 +7,7 @@
 #[macro_export]
 macro_rules! impl_material_api {
     (
-        $struct_name:ident, 
+        $struct_name:ident,
         $uniform_struct:ty,
         // Uniforms: (field_name, type, doc)
         uniforms: [ $(($u_field:ident, $u_type:ty, $u_doc:expr)),* $(,)? ],
@@ -23,8 +23,8 @@ macro_rules! impl_material_api {
 
             pub fn settings_mut(&self) -> $crate::resources::material::SettingsGuard<'_> {
                 $crate::resources::material::SettingsGuard::new(
-                    self.settings.write(), 
-                    &self.version 
+                    self.settings.write(),
+                    &self.version
                 )
             }
 
@@ -140,12 +140,12 @@ macro_rules! impl_material_api {
                     }
 
                     // e.g., modify texture, channel, transform simultaneously
-                    pub fn [<configure_ $t_field>]<F>(&self, f: F) 
-                    where F: FnOnce(&mut $crate::resources::material::TextureSlot) 
+                    pub fn [<configure_ $t_field>]<F>(&self, f: F)
+                    where F: FnOnce(&mut $crate::resources::material::TextureSlot)
                     {
                         let mut tex_data = self.textures.write();
                         let slot = &mut tex_data.$t_field;
-                        
+
                         // Record pre-modification state (key fields) to determine if version bump is needed
                         // Assuming TextureSlot implements PartialEq, or we only care about texture and channel
                         let old_texture = slot.texture.clone();
@@ -178,7 +178,7 @@ macro_rules! impl_material_api {
                     paste::paste! {
                         // Calculate matrix
                         let new_matrix = tex_data.$t_field.compute_matrix();
-                        
+
                         // Auto-derive field name: map -> map_transform
                         if uniforms.[<$t_field _transform>] != new_matrix {
                             uniforms.[<$t_field _transform>] = new_matrix;
@@ -241,10 +241,10 @@ macro_rules! impl_material_api {
         }
     };
 
-    // 
+    //
     // Overload without manual_clone_fields
     (
-        $struct_name:ident, 
+        $struct_name:ident,
         $uniform_struct:ty,
         uniforms: [ $($u_args:tt)* ],
         textures: [ $($t_args:tt)* ]
@@ -254,13 +254,13 @@ macro_rules! impl_material_api {
             $uniform_struct,
             uniforms: [ $($u_args)* ],
             textures: [ $($t_args)* ],
-            manual_clone_fields: {} 
+            manual_clone_fields: {}
         );
     };
 }
 
 /// [Macro 2] Trait Implementer
-/// Automatically implements MaterialTrait and RenderableMaterialTrait.
+/// Automatically implements `MaterialTrait` and `RenderableMaterialTrait`.
 /// Handles all binding logic, shader macro generation, and other tedious work.
 #[macro_export]
 macro_rules! impl_material_trait {
@@ -286,13 +286,13 @@ macro_rules! impl_material_trait {
 
             fn with_uniform_bytes(&self, visitor: &mut dyn FnMut(&[u8])) {
                 use $crate::resources::buffer::GpuData;
-                
+
                 // 1. Acquire read lock (Guard)
                 let guard = self.uniforms.read();
-                
+
                 // 2. Pass internal data slice to callback function
                 visitor(guard.as_bytes());
-                
+
                 // 3. Closure ends, Guard destroyed, lock released
             }
 
@@ -313,7 +313,7 @@ macro_rules! impl_material_trait {
                         }
                     }
                 )*
-                
+
                 // Acquire Settings read lock
                 self.settings.read().generate_shader_defines(&mut defines);
 
@@ -341,7 +341,7 @@ macro_rules! impl_material_trait {
                 );
 
                 let tex_data = self.textures.read();
-    
+
                 // Textures
                 $(
                     if let Some(handle) = &tex_data.$field.texture {
@@ -359,9 +359,9 @@ macro_rules! impl_material_trait {
                         paste::paste! {
                             let sampler_source = tex_data.[<$field _sampler>]
                                 .or_else(|| Some($crate::resources::texture::SamplerSource::FromTexture(*handle)));
-                            
+
                             builder.add_sampler(
-                                binding_name, 
+                                binding_name,
                                 sampler_source,
                                 wgpu::SamplerBindingType::Filtering,
                                 wgpu::ShaderStages::FRAGMENT

@@ -20,12 +20,12 @@ use std::borrow::Cow;
 
 use rustc_hash::FxHashMap;
 
-use crate::resources::tone_mapping::ToneMappingMode;
 use crate::ShaderDefines;
 use crate::render::{RenderContext, RenderNode};
 use crate::renderer::core::{binding::BindGroupKey, resources::Tracked};
 use crate::renderer::pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator};
 use crate::resources::buffer::{CpuBuffer, GpuData};
+use crate::resources::tone_mapping::ToneMappingMode;
 
 /// GPU uniform data for tone mapping shader.
 #[repr(C)]
@@ -66,7 +66,7 @@ impl GpuData for ToneMapUniforms {
 ///
 /// - Pipeline caching by mode (typically 1-2 pipelines active)
 /// - Version-based dirty checking (O(1) comparison)
-/// - BindGroup caching via global cache
+/// - `BindGroup` caching via global cache
 pub struct ToneMapPass {
     // === GPU Resources ===
     /// Bind group layout for tone mapping
@@ -77,9 +77,9 @@ pub struct ToneMapPass {
     uniforms: CpuBuffer<ToneMapUniforms>,
 
     // === Cache State ===
-    /// Currently active tone mapping mode (mirrors Scene.tone_mapping.mode)
+    /// Currently active tone mapping mode (mirrors `Scene.tone_mapping.mode`)
     current_mode: ToneMappingMode,
-    /// Cached pipelines by (mode, output_format) to handle HDR toggle correctly
+    /// Cached pipelines by (mode, `output_format`) to handle HDR toggle correctly
     pipeline_cache: FxHashMap<(ToneMappingMode, wgpu::TextureFormat), wgpu::RenderPipeline>,
 
     // === Runtime State (set during prepare, used during run) ===
@@ -89,7 +89,7 @@ pub struct ToneMapPass {
     current_pipeline: Option<wgpu::RenderPipeline>,
 
     // === Version Tracking ===
-    /// Last known version from Scene.tone_mapping
+    /// Last known version from `Scene.tone_mapping`
     last_settings_version: u64,
 }
 
@@ -98,6 +98,7 @@ impl ToneMapPass {
     ///
     /// This initializes GPU resources but does not configure any settings.
     /// Settings are pulled from `Scene.tone_mapping` during each frame's prepare phase.
+    #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("ToneMap Layout"),
@@ -169,14 +170,18 @@ impl ToneMapPass {
         view_format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
         let cache_key = (self.current_mode, view_format);
-        
+
         // Check cache first
         if let Some(pipeline) = self.pipeline_cache.get(&cache_key) {
             return pipeline.clone();
         }
 
         // Cache miss - compile new pipeline
-        log::debug!("Compiling ToneMap pipeline for mode {:?}, format {:?}", self.current_mode, view_format);
+        log::debug!(
+            "Compiling ToneMap pipeline for mode {:?}, format {:?}",
+            self.current_mode,
+            view_format
+        );
 
         // 1. Prepare shader defines
         let mut defines = ShaderDefines::new();
@@ -186,9 +191,9 @@ impl ToneMapPass {
         let options = ShaderCompilationOptions { defines };
 
         let shader_code = ShaderGenerator::generate_shader(
-            "",                     // vertex snippet (use default)
-            "",                     // binding code (use default)
-            "passes/tone_mapping",  // template name
+            "",                    // vertex snippet (use default)
+            "",                    // binding code (use default)
+            "passes/tone_mapping", // template name
             &options,
         );
 
@@ -295,26 +300,30 @@ impl RenderNode for ToneMapPass {
 
             let input_view = &ctx.frame_resources.scene_color_view[current_idx];
 
-            let new_bind_group = ctx.wgpu_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("ToneMap BindGroup"),
-                layout: &self.layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(input_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: gpu_buffer.buffer.as_entire_binding(),
-                    },
-                ],
-            });
+            let new_bind_group =
+                ctx.wgpu_ctx
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("ToneMap BindGroup"),
+                        layout: &self.layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(input_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(&self.sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: gpu_buffer.buffer.as_entire_binding(),
+                            },
+                        ],
+                    });
 
-            ctx.global_bind_group_cache.insert(key, new_bind_group.clone());
+            ctx.global_bind_group_cache
+                .insert(key, new_bind_group.clone());
             new_bind_group
         };
 
@@ -358,7 +367,7 @@ impl RenderNode for ToneMapPass {
         pass.draw(0..3, 0..1);
     }
 
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Tone Mapping Pass"
     }
 }

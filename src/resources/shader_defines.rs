@@ -53,6 +53,7 @@ pub struct ShaderDefines {
 impl ShaderDefines {
     /// Create empty shader defines collection
     #[inline]
+    #[must_use]
     pub fn new() -> Self {
         Self {
             defines: Vec::new(),
@@ -61,6 +62,7 @@ impl ShaderDefines {
 
     /// Create shader defines collection with pre-allocated capacity
     #[inline]
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             defines: Vec::with_capacity(capacity),
@@ -68,7 +70,7 @@ impl ShaderDefines {
     }
 
     /// Set shader define (maintains sorted order)
-    /// 
+    ///
     /// If key exists, updates its value; otherwise inserts new entry.
     pub fn set(&mut self, key: &str, value: &str) {
         let key_sym = interner::intern(key);
@@ -110,23 +112,27 @@ impl ShaderDefines {
     }
 
     /// Check if contains a shader define
+    #[must_use]
     pub fn contains(&self, key: &str) -> bool {
-        interner::get(key).map_or(false, |key_sym| self.contains_symbol(key_sym))
+        interner::get(key).is_some_and(|key_sym| self.contains_symbol(key_sym))
     }
 
     /// Check if contains a shader define using Symbol
     #[inline]
+    #[must_use]
     pub fn contains_symbol(&self, key: Symbol) -> bool {
         self.defines.binary_search_by_key(&key, |&(k, _)| k).is_ok()
     }
 
     /// Get shader define value
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<String> {
         interner::get(key).and_then(|key_sym| self.get_symbol(key_sym).map(|s| s.to_string()))
     }
 
     /// Get shader define value using Symbol
     #[inline]
+    #[must_use]
     pub fn get_symbol(&self, key: Symbol) -> Option<std::borrow::Cow<'static, str>> {
         self.defines
             .binary_search_by_key(&key, |&(k, _)| k)
@@ -142,12 +148,14 @@ impl ShaderDefines {
 
     /// Get shader defines count
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.defines.len()
     }
 
     /// Check if empty
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.defines.is_empty()
     }
@@ -161,19 +169,30 @@ impl ShaderDefines {
     /// Iterate all shader defines (as strings)
     #[inline]
     pub fn iter_strings(&self) -> impl Iterator<Item = (String, String)> + '_ {
-        self.defines.iter().map(|&(k, v)| (interner::resolve(k).to_string(), interner::resolve(v).to_string()))
+        self.defines.iter().map(|&(k, v)| {
+            (
+                interner::resolve(k).to_string(),
+                interner::resolve(v).to_string(),
+            )
+        })
     }
 
-    /// Convert to BTreeMap (for template rendering)
+    /// Convert to `BTreeMap` (for template rendering)
+    #[must_use]
     pub fn to_map(&self) -> BTreeMap<String, String> {
         self.defines
             .iter()
-            .map(|&(k, v)| (interner::resolve(k).to_string(), interner::resolve(v).to_string()))
+            .map(|&(k, v)| {
+                (
+                    interner::resolve(k).to_string(),
+                    interner::resolve(v).to_string(),
+                )
+            })
             .collect()
     }
 
-    /// Merge shader defines from another ShaderDefines
-    /// 
+    /// Merge shader defines from another `ShaderDefines`
+    ///
     /// If there are conflicts, values from other will override values in self.
     pub fn merge(&mut self, other: &ShaderDefines) {
         for &(key, value) in &other.defines {
@@ -181,7 +200,8 @@ impl ShaderDefines {
         }
     }
 
-    /// Create a new merged ShaderDefines
+    /// Create a new merged `ShaderDefines`
+    #[must_use]
     pub fn merged_with(&self, other: &ShaderDefines) -> ShaderDefines {
         let mut result = self.clone();
         result.merge(other);
@@ -189,15 +209,16 @@ impl ShaderDefines {
     }
 
     /// Compute content hash (for caching)
+    #[must_use]
     pub fn compute_hash(&self) -> u64 {
         use std::hash::BuildHasher;
-        let mut hasher = rustc_hash::FxBuildHasher.build_hasher();
-        self.hash(&mut hasher);
-        hasher.finish()
+
+        rustc_hash::FxBuildHasher.hash_one(self)
     }
 
     /// Get internal defines reference (for direct access)
     #[inline]
+    #[must_use]
     pub fn as_slice(&self) -> &[(Symbol, Symbol)] {
         &self.defines
     }
@@ -217,7 +238,7 @@ impl PartialEq for ShaderDefines {
 
 impl Eq for ShaderDefines {}
 
-/// Create ShaderDefines from list of macro definitions
+/// Create `ShaderDefines` from list of macro definitions
 impl From<&[(&str, &str)]> for ShaderDefines {
     fn from(defines: &[(&str, &str)]) -> Self {
         let mut result = Self::with_capacity(defines.len());
@@ -237,11 +258,11 @@ mod tests {
         let mut defines = ShaderDefines::new();
         defines.set("USE_MAP", "1");
         defines.set("USE_NORMAL_MAP", "1");
-        
+
         assert!(defines.contains("USE_MAP"));
         assert!(defines.contains("USE_NORMAL_MAP"));
         assert!(!defines.contains("USE_AO_MAP"));
-        
+
         assert_eq!(defines.get("USE_MAP"), Some("1".to_string()));
     }
 
@@ -251,12 +272,15 @@ mod tests {
         defines.set("B", "1");
         defines.set("A", "1");
         defines.set("C", "1");
-        
+
         // Verify internal sorting by Symbol (integer ID), ensuring hash consistency
         // Note: Symbol order depends on intern order, not string lexicographic order
         let symbols: Vec<_> = defines.iter().map(|(k, _)| k).collect();
-        assert!(symbols.windows(2).all(|w| w[0] < w[1]), "Symbols should be sorted by numeric value");
-        
+        assert!(
+            symbols.windows(2).all(|w| w[0] < w[1]),
+            "Symbols should be sorted by numeric value"
+        );
+
         // Verify all keys exist
         assert!(defines.contains("A"));
         assert!(defines.contains("B"));
@@ -268,13 +292,13 @@ mod tests {
         let mut d1 = ShaderDefines::new();
         d1.set("A", "1");
         d1.set("B", "2");
-        
+
         let mut d2 = ShaderDefines::new();
         d2.set("B", "3");
         d2.set("C", "4");
-        
+
         d1.merge(&d2);
-        
+
         assert_eq!(d1.get("A"), Some("1".to_string()));
         assert_eq!(d1.get("B"), Some("3".to_string())); // Overwritten
         assert_eq!(d1.get("C"), Some("4".to_string()));
@@ -285,11 +309,11 @@ mod tests {
         let mut d1 = ShaderDefines::new();
         d1.set("A", "1");
         d1.set("B", "2");
-        
+
         let mut d2 = ShaderDefines::new();
         d2.set("B", "2");
         d2.set("A", "1");
-        
+
         assert_eq!(d1.compute_hash(), d2.compute_hash());
     }
 }

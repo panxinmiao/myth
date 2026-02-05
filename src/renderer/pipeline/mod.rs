@@ -31,9 +31,9 @@
 //! are passed to the shader compiler.
 
 pub mod cache;
-pub mod vertex;
-pub mod shader_manager;
 pub mod shader_gen;
+pub mod shader_manager;
+pub mod vertex;
 
-pub use cache::{PipelineCache, PipelineKey, FastPipelineKey};
+pub use cache::{FastPipelineKey, PipelineCache, PipelineKey};
 pub use shader_gen::ShaderCompilationOptions;

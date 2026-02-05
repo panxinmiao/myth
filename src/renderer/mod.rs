@@ -2,8 +2,8 @@
 //!
 //! This module handles all GPU rendering operations using a layered architecture:
 //!
-//! - **[`core`]**: wgpu context wrapper (Device, Queue, Surface, ResourceManager)
-//! - **[`graph`]**: Render frame organization (RenderFrame, RenderNode, FrameBuilder)
+//! - **[`core`]**: wgpu context wrapper (Device, Queue, Surface, `ResourceManager`)
+//! - **[`graph`]**: Render frame organization (`RenderFrame`, `RenderNode`, `FrameBuilder`)
 //! - **[`pipeline`]**: Shader compilation and pipeline caching (L1/L2 cache strategy)
 //!
 //! # Architecture Overview
@@ -51,19 +51,19 @@ pub mod settings;
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
-use crate::renderer::core::binding::GlobalBindGroupCache;
-use crate::renderer::graph::composer::ComposerContext;
-use crate::renderer::graph::frame::RenderLists;
-use crate::renderer::graph::passes::{
-    BRDFLutComputePass, IBLComputePass, ToneMapPass, SceneCullPass,
-    SimpleForwardPass, OpaquePass, TransparentPass, TransmissionCopyPass,
-};
-use crate::{FrameBuilder, RenderStage};
 use crate::assets::AssetServer;
 use crate::errors::Result;
+use crate::renderer::core::binding::GlobalBindGroupCache;
+use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::context::FrameResources;
+use crate::renderer::graph::frame::RenderLists;
+use crate::renderer::graph::passes::{
+    BRDFLutComputePass, IBLComputePass, OpaquePass, SceneCullPass, SimpleForwardPass, ToneMapPass,
+    TransmissionCopyPass, TransparentPass,
+};
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
+use crate::{FrameBuilder, RenderStage};
 
 use self::core::{ResourceManager, WgpuContext};
 use self::graph::{FrameComposer, RenderFrame};
@@ -71,7 +71,7 @@ use self::pipeline::PipelineCache;
 use self::settings::RenderSettings;
 
 /// HDR 纹理格式
-/// 
+///
 /// 用于高动态范围渲染目标, 中间缓冲区的格式
 pub const HDR_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
@@ -102,32 +102,31 @@ struct RendererState {
     pipeline_cache: PipelineCache,
 
     render_frame: RenderFrame,
-    /// 渲染列表（与 render_frame 分离以避免借用冲突）
+    /// 渲染列表（与 `render_frame` 分离以避免借用冲突）
     render_lists: RenderLists,
 
     frame_resources: FrameResources,
     global_bind_group_cache: GlobalBindGroupCache,
 
     // ===== Built-in passes =====
-    
+
     // Data Preparation
     pub(crate) cull_pass: SceneCullPass,
-    
+
     // Simple Path (LDR)
     pub(crate) simple_forward_pass: SimpleForwardPass,
-    
+
     // PBR Path (HDR)
     pub(crate) opaque_pass: OpaquePass,
     pub(crate) transparent_pass: TransparentPass,
     pub(crate) transmission_copy_pass: TransmissionCopyPass,
-    
+
     // Compute Passes
     pub(crate) brdf_pass: BRDFLutComputePass,
     pub(crate) ibl_pass: IBLComputePass,
-    
+
     // Post Processing
     pub(crate) tone_mapping_pass: ToneMapPass,
-    
 }
 
 impl Renderer {
@@ -135,6 +134,7 @@ impl Renderer {
     ///
     /// This only stores the render settings. GPU resources are
     /// allocated when [`init`](Self::init) is called.
+    #[must_use]
     pub fn new(settings: RenderSettings) -> Self {
         Self {
             settings,
@@ -174,7 +174,6 @@ impl Renderer {
         let frame_resources = FrameResources::new(
             &wgpu_ctx,
             // &self.settings,
-
             (width, height),
         );
 
@@ -184,19 +183,19 @@ impl Renderer {
         // Build passes
         // Data Preparation
         let cull_pass = SceneCullPass::new();
-        
+
         // Simple Path (LDR)
         let simple_forward_pass = SimpleForwardPass::new(self.settings.clear_color);
-        
+
         // PBR Path (HDR)
         let opaque_pass = OpaquePass::new(self.settings.clear_color);
         let transparent_pass = TransparentPass::new();
         let transmission_copy_pass = TransmissionCopyPass::new();
-        
+
         // Compute Passes
         let brdf_pass = BRDFLutComputePass::new(&wgpu_ctx.device);
         let ibl_pass = IBLComputePass::new(&wgpu_ctx.device);
-        
+
         // Post Processing
         let tone_mapping_pass = ToneMapPass::new(&wgpu_ctx.device);
 
@@ -220,7 +219,6 @@ impl Renderer {
             brdf_pass,
             ibl_pass,
             tone_mapping_pass,
-
         });
 
         log::info!("Renderer Initialized");
@@ -231,7 +229,9 @@ impl Renderer {
         self.size = (width, height);
         if let Some(state) = &mut self.context {
             state.wgpu_ctx.resize(width, height);
-            state.frame_resources.resize(&state.wgpu_ctx,(width, height));
+            state
+                .frame_resources
+                .resize(&state.wgpu_ctx, (width, height));
         }
     }
 
@@ -296,29 +296,29 @@ impl Renderer {
         // ========================================
         // 2. 路径选择：HDR (PBR Path) vs LDR (Simple Path)
         // ========================================
-        // 
+        //
         // PBR Path: OpaquePass → [TransmissionCopyPass] → TransparentPass → ToneMapPass
         // Simple Path: SimpleForwardPass (直接输出到 Surface)
         //
         let use_hdr_path = self.settings.enable_hdr;
 
         if use_hdr_path {
-            
-            state.frame_resources
+            state
+                .frame_resources
                 .ensure_transmission_resource(&state.wgpu_ctx.device);
             // === PBR Path (HDR) ===
-            
+
             // Opaque rendering
             frame_builder.add_node(RenderStage::Opaque, &mut state.opaque_pass);
-            
+
             // Transmission copy (conditional)
             // 注意：TransmissionCopyPass 内部会检查 use_transmission 标志
             // 如果场景中没有使用 Transmission 的材质，此 Pass 会提前返回
             frame_builder.add_node(RenderStage::Opaque, &mut state.transmission_copy_pass);
-            
+
             // Transparent rendering
             frame_builder.add_node(RenderStage::Transparent, &mut state.transparent_pass);
-            
+
             // Tone mapping (HDR → LDR)
             frame_builder.add_node(RenderStage::PostProcess, &mut state.tone_mapping_pass);
         } else {
@@ -349,12 +349,9 @@ impl Renderer {
         };
 
         // Return FrameComposer, defer Surface acquisition to render() call
-        Some(FrameComposer::new(
-            frame_builder,
-            ctx,
-        ))
+        Some(FrameComposer::new(frame_builder, ctx))
     }
-    
+
     /// Performs periodic resource cleanup.
     ///
     /// Should be called after each frame to release unused GPU resources.
@@ -468,7 +465,7 @@ impl Renderer {
         self.context.as_ref().map(|s| s.wgpu_ctx.config.format)
     }
 
-    /// Returns a reference to the WgpuContext.
+    /// Returns a reference to the `WgpuContext`.
     ///
     /// For external plugins that need access to low-level GPU resources.
     /// Only available after renderer initialization.

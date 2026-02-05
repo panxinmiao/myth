@@ -1,15 +1,19 @@
-use crate::scene::{Scene, NodeHandle};
-use crate::animation::clip::AnimationClip;
 use crate::animation::binding::PropertyBinding;
+use crate::animation::clip::AnimationClip;
+use crate::scene::{NodeHandle, Scene};
 
 pub struct Binder;
 
 impl Binder {
-    /// 解析动画片段，将轨道绑定到场景中的实际 NodeHandle
+    /// 解析动画片段，将轨道绑定到场景中的实际 `NodeHandle`
     /// 搜索整个场景中的节点
-    pub fn bind(scene: &Scene, _root_node: NodeHandle, clip: &AnimationClip) -> Vec<PropertyBinding> {
+    pub fn bind(
+        scene: &Scene,
+        _root_node: NodeHandle,
+        clip: &AnimationClip,
+    ) -> Vec<PropertyBinding> {
         let mut bindings = Vec::with_capacity(clip.tracks.len());
-        
+
         for (track_idx, track) in clip.tracks.iter().enumerate() {
             let node_name = &track.meta.node_name;
             let target = track.meta.target;

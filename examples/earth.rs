@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use myth_engine::utils::fps_counter::FpsCounter;
 use myth_engine::prelude::*;
+use myth_engine::utils::fps_counter::FpsCounter;
 use winit::window::Window;
 
 /// 地球渲染示例
@@ -15,44 +15,70 @@ struct Earth {
 impl AppHandler for Earth {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 准备资源
-        let geometry = myth_engine::create_sphere(myth_engine::resources::primitives::SphereOptions {
-            radius: 63.71,
-            width_segments: 100,
-            height_segments: 50,
-            ..Default::default()
-        });
+        let geometry =
+            myth_engine::create_sphere(myth_engine::resources::primitives::SphereOptions {
+                radius: 63.71,
+                width_segments: 100,
+                height_segments: 50,
+                ..Default::default()
+            });
 
         let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         // 加载纹理
-        let earth_tex_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_atmos_4096.jpg", ColorSpace::Srgb, true
-        ).expect("Failed to load earth texture");
-        let specular_tex_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_specular_2048.jpg", ColorSpace::Srgb, true
-        ).expect("Failed to load specular texture");
-        let emssive_tex_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_lights_2048.png", ColorSpace::Srgb, true
-        ).expect("Failed to load emissive texture");
-        let normal_map_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_normal_2048.jpg", ColorSpace::Linear, true
-        ).expect("Failed to load normal map");
-        let clouds_tex_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_clouds_1024.png", ColorSpace::Srgb, true
-        ).expect("Failed to load clouds texture");
+        let earth_tex_handle = engine
+            .assets
+            .load_texture(
+                "examples/assets/planets/earth_atmos_4096.jpg",
+                ColorSpace::Srgb,
+                true,
+            )
+            .expect("Failed to load earth texture");
+        let specular_tex_handle = engine
+            .assets
+            .load_texture(
+                "examples/assets/planets/earth_specular_2048.jpg",
+                ColorSpace::Srgb,
+                true,
+            )
+            .expect("Failed to load specular texture");
+        let emssive_tex_handle = engine
+            .assets
+            .load_texture(
+                "examples/assets/planets/earth_lights_2048.png",
+                ColorSpace::Srgb,
+                true,
+            )
+            .expect("Failed to load emissive texture");
+        let normal_map_handle = engine
+            .assets
+            .load_texture(
+                "examples/assets/planets/earth_normal_2048.jpg",
+                ColorSpace::Linear,
+                true,
+            )
+            .expect("Failed to load normal map");
+        let clouds_tex_handle = engine
+            .assets
+            .load_texture(
+                "examples/assets/planets/earth_clouds_1024.png",
+                ColorSpace::Srgb,
+                true,
+            )
+            .expect("Failed to load clouds texture");
 
         if let Some(phong) = mat.as_phong_mut() {
             phong.set_map(Some(earth_tex_handle));
             phong.set_specular_map(Some(specular_tex_handle));
             phong.set_emissive_map(Some(emssive_tex_handle));
             phong.set_normal_map(Some(normal_map_handle));
-            
+
             phong.set_normal_scale(Vec2::new(0.85, -0.85));
             phong.set_shininess(10.0);
             phong.set_emissive(Vec3::new(0.0962, 0.0962, 0.0512));
             phong.set_emissive_intensity(3.0);
         }
-            
+
         let geo_handle = engine.assets.geometries.add(geometry);
         let mat_handle = engine.assets.materials.add(mat);
 
@@ -88,7 +114,9 @@ impl AppHandler for Earth {
         // 3. 添加灯光
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
         let light_handle = scene.add_light(light);
-        scene.environment.set_ambient_color(Vec3::new(0.0001, 0.0001, 0.0001));
+        scene
+            .environment
+            .set_ambient_color(Vec3::new(0.0001, 0.0001, 0.0001));
 
         if let Some(light_node) = scene.get_node_mut(light_handle) {
             light_node.transform.position = Vec3::new(3.0, 0.0, 1.0);
@@ -98,12 +126,12 @@ impl AppHandler for Earth {
         // 4. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
-        
+
         if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 0.0, 250.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
-        
+
         scene.active_camera = Some(cam_node_id);
 
         Self {
@@ -115,11 +143,10 @@ impl AppHandler for Earth {
     }
 
     fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
-
-        let Some(scene) = engine.scene_manager.active_scene_mut() else{
+        let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
-        
+
         let rot = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.001 * 60.0 * frame.dt, 0.0);
         let rot_clouds = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.00125 * 60.0 * frame.dt, 0.0);
 
@@ -127,7 +154,7 @@ impl AppHandler for Earth {
         if let Some(node) = scene.get_node_mut(self.earth_node_id) {
             node.transform.rotation = rot * node.transform.rotation;
         }
-        
+
         // 云层自转
         if let Some(clouds) = scene.get_node_mut(self.cloud_node_id) {
             clouds.transform.rotation = rot_clouds * clouds.transform.rotation;
@@ -135,7 +162,8 @@ impl AppHandler for Earth {
 
         // 轨道控制器
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, &engine.input, camera.fov, frame.dt);
+            self.controls
+                .update(transform, &engine.input, camera.fov, frame.dt);
         }
 
         // FPS 显示
@@ -143,13 +171,15 @@ impl AppHandler for Earth {
             window.set_title(&format!("Earth | FPS: {:.2}", fps));
         }
     }
-    
 }
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     App::new()
-    .with_title("Earth")
-    .with_settings(RenderSettings { vsync: false, ..Default::default() })
-    .run::<Earth>()
+        .with_title("Earth")
+        .with_settings(RenderSettings {
+            vsync: false,
+            ..Default::default()
+        })
+        .run::<Earth>()
 }

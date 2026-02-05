@@ -3,21 +3,21 @@
 //! `RenderContext` 在渲染图的各个 Pass 之间传递共享数据，
 //! 避免参数列表过长，统一数据访问方式。
 
-use crate::renderer::core::binding::GlobalBindGroupCache;
-use crate::scene::camera::RenderCamera;
-use crate::scene::{Scene};
-use crate::renderer::core::{ResourceManager, WgpuContext};
-use crate::renderer::pipeline::PipelineCache;
 use crate::assets::AssetServer;
-use crate::renderer::graph::{RenderState, ExtractedScene};
-use crate::renderer::graph::frame::RenderLists;
+use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::Tracked;
+use crate::renderer::core::{ResourceManager, WgpuContext};
+use crate::renderer::graph::frame::RenderLists;
+use crate::renderer::graph::{ExtractedScene, RenderState};
+use crate::renderer::pipeline::PipelineCache;
+use crate::scene::Scene;
+use crate::scene::camera::RenderCamera;
 
 /// 渲染上下文
-/// 
-/// 在 RenderGraph 执行期间，所有 RenderNode 共享此上下文。
+///
+/// 在 `RenderGraph` 执行期间，所有 `RenderNode` 共享此上下文。
 /// 包含 GPU 上下文、资源管理器、场景数据等。
-/// 
+///
 /// # 性能考虑
 /// - 所有字段都是引用，避免数据复制
 /// - `surface_view` 每帧更新，指向当前交换链纹理
@@ -41,13 +41,12 @@ pub struct RenderContext<'a> {
     pub render_state: &'a RenderState,
     /// 提取的场景数据
     pub extracted_scene: &'a ExtractedScene,
-    /// 渲染列表（由 SceneCullPass 填充，供各个绘制 Pass 消费）
+    /// 渲染列表（由 `SceneCullPass` 填充，供各个绘制 Pass 消费）
     pub render_frame: RenderFrameRef<'a>,
     /// 帧资源
     pub frame_resources: &'a FrameResources,
     /// 当前时间
     pub time: f32,
-
 
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
 
@@ -58,29 +57,25 @@ pub struct RenderContext<'a> {
     pub(crate) color_view_flip_flop: usize,
 }
 
-/// RenderFrame 的可变引用包装
-/// 
-/// 用于在 RenderContext 中安全地访问 RenderLists
+/// `RenderFrame` 的可变引用包装
+///
+/// 用于在 `RenderContext` 中安全地访问 `RenderLists`
 pub struct RenderFrameRef<'a> {
     pub render_lists: &'a mut RenderLists,
 }
 
-
-impl<'a> RenderContext<'a> {
+impl RenderContext<'_> {
     /// 获取 Post Process 的 Input 和 Output
-    /// 
+    ///
     /// 自动实现 Ping-Pong 切换：
     /// - Input: 上一个 Pass 的输出
     /// - Output: 下一个空闲的缓冲
-    /// 
-    /// 调用此方法后，Context 的 current_color_texture_view 会自动更新指向 Output，
+    ///
+    /// 调用此方法后，Context 的 `current_color_texture_view` 会自动更新指向 Output，
     /// 供下一个 Pass 使用。
-    pub fn acquire_pass_io(
-        &mut self
-    ) -> (&Tracked<wgpu::TextureView>, &wgpu::TextureView) {
-
+    pub fn acquire_pass_io(&mut self) -> (&Tracked<wgpu::TextureView>, &wgpu::TextureView) {
         let current_idx = self.color_view_flip_flop;
-    
+
         // 1. 确定输入
         let input = &self.frame_resources.scene_color_view[current_idx];
 
@@ -93,6 +88,7 @@ impl<'a> RenderContext<'a> {
         (input, output)
     }
 
+    #[must_use]
     pub fn get_scene_render_target_view(&self) -> &wgpu::TextureView {
         // 逻辑：如果是直连模式 ? Surface : SceneColor[0]
         if self.wgpu_ctx.enable_hdr {
@@ -113,10 +109,11 @@ impl<'a> RenderContext<'a> {
     //     }
     // }
 
+    #[must_use]
     pub fn get_scene_render_target_format(&self) -> wgpu::TextureFormat {
         if self.wgpu_ctx.enable_hdr {
             // 强制使用 HDR 格式 (推荐 Rgba16Float)
-            // wgpu::TextureFormat::Rgba16Float 
+            // wgpu::TextureFormat::Rgba16Float
             crate::renderer::HDR_TEXTURE_FORMAT
         } else {
             self.wgpu_ctx.surface_view_format
@@ -124,7 +121,7 @@ impl<'a> RenderContext<'a> {
     }
 
     // /// 获取场景渲染的目标 View
-    // /// 
+    // ///
     // /// - 如果开启后处理：返回 FrameResources.scene_color_view (HDR)
     // /// - 如果关闭后处理：返回 Surface View (LDR/sRGB)
     // pub fn scene_output_view(&self) -> &'a wgpu::TextureView {
@@ -132,15 +129,13 @@ impl<'a> RenderContext<'a> {
     //     // 或者在 Context 里存一个字段指向当前的 target
     //     self.current_render_target
     // }
-    
+
     // /// 获取场景渲染的格式
     // pub fn scene_output_format(&self) -> wgpu::TextureFormat {
     //      // 同上，可能是 Rgba16Float 或 Bgra8UnormSrgb
-    //      self.current_render_target_format 
+    //      self.current_render_target_format
     // }
-
 }
-
 
 pub struct FrameResources {
     // MSAA 缓冲 (可选)
@@ -162,7 +157,6 @@ pub struct FrameResources {
 }
 
 impl FrameResources {
-
     pub fn new(wgpu_ctx: &WgpuContext, size: (u32, u32)) -> Self {
         let device = &wgpu_ctx.device;
 
@@ -201,24 +195,19 @@ impl FrameResources {
             ..Default::default()
         });
 
-
         let placeholder_view = Self::create_texture(
             device,
             (1, 1),
             wgpu::TextureFormat::Rgba8Unorm,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             1,
-        1,
+            1,
             "Placeholder Texture",
         );
 
         // 2. 创建初始 BindGroup (指向 Dummy)
-        let initial_bind_group = Self::create_bind_group(
-            &wgpu_ctx.device, 
-            &layout, 
-            &placeholder_view, 
-            &sampler
-        );
+        let initial_bind_group =
+            Self::create_bind_group(&wgpu_ctx.device, &layout, &placeholder_view, &sampler);
 
         let mut resources = Self {
             size: (0, 0),
@@ -235,20 +224,19 @@ impl FrameResources {
             screen_bind_group_layout: Tracked::new(layout),
             screen_sampler: Tracked::new(sampler),
         };
-        
-        resources.resize(&wgpu_ctx, size);
+
+        resources.resize(wgpu_ctx, size);
         resources
-        
     }
 
     fn create_texture(
         device: &wgpu::Device,
-        size: (u32, u32), 
-        format: wgpu::TextureFormat, 
-        usage: wgpu::TextureUsages, 
+        size: (u32, u32),
+        format: wgpu::TextureFormat,
+        usage: wgpu::TextureUsages,
         sample_count: u32,
         mip_level_count: u32,
-        label: &str
+        label: &str,
     ) -> wgpu::TextureView {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
@@ -257,15 +245,15 @@ impl FrameResources {
                 height: size.1,
                 depth_or_array_layers: 1,
             },
-            mip_level_count: mip_level_count,
-            sample_count: sample_count,
+            mip_level_count,
+            sample_count,
             dimension: wgpu::TextureDimension::D2,
             format,
             usage,
             view_formats: &[],
         });
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-        view
+
+        texture.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
     fn create_bind_group(
@@ -291,7 +279,7 @@ impl FrameResources {
     }
 
     /// Forces recreation of all frame resources regardless of size.
-    /// 
+    ///
     /// Call this when render settings change (HDR mode, MSAA) that require
     /// texture format or sample count changes.
     pub fn force_recreate(&mut self, wgpu_ctx: &WgpuContext, size: (u32, u32)) {
@@ -303,8 +291,7 @@ impl FrameResources {
         self.resize(wgpu_ctx, size);
     }
 
-    pub fn resize(&mut self, wgpu_ctx: &WgpuContext, size: (u32, u32)){
-
+    pub fn resize(&mut self, wgpu_ctx: &WgpuContext, size: (u32, u32)) {
         if self.size == size {
             return;
         }
@@ -343,7 +330,9 @@ impl FrameResources {
                 &wgpu_ctx.device,
                 size,
                 crate::renderer::HDR_TEXTURE_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
                 1,
                 1,
                 "Ping-Pong Texture 0",
@@ -353,7 +342,9 @@ impl FrameResources {
                 &wgpu_ctx.device,
                 size,
                 crate::renderer::HDR_TEXTURE_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
                 1,
                 1,
                 "Ping-Pong Texture 1",
@@ -369,13 +360,13 @@ impl FrameResources {
         if wgpu_ctx.msaa_samples > 1 {
             // 创建 MSAA 纹理, 格式与主颜色纹理(Resolve target)相同
 
-            let masaa_target_fromat = if wgpu_ctx.enable_hdr{
+            let masaa_target_fromat = if wgpu_ctx.enable_hdr {
                 crate::renderer::HDR_TEXTURE_FORMAT
             } else {
                 wgpu_ctx.surface_view_format
             };
 
-            let scene_msaa_view =Self::create_texture(
+            let scene_msaa_view = Self::create_texture(
                 &wgpu_ctx.device,
                 size,
                 masaa_target_fromat,
@@ -385,7 +376,6 @@ impl FrameResources {
                 "Scene MSAA Color Texture",
             );
             self.scene_msaa_view = Some(Tracked::new(scene_msaa_view));
-
         } else {
             // MSAA 关闭时，清除 MSAA 纹理
             self.scene_msaa_view = None;
@@ -398,48 +388,52 @@ impl FrameResources {
                 &wgpu_ctx.device,
                 size,
                 crate::renderer::HDR_TEXTURE_FORMAT,
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 1,
                 mip_level_count,
-                "Transmission Texture"
+                "Transmission Texture",
             );
             let tracked_view = Tracked::new(texture_view);
 
             // 2. 立即创建 BindGroup (显式管理)
             // 这里我们不做 Cache 查找，直接 New 一个，反正 Texture 变了 BindGroup 必须变
-            let bind_group = wgpu_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Screen BindGroup"),
-                layout: &self.screen_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&tracked_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.screen_sampler),
-                    },
-                ],
-            });
+            let bind_group = wgpu_ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Screen BindGroup"),
+                    layout: &self.screen_bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&tracked_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.screen_sampler),
+                        },
+                    ],
+                });
 
             self.transmission_view = Some(tracked_view);
             self.screen_bind_group = Tracked::new(bind_group);
         }
-
     }
 
     pub fn ensure_transmission_resource(&mut self, device: &wgpu::Device) -> &wgpu::BindGroup {
-        
         if self.transmission_view.is_none() {
             let mip_level_count = ((self.size.0.max(self.size.1) as f32).log2().floor() as u32) + 1;
             let texture_view = Self::create_texture(
                 device,
                 self.size,
                 crate::renderer::HDR_TEXTURE_FORMAT,
-                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 1,
                 mip_level_count,
-                "Transmission Texture"
+                "Transmission Texture",
             );
             let tracked_view = Tracked::new(texture_view);
 
@@ -463,10 +457,8 @@ impl FrameResources {
         }
 
         &self.screen_bind_group
-
     }
 }
-
 
 pub struct PrepareContext<'a> {
     pub resource_manager: &'a mut ResourceManager,

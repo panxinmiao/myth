@@ -9,8 +9,8 @@
 //! The engine follows a clean separation of concerns:
 //!
 //! - **Renderer**: Handles all GPU operations and rendering pipeline
-//! - **SceneManager**: Manages multiple scenes and their lifecycles
-//! - **AssetServer**: Centralized asset storage and loading
+//! - **`SceneManager`**: Manages multiple scenes and their lifecycles
+//! - **`AssetServer`**: Centralized asset storage and loading
 //! - **Input**: Unified input state management
 //!
 //! # Example
@@ -34,8 +34,8 @@
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::assets::AssetServer;
-use crate::renderer::settings::RenderSettings;
 use crate::renderer::Renderer;
+use crate::renderer::settings::RenderSettings;
 use crate::resources::input::Input;
 use crate::scene::manager::SceneManager;
 
@@ -124,16 +124,14 @@ impl MythEngine {
     ///
     /// * `width` - New width in pixels
     /// * `height` - New height in pixels
-    /// * `scale_factor` - Display scale factor (for HiDPI support)
+    /// * `scale_factor` - Display scale factor (for `HiDPI` support)
     pub fn resize(&mut self, width: u32, height: u32, scale_factor: f32) {
-
         self.renderer.resize(width, height, scale_factor);
         self.input.inject_resize(width, height);
 
         if width > 0 && height > 0 {
             self.update_camera_aspect(width as f32 / height as f32);
         }
-
     }
 
     /// Updates the engine state for the current frame.
@@ -186,8 +184,6 @@ impl Default for MythEngine {
         Self::new(RenderSettings::default())
     }
 }
-
-
 
 /// Per-frame timing and state information.
 ///

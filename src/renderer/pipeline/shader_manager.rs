@@ -2,14 +2,14 @@
 //!
 //! 使用 minijinja 模板引擎管理 WGSL 着色器
 
+use minijinja::value::{Object, Value};
+use minijinja::{Environment, Error, ErrorKind, syntax::SyntaxConfig};
+use rust_embed::RustEmbed;
+use serde::Serialize;
 use std::borrow::Cow;
 use std::sync::Arc;
 use std::sync::OnceLock;
-use minijinja::{Environment, Error, ErrorKind, syntax::SyntaxConfig};
-use rust_embed::RustEmbed;
 use std::sync::atomic::{AtomicU32, Ordering};
-use serde::Serialize;
-use minijinja::value::{Value, Object};
 
 pub static SHADER_ENV: OnceLock<Environment<'static>> = OnceLock::new();
 
@@ -35,9 +35,7 @@ pub fn get_env() -> &'static Environment<'static> {
 
         env.set_loader(shader_loader);
 
-        env.set_path_join_callback(|name, _parent| {
-            format!("chunks/{}", name).into()
-        });
+        env.set_path_join_callback(|name, _parent| format!("chunks/{name}").into());
 
         env.add_function("next_loc", next_location);
 
@@ -49,7 +47,7 @@ fn shader_loader(name: &str) -> Result<Option<String>, Error> {
     let filename = if name.ends_with(".wgsl") {
         Cow::Borrowed(name)
     } else {
-        Cow::Owned(format!("{}.wgsl", name))
+        Cow::Owned(format!("{name}.wgsl"))
     };
 
     #[cfg(all(debug_assertions, not(target_arch = "wasm32")))]
@@ -58,18 +56,21 @@ fn shader_loader(name: &str) -> Result<Option<String>, Error> {
         if path.exists() {
             match std::fs::read_to_string(&path) {
                 Ok(source) => return Ok(Some(source)),
-                Err(e) => return Err(Error::new(
-                    ErrorKind::TemplateNotFound,
-                    format!("Failed to read file: {}", e)
-                )),
+                Err(e) => {
+                    return Err(Error::new(
+                        ErrorKind::TemplateNotFound,
+                        format!("Failed to read file: {e}"),
+                    ));
+                }
             }
         }
     }
 
     if let Some(file) = ShaderAssets::get(&filename)
-        && let Ok(source) = std::str::from_utf8(file.data.as_ref()) {
-            return Ok(Some(source.to_string()));
-        }
+        && let Ok(source) = std::str::from_utf8(file.data.as_ref())
+    {
+        return Ok(Some(source.to_string()));
+    }
 
     Ok(None)
 }
@@ -91,6 +92,7 @@ impl Default for LocationAllocator {
 }
 
 impl LocationAllocator {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             counter: AtomicU32::new(0),
@@ -107,12 +109,15 @@ impl Object for LocationAllocator {
         self: &Arc<Self>,
         _state: &minijinja::State,
         name: &str,
-        _args: &[Value]
+        _args: &[Value],
     ) -> Result<Value, Error> {
         if name == "next" {
             Ok(Value::from(self.next()))
         } else {
-            Err(Error::new(ErrorKind::UnknownMethod, format!("method {} not found", name)))
+            Err(Error::new(
+                ErrorKind::UnknownMethod,
+                format!("method {name} not found"),
+            ))
         }
     }
 }

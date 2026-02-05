@@ -1,5 +1,5 @@
-use slotmap::{SlotMap, new_key_type};
 use crate::Scene;
+use slotmap::{SlotMap, new_key_type};
 
 new_key_type! {
     pub struct SceneHandle;

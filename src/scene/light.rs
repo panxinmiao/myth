@@ -1,7 +1,5 @@
-use glam::{Vec3};
+use glam::Vec3;
 use uuid::Uuid;
-
-
 
 #[derive(Debug, Clone)]
 pub struct ShadowConfig {
@@ -56,6 +54,7 @@ pub struct Light {
 }
 
 impl Light {
+    #[must_use]
     pub fn new_directional(color: Vec3, intensity: f32) -> Self {
         Self {
             uuid: Uuid::new_v4(),
@@ -68,19 +67,25 @@ impl Light {
         }
     }
 
+    #[must_use]
     pub fn new_point(color: Vec3, intensity: f32, range: f32) -> Self {
         Self {
             uuid: Uuid::new_v4(),
             color,
             intensity,
-            kind: LightKind::Point(PointLight {
-                range,
-            }),
+            kind: LightKind::Point(PointLight { range }),
             shadow: Some(ShadowConfig::default()),
         }
     }
 
-    pub fn new_spot(color: Vec3, intensity: f32, range: f32, inner_cone: f32, outer_cone: f32) -> Self {
+    #[must_use]
+    pub fn new_spot(
+        color: Vec3,
+        intensity: f32,
+        range: f32,
+        inner_cone: f32,
+        outer_cone: f32,
+    ) -> Self {
         Self {
             uuid: Uuid::new_v4(),
             color,

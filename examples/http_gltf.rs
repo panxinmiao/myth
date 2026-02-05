@@ -15,18 +15,21 @@ struct HttpGltfExample {
 impl AppHandler for HttpGltfExample {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 加载环境贴图 (PBR 需要 IBL)
-        let env_texture_handle = engine.assets.load_cube_texture(
-            [
-                "examples/assets/Park2/posx.jpg",
-                "examples/assets/Park2/negx.jpg",
-                "examples/assets/Park2/posy.jpg",
-                "examples/assets/Park2/negy.jpg",
-                "examples/assets/Park2/posz.jpg",
-                "examples/assets/Park2/negz.jpg",
-            ],
-            ColorSpace::Srgb,
-            true
-        ).expect("Failed to load environment map");
+        let env_texture_handle = engine
+            .assets
+            .load_cube_texture(
+                [
+                    "examples/assets/Park2/posx.jpg",
+                    "examples/assets/Park2/negx.jpg",
+                    "examples/assets/Park2/posy.jpg",
+                    "examples/assets/Park2/negy.jpg",
+                    "examples/assets/Park2/posz.jpg",
+                    "examples/assets/Park2/negz.jpg",
+                ],
+                ColorSpace::Srgb,
+                true,
+            )
+            .expect("Failed to load environment map");
 
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
@@ -59,12 +62,12 @@ impl AppHandler for HttpGltfExample {
     fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
         if !self.loaded {
             self.loaded = true;
-            
+
             println!("Loading glTF model from network...");
             let url = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/refs/heads/main/Models/ABeautifulGame/glTF/ABeautifulGame.gltf";
-            
+
             let scene = engine.scene_manager.active_scene_mut().unwrap();
-            
+
             match GltfLoader::load_sync(url, engine.assets.clone()) {
                 Ok(prefab) => {
                     scene.instantiate(&prefab);
@@ -81,24 +84,27 @@ impl AppHandler for HttpGltfExample {
         };
 
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
-            self.controls.update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
+            self.controls
+                .update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
         }
 
         if let Some(fps) = self.fps_counter.update() {
             window.set_title(&format!("HTTP glTF Loading - FPS: {:.0}", fps));
         }
     }
-    
 }
 
 fn main() -> anyhow::Result<()> {
     env_logger::init();
-    
+
     println!("=== HTTP glTF Loading Example ===");
     println!("This example demonstrates loading glTF models from HTTP URLs.");
     println!("Loading: ABeautifulGame from Khronos glTF-Sample-Assets");
-    
+
     App::new()
-        .with_settings(RenderSettings { vsync: false, ..Default::default() })
+        .with_settings(RenderSettings {
+            vsync: false,
+            ..Default::default()
+        })
         .run::<HttpGltfExample>()
 }

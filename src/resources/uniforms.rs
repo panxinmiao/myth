@@ -1,20 +1,20 @@
-use glam::{Vec2, Vec3, Vec4, Mat4, Mat3, UVec4};
 use bytemuck::{Pod, Zeroable};
+use glam::{Mat3, Mat4, UVec4, Vec2, Vec3, Vec4};
 use std::borrow::Cow;
-use std::ops::{Deref, DerefMut};
 use std::collections::HashSet;
+use std::ops::{Deref, DerefMut};
 
 // ============================================================================
 // Mat3Padded: A mat3x3<f32> with correct GPU alignment (48 bytes)
 // ============================================================================
-// 
+//
 // In WGSL/WebGPU, mat3x3<f32> has the following layout:
 // - Each column is a vec3<f32>, but aligned to 16 bytes
 // - Total size: 3 columns × 16 bytes = 48 bytes
 //
 // glam::Mat3A provides this on native (via SIMD), but it's not Pod on WASM.
 // glam::Mat3 is only 36 bytes (3 columns × 12 bytes).
-// 
+//
 // So we create our own type that's always 48 bytes on all platforms.
 // ============================================================================
 
@@ -47,6 +47,7 @@ impl Mat3Padded {
         col2: Vec4::ZERO,
     };
 
+    #[must_use]
     pub fn new(col0: Vec3, col1: Vec3, col2: Vec3) -> Self {
         Self {
             col0: col0.extend(0.0),
@@ -55,12 +56,14 @@ impl Mat3Padded {
         }
     }
 
+    #[must_use]
     pub fn from_cols(col0: Vec3, col1: Vec3, col2: Vec3) -> Self {
         Self::new(col0, col1, col2)
     }
 
     /// Create from a column-major array (9 floats)
     /// Array layout: [col0.x, col0.y, col0.z, col1.x, col1.y, col1.z, col2.x, col2.y, col2.z]
+    #[must_use]
     pub fn from_cols_array(arr: &[f32; 9]) -> Self {
         Self {
             col0: Vec4::new(arr[0], arr[1], arr[2], 0.0),
@@ -70,6 +73,7 @@ impl Mat3Padded {
     }
 
     /// Create from Mat4 (extracts upper-left 3x3)
+    #[must_use]
     pub fn from_mat4(m: Mat4) -> Self {
         Self {
             col0: Vec4::new(m.x_axis.x, m.x_axis.y, m.x_axis.z, 0.0),
@@ -113,7 +117,6 @@ impl From<glam::Mat3A> for Mat3Padded {
 // Type alias for backward compatibility
 pub type Mat3Uniform = Mat3Padded;
 
-
 // ============================================================================
 // 1. Type Mapping Trait (Rust Type -> WGSL Type String)
 // ============================================================================
@@ -124,19 +127,66 @@ pub trait WgslType {
         // Default implementation is empty (for primitive types like f32, vec3, etc.)
     }
 }
-impl WgslType for f32 { fn wgsl_type_name() -> Cow<'static, str> { "f32".into() } }
-impl WgslType for i16 { fn wgsl_type_name() -> Cow<'static, str> { "i16".into() } }
-impl WgslType for i32 { fn wgsl_type_name() -> Cow<'static, str> { "i32".into() } }
-impl WgslType for u8 { fn wgsl_type_name() -> Cow<'static, str> { "u8".into() } }
-impl WgslType for u16 { fn wgsl_type_name() -> Cow<'static, str> { "u16".into() } }
-impl WgslType for u32 { fn wgsl_type_name() -> Cow<'static, str> { "u32".into() } }
-impl WgslType for Vec2 { fn wgsl_type_name() -> Cow<'static, str> { "vec2<f32>".into() } }
-impl WgslType for Vec3 { fn wgsl_type_name() -> Cow<'static, str> { "vec3<f32>".into() } }
-impl WgslType for Vec4 { fn wgsl_type_name() -> Cow<'static, str> { "vec4<f32>".into() } }
-impl WgslType for Mat4 { fn wgsl_type_name() -> Cow<'static, str> { "mat4x4<f32>".into() } }
-impl WgslType for Mat3Uniform { fn wgsl_type_name() -> Cow<'static, str> { "mat3x3<f32>".into() } }
-impl WgslType for UVec4 { fn wgsl_type_name() -> Cow<'static, str> { "vec4<u32>".into() } }
-
+impl WgslType for f32 {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        "f32".into()
+    }
+}
+impl WgslType for i16 {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        "i16".into()
+    }
+}
+impl WgslType for i32 {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        "i32".into()
+    }
+}
+impl WgslType for u8 {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        "u8".into()
+    }
+}
+impl WgslType for u16 {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        "u16".into()
+    }
+}
+impl WgslType for u32 {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        "u32".into()
+    }
+}
+impl WgslType for Vec2 {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        "vec2<f32>".into()
+    }
+}
+impl WgslType for Vec3 {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        "vec3<f32>".into()
+    }
+}
+impl WgslType for Vec4 {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        "vec4<f32>".into()
+    }
+}
+impl WgslType for Mat4 {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        "mat4x4<f32>".into()
+    }
+}
+impl WgslType for Mat3Uniform {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        "mat3x3<f32>".into()
+    }
+}
+impl WgslType for UVec4 {
+    fn wgsl_type_name() -> Cow<'static, str> {
+        "vec4<u32>".into()
+    }
+}
 
 /// Array wrapper specifically for Uniform Buffer
 #[repr(transparent)]
@@ -168,11 +218,15 @@ impl<T: Default + Pod + Copy, const N: usize> Default for UniformArray<T, N> {
 // 3. Implement Deref: make it behave like a regular array
 impl<T: Pod, const N: usize> Deref for UniformArray<T, N> {
     type Target = [T; N];
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }
 
 impl<T: Pod, const N: usize> DerefMut for UniformArray<T, N> {
-    fn deref_mut(&mut self) -> &mut Self::Target { &mut self.0 }
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
 
 // 4. Convenience constructors
@@ -208,32 +262,32 @@ macro_rules! define_gpu_data_struct {
         }
     ) => {
         // 1. Generate Rust Struct
-        define_gpu_data_struct!(@def_struct 
-            $(#[$meta])* struct $name { 
+        define_gpu_data_struct!(@def_struct
+            $(#[$meta])* struct $name {
                 $( $vis $field_name : $field_type ),* }
         );
 
         // 2. Generate Default implementation
-        define_gpu_data_struct!(@impl_default 
-            $name { 
+        define_gpu_data_struct!(@impl_default
+            $name {
                 $( $field_name : $field_type $(= $default_val)? ),* }
         );
 
         // 3. Generate WgslType implementation (supports nested fields)
-        define_gpu_data_struct!(@impl_wgsl_type 
-            $name { 
+        define_gpu_data_struct!(@impl_wgsl_type
+            $name {
                 $( $field_name : $field_type ),* }
         );
 
         // 4. Generate UniformBlock implementation (top-level entry)
-        define_gpu_data_struct!(@impl_uniform_block 
-            $name { 
+        define_gpu_data_struct!(@impl_uniform_block
+            $name {
                 $( $field_name : $field_type ),* }
         );
 
         // 5. Generate GpuData implementation
-        define_gpu_data_struct!(@impl_gpu_data 
-            $name { 
+        define_gpu_data_struct!(@impl_gpu_data
+            $name {
                 $( $field_name : $field_type ),* }
         );
     };
@@ -266,10 +320,10 @@ macro_rules! define_gpu_data_struct {
     (@gen_body $name_str:expr, { $( $vis:vis$field_name:ident : $field_type:ty ),* }) => {{
         let mut code = format!("struct {} {{\n", $name_str);
         $(
-            if !stringify!($field_name).starts_with("__") { 
+            if !stringify!($field_name).starts_with("__") {
                 code.push_str(&format!(
-                    "    {}: {},\n", 
-                    stringify!($field_name), 
+                    "    {}: {},\n",
+                    stringify!($field_name),
                     <$field_type as WgslType>::wgsl_type_name()
                 ));
             }
@@ -320,7 +374,7 @@ macro_rules! define_gpu_data_struct {
 
                 // 2. Generate top-level struct (using passed struct_name, may be renamed)
                 let top_def = define_gpu_data_struct!(@gen_body struct_name, { $( $vis $field_name : $field_type ),* });
-                
+
                 // 3. Concatenate all content
                 defs.push(top_def);
                 defs.join("\n")
@@ -334,7 +388,7 @@ macro_rules! define_gpu_data_struct {
             fn as_bytes(&self) -> &[u8] {
                 bytemuck::bytes_of(self)
             }
-            
+
             fn byte_size(&self) -> usize {
                 std::mem::size_of::<Self>()
             }
@@ -360,7 +414,6 @@ define_gpu_data_struct!(
     }
 );
 
-
 define_gpu_data_struct!(
     /// Global Uniforms (updated per frame)
     struct RenderStateUniforms {
@@ -371,7 +424,6 @@ define_gpu_data_struct!(
         pub time: f32 = 0.0,
     }
 );
-
 
 define_gpu_data_struct!(
     /// Global Uniforms (updated per frame)
@@ -384,7 +436,6 @@ define_gpu_data_struct!(
         pub(crate) __padding: UniformArray<f32, 2>,
     }
 );
-
 
 // Basic Material
 define_gpu_data_struct!(
@@ -443,17 +494,16 @@ define_gpu_data_struct!(
         pub specular_intensity: f32 = 1.0,    // 4
 
         // Using optimized Mat3Uniform (48 bytes)
-        pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,         
-        pub normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,   
+        pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub roughness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub metalness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
-        pub emissive_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY, 
+        pub emissive_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub ao_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub specular_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub specular_intensity_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
     }
 );
-
 
 define_gpu_data_struct!(
     struct MeshPhysicalUniforms {
@@ -501,11 +551,11 @@ define_gpu_data_struct!(
 
 
         // Using optimized Mat3Uniform (48 bytes)
-        pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,         
-        pub normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,   
+        pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
+        pub normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub roughness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub metalness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
-        pub emissive_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY, 
+        pub emissive_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub ao_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub specular_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
         pub specular_intensity_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
@@ -521,7 +571,6 @@ define_gpu_data_struct!(
         pub thickness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
     }
 );
-
 
 define_gpu_data_struct!(
     struct GpuLightStorage {
@@ -551,15 +600,13 @@ define_gpu_data_struct!(
         pub vertex_count: u32,
         pub flags: u32,
         pub _pad: u32,
-        
+
         // 32 morph target weights and indices, packed into Vec4 to satisfy Uniform buffer 16-byte alignment requirement
         // weights[0] = Vec4(w0, w1, w2, w3), weights[1] = Vec4(w4, w5, w6, w7), ...
-        pub weights: UniformArray<Vec4, 8>, 
-        pub indices: UniformArray<UVec4, 8>, 
+        pub weights: UniformArray<Vec4, 8>,
+        pub indices: UniformArray<UVec4, 8>,
     }
-
 );
-
 
 #[cfg(test)]
 mod tests {
@@ -568,8 +615,16 @@ mod tests {
 
     #[test]
     fn test_alignment() {
-        assert_eq!(mem::size_of::<MeshStandardUniforms>() % 16, 0, "Standard Uniforms not aligned to 16 bytes");
-        assert_eq!(mem::size_of::<MeshBasicUniforms>() % 16, 0, "Basic Uniforms not aligned to 16 bytes");
+        assert_eq!(
+            mem::size_of::<MeshStandardUniforms>() % 16,
+            0,
+            "Standard Uniforms not aligned to 16 bytes"
+        );
+        assert_eq!(
+            mem::size_of::<MeshBasicUniforms>() % 16,
+            0,
+            "Basic Uniforms not aligned to 16 bytes"
+        );
     }
 
     #[test]

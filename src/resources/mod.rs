@@ -20,28 +20,28 @@
 //!
 //! - **CPU-side only**: No direct GPU dependencies in this module
 //! - **Version tracking**: Resources track changes for efficient GPU sync
-//! - **Handle-based references**: Use SlotMap handles for safe resource references
+//! - **Handle-based references**: Use `SlotMap` handles for safe resource references
 //! - **Shared ownership**: Use `Arc` for data that may be shared across objects
 
-pub mod mesh;
-pub mod texture;
-pub mod image;
-pub mod geometry;
-pub mod primitives;
 pub mod buffer;
+pub mod geometry;
+pub mod image;
+pub mod input;
+pub mod material;
+pub mod mesh;
+pub mod primitives;
+pub mod shader_defines;
+pub mod texture;
+pub mod tone_mapping;
 pub mod uniforms;
 pub mod version_tracker;
-pub mod material;
-pub mod input;
-pub mod shader_defines;
-pub mod tone_mapping;
 
-pub use mesh::Mesh;
 pub use material::{
-    Material, MaterialType, MaterialTrait, RenderableMaterialTrait,
-    MeshBasicMaterial, MeshPhongMaterial, MeshPhysicalMaterial, 
-    Side, TextureSlot, TextureTransform, AlphaMode, PhysicalFeatures
+    AlphaMode, Material, MaterialTrait, MaterialType, MeshBasicMaterial, MeshPhongMaterial,
+    MeshPhysicalMaterial, PhysicalFeatures, RenderableMaterialTrait, Side, TextureSlot,
+    TextureTransform,
 };
+pub use mesh::Mesh;
 
 pub use buffer::BufferRef;
 pub use geometry::{Attribute, BoundingBox, BoundingSphere, Geometry};
@@ -50,4 +50,4 @@ pub use input::{ButtonState, Input, Key, MouseButton};
 pub use shader_defines::ShaderDefines;
 pub use texture::{Texture, TextureSampler};
 pub use tone_mapping::{ToneMappingMode, ToneMappingSettings};
-pub use uniforms::{WgslType, Mat3Uniform};
+pub use uniforms::{Mat3Uniform, WgslType};

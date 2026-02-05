@@ -1,7 +1,7 @@
-use glam::{Vec3, Quat};
+use glam::{Quat, Vec3};
 
-use crate::animation::tracks::KeyframeTrack;
 use crate::animation::binding::TargetPath;
+use crate::animation::tracks::KeyframeTrack;
 use crate::animation::values::MorphWeightData;
 
 #[derive(Debug, Clone)]
@@ -34,7 +34,8 @@ pub struct AnimationClip {
 
 impl AnimationClip {
     pub fn new(name: String, tracks: Vec<Track>) -> Self {
-        let duration = tracks.iter()
+        let duration = tracks
+            .iter()
             .map(|t| match &t.data {
                 TrackData::Vector3(track) => track.times.last().copied().unwrap_or(0.0),
                 TrackData::Quaternion(track) => track.times.last().copied().unwrap_or(0.0),

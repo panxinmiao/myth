@@ -6,7 +6,7 @@ use std::borrow::Cow;
 
 use rustc_hash::FxHashMap;
 
-const BLIT_WGSL: &str = r#"
+const BLIT_WGSL: &str = r"
 struct VertexOutput {
     @builtin(position) position : vec4<f32>,
     @location(0) uv : vec2<f32>,
@@ -33,7 +33,7 @@ fn vs_main(@builtin(vertex_index) vertexIndex : u32) -> VertexOutput {
 fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
     return textureSample(t_diffuse, s_diffuse, in.uv);
 }
-"#;
+";
 
 pub struct MipmapGenerator {
     layout: wgpu::BindGroupLayout,
@@ -43,6 +43,7 @@ pub struct MipmapGenerator {
 }
 
 impl MipmapGenerator {
+    #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Mipmap Blit Shader"),
@@ -89,46 +90,62 @@ impl MipmapGenerator {
         }
     }
 
-    fn get_pipeline(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) -> wgpu::RenderPipeline {
-        self.pipelines.entry(format).or_insert_with(|| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some(&format!("Mipmap Pipeline {:?}", format)),
-                layout: Some(&device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Mipmap Pipeline Layout"),
-                    bind_group_layouts: &[&self.layout],
-                    immediate_size: 0,
-                })),
-                vertex: wgpu::VertexState {
-                    module: &self.shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: Default::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &self.shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: Default::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
+    fn get_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+    ) -> wgpu::RenderPipeline {
+        self.pipelines
+            .entry(format)
+            .or_insert_with(|| {
+                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(&format!("Mipmap Pipeline {format:?}")),
+                    layout: Some(
+                        &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                            label: Some("Mipmap Pipeline Layout"),
+                            bind_group_layouts: &[&self.layout],
+                            immediate_size: 0,
+                        }),
+                    ),
+                    vertex: wgpu::VertexState {
+                        module: &self.shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: Default::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &self.shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: Default::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState {
+                        topology: wgpu::PrimitiveTopology::TriangleList,
+                        ..Default::default()
+                    },
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                })
             })
-        }).clone()
+            .clone()
     }
 
-    pub fn generate(&mut self, device: &wgpu::Device, encoder: &mut wgpu::CommandEncoder, texture: &wgpu::Texture) {
+    pub fn generate(
+        &mut self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        texture: &wgpu::Texture,
+    ) {
         let mip_count = texture.mip_level_count();
-        if mip_count < 2 { return; }
+        if mip_count < 2 {
+            return;
+        }
 
         let format = texture.format();
         let pipeline = self.get_pipeline(device, format);
@@ -164,8 +181,14 @@ impl MipmapGenerator {
                     label: Some("Mipmap BG"),
                     layout: &self.layout,
                     entries: &[
-                        wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&src_view) },
-                        wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::Sampler(&self.sampler) },
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&src_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
                     ],
                 });
 

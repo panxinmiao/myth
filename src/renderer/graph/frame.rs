@@ -26,8 +26,8 @@ use glam::Mat4;
 
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::renderer::core::{BindGroupContext, ResourceManager};
-use crate::scene::camera::RenderCamera;
 use crate::scene::Scene;
+use crate::scene::camera::RenderCamera;
 
 use super::extracted::ExtractedScene;
 use super::render_state::RenderState;
@@ -37,11 +37,11 @@ use super::render_state::RenderState;
 // ============================================================================
 
 /// 单个渲染命令
-/// 
-/// 包含绘制一个物体所需的全部信息，由 CullPass 生成，供 OpaquePass/TransparentPass 消费。
-/// 
+///
+/// 包含绘制一个物体所需的全部信息，由 `CullPass` 生成，供 OpaquePass/TransparentPass 消费。
+///
 /// # 性能考虑
-/// - Pipeline 通过 clone 获得（wgpu::RenderPipeline 内部是 Arc）
+/// - Pipeline 通过 clone `获得（wgpu::RenderPipeline` 内部是 Arc）
 /// - `dynamic_offset` 支持动态 Uniform 缓冲
 /// - `sort_key` 用于高效排序（Front-to-Back / Back-to-Front）
 pub struct RenderCommand {
@@ -53,7 +53,7 @@ pub struct RenderCommand {
     pub material_handle: MaterialHandle,
     /// Pipeline ID（用于状态追踪，避免冗余切换）
     pub pipeline_id: u16,
-    /// 渲染管线（wgpu::RenderPipeline 内部已经是 Arc）
+    /// `渲染管线（wgpu::RenderPipeline` 内部已经是 Arc）
     pub pipeline: wgpu::RenderPipeline,
     /// 模型世界矩阵
     pub model_matrix: Mat4,
@@ -64,10 +64,10 @@ pub struct RenderCommand {
 }
 
 /// 渲染列表
-/// 
+///
 /// 存储经过剔除和排序的渲染命令，由 `SceneCullPass` 填充，
 /// 供 `OpaquePass`、`TransparentPass` 和 `SimpleForwardPass` 消费。
-/// 
+///
 /// # 设计原则
 /// - **数据与逻辑分离**：仅存储数据，不包含渲染逻辑
 /// - **帧间复用**：预分配内存，每帧 `clear()` 后重用
@@ -77,18 +77,19 @@ pub struct RenderLists {
     pub opaque: Vec<RenderCommand>,
     /// 透明物体命令列表（Back-to-Front 排序）
     pub transparent: Vec<RenderCommand>,
-    
-    /// 全局 BindGroup ID（用于状态追踪）
+
+    /// 全局 `BindGroup` ID（用于状态追踪）
     pub gpu_global_bind_group_id: u64,
     /// 全局 BindGroup（相机、光照、环境等）
     pub gpu_global_bind_group: Option<wgpu::BindGroup>,
-    
+
     /// 是否需要 Transmission 拷贝
     pub use_transmission: bool,
 }
 
 impl RenderLists {
     /// 创建空的渲染列表，预分配默认容量
+    #[must_use]
     pub fn new() -> Self {
         Self {
             opaque: Vec::with_capacity(512),
@@ -121,16 +122,19 @@ impl RenderLists {
     }
 
     /// 对命令列表进行排序
-    /// 
+    ///
     /// - 不透明：按 Pipeline > Material > Depth (Front-to-Back)
     /// - 透明：按 Depth (Back-to-Front) > Pipeline > Material
     pub fn sort(&mut self) {
-        self.opaque.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
-        self.transparent.sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
+        self.opaque
+            .sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
+        self.transparent
+            .sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
     }
 
     /// 检查列表是否为空
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.opaque.is_empty() && self.transparent.is_empty()
     }
@@ -142,15 +146,14 @@ impl Default for RenderLists {
     }
 }
 
-
 // ============================================================================
 // RenderKey - 排序键
 // ============================================================================
 
 /// 渲染排序键 (Pipeline ID + Material ID + Depth)
-/// 
+///
 /// 使用 64 位整数编码排序信息，支持高效的基数排序。
-/// 
+///
 /// # 排序策略
 /// - **不透明物体**：Pipeline > Material > Depth (Front-to-Back)
 ///   - 最小化 Pipeline 切换开销
@@ -162,50 +165,47 @@ pub struct RenderKey(u64);
 
 impl RenderKey {
     /// 构造排序键
-    /// 
+    ///
     /// # 参数
     /// - `pipeline_id`: Pipeline 索引（14 bits）
     /// - `material_index`: 材质索引（20 bits）
     /// - `depth`: 到相机的平方距离
     /// - `transparent`: 是否为透明物体
+    #[must_use]
     pub fn new(pipeline_id: u16, material_index: u32, depth: f32, transparent: bool) -> Self {
         // 1. 统一处理深度压缩 (30 bits)
         // 注意：这里假设 depth >= 0.0。如果 depth 可能为负，clamp 到 0 是安全的。
-        let d_u32 = if depth.is_sign_negative() { 0 } else { depth.to_bits() >> 2 };
-        let raw_d_bits = (d_u32 as u64) & 0x3FFF_FFFF;
+        let d_u32 = if depth.is_sign_negative() {
+            0
+        } else {
+            depth.to_bits() >> 2
+        };
+        let raw_d_bits = u64::from(d_u32) & 0x3FFF_FFFF;
 
         // 2. 准备其他数据
-        let p_bits = (pipeline_id & 0x3FFF) as u64; // 14 bits
-        let m_bits = (material_index & 0xFFFFF) as u64; // 20 bits
+        let p_bits = u64::from(pipeline_id & 0x3FFF); // 14 bits
+        let m_bits = u64::from(material_index & 0xFFFFF); // 20 bits
 
         if transparent {
             // 【透明物体】：
             // 排序优先级：Depth (远->近) > Pipeline > Material
-            
+
             // 1. 反转深度，让远处的物体(大深度)变成小数值，从而排在前面
             let d_bits = raw_d_bits ^ 0x3FFF_FFFF;
-            
+
             // 2. 重新排列位布局
             // Depth (30 bits) << 34 | Pipeline (14 bits) << 20 | Material (20 bits)
             // 总共 64 bits
-            Self(
-                (d_bits << 34) | 
-                (p_bits << 20) | 
-                m_bits
-            )
+            Self((d_bits << 34) | (p_bits << 20) | m_bits)
         } else {
             // 【不透明物体】：
             // 排序优先级：Pipeline > Material > Depth (近->远)
-            
+
             // Depth 保持正序 (小深度排前面，Front-to-Back)
-            let d_bits = raw_d_bits; 
-            
+            let d_bits = raw_d_bits;
+
             // Pipeline (14 bits) << 50 | Material (20 bits) << 30 | Depth (30 bits)
-            Self(
-                (p_bits << 50) | 
-                (m_bits << 30) | 
-                d_bits
-            )
+            Self((p_bits << 50) | (m_bits << 30) | d_bits)
         }
     }
 }
@@ -224,7 +224,7 @@ impl RenderKey {
 /// # 性能考虑
 /// - `ExtractedScene` 持久化以复用内存
 /// - `FrameComposer` 每帧创建，但开销极低（仅 Vec 指针操作）
-/// 
+///
 /// # 注意
 /// `RenderLists` 存储在 `RendererState` 中而非此处，
 /// 以避免借用检查器的限制。
@@ -233,14 +233,20 @@ pub struct RenderFrame {
     pub(crate) extracted_scene: ExtractedScene,
 }
 
+impl Default for RenderFrame {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RenderFrame {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             render_state: RenderState::new(),
             extracted_scene: ExtractedScene::with_capacity(1024),
         }
     }
-
 
     /// 获取渲染状态引用
     #[inline]
@@ -266,7 +272,7 @@ impl RenderFrame {
     /// # 注意
     ///
     /// 此方法不获取 Surface，Surface 获取延迟到 `FrameComposer::render()` 中，
-    /// 以减少 SwapChain Buffer 的持有时间。
+    /// 以减少 `SwapChain` Buffer 的持有时间。
     pub fn extract_and_prepare(
         &mut self,
         resource_manager: &mut ResourceManager,
@@ -285,7 +291,6 @@ impl RenderFrame {
         self.render_state.update(camera, time);
         resource_manager.prepare_global(assets, scene, &self.render_state);
     }
-
 
     /// 定期清理资源
     pub fn maybe_prune(&self, resource_manager: &mut ResourceManager) {

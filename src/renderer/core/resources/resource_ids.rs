@@ -1,24 +1,24 @@
 //! 资源 ID 追踪模块
 //!
 //! 提供轻量级的资源 ID 追踪机制，用于检测 GPU 资源变化。
-//! 
+//!
 //! # 设计思路
-//! 
-//! 1. **EnsureResult**: ensure 操作的返回值，包含物理资源 ID
-//! 2. **ResourceIdSet**: 一组资源 ID 的集合，支持高效比较
-//! 3. **BindGroupFingerprint**: BindGroup 的完整指纹，包含所有依赖资源的 ID
+//!
+//! 1. **`EnsureResult`**: ensure 操作的返回值，包含物理资源 ID
+//! 2. **`ResourceIdSet`**: 一组资源 ID 的集合，支持高效比较
+//! 3. **`BindGroupFingerprint`**: `BindGroup` 的完整指纹，包含所有依赖资源的 ID
 
-use std::hash::{Hash, Hasher};
 use rustc_hash::FxHasher;
 use smallvec::SmallVec;
+use std::hash::{Hash, Hasher};
 
 /// GPU 资源的唯一标识符
-/// 
+///
 /// 当 GPU 资源被重建（如 Buffer 扩容、Texture 重新创建）时，ID 会变化
 pub type ResourceId = u64;
 const INVALID_RESOURCE_ID: u64 = u64::MAX;
 /// Ensure 操作的结果
-/// 
+///
 /// 包含资源的物理 ID，调用者可以用来判断资源是否发生变化
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnsureResult {
@@ -30,23 +30,35 @@ pub struct EnsureResult {
 
 impl EnsureResult {
     #[inline]
+    #[must_use]
     pub fn new(resource_id: ResourceId, was_recreated: bool) -> Self {
-        Self { resource_id, was_recreated }
+        Self {
+            resource_id,
+            was_recreated,
+        }
     }
 
     #[inline]
+    #[must_use]
     pub fn existing(resource_id: ResourceId) -> Self {
-        Self { resource_id, was_recreated: false }
+        Self {
+            resource_id,
+            was_recreated: false,
+        }
     }
 
     #[inline]
+    #[must_use]
     pub fn created(resource_id: ResourceId) -> Self {
-        Self { resource_id, was_recreated: true }
+        Self {
+            resource_id,
+            was_recreated: true,
+        }
     }
 }
 
 /// 资源 ID 集合
-/// 
+///
 /// 用于追踪一组资源的物理 ID，支持快速比较是否发生变化
 #[derive(Debug, Clone, Default)]
 pub struct ResourceIdSet {
@@ -59,6 +71,7 @@ pub struct ResourceIdSet {
 }
 
 impl ResourceIdSet {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             ids: SmallVec::new(),
@@ -67,6 +80,7 @@ impl ResourceIdSet {
         }
     }
 
+    #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
         Self {
             ids: SmallVec::with_capacity(capacity),
@@ -99,23 +113,27 @@ impl ResourceIdSet {
 
     /// 获取资源 ID 数量
     #[inline]
+    #[must_use]
     pub fn len(&self) -> usize {
         self.ids.len()
     }
 
     /// 是否为空
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
     }
 
     /// 获取所有 ID 的切片
     #[inline]
+    #[must_use]
     pub fn as_slice(&self) -> &[ResourceId] {
         &self.ids
     }
 
     #[inline]
+    #[must_use]
     pub fn matches_slice(&self, other_ids: &[ResourceId]) -> bool {
         self.ids.as_slice() == other_ids
     }
@@ -147,12 +165,12 @@ impl ResourceIdSet {
         if self.ids.len() != other.ids.len() {
             return false;
         }
-        
+
         // 先比较哈希（快速路径）
         if self.hash_value() != other.hash_value() {
             return false;
         }
-        
+
         // 哈希相同时再逐个比较（处理碰撞）
         self.ids == other.ids
     }
@@ -172,9 +190,9 @@ impl Hash for ResourceIdSet {
     }
 }
 
-/// BindGroup 的完整指纹
-/// 
-/// 包含 BindGroup 依赖的所有物理资源 ID，用于判断是否需要重建
+/// `BindGroup` 的完整指纹
+///
+/// 包含 `BindGroup` 依赖的所有物理资源 ID，用于判断是否需要重建
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BindGroupFingerprint {
     /// 所有依赖资源的 ID（按绑定顺序）
@@ -184,24 +202,31 @@ pub struct BindGroupFingerprint {
 }
 
 impl BindGroupFingerprint {
+    #[must_use]
     pub fn new(resource_ids: Vec<ResourceId>, layout_hash: u64) -> Self {
-        Self { resource_ids, layout_hash }
+        Self {
+            resource_ids,
+            layout_hash,
+        }
     }
 
     /// 检查资源 ID 是否发生变化
+    #[must_use]
     pub fn resources_changed(&self, new_ids: &[ResourceId]) -> bool {
         self.resource_ids != new_ids
     }
 
     /// 检查 Layout 是否发生变化
+    #[must_use]
     pub fn layout_changed(&self, new_layout_hash: u64) -> bool {
         self.layout_hash != new_layout_hash
     }
 }
 
-/// 计算 BindGroupLayoutEntry 列表的哈希值
-/// 
-/// 利用 wgpu::BindGroupLayoutEntry 实现的 Hash trait
+/// 计算 `BindGroupLayoutEntry` 列表的哈希值
+///
+/// 利用 `wgpu::BindGroupLayoutEntry` 实现的 Hash trait
+#[must_use]
 pub fn hash_layout_entries(entries: &[wgpu::BindGroupLayoutEntry]) -> u64 {
     let mut hasher = FxHasher::default();
     entries.len().hash(&mut hasher);

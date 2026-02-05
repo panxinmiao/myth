@@ -16,8 +16,15 @@ pub struct Timer {
     pub frame_count: u64,
 }
 
+impl Default for Timer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Timer {
     /// Creates a new timer starting from now.
+    #[must_use]
     pub fn new() -> Self {
         let now = Instant::now();
         Self {
@@ -37,7 +44,8 @@ impl Timer {
         self.last_update = now;
         self.frame_count += 1;
     }
-    
+
+    #[must_use]
     pub fn dt_seconds(&self) -> f32 {
         self.delta.as_secs_f32()
     }

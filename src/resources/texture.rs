@@ -1,20 +1,22 @@
-use uuid::Uuid;
-use std::sync::atomic::{AtomicU64, Ordering};
+use crate::{
+    assets::{TextureHandle, server::SamplerHandle},
+    resources::image::Image,
+};
 use std::borrow::Cow;
-use wgpu::{TextureFormat, TextureDimension, TextureViewDimension, AddressMode};
-use crate::{assets::{TextureHandle, server::SamplerHandle}, resources::image::Image};
-
+use std::sync::atomic::{AtomicU64, Ordering};
+use uuid::Uuid;
+use wgpu::{AddressMode, TextureDimension, TextureFormat, TextureViewDimension};
 
 /// Texture source specifier.
 ///
-/// Allows materials to reference textures from the AssetServer or
+/// Allows materials to reference textures from the `AssetServer` or
 /// internal render target attachments.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TextureSource {
-    /// Asset from AssetServer (with version tracking and automatic upload)
+    /// Asset from `AssetServer` (with version tracking and automatic upload)
     Asset(TextureHandle),
     /// Pure GPU resource (e.g., Render Target), directly using its Resource ID
-    /// This ID is typically assigned by RenderGraph or TexturePool
+    /// This ID is typically assigned by `RenderGraph` or `TexturePool`
     Attachment(u64, TextureViewDimension),
 }
 
@@ -30,22 +32,19 @@ impl From<TextureHandle> for Option<TextureSource> {
     }
 }
 
-
 /// Sampler source strategy for texture binding.
 ///
 /// Specifies which sampler to use when binding a texture.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SamplerSource {
     /// Automatic matching: Uses the sampler settings associated with the texture asset.
-    /// ResourceManager looks up the sampler from the TextureHandle's metadata.
+    /// `ResourceManager` looks up the sampler from the `TextureHandle`'s metadata.
     FromTexture(TextureHandle),
 
     /// Explicit specification: Uses a specific Sampler Asset.
     Asset(SamplerHandle),
 
-
     Default,
-
 }
 
 // Syntactic sugar: allows deriving SamplerSource directly from TextureHandle
@@ -70,7 +69,6 @@ impl From<TextureSource> for SamplerSource {
     }
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureSampler {
     pub address_mode_u: wgpu::AddressMode,
@@ -84,7 +82,6 @@ pub struct TextureSampler {
     pub compare: Option<wgpu::CompareFunction>,
     /// Advanced: anisotropic filtering level (1 = disabled)
     pub anisotropy_clamp: u16,
-
 }
 
 impl Default for TextureSampler {
@@ -102,13 +99,11 @@ impl Default for TextureSampler {
     }
 }
 
-
 impl From<&Sampler> for TextureSampler {
     fn from(asset: &Sampler) -> Self {
         asset.descriptor
     }
 }
-
 
 // ============================================================================
 // Sampler Asset (standalone sampler resource)
@@ -119,12 +114,13 @@ pub struct Sampler {
     pub uuid: Uuid,
 
     pub name: Option<Cow<'static, str>>,
-    
+
     /// Core sampling parameters
     pub descriptor: TextureSampler,
 }
 
 impl Sampler {
+    #[must_use]
     pub fn new(descriptor: TextureSampler) -> Self {
         Self {
             uuid: Uuid::new_v4(),
@@ -134,10 +130,10 @@ impl Sampler {
         }
     }
 
+    #[must_use]
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }
-
 }
 
 // Since TextureSampler implements Default, Sampler can implement it too
@@ -157,21 +153,21 @@ pub struct Texture {
 
     // #[cfg(debug_assertions)]
     pub name: Option<Cow<'static, str>>,
-    
+
     pub image: Image,
 
     pub view_dimension: TextureViewDimension,
 
     pub sampler: TextureSampler,
     //pub transform: TextureTransform,
-
     pub generate_mipmaps: bool,
-    
+
     version: AtomicU64,
 }
 
 impl Texture {
     /// Creates a Texture from an existing Image.
+    #[must_use]
     pub fn new(name: Option<&str>, image: Image, view_dimension: TextureViewDimension) -> Self {
         Self {
             uuid: Uuid::new_v4(),
@@ -187,21 +183,34 @@ impl Texture {
     }
 
     /// Creates a 2D texture (automatically creates the Image).
-    pub fn new_2d(name: Option<&str>, width: u32, height: u32, data: Option<Vec<u8>>, format: TextureFormat) -> Self {
-        let image = Image::new(
-            name, width, height, 1, 
-            TextureDimension::D2, 
-            format, data
-        );
+    #[must_use]
+    pub fn new_2d(
+        name: Option<&str>,
+        width: u32,
+        height: u32,
+        data: Option<Vec<u8>>,
+        format: TextureFormat,
+    ) -> Self {
+        let image = Image::new(name, width, height, 1, TextureDimension::D2, format, data);
         Self::new(name, image, TextureViewDimension::D2)
     }
 
     /// Creates a Cube Map texture.
-    pub fn new_cube(name: Option<&str>, size: u32, data: Option<Vec<u8>>, format: TextureFormat) -> Self {
+    #[must_use]
+    pub fn new_cube(
+        name: Option<&str>,
+        size: u32,
+        data: Option<Vec<u8>>,
+        format: TextureFormat,
+    ) -> Self {
         let image = Image::new(
-            name, size, size, 6, // 6 layers
+            name,
+            size,
+            size,
+            6,                    // 6 layers
             TextureDimension::D2, // Physical dimension is 2D
-            format, data
+            format,
+            data,
         );
         let mut tex = Self::new(name, image, TextureViewDimension::Cube);
         // Cube maps default to Clamp sampling
@@ -218,7 +227,9 @@ impl Texture {
         let w = self.image.width();
         let h = self.image.height();
         let max_dim = std::cmp::max(w, h);
-        if max_dim == 0 { return 1; }
+        if max_dim == 0 {
+            return 1;
+        }
         (max_dim as f32).log2().floor() as u32 + 1
     }
 
@@ -231,21 +242,33 @@ impl Texture {
     }
 
     /// Creates a solid color texture (1x1).
+    #[must_use]
     pub fn create_solid_color(name: Option<&str>, color: [u8; 4]) -> Texture {
-        Self::new_2d(name, 1, 1, Some(color.to_vec()), wgpu::TextureFormat::Rgba8UnormSrgb)
+        Self::new_2d(
+            name,
+            1,
+            1,
+            Some(color.to_vec()),
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+        )
     }
 
     pub fn needs_update(&mut self) {
         self.version.fetch_add(1, Ordering::Relaxed);
     }
 
-
     /// Creates a checkerboard test texture.
-    pub fn create_checkerboard(name: Option<&str>, width: u32, height: u32, check_size: u32) -> Self {
+    #[must_use]
+    pub fn create_checkerboard(
+        name: Option<&str>,
+        width: u32,
+        height: u32,
+        check_size: u32,
+    ) -> Self {
         let mut data = Vec::with_capacity((width * height * 4) as usize);
-        
+
         let color_a = [255, 255, 255, 255]; // White
-        let color_b = [0, 0, 0, 255];       // Black (or use pink [255, 0, 255, 255] for debugging)
+        let color_b = [0, 0, 0, 255]; // Black (or use pink [255, 0, 255, 255] for debugging)
 
         for y in 0..height {
             for x in 0..width {
@@ -253,7 +276,7 @@ impl Texture {
                 let cx = x / check_size;
                 let cy = y / check_size;
                 let is_a = (cx + cy).is_multiple_of(2);
-                
+
                 if is_a {
                     data.extend_from_slice(&color_a);
                 } else {
@@ -262,6 +285,12 @@ impl Texture {
             }
         }
 
-        Self::new_2d(name, width, height, Some(data), wgpu::TextureFormat::Rgba8Unorm)
+        Self::new_2d(
+            name,
+            width,
+            height,
+            Some(data),
+            wgpu::TextureFormat::Rgba8Unorm,
+        )
     }
 }

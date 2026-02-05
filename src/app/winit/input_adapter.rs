@@ -7,7 +7,7 @@ use winit::keyboard::{KeyCode, PhysicalKey};
 
 use crate::resources::input::{ButtonState, Input, Key, MouseButton};
 
-/// 将 Winit 的 PhysicalKey 转换为引擎的 Key
+/// 将 Winit 的 `PhysicalKey` 转换为引擎的 Key
 #[must_use]
 pub fn translate_key(physical_key: PhysicalKey) -> Option<Key> {
     let PhysicalKey::Code(code) = physical_key else {
@@ -135,7 +135,7 @@ pub fn translate_key(physical_key: PhysicalKey) -> Option<Key> {
     Some(key)
 }
 
-/// 将 Winit 的 MouseButton 转换为引擎的 MouseButton
+/// 将 Winit 的 `MouseButton` 转换为引擎的 `MouseButton`
 #[must_use]
 pub fn translate_mouse_button(button: winit::event::MouseButton) -> MouseButton {
     match button {
@@ -148,7 +148,7 @@ pub fn translate_mouse_button(button: winit::event::MouseButton) -> MouseButton 
     }
 }
 
-/// 将 Winit 的 ElementState 转换为引擎的 ButtonState
+/// 将 Winit 的 `ElementState` 转换为引擎的 `ButtonState`
 #[must_use]
 pub fn translate_element_state(state: ElementState) -> ButtonState {
     match state {

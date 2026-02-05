@@ -1,12 +1,11 @@
-use std::sync::{Arc, RwLock};
 #[cfg(debug_assertions)]
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicU64, AtomicU32, Ordering};
+use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
 // 全局 Image ID 生成器 (为了高性能 Map 查找，使用 u64)
 static NEXT_IMAGE_ID: AtomicU64 = AtomicU64::new(1);
-
 
 // 把所有可能触发 Re-creation 的元数据打包
 #[derive(Debug, Clone, Copy)]
@@ -32,9 +31,9 @@ pub struct ImageInner {
 
     // 数据内容 (像素)
     pub data: RwLock<Option<Vec<u8>>>,
-    
+
     // 版本控制
-    pub version: AtomicU64,  // 数据版本 (Data 内容变更时改变)
+    pub version: AtomicU64,       // 数据版本 (Data 内容变更时改变)
     pub generation_id: AtomicU64, // 结构版本 (尺寸/格式变更时改变)
 }
 
@@ -55,35 +54,36 @@ impl ImageInner {
 pub struct Image(Arc<ImageInner>);
 
 impl PartialEq for Image {
-    fn eq(&self, other: &Self) -> bool { self.0.id == other.0.id }
+    fn eq(&self, other: &Self) -> bool {
+        self.0.id == other.0.id
+    }
 }
 impl Eq for Image {}
 impl std::hash::Hash for Image {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) { self.0.id.hash(state); }
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.id.hash(state);
+    }
 }
 
 impl Image {
     pub fn new(
         _label: Option<&str>,
-        width: u32, 
-        height: u32, 
+        width: u32,
+        height: u32,
         depth_or_array_layers: u32,
         dimension: wgpu::TextureDimension,
-        format: wgpu::TextureFormat, 
-        data: Option<Vec<u8>>
+        format: wgpu::TextureFormat,
+        data: Option<Vec<u8>>,
     ) -> Self {
-        let image_descriptor = ImageDescriptor {
-            dimension,
-            format,
-        };
+        let image_descriptor = ImageDescriptor { dimension, format };
         Self(Arc::new(ImageInner {
             id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed),
             uuid: Uuid::new_v4(),
             #[cfg(debug_assertions)]
-            label: _label
-                .map(|s| Cow::Owned(s.to_string()))
-                .unwrap_or(Cow::Borrowed("Unnamed Image")),
-            
+            label: _label.map_or(Cow::Borrowed("Unnamed Image"), |s| {
+                Cow::Owned(s.to_string())
+            }),
+
             width: AtomicU32::new(width),
             height: AtomicU32::new(height),
             depth: AtomicU32::new(depth_or_array_layers),
@@ -97,20 +97,51 @@ impl Image {
         }))
     }
 
-    pub fn id(&self) -> u64 { self.0.id }
-    pub fn uuid(&self) -> Uuid { self.0.uuid }
-    pub fn version(&self) -> u64 { self.0.version.load(Ordering::Relaxed) }
-    pub fn generation_id(&self) -> u64 { self.0.generation_id.load(Ordering::Relaxed) }
-    
-    pub fn width(&self) -> u32 {self.0.width.load(Ordering::Relaxed)}
-    pub fn height(&self) -> u32 {self.0.height.load(Ordering::Relaxed)}
-    pub fn depth(&self) -> u32 {self.0.depth.load(Ordering::Relaxed)}
-
-    pub fn format(&self) -> wgpu::TextureFormat {
-        self.0.description.read().expect("Image descriptor lock poisoned").format
+    #[must_use]
+    pub fn id(&self) -> u64 {
+        self.0.id
     }
+    #[must_use]
+    pub fn uuid(&self) -> Uuid {
+        self.0.uuid
+    }
+    #[must_use]
+    pub fn version(&self) -> u64 {
+        self.0.version.load(Ordering::Relaxed)
+    }
+    #[must_use]
+    pub fn generation_id(&self) -> u64 {
+        self.0.generation_id.load(Ordering::Relaxed)
+    }
+
+    #[must_use]
+    pub fn width(&self) -> u32 {
+        self.0.width.load(Ordering::Relaxed)
+    }
+    #[must_use]
+    pub fn height(&self) -> u32 {
+        self.0.height.load(Ordering::Relaxed)
+    }
+    #[must_use]
+    pub fn depth(&self) -> u32 {
+        self.0.depth.load(Ordering::Relaxed)
+    }
+
+    #[must_use]
+    pub fn format(&self) -> wgpu::TextureFormat {
+        self.0
+            .description
+            .read()
+            .expect("Image descriptor lock poisoned")
+            .format
+    }
+    #[must_use]
     pub fn dimension(&self) -> wgpu::TextureDimension {
-        self.0.description.read().expect("Image descriptor lock poisoned").dimension
+        self.0
+            .description
+            .read()
+            .expect("Image descriptor lock poisoned")
+            .dimension
     }
 
     /// 更新数据
@@ -123,7 +154,7 @@ impl Image {
     pub fn resize(&self, width: u32, height: u32) {
         let old_w = self.width();
         let old_h = self.height();
-        
+
         if old_w != width || old_h != height {
             self.0.width.store(width, Ordering::Relaxed);
             self.0.height.store(height, Ordering::Relaxed);
@@ -132,7 +163,11 @@ impl Image {
     }
 
     pub fn set_format(&self, format: wgpu::TextureFormat) {
-        let mut desc = self.0.description.write().expect("Image descriptor lock poisoned");
+        let mut desc = self
+            .0
+            .description
+            .write()
+            .expect("Image descriptor lock poisoned");
         if desc.format != format {
             desc.format = format;
             self.0.generation_id.fetch_add(1, Ordering::Relaxed);
@@ -143,5 +178,7 @@ impl Image {
 // Deref 方便直接访问内部数据 (只读)
 impl std::ops::Deref for Image {
     type Target = ImageInner;
-    fn deref(&self) -> &Self::Target { &self.0 }
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
 }

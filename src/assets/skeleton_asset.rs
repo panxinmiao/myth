@@ -1,4 +1,4 @@
-use glam::{Affine3A};
+use glam::Affine3A;
 use uuid::Uuid;
 
 pub struct SkeletonAsset {

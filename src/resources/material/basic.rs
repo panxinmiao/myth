@@ -22,20 +22,24 @@ pub struct MeshBasicMaterial {
     pub(crate) settings: RwLock<MaterialSettings>,
     pub(crate) version: AtomicU64,
 
-    pub(crate) textures : RwLock<MeshBasicTextureSet>,
+    pub(crate) textures: RwLock<MeshBasicTextureSet>,
 
     pub auto_sync_texture_to_uniforms: bool,
 }
 
 impl MeshBasicMaterial {
+    #[must_use]
     pub fn new(color: Vec4) -> Self {
-        let uniform_data = MeshBasicUniforms { color, ..Default::default() };
-        
+        let uniform_data = MeshBasicUniforms {
+            color,
+            ..Default::default()
+        };
+
         Self {
             uniforms: CpuBuffer::new(
-                uniform_data, 
+                uniform_data,
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("MeshBasicUniforms")
+                Some("MeshBasicUniforms"),
             ),
             settings: RwLock::new(MaterialSettings::default()),
             version: AtomicU64::new(0),
@@ -45,11 +49,10 @@ impl MeshBasicMaterial {
             auto_sync_texture_to_uniforms: false,
         }
     }
-
 }
 
 impl_material_api!(
-    MeshBasicMaterial, 
+    MeshBasicMaterial,
     MeshBasicUniforms,
     uniforms: [
         (color,   Vec4, "Base color."),

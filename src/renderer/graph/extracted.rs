@@ -13,16 +13,16 @@ use std::collections::HashSet;
 
 use glam::Mat4;
 
+use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::renderer::core::{BindGroupContext, ResourceManager};
 use crate::resources::shader_defines::ShaderDefines;
+use crate::scene::camera::RenderCamera;
 use crate::scene::environment::Environment;
 use crate::scene::{NodeHandle, Scene, SkeletonKey};
-use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
-use crate::scene::camera::RenderCamera;
 
 /// Minimal render item, containing only data needed by GPU
-/// 
-/// Uses Clone instead of Copy because SkinBinding contains non-Copy types
+///
+/// Uses Clone instead of Copy because `SkinBinding` contains non-Copy types
 #[derive(Clone)]
 pub struct ExtractedRenderItem {
     /// Node handle (for debugging and cache write-back)
@@ -42,7 +42,6 @@ pub struct ExtractedRenderItem {
 
     /// Squared distance to camera (for sorting)
     pub distance_sq: f32,
-
 }
 
 /// Extracted skeleton data
@@ -52,7 +51,7 @@ pub struct ExtractedSkeleton {
 }
 
 /// Extracted scene data
-/// 
+///
 /// This is a lightweight structure containing only the minimal dataset needed for current frame rendering.
 /// Populated during Extract phase, after which the Scene borrow can be safely released.
 pub struct ExtractedScene {
@@ -67,7 +66,6 @@ pub struct ExtractedScene {
 
     collected_meshes: Vec<CollectedMesh>,
     collected_skeleton_keys: HashSet<SkeletonKey>,
-
 }
 
 struct CollectedMesh {
@@ -77,6 +75,7 @@ struct CollectedMesh {
 
 impl ExtractedScene {
     /// Creates an empty extracted scene
+    #[must_use]
     pub fn new() -> Self {
         Self {
             render_items: Vec::new(),
@@ -91,6 +90,7 @@ impl ExtractedScene {
     }
 
     /// Pre-allocates capacity
+    #[must_use]
     pub fn with_capacity(item_capacity: usize) -> Self {
         Self {
             render_items: Vec::with_capacity(item_capacity),
@@ -111,20 +111,31 @@ impl ExtractedScene {
         self.scene_defines.clear();
         self.scene_id = 0;
 
-
         self.collected_meshes.clear();
         self.collected_skeleton_keys.clear();
     }
 
     /// Reuse current instance memory, extract data from Scene
-    pub fn extract_into(&mut self, scene: &mut Scene, camera: &RenderCamera, assets: &AssetServer, resource_manager: &mut ResourceManager) {
+    pub fn extract_into(
+        &mut self,
+        scene: &mut Scene,
+        camera: &RenderCamera,
+        assets: &AssetServer,
+        resource_manager: &mut ResourceManager,
+    ) {
         self.clear();
-        self.extract_render_items(scene, camera, assets , resource_manager);
+        self.extract_render_items(scene, camera, assets, resource_manager);
         self.extract_environment(scene);
     }
 
     /// Extract visible render items
-    fn extract_render_items(&mut self, scene: &mut Scene, camera: &RenderCamera, assets: &AssetServer, resource_manager: &mut ResourceManager) {
+    fn extract_render_items(
+        &mut self,
+        scene: &mut Scene,
+        camera: &RenderCamera,
+        assets: &AssetServer,
+        resource_manager: &mut ResourceManager,
+    ) {
         let frustum = camera.frustum;
         let camera_pos = camera.position;
 
@@ -132,10 +143,9 @@ impl ExtractedScene {
         // Phase 1: Frustum culling & collection (holding read lock)
         // =========================================================
         {
-
             let geo_guard = assets.geometries.read_lock();
 
-            for (node_handle, mesh) in scene.meshes.iter() {
+            for (node_handle, mesh) in &scene.meshes {
                 if !mesh.visible {
                     continue;
                 }
@@ -152,7 +162,7 @@ impl ExtractedScene {
                 // let mat_handle = mesh.material;
 
                 let Some(geometry) = geo_guard.map.get(geo_handle) else {
-                    log::warn!("Node {:?} refers to missing Geometry {:?}", node_handle, geo_handle);
+                    log::warn!("Node {node_handle:?} refers to missing Geometry {geo_handle:?}");
                     continue;
                 };
 
@@ -200,9 +210,7 @@ impl ExtractedScene {
                 if let Some(binding) = skin_binding {
                     self.collected_skeleton_keys.insert(binding.skeleton);
                 }
-
             }
-
         }
 
         // =========================================================
@@ -211,7 +219,7 @@ impl ExtractedScene {
 
         // Prepare skeleton data
         for skeleton_key in &self.collected_skeleton_keys {
-            if let Some(skeleton) = scene.skeleton_pool.get(*skeleton_key){
+            if let Some(skeleton) = scene.skeleton_pool.get(*skeleton_key) {
                 resource_manager.prepare_skeleton(skeleton);
             }
         }
@@ -234,20 +242,21 @@ impl ExtractedScene {
             } else {
                 continue;
             };
-            
+
             let node_world = node.transform.world_matrix;
             let world_matrix = Mat4::from(node_world);
 
-
-            let skeleton = collected_mesh.skeleton.and_then(|key| scene.skeleton_pool.get(key).map(|s| s));
+            let skeleton = collected_mesh
+                .skeleton
+                .and_then(|key| scene.skeleton_pool.get(key).map(|s| s));
             mesh.update_morph_uniforms();
-            
-            let object_bind_group = if let Some(binding) = resource_manager.prepare_mesh(assets, mesh, skeleton) {
-                binding
-            } else {
-                continue;
-            };
 
+            let object_bind_group =
+                if let Some(binding) = resource_manager.prepare_mesh(assets, mesh, skeleton) {
+                    binding
+                } else {
+                    continue;
+                };
 
             let distance_sq = camera_pos.distance_squared(node_world.translation);
             let mut item_shader_defines = ShaderDefines::with_capacity(1);
@@ -257,10 +266,10 @@ impl ExtractedScene {
             }
 
             let has_negative_scale = world_matrix.determinant() < 0.0;
-            let has_negative_scale_flag = (has_negative_scale as u32) << 0;
+            let has_negative_scale_flag = u32::from(has_negative_scale);
 
             let has_skeleton = skeleton.is_some();
-            let has_skeleton_flag = (has_skeleton as u32) << 1;
+            let has_skeleton_flag = u32::from(has_skeleton) << 1;
 
             // compose item variant flags (has_negative_scale, has_skeleton)
             let item_variant_flags = has_negative_scale_flag | has_skeleton_flag;
@@ -271,14 +280,12 @@ impl ExtractedScene {
                 object_bind_group,
                 geometry: mesh.geometry,
                 material: mesh.material,
-                item_variant_flags: item_variant_flags,
+                item_variant_flags,
                 item_shader_defines,
                 distance_sq,
             });
         }
     }
-
-
 
     /// Extract environment data
     fn extract_environment(&mut self, scene: &Scene) {
@@ -290,12 +297,14 @@ impl ExtractedScene {
 
     /// Get render item count
     #[inline]
+    #[must_use]
     pub fn render_item_count(&self) -> usize {
         self.render_items.len()
     }
 
     /// Check if empty
     #[inline]
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.render_items.is_empty()
     }
@@ -307,7 +316,6 @@ impl Default for ExtractedScene {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -318,6 +326,10 @@ mod tests {
         let size = std::mem::size_of::<ExtractedRenderItem>();
         println!("ExtractedRenderItem size: {} bytes", size);
         // Should be within reasonable range (not exceeding 256 bytes)
-        assert!(size < 256, "ExtractedRenderItem is too large: {} bytes", size);
+        assert!(
+            size < 256,
+            "ExtractedRenderItem is too large: {} bytes",
+            size
+        );
     }
 }

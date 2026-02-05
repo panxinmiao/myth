@@ -37,24 +37,21 @@
 //! prefab.instantiate(&mut scene);
 //! ```
 
-pub mod server;
-pub mod loaders;
-pub mod skeleton_asset;
 pub mod handle;
 pub mod io;
-pub mod storage;
+pub mod loaders;
 pub mod prefab;
+pub mod server;
+pub mod skeleton_asset;
+pub mod storage;
 
-pub use server::{
-    AssetServer,
-    GeometryHandle, MaterialHandle, TextureHandle, SamplerHandle,
-};
+pub use server::{AssetServer, GeometryHandle, MaterialHandle, SamplerHandle, TextureHandle};
 
+pub use handle::{AssetTracker, StrongHandle, TrackedAsset, WeakHandle};
+pub use io::{AssetReader, AssetReaderVariant};
 #[cfg(feature = "gltf")]
 pub use loaders::GltfLoader;
-pub use handle::{AssetTracker, StrongHandle, WeakHandle, TrackedAsset};
 pub use prefab::{Prefab, PrefabNode, PrefabSkeleton, SharedPrefab};
-pub use io::{AssetReader, AssetReaderVariant};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use io::FileAssetReader;
@@ -62,19 +59,19 @@ pub use io::FileAssetReader;
 #[cfg(all(feature = "http"))]
 pub use io::HttpAssetReader;
 
+use anyhow::Context;
 use image::GenericImageView;
 use std::path::Path;
-use anyhow::Context;
 
 pub fn load_image_from_file(path: impl AsRef<Path>) -> anyhow::Result<(Vec<u8>, u32, u32)> {
     let img = image::open(path).context("Failed to open image file")?;
-    
+
     let (width, height) = img.dimensions();
-    
+
     let rgba_image = img.into_rgba8();
-    
+
     let data = rgba_image.into_raw();
-    
+
     Ok((data, width, height))
 }
 
@@ -84,9 +81,12 @@ pub enum ColorSpace {
     Linear,
 }
 
-pub fn load_texture_from_file(path: impl AsRef<Path>, color_space: ColorSpace) -> anyhow::Result<crate::resources::texture::Texture> {
+pub fn load_texture_from_file(
+    path: impl AsRef<Path>,
+    color_space: ColorSpace,
+) -> anyhow::Result<crate::resources::texture::Texture> {
     let (data, width, height) = load_image_from_file(&path)?;
-    
+
     let texture = crate::resources::texture::Texture::new_2d(
         path.as_ref().to_str(),
         width,
@@ -95,15 +95,15 @@ pub fn load_texture_from_file(path: impl AsRef<Path>, color_space: ColorSpace) -
         match color_space {
             ColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
             ColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
-        }
+        },
     );
-    
+
     Ok(texture)
 }
 
 /// Loads an HDR environment map in Equirectangular format.
 ///
-/// Returns a 2D texture with Rgba16Float format suitable for IBL.
+/// Returns a 2D texture with `Rgba16Float` format suitable for IBL.
 ///
 /// # Arguments
 ///
@@ -112,22 +112,24 @@ pub fn load_texture_from_file(path: impl AsRef<Path>, color_space: ColorSpace) -
 /// # Returns
 ///
 /// A texture that can be used for image-based lighting.
-pub fn load_hdr_texture_from_file(path: impl AsRef<Path>) -> anyhow::Result<crate::resources::texture::Texture> {
+pub fn load_hdr_texture_from_file(
+    path: impl AsRef<Path>,
+) -> anyhow::Result<crate::resources::texture::Texture> {
     let img = image::open(&path).context("Failed to open HDR file")?;
-    
+
     let width = img.width();
     let height = img.height();
-    
+
     let rgb32f = img.into_rgb32f();
-    
+
     let mut rgba_f16_data = Vec::with_capacity((width * height * 4) as usize * 2);
-    
+
     for pixel in rgb32f.pixels() {
         let r = half::f16::from_f32(pixel[0]);
         let g = half::f16::from_f32(pixel[1]);
         let b = half::f16::from_f32(pixel[2]);
         let a = half::f16::from_f32(1.0);
-        
+
         rgba_f16_data.extend_from_slice(&r.to_le_bytes());
         rgba_f16_data.extend_from_slice(&g.to_le_bytes());
         rgba_f16_data.extend_from_slice(&b.to_le_bytes());
@@ -149,39 +151,42 @@ pub fn load_hdr_texture_from_file(path: impl AsRef<Path>) -> anyhow::Result<crat
         image,
         wgpu::TextureViewDimension::D2,
     );
-    
+
     texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
     texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
     texture.sampler.mag_filter = wgpu::FilterMode::Linear;
     texture.sampler.min_filter = wgpu::FilterMode::Linear;
-    
+
     Ok(texture)
 }
 
-pub fn load_cube_texture_from_files(paths: [impl AsRef<Path>; 6], color_space: ColorSpace) -> anyhow::Result<crate::resources::texture::Texture> {
+pub fn load_cube_texture_from_files(
+    paths: [impl AsRef<Path>; 6],
+    color_space: ColorSpace,
+) -> anyhow::Result<crate::resources::texture::Texture> {
     let mut face_data = Vec::with_capacity(6);
     let mut width = 0;
     let mut height = 0;
-    
-    for path in paths.iter() {
+
+    for path in &paths {
         let (data, w, h) = load_image_from_file(path)?;
         if width == 0 && height == 0 {
             width = w;
             height = h;
-        } else {
-            if width != w || height != h {
-                return Err(anyhow::anyhow!("Cube texture faces must have the same dimensions"));
-            }
+        } else if width != w || height != h {
+            return Err(anyhow::anyhow!(
+                "Cube texture faces must have the same dimensions"
+            ));
         }
         face_data.push(data);
     }
-    
+
     // Merge all six faces' data
     let mut combined_data = Vec::with_capacity((width * height * 4 * 6) as usize);
-    for face in face_data.iter() {
+    for face in &face_data {
         combined_data.extend_from_slice(face);
     }
-    
+
     let texture = crate::resources::texture::Texture::new_cube(
         None,
         width,
@@ -189,8 +194,8 @@ pub fn load_cube_texture_from_files(paths: [impl AsRef<Path>; 6], color_space: C
         match color_space {
             ColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
             ColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
-        }
+        },
     );
-    
+
     Ok(texture)
-}   
+}

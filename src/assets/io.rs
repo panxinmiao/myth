@@ -7,7 +7,10 @@ use std::{borrow::Cow, sync::Arc};
 pub trait AssetReader: Send + Sync {
     /// 异步读取资源字节流
     #[cfg(not(target_arch = "wasm32"))]
-    fn read_bytes(&self, uri: &str) -> impl std::future::Future<Output = anyhow::Result<Vec<u8>>> + Send;
+    fn read_bytes(
+        &self,
+        uri: &str,
+    ) -> impl std::future::Future<Output = anyhow::Result<Vec<u8>>> + Send;
 
     /// WASM 下 Future 不需要 Send
     #[cfg(target_arch = "wasm32")]
@@ -33,6 +36,7 @@ impl FileAssetReader {
     }
 
     #[inline]
+    #[must_use]
     pub fn root_path(&self) -> &Path {
         &self.root_path
     }
@@ -59,15 +63,15 @@ pub struct HttpAssetReader {
 impl HttpAssetReader {
     pub fn new(url_str: &str) -> anyhow::Result<Self> {
         let url = reqwest::Url::parse(url_str)?;
-        let root_url = if !url.path().ends_with('/') {
+        let root_url = if url.path().ends_with('/') {
+            url
+        } else {
             let mut u = url.clone();
             if let Ok(mut segments) = u.path_segments_mut() {
                 segments.pop();
                 segments.push("");
             }
             u
-        } else {
-            url
         };
 
         let client = reqwest::Client::builder();
@@ -76,7 +80,6 @@ impl HttpAssetReader {
         #[cfg(not(target_arch = "wasm32"))]
         let client = client.timeout(std::time::Duration::from_secs(30));
 
-        
         Ok(Self {
             root_url,
             client: client.build()?,
@@ -84,6 +87,7 @@ impl HttpAssetReader {
     }
 
     #[inline]
+    #[must_use]
     pub fn root_url(&self) -> &reqwest::Url {
         &self.root_url
     }
@@ -114,7 +118,6 @@ pub enum AssetReaderVariant {
 impl AssetReaderVariant {
     /// 从路径或 URL 自动创建合适的读取器
     pub fn new(source: &impl AssetSource) -> anyhow::Result<Self> {
-
         let uri = source.uri();
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -133,7 +136,7 @@ impl AssetReaderVariant {
                 Ok(Self::File(Arc::new(FileAssetReader::new(uri.as_ref()))))
             }
         }
-        
+
         #[cfg(target_arch = "wasm32")]
         {
             // WASM 统一走 HTTP 读取
@@ -143,16 +146,16 @@ impl AssetReaderVariant {
             }
 
             let full_uri = if !source.is_http() {
-                let window = web_sys::window()
-                    .ok_or_else(|| anyhow::anyhow!("No window found"))?;
-                
+                let window = web_sys::window().ok_or_else(|| anyhow::anyhow!("No window found"))?;
+
                 let location = window.location();
-                let href = location.href()
+                let href = location
+                    .href()
                     .map_err(|e| anyhow::anyhow!("Failed to get href: {:?}", e))?;
 
                 let base = reqwest::Url::parse(&href)
                     .map_err(|e| anyhow::anyhow!("Invalid base URL: {}", e))?;
-                
+
                 base.join(&uri)
                     .map_err(|e| anyhow::anyhow!("Failed to join URL: {}", e))?
                     .to_string()
@@ -173,9 +176,7 @@ impl AssetReaderVariant {
             Self::Http(r) => r.read_bytes(uri).await,
         }
     }
-
 }
-
 
 pub trait AssetSource: std::fmt::Debug + Send + Sync {
     fn uri(&self) -> Cow<'_, str>;
@@ -197,7 +198,11 @@ impl AssetSource for str {
         let name = self.rsplit('/').next().unwrap_or(self);
         // 处理可能存在的 URL query 参数 "bar.png?v=1" -> "bar.png"
         let name = name.split('?').next().unwrap_or(name);
-        if name.is_empty() { None } else { Some(Cow::Borrowed(name)) }
+        if name.is_empty() {
+            None
+        } else {
+            Some(Cow::Borrowed(name))
+        }
     }
 
     fn is_http(&self) -> bool {
@@ -243,7 +248,7 @@ impl AssetSource for Path {
     }
 
     fn is_http(&self) -> bool {
-        false 
+        false
     }
 }
 
@@ -259,7 +264,7 @@ impl AssetSource for &Path {
     }
 
     fn is_http(&self) -> bool {
-        false 
+        false
     }
 }
 

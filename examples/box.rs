@@ -20,8 +20,7 @@ impl AppHandler for TexturedBox {
 
         basic_mat.set_map(Some(tex_handle));
         basic_mat.set_color(Vec4::new(1.0, 1.0, 1.0, 1.0));
-      
-        
+
         let geo_handle = engine.assets.geometries.add(geometry);
         let mat_handle = engine.assets.materials.add(basic_mat);
 
@@ -35,12 +34,12 @@ impl AppHandler for TexturedBox {
         // 4. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
-        
+
         if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 3.0, 10.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
-        
+
         scene.active_camera = Some(cam_node_id);
 
         let controls = OrbitControls::new(Vec3::new(0.0, 3.0, 10.0), Vec3::ZERO);
@@ -61,7 +60,8 @@ impl AppHandler for TexturedBox {
         let scene = engine.scene_manager.active_scene_mut().unwrap();
         // 轨道控制器
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, &engine.input, camera.fov, frame.dt);
+            self.controls
+                .update(transform, &engine.input, camera.fov, frame.dt);
         }
     }
 }

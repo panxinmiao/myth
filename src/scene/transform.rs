@@ -1,4 +1,4 @@
-use glam::{Affine3A, Mat4, Quat, Vec3, Mat3, EulerRot};
+use glam::{Affine3A, EulerRot, Mat3, Mat4, Quat, Vec3};
 
 /// Transform component for scene nodes.
 ///
@@ -51,6 +51,7 @@ pub struct Transform {
 
 impl Transform {
     /// Creates a new transform with identity values.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             position: Vec3::ZERO,
@@ -78,11 +79,8 @@ impl Transform {
             || self.force_update;
 
         if changed {
-            self.local_matrix = Affine3A::from_scale_rotation_translation(
-                self.scale,
-                self.rotation,
-                self.position,
-            );
+            self.local_matrix =
+                Affine3A::from_scale_rotation_translation(self.scale, self.rotation, self.position);
 
             self.last_position = self.position;
             self.last_rotation = self.rotation;
@@ -105,6 +103,7 @@ impl Transform {
     }
 
     /// Returns the rotation as Euler angles (XYZ order) in radians.
+    #[must_use]
     pub fn rotation_euler(&self) -> Vec3 {
         let (x, y, z) = self.rotation.to_euler(EulerRot::XYZ);
         Vec3::new(x, y, z)
@@ -116,16 +115,19 @@ impl Transform {
     }
 
     #[inline]
+    #[must_use]
     pub fn local_matrix(&self) -> &Affine3A {
         &self.local_matrix
     }
 
     #[inline]
+    #[must_use]
     pub fn world_matrix(&self) -> &Affine3A {
         &self.world_matrix
     }
 
     #[inline]
+    #[must_use]
     pub fn world_matrix_as_mat4(&self) -> Mat4 {
         Mat4::from(self.world_matrix)
     }

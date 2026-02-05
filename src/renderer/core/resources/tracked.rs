@@ -1,5 +1,5 @@
-use std::sync::atomic::{AtomicU64, Ordering};
 use std::ops::Deref;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// 全局唯一 ID 生成器
 static NEXT_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -9,7 +9,7 @@ fn next_id() -> u64 {
 }
 
 /// 带有唯一 ID 的资源包装器
-/// 用于给 FrameResources 或临时资源赋予身份标识
+/// 用于给 `FrameResources` 或临时资源赋予身份标识
 pub struct Tracked<T> {
     inner: T,
     id: u64,
@@ -24,7 +24,7 @@ impl<T> Tracked<T> {
         }
     }
 
-    /// 获取唯一 ID (作为 BindGroup Cache 的 Key)
+    /// 获取唯一 ID (作为 `BindGroup` Cache 的 Key)
     #[inline]
     pub fn id(&self) -> u64 {
         self.id

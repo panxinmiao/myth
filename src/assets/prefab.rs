@@ -25,6 +25,7 @@ pub struct PrefabNode {
 }
 
 impl PrefabNode {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             name: None,
@@ -57,8 +58,8 @@ pub struct PrefabSkeleton {
 }
 
 /// Prefab: intermediate data structure parsed from resource files like glTF
-/// 
-/// Prefab is a thread-safe pure data structure that doesn't contain any NodeHandle or Scene references.
+///
+/// Prefab is a thread-safe pure data structure that doesn't contain any `NodeHandle` or Scene references.
 /// Use `Scene::instantiate()` method to instantiate a Prefab into scene nodes.
 #[derive(Debug, Clone)]
 pub struct Prefab {
@@ -73,6 +74,7 @@ pub struct Prefab {
 }
 
 impl Prefab {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             nodes: Vec::new(),

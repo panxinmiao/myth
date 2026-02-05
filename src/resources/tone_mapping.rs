@@ -29,7 +29,7 @@ pub enum ToneMappingMode {
     Cineon,
     /// ACES Filmic (industry standard)
     ACESFilmic,
-    /// AgX tonemapper (modern, excellent color handling)
+    /// `AgX` tonemapper (modern, excellent color handling)
     AgX,
 }
 
@@ -49,8 +49,9 @@ impl ToneMappingMode {
         };
         defines.set("TONE_MAPPING_MODE", mode_str);
     }
-    
+
     /// Returns a human-readable name for the mode.
+    #[must_use]
     pub fn name(&self) -> &'static str {
         match self {
             Self::Linear => "Linear",
@@ -61,8 +62,9 @@ impl ToneMappingMode {
             Self::AgX => "AgX",
         }
     }
-    
+
     /// Returns all available tone mapping modes.
+    #[must_use]
     pub fn all() -> &'static [ToneMappingMode] {
         &[
             Self::Linear,
@@ -96,7 +98,7 @@ pub struct ToneMappingSettings {
     pub mode: ToneMappingMode,
     /// Exposure multiplier (default: 1.0)
     pub exposure: f32,
-    
+
     /// Internal version number (for change tracking)
     version: u64,
 }
@@ -113,15 +115,17 @@ impl Default for ToneMappingSettings {
 
 impl ToneMappingSettings {
     /// Creates new tone mapping settings with default values.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
-    
+
     /// Gets the current version number.
     ///
     /// The version is incremented whenever any setting changes,
     /// allowing render passes to detect when updates are needed.
     #[inline]
+    #[must_use]
     pub fn version(&self) -> u64 {
         self.version
     }

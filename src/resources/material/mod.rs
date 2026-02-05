@@ -1,14 +1,19 @@
 mod basic;
+mod macros;
 mod phong;
 mod physical;
-mod macros;
 use parking_lot::RwLockWriteGuard;
 
 pub use basic::MeshBasicMaterial;
 pub use phong::MeshPhongMaterial;
 pub use physical::{MeshPhysicalMaterial, PhysicalFeatures};
 
-use std::{any::Any, borrow::Cow, ops::Deref, sync::atomic::{AtomicU64, Ordering}};
+use std::{
+    any::Any,
+    borrow::Cow,
+    ops::Deref,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use crate::assets::TextureHandle;
 use crate::renderer::core::builder::ResourceBuilder;
@@ -79,6 +84,7 @@ pub struct TextureSlot {
 impl TextureSlot {
     /// Creates a new texture slot with default transform.
     #[inline]
+    #[must_use]
     pub fn new(handle: TextureHandle) -> Self {
         Self {
             texture: Some(handle),
@@ -89,6 +95,7 @@ impl TextureSlot {
 
     /// Creates a new texture slot with a custom transform.
     #[inline]
+    #[must_use]
     pub fn with_transform(handle: TextureHandle, transform: TextureTransform) -> Self {
         Self {
             texture: Some(handle),
@@ -103,28 +110,37 @@ impl TextureSlot {
     ///
     /// The resulting matrix is in column-major order for WGSL compatibility.
     #[inline]
+    #[must_use]
     pub fn compute_matrix(&self) -> Mat3Uniform {
         let (s, c) = (-self.transform.rotation).sin_cos();
         let sx = self.transform.scale.x;
         let sy = self.transform.scale.y;
-        
+
         // Column-major matrix:
         // | sx*c   -sy*s   tx |
         // | sx*s    sy*c   ty |
         // |  0       0      1 |
         Mat3Uniform::from_cols_array(&[
-            sx * c, sx * s, 0.0,
-            -sy * s, sy * c, 0.0,
-            self.transform.offset.x, self.transform.offset.y, 1.0,
+            sx * c,
+            sx * s,
+            0.0,
+            -sy * s,
+            sy * c,
+            0.0,
+            self.transform.offset.x,
+            self.transform.offset.y,
+            1.0,
         ])
     }
 
     #[inline]
+    #[must_use]
     pub fn is_some(&self) -> bool {
         self.texture.is_some()
     }
 
     #[inline]
+    #[must_use]
     pub fn is_none(&self) -> bool {
         self.texture.is_none()
     }
@@ -157,13 +173,17 @@ impl<'a> TextureSlotGuard<'a> {
     #[inline]
     pub fn new(slot: &'a mut TextureSlot, version: &'a mut u64) -> Self {
         let was_some = slot.texture.is_some();
-        Self { slot, version, was_some }
+        Self {
+            slot,
+            version,
+            was_some,
+        }
     }
 }
 
 impl std::ops::Deref for TextureSlotGuard<'_> {
     type Target = TextureSlot;
-    
+
     #[inline]
     fn deref(&self) -> &Self::Target {
         self.slot
@@ -224,7 +244,6 @@ impl From<Option<TextureSource>> for TextureSlot {
     }
 }
 
-
 /// Base trait for all material types.
 ///
 /// This is the user-facing interface for materials. For everyday use,
@@ -241,7 +260,6 @@ pub trait MaterialTrait: Any + Send + Sync + std::fmt::Debug {
     /// Returns mutable self as `Any` for downcasting.
     fn as_any_mut(&mut self) -> &mut dyn Any;
 }
-
 
 /// Advanced rendering interface for materials.
 ///
@@ -325,7 +343,7 @@ impl Default for MaterialSettings {
     fn default() -> Self {
         Self {
             alpha_mode: AlphaMode::Opaque,
-            depth_write: true, 
+            depth_write: true,
             depth_test: true,
             side: Side::Front,
         }
@@ -352,7 +370,6 @@ impl MaterialSettings {
                 defines.set("ALPHA_MODE", "BLEND");
             }
         }
-
     }
 }
 /// RAII guard for material settings modifications.
@@ -366,34 +383,31 @@ pub struct SettingsGuard<'a> {
 }
 
 impl<'a> SettingsGuard<'a> {
-    pub fn new(
-        guard: RwLockWriteGuard<'a, MaterialSettings>, 
-        version: &'a AtomicU64
-    ) -> Self {
+    pub fn new(guard: RwLockWriteGuard<'a, MaterialSettings>, version: &'a AtomicU64) -> Self {
         // Save snapshot (MaterialSettings must implement Clone)
-        let initial_settings = guard.clone();
+        let initial_settings = *guard;
         Self {
             guard,
-            initial_settings,
             version,
+            initial_settings,
         }
     }
 }
 
-impl<'a> std::ops::Deref for SettingsGuard<'a> {
+impl std::ops::Deref for SettingsGuard<'_> {
     type Target = MaterialSettings;
     fn deref(&self) -> &Self::Target {
         &self.guard
     }
 }
 
-impl<'a> std::ops::DerefMut for SettingsGuard<'a> {
+impl std::ops::DerefMut for SettingsGuard<'_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.guard
     }
 }
 
-impl<'a> Drop for SettingsGuard<'a> {
+impl Drop for SettingsGuard<'_> {
     fn drop(&mut self) {
         if *self.guard != self.initial_settings {
             self.version.fetch_add(1, Ordering::Relaxed);
@@ -549,7 +563,7 @@ impl MaterialType {
 pub struct Material {
     pub uuid: Uuid,
     pub name: Option<Cow<'static, str>>,
-    pub data: MaterialType, 
+    pub data: MaterialType,
 }
 
 impl Material {
@@ -567,14 +581,17 @@ impl Material {
     }
 
     // Helper constructors
+    #[must_use]
     pub fn new_basic(color: Vec4) -> Self {
         Self::from(MeshBasicMaterial::new(color))
     }
 
+    #[must_use]
     pub fn new_phong(color: Vec4) -> Self {
         Self::from(MeshPhongMaterial::new(color))
     }
 
+    #[must_use]
     pub fn new_physical(color: Vec4) -> Self {
         Self::from(MeshPhysicalMaterial::new(color))
     }
@@ -602,7 +619,7 @@ impl Material {
             _ => None,
         }
     }
-    
+
     pub fn as_basic_mut(&mut self) -> Option<&mut MeshBasicMaterial> {
         match &mut self.data {
             MaterialType::Basic(m) => Some(m),
@@ -616,14 +633,13 @@ impl Material {
             _ => None,
         }
     }
-    
+
     pub fn as_phong_mut(&mut self) -> Option<&mut MeshPhongMaterial> {
         match &mut self.data {
             MaterialType::Phong(m) => Some(m),
             _ => None,
         }
     }
-
 
     pub fn as_physical(&self) -> Option<&MeshPhysicalMaterial> {
         match &self.data {
@@ -653,36 +669,36 @@ impl Material {
 
     // Proxy methods
     #[inline]
-    pub(crate) fn shader_name(&self) -> &'static str { 
-        self.data.shader_name() 
+    pub(crate) fn shader_name(&self) -> &'static str {
+        self.data.shader_name()
     }
-    
+
     #[inline]
-    pub(crate) fn shader_defines(&self) -> ShaderDefines { 
-        self.data.shader_defines() 
+    pub(crate) fn shader_defines(&self) -> ShaderDefines {
+        self.data.shader_defines()
     }
-    
+
     #[inline]
     pub(crate) fn settings(&self) -> MaterialSettings {
         self.data.settings()
     }
-    
+
     // Convenience accessors
     #[inline]
     pub fn alpha_mode(&self) -> AlphaMode {
         self.settings().alpha_mode
     }
-    
+
     #[inline]
     pub fn depth_write(&self) -> bool {
         self.settings().depth_write
     }
-    
+
     #[inline]
     pub fn depth_test(&self) -> bool {
         self.settings().depth_test
     }
-    
+
     #[inline]
     pub fn side(&self) -> Side {
         self.settings().side
@@ -691,7 +707,7 @@ impl Material {
     /// Defines GPU resource bindings (delegates to internal data)
     #[inline]
     pub fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
-        self.data.define_bindings(builder)
+        self.data.define_bindings(builder);
     }
 
     #[inline]
@@ -706,7 +722,7 @@ impl Material {
 
     #[inline]
     pub fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource)) {
-        self.data.visit_textures(visitor)
+        self.data.visit_textures(visitor);
     }
 
     #[inline]
@@ -716,7 +732,7 @@ impl Material {
 
     #[inline]
     pub fn with_uniform_bytes(&self, f: &mut dyn FnMut(&[u8])) {
-        self.data.with_uniform_bytes(f)
+        self.data.with_uniform_bytes(f);
     }
 
     #[inline]

@@ -7,7 +7,7 @@
 //!
 //! 1. **Prepare (准备)**：提取数据 (Extract) 和准备资源 (Prepare)
 //! 2. **Compose (组装)**：通过链式 API 添加 `RenderNode`
-//! 3. **Execute (执行)**：获取 Surface，构建 RenderGraph 并提交 GPU 命令
+//! 3. **Execute (执行)**：获取 Surface，构建 `RenderGraph` 并提交 GPU 命令
 //!
 //! # 示例
 //!
@@ -35,7 +35,6 @@ use crate::scene::camera::RenderCamera;
 use super::context::RenderFrameRef;
 use super::frame::RenderLists;
 
-
 pub struct ComposerContext<'a> {
     pub wgpu_ctx: &'a mut WgpuContext,
     pub resource_manager: &'a mut ResourceManager,
@@ -47,7 +46,7 @@ pub struct ComposerContext<'a> {
     pub frame_resources: &'a FrameResources,
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
 
-    /// 渲染列表（由 SceneCullPass 填充）
+    /// 渲染列表（由 `SceneCullPass` 填充）
     pub render_lists: &'a mut RenderLists,
 
     // 外部场景数据 todo: refactor
@@ -85,14 +84,8 @@ impl<'a> FrameComposer<'a> {
     ///
     /// 内部会自动注入内置 Pass（BRDF LUT、IBL、Forward）。
     #[allow(clippy::too_many_arguments)]
-    pub(crate) fn new(
-        builder: FrameBuilder<'a>,
-        ctx: ComposerContext<'a>
-    ) -> Self {
-        Self {
-            ctx,
-            builder,
-        }
+    pub(crate) fn new(builder: FrameBuilder<'a>, ctx: ComposerContext<'a>) -> Self {
+        Self { ctx, builder }
     }
 
     /// 在指定阶段添加自定义渲染节点
@@ -128,9 +121,9 @@ impl<'a> FrameComposer<'a> {
     ///     .render();
     /// ```
     #[inline]
-    pub fn add_nodes<I>(mut self, stage: RenderStage, nodes: I) -> Self 
-    where 
-        I: IntoIterator<Item = &'a mut dyn RenderNode>
+    pub fn add_nodes<I>(mut self, stage: RenderStage, nodes: I) -> Self
+    where
+        I: IntoIterator<Item = &'a mut dyn RenderNode>,
     {
         self.builder.add_nodes(stage, nodes);
         self
@@ -154,20 +147,17 @@ impl<'a> FrameComposer<'a> {
             Ok(output) => output,
             Err(wgpu::SurfaceError::Lost) => return,
             Err(e) => {
-                log::error!("Render error: {:?}", e);
+                log::error!("Render error: {e:?}");
                 return;
             }
         };
 
         let view_format = self.ctx.wgpu_ctx.surface_view_format;
 
-        let surface_view = output
-            .texture
-            .create_view(&wgpu::TextureViewDescriptor{
-                format: Some(view_format),
-                ..Default::default()
-            });
-
+        let surface_view = output.texture.create_view(&wgpu::TextureViewDescriptor {
+            format: Some(view_format),
+            ..Default::default()
+        });
 
         // 2. 构建 RenderContext
         let mut render_ctx = RenderContext {

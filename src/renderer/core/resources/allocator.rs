@@ -9,8 +9,8 @@ use crate::resources::buffer::{BufferRef, CpuBuffer};
 use crate::resources::uniforms::DynamicModelUniforms;
 
 /// Model Buffer 分配器
-/// 
-/// 负责管理 DynamicModelUniforms 的 CPU 端缓存和分配
+///
+/// 负责管理 `DynamicModelUniforms` 的 CPU 端缓存和分配
 pub struct ModelBufferAllocator {
     /// CPU 端数据缓存
     host_data: Vec<DynamicModelUniforms>,
@@ -28,13 +28,14 @@ pub struct ModelBufferAllocator {
 
 impl ModelBufferAllocator {
     /// 创建新的分配器
+    #[must_use]
     pub fn new() -> Self {
         let initial_capacity = 4096;
         let initial_data = vec![DynamicModelUniforms::default(); initial_capacity];
         let buffer = CpuBuffer::new(
             initial_data.clone(),
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            Some("GlobalModelBuffer")
+            Some("GlobalModelBuffer"),
         );
 
         Self {
@@ -67,15 +68,17 @@ impl ModelBufferAllocator {
         // self.host_data.push(data);
         // self.buffer.write()[index] = data;
         self.host_data.push(data);
-        
+
         // 返回字节偏移量
         (index * std::mem::size_of::<DynamicModelUniforms>()) as u32
     }
 
-    /// 将 host_data 同步到 CpuBuffer
+    /// 将 `host_data` 同步到 `CpuBuffer`
     pub fn flush_to_buffer(&mut self) {
-        if self.host_data.is_empty() { return; }
-        
+        if self.host_data.is_empty() {
+            return;
+        }
+
         // 这一帧只获取一次锁/借用，进行批量拷贝
         let mut buffer_write = self.buffer.write();
         let len = self.host_data.len();
@@ -90,7 +93,11 @@ impl ModelBufferAllocator {
     /// 扩容
     fn expand_capacity(&mut self) {
         let new_cap = (self.capacity * 2).max(128);
-        log::info!("Model Buffer expanding capacity: {} -> {}", self.capacity, new_cap);
+        log::info!(
+            "Model Buffer expanding capacity: {} -> {}",
+            self.capacity,
+            new_cap
+        );
 
         self.capacity = new_cap;
         self.needs_recreate = true;
@@ -100,7 +107,7 @@ impl ModelBufferAllocator {
         self.buffer = CpuBuffer::new(
             new_data,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            Some("GlobalModelBuffer")
+            Some("GlobalModelBuffer"),
         );
     }
 
@@ -116,9 +123,14 @@ impl ModelBufferAllocator {
                 new_cap *= 2;
             }
             new_cap = new_cap.max(128);
-            
-            log::info!("Model Buffer resizing to fit {} items: {} -> {}", required_count, self.capacity, new_cap);
-            
+
+            log::info!(
+                "Model Buffer resizing to fit {} items: {} -> {}",
+                required_count,
+                self.capacity,
+                new_cap
+            );
+
             self.capacity = new_cap;
             self.needs_recreate = true;
 
@@ -127,7 +139,7 @@ impl ModelBufferAllocator {
             self.buffer = CpuBuffer::new(
                 new_data,
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("GlobalModelBuffer")
+                Some("GlobalModelBuffer"),
             );
         }
     }
@@ -152,7 +164,7 @@ impl ModelBufferAllocator {
         self.cursor == 0
     }
 
-    /// 获取 CpuBuffer 引用（用于构建 BindGroup）
+    /// 获取 `CpuBuffer` 引用（用于构建 `BindGroup`）
     pub fn cpu_buffer(&self) -> &CpuBuffer<Vec<DynamicModelUniforms>> {
         &self.buffer
     }

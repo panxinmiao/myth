@@ -5,7 +5,7 @@
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
-use crate::errors::{Result, MythError};
+use crate::errors::{MythError, Result};
 use crate::renderer::settings::RenderSettings;
 
 /// Core wgpu context holding GPU handles.
@@ -67,18 +67,20 @@ impl WgpuContext {
 
         // ===  查询 Surface 支持的格式 ===
         let caps = surface.get_capabilities(&adapter);
-        
+
         // 打印调试信息，查看当前平台支持哪些格式
         log::info!("Surface Supported Formats: {:?}", caps.formats);
 
         // 优先选择 sRGB 格式 (Native)，如果没有 (Web)，则选择第一个可用格式 (通常是 Linear)
         // 注意：在 Web 上，这里肯定找不到 Srgb 格式，会回退到 caps.formats[0]
-        let surface_format = caps.formats.iter()
+        let surface_format = caps
+            .formats
+            .iter()
             .copied()
-            .find(|f| f.is_srgb())
+            .find(wgpu::TextureFormat::is_srgb)
             .unwrap_or(caps.formats[0]);
 
-        log::info!("Selected Surface Format: {:?}", surface_format);
+        log::info!("Selected Surface Format: {surface_format:?}");
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
@@ -104,7 +106,7 @@ impl WgpuContext {
             width,
             height,
             desired_maximum_frame_latency: 2,
-            present_mode: present_mode,
+            present_mode,
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             view_formats: vec![view_format],
         };
@@ -132,10 +134,11 @@ impl WgpuContext {
         }
     }
 
+    #[must_use]
     pub fn create_depth_texture(
-        device: &wgpu::Device, 
-        config: &wgpu::SurfaceConfiguration, 
-        format: wgpu::TextureFormat
+        device: &wgpu::Device,
+        config: &wgpu::SurfaceConfiguration,
+        format: wgpu::TextureFormat,
     ) -> wgpu::TextureView {
         let size = wgpu::Extent3d {
             width: config.width,

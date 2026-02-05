@@ -23,33 +23,37 @@ pub struct KeyframeTrack<T: Interpolatable> {
 }
 
 impl<T: Interpolatable> KeyframeTrack<T> {
+    #[must_use]
     pub fn new(times: Vec<f32>, values: Vec<T>, interpolation: InterpolationMode) -> Self {
-        Self { times, values, interpolation }
+        Self {
+            times,
+            values,
+            interpolation,
+        }
     }
 
+    #[must_use]
     pub fn sample(&self, time: f32) -> T {
-        if self.times.is_empty() {
-             // 实际上应该返回 Default 或 Panic，视你的错误处理策略而定
-             // 这里为了演示简单，假设非空
-             panic!("Track is empty"); 
-        }
+        // 实际上应该返回 Default 或 Panic，视你的错误处理策略而定
+        // 这里为了演示简单，假设非空
+        assert!(!self.times.is_empty(), "Track is empty");
 
         // 1. 查找关键帧
         // partition_point 找到第一个大于 time 的索引，即 next_index
         let next_idx = self.times.partition_point(|&t| t <= time);
 
         self.sample_at_frame(next_idx, time)
-
     }
-
 
     /// 核心优化：带游标的采样
     /// cursor: 这是一个可变引用，我们会更新它
     pub fn sample_with_cursor(&self, time: f32, cursor: &mut KeyframeCursor) -> T {
         if self.times.is_empty() {
             // 简单处理空数据，实际项目中可能需要返回 Option 或 Default
-             if let Some(val) = self.values.first() { return val.clone(); }
-             panic!("Track is empty"); // 或者返回默认值
+            if let Some(val) = self.values.first() {
+                return val.clone();
+            }
+            panic!("Track is empty"); // 或者返回默认值
         }
 
         let len = self.times.len();
@@ -66,7 +70,6 @@ impl<T: Interpolatable> KeyframeTrack<T> {
         // 安全检查：如果游标越界（比如切换了 Clip），重置为 0
         let t_curr = *self.times.get(i).unwrap_or(&self.times[0]);
 
-
         // 决策：向前找，还是向后找？
         let found_index = if time >= t_curr {
             // === 场景 A: 正常播放 或 快进 (Time 增加) ===
@@ -81,9 +84,9 @@ impl<T: Interpolatable> KeyframeTrack<T> {
                     if time >= self.times[len - 1] {
                         res = Some(len - 1); // 锁定在末尾
                     }
-                    break; 
+                    break;
                 }
-                
+
                 // 检查区间 [times[idx], times[idx+1])
                 // 我们已知 time >= t_curr (即 times[i])，所以只需检查右边界
                 if time < self.times[idx + 1] {
@@ -98,18 +101,18 @@ impl<T: Interpolatable> KeyframeTrack<T> {
             let mut res = None;
             for offset in 0..=MAX_SCAN_OFFSET {
                 // 防止下溢
-                if i < offset { 
+                if i < offset {
                     break; // 已经到头了，还没找到
                 }
                 let idx = i - offset;
-                
+
                 // 检查区间 [times[idx], times[idx+1])
                 // 注意：如果 idx 是最后一个元素，这里逻辑会稍微不同，但在 "else" 分支里，
                 // time < t_curr，说明 time 肯定小于 times[i]。
                 // 如果 idx == i，我们知道 time < times[i]，所以它肯定不在区间 [i, i+1)
                 // 所以 loop 第一次迭代 (offset=0) 其实是无效的？
                 // 不一定，为了逻辑统一，我们还是检查标准区间定义。
-                
+
                 // 标准检查： time >= times[idx]
                 // (右边界 time < times[idx+1] 在倒序查找中通常是满足的，因为我们是从右往左找)
                 if time >= self.times[idx] {
@@ -123,29 +126,24 @@ impl<T: Interpolatable> KeyframeTrack<T> {
         };
 
         // 更新游标逻辑
-        let final_index = match found_index {
-            Some(idx) => {
-                // 命中缓存/局部搜索！更新游标
-                cursor.last_index = idx;
-                idx
-            }
-            None => {
-                // === 场景 C: 剧烈跳变 (Scrubbing / Loop Reset) ===
-                // 局部搜索失败，回退到全局二分查找 (O(log N))
-                // partition_point 返回的是第一个 > time 的位置，即 "next_index"
-                let next_idx = self.times.partition_point(|&t| t <= time);
-                let idx = if next_idx > 0 { next_idx - 1 } else { 0 };
-                
-                // 更新游标，为下一次做准备
-                cursor.last_index = idx;
-                idx
-            }
+        let final_index = if let Some(idx) = found_index {
+            // 命中缓存/局部搜索！更新游标
+            cursor.last_index = idx;
+            idx
+        } else {
+            // === 场景 C: 剧烈跳变 (Scrubbing / Loop Reset) ===
+            // 局部搜索失败，回退到全局二分查找 (O(log N))
+            // partition_point 返回的是第一个 > time 的位置，即 "next_index"
+            let next_idx = self.times.partition_point(|&t| t <= time);
+            let idx = if next_idx > 0 { next_idx - 1 } else { 0 };
+
+            // 更新游标，为下一次做准备
+            cursor.last_index = idx;
+            idx
         };
 
         self.sample_at_frame(final_index, time)
-
     }
-
 
     /// 辅助方法：统一获取“值”部分
     /// 对于 Linear/Step，索引就是 index
@@ -159,7 +157,7 @@ impl<T: Interpolatable> KeyframeTrack<T> {
 
     fn sample_at_frame(&self, index: usize, time: f32) -> T {
         let len = self.times.len();
-        
+
         // 1. 边界情况：最后实际上没有下一帧了
         if index >= len - 1 {
             return self.get_value_at(len - 1).clone();
@@ -181,7 +179,7 @@ impl<T: Interpolatable> KeyframeTrack<T> {
                 let v0 = self.get_value_at(index);
                 let v1 = self.get_value_at(next_idx);
                 T::interpolate_linear(v0, v1, t)
-            },
+            }
             InterpolationMode::CubicSpline => {
                 let i_prev = index * 3;
                 let i_next = next_idx * 3;
@@ -195,6 +193,4 @@ impl<T: Interpolatable> KeyframeTrack<T> {
             }
         }
     }
-    
-
 }

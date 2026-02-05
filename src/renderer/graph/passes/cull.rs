@@ -27,7 +27,7 @@ use crate::resources::uniforms::{DynamicModelUniforms, Mat3Uniform};
 /// 场景剔除 Pass
 ///
 /// 仅执行 prepare 阶段，将渲染命令写入 `RenderFrame.render_lists`。
-/// 
+///
 /// # 性能考虑
 /// - 利用 L1/L2 Pipeline 缓存避免重复编译
 /// - 批量上传动态 Uniform 减少 GPU 调用
@@ -35,6 +35,7 @@ use crate::resources::uniforms::{DynamicModelUniforms, Mat3Uniform};
 pub struct SceneCullPass;
 
 impl SceneCullPass {
+    #[must_use]
     pub fn new() -> Self {
         Self
     }
@@ -45,7 +46,7 @@ impl SceneCullPass {
     /// 1. 清空 `render_lists`
     /// 2. 遍历 `extracted_scene.render_items`
     /// 3. 查找/创建 Pipeline
-    /// 4. 生成 RenderCommand 并分类
+    /// 4. 生成 `RenderCommand` 并分类
     /// 5. 排序命令列表
     fn prepare_and_sort_commands(&self, ctx: &mut RenderContext) {
         // 预先获取需要的配置（避免后续借用冲突）
@@ -66,8 +67,7 @@ impl SceneCullPass {
             .get_global_state(render_state_id, scene_id)
         else {
             error!(
-                "Render Environment missing for render_state_id {}, scene_id {}",
-                render_state_id, scene_id
+                "Render Environment missing for render_state_id {render_state_id}, scene_id {scene_id}"
             );
             return;
         };
@@ -137,11 +137,8 @@ impl SceneCullPass {
                         &item.item_shader_defines,
                     );
 
-                    if final_a2c_enable{
-                        options.add_define(
-                            "ALPHA_TO_COVERAGE",
-                            "1",
-                        );
+                    if final_a2c_enable {
+                        options.add_define("ALPHA_TO_COVERAGE", "1");
                     }
 
                     let shader_hash = options.compute_hash();
@@ -184,7 +181,7 @@ impl SceneCullPass {
                         &gpu_geometry.layout_info,
                         gpu_material,
                         object_bind_group,
-                        &gpu_world,
+                        gpu_world,
                         ctx.frame_resources,
                     );
 
@@ -202,7 +199,6 @@ impl SceneCullPass {
 
             let is_transparent = material.alpha_mode() == AlphaMode::Blend || has_transmission;
             let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq, is_transparent);
-
 
             let cmd = RenderCommand {
                 object_bind_group: object_bind_group.clone(),
@@ -237,7 +233,7 @@ impl SceneCullPass {
         }
 
         // 处理不透明物体
-        for cmd in render_lists.opaque.iter_mut() {
+        for cmd in &mut render_lists.opaque {
             let world_matrix_inverse = cmd.model_matrix.inverse();
             let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
 
@@ -254,7 +250,7 @@ impl SceneCullPass {
         }
 
         // 处理透明物体
-        for cmd in render_lists.transparent.iter_mut() {
+        for cmd in &mut render_lists.transparent {
             let world_matrix_inverse = cmd.model_matrix.inverse();
             let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
 
@@ -281,7 +277,7 @@ impl Default for SceneCullPass {
 }
 
 impl RenderNode for SceneCullPass {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Scene Cull Pass"
     }
 

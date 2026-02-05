@@ -1,7 +1,11 @@
 use std::sync::Arc;
 
-use crate::animation::{MorphWeightData, binding::PropertyBinding, clip::{AnimationClip, TrackData}, tracks::KeyframeCursor};
-
+use crate::animation::{
+    MorphWeightData,
+    binding::PropertyBinding,
+    clip::{AnimationClip, TrackData},
+    tracks::KeyframeCursor,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LoopMode {
@@ -27,6 +31,7 @@ pub struct AnimationAction {
 }
 
 impl AnimationAction {
+    #[must_use]
     pub fn new(clip: Arc<AnimationClip>) -> Self {
         let track_count = clip.tracks.len();
         Self {
@@ -43,6 +48,7 @@ impl AnimationAction {
         }
     }
 
+    #[must_use]
     pub fn clip(&self) -> &Arc<AnimationClip> {
         &self.clip
     }
@@ -98,12 +104,16 @@ impl AnimationAction {
     pub fn sample_track(&mut self, track_index: usize) -> Option<TrackValue> {
         let track = self.clip.tracks.get(track_index)?;
         let cursor = self.track_cursors.get_mut(track_index)?;
-        
+
         Some(match &track.data {
             TrackData::Vector3(t) => TrackValue::Vector3(t.sample_with_cursor(self.time, cursor)),
-            TrackData::Quaternion(t) => TrackValue::Quaternion(t.sample_with_cursor(self.time, cursor)),
+            TrackData::Quaternion(t) => {
+                TrackValue::Quaternion(t.sample_with_cursor(self.time, cursor))
+            }
             TrackData::Scalar(t) => TrackValue::Scalar(t.sample_with_cursor(self.time, cursor)),
-            TrackData::MorphWeights(t) => TrackValue::MorphWeight(t.sample_with_cursor(self.time, cursor)),
+            TrackData::MorphWeights(t) => {
+                TrackValue::MorphWeight(t.sample_with_cursor(self.time, cursor))
+            }
         })
     }
 }
@@ -112,5 +122,5 @@ pub enum TrackValue {
     Vector3(glam::Vec3),
     Quaternion(glam::Quat),
     Scalar(f32),
-    MorphWeight(MorphWeightData)
+    MorphWeight(MorphWeightData),
 }

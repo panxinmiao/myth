@@ -22,12 +22,12 @@
 //! Most types are designed to be used from a single thread, though
 //! the underlying wgpu types are Send + Sync.
 
-pub mod context;
-pub mod resources;
 pub mod binding;
 pub mod builder;
+pub mod context;
+pub mod resources;
 
-pub use context::WgpuContext;
-pub use resources::{ResourceManager, BindGroupContext};
 pub use binding::{BindingResource, Bindings};
 pub use builder::ResourceBuilder;
+pub use context::WgpuContext;
+pub use resources::{BindGroupContext, ResourceManager};

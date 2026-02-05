@@ -31,9 +31,9 @@
 //! }
 //! ```
 
-use glam::Vec3;
 use crate::resources::input::{Input, MouseButton};
 use crate::scene::transform::Transform;
+use glam::Vec3;
 
 /// Internal spherical coordinate representation.
 #[derive(Clone, Copy, Debug)]
@@ -60,7 +60,7 @@ impl Spherical {
     }
 
     fn make_safe(&mut self) {
-        const EPS: f32 = 0.000001;
+        const EPS: f32 = 0.000_001;
         self.phi = self.phi.clamp(EPS, std::f32::consts::PI - EPS);
     }
 }
@@ -113,12 +113,12 @@ pub struct OrbitControls {
     pub enable_zoom: bool,
     /// Zoom speed multiplier.
     pub zoom_speed: f32,
-    
+
     /// Enable left-click rotation.
     pub enable_rotate: bool,
     /// Rotation speed multiplier.
     pub rotate_speed: f32,
-    
+
     /// Enable right-click panning.
     pub enable_pan: bool,
     /// Pan speed multiplier.
@@ -137,8 +137,8 @@ pub struct OrbitControls {
     target: Vec3,
     spherical: Spherical,
     spherical_delta: Spherical,
-    pan_offset: Vec3,   
-    target_radius: f32,         
+    pan_offset: Vec3,
+    target_radius: f32,
 }
 
 impl OrbitControls {
@@ -148,6 +148,7 @@ impl OrbitControls {
     ///
     /// * `camera_pos` - Initial camera world position
     /// * `target` - Point to orbit around (look-at target)
+    #[must_use]
     pub fn new(camera_pos: Vec3, target: Vec3) -> Self {
         let mut spherical = Spherical::new(1.0, 0.0, 0.0);
         spherical.set_from_vec3(camera_pos - target);
@@ -175,9 +176,9 @@ impl OrbitControls {
             spherical,
             spherical_delta: Spherical::new(0.0, 0.0, 0.0),
             pan_offset: Vec3::ZERO,
-            
+
             // Initialize target radius = current radius
-            target_radius: spherical.radius, 
+            target_radius: spherical.radius,
         }
     }
 
@@ -215,7 +216,9 @@ impl OrbitControls {
                 self.target_radius /= zoom_scale;
             }
 
-            self.target_radius = self.target_radius.clamp(self.min_distance, self.max_distance);
+            self.target_radius = self
+                .target_radius
+                .clamp(self.min_distance, self.max_distance);
         }
 
         // Panning
@@ -242,7 +245,10 @@ impl OrbitControls {
         // Apply rotation
         self.spherical.theta += self.spherical_delta.theta * time_scale;
         self.spherical.phi += self.spherical_delta.phi * time_scale;
-        self.spherical.phi = self.spherical.phi.clamp(self.min_polar_angle, self.max_polar_angle);
+        self.spherical.phi = self
+            .spherical
+            .phi
+            .clamp(self.min_polar_angle, self.max_polar_angle);
         self.spherical.make_safe();
 
         // Apply zoom
@@ -253,7 +259,10 @@ impl OrbitControls {
             self.spherical.radius = self.target_radius;
         }
 
-        self.spherical.radius = self.spherical.radius.clamp(self.min_distance, self.max_distance);
+        self.spherical.radius = self
+            .spherical
+            .radius
+            .clamp(self.min_distance, self.max_distance);
 
         // Calculate Transform
         let sin_phi_radius = self.spherical.phi.sin() * self.spherical.radius;
@@ -299,6 +308,7 @@ impl Transform {
     /// Returns the local coordinate axes based on current rotation.
     ///
     /// Returns (right, up, forward) vectors in world space.
+    #[must_use]
     pub fn rotation_basis(&self) -> (Vec3, Vec3, Vec3) {
         let right = self.rotation * Vec3::X;
         let up = self.rotation * Vec3::Y;

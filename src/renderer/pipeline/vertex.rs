@@ -2,10 +2,10 @@
 //!
 //! 根据 Geometry 属性生成 WGPU 顶点布局和 WGSL 代码
 
+use crate::resources::buffer::BufferRef;
+use crate::resources::geometry::{Attribute, Geometry};
 use rustc_hash::FxHashMap;
 use wgpu::VertexFormat;
-use crate::resources::geometry::{Geometry, Attribute};
-use crate::resources::buffer::BufferRef;
 
 #[derive(Debug, Clone)]
 pub struct OwnedVertexBufferDesc {
@@ -16,6 +16,7 @@ pub struct OwnedVertexBufferDesc {
 }
 
 impl OwnedVertexBufferDesc {
+    #[must_use]
     pub fn as_wgpu(&self) -> wgpu::VertexBufferLayout<'_> {
         wgpu::VertexBufferLayout {
             array_stride: self.array_stride,
@@ -37,7 +38,10 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
 
     for (name, attr) in geometry.attributes() {
         let buffer_id = attr.buffer.id();
-        buffer_groups.entry(buffer_id).or_default().push((name, attr));
+        buffer_groups
+            .entry(buffer_id)
+            .or_default()
+            .push((name, attr));
     }
 
     let mut sorted_groups: Vec<_> = buffer_groups.into_iter().collect();
@@ -53,16 +57,14 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
     let mut current_location = 0;
 
     for (buffer_id, mut attrs) in sorted_groups {
-        attrs.sort_by(|a, b| {
-            a.1.offset.cmp(&b.1.offset).then(a.0.cmp(b.0))
-        });
+        attrs.sort_by(|a, b| a.1.offset.cmp(&b.1.offset).then(a.0.cmp(b.0)));
 
         let first_attr = attrs[0].1;
         let stride = first_attr.stride;
         let step_mode = first_attr.step_mode;
 
         if attrs.iter().any(|(_, a)| a.step_mode != step_mode) {
-            log::warn!("Mixed step_mode in buffer {:?}. Using {:?}", buffer_id, step_mode);
+            log::warn!("Mixed step_mode in buffer {buffer_id:?}. Using {step_mode:?}");
         }
 
         let mut wgpu_attributes = Vec::new();
@@ -78,7 +80,7 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
             });
 
             let wgsl_type = format_to_wgsl_type(attr.format);
-            wgsl_struct_fields.push(format!("    @location({}) {}: {},", location, name, wgsl_type));
+            wgsl_struct_fields.push(format!("    @location({location}) {name}: {wgsl_type},"));
             location_map.insert(name.clone(), location);
         }
 
@@ -90,7 +92,10 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
         });
     }
 
-    let vertex_input_code = format!("struct VertexInput {{\n{}\n}};", wgsl_struct_fields.join("\n"));
+    let vertex_input_code = format!(
+        "struct VertexInput {{\n{}\n}};",
+        wgsl_struct_fields.join("\n")
+    );
 
     GeneratedVertexLayout {
         buffers: owned_layouts,

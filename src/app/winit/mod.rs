@@ -166,7 +166,6 @@ pub trait AppHandler: Sized + 'static {
     ///         .render();
     /// }
     /// ```
-
     fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
         composer.render();
     }
@@ -266,13 +265,13 @@ impl App {
     #[cfg(target_arch = "wasm32")]
     pub fn run<H: AppHandler>(self) -> anyhow::Result<()> {
         use winit::platform::web::EventLoopExtWebSys;
-        
+
         let event_loop = EventLoop::new()?;
         event_loop.set_control_flow(ControlFlow::Poll);
 
         let runner = AppRunner::<H>::new(self.title, self.render_settings);
         event_loop.spawn_app(runner);
-        
+
         Ok(())
     }
 }
@@ -283,7 +282,7 @@ impl Default for App {
     }
 }
 
-/// Internal application runner that implements winit's ApplicationHandler.
+/// Internal application runner that implements winit's `ApplicationHandler`.
 ///
 /// This struct manages the application lifecycle including window creation,
 /// event handling, and frame rendering.
@@ -297,7 +296,7 @@ struct AppRunner<H: AppHandler> {
 
     start_time: Instant,
     last_loop_time: Instant,
-    
+
     /// WASM async initialization state
     #[cfg(target_arch = "wasm32")]
     init_state: std::rc::Rc<std::cell::RefCell<WasmInitState<H>>>,
@@ -326,7 +325,7 @@ impl<H: AppHandler> WasmInitState<H> {
     fn try_take_result(&mut self) -> Option<(MythEngine, H)> {
         self.result.take()
     }
-    
+
     // Check if initialization is complete (result is ready)
     // fn is_complete(&self) -> bool {
     //     self.result.is_some()
@@ -392,12 +391,11 @@ impl<H: AppHandler> AppRunner<H> {
         let render_camera = cam.extract_render_camera();
 
         // Use new chained FrameComposer API
-        if let Some(composer) = engine.renderer.begin_frame(
-            scene,
-            &render_camera,
-            &engine.assets,
-            engine.time,
-        ) {
+        if let Some(composer) =
+            engine
+                .renderer
+                .begin_frame(scene, &render_camera, &engine.assets, engine.time)
+        {
             // User adds nodes via compose_frame chaining
             user_state.compose_frame(composer);
         }
@@ -430,7 +428,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         let size = window.inner_size();
 
         if let Err(e) = pollster::block_on(engine.init(window.clone(), size.width, size.height)) {
-            log::error!("Fatal Renderer Error: {}", e);
+            log::error!("Fatal Renderer Error: {e}");
             event_loop.exit();
             return;
         }
@@ -448,7 +446,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         use wasm_bindgen::JsCast;
         use winit::platform::web::WindowAttributesExtWebSys;
-        
+
         if self.window.is_some() {
             return;
         }
@@ -486,13 +484,13 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         let render_settings = self.render_settings.clone();
         let init_state = self.init_state.clone();
         let window_clone = window.clone();
-        
+
         wasm_bindgen_futures::spawn_local(async move {
             let mut engine = MythEngine::new(render_settings);
             let size = window_clone.inner_size();
             let w = size.width.max(1);
             let h = size.height.max(1);
-            
+
             match engine.init(window_clone.clone(), w, h).await {
                 Ok(_) => {
                     log::info!("WebGPU initialization successful");
@@ -506,9 +504,9 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                 }
             }
         });
-        
+
         self.init_state.borrow_mut().pending = true;
-        
+
         let now = Instant::now();
         self.start_time = now;
         self.last_loop_time = now;
@@ -533,7 +531,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                         }
                     }
                 };
-                
+
                 if let Some((mut engine, user_state)) = result {
                     // Immediately resize to correct dimensions after init completes
                     if let Some(window) = &self.window {
@@ -544,7 +542,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                         engine.resize(w, h, scale_factor);
                         log::info!("Resized to {}x{} after init", w, h);
                     }
-                    
+
                     self.engine = Some(engine);
                     self.user_state = Some(user_state);
                     log::info!("Engine initialization completed, starting render loop");
@@ -554,18 +552,28 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                 }
             }
         }
-        
+
         let (Some(window), Some(engine), Some(user_state)) =
             (&self.window, &mut self.engine, &mut self.user_state)
         else {
             return;
         };
 
-        let consumed = {
-            user_state.on_event(engine, window, &event)
-        };
+        let consumed = { user_state.on_event(engine, window, &event) };
 
-        if !consumed {
+        if consumed {
+            if let WindowEvent::Resized(ps) = event {
+                let scale_factor = window.scale_factor() as f32;
+                engine.resize(ps.width, ps.height, scale_factor);
+            }
+            if let WindowEvent::RedrawRequested = event {
+                self.update_logic();
+                self.render_frame();
+                if let Some(w) = &self.window {
+                    w.request_redraw();
+                }
+            }
+        } else {
             // Use adapter to translate winit events to engine Input
             input_adapter::process_window_event(&mut engine.input, &event);
 
@@ -584,26 +592,14 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                 }
                 _ => {}
             }
-        } else {
-            if let WindowEvent::Resized(ps) = event {
-                let scale_factor = window.scale_factor() as f32;
-                engine.resize(ps.width, ps.height, scale_factor);
-            }
-            if let WindowEvent::RedrawRequested = event {
-                self.update_logic();
-                self.render_frame();
-                if let Some(w) = &self.window {
-                    w.request_redraw();
-                }
-            }
         }
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if self.engine.is_some() {
-            if let Some(window) = &self.window {
-                window.request_redraw();
-            }
+        if self.engine.is_some()
+            && let Some(window) = &self.window
+        {
+            window.request_redraw();
         }
     }
 }

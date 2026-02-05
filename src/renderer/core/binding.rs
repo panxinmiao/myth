@@ -1,22 +1,21 @@
 //! GPU 绑定资源
 //!
-//! 定义 BindGroup 的资源类型和绑定 Trait
+//! 定义 `BindGroup` 的资源类型和绑定 Trait
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
 use crate::assets::TextureHandle;
-use crate::resources::texture::{SamplerSource, TextureSource};
-use crate::{Mesh, Scene};
-use crate::resources::buffer::BufferRef;
-use crate::resources::material::{Material, RenderableMaterialTrait};
-use crate::resources::geometry::Geometry;
-use crate::resources::uniforms::*;
-use crate::renderer::core::builder::{ResourceBuilder};
+use crate::renderer::core::builder::ResourceBuilder;
 use crate::renderer::graph::RenderState;
+use crate::resources::buffer::BufferRef;
+use crate::resources::geometry::Geometry;
+use crate::resources::material::{Material, RenderableMaterialTrait};
+use crate::resources::texture::{SamplerSource, TextureSource};
+use crate::resources::uniforms::{MorphUniforms, RenderStateUniforms, WgslStruct};
+use crate::{Mesh, Scene};
 
-
-/// 实际的绑定资源数据 (用于生成 BindGroup)
+/// 实际的绑定资源数据 (用于生成 `BindGroup`)
 #[derive(Debug, Clone)]
 pub enum BindingResource<'a> {
     Buffer {
@@ -46,38 +45,50 @@ impl Bindings for Geometry {
         // Morph Target Storage Buffers
         if self.has_morph_targets() {
             // Position morph storage
-            if let (Some(buffer), Some(data)) = (&self.morph_position_buffer, self.morph_position_bytes()) {
+            if let (Some(buffer), Some(data)) =
+                (&self.morph_position_buffer, self.morph_position_bytes())
+            {
                 builder.add_storage_buffer(
                     "morph_positions",
                     buffer,
                     Some(data),
                     true,
                     wgpu::ShaderStages::VERTEX,
-                    Some(crate::renderer::core::builder::WgslStructName::Name("f32".into()))
+                    Some(crate::renderer::core::builder::WgslStructName::Name(
+                        "f32".into(),
+                    )),
                 );
             }
-            
+
             // Normal morph storage (optional)
-            if let (Some(buffer), Some(data)) = (&self.morph_normal_buffer, self.morph_normal_bytes()) {
+            if let (Some(buffer), Some(data)) =
+                (&self.morph_normal_buffer, self.morph_normal_bytes())
+            {
                 builder.add_storage_buffer(
                     "morph_normals",
                     buffer,
                     Some(data),
                     true,
                     wgpu::ShaderStages::VERTEX,
-                    Some(crate::renderer::core::builder::WgslStructName::Name("f32".into()))
+                    Some(crate::renderer::core::builder::WgslStructName::Name(
+                        "f32".into(),
+                    )),
                 );
             }
-            
+
             // Tangent morph storage (optional)
-            if let (Some(buffer), Some(data)) = (&self.morph_tangent_buffer, self.morph_tangent_bytes()) {
+            if let (Some(buffer), Some(data)) =
+                (&self.morph_tangent_buffer, self.morph_tangent_bytes())
+            {
                 builder.add_storage_buffer(
                     "morph_tangents",
                     buffer,
                     Some(data),
                     true,
                     wgpu::ShaderStages::VERTEX,
-                    Some(crate::renderer::core::builder::WgslStructName::Name("f32".into()))
+                    Some(crate::renderer::core::builder::WgslStructName::Name(
+                        "f32".into(),
+                    )),
                 );
             }
         }
@@ -90,7 +101,7 @@ impl Bindings for Mesh {
         builder.add_uniform::<MorphUniforms>(
             "morph_targets",
             &self.morph_uniforms,
-            wgpu::ShaderStages::VERTEX
+            wgpu::ShaderStages::VERTEX,
         );
     }
 }
@@ -100,7 +111,7 @@ impl Bindings for RenderState {
         builder.add_uniform::<RenderStateUniforms>(
             "render_state",
             self.uniforms(),
-            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT
+            wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
         );
     }
 }
@@ -116,10 +127,10 @@ impl Bindings for Scene {
             false,
             None,
             Some(crate::renderer::core::builder::WgslStructName::Generator(
-                crate::resources::uniforms::EnvironmentUniforms::wgsl_struct_def
-            ))
+                crate::resources::uniforms::EnvironmentUniforms::wgsl_struct_def,
+            )),
         );
-        
+
         // Binding 2: Light Storage Buffer
         builder.add_storage_buffer(
             "lights",
@@ -128,26 +139,28 @@ impl Bindings for Scene {
             true,
             wgpu::ShaderStages::FRAGMENT,
             Some(crate::renderer::core::builder::WgslStructName::Generator(
-                crate::resources::uniforms::GpuLightStorage::wgsl_struct_def
-            ))
+                crate::resources::uniforms::GpuLightStorage::wgsl_struct_def,
+            )),
         );
 
         // Binding 3-4: Environment Map (Cube) and Sampler - use processed_env_map for Skybox
-        let env_map_handle = self.environment.get_processed_env_map()
-            .cloned()
+        let env_map_handle = self
+            .environment
+            .get_processed_env_map()
+            .copied()
             .unwrap_or(TextureHandle::dummy_env_map().into());
         builder.add_texture(
             "env_map",
             Some(env_map_handle),
             wgpu::TextureSampleType::Float { filterable: true },
             wgpu::TextureViewDimension::Cube,
-            wgpu::ShaderStages::FRAGMENT
+            wgpu::ShaderStages::FRAGMENT,
         );
         builder.add_sampler(
             "env_map",
             Some(SamplerSource::Default),
             wgpu::SamplerBindingType::Filtering,
-            wgpu::ShaderStages::FRAGMENT
+            wgpu::ShaderStages::FRAGMENT,
         );
 
         builder.add_texture(
@@ -155,13 +168,13 @@ impl Bindings for Scene {
             self.environment.pmrem_map,
             wgpu::TextureSampleType::Float { filterable: true },
             wgpu::TextureViewDimension::Cube,
-            wgpu::ShaderStages::FRAGMENT
+            wgpu::ShaderStages::FRAGMENT,
         );
         builder.add_sampler(
             "pmrem_map",
             Some(SamplerSource::Default),
             wgpu::SamplerBindingType::Filtering,
-            wgpu::ShaderStages::FRAGMENT
+            wgpu::ShaderStages::FRAGMENT,
         );
 
         builder.add_texture(
@@ -169,31 +182,36 @@ impl Bindings for Scene {
             self.environment.brdf_lut,
             wgpu::TextureSampleType::Float { filterable: true },
             wgpu::TextureViewDimension::D2,
-            wgpu::ShaderStages::FRAGMENT
+            wgpu::ShaderStages::FRAGMENT,
         );
         builder.add_sampler(
             "brdf_lut",
             Some(SamplerSource::Default),
             wgpu::SamplerBindingType::Filtering,
-            wgpu::ShaderStages::FRAGMENT
+            wgpu::ShaderStages::FRAGMENT,
         );
-            
     }
 }
-
-
 
 pub struct GlobalBindGroupCache {
     cache: FxHashMap<BindGroupKey, wgpu::BindGroup>,
 }
 
+impl Default for GlobalBindGroupCache {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl GlobalBindGroupCache {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             cache: FxHashMap::default(),
         }
     }
 
+    #[must_use]
     pub fn get(&self, key: &BindGroupKey) -> Option<&wgpu::BindGroup> {
         self.cache.get(key)
     }
@@ -216,16 +234,16 @@ impl GlobalBindGroupCache {
     }
 }
 
-
-/// 全局 BindGroup 缓存键
+/// 全局 `BindGroup` 缓存键
 /// 包含 Layout 的唯一标识 + 所有绑定资源的唯一标识
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BindGroupKey {
-    layout_id: u64,      
+    layout_id: u64,
     resources: SmallVec<[u64; 8]>,
 }
 
 impl BindGroupKey {
+    #[must_use]
     pub fn new(layout_id: u64) -> Self {
         Self {
             layout_id,
@@ -233,6 +251,7 @@ impl BindGroupKey {
         }
     }
 
+    #[must_use]
     pub fn with_resource(mut self, id: u64) -> Self {
         self.resources.push(id);
         self

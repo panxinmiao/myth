@@ -1,10 +1,10 @@
 //! Texture 和 Image 相关操作
 //!
 //! 核心概念：
-//! - GpuImage: 物理纹理资源，包含 wgpu::Texture 和默认视图
-//! - GpuSampler: 采样器状态，全局缓存复用
-//! - TextureBinding: 将 TextureHandle 映射到 (ImageId, ViewId, SamplerId)
-//! - TextureViewKey: 视图缓存键，支持"一份数据，多种视图"
+//! - `GpuImage`: 物理纹理资源，包含 `wgpu::Texture` 和默认视图
+//! - `GpuSampler`: 采样器状态，全局缓存复用
+//! - `TextureBinding`: 将 `TextureHandle` 映射到 (`ImageId`, `ViewId`, `SamplerId`)
+//! - `TextureViewKey`: 视图缓存键，支持"一份数据，多种视图"
 
 use std::sync::atomic::Ordering;
 
@@ -14,22 +14,25 @@ use crate::renderer::core::resources::generate_gpu_resource_id;
 use crate::resources::image::{Image, ImageInner};
 use crate::resources::texture::{SamplerSource, TextureSampler};
 
-use super::{ResourceManager, GpuImage, GpuSampler, TextureBinding, TextureViewKey};
+use super::{GpuImage, GpuSampler, ResourceManager, TextureBinding, TextureViewKey};
 
 impl GpuImage {
     pub fn new(
-        device: &wgpu::Device, 
-        queue: &wgpu::Queue, 
-        image: &ImageInner, 
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        image: &ImageInner,
         view_dimension: wgpu::TextureViewDimension,
-        mip_level_count: u32, 
-        usage: wgpu::TextureUsages
+        mip_level_count: u32,
+        usage: wgpu::TextureUsages,
     ) -> Self {
         let width = image.width.load(Ordering::Relaxed);
         let height = image.height.load(Ordering::Relaxed);
         let depth = image.depth.load(Ordering::Relaxed);
-        let desc = image.description.read().expect("Failed to read image descriptor");
-        
+        let desc = image
+            .description
+            .read()
+            .expect("Failed to read image descriptor");
+
         let size = wgpu::Extent3d {
             width,
             height,
@@ -73,16 +76,37 @@ impl GpuImage {
         }
     }
 
-    pub fn update(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, image: &ImageInner, view_dimension: wgpu::TextureViewDimension) {
+    pub fn update(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        image: &ImageInner,
+        view_dimension: wgpu::TextureViewDimension,
+    ) {
         let gen_id = image.generation_id.load(Ordering::Relaxed);
         if self.generation_id != gen_id {
-            *self = Self::new(device, queue, image, view_dimension, self.mip_level_count, self.usage);
+            *self = Self::new(
+                device,
+                queue,
+                image,
+                view_dimension,
+                self.mip_level_count,
+                self.usage,
+            );
             return;
         }
 
         let ver = image.version.load(Ordering::Relaxed);
         if self.version < ver {
-            Self::upload_data(queue, &self.texture, image, self.size.width, self.size.height, self.size.depth_or_array_layers, self.format);
+            Self::upload_data(
+                queue,
+                &self.texture,
+                image,
+                self.size.width,
+                self.size.height,
+                self.size.depth_or_array_layers,
+                self.format,
+            );
             self.version = ver;
             if self.mip_level_count > 1 {
                 self.mipmaps_generated = false;
@@ -90,12 +114,20 @@ impl GpuImage {
         }
     }
 
-    fn upload_data(queue: &wgpu::Queue, texture: &wgpu::Texture, image: &ImageInner, src_width: u32, src_height: u32, src_depth: u32, src_format: wgpu::TextureFormat) {
+    fn upload_data(
+        queue: &wgpu::Queue,
+        texture: &wgpu::Texture,
+        image: &ImageInner,
+        src_width: u32,
+        src_height: u32,
+        src_depth: u32,
+        src_format: wgpu::TextureFormat,
+    ) {
         let data_guard = image.data.read().expect("Failed to read image data");
         if let Some(data) = &*data_guard {
             let block_size = src_format.block_copy_size(None).unwrap_or(4);
             let bytes_per_row = src_width * block_size;
-            
+
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture,
@@ -113,7 +145,7 @@ impl GpuImage {
                     width: src_width,
                     height: src_height,
                     depth_or_array_layers: src_depth,
-                }
+                },
             );
         }
     }
@@ -121,17 +153,19 @@ impl GpuImage {
 
 impl ResourceManager {
     pub(crate) fn prepare_image(
-        &mut self, 
-        image: &Image, 
+        &mut self,
+        image: &Image,
         view_dimension: wgpu::TextureViewDimension,
-        required_mip_count: u32, 
-        required_usage: wgpu::TextureUsages
+        required_mip_count: u32,
+        required_usage: wgpu::TextureUsages,
     ) -> u64 {
         let id = image.id();
         let mut needs_recreate = false;
 
         if let Some(gpu_img) = self.gpu_images.get(&id) {
-            if gpu_img.mip_level_count < required_mip_count || !gpu_img.usage.contains(required_usage) {
+            if gpu_img.mip_level_count < required_mip_count
+                || !gpu_img.usage.contains(required_usage)
+            {
                 needs_recreate = true;
             }
         } else {
@@ -140,7 +174,14 @@ impl ResourceManager {
 
         if needs_recreate {
             self.gpu_images.remove(&id);
-            let mut gpu_img = GpuImage::new(&self.device, &self.queue, image, view_dimension, required_mip_count, required_usage);
+            let mut gpu_img = GpuImage::new(
+                &self.device,
+                &self.queue,
+                image,
+                view_dimension,
+                required_mip_count,
+                required_usage,
+            );
             gpu_img.last_used_frame = self.frame_index;
             let new_id = gpu_img.id;
             self.gpu_images.insert(id, gpu_img);
@@ -156,11 +197,11 @@ impl ResourceManager {
 
     pub fn prepare_texture(&mut self, assets: &AssetServer, handle: TextureHandle) {
         if handle == TextureHandle::dummy_env_map() {
-            return; 
+            return;
         }
 
         let Some(texture_asset) = assets.textures.get(handle) else {
-            log::warn!("Texture asset not found for handle: {:?}", handle);
+            log::warn!("Texture asset not found for handle: {handle:?}");
             return;
         };
 
@@ -168,9 +209,9 @@ impl ResourceManager {
             let image_id = texture_asset.image.id();
             if let Some(gpu_img) = self.gpu_images.get(&image_id) {
                 let version_match = binding.texture_version == texture_asset.version();
-                let image_match = binding.view_id == gpu_img.id && 
-                                  gpu_img.generation_id == texture_asset.image.generation_id();
-                
+                let image_match = binding.view_id == gpu_img.id
+                    && gpu_img.generation_id == texture_asset.image.generation_id();
+
                 if version_match && image_match {
                     if let Some(gpu_img) = self.gpu_images.get_mut(&image_id) {
                         gpu_img.last_used_frame = self.frame_index;
@@ -181,7 +222,11 @@ impl ResourceManager {
         }
 
         let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
-        let generated_mips = if texture_asset.generate_mipmaps { texture_asset.mip_level_count() } else { 1 };
+        let generated_mips = if texture_asset.generate_mipmaps {
+            texture_asset.mip_level_count()
+        } else {
+            1
+        };
         let final_mip_count = std::cmp::max(1, generated_mips);
 
         if final_mip_count > 1 {
@@ -189,24 +234,28 @@ impl ResourceManager {
         }
 
         let gpu_image_id = self.prepare_image(
-            &texture_asset.image, 
+            &texture_asset.image,
             texture_asset.view_dimension,
-            final_mip_count, 
-            usage
+            final_mip_count,
+            usage,
         );
 
         let image_id = texture_asset.image.id();
 
-        if texture_asset.generate_mipmaps {
-            if let Some(gpu_img) = self.gpu_images.get(&image_id) {
-                if !gpu_img.mipmaps_generated {
-                    let gpu_img_mut = self.gpu_images.get_mut(&image_id).unwrap();
-                    let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Mipmap Gen") });
-                    self.mipmap_generator.generate(&self.device, &mut encoder, &gpu_img_mut.texture);
-                    self.queue.submit(Some(encoder.finish()));
-                    gpu_img_mut.mipmaps_generated = true;
-                }
-            }
+        if texture_asset.generate_mipmaps
+            && let Some(gpu_img) = self.gpu_images.get(&image_id)
+            && !gpu_img.mipmaps_generated
+        {
+            let gpu_img_mut = self.gpu_images.get_mut(&image_id).unwrap();
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Mipmap Gen"),
+                });
+            self.mipmap_generator
+                .generate(&self.device, &mut encoder, &gpu_img_mut.texture);
+            self.queue.submit(Some(encoder.finish()));
+            gpu_img_mut.mipmaps_generated = true;
         }
 
         let sampler_id = self.get_or_create_sampler(texture_asset.sampler, texture_asset.name());
@@ -220,26 +269,28 @@ impl ResourceManager {
         self.texture_bindings.insert(handle, binding);
     }
 
-
     /// 准备 Sampler 资源
-    /// 
+    ///
     /// 逻辑：
-    /// 1. 从 AssetServer 获取 Sampler 数据
+    /// 1. 从 `AssetServer` 获取 Sampler 数据
     /// 2. 构建 Descriptor Key
-    /// 3. 查 sampler_cache (去重)
+    /// 3. 查 `sampler_cache` (去重)
     ///    - 命中：直接复用 ID
-    ///    - 未命中：创建新 wgpu::Sampler，存入 cache 和 lookup
-    /// 4. 更新 sampler_bindings 映射
+    ///    - 未命中：创建新 `wgpu::Sampler，存入` cache 和 lookup
+    /// 4. 更新 `sampler_bindings` 映射
     pub fn prepare_sampler(&mut self, assets: &AssetServer, handle: SamplerHandle) -> u64 {
         // 1. 如果已经绑定且 Asset 版本没变，直接返回 (优化)
         if let Some(&id) = self.sampler_bindings.get(handle) {
-             // 这里可以加版本检查逻辑，类似 prepare_texture
-             return id;
+            // 这里可以加版本检查逻辑，类似 prepare_texture
+            return id;
         }
 
         // 2. 获取 Asset 数据
-        let sampler_asset = assets.samplers.get(handle).expect("Sampler asset not found");
-        
+        let sampler_asset = assets
+            .samplers
+            .get(handle)
+            .expect("Sampler asset not found");
+
         // 3. 构建 Key
         let key = sampler_asset.descriptor;
 
@@ -264,12 +315,12 @@ impl ResourceManager {
             };
             let sampler = self.device.create_sampler(&desc);
             let new_id = generate_gpu_resource_id();
-            
+
             let gpu_sampler = GpuSampler {
                 id: new_id,
                 sampler: sampler.clone(),
             };
-            
+
             self.sampler_cache.insert(key, gpu_sampler);
             self.sampler_id_lookup.insert(new_id, sampler);
             new_id
@@ -277,16 +328,13 @@ impl ResourceManager {
 
         // 5. 记录绑定关系
         self.sampler_bindings.insert(handle, id);
-        
+
         id
     }
-
-
 
     pub fn resolve_sampler_id(&mut self, assets: &AssetServer, source: SamplerSource) -> u64 {
         match source {
             SamplerSource::FromTexture(tex_handle) => {
-
                 if let Some(binding) = self.texture_bindings.get(tex_handle) {
                     return binding.sampler_id;
                 }
@@ -297,27 +345,23 @@ impl ResourceManager {
                 } else {
                     self.dummy_sampler.id
                 }
-            },
-            
-            SamplerSource::Asset(sampler_handle) => {
-                self.prepare_sampler(assets, sampler_handle)
-            },
-            
+            }
+
+            SamplerSource::Asset(sampler_handle) => self.prepare_sampler(assets, sampler_handle),
+
             SamplerSource::Default => self.dummy_sampler.id,
         }
     }
 
-
-
-    /// 获取指定配置的 TextureView
-    /// 
+    /// 获取指定配置的 `TextureView`
+    ///
     /// 极速路径：如果 desc 为 None，直接返回默认视图
-    /// 缓存路径：根据 TextureViewKey 查找/创建视图
+    /// 缓存路径：根据 `TextureViewKey` 查找/创建视图
     #[inline]
     pub fn get_texture_view_desc(
-        &mut self, 
+        &mut self,
         cpu_image_id: u64,
-        desc: Option<&wgpu::TextureViewDescriptor>
+        desc: Option<&wgpu::TextureViewDescriptor>,
     ) -> Option<(&wgpu::TextureView, u64)> {
         let gpu_image = self.gpu_images.get(&cpu_image_id)?;
         let image_id = gpu_image.id;
@@ -325,17 +369,17 @@ impl ResourceManager {
         if desc.is_none() {
             return Some((&gpu_image.default_view, image_id));
         }
-        
+
         let desc = desc.unwrap();
         let key = TextureViewKey::new(image_id, desc);
-        
+
         if !self.view_cache.contains_key(&key) {
             let gpu_image = self.gpu_images.get(&cpu_image_id)?;
             let view = gpu_image.texture.create_view(desc);
             let view_id = generate_gpu_resource_id();
             self.view_cache.insert(key, (view, view_id));
         }
-        
+
         let (view, id) = self.view_cache.get(&key)?;
         Some((view, *id))
     }
@@ -343,9 +387,9 @@ impl ResourceManager {
     /// 获取指定配置的 TextureView（不可变版本，仅查缓存）
     #[inline]
     pub fn get_texture_view_cached(
-        &self, 
+        &self,
         cpu_image_id: u64,
-        desc: Option<&wgpu::TextureViewDescriptor>
+        desc: Option<&wgpu::TextureViewDescriptor>,
     ) -> Option<(&wgpu::TextureView, u64)> {
         let gpu_image = self.gpu_images.get(&cpu_image_id)?;
         let image_id = gpu_image.id;
@@ -353,21 +397,23 @@ impl ResourceManager {
         if desc.is_none() {
             return Some((&gpu_image.default_view, image_id));
         }
-        
+
         let desc = desc.unwrap();
         let key = TextureViewKey::new(image_id, desc);
         let (view, id) = self.view_cache.get(&key)?;
         Some((view, *id))
     }
 
-    pub(crate) fn get_or_create_sampler(&mut self, descriptor: TextureSampler, label: Option<&str>) -> u64 {
-
+    pub(crate) fn get_or_create_sampler(
+        &mut self,
+        descriptor: TextureSampler,
+        label: Option<&str>,
+    ) -> u64 {
         // 1. 直接用 descriptor 查表
         if let Some(gpu_sampler) = self.sampler_cache.get(&descriptor) {
             return gpu_sampler.id;
         }
-    
-    
+
         let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
             label,
             address_mode_u: descriptor.address_mode_u,
@@ -382,11 +428,14 @@ impl ResourceManager {
         });
 
         let id = generate_gpu_resource_id();
-        let gpu_sampler = GpuSampler { id, sampler: sampler.clone() };
+        let gpu_sampler = GpuSampler {
+            id,
+            sampler: sampler.clone(),
+        };
 
         self.sampler_cache.insert(descriptor, gpu_sampler);
         self.sampler_id_lookup.insert(id, sampler);
-        
+
         id
     }
 
@@ -404,7 +453,7 @@ impl ResourceManager {
     pub fn get_image(&self, id: u64) -> Option<&GpuImage> {
         self.gpu_images.get(&id)
     }
-    
+
     #[inline]
     pub fn get_image_by_cpu_id(&self, cpu_image_id: u64) -> Option<&GpuImage> {
         self.gpu_images.get(&cpu_image_id)

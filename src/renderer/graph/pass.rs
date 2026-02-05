@@ -1,15 +1,14 @@
 //! 带状态追踪的渲染通道
 //!
 //! 避免冗余的状态切换调用
-//! 
-
+//!
 
 // 用于替代 Vec<u32> 的结构体，避免堆内存分配
 #[derive(Clone, Copy, PartialEq)]
 struct BindGroupState {
     id: u64,
     // wgpu 的动态偏移量通常很少（限制一般是 8 或 4），用固定数组足够
-    offsets: [u32; 8], 
+    offsets: [u32; 8],
     offset_count: u8,
 }
 
@@ -22,6 +21,7 @@ pub struct TrackedRenderPass<'a> {
 }
 
 impl<'a> TrackedRenderPass<'a> {
+    #[must_use]
     pub fn new(pass: wgpu::RenderPass<'a>) -> Self {
         Self {
             pass,
@@ -103,7 +103,12 @@ impl<'a> TrackedRenderPass<'a> {
         self.pass.draw(vertices, instances);
     }
 
-    pub fn draw_indexed(&mut self, indices: std::ops::Range<u32>, base_vertex: i32, instances: std::ops::Range<u32>) {
+    pub fn draw_indexed(
+        &mut self,
+        indices: std::ops::Range<u32>,
+        base_vertex: i32,
+        instances: std::ops::Range<u32>,
+    ) {
         self.pass.draw_indexed(indices, base_vertex, instances);
     }
 }

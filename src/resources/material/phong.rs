@@ -9,7 +9,6 @@ use crate::resources::texture::SamplerSource;
 use crate::resources::uniforms::MeshPhongUniforms;
 use crate::{impl_material_api, impl_material_trait};
 
-
 #[derive(Clone, Default, Debug)]
 pub struct MeshPhongTextureSet {
     pub map: TextureSlot,
@@ -23,8 +22,6 @@ pub struct MeshPhongTextureSet {
     pub emissive_map_sampler: Option<SamplerSource>,
 }
 
-
-
 #[derive(Debug)]
 pub struct MeshPhongMaterial {
     pub(crate) uniforms: CpuBuffer<MeshPhongUniforms>,
@@ -37,14 +34,18 @@ pub struct MeshPhongMaterial {
 }
 
 impl MeshPhongMaterial {
+    #[must_use]
     pub fn new(color: Vec4) -> Self {
-        let uniform_data = MeshPhongUniforms { color, ..Default::default() };
-        
+        let uniform_data = MeshPhongUniforms {
+            color,
+            ..Default::default()
+        };
+
         Self {
             uniforms: CpuBuffer::new(
                 uniform_data,
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("MeshPhongUniforms")
+                Some("MeshPhongUniforms"),
             ),
             settings: RwLock::new(MaterialSettings::default()),
             version: AtomicU64::new(0),
@@ -54,11 +55,10 @@ impl MeshPhongMaterial {
             auto_sync_texture_to_uniforms: false,
         }
     }
-
 }
 
 impl_material_api!(
-    MeshPhongMaterial, 
+    MeshPhongMaterial,
     MeshPhongUniforms,
     uniforms: [
         (color,              Vec4, "Diffuse color."),
@@ -95,4 +95,3 @@ impl Default for MeshPhongMaterial {
         Self::new(Vec4::ONE)
     }
 }
-

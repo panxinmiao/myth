@@ -36,7 +36,7 @@ pub use builder::FrameBuilder;
 pub use composer::FrameComposer;
 pub use context::RenderContext;
 pub use extracted::{ExtractedRenderItem, ExtractedScene, ExtractedSkeleton};
-pub use frame::{RenderFrame, RenderLists, RenderCommand, RenderKey};
+pub use frame::{RenderCommand, RenderFrame, RenderKey, RenderLists};
 pub use graph::RenderGraph;
 pub use node::RenderNode;
 pub use pass::TrackedRenderPass;

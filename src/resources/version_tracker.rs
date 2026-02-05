@@ -5,6 +5,7 @@ pub struct ChangeTracker {
 }
 
 impl ChangeTracker {
+    #[must_use]
     pub fn new() -> Self {
         Self { version: 0 }
     }
@@ -13,8 +14,9 @@ impl ChangeTracker {
     pub fn changed(&mut self) {
         self.version = self.version.wrapping_add(1);
     }
-    
+
     /// Gets the current version number
+    #[must_use]
     pub fn version(&self) -> u64 {
         self.version
     }
@@ -32,22 +34,22 @@ impl<'a, T> MutGuard<'a, T> {
     }
 }
 
-impl<'a, T> std::ops::Deref for MutGuard<'a, T> {
+impl<T> std::ops::Deref for MutGuard<'_, T> {
     type Target = T;
-    
+
     fn deref(&self) -> &Self::Target {
         self.data
     }
 }
 
-impl<'a, T> std::ops::DerefMut for MutGuard<'a, T> {
+impl<T> std::ops::DerefMut for MutGuard<'_, T> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         self.data
     }
 }
 
 // Key: when Guard is dropped, automatically increment version number
-impl<'a, T> Drop for MutGuard<'a, T> {
+impl<T> Drop for MutGuard<'_, T> {
     fn drop(&mut self) {
         *self.version = self.version.wrapping_add(1);
     }

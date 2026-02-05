@@ -98,7 +98,7 @@
 //!
 //! - **Performance First**: Cache-friendly data layouts, GPU resource pooling
 //! - **Progressive Disclosure**: Simple API for beginners, full control for experts
-//! - **Type Safety**: SlotMap handles for safe resource references
+//! - **Type Safety**: `SlotMap` handles for safe resource references
 //! - **Cross-Platform**: WebGPU/Vulkan/Metal/DX12 via wgpu
 
 #![warn(clippy::all)]
@@ -146,34 +146,35 @@ pub mod prelude {
     // Application
     #[cfg(feature = "winit")]
     pub use crate::app::winit::{App, AppHandler};
-    pub use crate::engine::{MythEngine, FrameState};
-    
+    pub use crate::engine::{FrameState, MythEngine};
+
     // Scene graph
     pub use crate::scene::{
-        Scene, SceneLogic, Node, NodeHandle, SkeletonKey,
-        Camera, ProjectionType, Light, LightKind, Transform,
+        Camera, Light, LightKind, Node, NodeHandle, ProjectionType, Scene, SceneLogic, SkeletonKey,
+        Transform,
     };
-    
+
     // Resources
     pub use crate::resources::{
-        Mesh, Geometry, Material, MaterialType, Texture, Image,
-        MeshBasicMaterial, MeshPhongMaterial, MeshPhysicalMaterial,
-        Side, AlphaMode, TextureSlot,
+        AlphaMode, Geometry, Image, Material, MaterialType, Mesh, MeshBasicMaterial,
+        MeshPhongMaterial, MeshPhysicalMaterial, Side, Texture, TextureSlot,
     };
-    
+
     // Assets
-    pub use crate::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle, ColorSpace};
     pub use crate::assets::GltfLoader;
-    
+    pub use crate::assets::{
+        AssetServer, ColorSpace, GeometryHandle, MaterialHandle, TextureHandle,
+    };
+
     // Animation
-    pub use crate::animation::{AnimationClip, AnimationAction, AnimationMixer, LoopMode};
-    
+    pub use crate::animation::{AnimationAction, AnimationClip, AnimationMixer, LoopMode};
+
     // Math (re-export common glam types)
-    pub use glam::{Vec2, Vec3, Vec4, Quat, Mat3, Mat4, Affine3A, EulerRot};
-    
+    pub use glam::{Affine3A, EulerRot, Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
+
     // Utilities
     pub use crate::utils::orbit_control::OrbitControls;
-    
+
     // Renderer (limited exposure)
     pub use crate::renderer::graph::{FrameComposer, RenderStage};
     pub use crate::renderer::settings::RenderSettings;
@@ -223,8 +224,8 @@ pub mod math {
 
 /// Rendering system configuration and advanced APIs.
 ///
-/// Most users only need [`RenderSettings`](renderer::settings::RenderSettings) 
-/// to configure basic options. Advanced users can access the render graph 
+/// Most users only need [`RenderSettings`](renderer::settings::RenderSettings)
+/// to configure basic options. Advanced users can access the render graph
 /// system for custom passes.
 ///
 /// # Basic Usage
@@ -245,7 +246,7 @@ pub mod math {
 ///
 /// # Advanced: Custom Render Passes
 ///
-/// Implement [`RenderNode`](renderer::graph::RenderNode) to add custom 
+/// Implement [`RenderNode`](renderer::graph::RenderNode) to add custom
 /// rendering passes:
 ///
 /// ```rust,ignore
@@ -260,20 +261,20 @@ pub mod math {
 /// }
 /// ```
 pub mod render {
-    pub use crate::renderer::settings::RenderSettings;
-    pub use crate::renderer::graph::{
-        FrameComposer, FrameBuilder, RenderStage, RenderNode,
-        RenderContext, RenderState, TrackedRenderPass,
-    };
     pub use crate::renderer::Renderer;
-    
+    pub use crate::renderer::graph::{
+        FrameBuilder, FrameComposer, RenderContext, RenderNode, RenderStage, RenderState,
+        TrackedRenderPass,
+    };
+    pub use crate::renderer::settings::RenderSettings;
+
     /// Low-level GPU context access.
     ///
     /// These types are for advanced users who need direct GPU access.
     /// Most applications should not need to use these directly.
     pub mod core {
-        pub use crate::renderer::core::WgpuContext;
         pub use crate::renderer::core::ResourceManager;
+        pub use crate::renderer::core::WgpuContext;
         // Advanced: GPU binding system
         pub use crate::renderer::core::{BindingResource, Bindings, ResourceBuilder};
     }
@@ -286,42 +287,55 @@ pub mod render {
 // Application
 #[cfg(feature = "winit")]
 pub use app::winit::{App, AppHandler};
-pub use engine::{MythEngine, FrameState};
+pub use engine::{FrameState, MythEngine};
 
 // Scene (most common types)
-pub use scene::{Scene, Node, NodeHandle, Camera, Light, Transform};
+pub use scene::{Camera, Light, Node, NodeHandle, Scene, Transform};
 
 // Resources (most common types)
 pub use resources::{
-    Mesh, Geometry, Material, MaterialType, Texture, Image,
-    MeshBasicMaterial, MeshPhongMaterial, MeshPhysicalMaterial,
-    Side, AlphaMode,
+    AlphaMode,
+    Attribute,
+    Geometry,
+    Image,
+    Material,
     // Advanced: Material trait for custom materials
-    MaterialTrait, RenderableMaterialTrait, TextureSlot, TextureTransform,
+    MaterialTrait,
+    MaterialType,
+    Mesh,
+    MeshBasicMaterial,
+    MeshPhongMaterial,
+    MeshPhysicalMaterial,
+    RenderableMaterialTrait,
     // Geometry primitives
-    ShaderDefines, Attribute,
+    ShaderDefines,
+    Side,
+    Texture,
+    TextureSlot,
+    TextureTransform,
     // Tone mapping
-    ToneMappingMode, ToneMappingSettings,
+    ToneMappingMode,
+    ToneMappingSettings,
 };
 
 // Primitives - Geometry creation functions
 pub use resources::primitives::{
-    create_box, create_sphere, SphereOptions, create_plane, PlaneOptions,
+    PlaneOptions, SphereOptions, create_box, create_plane, create_sphere,
 };
 
 // Assets
-pub use assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle, ColorSpace};
+pub use assets::{AssetServer, ColorSpace, GeometryHandle, MaterialHandle, TextureHandle};
 
 // Animation
 pub use animation::{
-    AnimationClip, AnimationAction, AnimationMixer, AnimationSystem,
-    Track, TrackData, TrackMeta, LoopMode, InterpolationMode, Binder,
+    AnimationAction, AnimationClip, AnimationMixer, AnimationSystem, Binder, InterpolationMode,
+    LoopMode, Track, TrackData, TrackMeta,
 };
 
 // Renderer
-pub use renderer::graph::{FrameComposer, FrameBuilder, RenderStage};
-pub use renderer::settings::RenderSettings;
 pub use renderer::Renderer;
+pub use renderer::graph::{FrameBuilder, FrameComposer, RenderStage};
+pub use renderer::settings::RenderSettings;
 
 // Errors
 pub use errors::MythError;

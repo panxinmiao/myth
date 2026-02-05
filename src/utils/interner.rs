@@ -4,25 +4,24 @@
 //! integer [`Symbol`]s for efficient comparison and hashing. This is the foundational
 //! infrastructure for the dynamic shader macro system.
 
-use std::borrow::Cow;
 use lasso::Spur;
+use std::borrow::Cow;
 
 #[cfg(not(target_arch = "wasm32"))]
 use lasso::ThreadedRodeo;
 
 #[cfg(target_arch = "wasm32")]
-use std::cell::UnsafeCell;
-#[cfg(target_arch = "wasm32")]
 use lasso::Rodeo;
+#[cfg(target_arch = "wasm32")]
+use std::cell::UnsafeCell;
 
 /// Global string interner instance (Native - thread-safe)
 #[cfg(not(target_arch = "wasm32"))]
 static INTERNER: std::sync::LazyLock<ThreadedRodeo> = std::sync::LazyLock::new(ThreadedRodeo::new);
 
-
 #[cfg(target_arch = "wasm32")]
 // Global string interner instance (WASM - single-threaded)
-// 
+//
 // We use UnsafeCell here because WASM is single-threaded and RefCell can cause
 // double-borrow panics when async callbacks interleave with event handlers.
 // Since WASM guarantees single-threaded execution, this is safe.
@@ -89,11 +88,7 @@ pub fn resolve(sym: Symbol) -> Cow<'static, str> {
 #[cfg(target_arch = "wasm32")]
 #[inline]
 pub fn resolve(sym: Symbol) -> Cow<'static, str> {
-    INTERNER.with(|interner| {
-        unsafe { 
-            Cow::Owned((*interner.get()).resolve(&sym).to_string()) 
-        }
-    })
+    INTERNER.with(|interner| unsafe { Cow::Owned((*interner.get()).resolve(&sym).to_string()) })
 }
 
 /// Pre-interns commonly used macro names.
@@ -112,7 +107,6 @@ pub fn preload_common_macros() {
         "USE_ANISOTROPY",
         "USE_TRANSMISSION",
         "USE_DISPERSION",
-        
         // Material-related
         "HAS_MAP",
         "HAS_NORMAL_MAP",
@@ -132,7 +126,6 @@ pub fn preload_common_macros() {
         "HAS_ANISOTROPY_MAP",
         "HAS_TRANSMISSION_MAP",
         "HAS_THICKNESS_MAP",
-
         // Geometry-related
         "HAS_UV",
         "HAS_NORMAL",
@@ -157,7 +150,7 @@ pub fn preload_common_macros() {
         "true",
         "false",
     ];
-    
+
     for name in common {
         intern(name);
     }
@@ -172,10 +165,10 @@ mod tests {
         let s1 = intern("hello");
         let s2 = intern("hello");
         let s3 = intern("world");
-        
+
         assert_eq!(s1, s2);
         assert_ne!(s1, s3);
-        
+
         assert_eq!(resolve(s1), "hello");
         assert_eq!(resolve(s3), "world");
     }
@@ -183,7 +176,7 @@ mod tests {
     #[test]
     fn test_get() {
         let _ = intern("existing");
-        
+
         assert!(get("existing").is_some());
         assert!(get("non_existing").is_none());
     }

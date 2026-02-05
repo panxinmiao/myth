@@ -1,12 +1,12 @@
-use std::sync::Arc;
-use slotmap::{Key, SlotMap};
-use rustc_hash::FxHashMap;
-use uuid::Uuid;
 use parking_lot::{RwLock, RwLockReadGuard};
+use rustc_hash::FxHashMap;
+use slotmap::{Key, SlotMap};
+use std::sync::Arc;
+use uuid::Uuid;
 
 // 内部数据结构，被锁保护
 pub struct StorageInner<H: Key, T> {
-    pub map: SlotMap<H, Arc<T>>, 
+    pub map: SlotMap<H, Arc<T>>,
     pub lookup: FxHashMap<Uuid, H>,
 }
 
@@ -24,7 +24,14 @@ pub struct AssetStorage<H: Key, T> {
     inner: RwLock<StorageInner<H, T>>,
 }
 
+impl<H: Key, T> Default for AssetStorage<H, T> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<H: Key, T> AssetStorage<H, T> {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             inner: RwLock::default(),
@@ -61,13 +68,13 @@ impl<H: Key, T> AssetStorage<H, T> {
         let handle = guard.lookup.get(uuid)?;
         guard.map.get(*handle).cloned()
     }
-    
+
     // 获取 Handle (如果只知道 UUID)
     pub fn get_handle_by_uuid(&self, uuid: &Uuid) -> Option<H> {
         let guard = self.inner.read();
-        guard.lookup.get(uuid).cloned()
+        guard.lookup.get(uuid).copied()
     }
-    
+
     /// [读操作 - 高级] 获取读锁 Guard
     /// 用于渲染循环中的批量访问，避免多次获取锁
     pub fn read_lock(&self) -> RwLockReadGuard<'_, StorageInner<H, T>> {

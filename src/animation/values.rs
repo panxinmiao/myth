@@ -1,24 +1,24 @@
-use glam::{Vec3, Quat, Vec4};
-use smallvec::{SmallVec, smallvec};
 use crate::resources::mesh::MAX_MORPH_TARGETS;
+use glam::{Quat, Vec3, Vec4};
+use smallvec::{SmallVec, smallvec};
 
 pub trait Interpolatable: Clone + Sized {
     fn interpolate_linear(start: &Self, end: &Self, t: f32) -> Self;
-    
+
     fn interpolate_cubic(
-        v0: &Self, 
-        out_tangent0: &Self, 
-        in_tangent1: &Self, 
-        v1: &Self, 
-        t: f32, 
-        dt: f32
+        v0: &Self,
+        out_tangent0: &Self,
+        in_tangent1: &Self,
+        v1: &Self,
+        t: f32,
+        dt: f32,
     ) -> Self;
 }
 
 #[repr(C)]
 #[derive(Clone, Debug, Default)]
 pub struct MorphWeightData {
-    pub weights: SmallVec<[f32; MAX_MORPH_TARGETS]>
+    pub weights: SmallVec<[f32; MAX_MORPH_TARGETS]>,
 }
 
 impl Interpolatable for MorphWeightData {
@@ -32,8 +32,10 @@ impl Interpolatable for MorphWeightData {
             let b = end.weights.get(i).copied().unwrap_or(0.0);
             result_weights[i] = a + (b - a) * t;
         }
-        
-        MorphWeightData { weights: result_weights }
+
+        MorphWeightData {
+            weights: result_weights,
+        }
 
         // let mut result = MorphWeightData::default();
         // for i in 0..MAX_MORPH_TARGETS {
@@ -42,14 +44,21 @@ impl Interpolatable for MorphWeightData {
         // result
     }
 
-    fn interpolate_cubic(v0: &Self, out_tangent0: &Self, in_tangent1: &Self, v1: &Self, t: f32, dt: f32) -> Self {
+    fn interpolate_cubic(
+        v0: &Self,
+        out_tangent0: &Self,
+        in_tangent1: &Self,
+        v1: &Self,
+        t: f32,
+        dt: f32,
+    ) -> Self {
         let t2 = t * t;
         let t3 = t2 * t;
         let s2 = -2.0 * t3 + 3.0 * t2;
         let s3 = t3 - t2;
         let s0 = 1.0 - s2;
         let s1 = s3 - t2 + t;
-        
+
         let mut result = MorphWeightData::default();
         for i in 0..MAX_MORPH_TARGETS {
             let m0 = out_tangent0.weights[i] * dt;
@@ -65,7 +74,14 @@ impl Interpolatable for f32 {
         start + (end - start) * t
     }
 
-    fn interpolate_cubic(v0: &Self, out_tangent0: &Self, in_tangent1: &Self, v1: &Self, t: f32, dt: f32) -> Self {
+    fn interpolate_cubic(
+        v0: &Self,
+        out_tangent0: &Self,
+        in_tangent1: &Self,
+        v1: &Self,
+        t: f32,
+        dt: f32,
+    ) -> Self {
         let t2 = t * t;
         let t3 = t2 * t;
 
@@ -86,7 +102,14 @@ impl Interpolatable for Vec3 {
         start.lerp(*end, t)
     }
 
-    fn interpolate_cubic(v0: &Self, out_tangent0: &Self, in_tangent1: &Self, v1: &Self, t: f32, dt: f32) -> Self {
+    fn interpolate_cubic(
+        v0: &Self,
+        out_tangent0: &Self,
+        in_tangent1: &Self,
+        v1: &Self,
+        t: f32,
+        dt: f32,
+    ) -> Self {
         let t2 = t * t;
         let t3 = t2 * t;
 
@@ -107,7 +130,14 @@ impl Interpolatable for Quat {
         start.slerp(*end, t)
     }
 
-    fn interpolate_cubic(v0: &Self, out_tangent0: &Self, in_tangent1: &Self, v1: &Self, t: f32, dt: f32) -> Self {
+    fn interpolate_cubic(
+        v0: &Self,
+        out_tangent0: &Self,
+        in_tangent1: &Self,
+        v1: &Self,
+        t: f32,
+        dt: f32,
+    ) -> Self {
         let t2 = t * t;
         let t3 = t2 * t;
 
@@ -122,7 +152,7 @@ impl Interpolatable for Quat {
         let m1_v = Vec4::from(*in_tangent1) * dt;
 
         let result = v0_v * s0 + m0_v * s1 + v1_v * s2 + m1_v * s3;
-        
+
         Quat::from_vec4(result).normalize()
     }
 }

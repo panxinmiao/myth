@@ -21,7 +21,7 @@ impl AppHandler for PhongBox {
         if let Some(phong) = mat.as_phong_mut() {
             phong.set_map(Some(tex_handle));
         }
-        
+
         let geo_handle = engine.assets.geometries.add(geometry);
         let mat_handle = engine.assets.materials.add(mat);
 
@@ -37,12 +37,12 @@ impl AppHandler for PhongBox {
         // 4. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
-        
+
         if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 3.0, 10.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
-        
+
         scene.active_camera = Some(cam_node_id);
 
         Self {
@@ -52,7 +52,7 @@ impl AppHandler for PhongBox {
     }
 
     fn update(&mut self, engine: &mut MythEngine, _window: &Arc<Window>, frame: &FrameState) {
-        let Some(scene) = engine.scene_manager.active_scene_mut() else{
+        let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
         // 旋转立方体
@@ -64,10 +64,10 @@ impl AppHandler for PhongBox {
 
         // 轨道控制器
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, &engine.input, camera.fov, frame.dt);
+            self.controls
+                .update(transform, &engine.input, camera.fov, frame.dt);
         }
     }
-
 }
 
 fn main() -> anyhow::Result<()> {

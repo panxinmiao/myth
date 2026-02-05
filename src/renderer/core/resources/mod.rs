@@ -1,55 +1,57 @@
 //! GPU 资源管理器
 //!
 //! 负责 GPU 端资源的创建、更新和管理
-//! 
+//!
 //! 采用模块化设计，将不同职责拆分到独立文件中：
 //! - buffer.rs: Buffer 相关操作
 //! - texture.rs: Texture 和 Image 相关操作  
 //! - geometry.rs: Geometry 相关操作
 //! - material.rs: Material 相关操作
-//! - binding.rs: BindGroup 相关操作
-//! - allocator.rs: ModelBufferAllocator
-//! - resource_ids.rs: 资源 ID 追踪和变化检测
+//! - binding.rs: `BindGroup` 相关操作
+//! - allocator.rs: `ModelBufferAllocator`
+//! - `resource_ids.rs`: 资源 ID 追踪和变化检测
 //!
 //! # 资源管理架构
 //!
 //! 采用 "Ensure -> Check -> Rebuild" 模式：
-//! 
+//!
 //! 1. **Ensure 阶段**: 确保 GPU 资源存在且数据最新，返回物理资源 ID
-//! 2. **Check 阶段**: 比较资源 ID 是否变化，决定是否需要重建 BindGroup
-//! 3. **Rebuild 阶段**: 如需重建，收集 LayoutEntries 并比较是否需要新 Layout
+//! 2. **Check 阶段**: 比较资源 ID 是否变化，决定是否需要重建 `BindGroup`
+//! 3. **Rebuild 阶段**: 如需重建，收集 `LayoutEntries` 并比较是否需要新 Layout
 
 mod allocator;
+mod binding;
 mod buffer;
-mod texture;
 mod geometry;
 mod material;
-mod binding;
 mod mipmap;
 mod resource_ids;
+mod texture;
 mod tracked;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use glam::Mat4;
-use slotmap::SecondaryMap;
 use core::ops::Range;
+use glam::Mat4;
 use rustc_hash::FxHashMap;
+use slotmap::SecondaryMap;
 
 use crate::assets::server::SamplerHandle;
 
 use crate::resources::texture::TextureSampler;
 
-use crate::scene::SkeletonKey;
-use crate::resources::buffer::{CpuBuffer, GpuData};
 use crate::assets::{GeometryHandle, MaterialHandle, TextureHandle};
+use crate::resources::buffer::{CpuBuffer, GpuData};
+use crate::scene::SkeletonKey;
 
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 
-pub use allocator::ModelBufferAllocator;
 pub use crate::renderer::core::resources::mipmap::MipmapGenerator;
-pub use resource_ids::{EnsureResult, ResourceIdSet, BindGroupFingerprint, hash_layout_entries, ResourceId};
+pub use allocator::ModelBufferAllocator;
+pub use resource_ids::{
+    BindGroupFingerprint, EnsureResult, ResourceId, ResourceIdSet, hash_layout_entries,
+};
 pub use tracked::Tracked;
 
 static NEXT_GPU_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -75,7 +77,13 @@ pub struct GpuBuffer {
 }
 
 impl GpuBuffer {
-    pub fn new(device: &wgpu::Device, data: &[u8], usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
+    #[must_use]
+    pub fn new(
+        device: &wgpu::Device,
+        data: &[u8],
+        usage: wgpu::BufferUsages,
+        label: Option<&str>,
+    ) -> Self {
         use wgpu::util::DeviceExt;
         let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
             label,
@@ -102,7 +110,12 @@ impl GpuBuffer {
         }
     }
 
-    pub fn update_with_data(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) -> bool {
+    pub fn update_with_data(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &[u8],
+    ) -> bool {
         if let Some(prev) = &mut self.shadow_data {
             if prev == data {
                 return false;
@@ -115,7 +128,13 @@ impl GpuBuffer {
         self.write_to_gpu(device, queue, data)
     }
 
-    pub fn update_with_version(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8], new_version: u64) -> bool {
+    pub fn update_with_version(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &[u8],
+        new_version: u64,
+    ) -> bool {
         if new_version <= self.version {
             return false;
         }
@@ -149,7 +168,7 @@ impl GpuBuffer {
 
 /// 纹理资源映射
 ///
-/// 将 TextureHandle 映射到对应的 GpuImage ID、View ID 和 GpuSampler ID
+/// 将 `TextureHandle` 映射到对应的 `GpuImage` ID、View ID 和 `GpuSampler` ID
 #[derive(Debug, Clone, Copy)]
 pub struct TextureBinding {
     /// GPU 端图像视图 ID
@@ -163,8 +182,8 @@ pub struct TextureBinding {
 
 /// 纹理视图缓存键
 ///
-/// 用于按需创建和缓存不同配置的 TextureView。
-/// Key 包含 view_id，确保底层 Image 重建时自动失效。
+/// 用于按需创建和缓存不同配置的 `TextureView`。
+/// Key 包含 `view_id，确保底层` Image 重建时自动失效。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureViewKey {
     pub view_id: u64,
@@ -179,6 +198,7 @@ pub struct TextureViewKey {
 
 impl TextureViewKey {
     #[inline]
+    #[must_use]
     pub fn new(view_id: u64, desc: &wgpu::TextureViewDescriptor) -> Self {
         Self {
             view_id,
@@ -193,6 +213,7 @@ impl TextureViewKey {
     }
 
     #[inline]
+    #[must_use]
     pub fn default_for_view(view_id: u64) -> Self {
         Self {
             view_id,
@@ -226,16 +247,16 @@ pub struct GpuImage {
 }
 
 /// GPU 端采样器资源
-/// 
-/// 与 GpuImage 分离，实现全局缓存和复用
+///
+/// 与 `GpuImage` 分离，实现全局缓存和复用
 pub struct GpuSampler {
     pub id: u64,
     pub sampler: wgpu::Sampler,
 }
 
 /// GPU 端几何体资源
-/// 
-/// Vertex Buffer IDs 用于 Pipeline 缓存验证，不影响 BindGroup
+///
+/// Vertex Buffer IDs 用于 Pipeline 缓存验证，不影响 `BindGroup`
 pub struct GpuGeometry {
     pub layout_info: GeneratedVertexLayout,
     pub vertex_buffers: Vec<wgpu::Buffer>,
@@ -249,18 +270,18 @@ pub struct GpuGeometry {
 }
 
 /// GPU 端材质资源
-/// 
+///
 /// 使用资源 ID 追踪机制自动检测变化
-/// 
+///
 /// # 版本追踪三维分离
-/// 
-/// 1. **资源拓扑 (BindGroup)**: 由 `resource_ids` 追踪
-///    - 纹理/采样器/Buffer ID 变化 -> 重建 BindGroup
-/// 
+///
+/// 1. **资源拓扑 (`BindGroup`)**: 由 `resource_ids` 追踪
+///    - 纹理/采样器/Buffer ID 变化 -> 重建 `BindGroup`
+///
 /// 2. **资源内容 (Buffer Data)**: 由 `BufferRef` 追踪（外部）
 ///    - Atomic 版本号变化 -> 上传 Buffer
-/// 
-/// 3. **管线状态 (RenderPipeline)**: 由 `version` 追踪
+///
+/// 3. **管线状态 (`RenderPipeline`)**: 由 `version` 追踪
 ///    - 深度写入/透明度/双面渲染等变化 -> 切换 Pipeline
 pub struct GpuMaterial {
     pub bind_group: wgpu::BindGroup,
@@ -270,18 +291,18 @@ pub struct GpuMaterial {
     /// Layout entries 的哈希值（用于快速比较是否需要重建 Layout）
     pub layout_hash: u64,
     pub binding_wgsl: String,
-    /// 所有依赖资源的物理 ID 集合（守卫 BindGroup 的有效性）
+    /// 所有依赖资源的物理 ID 集合（守卫 `BindGroup` 的有效性）
     pub resource_ids: ResourceIdSet,
-    /// 记录生成此 GpuMaterial 时的 Material 版本（用于 Pipeline 缓存）
+    /// 记录生成此 `GpuMaterial` 时的 Material 版本（用于 Pipeline 缓存）
     pub version: u64,
     pub last_used_frame: u64,
     pub last_verified_frame: u64,
 }
 
 /// GPU 全局状态 (Group 0)
-/// 
+///
 /// 包含 Camera Uniforms、Light Storage Buffer、Environment Maps 等
-/// 
+///
 /// 采用 "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" 模式
 pub struct GpuGlobalState {
     pub id: u32,
@@ -294,7 +315,6 @@ pub struct GpuGlobalState {
     pub resource_ids: ResourceIdSet,
     pub last_used_frame: u64,
 }
-
 
 // ============================================================================
 // 紧凑的 BindGroup 缓存键
@@ -324,11 +344,11 @@ pub struct ResourceManager {
     pub(crate) gpu_materials: SecondaryMap<MaterialHandle, GpuMaterial>,
     pub(crate) global_states: FxHashMap<u64, GpuGlobalState>,
 
-    /// TextureHandle 到 (ImageId, SamplerId) 的映射
+    /// `TextureHandle` 到 (`ImageId`, `SamplerId`) 的映射
     pub(crate) texture_bindings: SecondaryMap<TextureHandle, TextureBinding>,
-    /// SamplerHandle 到 SamplerId 的映射
+    /// `SamplerHandle` 到 `SamplerId` 的映射
     pub(crate) sampler_bindings: SecondaryMap<SamplerHandle, u64>,
-    
+
     /// 所有 GpuBuffer，Key 是 CPU Buffer 的 ID
     pub(crate) gpu_buffers: FxHashMap<u64, GpuBuffer>,
     /// 所有 GpuImage，Key 是 CPU Image 的 ID
@@ -337,7 +357,8 @@ pub struct ResourceManager {
     pub(crate) sampler_cache: FxHashMap<TextureSampler, GpuSampler>,
     pub(crate) sampler_id_lookup: FxHashMap<u64, wgpu::Sampler>,
     pub(crate) view_cache: FxHashMap<TextureViewKey, (wgpu::TextureView, u64)>,
-    pub(crate) layout_cache: FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
+    pub(crate) layout_cache:
+        FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
 
     pub(crate) dummy_image: GpuImage,
     pub(crate) dummy_env_image: GpuImage,
@@ -351,10 +372,9 @@ pub struct ResourceManager {
     pub(crate) object_bind_group_cache: FxHashMap<ObjectBindGroupKey, BindGroupContext>,
     pub(crate) bind_group_id_lookup: FxHashMap<u64, BindGroupContext>,
 
-
     /// 存储内部生成的纹理视图 (Render Targets / Attachments)
     /// Key: Resource ID (u64)
-    /// Value: wgpu::TextureView
+    /// Value: `wgpu::TextureView`
     pub(crate) internal_resources: FxHashMap<u64, wgpu::TextureView>,
 
     /// 内部纹理的名称到 ID 的映射，保证 ID 跨帧稳定
@@ -365,10 +385,15 @@ pub struct ResourceManager {
 }
 
 impl ResourceManager {
+    #[must_use]
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         // 创建 dummy 2D image
         let dummy_image = {
-            let size = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 };
+            let size = wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            };
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Dummy Image"),
                 size,
@@ -379,7 +404,7 @@ impl ResourceManager {
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
-            
+
             queue.write_texture(
                 wgpu::TexelCopyTextureInfo {
                     texture: &texture,
@@ -395,9 +420,9 @@ impl ResourceManager {
                 },
                 size,
             );
-            
+
             let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-            
+
             GpuImage {
                 id: generate_gpu_resource_id(),
                 texture,
@@ -416,7 +441,11 @@ impl ResourceManager {
 
         // 创建 dummy env image (cube map)
         let dummy_env_image = {
-            let size = wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 6 };
+            let size = wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 6,
+            };
             let texture = device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("Dummy EnvMap Black"),
                 size,
@@ -486,9 +515,14 @@ impl ResourceManager {
         // 初始化 Model GPU Buffer 映射
         let gpu_buffers = {
             let model_cpu_buffer = model_allocator.cpu_buffer();
-            let buffer_guard  = model_cpu_buffer.read();
-            let model_gpu_buffer = GpuBuffer::new(&device, buffer_guard.as_bytes(), model_cpu_buffer.usage(), model_cpu_buffer.label());
-            
+            let buffer_guard = model_cpu_buffer.read();
+            let model_gpu_buffer = GpuBuffer::new(
+                &device,
+                buffer_guard.as_bytes(),
+                model_cpu_buffer.usage(),
+                model_cpu_buffer.label(),
+            );
+
             let mut map = FxHashMap::default();
             map.insert(model_cpu_buffer.id(), model_gpu_buffer);
             map
@@ -538,9 +572,9 @@ impl ResourceManager {
     // 确保 Model Buffer 容量并同步 GPU 资源
     pub fn ensure_model_buffer_capacity(&mut self, count: usize) {
         let old_id = self.model_allocator.buffer_id();
-        
+
         self.model_allocator.ensure_capacity(count);
-        
+
         // 如果发生了扩容 (ID 变了)，我们需要立即创建对应的 GPU Buffer
         // 否则后续的 prepare_mesh 会找不到 Buffer 或者绑定到旧 Buffer
         let new_id = self.model_allocator.buffer_id();
@@ -553,27 +587,29 @@ impl ResourceManager {
             // 立即创建新的 GpuBuffer (虽然数据还没填，但 wgpu::Buffer 对象需要存在)
             // 注意：这里我们创建一个未初始化的 Buffer 即可，因为后面 upload_model_buffer 会填充数据
             // 但为了安全，我们可以用 CpuBuffer 的默认数据初始化
-            let buffer_guard  = cpu_buf.read();
+            let buffer_guard = cpu_buf.read();
             let gpu_buf = GpuBuffer::new(
-                &self.device, 
-                buffer_guard.as_bytes(), 
-                cpu_buf.usage(), 
-                cpu_buf.label()
+                &self.device,
+                buffer_guard.as_bytes(),
+                cpu_buf.usage(),
+                cpu_buf.label(),
             );
-            
+
             self.gpu_buffers.insert(new_id, gpu_buf);
         }
     }
 
     /// 分配一个 Model Uniform，返回字节偏移量
     #[inline]
-    pub fn allocate_model_uniform(&mut self, data: crate::resources::uniforms::DynamicModelUniforms) -> u32 {
+    pub fn allocate_model_uniform(
+        &mut self,
+        data: crate::resources::uniforms::DynamicModelUniforms,
+    ) -> u32 {
         self.model_allocator.allocate(data)
     }
 
     /// 每帧结束前上传 Model Buffer 到 GPU
     pub fn upload_model_buffer(&mut self) {
-
         if self.model_allocator.is_empty() {
             return;
         }
@@ -583,7 +619,7 @@ impl ResourceManager {
         let allocator = &self.model_allocator;
         let buffer_ref = allocator.buffer_handle();
 
-        let buffer_guard  = allocator.cpu_buffer().read();
+        let buffer_guard = allocator.cpu_buffer().read();
 
         let full_slice = buffer_guard.as_bytes();
 
@@ -600,7 +636,7 @@ impl ResourceManager {
             &mut self.gpu_buffers,
             self.frame_index,
             &buffer_ref,
-            data_to_upload
+            data_to_upload,
         );
     }
 
@@ -610,23 +646,29 @@ impl ResourceManager {
         self.model_allocator.buffer_id()
     }
 
-    /// 通过缓存的 ID 快速获取 BindGroup 数据
+    /// 通过缓存的 ID 快速获取 `BindGroup` 数据
     #[inline]
     pub fn get_cached_bind_group(&self, cached_bind_group_id: u64) -> Option<&BindGroupContext> {
         self.bind_group_id_lookup.get(&cached_bind_group_id)
     }
 
     pub fn prune(&mut self, ttl_frames: u64) {
-        if self.frame_index < ttl_frames { return; }
+        if self.frame_index < ttl_frames {
+            return;
+        }
         let cutoff = self.frame_index - ttl_frames;
 
-        self.gpu_geometries.retain(|_, v| v.last_used_frame >= cutoff);
-        self.gpu_materials.retain(|_, v| v.last_used_frame >= cutoff);
+        self.gpu_geometries
+            .retain(|_, v| v.last_used_frame >= cutoff);
+        self.gpu_materials
+            .retain(|_, v| v.last_used_frame >= cutoff);
         // Sampler 缓存使用全局缓存，不需要按 Texture 清理
         self.gpu_buffers.retain(|_, v| v.last_used_frame >= cutoff);
         self.gpu_images.retain(|_, v| v.last_used_frame >= cutoff);
-        self.global_states.retain(|_, v| v.last_used_frame >= cutoff);
+        self.global_states
+            .retain(|_, v| v.last_used_frame >= cutoff);
         // texture_bindings 跟随 gpu_images 清理
-        self.texture_bindings.retain(|_, b| self.gpu_images.contains_key(&b.cpu_image_id));
+        self.texture_bindings
+            .retain(|_, b| self.gpu_images.contains_key(&b.cpu_image_id));
     }
 }

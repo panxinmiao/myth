@@ -1,4 +1,4 @@
-use crate::resources::geometry::{Geometry, Attribute};
+use crate::resources::geometry::{Attribute, Geometry};
 use wgpu::VertexFormat;
 
 pub struct PlaneOptions {
@@ -19,13 +19,14 @@ impl Default for PlaneOptions {
     }
 }
 
+#[must_use]
 pub fn create_plane(options: PlaneOptions) -> Geometry {
     let width_half = options.width / 2.0;
     let height_half = options.height / 2.0;
 
     let grid_x = options.width_segments;
     let grid_y = options.height_segments;
-    
+
     let grid_x1 = grid_x + 1;
     let grid_y1 = grid_y + 1;
 
@@ -67,11 +68,17 @@ pub fn create_plane(options: PlaneOptions) -> Geometry {
     }
 
     let mut geo = Geometry::new();
-    geo.set_attribute("position", Attribute::new_planar(&positions, VertexFormat::Float32x3));
-    geo.set_attribute("normal", Attribute::new_planar(&normals, VertexFormat::Float32x3));
+    geo.set_attribute(
+        "position",
+        Attribute::new_planar(&positions, VertexFormat::Float32x3),
+    );
+    geo.set_attribute(
+        "normal",
+        Attribute::new_planar(&normals, VertexFormat::Float32x3),
+    );
     geo.set_attribute("uv", Attribute::new_planar(&uvs, VertexFormat::Float32x2));
     geo.set_indices(&indices);
     geo.compute_bounding_volume();
-    
+
     geo
 }

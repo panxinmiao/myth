@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use myth_engine::utils::FpsCounter;
 use myth_engine::prelude::*;
+use myth_engine::utils::FpsCounter;
 use winit::window::Window;
 
 /// HDR 环境贴图示例
@@ -15,9 +15,10 @@ struct HdrEnvDemo {
 impl AppHandler for HdrEnvDemo {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 加载 HDR 环境贴图 (Equirectangular 格式)
-        let env_texture_handle = engine.assets.load_hdr_texture(
-            "examples/assets/blouberg_sunrise_2_1k.hdr"
-        ).expect("Failed to load HDR environment map");
+        let env_texture_handle = engine
+            .assets
+            .load_hdr_texture("examples/assets/blouberg_sunrise_2_1k.hdr")
+            .expect("Failed to load HDR environment map");
 
         // let env_texture_handle = engine.assets.load_texture_from_file(
         //     "examples/assets/royal_esplanade_2k.hdr.jpg",
@@ -36,13 +37,12 @@ impl AppHandler for HdrEnvDemo {
         scene.add_light(light);
 
         // 3. 加载 glTF 模型
-        let gltf_path = std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
+        let gltf_path =
+            std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
         println!("Loading glTF model from: {}", gltf_path.display());
-        
-        let prefab = GltfLoader::load(
-            gltf_path,
-            engine.assets.clone()
-        ).expect("Failed to load glTF model");
+
+        let prefab =
+            GltfLoader::load(gltf_path, engine.assets.clone()).expect("Failed to load glTF model");
         let gltf_node = scene.instantiate(&prefab);
 
         println!("Successfully loaded root node: {:?}", gltf_node);
@@ -80,7 +80,8 @@ impl AppHandler for HdrEnvDemo {
         };
 
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
-            self.controls.update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
+            self.controls
+                .update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
         }
 
         if let Some(fps) = self.fps_counter.update() {
@@ -92,6 +93,9 @@ impl AppHandler for HdrEnvDemo {
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     App::new()
-        .with_settings(RenderSettings { vsync: false, ..Default::default() })
+        .with_settings(RenderSettings {
+            vsync: false,
+            ..Default::default()
+        })
         .run::<HdrEnvDemo>()
 }

@@ -1,13 +1,13 @@
-use std::sync::Arc;
-use std::path::Path;
 use std::env;
+use std::path::Path;
+use std::sync::Arc;
 
 use myth_engine::prelude::*;
 use myth_engine::utils::FpsCounter;
 use winit::window::Window;
 
 /// 骨骼动画示例
-/// 
+///
 /// 用法: skinning [path_to_model.glb]
 struct SkinningDemo {
     controls: OrbitControls,
@@ -18,10 +18,10 @@ impl AppHandler for SkinningDemo {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // === 1. 解析启动参数 ===
         let args: Vec<String> = env::args().collect();
-        
+
         // 默认模型路径 (如果没有传参数，就用这个)
-        let default_path = "examples/assets/Michelle.glb"; 
-        
+        let default_path = "examples/assets/Michelle.glb";
+
         let gltf_path_str = if args.len() > 1 {
             &args[1]
         } else {
@@ -34,18 +34,21 @@ impl AppHandler for SkinningDemo {
         let gltf_path = Path::new(gltf_path_str);
 
         // === 2. 加载环境贴图 (保持不变) ===
-        let env_texture_handle = engine.assets.load_cube_texture(
-            [
-                "examples/assets/Park2/posx.jpg",
-                "examples/assets/Park2/negx.jpg",
-                "examples/assets/Park2/posy.jpg",
-                "examples/assets/Park2/negy.jpg",
-                "examples/assets/Park2/posz.jpg",
-                "examples/assets/Park2/negz.jpg",
-            ],
-            ColorSpace::Srgb,
-            true
-        ).expect("Failed to load environment map");
+        let env_texture_handle = engine
+            .assets
+            .load_cube_texture(
+                [
+                    "examples/assets/Park2/posx.jpg",
+                    "examples/assets/Park2/negx.jpg",
+                    "examples/assets/Park2/posy.jpg",
+                    "examples/assets/Park2/negy.jpg",
+                    "examples/assets/Park2/posz.jpg",
+                    "examples/assets/Park2/negz.jpg",
+                ],
+                ColorSpace::Srgb,
+                true,
+            )
+            .expect("Failed to load environment map");
 
         let scene = engine.scene_manager.create_active();
 
@@ -56,11 +59,8 @@ impl AppHandler for SkinningDemo {
         scene.add_light(light);
         // === 4. 加载 glTF 模型 ===
         println!("Loading glTF model from: {:?}", gltf_path);
-        
-        let prefab = match GltfLoader::load(
-            gltf_path,
-            engine.assets.clone()
-        ) {
+
+        let prefab = match GltfLoader::load(gltf_path, engine.assets.clone()) {
             Ok(res) => res,
             Err(e) => {
                 eprintln!("Error loading model '{}': {}", gltf_path.display(), e);
@@ -82,13 +82,12 @@ impl AppHandler for SkinningDemo {
             }
 
             mixer.play("SambaDance");
-
         }
 
         // === 5. 设置相机 ===
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
-        
+
         if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 1.5, 4.0); // 稍微抬高一点视角
             node.transform.look_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y);
@@ -102,12 +101,13 @@ impl AppHandler for SkinningDemo {
     }
 
     fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
-        let Some(scene) = engine.scene_manager.active_scene_mut() else{
+        let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
 
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, &engine.input, camera.fov, frame.dt);
+            self.controls
+                .update(transform, &engine.input, camera.fov, frame.dt);
         }
 
         if let Some(fps) = self.fps_counter.update() {
@@ -119,6 +119,10 @@ impl AppHandler for SkinningDemo {
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     App::new()
-        .with_settings(RenderSettings { vsync: false, enable_hdr: false, ..Default::default() }) 
+        .with_settings(RenderSettings {
+            vsync: false,
+            enable_hdr: false,
+            ..Default::default()
+        })
         .run::<SkinningDemo>()
 }

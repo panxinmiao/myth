@@ -4,7 +4,7 @@ use myth_engine::prelude::*;
 use winit::window::Window;
 
 /// 旋转立方体示例
-/// 
+///
 /// 演示带动画更新的 AppHandler 模式
 struct RotatingCube {
     cube_node_id: NodeHandle,
@@ -27,19 +27,19 @@ impl AppHandler for RotatingCube {
         // 3. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let camera_node_id = scene.add_camera(camera);
-        
+
         if let Some(cam_node) = scene.get_node_mut(camera_node_id) {
             cam_node.transform.position = Vec3::new(0.0, 3.0, 20.0);
             cam_node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
-        
+
         scene.active_camera = Some(camera_node_id);
 
         Self { cube_node_id }
     }
 
     fn update(&mut self, engine: &mut MythEngine, _window: &Arc<Window>, frame: &FrameState) {
-        let Some(scene) = engine.scene_manager.active_scene_mut() else{
+        let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
         // 让立方体旋转

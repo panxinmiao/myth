@@ -4,7 +4,7 @@
 //! In fact, this example currently has some privileges because to support the Inspector,
 //! it directly accesses the engine's internal data structures.
 //! In the future, as the engine evolves, it may become a prototype for the engine's editor/debugger.
-//! 
+//!
 //! Features:
 //! - Load local glTF/glb files via file dialog
 //! - Support loading KhronosGroup glTF-Sample-Assets remote resources
@@ -14,7 +14,7 @@
 //! - FPS display
 //!
 //! Run: cargo run --example gltf_viewer --release
-//! 
+//!
 //! # Architecture Notes
 //! This example demonstrates the "UI as a Plugin" pattern:
 //! - `UiPass` implements `RenderNode` trait, can be injected into RenderGraph
@@ -23,32 +23,32 @@
 
 mod ui_pass;
 
-use std::sync::Arc;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
-use std::sync::mpsc::{channel, Receiver, Sender};
+use std::sync::Arc;
+use std::sync::mpsc::{Receiver, Sender, channel};
 
 #[cfg(target_arch = "wasm32")]
 use std::sync::Mutex;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use myth_engine::prelude::*;
+use myth_engine::RenderableMaterialTrait;
 use myth_engine::assets::SharedPrefab;
-use myth_engine::utils::FpsCounter;
+use myth_engine::prelude::*;
 use myth_engine::renderer::core::{BindingResource, ResourceBuilder};
-use myth_engine::{RenderableMaterialTrait};
 use myth_engine::resources::texture::TextureSource;
+use myth_engine::utils::FpsCounter;
 
 use ui_pass::UiPass;
 
+use winit::event::WindowEvent;
 use winit::keyboard::PhysicalKey;
 use winit::window::Window;
-use winit::event::WindowEvent;
-
 
 #[cfg(target_arch = "wasm32")]
-static DROP_SENDER: std::sync::LazyLock<Mutex<Option<Sender<(String, Vec<u8>)>>>> = std::sync::LazyLock::new(|| Mutex::new(None));
+static DROP_SENDER: std::sync::LazyLock<Mutex<Option<Sender<(String, Vec<u8>)>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(None));
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
@@ -136,7 +136,7 @@ struct TextureInfo {
 struct GltfViewer {
     /// UI Pass (egui rendering)
     ui_pass: UiPass,
-    
+
     /// Currently loaded model root node
     gltf_node: Option<NodeHandle>,
     /// List of available animations
@@ -168,7 +168,7 @@ struct GltfViewer {
     file_dialog_tx: Sender<PathBuf>,
     #[cfg(target_arch = "wasm32")]
     file_dialog_tx: Sender<(String, Vec<u8>)>,
-    
+
     // === Remote Model Related ===
     /// Remote model list
     model_list: Vec<ModelInfo>,
@@ -182,13 +182,13 @@ struct GltfViewer {
     load_sender: Sender<LoadResult>,
     /// Preferred glTF variants (by priority)
     preferred_variants: Vec<&'static str>,
-    
+
     // === Async Prefab Loading ===
     /// Prefab load result receiver
     prefab_receiver: Receiver<PrefabLoadResult>,
     /// Prefab load sender
     prefab_sender: Sender<PrefabLoadResult>,
-    
+
     // === Inspector Related ===
     /// Whether to show Inspector
     show_inspector: bool,
@@ -198,7 +198,7 @@ struct GltfViewer {
     inspector_materials: Vec<MaterialInfo>,
     /// Collected texture list
     inspector_textures: Vec<TextureInfo>,
-    
+
     // === Render Settings ===
     /// IBL toggle
     ibl_enabled: bool,
@@ -206,7 +206,7 @@ struct GltfViewer {
     hdr_enabled: bool,
     /// MSAA sample count (cached from renderer)
     msaa_samples: u32,
-    
+
     hdr_receiver: Option<Receiver<TextureHandle>>,
 
     show_ui: bool,
@@ -231,12 +231,11 @@ const ASSET_PATH: &str = "assets/";
 impl AppHandler for GltfViewer {
     fn init(engine: &mut MythEngine, window: &Arc<Window>) -> Self {
         // 1. Create UI Pass
-        let wgpu_ctx = engine.renderer.wgpu_ctx().expect("Renderer not initialized");
-        let ui_pass = UiPass::new(
-            &wgpu_ctx.device,
-            wgpu_ctx.surface_view_format,
-            window,
-        );
+        let wgpu_ctx = engine
+            .renderer
+            .wgpu_ctx()
+            .expect("Renderer not initialized");
+        let ui_pass = UiPass::new(&wgpu_ctx.device, wgpu_ctx.surface_view_format, window);
 
         let scene = engine.scene_manager.create_active();
 
@@ -253,7 +252,7 @@ impl AppHandler for GltfViewer {
             //     format!("{}{}", ASSET_PATH, "Park2/posz.jpg"),
             //     format!("{}{}", ASSET_PATH, "Park2/negz.jpg"),
             // ];
-                
+
             let map_path = "royal_esplanade_2k.hdr.jpg";
             let env_map_path = format!("{}{}", ASSET_PATH, map_path);
 
@@ -265,8 +264,8 @@ impl AppHandler for GltfViewer {
                 }
                 Err(e) => log::error!("HDR load failed: {}", e),
             }
-        });        
-        
+        });
+
         scene.environment.set_ambient_color(Vec3::splat(0.3));
 
         // 3. 添加灯光
@@ -322,21 +321,21 @@ impl AppHandler for GltfViewer {
             load_receiver: Some(rx),
             load_sender: tx,
             preferred_variants: vec!["glTF-Binary", "glTF-Embedded", "glTF"],
-            
+
             // Prefab 异步加载
             prefab_receiver: prefab_rx,
             prefab_sender: prefab_tx,
-            
+
             // Inspector
             show_inspector: false,
             inspector_target: None,
             inspector_materials: Vec::new(),
             inspector_textures: Vec::new(),
-            
+
             // 渲染设置
             ibl_enabled: true,
-            hdr_enabled: true,  // Match RenderSettings in main()
-            msaa_samples: 4,     // Match RenderSettings in main()
+            hdr_enabled: true, // Match RenderSettings in main()
+            msaa_samples: 4,   // Match RenderSettings in main()
 
             hdr_receiver: Some(hdr_rx),
 
@@ -349,37 +348,40 @@ impl AppHandler for GltfViewer {
         viewer
     }
 
-    fn on_event(&mut self, _engine: &mut MythEngine, window: &Arc<Window>, event: &WindowEvent) -> bool {
-
-
+    fn on_event(
+        &mut self,
+        _engine: &mut MythEngine,
+        window: &Arc<Window>,
+        event: &WindowEvent,
+    ) -> bool {
         // Tab 键切换 UI 显示
         if let WindowEvent::KeyboardInput { event, .. } = event {
             let PhysicalKey::Code(code) = event.physical_key else {
                 return false;
             };
-            if code == winit::keyboard::KeyCode::Tab && event.state == winit::event::ElementState::Pressed {
+            if code == winit::keyboard::KeyCode::Tab
+                && event.state == winit::event::ElementState::Pressed
+            {
                 self.show_ui = !self.show_ui;
                 return true;
             }
-
         }
 
         // UI 优先处理事件
         if self.ui_pass.handle_input(window, event) {
             return true;
         }
-        
+
         // 处理窗口大小调整
         if let WindowEvent::Resized(size) = event {
             let scale_factor = window.scale_factor() as f32;
             self.ui_pass.resize(size.width, size.height, scale_factor);
         }
-        
+
         false
     }
 
     fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
-
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
@@ -408,7 +410,8 @@ impl AppHandler for GltfViewer {
 
         // 3. 相机控制
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
-            self.controls.update(transform, &engine.input, camera.fov, frame.dt);
+            self.controls
+                .update(transform, &engine.input, camera.fov, frame.dt);
             // camera.near = self.controls.spherical.radius * 0.01;
             // camera.update_projection_matrix();
         }
@@ -421,7 +424,6 @@ impl AppHandler for GltfViewer {
             self.render_ui(engine);
             self.ui_pass.end_frame(window);
         }
-
     }
 
     fn compose_frame<'a>(&'a mut self, composer: myth_engine::renderer::graph::FrameComposer<'a>) {
@@ -429,7 +431,7 @@ impl AppHandler for GltfViewer {
             composer
                 .add_node(RenderStage::UI, &mut self.ui_pass)
                 .render();
-        }else{
+        } else {
             composer.render();
         }
     }
@@ -444,14 +446,11 @@ impl GltfViewer {
     fn fetch_model_list(&mut self) {
         self.loading_state = LoadingState::LoadingList;
         let tx = self.load_sender.clone();
-        
-        execute_future(
-            async move {
-                let result = fetch_remote_model_list().await;
-                let _ = tx.send(LoadResult::ModelList(result));
-            }
-        );
 
+        execute_future(async move {
+            let result = fetch_remote_model_list().await;
+            let _ = tx.send(LoadResult::ModelList(result));
+        });
     }
 
     /// 处理异步加载结果
@@ -472,7 +471,7 @@ impl GltfViewer {
                 }
             }
         }
-        
+
         // 处理 HDR 环境贴图加载结果
 
         if let Some(rx) = &self.hdr_receiver {
@@ -482,12 +481,11 @@ impl GltfViewer {
                 scene.environment.set_intensity(1.0);
             }
         }
-        
 
         // 处理 Prefab 加载结果 - 实例化到场景中
         while let Ok(result) = self.prefab_receiver.try_recv() {
             // 实例化新模型
-            self.instantiate_prefab(scene, assets , result);
+            self.instantiate_prefab(scene, assets, result);
         }
 
         // Native: 处理文件对话框结果
@@ -504,8 +502,12 @@ impl GltfViewer {
     }
 
     /// 将加载完成的 Prefab 实例化到场景
-    fn instantiate_prefab(&mut self, scene: &mut Scene, assets: &AssetServer, result: PrefabLoadResult) {
-
+    fn instantiate_prefab(
+        &mut self,
+        scene: &mut Scene,
+        assets: &AssetServer,
+        result: PrefabLoadResult,
+    ) {
         // 清理旧模型
         if let Some(gltf_node) = self.gltf_node {
             scene.remove_node(gltf_node);
@@ -518,7 +520,7 @@ impl GltfViewer {
 
         // 实例化新模型
         let gltf_node = scene.instantiate(&result.prefab);
-        
+
         self.gltf_node = Some(gltf_node);
         self.model_name = Some(result.display_name.clone());
         self.current_animation = 0;
@@ -533,7 +535,7 @@ impl GltfViewer {
 
         // 更新子树变换
         scene.update_subtree(gltf_node);
-        
+
         // 调整相机以适应模型
         if let Some(bbox) = scene.get_bbox_of_node(gltf_node, assets) {
             let center = bbox.center();
@@ -544,77 +546,81 @@ impl GltfViewer {
                 self.controls.set_target(center);
                 // let distance = radius / (camera.fov / 2.0).tan();
                 // self.controls.set_position(center + Vec3::new(0.0, radius, distance * 1.25));
-                self.controls.set_position(center + Vec3::new(0.0, radius, radius * 2.5));
+                self.controls
+                    .set_position(center + Vec3::new(0.0, radius, radius * 2.5));
             }
         }
 
         // 收集 Inspector 数据
         self.collect_inspector_targets(scene, assets, gltf_node);
-        
+
         self.loading_state = LoadingState::Idle;
         log::info!("Instantiated model: {}", result.display_name);
     }
 
     /// 加载模型（本地或远程） - 真正的异步加载
     fn load_model(&mut self, source: ModelSource, assets: AssetServer) {
-
         let prefab_tx = self.prefab_sender.clone();
 
         // 处理不同的加载源
         match source {
             ModelSource::Remote(url) => {
-                let display_name = url.rsplit('/').next()
-                    .unwrap_or("Remote Model")
-                    .to_string();
-                
+                let display_name = url.rsplit('/').next().unwrap_or("Remote Model").to_string();
+
                 self.loading_state = LoadingState::LoadingModel(display_name.clone());
 
-                execute_future(
-                    async move {
-                        match GltfLoader::load_async(url, assets).await {
-                            Ok(prefab) => {
-                                let _ = prefab_tx.send(PrefabLoadResult { prefab, display_name });
-                            }
-                            Err(e) => {
-                                log::error!("Failed to load model: {}", e);
-                            }
+                execute_future(async move {
+                    match GltfLoader::load_async(url, assets).await {
+                        Ok(prefab) => {
+                            let _ = prefab_tx.send(PrefabLoadResult {
+                                prefab,
+                                display_name,
+                            });
+                        }
+                        Err(e) => {
+                            log::error!("Failed to load model: {}", e);
                         }
                     }
-                );
+                });
             }
 
             #[cfg(not(target_arch = "wasm32"))]
             ModelSource::Local(path) => {
-                let display_name = path.file_name()
+                let display_name = path
+                    .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "Unknown".to_string());
-                
+
                 self.loading_state = LoadingState::LoadingModel(display_name.clone());
-                
+
                 let load_path = path.to_string_lossy().to_string();
-                
-                execute_future(
-                    async move {
-                        match GltfLoader::load_async(load_path, assets).await {
-                            Ok(prefab) => {
-                                let _ = prefab_tx.send(PrefabLoadResult { prefab, display_name });
-                            }
-                            Err(e) => {
-                                log::error!("Failed to load model: {}", e);
-                            }
+
+                execute_future(async move {
+                    match GltfLoader::load_async(load_path, assets).await {
+                        Ok(prefab) => {
+                            let _ = prefab_tx.send(PrefabLoadResult {
+                                prefab,
+                                display_name,
+                            });
+                        }
+                        Err(e) => {
+                            log::error!("Failed to load model: {}", e);
                         }
                     }
-                );
+                });
             }
-            
+
             #[cfg(target_arch = "wasm32")]
             ModelSource::Local(name, data) => {
                 self.loading_state = LoadingState::LoadingModel(name.clone());
-                
+
                 execute_future(async move {
                     match GltfLoader::load_from_bytes(data, assets).await {
                         Ok(prefab) => {
-                            let _ = prefab_tx.send(PrefabLoadResult { prefab, display_name: name });
+                            let _ = prefab_tx.send(PrefabLoadResult {
+                                prefab,
+                                display_name: name,
+                            });
                         }
                         Err(e) => {
                             log::error!("Failed to load model from bytes: {}", e);
@@ -628,7 +634,7 @@ impl GltfViewer {
     /// 从选中的远程模型构建 URL
     fn build_remote_url(&self, model_index: usize) -> Option<String> {
         let model = self.model_list.get(model_index)?;
-        
+
         for variant in &self.preferred_variants {
             if let Some(filename) = model.variants.get(*variant) {
                 return Some(format!(
@@ -637,23 +643,22 @@ impl GltfViewer {
                 ));
             }
         }
-        
+
         None
     }
-    
+
     /// 处理全局拖拽事件 (Native & WASM)
     fn handle_drag_and_drop(&mut self, ctx: &egui::Context, assets: AssetServer) {
         // 1. 检查是否有文件正在悬停 (可选：显示视觉提示)
         if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
-            let painter = ctx.layer_painter(egui::LayerId::new(egui::Order::Foreground, egui::Id::new("file_drop_overlay")));
+            let painter = ctx.layer_painter(egui::LayerId::new(
+                egui::Order::Foreground,
+                egui::Id::new("file_drop_overlay"),
+            ));
             let screen_rect = ctx.content_rect();
-            
+
             // 绘制半透明覆盖层提示用户松手
-            painter.rect_filled(
-                screen_rect,
-                0.0,
-                egui::Color32::from_black_alpha(100),
-            );
+            painter.rect_filled(screen_rect, 0.0, egui::Color32::from_black_alpha(100));
             painter.text(
                 screen_rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -673,7 +678,7 @@ impl GltfViewer {
             }
         });
     }
-    
+
     /// 将 egui 的 DroppedFile 转换为 ModelSource
     fn process_dropped_file(&mut self, file: &egui::DroppedFile, assets: AssetServer) {
         // Native 平台：使用文件路径
@@ -688,13 +693,19 @@ impl GltfViewer {
         #[cfg(target_arch = "wasm32")]
         if let Some(bytes) = &file.bytes {
             log::info!("File dropped (WASM): {}, {} bytes", file.name, bytes.len());
-            self.load_model(ModelSource::Local(file.name.clone(), bytes.to_vec()), assets);
+            self.load_model(
+                ModelSource::Local(file.name.clone(), bytes.to_vec()),
+                assets,
+            );
         } else {
             // 如果在 Native 拖拽但没拿到 path，或者 WASM 没拿到 bytes
-            log::warn!("Dropped file has no data. Native path: {:?}, Bytes present: {}", file.path, file.bytes.is_some());
+            log::warn!(
+                "Dropped file has no data. Native path: {:?}, Bytes present: {}",
+                file.path,
+                file.bytes.is_some()
+            );
         }
     }
-    
 
     // ========================================================================
     // Inspector 数据收集
@@ -705,10 +716,9 @@ impl GltfViewer {
         self.inspector_materials.clear();
         self.inspector_textures.clear();
 
-        
         let mut visited_materials = std::collections::HashSet::new();
         let mut visited_textures = std::collections::HashSet::new();
-        
+
         // 遍历所有节点
         let mut stack = vec![root];
         while let Some(node_handle) = stack.pop() {
@@ -716,27 +726,34 @@ impl GltfViewer {
             if let Some(node) = scene.get_node(node_handle) {
                 stack.extend(node.children.iter().cloned());
             }
-            
+
             // 收集 Mesh 的材质
             if let Some(mesh) = scene.get_mesh(node_handle) {
                 let mat_handle = mesh.material;
-                
+
                 if !visited_materials.contains(&mat_handle) {
                     visited_materials.insert(mat_handle);
-                    
-                    let mat_name = assets.materials.get(mat_handle)
+
+                    let mat_name = assets
+                        .materials
+                        .get(mat_handle)
                         .and_then(|m| m.name.clone())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| format!("Material_{:?}", mat_handle));
-                    
+
                     self.inspector_materials.push(MaterialInfo {
                         handle: mat_handle,
                         name: mat_name.clone(),
                     });
-                    
+
                     // 收集材质使用的纹理
                     if let Some(material) = assets.materials.get(mat_handle) {
-                        self.collect_textures_from_material(&material, &mat_name, assets, &mut visited_textures);
+                        self.collect_textures_from_material(
+                            &material,
+                            &mat_name,
+                            assets,
+                            &mut visited_textures,
+                        );
                     }
                 }
             }
@@ -745,11 +762,11 @@ impl GltfViewer {
 
     /// 从材质中收集纹理信息
     fn collect_textures_from_material(
-        &mut self, 
-        material: &myth_engine::Material, 
+        &mut self,
+        material: &myth_engine::Material,
         mat_name: &str,
         assets: &AssetServer,
-        visited: &mut std::collections::HashSet<TextureHandle>
+        visited: &mut std::collections::HashSet<TextureHandle>,
     ) {
         // 使用通用方式收集纹理：通过 visit_textures trait 方法
         let mut collected = Vec::new();
@@ -761,13 +778,15 @@ impl GltfViewer {
                 }
             }
         });
-        
+
         for (i, tex_handle) in collected.into_iter().enumerate() {
-            let texture_name = assets.textures.get(tex_handle)
+            let texture_name = assets
+                .textures
+                .get(tex_handle)
                 .and_then(|t| t.name.clone())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| format!("{}:texture_{}", mat_name, i));
-    
+
             self.inspector_textures.push(TextureInfo {
                 handle: tex_handle,
                 name: texture_name,
@@ -785,43 +804,50 @@ impl GltfViewer {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
-        
+
         // 主控制面板
         self.render_control_panel(&egui_ctx, scene, &engine.assets, &mut engine.renderer);
-        
+
         // Inspector 面板
         if self.show_inspector {
-            self.render_inspector(&egui_ctx,scene, &engine.assets);
+            self.render_inspector(&egui_ctx, scene, &engine.assets);
         }
     }
 
     /// 渲染主控制面板
-    fn render_control_panel(&mut self, ctx: &egui::Context, scene: &mut Scene, assets: &AssetServer, renderer: &mut myth_engine::Renderer) {
-
+    fn render_control_panel(
+        &mut self,
+        ctx: &egui::Context,
+        scene: &mut Scene,
+        assets: &AssetServer,
+        renderer: &mut myth_engine::Renderer,
+    ) {
         egui::Window::new("Control Panel")
             .default_pos([10.0, 10.0])
             .default_width(320.0)
             .show(ctx, |ui| {
                 // ===== 远程模型加载 =====
                 ui.collapsing("🌐 Remote Models", |ui| {
-                    let is_loading = matches!(self.loading_state, LoadingState::LoadingList | LoadingState::LoadingModel(_));
-                    
-                    ui.add_enabled_ui(!is_loading, |ui| {
+                    let is_loading = matches!(
+                        self.loading_state,
+                        LoadingState::LoadingList | LoadingState::LoadingModel(_)
+                    );
 
+                    ui.add_enabled_ui(!is_loading, |ui| {
                         ui.horizontal(|ui| {
-                            let model_names: Vec<_> = self.model_list.iter()
-                                .map(|m| m.name.as_str())
-                                .collect();
+                            let model_names: Vec<_> =
+                                self.model_list.iter().map(|m| m.name.as_str()).collect();
                             ui.label("Model:");
 
                             let combo = egui::ComboBox::from_id_salt("remote_model_selector")
                                 .width(180.0)
                                 .selected_text(
-                                    model_names.get(self.selected_model_index)
+                                    model_names
+                                        .get(self.selected_model_index)
                                         .copied()
-                                        .unwrap_or("Select a model...")
+                                        .unwrap_or("Select a model..."),
                                 );
-                            
+
                             combo.show_ui(ui, |ui| {
                                 ui.set_min_width(250.0);
                                 for (i, name) in model_names.iter().enumerate() {
@@ -830,15 +856,14 @@ impl GltfViewer {
                             });
 
                             if ui.button("Load").clicked() {
-                                if let Some(url) = self.build_remote_url(self.selected_model_index) {
+                                if let Some(url) = self.build_remote_url(self.selected_model_index)
+                                {
                                     self.load_model(ModelSource::Remote(url), assets.clone());
                                 }
                             }
                         });
-
-
                     });
-                    
+
                     // 显示加载状态
                     match &self.loading_state {
                         LoadingState::LoadingList => {
@@ -858,7 +883,7 @@ impl GltfViewer {
                         }
                         LoadingState::Idle => {}
                     }
-                    
+
                     ui.label(format!("{} models available", self.model_list.len()));
                 });
 
@@ -900,12 +925,12 @@ impl GltfViewer {
                     } else {
                         ui.label("No model loaded");
                     }
-                     #[cfg(target_arch = "wasm32")]
-                     {
+                    #[cfg(target_arch = "wasm32")]
+                    {
                         ui.separator();
                         ui.label("💡 Tip: GLB format recommended");
                         ui.label("(contains all data in one file)");
-                     }
+                    }
                 });
 
                 ui.separator();
@@ -916,10 +941,12 @@ impl GltfViewer {
                         ui.label("No animations available");
                     } else {
                         // 动画选择
-                        let anim_name = self.animations.get(self.current_animation)
+                        let anim_name = self
+                            .animations
+                            .get(self.current_animation)
                             .cloned()
                             .unwrap_or_else(|| "Select Animation".to_string());
-                        
+
                         ui.horizontal(|ui| {
                             ui.label("Clip:");
                             egui::ComboBox::from_id_salt("animation_selector")
@@ -927,9 +954,14 @@ impl GltfViewer {
                                 .selected_text(&anim_name)
                                 .show_ui(ui, |ui| {
                                     for (i, clip) in self.animations.iter().enumerate() {
-                                        if ui.selectable_value(&mut self.current_animation, i, clip).changed() {
+                                        if ui
+                                            .selectable_value(&mut self.current_animation, i, clip)
+                                            .changed()
+                                        {
                                             if let Some(gltf_node) = self.gltf_node {
-                                                if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
+                                                if let Some(mixer) =
+                                                    scene.animation_mixers.get_mut(gltf_node)
+                                                {
                                                     mixer.stop_all();
                                                     mixer.play(clip);
                                                 }
@@ -941,12 +973,21 @@ impl GltfViewer {
 
                         // 播放控制
                         ui.horizontal(|ui| {
-                            if ui.button(if self.is_playing { "⏸ Pause" } else { "▶ Play" }).clicked() {
+                            if ui
+                                .button(if self.is_playing {
+                                    "⏸ Pause"
+                                } else {
+                                    "▶ Play"
+                                })
+                                .clicked()
+                            {
                                 self.is_playing = !self.is_playing;
                                 if let Some(gltf_node) = self.gltf_node {
                                     if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
                                         if self.is_playing {
-                                            if let Some(anim) = self.animations.get(self.current_animation) {
+                                            if let Some(anim) =
+                                                self.animations.get(self.current_animation)
+                                            {
                                                 mixer.play(anim);
                                             }
                                         } else {
@@ -960,9 +1001,11 @@ impl GltfViewer {
                         // 播放速度
                         ui.horizontal(|ui| {
                             ui.label("Speed:");
-                            ui.add(egui::Slider::new(&mut self.playback_speed, 0.0..=2.0)
-                                .step_by(0.1)
-                                .suffix("x"));
+                            ui.add(
+                                egui::Slider::new(&mut self.playback_speed, 0.0..=2.0)
+                                    .step_by(0.1)
+                                    .suffix("x"),
+                            );
                         });
                     }
                 });
@@ -972,57 +1015,75 @@ impl GltfViewer {
                 // ===== 渲染设置 =====
                 ui.collapsing("⚙ Rendering", |ui| {
                     // --- HDR 渲染 ---
-                    if ui.checkbox(&mut self.hdr_enabled, "HDR Rendering").changed() {
+                    if ui
+                        .checkbox(&mut self.hdr_enabled, "HDR Rendering")
+                        .changed()
+                    {
                         renderer.set_hdr_enabled(self.hdr_enabled);
                     }
-                    
+
                     // --- MSAA 抗锯齿 ---
                     ui.horizontal(|ui| {
                         ui.label("MSAA:");
                         let msaa_options = [1u32, 4];
                         egui::ComboBox::from_id_salt("msaa_selector")
                             .width(60.0)
-                            .selected_text(if self.msaa_samples == 1 { 
-                                "Off".to_string() 
-                            } else { 
-                                format!("{}x", self.msaa_samples) 
+                            .selected_text(if self.msaa_samples == 1 {
+                                "Off".to_string()
+                            } else {
+                                format!("{}x", self.msaa_samples)
                             })
                             .show_ui(ui, |ui| {
                                 for &samples in &msaa_options {
-                                    let label = if samples == 1 { "Off".to_string() } else { format!("{}x", samples) };
-                                    if ui.selectable_value(&mut self.msaa_samples, samples, label).changed() {
+                                    let label = if samples == 1 {
+                                        "Off".to_string()
+                                    } else {
+                                        format!("{}x", samples)
+                                    };
+                                    if ui
+                                        .selectable_value(&mut self.msaa_samples, samples, label)
+                                        .changed()
+                                    {
                                         renderer.set_msaa_samples(self.msaa_samples);
                                     }
                                 }
                             });
                     });
-                    
+
                     ui.separator();
-                    
+
                     // --- IBL 环境贴图 ---
-                    if ui.checkbox(&mut self.ibl_enabled, "IBL (Environment Map)").changed() {
-                        scene.environment.set_intensity(if self.ibl_enabled { 1.0 } else { 0.0 });
+                    if ui
+                        .checkbox(&mut self.ibl_enabled, "IBL (Environment Map)")
+                        .changed()
+                    {
+                        scene
+                            .environment
+                            .set_intensity(if self.ibl_enabled { 1.0 } else { 0.0 });
                     }
-                    
+
                     ui.separator();
-                    
+
                     // --- Tone Mapping 设置 (仅在 HDR 模式下可用) ---
                     ui.add_enabled_ui(self.hdr_enabled, |ui| {
                         ui.label("Tone Mapping:");
-                        
+
                         // 曝光度
                         ui.horizontal(|ui| {
                             ui.label("Exposure:");
                             let mut exposure = scene.tone_mapping.exposure;
-                            if ui.add(egui::Slider::new(&mut exposure, 0.1..=5.0)
-                                .step_by(0.1)
-                                .logarithmic(true))
-                                .changed() 
+                            if ui
+                                .add(
+                                    egui::Slider::new(&mut exposure, 0.1..=5.0)
+                                        .step_by(0.1)
+                                        .logarithmic(true),
+                                )
+                                .changed()
                             {
                                 scene.tone_mapping.set_exposure(exposure);
                             }
                         });
-                        
+
                         // 模式选择
                         ui.horizontal(|ui| {
                             ui.label("Mode:");
@@ -1032,14 +1093,17 @@ impl GltfViewer {
                                 .selected_text(current_mode.name())
                                 .show_ui(ui, |ui| {
                                     for mode in myth_engine::ToneMappingMode::all() {
-                                        if ui.selectable_label(current_mode == *mode, mode.name()).clicked() {
+                                        if ui
+                                            .selectable_label(current_mode == *mode, mode.name())
+                                            .clicked()
+                                        {
                                             scene.tone_mapping.set_mode(*mode);
                                         }
                                     }
                                 });
                         });
                     });
-                    
+
                     if !self.hdr_enabled {
                         ui.label("ℹ Enable HDR to configure tone mapping");
                     }
@@ -1049,7 +1113,14 @@ impl GltfViewer {
 
                 // ===== Inspector 开关 =====
                 if self.gltf_node.is_some() {
-                    if ui.button(if self.show_inspector { "🔍 Hide Inspector" } else { "🔍 Show Inspector" }).clicked() {
+                    if ui
+                        .button(if self.show_inspector {
+                            "🔍 Hide Inspector"
+                        } else {
+                            "🔍 Show Inspector"
+                        })
+                        .clicked()
+                    {
                         self.show_inspector = !self.show_inspector;
                     }
                 }
@@ -1068,12 +1139,11 @@ impl GltfViewer {
         };
 
         egui::Window::new("🔍 Inspector")
-            .resizable(true)     
-            .default_width(600.0)  
+            .resizable(true)
+            .default_width(600.0)
             .default_height(500.0)
             .vscroll(false)
             .show(ctx, |ui| {
-
                 // 使用 columns(2) 将窗口分为左右两栏，它们会自动填充窗口宽度
                 ui.columns(2, |columns| {
                     columns[0].push_id("inspector_tree", |ui| {
@@ -1086,49 +1156,59 @@ impl GltfViewer {
                                 ui.set_min_width(ui.available_width());
 
                                 egui::CollapsingHeader::new("📦 Nodes")
-                                .id_salt("nodes_tree")
-                                .default_open(true)
-                                .show(ui, |ui| {
-                                    self.render_node_tree(ui, scene, gltf_node, 0);
-                                });
-                                
+                                    .id_salt("nodes_tree")
+                                    .default_open(true)
+                                    .show(ui, |ui| {
+                                        self.render_node_tree(ui, scene, gltf_node, 0);
+                                    });
+
                                 egui::CollapsingHeader::new("🎨 Materials")
-                                .id_salt("materials_list")
-                                .default_open(true)
-                                .show(ui, |ui| {
-                                    for mat_info in &self.inspector_materials {
-                                        let is_selected = self.inspector_target == Some(InspectorTarget::Material(mat_info.handle));
-                                        if ui.selectable_label(is_selected, &mat_info.name).clicked() {
-                                            self.inspector_target = Some(InspectorTarget::Material(mat_info.handle));
+                                    .id_salt("materials_list")
+                                    .default_open(true)
+                                    .show(ui, |ui| {
+                                        for mat_info in &self.inspector_materials {
+                                            let is_selected = self.inspector_target
+                                                == Some(InspectorTarget::Material(mat_info.handle));
+                                            if ui
+                                                .selectable_label(is_selected, &mat_info.name)
+                                                .clicked()
+                                            {
+                                                self.inspector_target = Some(
+                                                    InspectorTarget::Material(mat_info.handle),
+                                                );
+                                            }
                                         }
-                                    }
-                                });
+                                    });
 
                                 egui::CollapsingHeader::new("🖼 Textures")
-                                .id_salt("textures_list")
-                                .default_open(true)
-                                .show(ui, |ui| {
-                                    for tex_info in &self.inspector_textures {
-                                        let is_selected = self.inspector_target == Some(InspectorTarget::Texture(tex_info.handle));
-                                        if ui.selectable_label(is_selected, &tex_info.name).clicked() {
-                                            self.inspector_target = Some(InspectorTarget::Texture(tex_info.handle));
+                                    .id_salt("textures_list")
+                                    .default_open(true)
+                                    .show(ui, |ui| {
+                                        for tex_info in &self.inspector_textures {
+                                            let is_selected = self.inspector_target
+                                                == Some(InspectorTarget::Texture(tex_info.handle));
+                                            if ui
+                                                .selectable_label(is_selected, &tex_info.name)
+                                                .clicked()
+                                            {
+                                                self.inspector_target =
+                                                    Some(InspectorTarget::Texture(tex_info.handle));
+                                            }
                                         }
-                                    }
-                                });
+                                    });
                             });
-
-                    });        
+                    });
 
                     // === 右侧：详情面板 ===
                     columns[1].push_id("inspector_details", |ui| {
                         let available_height = ui.available_height();
-                    
+
                         egui::ScrollArea::vertical()
                             .id_salt("inspector_details")
                             .min_scrolled_height(available_height)
                             .show(ui, |ui| {
                                 ui.set_min_width(ui.available_width());
-                                
+
                                 if let Some(target) = &self.inspector_target {
                                     match target {
                                         InspectorTarget::Node(handle) => {
@@ -1145,22 +1225,28 @@ impl GltfViewer {
                                     ui.label("Select an item from the tree to see details.");
                                 }
                             });
-
                     });
                 });
             });
     }
 
     /// 递归渲染节点树
-    fn render_node_tree(&mut self, ui: &mut egui::Ui, scene: &myth_engine::Scene, node: NodeHandle, depth: usize) {
+    fn render_node_tree(
+        &mut self,
+        ui: &mut egui::Ui,
+        scene: &myth_engine::Scene,
+        node: NodeHandle,
+        depth: usize,
+    ) {
         let Some(node_data) = scene.get_node(node) else {
             return;
         };
-        
-        let name = scene.get_name(node)
+
+        let name = scene
+            .get_name(node)
             .map(|s| s.to_string())
             .unwrap_or_else(|| format!("Node_{:?}", node));
-        
+
         // 确定节点图标
         let icon = if scene.get_mesh(node).is_some() {
             "🧊"
@@ -1174,7 +1260,7 @@ impl GltfViewer {
 
         let label = format!("{} {}", icon, name);
         let is_selected = self.inspector_target == Some(InspectorTarget::Node(node));
-        
+
         if node_data.children.is_empty() {
             // 叶子节点
             if ui.selectable_label(is_selected, &label).clicked() {
@@ -1189,7 +1275,7 @@ impl GltfViewer {
                         self.render_node_tree(ui, scene, *child, depth + 1);
                     }
                 });
-            
+
             if header.header_response.clicked() {
                 self.inspector_target = Some(InspectorTarget::Node(node));
             }
@@ -1197,12 +1283,18 @@ impl GltfViewer {
     }
 
     /// 渲染节点详情
-    fn render_node_details(&self, ui: &mut egui::Ui, scene: &mut myth_engine::Scene, node: NodeHandle, assets: &AssetServer) {
+    fn render_node_details(
+        &self,
+        ui: &mut egui::Ui,
+        scene: &mut myth_engine::Scene,
+        node: NodeHandle,
+        assets: &AssetServer,
+    ) {
         let Some(node_data) = scene.get_node(node) else {
             ui.label("Node not found");
             return;
         };
-        
+
         let name = scene.get_name(node).unwrap_or("Unnamed");
         ui.heading(format!("📦 {}", name));
         ui.separator();
@@ -1214,25 +1306,31 @@ impl GltfViewer {
             .spacing([20.0, 4.0])
             .show(ui, |ui| {
                 ui.label("Position:");
-                ui.label(format!("{:.3}, {:.3}, {:.3}", 
+                ui.label(format!(
+                    "{:.3}, {:.3}, {:.3}",
                     node_data.transform.position.x,
                     node_data.transform.position.y,
-                    node_data.transform.position.z));
+                    node_data.transform.position.z
+                ));
                 ui.end_row();
 
                 ui.label("Rotation:");
                 let euler = node_data.transform.rotation.to_euler(glam::EulerRot::XYZ);
-                ui.label(format!("{:.1}°, {:.1}°, {:.1}°", 
+                ui.label(format!(
+                    "{:.1}°, {:.1}°, {:.1}°",
                     euler.0.to_degrees(),
                     euler.1.to_degrees(),
-                    euler.2.to_degrees()));
+                    euler.2.to_degrees()
+                ));
                 ui.end_row();
 
                 ui.label("Scale:");
-                ui.label(format!("{:.3}, {:.3}, {:.3}", 
+                ui.label(format!(
+                    "{:.3}, {:.3}, {:.3}",
                     node_data.transform.scale.x,
                     node_data.transform.scale.y,
-                    node_data.transform.scale.z));
+                    node_data.transform.scale.z
+                ));
                 ui.end_row();
 
                 ui.label("Visible:");
@@ -1244,7 +1342,7 @@ impl GltfViewer {
         if let Some(mesh) = scene.get_mesh(node) {
             ui.separator();
             ui.label("Mesh:");
-            
+
             egui::Grid::new("mesh_grid")
                 .num_columns(2)
                 .spacing([20.0, 4.0])
@@ -1265,7 +1363,9 @@ impl GltfViewer {
                     }
 
                     ui.label("Material:");
-                    let mat_name = assets.materials.get(mesh.material)
+                    let mat_name = assets
+                        .materials
+                        .get(mesh.material)
                         .and_then(|m| m.name.clone())
                         .map(|s| s.to_string())
                         .unwrap_or_else(|| "Unknown".to_string());
@@ -1276,7 +1376,12 @@ impl GltfViewer {
     }
 
     /// 渲染材质详情
-    fn render_material_details(&mut self, ui: &mut egui::Ui, assets: &AssetServer, handle: MaterialHandle) {
+    fn render_material_details(
+        &mut self,
+        ui: &mut egui::Ui,
+        assets: &AssetServer,
+        handle: MaterialHandle,
+    ) {
         let Some(material) = assets.materials.get(handle) else {
             ui.label("Material not found");
             return;
@@ -1284,7 +1389,9 @@ impl GltfViewer {
 
         // let mut material = (*material).clone();
 
-        let name = material.name.clone()
+        let name = material
+            .name
+            .clone()
             .map(|s| s.to_string())
             .unwrap_or_else(|| "Unnamed Material".to_string());
         ui.heading(format!("🎨 {}", name));
@@ -1308,7 +1415,8 @@ impl GltfViewer {
                 // 只处理 Physical 材质
                 match &material.data {
                     myth_engine::MaterialType::Physical(m) => {
-                        {   // uniforms
+                        {
+                            // uniforms
                             // let mut uniform_mut = m.uniforms_mut();
                             let mut uniform_mut = m.uniforms_mut();
 
@@ -1316,10 +1424,12 @@ impl GltfViewer {
                             ui.label("MeshPhysicalMaterial");
                             ui.end_row();
 
-                            
                             ui.label("Color:");
                             let mut color_arr = uniform_mut.color.to_array();
-                            if ui.color_edit_button_rgba_unmultiplied(&mut color_arr).changed() {
+                            if ui
+                                .color_edit_button_rgba_unmultiplied(&mut color_arr)
+                                .changed()
+                            {
                                 uniform_mut.color = glam::Vec4::from_array(color_arr);
                             }
                             ui.end_row();
@@ -1334,7 +1444,10 @@ impl GltfViewer {
                             ui.end_row();
 
                             ui.label("Specular Intensity:");
-                            ui.add(egui::DragValue::new(&mut uniform_mut.specular_intensity).speed(0.01));
+                            ui.add(
+                                egui::DragValue::new(&mut uniform_mut.specular_intensity)
+                                    .speed(0.01),
+                            );
                             ui.end_row();
 
                             ui.label("Specular Color:");
@@ -1349,7 +1462,10 @@ impl GltfViewer {
                             ui.end_row();
 
                             ui.label("Clearcoat Roughness:");
-                            ui.add(egui::DragValue::new(&mut uniform_mut.clearcoat_roughness).speed(0.01));
+                            ui.add(
+                                egui::DragValue::new(&mut uniform_mut.clearcoat_roughness)
+                                    .speed(0.01),
+                            );
                             ui.end_row();
 
                             ui.label("IOR:");
@@ -1357,21 +1473,34 @@ impl GltfViewer {
                             ui.end_row();
                         }
 
-                            ui.separator();
-                            ui.end_row();
+                        ui.separator();
+                        ui.end_row();
 
-                        {   // settings
+                        {
+                            // settings
                             let mut settings = m.settings_mut();
                             ui.label("Side");
                             egui::ComboBox::from_id_salt("side_combo")
                                 .selected_text(format!("{:?}", settings.side))
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut settings.side, myth_engine::Side::Front, "Front");
-                                    ui.selectable_value(&mut settings.side, myth_engine::Side::Back, "Back");
-                                    ui.selectable_value(&mut settings.side, myth_engine::Side::Double, "Double");
+                                    ui.selectable_value(
+                                        &mut settings.side,
+                                        myth_engine::Side::Front,
+                                        "Front",
+                                    );
+                                    ui.selectable_value(
+                                        &mut settings.side,
+                                        myth_engine::Side::Back,
+                                        "Back",
+                                    );
+                                    ui.selectable_value(
+                                        &mut settings.side,
+                                        myth_engine::Side::Double,
+                                        "Double",
+                                    );
                                 });
                             ui.end_row();
-                            
+
                             // 透明度模式
                             ui.label("Alpha Mode:");
                             egui::ComboBox::from_id_salt("alpha_mode_combo")
@@ -1382,28 +1511,65 @@ impl GltfViewer {
                                 })
                                 .show_ui(ui, |ui| {
                                     // 切换模式时，如果是 Mask 需要保留默认阈值
-                                    if ui.selectable_label(matches!(settings.alpha_mode, myth_engine::AlphaMode::Opaque), "Opaque").clicked() {
+                                    if ui
+                                        .selectable_label(
+                                            matches!(
+                                                settings.alpha_mode,
+                                                myth_engine::AlphaMode::Opaque
+                                            ),
+                                            "Opaque",
+                                        )
+                                        .clicked()
+                                    {
                                         settings.alpha_mode = myth_engine::AlphaMode::Opaque;
                                     }
-                                    if ui.selectable_label(matches!(settings.alpha_mode, myth_engine::AlphaMode::Mask(..)), "Mask").clicked() {
+                                    if ui
+                                        .selectable_label(
+                                            matches!(
+                                                settings.alpha_mode,
+                                                myth_engine::AlphaMode::Mask(..)
+                                            ),
+                                            "Mask",
+                                        )
+                                        .clicked()
+                                    {
                                         // 如果之前不是 Mask，设为默认 0.5，否则保持
-                                        if !matches!(settings.alpha_mode, myth_engine::AlphaMode::Mask(..)) {
-                                            settings.alpha_mode = myth_engine::AlphaMode::Mask(0.5, false);
+                                        if !matches!(
+                                            settings.alpha_mode,
+                                            myth_engine::AlphaMode::Mask(..)
+                                        ) {
+                                            settings.alpha_mode =
+                                                myth_engine::AlphaMode::Mask(0.5, false);
                                         }
                                     }
-                                    if ui.selectable_label(matches!(settings.alpha_mode, myth_engine::AlphaMode::Blend), "Blend").clicked() {
+                                    if ui
+                                        .selectable_label(
+                                            matches!(
+                                                settings.alpha_mode,
+                                                myth_engine::AlphaMode::Blend
+                                            ),
+                                            "Blend",
+                                        )
+                                        .clicked()
+                                    {
                                         settings.alpha_mode = myth_engine::AlphaMode::Blend;
                                     }
                                 });
-                            
+
                             // 如果是 Mask 模式，额外显示阈值滑块
-                            if let myth_engine::AlphaMode::Mask(cutoff, a2c) = &mut settings.alpha_mode {
+                            if let myth_engine::AlphaMode::Mask(cutoff, a2c) =
+                                &mut settings.alpha_mode
+                            {
                                 ui.horizontal(|ui| {
                                     // ui[1].add(egui::DragValue::new(cutoff).speed(0.01).range(0.0..=1.0).prefix(""));
-                                    ui.add(egui::DragValue::new(cutoff).speed(0.01).range(0.0..=1.0).prefix("Cutoff: "));
+                                    ui.add(
+                                        egui::DragValue::new(cutoff)
+                                            .speed(0.01)
+                                            .range(0.0..=1.0)
+                                            .prefix("Cutoff: "),
+                                    );
                                     ui.checkbox(a2c, "A2C");
                                 });
-                                
                             }
                             ui.end_row();
 
@@ -1414,7 +1580,6 @@ impl GltfViewer {
                                 ui.checkbox(&mut settings.depth_write, "Write");
                             });
                             ui.end_row();
-
                         }
                         // 纹理绑定
                         ui.separator();
@@ -1428,37 +1593,42 @@ impl GltfViewer {
                             match binding {
                                 BindingResource::Texture(source) => {
                                     // ui.horizontal(|ui| {
-                                        ui.label(format!("{}:", name));
+                                    ui.label(format!("{}:", name));
 
-                                        if let Some(s) = source{
-                                            match s {
-                                                TextureSource::Asset(tex_handle) => {
-                                                    if ui.label(name).clicked() {
-                                                        self.inspector_target = Some(InspectorTarget::Texture(*tex_handle));
-                                                    }
-
-                                                    if let Some(tex) = assets.textures.get(*tex_handle) {
-                                                        let tex_name = tex.name()
-                                                            .or_else(|| {
-                                                                    self.inspector_textures.iter()
-                                                                        .find(|t| t.handle == *tex_handle)
-                                                                        .map(|t| t.name.as_str())
-                                                                })
-                                                                .unwrap_or("Unnamed");
-
-
-                                                        if ui.link(tex_name).clicked() {
-                                                            self.inspector_target = Some(InspectorTarget::Texture(*tex_handle));
-                                                        }
-                                                    } else {
-                                                        ui.label("None");
-                                                    }
+                                    if let Some(s) = source {
+                                        match s {
+                                            TextureSource::Asset(tex_handle) => {
+                                                if ui.label(name).clicked() {
+                                                    self.inspector_target =
+                                                        Some(InspectorTarget::Texture(*tex_handle));
                                                 }
-                                                _ => {
-                                                    ui.label("Non-asset texture");
+
+                                                if let Some(tex) = assets.textures.get(*tex_handle)
+                                                {
+                                                    let tex_name = tex
+                                                        .name()
+                                                        .or_else(|| {
+                                                            self.inspector_textures
+                                                                .iter()
+                                                                .find(|t| t.handle == *tex_handle)
+                                                                .map(|t| t.name.as_str())
+                                                        })
+                                                        .unwrap_or("Unnamed");
+
+                                                    if ui.link(tex_name).clicked() {
+                                                        self.inspector_target = Some(
+                                                            InspectorTarget::Texture(*tex_handle),
+                                                        );
+                                                    }
+                                                } else {
+                                                    ui.label("None");
                                                 }
                                             }
+                                            _ => {
+                                                ui.label("Non-asset texture");
+                                            }
                                         }
+                                    }
 
                                     // });
                                     ui.end_row();
@@ -1473,15 +1643,22 @@ impl GltfViewer {
     }
 
     /// 渲染纹理详情
-    fn render_texture_details(&self, ui: &mut egui::Ui, assets: &AssetServer, handle: TextureHandle) {
+    fn render_texture_details(
+        &self,
+        ui: &mut egui::Ui,
+        assets: &AssetServer,
+        handle: TextureHandle,
+    ) {
         let Some(texture) = assets.textures.get(handle) else {
             ui.label("Texture not found");
             return;
         };
 
-        let name = texture.name() 
+        let name = texture
+            .name()
             .or_else(|| {
-                self.inspector_textures.iter()
+                self.inspector_textures
+                    .iter()
                     .find(|t| t.handle == handle)
                     .map(|t| t.name.as_str())
             })
@@ -1495,7 +1672,11 @@ impl GltfViewer {
             .spacing([20.0, 4.0])
             .show(ui, |ui| {
                 ui.label("Dimensions:");
-                ui.label(format!("{}x{}", texture.image.width(), texture.image.height()));
+                ui.label(format!(
+                    "{}x{}",
+                    texture.image.width(),
+                    texture.image.height()
+                ));
                 ui.end_row();
 
                 ui.label("Format:");
@@ -1503,7 +1684,11 @@ impl GltfViewer {
                 ui.end_row();
 
                 ui.label("Mip Levels:");
-                ui.label(if texture.generate_mipmaps { "Auto-generated" } else { "1" });
+                ui.label(if texture.generate_mipmaps {
+                    "Auto-generated"
+                } else {
+                    "1"
+                });
                 ui.end_row();
 
                 ui.label("Address Mode U:");
@@ -1521,7 +1706,6 @@ impl GltfViewer {
                 ui.label("Min Filter:");
                 ui.label(format!("{:?}", texture.sampler.min_filter));
                 ui.end_row();
-
             });
 
         ui.separator();
@@ -1529,7 +1713,7 @@ impl GltfViewer {
         ui.label("Preview:");
         if let Some(tex_id) = self.ui_pass.request_texture(handle) {
             let size = egui::vec2(texture.image.width() as f32, texture.image.height() as f32);
-            
+
             // 自适应缩放
             let available_width = ui.available_width();
             let display_size = if size.x > available_width {
@@ -1546,7 +1730,7 @@ impl GltfViewer {
                 ui.spinner();
                 ui.label(" Loading GPU Texture...");
             });
-            
+
             // 强制触发重绘，以便一旦纹理就绪能立刻显示出来，不用等鼠标动
             ui.ctx().request_repaint();
         }
@@ -1565,26 +1749,30 @@ async fn fetch_remote_model_list() -> Result<Vec<ModelInfo>, String> {
     #[cfg(not(target_arch = "wasm32"))]
     let client = client.timeout(std::time::Duration::from_secs(30));
 
-    let client = client.build().map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-    
-    let response = client.get(MODEL_LIST_URL)
+    let client = client
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
+
+    let response = client
+        .get(MODEL_LIST_URL)
         .send()
         .await
         .map_err(|e| format!("HTTP request failed: {}", e))?;
-    
+
     if !response.status().is_success() {
         return Err(format!("HTTP error: {}", response.status()));
     }
-    
-    let text = response.text().await
+
+    let text = response
+        .text()
+        .await
         .map_err(|e| format!("Failed to read response: {}", e))?;
-    
-    let models: Vec<ModelInfo> = serde_json::from_str(&text)
-        .map_err(|e| format!("Failed to parse JSON: {}", e))?;
-    
+
+    let models: Vec<ModelInfo> =
+        serde_json::from_str(&text).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+
     Ok(models)
 }
-
 
 #[cfg(not(target_arch = "wasm32"))]
 fn execute_future<F: std::future::Future<Output = ()> + Send + 'static>(f: F) {
@@ -1610,15 +1798,20 @@ fn main() -> anyhow::Result<()> {
         .expect("无法创建 Tokio Runtime");
 
     let _enter = rt.enter();
-    
+
     App::new()
         .with_title("glTF Viewer")
-        .with_settings(RenderSettings { 
-            vsync: false, 
-            clear_color: wgpu::Color { r: 0.03, g: 0.03, b: 0.03, a: 1.0 },
-            enable_hdr: true,    // 启用 HDR 渲染
-            msaa_samples: 4,    // 4x MSAA 抗锯齿
-            ..Default::default() 
+        .with_settings(RenderSettings {
+            vsync: false,
+            clear_color: wgpu::Color {
+                r: 0.03,
+                g: 0.03,
+                b: 0.03,
+                a: 1.0,
+            },
+            enable_hdr: true, // 启用 HDR 渲染
+            msaa_samples: 4,  // 4x MSAA 抗锯齿
+            ..Default::default()
         })
         .run::<GltfViewer>()
 }
@@ -1627,23 +1820,24 @@ fn main() -> anyhow::Result<()> {
 // WASM Entry Point
 // ============================================================================
 
-
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
 pub fn wasm_main() {
     // Set up panic hook for better error messages
     std::panic::set_hook(Box::new(console_error_panic_hook::hook));
-    
+
     // Initialize logging
-    console_log::init_with_level(log::Level::Info)
-        .expect("Failed to initialize logger");
-    
+    console_log::init_with_level(log::Level::Info).expect("Failed to initialize logger");
+
     log::info!("Starting glTF Viewer (WASM)...");
-    
+
     // Run the application
     if let Err(e) = App::new()
         .with_title("glTF Viewer")
-        .with_settings(RenderSettings { vsync: true, ..Default::default() })
+        .with_settings(RenderSettings {
+            vsync: true,
+            ..Default::default()
+        })
         .run::<GltfViewer>()
     {
         log::error!("Application error: {}", e);
