@@ -1,6 +1,6 @@
 @echo off
 REM Build script for WASM target (Windows)
-REM Usage: build_wasm.bat [--release]
+REM Usage: build_wasm.bat [--debug]
 
 setlocal enabledelayedexpansion
 
@@ -13,14 +13,14 @@ if %ERRORLEVEL% neq 0 (
 )
 
 REM Parse arguments
-set BUILD_PROFILE=debug
-set CARGO_FLAGS=
-if "%1"=="--release" (
-    set BUILD_PROFILE=release
-    set CARGO_FLAGS=--release
-    echo Building in RELEASE mode
-) else (
+set BUILD_PROFILE=release
+set CARGO_FLAGS=--release
+if "%1"=="--debug" (
+    set BUILD_PROFILE=debug
+    set CARGO_FLAGS=
     echo Building in DEBUG mode
+) else (
+    echo Building in RELEASE mode
 )
 
 REM Get script directory and move to project root

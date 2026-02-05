@@ -28,24 +28,41 @@ use std::sync::Arc;
 use std::path::PathBuf;
 use std::sync::mpsc::{channel, Receiver, Sender};
 
-use glam::Vec3;
-use three::engine::FrameState;
-use three::renderer::core::{BindingResource, ResourceBuilder};
-use three::resources::texture::TextureSource;
-use winit::event::WindowEvent;
+#[cfg(target_arch = "wasm32")]
+use std::sync::Mutex;
+#[cfg(target_arch = "wasm32")]
+use once_cell::sync::Lazy;
+#[cfg(target_arch = "wasm32")]
+use wasm_bindgen::prelude::*;
 
-use three::app::winit::{App, AppHandler};
-use three::assets::{GltfLoader, MaterialHandle, SharedPrefab, TextureHandle};
-use three::scene::{Camera, NodeHandle, light};
-use three::renderer::graph::RenderStage;
-use three::renderer::settings::{RenderSettings};
-use three::ToneMappingMode;
-use three::{AssetServer, OrbitControls, RenderableMaterialTrait, Scene, ThreeEngine};
-use three::utils::fps_counter::FpsCounter;
+use myth_engine::prelude::*;
+use myth_engine::assets::SharedPrefab;
+use myth_engine::utils::FpsCounter;
+use myth_engine::renderer::core::{BindingResource, ResourceBuilder};
+use myth_engine::{RenderableMaterialTrait};
+use myth_engine::resources::texture::TextureSource;
 
 use ui_pass::UiPass;
+
 use winit::keyboard::PhysicalKey;
 use winit::window::Window;
+use winit::event::WindowEvent;
+
+
+#[cfg(target_arch = "wasm32")]
+static DROP_SENDER: Lazy<Mutex<Option<Sender<(String, Vec<u8>)>>>> = Lazy::new(|| Mutex::new(None));
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+pub fn receive_dropped_file(name: String, data: Vec<u8>) {
+    if let Ok(guard) = DROP_SENDER.lock() {
+        if let Some(sender) = &*guard {
+            // 发送数据到 App 的 file_dialog_rx
+            let _ = sender.send((name, data));
+            log::info!("Received dropped file from JS bridge");
+        }
+    }
+}
 
 // ============================================================================
 // Remote Model Resources
@@ -214,7 +231,7 @@ const ASSET_PATH: &str = "examples/assets/";
 const ASSET_PATH: &str = "assets/";
 
 impl AppHandler for GltfViewer {
-    fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self {
+    fn init(engine: &mut MythEngine, window: &Arc<Window>) -> Self {
         // 1. Create UI Pass
         let wgpu_ctx = engine.renderer.wgpu_ctx().expect("Renderer not initialized");
         let ui_pass = UiPass::new(
@@ -242,7 +259,7 @@ impl AppHandler for GltfViewer {
             let map_path = "royal_esplanade_2k.hdr.jpg";
             let env_map_path = format!("{}{}", ASSET_PATH, map_path);
 
-            // match asset_server.load_cube_texture_async(env_map_path, three::ColorSpace::Srgb, true).await {
+            // match asset_server.load_cube_texture_async(env_map_path, myth_engine::ColorSpace::Srgb, true).await {
             match asset_server.load_hdr_texture_async(env_map_path).await {
                 Ok(handle) => {
                     log::info!("HDR loaded");
@@ -255,7 +272,7 @@ impl AppHandler for GltfViewer {
         scene.environment.set_ambient_color(Vec3::splat(0.3));
 
         // 3. 添加灯光
-        let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0);
+        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0);
 
         let light_node = scene.add_light(light);
         if let Some(node) = scene.get_node_mut(light_node) {
@@ -276,6 +293,13 @@ impl AppHandler for GltfViewer {
         let (tx, rx) = channel();
         let (file_dialog_tx, file_dialog_rx) = channel();
         let (prefab_tx, prefab_rx) = channel();
+
+        #[cfg(target_arch = "wasm32")]
+        {
+            if let Ok(mut guard) = DROP_SENDER.lock() {
+                *guard = Some(file_dialog_tx.clone());
+            }
+        }
 
         let mut viewer = Self {
             ui_pass,
@@ -327,7 +351,7 @@ impl AppHandler for GltfViewer {
         viewer
     }
 
-    fn on_event(&mut self, _engine: &mut ThreeEngine, window: &Arc<Window>, event: &WindowEvent) -> bool {
+    fn on_event(&mut self, _engine: &mut MythEngine, window: &Arc<Window>, event: &WindowEvent) -> bool {
 
 
         // Tab 键切换 UI 显示
@@ -356,7 +380,7 @@ impl AppHandler for GltfViewer {
         false
     }
 
-    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
 
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
@@ -402,7 +426,7 @@ impl AppHandler for GltfViewer {
 
     }
 
-    fn compose_frame<'a>(&'a mut self, composer: three::renderer::graph::FrameComposer<'a>) {
+    fn compose_frame<'a>(&'a mut self, composer: myth_engine::renderer::graph::FrameComposer<'a>) {
         if self.show_ui {
             composer
                 .add_node(RenderStage::UI, &mut self.ui_pass)
@@ -724,7 +748,7 @@ impl GltfViewer {
     /// 从材质中收集纹理信息
     fn collect_textures_from_material(
         &mut self, 
-        material: &three::Material, 
+        material: &myth_engine::Material, 
         mat_name: &str,
         assets: &AssetServer,
         visited: &mut std::collections::HashSet<TextureHandle>
@@ -732,7 +756,7 @@ impl GltfViewer {
         // 使用通用方式收集纹理：通过 visit_textures trait 方法
         let mut collected = Vec::new();
         material.as_renderable().visit_textures(&mut |tex_source| {
-            if let three::resources::texture::TextureSource::Asset(handle) = tex_source {
+            if let myth_engine::resources::texture::TextureSource::Asset(handle) = tex_source {
                 if !visited.contains(handle) {
                     visited.insert(*handle);
                     collected.push(*handle);
@@ -757,7 +781,7 @@ impl GltfViewer {
     // UI 渲染
     // ========================================================================
 
-    fn render_ui(&mut self, engine: &mut ThreeEngine) {
+    fn render_ui(&mut self, engine: &mut MythEngine) {
         let egui_ctx = self.ui_pass.context().clone();
 
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
@@ -774,7 +798,7 @@ impl GltfViewer {
     }
 
     /// 渲染主控制面板
-    fn render_control_panel(&mut self, ctx: &egui::Context, scene: &mut Scene, assets: &AssetServer, renderer: &mut three::Renderer) {
+    fn render_control_panel(&mut self, ctx: &egui::Context, scene: &mut Scene, assets: &AssetServer, renderer: &mut myth_engine::Renderer) {
 
         egui::Window::new("Control Panel")
             .default_pos([10.0, 10.0])
@@ -1009,7 +1033,7 @@ impl GltfViewer {
                                 .width(120.0)
                                 .selected_text(current_mode.name())
                                 .show_ui(ui, |ui| {
-                                    for mode in ToneMappingMode::all() {
+                                    for mode in myth_engine::ToneMappingMode::all() {
                                         if ui.selectable_label(current_mode == *mode, mode.name()).clicked() {
                                             scene.tone_mapping.set_mode(*mode);
                                         }
@@ -1130,7 +1154,7 @@ impl GltfViewer {
     }
 
     /// 递归渲染节点树
-    fn render_node_tree(&mut self, ui: &mut egui::Ui, scene: &three::Scene, node: NodeHandle, depth: usize) {
+    fn render_node_tree(&mut self, ui: &mut egui::Ui, scene: &myth_engine::Scene, node: NodeHandle, depth: usize) {
         let Some(node_data) = scene.get_node(node) else {
             return;
         };
@@ -1175,7 +1199,7 @@ impl GltfViewer {
     }
 
     /// 渲染节点详情
-    fn render_node_details(&self, ui: &mut egui::Ui, scene: &mut three::Scene, node: NodeHandle, assets: &AssetServer) {
+    fn render_node_details(&self, ui: &mut egui::Ui, scene: &mut myth_engine::Scene, node: NodeHandle, assets: &AssetServer) {
         let Some(node_data) = scene.get_node(node) else {
             ui.label("Node not found");
             return;
@@ -1285,7 +1309,7 @@ impl GltfViewer {
 
                 // 只处理 Physical 材质
                 match &material.data {
-                    three::MaterialType::Physical(m) => {
+                    myth_engine::MaterialType::Physical(m) => {
                         {   // uniforms
                             // let mut uniform_mut = m.uniforms_mut();
                             let mut uniform_mut = m.uniforms_mut();
@@ -1344,9 +1368,9 @@ impl GltfViewer {
                             egui::ComboBox::from_id_salt("side_combo")
                                 .selected_text(format!("{:?}", settings.side))
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut settings.side, three::Side::Front, "Front");
-                                    ui.selectable_value(&mut settings.side, three::Side::Back, "Back");
-                                    ui.selectable_value(&mut settings.side, three::Side::Double, "Double");
+                                    ui.selectable_value(&mut settings.side, myth_engine::Side::Front, "Front");
+                                    ui.selectable_value(&mut settings.side, myth_engine::Side::Back, "Back");
+                                    ui.selectable_value(&mut settings.side, myth_engine::Side::Double, "Double");
                                 });
                             ui.end_row();
                             
@@ -1354,28 +1378,28 @@ impl GltfViewer {
                             ui.label("Alpha Mode:");
                             egui::ComboBox::from_id_salt("alpha_mode_combo")
                                 .selected_text(match settings.alpha_mode {
-                                    three::AlphaMode::Opaque => "Opaque",
-                                    three::AlphaMode::Mask(..) => "Mask",
-                                    three::AlphaMode::Blend => "Blend",
+                                    myth_engine::AlphaMode::Opaque => "Opaque",
+                                    myth_engine::AlphaMode::Mask(..) => "Mask",
+                                    myth_engine::AlphaMode::Blend => "Blend",
                                 })
                                 .show_ui(ui, |ui| {
                                     // 切换模式时，如果是 Mask 需要保留默认阈值
-                                    if ui.selectable_label(matches!(settings.alpha_mode, three::AlphaMode::Opaque), "Opaque").clicked() {
-                                        settings.alpha_mode = three::AlphaMode::Opaque;
+                                    if ui.selectable_label(matches!(settings.alpha_mode, myth_engine::AlphaMode::Opaque), "Opaque").clicked() {
+                                        settings.alpha_mode = myth_engine::AlphaMode::Opaque;
                                     }
-                                    if ui.selectable_label(matches!(settings.alpha_mode, three::AlphaMode::Mask(..)), "Mask").clicked() {
+                                    if ui.selectable_label(matches!(settings.alpha_mode, myth_engine::AlphaMode::Mask(..)), "Mask").clicked() {
                                         // 如果之前不是 Mask，设为默认 0.5，否则保持
-                                        if !matches!(settings.alpha_mode, three::AlphaMode::Mask(..)) {
-                                            settings.alpha_mode = three::AlphaMode::Mask(0.5, false);
+                                        if !matches!(settings.alpha_mode, myth_engine::AlphaMode::Mask(..)) {
+                                            settings.alpha_mode = myth_engine::AlphaMode::Mask(0.5, false);
                                         }
                                     }
-                                    if ui.selectable_label(matches!(settings.alpha_mode, three::AlphaMode::Blend), "Blend").clicked() {
-                                        settings.alpha_mode = three::AlphaMode::Blend;
+                                    if ui.selectable_label(matches!(settings.alpha_mode, myth_engine::AlphaMode::Blend), "Blend").clicked() {
+                                        settings.alpha_mode = myth_engine::AlphaMode::Blend;
                                     }
                                 });
                             
                             // 如果是 Mask 模式，额外显示阈值滑块
-                            if let three::AlphaMode::Mask(cutoff, a2c) = &mut settings.alpha_mode {
+                            if let myth_engine::AlphaMode::Mask(cutoff, a2c) = &mut settings.alpha_mode {
                                 ui.horizontal(|ui| {
                                     // ui[1].add(egui::DragValue::new(cutoff).speed(0.01).range(0.0..=1.0).prefix(""));
                                     ui.add(egui::DragValue::new(cutoff).speed(0.01).range(0.0..=1.0).prefix("Cutoff: "));
@@ -1605,8 +1629,6 @@ fn main() -> anyhow::Result<()> {
 // WASM Entry Point
 // ============================================================================
 
-#[cfg(target_arch = "wasm32")]
-use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]

@@ -173,9 +173,9 @@ dependencies = [
 
 [[package]]
 name = "anyhow"
-version = "1.0.100"
+version = "1.0.101"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a23eb6b1614318a8071c9b2521f36b424b2c83db5eb3a0fead4a6c0809af6e61"
+checksum = "5f0e0fee31ef5ed1ba1316088939cea399010ed7731dba877ed44aeb407a75ea"
 
 [[package]]
 name = "arbitrary"
@@ -2192,6 +2192,55 @@ dependencies = [
 ]
 
 [[package]]
+name = "myth-engine"
+version = "0.0.1"
+dependencies = [
+ "anyhow",
+ "base64 0.22.1",
+ "bitflags 2.10.0",
+ "bytemuck",
+ "console_error_panic_hook",
+ "console_log",
+ "egui",
+ "egui-wgpu",
+ "egui-winit",
+ "env_logger",
+ "futures",
+ "glam",
+ "gltf",
+ "half",
+ "image",
+ "js-sys",
+ "lasso",
+ "log",
+ "minijinja",
+ "once_cell",
+ "parking_lot",
+ "paste",
+ "pollster",
+ "raw-window-handle",
+ "reqwest",
+ "rfd",
+ "rust-embed",
+ "rustc-hash 2.1.1",
+ "serde",
+ "serde_json",
+ "slotmap",
+ "smallvec",
+ "thiserror 2.0.18",
+ "tokio",
+ "uuid",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "wasm-bindgen-test",
+ "web-sys",
+ "web-time",
+ "wgpu",
+ "winit",
+ "xxhash-rust",
+]
+
+[[package]]
 name = "naga"
 version = "28.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3837,55 +3886,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
-]
-
-[[package]]
-name = "three"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "base64 0.22.1",
- "bitflags 2.10.0",
- "bytemuck",
- "console_error_panic_hook",
- "console_log",
- "egui",
- "egui-wgpu",
- "egui-winit",
- "env_logger",
- "futures",
- "glam",
- "gltf",
- "half",
- "image",
- "js-sys",
- "lasso",
- "log",
- "minijinja",
- "once_cell",
- "parking_lot",
- "paste",
- "pollster",
- "raw-window-handle",
- "reqwest",
- "rfd",
- "rust-embed",
- "rustc-hash 2.1.1",
- "serde",
- "serde_json",
- "slotmap",
- "smallvec",
- "thiserror 2.0.18",
- "tokio",
- "uuid",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "wasm-bindgen-test",
- "web-sys",
- "web-time",
- "wgpu",
- "winit",
- "xxhash-rust",
 ]
 
 [[package]]

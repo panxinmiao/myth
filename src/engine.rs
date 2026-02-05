@@ -1,6 +1,6 @@
 //! Engine Core Module
 //!
-//! This module contains [`ThreeEngine`], the central coordinator of the rendering engine.
+//! This module contains [`MythEngine`], the central coordinator of the rendering engine.
 //! It is a pure engine instance without any window management logic, allowing it to be
 //! driven by different frontends (Winit, Python bindings, WebAssembly, etc.).
 //!
@@ -16,10 +16,10 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use three::{ThreeEngine, RenderSettings};
+//! use myth_engine::{MythEngine, RenderSettings};
 //!
 //! // Create engine with custom settings
-//! let mut engine = ThreeEngine::new(RenderSettings::default());
+//! let mut engine = MythEngine::new(RenderSettings::default());
 //!
 //! // Initialize GPU context with a window
 //! engine.init(window, 1280, 720).await?;
@@ -41,7 +41,7 @@ use crate::scene::manager::SceneManager;
 
 /// The core engine instance that orchestrates all rendering subsystems.
 ///
-/// `ThreeEngine` is a pure engine implementation without window management,
+/// `MythEngine` is a pure engine implementation without window management,
 /// making it suitable for integration with various windowing systems and platforms.
 ///
 /// # Components
@@ -53,11 +53,11 @@ use crate::scene::manager::SceneManager;
 ///
 /// # Lifecycle
 ///
-/// 1. Create with [`ThreeEngine::new`] or [`ThreeEngine::default`]
-/// 2. Initialize GPU with [`ThreeEngine::init`]
-/// 3. Update each frame with [`ThreeEngine::update`]
+/// 1. Create with [`MythEngine::new`] or [`MythEngine::default`]
+/// 2. Initialize GPU with [`MythEngine::init`]
+/// 3. Update each frame with [`MythEngine::update`]
 /// 4. Render using [`Renderer::begin_frame`]
-pub struct ThreeEngine {
+pub struct MythEngine {
     pub renderer: Renderer,
     pub scene_manager: SceneManager,
     pub assets: AssetServer,
@@ -67,7 +67,7 @@ pub struct ThreeEngine {
     pub(crate) frame_count: u64,
 }
 
-impl ThreeEngine {
+impl MythEngine {
     /// Creates a new engine instance with the specified render settings.
     ///
     /// This only creates the engine configuration. GPU resources are not
@@ -181,7 +181,7 @@ impl ThreeEngine {
     }
 }
 
-impl Default for ThreeEngine {
+impl Default for MythEngine {
     fn default() -> Self {
         Self::new(RenderSettings::default())
     }

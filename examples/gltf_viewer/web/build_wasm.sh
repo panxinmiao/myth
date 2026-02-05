@@ -1,6 +1,6 @@
 #!/bin/bash
 # Build script for WASM target
-# Usage: ./build_wasm.sh [--release]
+# Usage: ./build_wasm.sh [--debug]
 
 set -e
 
@@ -18,12 +18,12 @@ if ! command -v wasm-pack &> /dev/null; then
 fi
 
 # Parse arguments
-BUILD_MODE="--dev"
-if [ "$1" == "--release" ]; then
-    BUILD_MODE="--release"
-    echo -e "${GREEN}Building in RELEASE mode${NC}"
-else
+BUILD_MODE="--release"
+if [ "$1" == "--debug" ]; then
+    BUILD_MODE="--dev"
     echo -e "${YELLOW}Building in DEBUG mode${NC}"
+else
+    echo -e "${GREEN}Building in RELEASE mode${NC}"
 fi
 
 # Get script directory

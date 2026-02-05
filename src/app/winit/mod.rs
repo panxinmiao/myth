@@ -20,8 +20,8 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use three::app::winit::{App, AppHandler};
-//! use three::engine::{ThreeEngine, FrameState};
+//! use myth_engine::app::winit::{App, AppHandler};
+//! use myth_engine::engine::{MythEngine, FrameState};
 //! use std::sync::Arc;
 //! use winit::window::Window;
 //!
@@ -30,12 +30,12 @@
 //! }
 //!
 //! impl AppHandler for GameApp {
-//!     fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self {
+//!     fn init(engine: &mut MythEngine, window: &Arc<Window>) -> Self {
 //!         // Initialize scene, load assets, etc.
 //!         GameApp {}
 //!     }
 //!
-//!     fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+//!     fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
 //!         // Update game logic
 //!     }
 //!
@@ -63,9 +63,9 @@ use web_time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-use winit::window::{Window, WindowId};
+pub use winit::window::{Window, WindowId};
 
-use crate::engine::{FrameState, ThreeEngine};
+use crate::engine::{FrameState, MythEngine};
 use crate::renderer::graph::FrameComposer;
 use crate::renderer::settings::RenderSettings;
 
@@ -87,12 +87,12 @@ pub mod input_adapter;
 ///
 /// ```rust,ignore
 /// impl AppHandler for MyApp {
-///     fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self {
+///     fn init(engine: &mut MythEngine, window: &Arc<Window>) -> Self {
 ///         // Load assets, create scene
 ///         MyApp { /* ... */ }
 ///     }
 ///
-///     fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+///     fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
 ///         // Update animations, physics, etc.
 ///     }
 /// }
@@ -107,7 +107,7 @@ pub trait AppHandler: Sized + 'static {
     ///
     /// * `engine` - Mutable reference to the engine instance
     /// * `window` - Reference to the window (for querying size, etc.)
-    fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self;
+    fn init(engine: &mut MythEngine, window: &Arc<Window>) -> Self;
 
     /// Handles window events.
     ///
@@ -127,7 +127,7 @@ pub trait AppHandler: Sized + 'static {
     #[allow(unused_variables)]
     fn on_event(
         &mut self,
-        engine: &mut ThreeEngine,
+        engine: &mut MythEngine,
         window: &Arc<Window>,
         event: &WindowEvent,
     ) -> bool {
@@ -145,7 +145,7 @@ pub trait AppHandler: Sized + 'static {
     /// * `window` - Reference to the window
     /// * `frame` - Frame timing information
     #[allow(unused_variables)]
-    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {}
+    fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {}
 
     /// Configures the render pipeline for this frame.
     ///
@@ -179,10 +179,10 @@ pub trait AppHandler: Sized + 'static {
 pub struct DefaultHandler;
 
 impl AppHandler for DefaultHandler {
-    fn init(_ctx: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
+    fn init(_ctx: &mut MythEngine, _window: &Arc<Window>) -> Self {
         Self
     }
-    fn update(&mut self, _engine: &mut ThreeEngine, _window: &Arc<Window>, _frame: &FrameState) {}
+    fn update(&mut self, _engine: &mut MythEngine, _window: &Arc<Window>, _frame: &FrameState) {}
 }
 
 /// Application builder for configuring and launching the engine.
@@ -211,7 +211,7 @@ impl App {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            title: "Three-rs Engine".into(),
+            title: "Myth Engine".into(),
             render_settings: RenderSettings::default(),
         }
     }
@@ -292,7 +292,7 @@ struct AppRunner<H: AppHandler> {
     render_settings: RenderSettings,
 
     window: Option<Arc<Window>>,
-    engine: Option<ThreeEngine>,
+    engine: Option<MythEngine>,
     user_state: Option<H>,
 
     start_time: Instant,
@@ -307,7 +307,7 @@ struct AppRunner<H: AppHandler> {
 #[cfg(target_arch = "wasm32")]
 struct WasmInitState<H: AppHandler> {
     pending: bool,
-    result: Option<(ThreeEngine, H)>,
+    result: Option<(MythEngine, H)>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -323,7 +323,7 @@ impl<H: AppHandler> Default for WasmInitState<H> {
 #[cfg(target_arch = "wasm32")]
 impl<H: AppHandler> WasmInitState<H> {
     /// Try to take the result if available, returns None if not ready or already taken
-    fn try_take_result(&mut self) -> Option<(ThreeEngine, H)> {
+    fn try_take_result(&mut self) -> Option<(MythEngine, H)> {
         self.result.take()
     }
     
@@ -426,7 +426,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
 
         log::info!("Initializing Renderer Backend...");
 
-        let mut engine = ThreeEngine::new(self.render_settings.clone());
+        let mut engine = MythEngine::new(self.render_settings.clone());
         let size = window.inner_size();
 
         if let Err(e) = pollster::block_on(engine.init(window.clone(), size.width, size.height)) {
@@ -457,8 +457,8 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         let web_window = web_sys::window().expect("No window found");
         let document = web_window.document().expect("No document found");
         let canvas = document
-            .get_element_by_id("three-canvas")
-            .expect("Canvas element 'three-canvas' not found")
+            .get_element_by_id("myth-canvas")
+            .expect("Canvas element 'myth-canvas' not found")
             .dyn_into::<web_sys::HtmlCanvasElement>()
             .expect("Element is not a canvas");
 
@@ -488,7 +488,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         let window_clone = window.clone();
         
         wasm_bindgen_futures::spawn_local(async move {
-            let mut engine = ThreeEngine::new(render_settings);
+            let mut engine = MythEngine::new(render_settings);
             let size = window_clone.inner_size();
             let w = size.width.max(1);
             let h = size.height.max(1);

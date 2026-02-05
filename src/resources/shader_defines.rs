@@ -15,7 +15,7 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use three::resources::ShaderDefines;
+//! use myth_engine::resources::ShaderDefines;
 //!
 //! let mut defines = ShaderDefines::new();
 //! defines.set("HAS_NORMAL_MAP", "1");

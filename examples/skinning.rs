@@ -1,15 +1,9 @@
 use std::sync::Arc;
-use std::path::Path; // 引入 Path
-use std::env; // 引入 env
+use std::path::Path;
+use std::env;
 
-use glam::Vec3;
-use three::app::winit::{App, AppHandler};
-use three::scene::{Camera, light};
-use three::OrbitControls;
-use three::utils::fps_counter::FpsCounter;
-use three::assets::GltfLoader;
-use three::renderer::settings::RenderSettings;
-use three::engine::{FrameState, ThreeEngine};
+use myth_engine::prelude::*;
+use myth_engine::utils::FpsCounter;
 use winit::window::Window;
 
 /// 骨骼动画示例
@@ -21,7 +15,7 @@ struct SkinningDemo {
 }
 
 impl AppHandler for SkinningDemo {
-    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // === 1. 解析启动参数 ===
         let args: Vec<String> = env::args().collect();
         
@@ -49,7 +43,7 @@ impl AppHandler for SkinningDemo {
                 "examples/assets/Park2/posz.jpg",
                 "examples/assets/Park2/negz.jpg",
             ],
-            three::ColorSpace::Srgb,
+            ColorSpace::Srgb,
             true
         ).expect("Failed to load environment map");
 
@@ -58,12 +52,11 @@ impl AppHandler for SkinningDemo {
         scene.environment.set_env_map(Some(env_texture_handle));
 
         // === 3. 添加灯光 ===
-        let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
+        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
         scene.add_light(light);
         // === 4. 加载 glTF 模型 ===
         println!("Loading glTF model from: {:?}", gltf_path);
         
-        // 这里加一个简单的错误处理，防止路径错误直接崩溃不好调试
         let prefab = match GltfLoader::load(
             gltf_path,
             engine.assets.clone()
@@ -71,7 +64,6 @@ impl AppHandler for SkinningDemo {
             Ok(res) => res,
             Err(e) => {
                 eprintln!("Error loading model '{}': {}", gltf_path.display(), e);
-                // 加载失败时返回一个空场景或 fallback，这里简单起见 panic
                 panic!("Failed to load model");
             }
         };
@@ -109,7 +101,7 @@ impl AppHandler for SkinningDemo {
         }
     }
 
-    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };
@@ -127,7 +119,6 @@ impl AppHandler for SkinningDemo {
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     App::new()
-        // 开启 VSync 可以避免 GPU 满载啸叫，但在测试性能时可以关掉
         .with_settings(RenderSettings { vsync: false, enable_hdr: false, ..Default::default() }) 
         .run::<SkinningDemo>()
 }

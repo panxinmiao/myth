@@ -5,7 +5,7 @@
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
-use crate::errors::{Result, ThreeError};
+use crate::errors::{Result, MythError};
 use crate::renderer::settings::RenderSettings;
 
 /// Core wgpu context holding GPU handles.
@@ -54,7 +54,7 @@ impl WgpuContext {
         let instance = wgpu::Instance::default();
         let surface = instance
             .create_surface(window)
-            .map_err(|e| ThreeError::AdapterRequestFailed(e.to_string()))?;
+            .map_err(|e| MythError::AdapterRequestFailed(e.to_string()))?;
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -63,7 +63,7 @@ impl WgpuContext {
                 force_fallback_adapter: false,
             })
             .await
-            .map_err(|e| ThreeError::AdapterRequestFailed(e.to_string()))?;
+            .map_err(|e| MythError::AdapterRequestFailed(e.to_string()))?;
 
         // ===  查询 Surface 支持的格式 ===
         let caps = surface.get_capabilities(&adapter);

@@ -21,16 +21,16 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use three::app::winit::{App, AppHandler};
+//! use myth_engine::app::winit::{App, AppHandler};
 //!
 //! struct MyGame;
 //!
 //! impl AppHandler for MyGame {
-//!     fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self {
+//!     fn init(engine: &mut MythEngine, window: &Arc<Window>) -> Self {
 //!         MyGame
 //!     }
 //!
-//!     fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+//!     fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
 //!         // Game logic here
 //!     }
 //! }

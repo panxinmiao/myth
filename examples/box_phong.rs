@@ -1,11 +1,6 @@
 use std::sync::Arc;
 
-use glam::{Vec3, Vec4, Quat};
-use three::app::winit::{App, AppHandler};
-use three::engine::FrameState;
-use three::resources::{Geometry, Material, Mesh, Texture};
-use three::scene::{Camera, NodeHandle, light};
-use three::{OrbitControls, ThreeEngine};
+use myth_engine::prelude::*;
 use winit::window::Window;
 
 /// Phong 材质立方体示例
@@ -15,7 +10,7 @@ struct PhongBox {
 }
 
 impl AppHandler for PhongBox {
-    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 准备资源
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
@@ -28,7 +23,7 @@ impl AppHandler for PhongBox {
         }
         
         let geo_handle = engine.assets.geometries.add(geometry);
-        let mat_handle = engine.assets.materials.add(mat.into());
+        let mat_handle = engine.assets.materials.add(mat);
 
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
@@ -37,7 +32,7 @@ impl AppHandler for PhongBox {
         let cube_node_id = scene.add_mesh(mesh);
 
         // 3. 添加灯光
-        let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
+        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
         scene.add_light(light);
         // 4. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
@@ -56,7 +51,7 @@ impl AppHandler for PhongBox {
         }
     }
 
-    fn update(&mut self, engine: &mut ThreeEngine, _window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut MythEngine, _window: &Arc<Window>, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };

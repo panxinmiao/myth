@@ -2,19 +2,19 @@
 //!
 //! This module defines the error types used throughout the engine.
 //!
-//! The main error type [`ThreeError`] covers all failure modes including:
+//! The main error type [`MythError`] covers all failure modes including:
 //! - GPU initialization failures
 //! - Asset loading errors
 //! - Resource management errors
 
 use thiserror::Error;
 
-/// The main error type for the Three engine.
+/// The main error type for the Myth engine.
 ///
 /// This enum covers all possible error conditions that can occur
 /// during engine operation.
 #[derive(Error, Debug)]
-pub enum ThreeError {
+pub enum MythError {
     /// Failed to request a compatible GPU adapter.
     #[error("Failed to request WGPU adapter: {0}")]
     AdapterRequestFailed(String),
@@ -40,5 +40,5 @@ pub enum ThreeError {
     ImageError(String),
 }
 
-/// Alias for `Result<T, ThreeError>`.
-pub type Result<T> = std::result::Result<T, ThreeError>;
+/// Alias for `Result<T, MythError>`.
+pub type Result<T> = std::result::Result<T, MythError>;

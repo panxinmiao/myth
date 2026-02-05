@@ -1,14 +1,7 @@
 use std::sync::Arc;
 
-use glam::{Vec2, Vec3, Vec4, Quat};
-use three::app::winit::{App, AppHandler};
-use three::engine::FrameState;
-use three::resources::Material;
-use three::resources::material::AlphaMode;
-use three::scene::{Camera, NodeHandle, light};
-use three::{OrbitControls, ThreeEngine};
-use three::utils::fps_counter::FpsCounter;
-use three::renderer::settings::RenderSettings;
+use myth_engine::utils::fps_counter::FpsCounter;
+use myth_engine::prelude::*;
 use winit::window::Window;
 
 /// 地球渲染示例
@@ -20,9 +13,9 @@ struct Earth {
 }
 
 impl AppHandler for Earth {
-    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 准备资源
-        let geometry = three::create_sphere(three::resources::primitives::SphereOptions {
+        let geometry = myth_engine::create_sphere(myth_engine::resources::primitives::SphereOptions {
             radius: 63.71,
             width_segments: 100,
             height_segments: 50,
@@ -33,19 +26,19 @@ impl AppHandler for Earth {
 
         // 加载纹理
         let earth_tex_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_atmos_4096.jpg", three::ColorSpace::Srgb, true
+            "examples/assets/planets/earth_atmos_4096.jpg", ColorSpace::Srgb, true
         ).expect("Failed to load earth texture");
         let specular_tex_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_specular_2048.jpg", three::ColorSpace::Srgb, true
+            "examples/assets/planets/earth_specular_2048.jpg", ColorSpace::Srgb, true
         ).expect("Failed to load specular texture");
         let emssive_tex_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_lights_2048.png", three::ColorSpace::Srgb, true
+            "examples/assets/planets/earth_lights_2048.png", ColorSpace::Srgb, true
         ).expect("Failed to load emissive texture");
         let normal_map_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_normal_2048.jpg", three::ColorSpace::Linear, true
+            "examples/assets/planets/earth_normal_2048.jpg", ColorSpace::Linear, true
         ).expect("Failed to load normal map");
         let clouds_tex_handle = engine.assets.load_texture(
-            "examples/assets/planets/earth_clouds_1024.png", three::ColorSpace::Srgb, true
+            "examples/assets/planets/earth_clouds_1024.png", ColorSpace::Srgb, true
         ).expect("Failed to load clouds texture");
 
         if let Some(phong) = mat.as_phong_mut() {
@@ -70,13 +63,13 @@ impl AppHandler for Earth {
             phong.set_opacity(0.8);
             phong.set_alpha_mode(AlphaMode::Blend);
             phong.set_depth_write(false);
-            phong.set_side(three::Side::Front);
+            phong.set_side(Side::Front);
         }
         let cloud_material_handle = engine.assets.materials.add(cloud_material);
 
         // 2. 创建 Mesh 并加入场景
-        let mesh = three::resources::Mesh::new(geo_handle, mat_handle);
-        let cloud_mesh = three::resources::Mesh::new(geo_handle, cloud_material_handle);
+        let mesh = Mesh::new(geo_handle, mat_handle);
+        let cloud_mesh = Mesh::new(geo_handle, cloud_material_handle);
 
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
@@ -93,11 +86,11 @@ impl AppHandler for Earth {
         }
 
         // 3. 添加灯光
-        let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
-        let light_index = scene.add_light(light);
+        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
+        let light_handle = scene.add_light(light);
         scene.environment.set_ambient_color(Vec3::new(0.0001, 0.0001, 0.0001));
 
-        if let Some(light_node) = scene.get_node_mut(light_index) {
+        if let Some(light_node) = scene.get_node_mut(light_handle) {
             light_node.transform.position = Vec3::new(3.0, 0.0, 1.0);
             light_node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
@@ -121,7 +114,7 @@ impl AppHandler for Earth {
         }
     }
 
-    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
 
         let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;

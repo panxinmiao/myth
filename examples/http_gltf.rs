@@ -1,13 +1,7 @@
 use std::sync::Arc;
 
-use glam::Vec3;
-use three::app::winit::{App, AppHandler};
-use three::engine::FrameState;
-use three::scene::{Camera, NodeHandle, light};
-use three::{OrbitControls, ThreeEngine};
-use three::utils::fps_counter::FpsCounter;
-use three::assets::GltfLoader;
-use three::renderer::settings::RenderSettings;
+use myth_engine::prelude::*;
+use myth_engine::utils::FpsCounter;
 use winit::window::Window;
 
 struct HttpGltfExample {
@@ -19,7 +13,7 @@ struct HttpGltfExample {
 }
 
 impl AppHandler for HttpGltfExample {
-    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 加载环境贴图 (PBR 需要 IBL)
         let env_texture_handle = engine.assets.load_cube_texture(
             [
@@ -30,7 +24,7 @@ impl AppHandler for HttpGltfExample {
                 "examples/assets/Park2/posz.jpg",
                 "examples/assets/Park2/negz.jpg",
             ],
-            three::ColorSpace::Srgb,
+            ColorSpace::Srgb,
             true
         ).expect("Failed to load environment map");
 
@@ -40,7 +34,7 @@ impl AppHandler for HttpGltfExample {
         scene.environment.set_env_map(Some(env_texture_handle));
 
         // 2. 添加灯光
-        let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
+        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
         scene.add_light(light);
 
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
@@ -62,7 +56,7 @@ impl AppHandler for HttpGltfExample {
         }
     }
 
-    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
         if !self.loaded {
             self.loaded = true;
             

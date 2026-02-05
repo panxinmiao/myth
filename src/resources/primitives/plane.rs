@@ -37,9 +37,6 @@ pub fn create_plane(options: PlaneOptions) -> Geometry {
     let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
-    // 生成顶点 (Z-up 还是 Y-up? 通常平面是 XY 平面或 XZ 平面)
-    // Three.js PlaneGeometry 默认是 XY 平面 (竖着的墙)
-    // 如果想要地板，需要旋转或者这里改成 XZ。这里我们模仿标准，做成 XY 平面。
     for iy in 0..grid_y1 {
         let y = iy as f32 * segment_height - height_half;
         for ix in 0..grid_x1 {

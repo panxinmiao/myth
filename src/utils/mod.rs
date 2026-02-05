@@ -14,7 +14,7 @@
 //! can be compared in O(1) time.
 //!
 //! ```rust,ignore
-//! use three::utils::interner;
+//! use myth_engine::utils::interner;
 //!
 //! let sym1 = interner::intern("HAS_NORMAL_MAP");
 //! let sym2 = interner::intern("HAS_NORMAL_MAP");
@@ -27,3 +27,5 @@ pub mod interner;
 pub mod time;
 
 pub use interner::Symbol;
+pub use orbit_control::OrbitControls;
+pub use fps_counter::FpsCounter;

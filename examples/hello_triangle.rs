@@ -1,28 +1,24 @@
 use std::sync::Arc;
 
-use glam::{Vec3, Vec4};
-use three::ThreeEngine;
-use three::app::winit::{App, AppHandler};
-use three::resources::{Geometry, Attribute, Material, Mesh, Texture};
-use three::scene::Camera;
+
+use myth_engine::prelude::*;
 use winit::window::Window;
 
 /// Hello Triangle 示例
 /// 
-/// 最简单的静态场景示例，演示新的 AppHandler 模式
 struct HelloTriangle;
 
 impl AppHandler for HelloTriangle {
-    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 构建三角形几何体
         let mut geometry = Geometry::new();
-        geometry.set_attribute("position", Attribute::new_planar(&[
+        geometry.set_attribute("position", myth_engine::Attribute::new_planar(&[
             [0.0f32, 0.5, 0.0],
             [-0.5, -0.5, 0.0],
             [0.5, -0.5, 0.0],
         ], wgpu::VertexFormat::Float32x3));
         
-        geometry.set_attribute("uv", Attribute::new_planar(&[
+        geometry.set_attribute("uv", myth_engine::Attribute::new_planar(&[
             [0.5f32, 1.0],
             [0.0, 0.0],
             [1.0, 0.0],

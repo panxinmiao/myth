@@ -1,7 +1,23 @@
 [package]
-name = "three"
-version = "0.1.0"
+name = "myth-engine"
+version = "0.0.1"
 edition = "2024"
+authors = ["Pan Xinmiao <pan_xinmiao@163.com>"]
+description = "A developer-friendly, high-performance 3D rendering engine written in Rust."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/panxinmiao/myth-engine"
+homepage = "https://github.com/panxinmiao/myth-engine"
+documentation = "https://docs.rs/myth-engine"
+readme = "README.md"
+keywords = ["3d", "wgpu", "graphics", "gamedev", "engine"]
+categories = ["game-development", "graphics", "rendering::engine"]
+
+exclude = [
+    "examples/assets/*", 
+    "docs/images/*",
+    ".github/*",
+    ".gitignore"
+]
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -34,7 +50,7 @@ base64 = "0.22"
 reqwest = { version = "0.13.1", default-features = false, optional = true }
 
 # 工具库
-anyhow = "1.0"
+anyhow = "1.0.101"
 thiserror = "2.0"
 log = "0.4"
 env_logger = "0.11"

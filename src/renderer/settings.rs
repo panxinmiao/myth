@@ -5,7 +5,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use three::render::RenderSettings;
+//! use myth_engine::render::RenderSettings;
 //!
 //! let settings = RenderSettings {
 //!     vsync: false,
@@ -45,7 +45,7 @@
 /// # Example
 ///
 /// ```rust,ignore
-/// use three::render::RenderSettings;
+/// use myth_engine::render::RenderSettings;
 ///
 /// // High-performance settings for games
 /// let game_settings = RenderSettings {

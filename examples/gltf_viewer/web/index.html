@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>glTF Viewer - Three-rs WebGPU</title>
+    <title>glTF Viewer - Myth-Engine WebGPU</title>
     <style>
         * {
             margin: 0;
@@ -18,7 +18,7 @@
             background-color: #1a1a2e;
         }
         
-        #three-canvas {
+        #myth-canvas {
             width: 100%;
             height: 100%;
             display: block;
@@ -120,9 +120,62 @@
         <p><a href="https://caniuse.com/webgpu" target="_blank">Check WebGPU support</a></p>
     </div>
     
-    <canvas id="three-canvas"></canvas>
+    <canvas id="myth-canvas"></canvas>
     
     <script type="module">
+        let wasm_exports = null;
+
+        async function handleDrop(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            document.body.style.opacity = "1.0"; 
+
+            const dt = e.dataTransfer;
+            const files = dt.files;
+
+            if (files.length > 0 && wasm_exports) {
+                const file = files[0];
+                console.log("Reading dropped file:", file.name);
+
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const data = new Uint8Array(arrayBuffer);
+                    wasm_exports.receive_dropped_file(file.name, data);
+                    
+                } catch (err) {
+                    console.error("Error reading file:", err);
+                }
+            }
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'copy';
+            document.body.style.opacity = "0.7"; 
+        }
+
+        function handleDragLeave(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            document.body.style.opacity = "1.0";
+        }
+
+        // 绑定事件到 Body (确保覆盖全屏)
+        document.body.addEventListener('dragenter', handleDragOver, false);
+        document.body.addEventListener('dragover', handleDragOver, false);
+        document.body.addEventListener('dragleave', handleDragLeave, false);
+        document.body.addEventListener('drop', handleDrop, false);
+        
+        // 同样绑定到 Canvas，以防万一
+        const canvas = document.getElementById('myth-canvas');
+        canvas.addEventListener('dragenter', handleDragOver, false);
+        canvas.addEventListener('dragover', handleDragOver, false);
+        canvas.addEventListener('dragleave', handleDragLeave, false);
+        canvas.addEventListener('drop', handleDrop, false);
+
+
         // Check for WebGPU support
         async function checkWebGPU() {
             if (!navigator.gpu) {
@@ -157,6 +210,8 @@
                 // Import the WASM module
                 const wasm = await import('./pkg/gltf_viewer.js');
                 await wasm.default();
+
+                wasm_exports = wasm;
                 
                 // Hide loading screen after a short delay
                 setTimeout(() => {

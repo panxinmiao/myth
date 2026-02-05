@@ -1,6 +1,6 @@
-//! # Three - A High-Performance WebGPU Rendering Engine
+//! # Myth-Engine - A High-Performance WebGPU Rendering Engine
 //!
-//! Three is a modern 3D rendering engine built with Rust and wgpu, inspired by Three.js.
+//! Myth-Engine is a modern 3D rendering engine built with Rust and wgpu, inspired by Three.js.
 //! It provides a flexible, high-performance foundation for real-time graphics applications.
 //!
 //! ## Quick Start
@@ -8,12 +8,12 @@
 //! For the simplest way to get started, use the [`prelude`] module:
 //!
 //! ```rust,ignore
-//! use three::prelude::*;
+//! use myth_engine::prelude::*;
 //!
 //! struct MyApp;
 //!
 //! impl AppHandler for MyApp {
-//!     fn init(engine: &mut ThreeEngine, window: &Arc<Window>) -> Self {
+//!     fn init(engine: &mut MythEngine, window: &Arc<Window>) -> Self {
 //!         // Create a scene with a mesh
 //!         let scene = engine.scene_manager.create_active();
 //!         
@@ -34,7 +34,7 @@
 //!         MyApp
 //!     }
 //!     
-//!     fn update(&mut self, engine: &mut ThreeEngine, _: &Arc<Window>, frame: &FrameState) {
+//!     fn update(&mut self, engine: &mut MythEngine, _: &Arc<Window>, frame: &FrameState) {
 //!         // Update logic here
 //!     }
 //! }
@@ -54,7 +54,7 @@
 //! │               (Winit integration, event loop)              │
 //! ├─────────────────────────────────────────────────────────────┤
 //! │                       Engine Layer                         │
-//! │              (ThreeEngine, SceneManager)                   │
+//! │              (MythEngine, SceneManager)                   │
 //! ├─────────────────────────────────────────────────────────────┤
 //! │   Scene Graph   │    Renderer     │      Animation        │
 //! │  (Node, Camera, │  (Core, Graph,  │  (Mixer, Clip, Track) │
@@ -80,7 +80,7 @@
 //! | Module | Description |
 //! |--------|-------------|
 //! | [`app`] | Application lifecycle and window management |
-//! | [`engine`] | Core engine instance ([`ThreeEngine`]) |
+//! | [`engine`] | Core engine instance ([`MythEngine`]) |
 //! | [`scene`] | Scene graph with nodes, cameras, and lights |
 //! | [`resources`] | Resource definitions (geometry, material, texture) |
 //! | [`assets`] | Asset loading and management (glTF, images) |
@@ -133,19 +133,20 @@ pub mod utils;
 /// Import everything you need for basic usage with a single line:
 ///
 /// ```rust,ignore
-/// use three::prelude::*;
+/// use myth_engine::prelude::*;
 /// ```
 ///
 /// This includes:
-/// - Application types: [`App`], [`AppHandler`], [`ThreeEngine`], [`FrameState`]
+/// - Application types: [`App`], [`AppHandler`], [`MythEngine`], [`FrameState`]
 /// - Scene types: [`Scene`], [`Node`], [`NodeHandle`], [`Camera`], [`Light`]
 /// - Resource types: [`Mesh`], [`Geometry`], [`Material`], [`Texture`]
 /// - Common math types from `glam`
 /// - Asset loading: [`AssetServer`]
 pub mod prelude {
     // Application
+    #[cfg(feature = "winit")]
     pub use crate::app::winit::{App, AppHandler};
-    pub use crate::engine::{ThreeEngine, FrameState};
+    pub use crate::engine::{MythEngine, FrameState};
     
     // Scene graph
     pub use crate::scene::{
@@ -162,6 +163,7 @@ pub mod prelude {
     
     // Assets
     pub use crate::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle, ColorSpace};
+    pub use crate::assets::GltfLoader;
     
     // Animation
     pub use crate::animation::{AnimationClip, AnimationAction, AnimationMixer, LoopMode};
@@ -189,7 +191,7 @@ pub mod prelude {
 /// # Example
 ///
 /// ```rust,ignore
-/// use three::math::{Vec3, Quat, Mat4};
+/// use myth_engine::math::{Vec3, Quat, Mat4};
 ///
 /// let position = Vec3::new(1.0, 2.0, 3.0);
 /// let rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
@@ -228,7 +230,7 @@ pub mod math {
 /// # Basic Usage
 ///
 /// ```rust,ignore
-/// use three::render::RenderSettings;
+/// use myth_engine::render::RenderSettings;
 ///
 /// let settings = RenderSettings {
 ///     vsync: true,
@@ -247,7 +249,7 @@ pub mod math {
 /// rendering passes:
 ///
 /// ```rust,ignore
-/// use three::render::{FrameComposer, RenderStage, RenderNode};
+/// use myth_engine::render::{FrameComposer, RenderStage, RenderNode};
 ///
 /// impl AppHandler for MyApp {
 ///     fn compose_frame<'a>(&'a self, composer: FrameComposer<'a>) {
@@ -282,8 +284,9 @@ pub mod render {
 // ============================================================================
 
 // Application
+#[cfg(feature = "winit")]
 pub use app::winit::{App, AppHandler};
-pub use engine::{ThreeEngine, FrameState};
+pub use engine::{MythEngine, FrameState};
 
 // Scene (most common types)
 pub use scene::{Scene, Node, NodeHandle, Camera, Light, Transform};
@@ -321,7 +324,7 @@ pub use renderer::settings::RenderSettings;
 pub use renderer::Renderer;
 
 // Errors
-pub use errors::ThreeError;
+pub use errors::MythError;
 
 // Utilities
 pub use utils::interner;

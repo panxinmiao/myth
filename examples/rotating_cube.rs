@@ -1,11 +1,6 @@
 use std::sync::Arc;
 
-use glam::{Vec3, Vec4, Quat};
-use three::ThreeEngine;
-use three::app::winit::{App, AppHandler};
-use three::engine::FrameState;
-use three::resources::{Geometry, Material, Mesh};
-use three::scene::{Camera, NodeHandle};
+use myth_engine::prelude::*;
 use winit::window::Window;
 
 /// 旋转立方体示例
@@ -16,7 +11,7 @@ struct RotatingCube {
 }
 
 impl AppHandler for RotatingCube {
-    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 创建并添加几何体和材质到资产服务器
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let geo_handle = engine.assets.geometries.add(geometry);
@@ -43,7 +38,7 @@ impl AppHandler for RotatingCube {
         Self { cube_node_id }
     }
 
-    fn update(&mut self, engine: &mut ThreeEngine, _window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut MythEngine, _window: &Arc<Window>, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };

@@ -1,13 +1,7 @@
 use std::sync::Arc;
 
-use glam::Vec3;
-use three::app::winit::{App, AppHandler};
-use three::engine::FrameState;
-use three::scene::{Camera, NodeHandle, light};
-use three::{OrbitControls, ThreeEngine};
-use three::utils::fps_counter::FpsCounter;
-use three::assets::GltfLoader;
-use three::renderer::settings::RenderSettings;
+use myth_engine::utils::FpsCounter;
+use myth_engine::prelude::*;
 use winit::window::Window;
 
 /// HDR 环境贴图示例
@@ -19,7 +13,7 @@ struct HdrEnvDemo {
 }
 
 impl AppHandler for HdrEnvDemo {
-    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 加载 HDR 环境贴图 (Equirectangular 格式)
         let env_texture_handle = engine.assets.load_hdr_texture(
             "examples/assets/blouberg_sunrise_2_1k.hdr"
@@ -27,7 +21,7 @@ impl AppHandler for HdrEnvDemo {
 
         // let env_texture_handle = engine.assets.load_texture_from_file(
         //     "examples/assets/royal_esplanade_2k.hdr.jpg",
-        //     three::ColorSpace::Srgb,
+        //     ColorSpace::Srgb,
         //     false
         // ).expect("Failed to load HDR environment map");
 
@@ -38,7 +32,7 @@ impl AppHandler for HdrEnvDemo {
         scene.environment.set_intensity(1.0);
 
         // 2. 添加灯光
-        let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
+        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
         scene.add_light(light);
 
         // 3. 加载 glTF 模型
@@ -80,7 +74,7 @@ impl AppHandler for HdrEnvDemo {
         }
     }
 
-    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };

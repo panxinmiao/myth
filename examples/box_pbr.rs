@@ -1,13 +1,7 @@
 use std::sync::Arc;
 
-use glam::{Vec3, Vec4, Quat};
-use three::app::winit::{App, AppHandler};
-use three::engine::FrameState;
-use three::resources::{Geometry, Mesh, Texture};
-use three::scene::{Camera, NodeHandle, light};
-use three::utils::fps_counter::FpsCounter;
-use three::{MeshPhysicalMaterial, OrbitControls, ThreeEngine};
-use three::renderer::settings::RenderSettings;
+use myth_engine::prelude::*;
+use myth_engine::utils::fps_counter::FpsCounter;
 use winit::window::Window;
 
 /// PBR 材质立方体示例
@@ -18,7 +12,7 @@ struct PbrBox {
 }
 
 impl AppHandler for PbrBox {
-    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 准备资源
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
@@ -31,7 +25,7 @@ impl AppHandler for PbrBox {
         
         let geo_handle = engine.assets.geometries.add(geometry);
         // 在最后需要时才转换为通用 Material 类型
-        let mat_handle = engine.assets.materials.add(standard_mat.into());
+        let mat_handle = engine.assets.materials.add(standard_mat);
 
         let scene = engine.scene_manager.create_active();
         //let scene = ctx.scenes.active_scene_mut().unwrap();
@@ -40,7 +34,7 @@ impl AppHandler for PbrBox {
         let mesh = Mesh::new(geo_handle, mat_handle);
         let cube_node_id = scene.add_mesh(mesh);
         // 3. 添加灯光
-        let light = light::Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 0.0);
+        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 0.0);
         scene.add_light(light);
 
         // 4. 加载环境贴图
@@ -53,7 +47,7 @@ impl AppHandler for PbrBox {
                 "examples/assets/Park2/posz.jpg",
                 "examples/assets/Park2/negz.jpg",
             ],
-            three::ColorSpace::Srgb,
+            myth_engine::ColorSpace::Srgb,
             true
         ).expect("Failed to load environment map");
 
@@ -77,7 +71,7 @@ impl AppHandler for PbrBox {
         }
     }
 
-    fn update(&mut self, engine: &mut ThreeEngine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else{
             return;
         };

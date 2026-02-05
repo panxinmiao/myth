@@ -86,7 +86,6 @@ fn getTangentFrame( eye_pos: vec3<f32>, surf_norm: vec3<f32>, uv: vec2<f32>) -> 
 
     // We flip the Y when we compute the tangent from screen space.
     // See: https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/NormalTangentTest#problem-flipped-y-axis-or-flipped-green-channel
-    // See: https://github.com/mrdoob/three.js/issues/11438#issuecomment-507003995
     return mat3x3f(T * scale, -B * scale, N);
 }
 

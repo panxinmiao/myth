@@ -1,6 +1,6 @@
 //! UI Pass 插件模块
 //!
-//! 这是一个外部插件示例，演示如何将 egui 集成到 three-rs 渲染引擎中。
+//! 这是一个外部插件示例，演示如何将 egui 集成到 myth-engine 渲染引擎中。
 //! 该模块暂时**不属于**引擎核心，是"用户代码"(User Land Code)。
 //! 未来，它可能会被移入引擎核心，作为官方 UI 解决方案提供。
 //!
@@ -17,7 +17,7 @@ use winit::window::Window;
 use winit::event::WindowEvent;
 use wgpu::{Device, TextureFormat};
 
-use three::{assets::TextureHandle, renderer::graph::{RenderContext, RenderNode}};
+use myth_engine::{assets::TextureHandle, renderer::graph::{RenderContext, RenderNode}};
 
 /// UI 渲染 Pass
 /// 
@@ -127,15 +127,6 @@ impl UiPass {
         if let WindowEvent::MouseInput { state: winit::event::ElementState::Released, .. } = event {
             return false;
         }
-
-        // let is_mouse_released = matches!(event, 
-        //     WindowEvent::MouseInput { state: winit::event::ElementState::Released, .. }
-        // );
-
-        // // 1. 优先检查鼠标释放事件，防止“点击穿透”问题
-        // if is_mouse_released {
-        //     return false;
-        // }
 
         response.consumed
     }
@@ -318,8 +309,6 @@ impl RenderNode for UiPass {
         let view = ctx.surface_view;
 
         // 转换为 egui_wgpu 版本的类型
-        // 注意：这里使用 transmute 是因为 three-rs 和 egui-wgpu 使用相同版本的 wgpu (28.0.0)
-        // 已通过 cargo tree 验证版本一致性
         let device_egui: &egui_wgpu::wgpu::Device = unsafe { std::mem::transmute(device) };
         let queue_egui: &egui_wgpu::wgpu::Queue = unsafe { std::mem::transmute(queue) };
         let encoder_egui: &mut egui_wgpu::wgpu::CommandEncoder = unsafe { std::mem::transmute(encoder) };

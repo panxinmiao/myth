@@ -33,18 +33,18 @@ impl<H: Key, T> AssetStorage<H, T> {
 
     /// [写操作] 添加资源，返回 Handle
     /// 注意：不再需要 &mut self
-    pub fn add(&self, asset: T) -> H {
+    pub fn add(&self, asset: impl Into<T>) -> H {
         let mut guard = self.inner.write();
-        guard.map.insert(Arc::new(asset))
+        guard.map.insert(Arc::new(asset.into()))
     }
 
     /// [写操作] 带 UUID 的添加 (用于文件加载去重)
-    pub fn add_with_uuid(&self, uuid: Uuid, asset: T) -> H {
+    pub fn add_with_uuid(&self, uuid: Uuid, asset: impl Into<T>) -> H {
         let mut guard = self.inner.write();
         if let Some(&handle) = guard.lookup.get(&uuid) {
             return handle;
         }
-        let handle = guard.map.insert(Arc::new(asset));
+        let handle = guard.map.insert(Arc::new(asset.into()));
         guard.lookup.insert(uuid, handle);
         handle
     }

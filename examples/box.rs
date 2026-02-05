@@ -1,11 +1,6 @@
 use std::sync::Arc;
 
-use glam::{Vec3, Vec4, Quat};
-use three::app::winit::{App, AppHandler};
-use three::engine::FrameState;
-use three::resources::{Geometry, Mesh, MeshBasicMaterial, Texture};
-use three::scene::{Camera};
-use three::{OrbitControls, ThreeEngine};
+use myth_engine::prelude::*;
 use winit::window::Window;
 
 /// 带纹理的旋转立方体 + 轨道控制器
@@ -14,7 +9,7 @@ struct TexturedBox {
 }
 
 impl AppHandler for TexturedBox {
-    fn init(engine: &mut ThreeEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 准备资源
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
@@ -28,7 +23,7 @@ impl AppHandler for TexturedBox {
       
         
         let geo_handle = engine.assets.geometries.add(geometry);
-        let mat_handle = engine.assets.materials.add(basic_mat.into());
+        let mat_handle = engine.assets.materials.add(basic_mat);
 
         engine.scene_manager.create_active();
 
@@ -62,14 +57,7 @@ impl AppHandler for TexturedBox {
         Self { controls }
     }
 
-    fn update(&mut self, engine: &mut ThreeEngine, _window: &Arc<Window>, frame: &FrameState) {
-        // let scene = ctx.scenes.active_scene_mut().expect("No active scene");
-        // // 旋转立方体
-        // if let Some(node) = scene.get_node_mut(self.cube_node_id) {
-        //     let rot_y = Quat::from_rotation_y(0.02);
-        //     let rot_x = Quat::from_rotation_x(0.01);
-        //     node.transform.rotation = node.transform.rotation * rot_y * rot_x;
-        // }
+    fn update(&mut self, engine: &mut MythEngine, _window: &Arc<Window>, frame: &FrameState) {
         let scene = engine.scene_manager.active_scene_mut().unwrap();
         // 轨道控制器
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
