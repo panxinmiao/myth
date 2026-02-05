@@ -36,7 +36,7 @@ macro_rules! impl_material_api {
             pub fn set_alpha_mode(&self, mode: $crate::resources::material::AlphaMode) {
                 self.settings_mut().alpha_mode = mode;
                 // Handle associated Uniform logic
-                if let $crate::resources::material::AlphaMode::Mask(cutoff) = mode {
+                if let $crate::resources::material::AlphaMode::Mask(cutoff, _a2c) = mode {
                      self.uniforms.write().alpha_test = cutoff;
                 }
             }

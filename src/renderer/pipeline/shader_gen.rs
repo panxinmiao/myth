@@ -53,6 +53,10 @@ impl ShaderCompilationOptions {
         &mut self.defines
     }
 
+    pub fn add_define(&mut self, key: &str, value: &str) {
+        self.defines.set(key, value);
+    }
+
     /// 计算编译选项的哈希值（用于缓存）
     pub fn compute_hash(&self) -> u64 {
         self.defines.compute_hash()

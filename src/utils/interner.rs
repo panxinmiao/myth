@@ -112,6 +112,8 @@ pub fn preload_common_macros() {
         "USE_SHEEN",
         "USE_IRIDESCENCE",
         "USE_ANISOTROPY",
+        "USE_TRANSMISSION",
+        "USE_DISPERSION",
         
         // Material-related
         "HAS_MAP",
@@ -125,6 +127,13 @@ pub fn preload_common_macros() {
         "HAS_CLEARCOAT_MAP",
         "HAS_CLEARCOAT_ROUGHNESS_MAP",
         "HAS_CLEARCOAT_NORMAL_MAP",
+        "HAS_SHEEN_COLOR_MAP",
+        "HAS_SHEEN_ROUGHNESS_MAP",
+        "HAS_IRIDESCENCE_MAP",
+        "HAS_IRIDESCENCE_THICKNESS_MAP",
+        "HAS_ANISOTROPY_MAP",
+        "HAS_TRANSMISSION_MAP",
+        "HAS_THICKNESS_MAP",
 
         // Geometry-related
         "HAS_UV",
@@ -143,9 +152,12 @@ pub fn preload_common_macros() {
         "OPAQUE",
         "MASK",
         "BLEND",
+        "ALPHA_TO_COVERAGE",
         // Common values
+        "0",
         "1",
         "true",
+        "false",
     ];
     
     for name in common {

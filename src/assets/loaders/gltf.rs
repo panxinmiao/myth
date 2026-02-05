@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
 use futures::future::try_join_all;
+use smallvec::SmallVec;
 use crate::resources::material::AlphaMode;
 use crate::resources::{Material, MeshPhysicalMaterial, TextureSampler, TextureSlot, TextureTransform, PhysicalFeatures};
 use crate::resources::geometry::{Geometry, Attribute};
@@ -15,7 +16,6 @@ use crate::animation::clip::{AnimationClip, Track, TrackMeta, TrackData};
 use crate::animation::tracks::{KeyframeTrack, InterpolationMode};
 use crate::animation::binding::TargetPath;
 use crate::animation::values::MorphWeightData;
-use crate::resources::mesh::MAX_MORPH_TARGETS;
 use wgpu::{BufferUsages, PrimitiveTopology, TextureFormat, VertexFormat, VertexStepMode};
 use anyhow::Context;
 use serde_json::Value;
@@ -758,9 +758,13 @@ impl GltfLoader {
                     gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
                     gltf::material::AlphaMode::Mask => {
                         let cut_off = material.alpha_cutoff().unwrap_or(0.5);
-                        AlphaMode::Mask(cut_off)
+                        uniforms.alpha_test = cut_off;
+                        AlphaMode::Mask(cut_off, false)
                     },
-                    gltf::material::AlphaMode::Blend => AlphaMode::Blend,
+                    gltf::material::AlphaMode::Blend => {
+                        // settings.depth_write = false;
+                        AlphaMode::Blend
+                    },
                 };
 
                 settings.alpha_mode = alpha_mode;
@@ -969,6 +973,17 @@ impl GltfLoader {
     ) -> anyhow::Result<()> {
         let node_idx = node.index();
 
+        let initial_weights = if let Some(weights) = node.weights() {
+            Some(weights.to_vec())
+        } else if let Some(mesh) = node.mesh() {
+            mesh.weights().map(|w| w.to_vec())
+        } else {
+            None
+        };
+
+        self.prefab_nodes[node_idx].morph_weights = initial_weights;
+
+
         if let Some(mesh) = node.mesh() {
             let primitives: Vec<_> = mesh.primitives().collect();
 
@@ -989,6 +1004,8 @@ impl GltfLoader {
                         sub_node.name = Some(format!("{}_{}", 
                             parent_name.as_deref().unwrap_or("node"), i));
                         sub_node.mesh = Some(engine_mesh);
+
+                        sub_node.is_split_primitive = true;
                         
                         self.prefab_nodes.push(sub_node);
                     }
@@ -1291,8 +1308,12 @@ impl GltfLoader {
                         for i in 0..times.len() {
                             let mut pod = MorphWeightData::default();
                             let start = i * weights_per_frame;
-                            let count = weights_per_frame.min(MAX_MORPH_TARGETS);
-                            pod.weights[..count].copy_from_slice(&outputs[start..start + count]);
+                            let end = start + weights_per_frame;
+                            // pod.weights[..count].copy_from_slice(&outputs[start..start + count]);
+                            // pod_outputs.push(pod);
+
+                            pod.weights = SmallVec::from_slice(&outputs[start..end]);
+        
                             pod_outputs.push(pod);
                         }
                         

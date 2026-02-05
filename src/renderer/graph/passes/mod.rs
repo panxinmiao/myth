@@ -36,7 +36,6 @@
 
 mod brdf_lut_compute;
 mod cull;
-mod forward;
 mod ibl_compute;
 mod opaque;
 mod simple_forward;
@@ -46,7 +45,6 @@ mod transparent;
 
 pub use brdf_lut_compute::BRDFLutComputePass;
 pub use cull::SceneCullPass;
-pub use forward::ForwardRenderPass;
 pub use ibl_compute::IBLComputePass;
 pub use opaque::OpaquePass;
 pub use simple_forward::SimpleForwardPass;

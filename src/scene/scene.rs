@@ -13,7 +13,6 @@ use crate::resources::buffer::CpuBuffer;
 use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::tone_mapping::ToneMappingSettings;
 use crate::resources::uniforms::{EnvironmentUniforms, GpuLightStorage};
-use crate::resources::mesh::MAX_MORPH_TARGETS;
 use crate::scene::node::Node;
 use crate::scene::skeleton::{BindMode, Skeleton, SkinBinding};
 use crate::scene::transform::Transform;
@@ -64,6 +63,10 @@ where F: FnMut(&mut Scene, &Input, f32) + Send + Sync + 'static
         (self.0)(scene, input, dt)
     }
 }
+
+/// Tag component indicating a split primitive node.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SplitPrimitiveTag;
 
 /// The scene graph container.
 ///
@@ -116,8 +119,8 @@ pub struct Scene {
     pub morph_weights: SparseSecondaryMap<NodeHandle, Vec<f32>>,
     /// Animation mixer components (sparse, only character roots have animations)
     pub animation_mixers: SparseSecondaryMap<NodeHandle, AnimationMixer>,
-
-    morph_target_nodes: Vec<NodeHandle>,
+    /// Split primitive tags
+    pub split_primitive_tags: SparseSecondaryMap<NodeHandle, SplitPrimitiveTag>,
 
     // === Resource Pools (only truly shared resources) ===
     /// Skeleton is a shared resource - multiple characters may reference the same skeleton definition
@@ -168,8 +171,9 @@ impl Scene {
             lights: SparseSecondaryMap::new(),
             skins: SparseSecondaryMap::new(),
             morph_weights: SparseSecondaryMap::new(),
-            morph_target_nodes: Vec::with_capacity(16),
             animation_mixers: SparseSecondaryMap::new(),
+
+            split_primitive_tags: SparseSecondaryMap::new(),
 
             // Resource pools (only truly shared resources)
             skeleton_pool: SlotMap::with_key(),
@@ -419,10 +423,10 @@ impl Scene {
     pub fn set_morph_weights_from_pod(&mut self, handle: NodeHandle, data: &crate::animation::values::MorphWeightData) {
         let weights = self.morph_weights.entry(handle)
             .unwrap()
-            .or_insert_with(|| vec![0.0; MAX_MORPH_TARGETS]);
+            .or_insert_with(|| Vec::new());
         
-        if weights.len() < MAX_MORPH_TARGETS {
-            weights.resize(MAX_MORPH_TARGETS, 0.0);
+        if weights.len() != data.weights.len() {
+            weights.resize(data.weights.len(), 0.0);
         }
         weights.copy_from_slice(&data.weights);
     }
@@ -548,6 +552,10 @@ impl Scene {
             if let Some(weights) = &p_node.morph_weights {
                 self.set_morph_weights(handle, weights.clone());
             }
+
+            if p_node.is_split_primitive {
+                self.mark_as_split_primitive(handle);
+            }
             
             node_map.push(handle);
         }
@@ -647,6 +655,10 @@ impl Scene {
         self.lights.insert(node_handle, light);
         self.attach(node_handle, parent);
         node_handle
+    }
+
+    pub fn mark_as_split_primitive(&mut self, handle: NodeHandle) {
+        self.split_primitive_tags.insert(handle, SplitPrimitiveTag);
     }
 
     /// Computes the scene's shader macro definitions
@@ -826,25 +838,28 @@ impl Scene {
     }
 
     pub fn sync_morph_weights(&mut self) {
-        self.morph_target_nodes.clear();
-        
-        for (handle, _) in &self.morph_weights {
-            if self.meshes.contains_key(handle) {
-                self.morph_target_nodes.push(handle);
-            }
-        }
 
-        for handle in &self.morph_target_nodes {            
-            if let Some(weights) = self.morph_weights.get(*handle) {
-                if weights.is_empty() { continue; }
-                
-                let weights_slice = weights.as_slice();
-                
-                if let Some(mesh) = self.meshes.get_mut(*handle) {
-                    mesh.set_morph_target_influences(weights_slice);
-                    mesh.update_morph_uniforms();
+        for (handle, weights) in &self.morph_weights {         
+
+            if weights.is_empty() { continue; }
+            
+            let weights_slice = weights.as_slice();
+            
+            if let Some(mesh) = self.meshes.get_mut(handle) {
+                mesh.set_morph_target_influences(weights_slice);
+                mesh.update_morph_uniforms();
+            } else if let Some(node) = self.nodes.get(handle) {
+                for &child_handle in &node.children {
+                    // 广播给拥有 SplitPrimitiveTag 的节点
+                    if self.split_primitive_tags.contains_key(child_handle) {
+                        if let Some(child_mesh) = self.meshes.get_mut(child_handle) {
+                            child_mesh.set_morph_target_influences(weights_slice);
+                            child_mesh.update_morph_uniforms();
+                        }
+                    }
                 }
             }
+            
         }
     }
 

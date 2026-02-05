@@ -40,6 +40,5 @@ pub use frame::{RenderFrame, RenderLists, RenderCommand, RenderKey};
 pub use graph::RenderGraph;
 pub use node::RenderNode;
 pub use pass::TrackedRenderPass;
-pub use passes::ForwardRenderPass;
 pub use render_state::RenderState;
 pub use stage::RenderStage;

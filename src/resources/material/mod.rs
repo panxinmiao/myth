@@ -300,7 +300,7 @@ pub enum AlphaMode {
     /// Fully opaque, no transparency
     Opaque,
     /// Alpha cutoff (discard pixels below threshold)
-    Mask(f32),
+    Mask(f32, bool), // (cutoff value, alpha to coverage)
     /// Standard alpha blending
     Blend,
 }
@@ -342,9 +342,11 @@ impl MaterialSettings {
         match self.alpha_mode {
             AlphaMode::Opaque => {
                 defines.set("ALPHA_MODE", "OPAQUE");
+                // defines.set("OPAQUE", "1");
             }
-            AlphaMode::Mask(_cutoff) => {
+            AlphaMode::Mask(_cutoff, _alpha_to_coverage) => {
                 defines.set("ALPHA_MODE", "MASK");
+                // defines.set("OPAQUE", "1");
             }
             AlphaMode::Blend => {
                 defines.set("ALPHA_MODE", "BLEND");
@@ -666,11 +668,7 @@ impl Material {
     }
     
     // Convenience accessors
-    // #[inline]
-    // pub fn transparent(&self) -> bool {
-    //     self.settings().transparent
-    // }
-
+    #[inline]
     pub fn alpha_mode(&self) -> AlphaMode {
         self.settings().alpha_mode
     }

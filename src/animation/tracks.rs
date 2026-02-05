@@ -48,14 +48,14 @@ impl<T: Interpolatable> KeyframeTrack<T> {
     pub fn sample_with_cursor(&self, time: f32, cursor: &mut KeyframeCursor) -> T {
         if self.times.is_empty() {
             // 简单处理空数据，实际项目中可能需要返回 Option 或 Default
-             if let Some(val) = self.values.first() { return *val; }
+             if let Some(val) = self.values.first() { return val.clone(); }
              panic!("Track is empty"); // 或者返回默认值
         }
 
         let len = self.times.len();
         // 快速路径：如果是静态数据（只有1帧）
         if len == 1 {
-            return self.get_value_at(0);
+            return self.get_value_at(0).clone();
         }
 
         let i = cursor.last_index;
@@ -150,10 +150,10 @@ impl<T: Interpolatable> KeyframeTrack<T> {
     /// 辅助方法：统一获取“值”部分
     /// 对于 Linear/Step，索引就是 index
     /// 对于 CubicSpline，值在 index * 3 + 1
-    fn get_value_at(&self, index: usize) -> T {
+    fn get_value_at(&self, index: usize) -> &T {
         match self.interpolation {
-            InterpolationMode::CubicSpline => self.values[index * 3 + 1],
-            _ => self.values[index],
+            InterpolationMode::CubicSpline => &self.values[index * 3 + 1],
+            _ => &self.values[index],
         }
     }
 
@@ -162,7 +162,7 @@ impl<T: Interpolatable> KeyframeTrack<T> {
         
         // 1. 边界情况：最后实际上没有下一帧了
         if index >= len - 1 {
-            return self.get_value_at(len - 1);
+            return self.get_value_at(len - 1).clone();
         }
 
         let next_idx = index + 1;
@@ -176,7 +176,7 @@ impl<T: Interpolatable> KeyframeTrack<T> {
         let t = t.clamp(0.0, 1.0);
 
         match self.interpolation {
-            InterpolationMode::Step => self.get_value_at(index),
+            InterpolationMode::Step => self.get_value_at(index).clone(),
             InterpolationMode::Linear => {
                 let v0 = self.get_value_at(index);
                 let v1 = self.get_value_at(next_idx);
@@ -186,10 +186,10 @@ impl<T: Interpolatable> KeyframeTrack<T> {
                 let i_prev = index * 3;
                 let i_next = next_idx * 3;
 
-                let v0 = self.values[i_prev + 1];
-                let out_tangent0 = self.values[i_prev + 2];
-                let in_tangent1 = self.values[i_next];
-                let v1 = self.values[i_next + 1];
+                let v0 = &self.values[i_prev + 1];
+                let out_tangent0 = &self.values[i_prev + 2];
+                let in_tangent1 = &self.values[i_next];
+                let v1 = &self.values[i_next + 1];
 
                 T::interpolate_cubic(v0, out_tangent0, in_tangent1, v1, t, dt)
             }

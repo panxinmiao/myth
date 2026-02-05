@@ -1,35 +1,48 @@
 use glam::{Vec3, Quat, Vec4};
+use smallvec::{SmallVec, smallvec};
 use crate::resources::mesh::MAX_MORPH_TARGETS;
 
-pub trait Interpolatable: Copy + Clone + Sized {
-    fn interpolate_linear(start: Self, end: Self, t: f32) -> Self;
+pub trait Interpolatable: Clone + Sized {
+    fn interpolate_linear(start: &Self, end: &Self, t: f32) -> Self;
     
     fn interpolate_cubic(
-        v0: Self, 
-        out_tangent0: Self, 
-        in_tangent1: Self, 
-        v1: Self, 
+        v0: &Self, 
+        out_tangent0: &Self, 
+        in_tangent1: &Self, 
+        v1: &Self, 
         t: f32, 
         dt: f32
     ) -> Self;
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Debug, Default)]
 pub struct MorphWeightData {
-    pub weights: [f32; MAX_MORPH_TARGETS],
+    pub weights: SmallVec<[f32; MAX_MORPH_TARGETS]>
 }
 
 impl Interpolatable for MorphWeightData {
-    fn interpolate_linear(start: Self, end: Self, t: f32) -> Self {
-        let mut result = MorphWeightData::default();
-        for i in 0..MAX_MORPH_TARGETS {
-            result.weights[i] = start.weights[i] + (end.weights[i] - start.weights[i]) * t;
+    fn interpolate_linear(start: &Self, end: &Self, t: f32) -> Self {
+        let len = start.weights.len().max(end.weights.len());
+
+        let mut result_weights = smallvec![0.0; len];
+
+        for i in 0..len {
+            let a = start.weights.get(i).copied().unwrap_or(0.0);
+            let b = end.weights.get(i).copied().unwrap_or(0.0);
+            result_weights[i] = a + (b - a) * t;
         }
-        result
+        
+        MorphWeightData { weights: result_weights }
+
+        // let mut result = MorphWeightData::default();
+        // for i in 0..MAX_MORPH_TARGETS {
+        //     result.weights[i] = start.weights[i] + (end.weights[i] - start.weights[i]) * t;
+        // }
+        // result
     }
 
-    fn interpolate_cubic(v0: Self, out_tangent0: Self, in_tangent1: Self, v1: Self, t: f32, dt: f32) -> Self {
+    fn interpolate_cubic(v0: &Self, out_tangent0: &Self, in_tangent1: &Self, v1: &Self, t: f32, dt: f32) -> Self {
         let t2 = t * t;
         let t3 = t2 * t;
         let s2 = -2.0 * t3 + 3.0 * t2;
@@ -48,11 +61,11 @@ impl Interpolatable for MorphWeightData {
 }
 
 impl Interpolatable for f32 {
-    fn interpolate_linear(start: Self, end: Self, t: f32) -> Self {
+    fn interpolate_linear(start: &Self, end: &Self, t: f32) -> Self {
         start + (end - start) * t
     }
 
-    fn interpolate_cubic(v0: Self, out_tangent0: Self, in_tangent1: Self, v1: Self, t: f32, dt: f32) -> Self {
+    fn interpolate_cubic(v0: &Self, out_tangent0: &Self, in_tangent1: &Self, v1: &Self, t: f32, dt: f32) -> Self {
         let t2 = t * t;
         let t3 = t2 * t;
 
@@ -69,11 +82,11 @@ impl Interpolatable for f32 {
 }
 
 impl Interpolatable for Vec3 {
-    fn interpolate_linear(start: Self, end: Self, t: f32) -> Self {
-        start.lerp(end, t)
+    fn interpolate_linear(start: &Self, end: &Self, t: f32) -> Self {
+        start.lerp(*end, t)
     }
 
-    fn interpolate_cubic(v0: Self, out_tangent0: Self, in_tangent1: Self, v1: Self, t: f32, dt: f32) -> Self {
+    fn interpolate_cubic(v0: &Self, out_tangent0: &Self, in_tangent1: &Self, v1: &Self, t: f32, dt: f32) -> Self {
         let t2 = t * t;
         let t3 = t2 * t;
 
@@ -90,11 +103,11 @@ impl Interpolatable for Vec3 {
 }
 
 impl Interpolatable for Quat {
-    fn interpolate_linear(start: Self, end: Self, t: f32) -> Self {
-        start.slerp(end, t)
+    fn interpolate_linear(start: &Self, end: &Self, t: f32) -> Self {
+        start.slerp(*end, t)
     }
 
-    fn interpolate_cubic(v0: Self, out_tangent0: Self, in_tangent1: Self, v1: Self, t: f32, dt: f32) -> Self {
+    fn interpolate_cubic(v0: &Self, out_tangent0: &Self, in_tangent1: &Self, v1: &Self, t: f32, dt: f32) -> Self {
         let t2 = t * t;
         let t3 = t2 * t;
 
@@ -103,10 +116,10 @@ impl Interpolatable for Quat {
         let s0 = 1.0 - s2;
         let s1 = s3 - t2 + t;
 
-        let v0_v = Vec4::from(v0);
-        let v1_v = Vec4::from(v1);
-        let m0_v = Vec4::from(out_tangent0) * dt;
-        let m1_v = Vec4::from(in_tangent1) * dt;
+        let v0_v = Vec4::from(*v0);
+        let v1_v = Vec4::from(*v1);
+        let m0_v = Vec4::from(*out_tangent0) * dt;
+        let m1_v = Vec4::from(*in_tangent1) * dt;
 
         let result = v0_v * s0 + m0_v * s1 + v1_v * s2 + m1_v * s3;
         

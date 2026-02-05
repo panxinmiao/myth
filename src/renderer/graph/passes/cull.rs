@@ -124,12 +124,26 @@ impl SceneCullPass {
                     let geo_defines = geometry.shader_defines();
                     let mat_defines = material.shader_defines();
 
-                    let options = ShaderCompilationOptions::from_merged(
+                    let final_a2c_enable = match material.alpha_mode() {
+                        AlphaMode::Mask(_, a2c) => a2c,
+                        AlphaMode::Blend => false,
+                        AlphaMode::Opaque => false,
+                    };
+
+                    let mut options = ShaderCompilationOptions::from_merged(
                         &mat_defines,
                         &geo_defines,
                         &ctx.extracted_scene.scene_defines,
                         &item.item_shader_defines,
                     );
+
+                    if final_a2c_enable{
+                        options.add_define(
+                            "ALPHA_TO_COVERAGE",
+                            "1",
+                        );
+                    }
+
                     let shader_hash = options.compute_hash();
 
                     let canonical_key = PipelineKey {
@@ -154,6 +168,7 @@ impl SceneCullPass {
                         color_format,
                         depth_format,
                         sample_count,
+                        alpha_to_coverage: final_a2c_enable,
                         front_face: if item.item_variant_flags & 0x1 != 0 {
                             wgpu::FrontFace::Cw
                         } else {

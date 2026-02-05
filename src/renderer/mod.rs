@@ -52,7 +52,6 @@ pub mod settings;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::renderer::core::binding::GlobalBindGroupCache;
-use crate::renderer::graph::ForwardRenderPass;
 use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
@@ -129,9 +128,6 @@ struct RendererState {
     // Post Processing
     pub(crate) tone_mapping_pass: ToneMapPass,
     
-    // Legacy (to be removed after migration)
-    #[allow(dead_code)]
-    pub(crate) forward_pass: ForwardRenderPass,
 }
 
 impl Renderer {
@@ -203,9 +199,6 @@ impl Renderer {
         
         // Post Processing
         let tone_mapping_pass = ToneMapPass::new(&wgpu_ctx.device);
-        
-        // Legacy
-        let forward_pass = ForwardRenderPass::new(wgpu::Color::BLACK);
 
         // 6. Assemble state
         self.context = Some(RendererState {
@@ -227,7 +220,6 @@ impl Renderer {
             brdf_pass,
             ibl_pass,
             tone_mapping_pass,
-            forward_pass,
 
         });
 

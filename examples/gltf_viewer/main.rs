@@ -520,6 +520,8 @@ impl GltfViewer {
                 camera.near = radius / 100.0;
                 camera.update_projection_matrix();
                 self.controls.set_target(center);
+                // let distance = radius / (camera.fov / 2.0).tan();
+                // self.controls.set_position(center + Vec3::new(0.0, radius, distance * 1.25));
                 self.controls.set_position(center + Vec3::new(0.0, radius, radius * 2.5));
             }
         }
@@ -1353,7 +1355,7 @@ impl GltfViewer {
                             egui::ComboBox::from_id_salt("alpha_mode_combo")
                                 .selected_text(match settings.alpha_mode {
                                     three::AlphaMode::Opaque => "Opaque",
-                                    three::AlphaMode::Mask(_) => "Mask",
+                                    three::AlphaMode::Mask(..) => "Mask",
                                     three::AlphaMode::Blend => "Blend",
                                 })
                                 .show_ui(ui, |ui| {
@@ -1361,10 +1363,10 @@ impl GltfViewer {
                                     if ui.selectable_label(matches!(settings.alpha_mode, three::AlphaMode::Opaque), "Opaque").clicked() {
                                         settings.alpha_mode = three::AlphaMode::Opaque;
                                     }
-                                    if ui.selectable_label(matches!(settings.alpha_mode, three::AlphaMode::Mask(_)), "Mask").clicked() {
+                                    if ui.selectable_label(matches!(settings.alpha_mode, three::AlphaMode::Mask(..)), "Mask").clicked() {
                                         // 如果之前不是 Mask，设为默认 0.5，否则保持
-                                        if !matches!(settings.alpha_mode, three::AlphaMode::Mask(_)) {
-                                            settings.alpha_mode = three::AlphaMode::Mask(0.5);
+                                        if !matches!(settings.alpha_mode, three::AlphaMode::Mask(..)) {
+                                            settings.alpha_mode = three::AlphaMode::Mask(0.5, false);
                                         }
                                     }
                                     if ui.selectable_label(matches!(settings.alpha_mode, three::AlphaMode::Blend), "Blend").clicked() {
@@ -1373,8 +1375,13 @@ impl GltfViewer {
                                 });
                             
                             // 如果是 Mask 模式，额外显示阈值滑块
-                            if let three::AlphaMode::Mask(cutoff) = &mut settings.alpha_mode {
-                                ui.add(egui::DragValue::new(cutoff).speed(0.01).range(0.0..=1.0).prefix("Cutoff: "));
+                            if let three::AlphaMode::Mask(cutoff, a2c) = &mut settings.alpha_mode {
+                                ui.horizontal(|ui| {
+                                    // ui[1].add(egui::DragValue::new(cutoff).speed(0.01).range(0.0..=1.0).prefix(""));
+                                    ui.add(egui::DragValue::new(cutoff).speed(0.01).range(0.0..=1.0).prefix("Cutoff: "));
+                                    ui.checkbox(a2c, "A2C");
+                                });
+                                
                             }
                             ui.end_row();
 
@@ -1586,7 +1593,7 @@ fn main() -> anyhow::Result<()> {
         .with_title("glTF Viewer")
         .with_settings(RenderSettings { 
             vsync: false, 
-            clear_color: wgpu::Color { r: 0.1, g: 0.1, b: 0.1, a: 1.0 },
+            clear_color: wgpu::Color { r: 0.03, g: 0.03, b: 0.03, a: 1.0 },
             enable_hdr: true,    // 启用 HDR 渲染
             msaa_samples: 4,    // 4x MSAA 抗锯齿
             ..Default::default() 

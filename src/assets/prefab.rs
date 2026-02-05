@@ -19,6 +19,9 @@ pub struct PrefabNode {
     pub skin_index: Option<usize>,
     /// Morph weights (if any)
     pub morph_weights: Option<Vec<f32>>,
+
+    /// Indicates if this node is a split primitive
+    pub is_split_primitive: bool,
 }
 
 impl PrefabNode {
@@ -30,6 +33,7 @@ impl PrefabNode {
             mesh: None,
             skin_index: None,
             morph_weights: None,
+            is_split_primitive: false,
         }
     }
 }

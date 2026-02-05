@@ -35,6 +35,7 @@ pub struct PipelineKey {
     pub color_format: wgpu::TextureFormat,
     pub depth_format: wgpu::TextureFormat,
     pub sample_count: u32,
+    pub alpha_to_coverage: bool,
     pub front_face: wgpu::FrontFace,
 }
 
@@ -123,11 +124,6 @@ impl PipelineCache {
         }
 
         let binding_code = format!("{}\n{}\n{}", &gpu_world.binding_wgsl, &gpu_material.binding_wgsl, &object_bind_group.binding_wgsl);
-
-        // if let Some(frame_resources) = frame_resources {
-        //     let frame_binding_code = &frame_resources.screen_bindings_code;
-        //     binding_code = format!("{}\n{}", binding_code, frame_binding_code);
-        // }
 
         let shader_source = ShaderGenerator::generate_shader(
             &vertex_layout.vertex_input_code,
