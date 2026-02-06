@@ -59,7 +59,7 @@ pub use io::FileAssetReader;
 #[cfg(feature = "http")]
 pub use io::HttpAssetReader;
 
-use crate::errors::{MythError, Result};
+use crate::errors::{AssetError, Error, Result};
 use image::GenericImageView;
 use std::path::Path;
 
@@ -174,9 +174,9 @@ pub fn load_cube_texture_from_files(
             width = w;
             height = h;
         } else if width != w || height != h {
-            return Err(MythError::CubeMapError(
+            return Err(Error::Asset(AssetError::InvalidData(
                 "Cube texture faces must have the same dimensions".to_string(),
-            ));
+            )));
         }
         face_data.push(data);
     }

@@ -338,7 +338,7 @@ pub use renderer::graph::{FrameBuilder, FrameComposer, RenderStage};
 pub use renderer::settings::RenderSettings;
 
 // Errors
-pub use errors::{MythError, Result};
+pub use errors::{AssetError, Error, PlatformError, RenderError, Result};
 
 // Utilities
 pub use utils::interner;

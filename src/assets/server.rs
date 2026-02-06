@@ -6,7 +6,7 @@ use crate::ColorSpace;
 use crate::assets::AssetReaderVariant;
 use crate::assets::io::AssetSource;
 use crate::assets::storage::AssetStorage;
-use crate::errors::{MythError, Result};
+use crate::errors::{AssetError, Error, Result};
 use crate::resources::geometry::Geometry;
 use crate::resources::material::Material;
 use crate::resources::texture::{Sampler, Texture};
@@ -206,7 +206,7 @@ impl AssetServer {
                 let bytes = reader.read_bytes(&filename).await?;
                 let image =
                     Self::decode_image_async(bytes, color_space, filename.to_string()).await?;
-                Ok::<crate::resources::image::Image, MythError>(image)
+                Ok::<crate::resources::image::Image, Error>(image)
             });
         }
 
@@ -219,9 +219,9 @@ impl AssetServer {
             .iter()
             .any(|img| img.width() != width || img.height() != height)
         {
-            return Err(MythError::CubeMapError(
+            return Err(Error::Asset(AssetError::InvalidData(
                 "Cube map images must have same dimensions".to_string(),
-            ));
+            )));
         }
 
         let mut combined_data = Vec::with_capacity((width * height * 4 * 6) as usize);
@@ -311,7 +311,9 @@ impl AssetServer {
         use image::GenericImageView;
 
         let img = image::load_from_memory(bytes).map_err(|e| {
-            MythError::ImageDecodeError(format!("Failed to decode image {label}: {e}"))
+            Error::Asset(AssetError::Format(format!(
+                "Failed to decode image {label}: {e}"
+            )))
         })?;
 
         let (width, height) = img.dimensions();
@@ -346,7 +348,7 @@ impl AssetServer {
     /// CPU HDR 解码逻辑 (转换为 `RGBA16Float`)
     fn decode_hdr_cpu(bytes: &[u8]) -> Result<crate::resources::image::Image> {
         let img = image::load_from_memory(bytes)
-            .map_err(|e| MythError::ImageDecodeError(format!("Failed to decode HDR: {e}")))?;
+            .map_err(|e| Error::Asset(AssetError::Format(format!("Failed to decode HDR: {e}"))))?;
 
         let width = img.width();
         let height = img.height();

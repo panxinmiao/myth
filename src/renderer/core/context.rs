@@ -5,7 +5,7 @@
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
-use crate::errors::{MythError, Result};
+use crate::errors::{Error, PlatformError, Result};
 use crate::renderer::settings::RenderSettings;
 
 /// Core wgpu context holding GPU handles.
@@ -51,10 +51,10 @@ impl WgpuContext {
     where
         W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static,
     {
-        let instance = wgpu::Instance::default();
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::from_env_or_default());
         let surface = instance
             .create_surface(window)
-            .map_err(|e| MythError::AdapterRequestFailed(e.to_string()))?;
+            .map_err(|e| Error::Platform(PlatformError::SurfaceConfigFailed(e.to_string())))?;
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
@@ -63,13 +63,19 @@ impl WgpuContext {
                 force_fallback_adapter: false,
             })
             .await
-            .map_err(|e| MythError::AdapterRequestFailed(e.to_string()))?;
+            .map_err(|e| Error::Platform(PlatformError::AdapterNotFound(e.to_string())))?;
+
+        let info = adapter.get_info();
+
+        log::debug!("Backend: {:?}", info.backend);
+        log::debug!("Device: {}", info.name);
+        log::debug!("Vendor: {:x}", info.vendor);
 
         // ===  查询 Surface 支持的格式 ===
         let caps = surface.get_capabilities(&adapter);
 
         // 打印调试信息，查看当前平台支持哪些格式
-        log::info!("Surface Supported Formats: {:?}", caps.formats);
+        log::debug!("Surface Supported Formats: {:?}", caps.formats);
 
         // 优先选择 sRGB 格式 (Native)，如果没有 (Web)，则选择第一个可用格式 (通常是 Linear)
         // 注意：在 Web 上，这里肯定找不到 Srgb 格式，会回退到 caps.formats[0]
@@ -80,7 +86,7 @@ impl WgpuContext {
             .find(wgpu::TextureFormat::is_srgb)
             .unwrap_or(caps.formats[0]);
 
-        log::info!("Selected Surface Format: {surface_format:?}");
+        log::debug!("Selected Surface Format: {surface_format:?}");
 
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {

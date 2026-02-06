@@ -267,13 +267,13 @@ impl App {
     /// Returns an error if event loop creation or execution fails.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn run<H: AppHandler>(self) -> crate::errors::Result<()> {
-        use crate::MythError;
+        use crate::Error;
 
         let event_loop = EventLoop::new()?;
         event_loop.set_control_flow(ControlFlow::Poll);
 
         let mut runner = AppRunner::<H>::new(self.title, self.render_settings);
-        event_loop.run_app(&mut runner).map_err(MythError::from)
+        event_loop.run_app(&mut runner).map_err(Error::from)
     }
 
     /// Runs the application with the specified handler (WASM version).

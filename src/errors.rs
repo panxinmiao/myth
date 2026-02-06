@@ -1,174 +1,277 @@
 //! Error Types
 //!
-//! This module defines the error types used throughout the engine.
+//! This module defines the hierarchical error types used throughout the engine.
 //!
 //! # Overview
 //!
-//! The main error type [`MythError`] covers all failure modes including:
-//! - GPU initialization failures  
-//! - Asset loading and decoding errors
-//! - Resource management errors
-//! - HTTP and network errors
+//! Errors are organized into three main categories:
+//! - **Platform errors** ([`PlatformError`]): Window system, event loop, and adapter issues
+//! - **Asset errors** ([`AssetError`]): I/O, network, parsing, and data validation issues
+//! - **Render errors** ([`RenderError`]): GPU device and shader compilation issues
 //!
 //! # Usage
 //!
-//! All public APIs return [`Result<T>`] which is an alias for `std::result::Result<T, MythError>`.
+//! All public APIs return [`Result<T>`] which is an alias for `std::result::Result<T, Error>`.
 //!
 //! ```rust,ignore
-//! use myth::errors::{MythError, Result};
+//! use myth::errors::{Error, Result, AssetError};
 //!
 //! fn load_asset() -> Result<()> {
-//!     // Operations that may fail return Result
+//!     // Errors are automatically converted via From implementations
+//!     let data = std::fs::read("file.txt")?; // io::Error -> AssetError -> Error
 //!     Ok(())
 //! }
 //! ```
 
 use thiserror::Error;
 
-/// The main error type for the Myth engine.
+// ============================================================================
+// Top-Level Error Type
+// ============================================================================
+
+/// The top-level error type for the Myth engine.
 ///
-/// This enum covers all possible error conditions that can occur
-/// during engine operation. Each variant provides specific context
-/// about what went wrong.
+/// This enum delegates to specialized sub-error types for better organization
+/// and more specific error handling.
 #[derive(Error, Debug)]
-pub enum MythError {
-    // ========================================================================
-    // GPU & Rendering Errors
-    // ========================================================================
-    /// Failed to request a compatible GPU adapter.
-    #[error("Failed to request WGPU adapter: {0}")]
-    AdapterRequestFailed(String),
+pub enum Error {
+    /// Platform and window system related errors.
+    #[error("Platform error: {0}")]
+    Platform(#[from] PlatformError),
 
-    /// Failed to create the GPU device.
-    #[error("Failed to create WGPU device: {0}")]
-    DeviceCreateFailed(#[from] wgpu::RequestDeviceError),
+    /// Asset loading and processing related errors (I/O, Network, Parsing).
+    #[error("Asset error: {0}")]
+    Asset(#[from] AssetError),
 
-    /// Window system error.
-    #[error("Window system error: {0}")]
-    WindowError(#[from] raw_window_handle::HandleError),
+    /// Rendering and GPU core related errors.
+    #[error("Render error: {0}")]
+    Render(#[from] RenderError),
 
-    /// Event loop error (winit).
-    #[cfg(feature = "winit")]
-    #[error("Event loop error: {0}")]
-    EventLoopError(#[from] winit::error::EventLoopError),
+    /// General engine error for miscellaneous cases.
+    #[error("Engine error: {0}")]
+    General(String),
+}
 
-    // ========================================================================
-    // Asset Loading Errors
-    // ========================================================================
+// ============================================================================
+// Sub-Category: AssetError
+// Covers: I/O, Network, Image, glTF, Parsing
+// ============================================================================
+
+/// Errors related to asset loading and processing.
+///
+/// This covers file I/O, network requests, image decoding,
+/// format parsing (glTF, JSON), and data validation.
+#[derive(Error, Debug)]
+pub enum AssetError {
     /// The requested asset was not found.
     #[error("Asset not found: {0}")]
-    AssetNotFound(String),
+    NotFound(String),
 
-    /// Asset index out of bounds.
-    #[error("Asset index out of bounds: {context} (index: {index})")]
-    AssetIndexOutOfBounds {
-        /// Description of what was being accessed
-        context: String,
-        /// The invalid index
-        index: usize,
-    },
-
-    // ========================================================================
-    // I/O Errors
-    // ========================================================================
     /// File I/O error.
-    #[error("IO error: {0}")]
-    IoError(#[from] std::io::Error),
+    #[error("Failed to load file: {0}")]
+    Io(#[from] std::io::Error),
 
-    // ========================================================================
-    // HTTP & Network Errors
-    // ========================================================================
     /// HTTP request error.
     #[cfg(feature = "http")]
-    #[error("HTTP error: {0}")]
-    HttpError(#[from] reqwest::Error),
+    #[error("Network request failed: {0}")]
+    Network(#[from] reqwest::Error),
 
     /// URL parsing error.
     #[cfg(feature = "http")]
     #[error("URL parse error: {0}")]
-    UrlParseError(#[from] url::ParseError),
+    UrlParse(#[from] url::ParseError),
 
     /// HTTP response error with status code.
     #[error("HTTP response error: status {status}")]
-    HttpResponseError {
+    HttpResponse {
         /// HTTP status code
         status: u16,
     },
 
-    // ========================================================================
-    // Image & Texture Errors
-    // ========================================================================
-    /// Image decoding error.
-    #[error("Image decode error: {0}")]
-    ImageDecodeError(String),
+    /// Failed to parse data format (Image, glTF, JSON, etc.)
+    #[error("Failed to parse data format: {0}")]
+    Format(String),
 
-    /// Cube map validation error.
-    #[error("Cube map error: {0}")]
-    CubeMapError(String),
-
-    // ========================================================================
-    // Format & Parsing Errors
-    // ========================================================================
-    /// glTF parsing or loading error.
-    #[cfg(feature = "gltf")]
-    #[error("glTF error: {0}")]
-    GltfError(String),
-
-    /// Data URI parsing error.
-    #[error("Data URI error: {0}")]
-    DataUriError(String),
-
-    /// JSON parsing error.
-    #[error("JSON parse error: {0}")]
-    JsonError(#[from] serde_json::Error),
+    /// Invalid asset data (cube map validation, index out of bounds, etc.)
+    #[error("Invalid asset data: {0}")]
+    InvalidData(String),
 
     /// Base64 decoding error.
     #[error("Base64 decode error: {0}")]
-    Base64Error(#[from] base64::DecodeError),
+    Base64(#[from] base64::DecodeError),
 
-    // ========================================================================
-    // Async & Threading Errors
-    // ========================================================================
     /// Task join error (when async tasks fail to complete).
     #[error("Task join error: {0}")]
-    TaskJoinError(String),
+    TaskJoin(String),
+}
 
-    // ========================================================================
-    // Platform-Specific Errors
-    // ========================================================================
-    /// Feature not enabled.
-    #[error("Feature not enabled: {0}")]
-    FeatureNotEnabled(String),
+// ============================================================================
+// Sub-Category: PlatformError
+// Covers: Winit, WindowHandle, Adapter discovery
+// ============================================================================
+
+/// Errors related to platform and window system.
+///
+/// This covers window handle errors, event loop issues,
+/// and GPU adapter discovery failures.
+#[derive(Error, Debug)]
+pub enum PlatformError {
+    /// Window handle error.
+    #[error("Window handle error: {0}")]
+    WindowHandle(#[from] raw_window_handle::HandleError),
+
+    /// Event loop error (winit).
+    #[cfg(feature = "winit")]
+    #[error("Event loop error: {0}")]
+    EventLoop(#[from] winit::error::EventLoopError),
+
+    /// No compatible GPU adapter found.
+    #[error("No compatible GPU adapter found: {0}")]
+    AdapterNotFound(String),
+
+    /// Failed to create surface.
+    #[error("Failed to create surface: {0}")]
+    SurfaceConfigFailed(String),
 
     /// WASM-specific error.
     #[cfg(target_arch = "wasm32")]
     #[error("WASM error: {0}")]
-    WasmError(String),
+    Wasm(String),
+
+    /// Feature not enabled.
+    #[error("Feature not enabled: {0}")]
+    FeatureNotEnabled(String),
 }
 
 // ============================================================================
-// Convenient conversion implementations
+// Sub-Category: RenderError
+// Covers: WGPU Device, Shader Compilation, Render Graph
 // ============================================================================
 
-impl From<image::ImageError> for MythError {
+/// Errors related to rendering and GPU operations.
+///
+/// This covers GPU device creation, shader compilation,
+/// and render graph construction failures.
+#[derive(Error, Debug)]
+pub enum RenderError {
+    /// WGPU device creation error.
+    #[error("WGPU device error: {0}")]
+    RequestDeviceFailed(#[from] wgpu::RequestDeviceError),
+
+    /// Shader compilation failed.
+    #[error("Shader compilation failed: {0}")]
+    ShaderCompile(String),
+
+    /// Render graph error.
+    #[error("Render graph error: {0}")]
+    Graph(String),
+}
+
+// ============================================================================
+// Convenient conversion implementations for AssetError
+// ============================================================================
+
+impl From<image::ImageError> for AssetError {
     fn from(err: image::ImageError) -> Self {
-        MythError::ImageDecodeError(err.to_string())
+        AssetError::Format(format!("Image error: {}", err))
     }
 }
 
 #[cfg(feature = "gltf")]
-impl From<gltf::Error> for MythError {
+impl From<gltf::Error> for AssetError {
     fn from(err: gltf::Error) -> Self {
-        MythError::GltfError(err.to_string())
+        AssetError::Format(format!("glTF error: {}", err))
+    }
+}
+
+impl From<serde_json::Error> for AssetError {
+    fn from(err: serde_json::Error) -> Self {
+        AssetError::Format(format!("JSON error: {}", err))
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-impl From<tokio::task::JoinError> for MythError {
+impl From<tokio::task::JoinError> for AssetError {
     fn from(err: tokio::task::JoinError) -> Self {
-        MythError::TaskJoinError(err.to_string())
+        AssetError::TaskJoin(err.to_string())
     }
 }
 
-/// Alias for `Result<T, MythError>`.
-pub type Result<T> = std::result::Result<T, MythError>;
+// ============================================================================
+// Convenient conversion implementations for top-level Error
+// These allow ? operator to work seamlessly across error types
+// ============================================================================
+
+impl From<image::ImageError> for Error {
+    fn from(err: image::ImageError) -> Self {
+        Error::Asset(AssetError::from(err))
+    }
+}
+
+#[cfg(feature = "gltf")]
+impl From<gltf::Error> for Error {
+    fn from(err: gltf::Error) -> Self {
+        Error::Asset(AssetError::from(err))
+    }
+}
+
+impl From<serde_json::Error> for Error {
+    fn from(err: serde_json::Error) -> Self {
+        Error::Asset(AssetError::from(err))
+    }
+}
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::Asset(AssetError::from(err))
+    }
+}
+
+#[cfg(feature = "http")]
+impl From<reqwest::Error> for Error {
+    fn from(err: reqwest::Error) -> Self {
+        Error::Asset(AssetError::from(err))
+    }
+}
+
+#[cfg(feature = "http")]
+impl From<url::ParseError> for Error {
+    fn from(err: url::ParseError) -> Self {
+        Error::Asset(AssetError::from(err))
+    }
+}
+
+impl From<base64::DecodeError> for Error {
+    fn from(err: base64::DecodeError) -> Self {
+        Error::Asset(AssetError::from(err))
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl From<tokio::task::JoinError> for Error {
+    fn from(err: tokio::task::JoinError) -> Self {
+        Error::Asset(AssetError::from(err))
+    }
+}
+
+impl From<raw_window_handle::HandleError> for Error {
+    fn from(err: raw_window_handle::HandleError) -> Self {
+        Error::Platform(PlatformError::from(err))
+    }
+}
+
+#[cfg(feature = "winit")]
+impl From<winit::error::EventLoopError> for Error {
+    fn from(err: winit::error::EventLoopError) -> Self {
+        Error::Platform(PlatformError::from(err))
+    }
+}
+
+impl From<wgpu::RequestDeviceError> for Error {
+    fn from(err: wgpu::RequestDeviceError) -> Self {
+        Error::Render(RenderError::from(err))
+    }
+}
+
+/// Alias for `Result<T, Error>`.
+pub type Result<T> = std::result::Result<T, Error>;

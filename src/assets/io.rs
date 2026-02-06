@@ -2,7 +2,7 @@
 use std::path::{Path, PathBuf};
 use std::{borrow::Cow, sync::Arc};
 
-use crate::errors::{MythError, Result};
+use crate::errors::{AssetError, Error, Result};
 
 /// 资产读取器 Trait
 /// 支持本地文件和网络资源的异步读取
@@ -98,9 +98,9 @@ impl AssetReader for HttpAssetReader {
         let url = self.root_url.join(uri)?;
         let resp = self.client.get(url).send().await?;
         if !resp.status().is_success() {
-            return Err(MythError::HttpResponseError {
+            return Err(Error::Asset(AssetError::HttpResponse {
                 status: resp.status().as_u16(),
-            });
+            }));
         }
         let bytes = resp.bytes().await?;
         Ok(bytes.to_vec())
@@ -130,7 +130,9 @@ impl AssetReaderVariant {
                 }
                 #[cfg(not(feature = "http"))]
                 {
-                    Err(MythError::FeatureNotEnabled("http".to_string()))
+                    Err(Error::Platform(
+                        crate::errors::PlatformError::FeatureNotEnabled("http".to_string()),
+                    ))
                 }
             } else {
                 // 如果不是 HTTP，默认走文件系统
@@ -143,17 +145,25 @@ impl AssetReaderVariant {
             // WASM 统一走 HTTP 读取
             #[cfg(not(feature = "http"))]
             {
-                return Err(MythError::FeatureNotEnabled("http".to_string()));
+                return Err(Error::Platform(
+                    crate::errors::PlatformError::FeatureNotEnabled("http".to_string()),
+                ));
             }
 
             let full_uri = if !source.is_http() {
-                let window = web_sys::window()
-                    .ok_or_else(|| MythError::WasmError("No window found".to_string()))?;
+                let window = web_sys::window().ok_or_else(|| {
+                    Error::Platform(crate::errors::PlatformError::Wasm(
+                        "No window found".to_string(),
+                    ))
+                })?;
 
                 let location = window.location();
-                let href = location
-                    .href()
-                    .map_err(|e| MythError::WasmError(format!("Failed to get href: {:?}", e)))?;
+                let href = location.href().map_err(|e| {
+                    Error::Platform(crate::errors::PlatformError::Wasm(format!(
+                        "Failed to get href: {:?}",
+                        e
+                    )))
+                })?;
 
                 let base = reqwest::Url::parse(&href)?;
 
