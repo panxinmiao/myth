@@ -78,7 +78,7 @@ impl AppHandler for HdrEnvDemo {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> myth::Result<()> {
     env_logger::init();
     App::new()
         .with_settings(RenderSettings {

@@ -67,7 +67,7 @@ impl AppHandler for PhongBox {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> myth::Result<()> {
     env_logger::init();
     App::new().run::<PhongBox>()
 }

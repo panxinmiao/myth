@@ -92,7 +92,7 @@ impl AppHandler for HttpGltfExample {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> myth::Result<()> {
     env_logger::init();
 
     println!("=== HTTP glTF Loading Example ===");

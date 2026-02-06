@@ -829,73 +829,65 @@ impl GltfViewer {
             .default_width(320.0)
             .show(ctx, |ui| {
                 // ===== 远程模型加载 =====
-                ui.collapsing(
-                    "🌐 Remote Models (KhronosGroup glTF-Sample-Assets)",
-                    |ui| {
-                        let is_loading = matches!(
-                            self.loading_state,
-                            LoadingState::LoadingList | LoadingState::LoadingModel(_)
-                        );
+                ui.collapsing("🌐 KhronosGroup glTF-Sample-Assets (Remote)", |ui| {
+                    let is_loading = matches!(
+                        self.loading_state,
+                        LoadingState::LoadingList | LoadingState::LoadingModel(_)
+                    );
 
-                        ui.add_enabled_ui(!is_loading, |ui| {
-                            ui.horizontal(|ui| {
-                                let model_names: Vec<_> =
-                                    self.model_list.iter().map(|m| m.name.as_str()).collect();
-                                ui.label("Model:");
+                    ui.add_enabled_ui(!is_loading, |ui| {
+                        ui.horizontal(|ui| {
+                            let model_names: Vec<_> =
+                                self.model_list.iter().map(|m| m.name.as_str()).collect();
+                            ui.label("Model:");
 
-                                let combo = egui::ComboBox::from_id_salt("remote_model_selector")
-                                    .width(180.0)
-                                    .selected_text(
-                                        model_names
-                                            .get(self.selected_model_index)
-                                            .copied()
-                                            .unwrap_or("Select a model..."),
-                                    );
+                            let combo = egui::ComboBox::from_id_salt("remote_model_selector")
+                                .width(180.0)
+                                .selected_text(
+                                    model_names
+                                        .get(self.selected_model_index)
+                                        .copied()
+                                        .unwrap_or("Select a model..."),
+                                );
 
-                                combo.show_ui(ui, |ui| {
-                                    ui.set_min_width(250.0);
-                                    for (i, name) in model_names.iter().enumerate() {
-                                        ui.selectable_value(
-                                            &mut self.selected_model_index,
-                                            i,
-                                            *name,
-                                        );
-                                    }
-                                });
-
-                                if ui.button("Load").clicked() {
-                                    if let Some(url) =
-                                        self.build_remote_url(self.selected_model_index)
-                                    {
-                                        self.load_model(ModelSource::Remote(url), assets.clone());
-                                    }
+                            combo.show_ui(ui, |ui| {
+                                ui.set_min_width(250.0);
+                                for (i, name) in model_names.iter().enumerate() {
+                                    ui.selectable_value(&mut self.selected_model_index, i, *name);
                                 }
                             });
+
+                            if ui.button("Load").clicked() {
+                                if let Some(url) = self.build_remote_url(self.selected_model_index)
+                                {
+                                    self.load_model(ModelSource::Remote(url), assets.clone());
+                                }
+                            }
                         });
+                    });
 
-                        // 显示加载状态
-                        match &self.loading_state {
-                            LoadingState::LoadingList => {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label("Loading model list...");
-                                });
-                            }
-                            LoadingState::LoadingModel(name) => {
-                                ui.horizontal(|ui| {
-                                    ui.spinner();
-                                    ui.label(format!("Loading {}...", name));
-                                });
-                            }
-                            LoadingState::Error(e) => {
-                                ui.colored_label(egui::Color32::RED, format!("⚠ Error: {}", e));
-                            }
-                            LoadingState::Idle => {}
+                    // 显示加载状态
+                    match &self.loading_state {
+                        LoadingState::LoadingList => {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label("Loading model list...");
+                            });
                         }
+                        LoadingState::LoadingModel(name) => {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label(format!("Loading {}...", name));
+                            });
+                        }
+                        LoadingState::Error(e) => {
+                            ui.colored_label(egui::Color32::RED, format!("⚠ Error: {}", e));
+                        }
+                        LoadingState::Idle => {}
+                    }
 
-                        ui.label(format!("{} models available", self.model_list.len()));
-                    },
-                );
+                    ui.label(format!("{} models available", self.model_list.len()));
+                });
 
                 ui.separator();
 
@@ -1772,7 +1764,7 @@ fn execute_future<F: std::future::Future<Output = ()> + 'static>(f: F) {
 // ============================================================================
 
 #[cfg(not(target_arch = "wasm32"))]
-fn main() -> anyhow::Result<()> {
+fn main() -> myth::Result<()> {
     env_logger::init();
 
     let rt = tokio::runtime::Builder::new_multi_thread()

@@ -50,9 +50,9 @@ base64 = "0.22"
 
 # 网络 (通用)
 reqwest = { version = "0.13.1", default-features = false, optional = true }
+url = { version = "2.5", optional = true }
 
 # 工具库
-anyhow = "1.0.101"
 thiserror = "2.0"
 log = "0.4"
 env_logger = "0.11"
@@ -109,6 +109,7 @@ lasso = { version = "0.7", features = [] }
 # 开发依赖 (Dev Dependencies) & Egui
 # =================================================================
 [dev-dependencies]
+anyhow = "1.0.101"
 rfd = { version = "0.17.2" }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
@@ -150,4 +151,4 @@ features = ["links"]
 default = ["winit", "gltf", "http"]
 winit = ["dep:winit"]
 gltf = ["dep:gltf"]
-http = ["dep:reqwest"]
+http = ["dep:reqwest", "dep:url"]

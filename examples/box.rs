@@ -63,7 +63,7 @@ impl AppHandler for TexturedBox {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> myth::Result<()> {
     env_logger::init();
     App::new().run::<TexturedBox>()
 }

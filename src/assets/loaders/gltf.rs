@@ -5,6 +5,7 @@ use crate::animation::values::MorphWeightData;
 use crate::assets::io::{AssetReaderVariant, AssetSource};
 use crate::assets::prefab::{Prefab, PrefabNode, PrefabSkeleton};
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
+use crate::errors::{MythError, Result};
 use crate::resources::buffer::BufferRef;
 use crate::resources::geometry::{Attribute, Geometry};
 use crate::resources::material::AlphaMode;
@@ -12,7 +13,6 @@ use crate::resources::texture::Texture;
 use crate::resources::{
     Material, MeshPhysicalMaterial, PhysicalFeatures, TextureSampler, TextureSlot, TextureTransform,
 };
-use anyhow::Context;
 use futures::future::try_join_all;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
 use serde_json::Value;
@@ -35,11 +35,11 @@ fn get_global_runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| Runtime::new().expect("Failed to create global asset loader runtime"))
 }
 
-fn decode_data_uri(uri: &str) -> anyhow::Result<Vec<u8>> {
+fn decode_data_uri(uri: &str) -> Result<Vec<u8>> {
     if uri.starts_with("data:") {
-        let comma = uri
-            .find(',')
-            .ok_or_else(|| anyhow::anyhow!("Invalid Data URI"))?;
+        let comma = uri.find(',').ok_or_else(|| {
+            MythError::DataUriError("Invalid Data URI: missing comma".to_string())
+        })?;
         let header = &uri[0..comma];
         let data = &uri[comma + 1..];
 
@@ -48,12 +48,12 @@ fn decode_data_uri(uri: &str) -> anyhow::Result<Vec<u8>> {
             let bytes = general_purpose::STANDARD.decode(data)?;
             Ok(bytes)
         } else {
-            Err(anyhow::anyhow!(
-                "Unsupported Data URI encoding (only base64 supported)"
+            Err(MythError::DataUriError(
+                "Unsupported Data URI encoding (only base64 supported)".to_string(),
             ))
         }
     } else {
-        Err(anyhow::anyhow!("Not a Data URI"))
+        Err(MythError::DataUriError("Not a Data URI".to_string()))
     }
 }
 
@@ -98,7 +98,7 @@ fn parse_transform_from_json(texture_slot: &mut TextureSlot, transform_val: &Val
 }
 
 #[allow(dead_code)]
-fn sanitize_gltf_data(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
+fn sanitize_gltf_data(data: &[u8]) -> Result<Cow<'_, [u8]>> {
     if data.starts_with(b"glTF") {
         sanitize_glb(data)
     } else {
@@ -107,9 +107,8 @@ fn sanitize_gltf_data(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
 }
 
 #[allow(dead_code)]
-fn sanitize_json(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
-    let mut root: Value =
-        serde_json::from_slice(data).context("Failed to parse GLTF JSON for sanitization")?;
+fn sanitize_json(data: &[u8]) -> Result<Cow<'_, [u8]>> {
+    let mut root: Value = serde_json::from_slice(data)?;
 
     if patch_json_value(&mut root) {
         let patched = serde_json::to_vec(&root)?;
@@ -120,18 +119,30 @@ fn sanitize_json(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
 }
 
 #[allow(dead_code)]
-fn sanitize_glb(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
+fn sanitize_glb(data: &[u8]) -> Result<Cow<'_, [u8]>> {
     if data.len() < 12 {
         return Ok(Cow::Borrowed(data));
     }
 
-    let version = u32::from_le_bytes(data[4..8].try_into()?);
+    let version = u32::from_le_bytes(
+        data[4..8]
+            .try_into()
+            .map_err(|_| MythError::GltfError("Invalid GLB header".to_string()))?,
+    );
     if version != 2 {
         return Ok(Cow::Borrowed(data));
     }
 
-    let chunk0_len = u32::from_le_bytes(data[12..16].try_into()?) as usize;
-    let chunk0_type = u32::from_le_bytes(data[16..20].try_into()?);
+    let chunk0_len = u32::from_le_bytes(
+        data[12..16]
+            .try_into()
+            .map_err(|_| MythError::GltfError("Invalid GLB chunk header".to_string()))?,
+    ) as usize;
+    let chunk0_type = u32::from_le_bytes(
+        data[16..20]
+            .try_into()
+            .map_err(|_| MythError::GltfError("Invalid GLB chunk type".to_string()))?,
+    );
 
     if chunk0_type != 0x4E4F_534A {
         return Ok(Cow::Borrowed(data));
@@ -260,7 +271,7 @@ pub trait GltfExtensionParser {
         gltf_mat: &gltf::Material,
         engine_mat: &MeshPhysicalMaterial,
         extension_value: &Value,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         Ok(())
     }
 
@@ -296,7 +307,7 @@ impl LoadContext<'_, '_> {
         &mut self,
         gltf_texture_index: usize,
         is_srgb: bool,
-    ) -> anyhow::Result<TextureHandle> {
+    ) -> Result<TextureHandle> {
         let key = TextureCacheKey {
             gltf_texture_index,
             is_srgb,
@@ -309,7 +320,10 @@ impl LoadContext<'_, '_> {
         let raw = self
             .intermediate_textures
             .get(gltf_texture_index)
-            .ok_or_else(|| anyhow::anyhow!("Texture index {gltf_texture_index} out of bounds"))?;
+            .ok_or_else(|| MythError::AssetIndexOutOfBounds {
+                context: "Texture".to_string(),
+                index: gltf_texture_index,
+            })?;
 
         let format = if is_srgb {
             TextureFormat::Rgba8UnormSrgb
@@ -413,11 +427,7 @@ impl GltfLoader {
         self.extensions.insert(ext.name().to_string(), ext);
     }
 
-    async fn load_inner(
-        mut self,
-        gltf: &gltf::Gltf,
-        buffers: &[Vec<u8>],
-    ) -> anyhow::Result<Arc<Prefab>> {
+    async fn load_inner(mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> Result<Arc<Prefab>> {
         self.load_textures_async(gltf, buffers).await?;
         self.load_materials(gltf)?;
         let prefab = self.build_prefab(gltf, buffers);
@@ -429,7 +439,7 @@ impl GltfLoader {
     pub fn load(
         source: impl AssetSource,
         assets: impl Into<Arc<AssetServer>>,
-    ) -> anyhow::Result<Arc<Prefab>> {
+    ) -> Result<Arc<Prefab>> {
         Self::load_sync(source, assets)
     }
 
@@ -438,7 +448,7 @@ impl GltfLoader {
     pub fn load_sync(
         source: impl AssetSource,
         assets: impl Into<Arc<AssetServer>>,
-    ) -> anyhow::Result<Arc<Prefab>> {
+    ) -> Result<Arc<Prefab>> {
         let rt = get_global_runtime();
         rt.block_on(Self::load_async(source, assets))
     }
@@ -447,16 +457,19 @@ impl GltfLoader {
     pub async fn load_async(
         source: impl AssetSource,
         assets: impl Into<Arc<AssetServer>>,
-    ) -> anyhow::Result<Arc<Prefab>> {
+    ) -> Result<Arc<Prefab>> {
         let reader = AssetReaderVariant::new(&source)?;
         let filename = source
             .filename()
             .unwrap_or(std::borrow::Cow::Borrowed("unknown"));
 
-        let gltf_bytes = reader
-            .read_bytes(&filename)
-            .await
-            .with_context(|| format!("Failed to read glTF file: {}", source.uri()))?;
+        let gltf_bytes = reader.read_bytes(&filename).await.map_err(|e| {
+            MythError::GltfError(format!(
+                "Failed to read glTF file '{}': {}",
+                source.uri(),
+                e
+            ))
+        })?;
 
         // 1. Parse glTF
         let gltf = Self::parse_gltf_bytes(&gltf_bytes)?;
@@ -475,7 +488,7 @@ impl GltfLoader {
     pub async fn load_from_bytes(
         gltf_bytes: Vec<u8>,
         assets: impl Into<Arc<AssetServer>>,
-    ) -> anyhow::Result<Arc<Prefab>> {
+    ) -> Result<Arc<Prefab>> {
         // 1. Parse glTF
         let gltf = Self::parse_gltf_bytes(&gltf_bytes)?;
 
@@ -498,15 +511,12 @@ impl GltfLoader {
         loader.load_inner(&gltf, &buffers).await
     }
 
-    fn parse_gltf_bytes(bytes: &[u8]) -> anyhow::Result<gltf::Gltf> {
-        // let sanitized_bytes = sanitize_gltf_data(bytes)
-        //     .context("Failed to sanitize glTF data")?;
-
+    fn parse_gltf_bytes(bytes: &[u8]) -> Result<gltf::Gltf> {
         match gltf::Gltf::from_slice_without_validation(bytes) {
             Ok(g) => Ok(g),
             Err(err) => {
                 log::error!("GLTF Parse Error Details: {err:?}");
-                Err(anyhow::anyhow!("Failed to parse glTF: {err}"))
+                Err(MythError::GltfError(format!("Failed to parse glTF: {err}")))
             }
         }
     }
@@ -525,7 +535,7 @@ impl GltfLoader {
     async fn load_buffers_async(
         gltf: &gltf::Gltf,
         reader: &AssetReaderVariant,
-    ) -> anyhow::Result<Vec<Vec<u8>>> {
+    ) -> Result<Vec<Vec<u8>>> {
         let mut tasks = Vec::new();
 
         for buffer in gltf.buffers() {
@@ -535,7 +545,7 @@ impl GltfLoader {
             let future = async move {
                 match buffer.source() {
                     gltf::buffer::Source::Bin => {
-                        blob.ok_or_else(|| anyhow::anyhow!("Missing GLB blob"))
+                        blob.ok_or_else(|| MythError::GltfError("Missing GLB blob".to_string()))
                     }
                     gltf::buffer::Source::Uri(uri) => {
                         if uri.starts_with("data:") {
@@ -553,11 +563,7 @@ impl GltfLoader {
     }
 
     /// Load textures asynchronously - Native version using `tokio::spawn`
-    async fn load_textures_async(
-        &mut self,
-        gltf: &gltf::Gltf,
-        buffers: &[Vec<u8>],
-    ) -> anyhow::Result<()> {
+    async fn load_textures_async(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> Result<()> {
         let mut futures = Vec::new();
 
         for (index, texture) in gltf.textures().enumerate() {
@@ -603,11 +609,10 @@ impl GltfLoader {
                 })
                 .await??;
 
-                // WASM: 直接在当前线程执行 (或者未来接入 WebWorker)
                 #[cfg(target_arch = "wasm32")]
                 let img_data = Self::decode_image_cpu_work(&img_bytes, index)?;
 
-                Ok::<IntermediateTexture, anyhow::Error>(IntermediateTexture {
+                Ok::<IntermediateTexture, MythError>(IntermediateTexture {
                     name,
                     width: img_data.width,
                     height: img_data.height,
@@ -630,9 +635,10 @@ impl GltfLoader {
     }
 
     // 纯 CPU 解码逻辑，剥离出来方便在不同上下文调用
-    fn decode_image_cpu_work(img_bytes: &[u8], index: usize) -> anyhow::Result<DecodedImage> {
-        let img = image::load_from_memory(img_bytes)
-            .with_context(|| format!("Failed to decode texture {index}"))?;
+    fn decode_image_cpu_work(img_bytes: &[u8], index: usize) -> Result<DecodedImage> {
+        let img = image::load_from_memory(img_bytes).map_err(|e| {
+            MythError::ImageDecodeError(format!("Failed to decode texture {index}: {e}"))
+        })?;
         let rgba = img.to_rgba8();
         Ok(DecodedImage {
             width: rgba.width(),
@@ -707,7 +713,7 @@ impl GltfLoader {
         &mut self,
         gltf_texture_index: usize,
         is_srgb: bool,
-    ) -> anyhow::Result<TextureHandle> {
+    ) -> Result<TextureHandle> {
         let key = TextureCacheKey {
             gltf_texture_index,
             is_srgb,
@@ -720,7 +726,10 @@ impl GltfLoader {
         let raw = self
             .intermediate_textures
             .get(gltf_texture_index)
-            .ok_or_else(|| anyhow::anyhow!("Texture index {gltf_texture_index} out of bounds"))?;
+            .ok_or_else(|| MythError::AssetIndexOutOfBounds {
+                context: "Texture".to_string(),
+                index: gltf_texture_index,
+            })?;
 
         let format = if is_srgb {
             TextureFormat::Rgba8UnormSrgb
@@ -750,7 +759,7 @@ impl GltfLoader {
         texture_slot: &mut TextureSlot,
         info: &gltf::texture::Info,
         is_srgb: bool,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let tex_handle = self.get_or_create_texture(info.texture().index(), is_srgb)?;
         texture_slot.texture = Some(tex_handle);
         texture_slot.channel = info.tex_coord() as u8;
@@ -767,7 +776,7 @@ impl GltfLoader {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn load_materials(&mut self, gltf: &gltf::Gltf) -> anyhow::Result<()> {
+    fn load_materials(&mut self, gltf: &gltf::Gltf) -> Result<()> {
         for material in gltf.materials() {
             let pbr = material.pbr_metallic_roughness();
             let base_color_factor = Vec4::from_array(pbr.base_color_factor());
@@ -1504,10 +1513,10 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         gltf_mat: &gltf::Material,
         physical_mat: &MeshPhysicalMaterial,
         _extension_value: &Value,
-    ) -> anyhow::Result<()> {
-        let sg = gltf_mat
-            .pbr_specular_glossiness()
-            .ok_or_else(|| anyhow::anyhow!("Material missing pbr_specular_glossiness data"))?;
+    ) -> Result<()> {
+        let sg = gltf_mat.pbr_specular_glossiness().ok_or_else(|| {
+            MythError::GltfError("Material missing pbr_specular_glossiness data".to_string())
+        })?;
 
         {
             let mut uniforms = physical_mat.uniforms_mut();
@@ -1528,10 +1537,12 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
             let tex_index = sg_tex_info.texture().index();
             let glossiness_factor = sg.glossiness_factor();
 
-            let raw = ctx
-                .intermediate_textures
-                .get(tex_index)
-                .ok_or_else(|| anyhow::anyhow!("Texture index {tex_index} out of bounds"))?;
+            let raw = ctx.intermediate_textures.get(tex_index).ok_or_else(|| {
+                MythError::AssetIndexOutOfBounds {
+                    context: "Texture".to_string(),
+                    index: tex_index,
+                }
+            })?;
 
             let width = raw.width;
             let height = raw.height;
@@ -1632,10 +1643,10 @@ impl GltfExtensionParser for KhrMaterialsClearcoat {
         _gltf_mat: &gltf::Material,
         physical_mat: &MeshPhysicalMaterial,
         extension_value: &Value,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let clearcoat_info = extension_value
             .as_object()
-            .ok_or_else(|| anyhow::anyhow!("Invalid clearcoat extension data"))?;
+            .ok_or_else(|| MythError::GltfError("Invalid clearcoat extension data".to_string()))?;
 
         let clearcoat_factor = clearcoat_info
             .get("clearcoatFactor")
@@ -1702,10 +1713,10 @@ impl GltfExtensionParser for KhrMaterialsSheen {
         _gltf_mat: &gltf::Material,
         physical_mat: &MeshPhysicalMaterial,
         extension_value: &Value,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let sheen_info = extension_value
             .as_object()
-            .ok_or_else(|| anyhow::anyhow!("Invalid sheen extension data"))?;
+            .ok_or_else(|| MythError::GltfError("Invalid sheen extension data".to_string()))?;
 
         let sheen_color_factor = sheen_info
             .get("sheenColorFactor")
@@ -1773,10 +1784,10 @@ impl GltfExtensionParser for KhrMaterialsIridescence {
         _gltf_mat: &gltf::Material,
         physical_mat: &MeshPhysicalMaterial,
         extension_value: &Value,
-    ) -> anyhow::Result<()> {
-        let iridescence_info = extension_value
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("Invalid iridescence extension data"))?;
+    ) -> Result<()> {
+        let iridescence_info = extension_value.as_object().ok_or_else(|| {
+            MythError::GltfError("Invalid iridescence extension data".to_string())
+        })?;
 
         let iridescence_factor = iridescence_info
             .get("iridescenceFactor")
@@ -1847,10 +1858,10 @@ impl GltfExtensionParser for KhrMaterialsAnisotropy {
         _gltf_mat: &gltf::Material,
         physical_mat: &MeshPhysicalMaterial,
         extension_value: &Value,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let anisotropy_info = extension_value
             .as_object()
-            .ok_or_else(|| anyhow::anyhow!("Invalid anisotropy extension data"))?;
+            .ok_or_else(|| MythError::GltfError("Invalid anisotropy extension data".to_string()))?;
 
         let anisotropy_strength = anisotropy_info
             .get("anisotropyStrength")
@@ -1899,10 +1910,10 @@ impl GltfExtensionParser for KhrMaterialsTransmission {
         _gltf_mat: &gltf::Material,
         physical_mat: &MeshPhysicalMaterial,
         extension_value: &Value,
-    ) -> anyhow::Result<()> {
-        let transmission_info = extension_value
-            .as_object()
-            .ok_or_else(|| anyhow::anyhow!("Invalid transmission extension data"))?;
+    ) -> Result<()> {
+        let transmission_info = extension_value.as_object().ok_or_else(|| {
+            MythError::GltfError("Invalid transmission extension data".to_string())
+        })?;
 
         let transmission_factor = transmission_info
             .get("transmissionFactor")
@@ -1942,10 +1953,10 @@ impl GltfExtensionParser for KhrMaterialsVolume {
         _gltf_mat: &gltf::Material,
         physical_mat: &MeshPhysicalMaterial,
         extension_value: &Value,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let volume_info = extension_value
             .as_object()
-            .ok_or_else(|| anyhow::anyhow!("Invalid volume extension data"))?;
+            .ok_or_else(|| MythError::GltfError("Invalid volume extension data".to_string()))?;
 
         let thickness_factor = volume_info
             .get("thicknessFactor")
@@ -2008,10 +2019,10 @@ impl GltfExtensionParser for KhrMaterialsDispersion {
         _gltf_mat: &gltf::Material,
         physical_mat: &MeshPhysicalMaterial,
         extension_value: &Value,
-    ) -> anyhow::Result<()> {
+    ) -> Result<()> {
         let dispersion_info = extension_value
             .as_object()
-            .ok_or_else(|| anyhow::anyhow!("Invalid dispersion extension data"))?;
+            .ok_or_else(|| MythError::GltfError("Invalid dispersion extension data".to_string()))?;
 
         let dispersion_factor = dispersion_info
             .get("dispersionFactor")

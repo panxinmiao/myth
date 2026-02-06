@@ -2,19 +2,18 @@
 use std::path::{Path, PathBuf};
 use std::{borrow::Cow, sync::Arc};
 
+use crate::errors::{MythError, Result};
+
 /// 资产读取器 Trait
 /// 支持本地文件和网络资源的异步读取
 pub trait AssetReader: Send + Sync {
     /// 异步读取资源字节流
     #[cfg(not(target_arch = "wasm32"))]
-    fn read_bytes(
-        &self,
-        uri: &str,
-    ) -> impl std::future::Future<Output = anyhow::Result<Vec<u8>>> + Send;
+    fn read_bytes(&self, uri: &str) -> impl std::future::Future<Output = Result<Vec<u8>>> + Send;
 
     /// WASM 下 Future 不需要 Send
     #[cfg(target_arch = "wasm32")]
-    fn read_bytes(&self, uri: &str) -> impl std::future::Future<Output = anyhow::Result<Vec<u8>>>;
+    fn read_bytes(&self, uri: &str) -> impl std::future::Future<Output = Result<Vec<u8>>>;
 }
 
 /// 本地文件读取器 (仅在非 WASM 平台可用)
@@ -44,7 +43,7 @@ impl FileAssetReader {
 
 #[cfg(not(target_arch = "wasm32"))]
 impl AssetReader for FileAssetReader {
-    async fn read_bytes(&self, uri: &str) -> anyhow::Result<Vec<u8>> {
+    async fn read_bytes(&self, uri: &str) -> Result<Vec<u8>> {
         let path = self.root_path.join(uri);
         let data = tokio::fs::read(&path).await?;
         Ok(data)
@@ -61,7 +60,7 @@ pub struct HttpAssetReader {
 
 #[cfg(feature = "http")]
 impl HttpAssetReader {
-    pub fn new(url_str: &str) -> anyhow::Result<Self> {
+    pub fn new(url_str: &str) -> Result<Self> {
         let url = reqwest::Url::parse(url_str)?;
         let root_url = if url.path().ends_with('/') {
             url
@@ -95,11 +94,13 @@ impl HttpAssetReader {
 
 #[cfg(feature = "http")]
 impl AssetReader for HttpAssetReader {
-    async fn read_bytes(&self, uri: &str) -> anyhow::Result<Vec<u8>> {
+    async fn read_bytes(&self, uri: &str) -> Result<Vec<u8>> {
         let url = self.root_url.join(uri)?;
         let resp = self.client.get(url).send().await?;
         if !resp.status().is_success() {
-            return Err(anyhow::anyhow!("HTTP error: {}", resp.status()));
+            return Err(MythError::HttpResponseError {
+                status: resp.status().as_u16(),
+            });
         }
         let bytes = resp.bytes().await?;
         Ok(bytes.to_vec())
@@ -117,7 +118,7 @@ pub enum AssetReaderVariant {
 
 impl AssetReaderVariant {
     /// 从路径或 URL 自动创建合适的读取器
-    pub fn new(source: &impl AssetSource) -> anyhow::Result<Self> {
+    pub fn new(source: &impl AssetSource) -> Result<Self> {
         let uri = source.uri();
 
         #[cfg(not(target_arch = "wasm32"))]
@@ -129,7 +130,7 @@ impl AssetReaderVariant {
                 }
                 #[cfg(not(feature = "http"))]
                 {
-                    Err(anyhow::anyhow!("HTTP feature is not enabled"))
+                    Err(MythError::FeatureNotEnabled("http".to_string()))
                 }
             } else {
                 // 如果不是 HTTP，默认走文件系统
@@ -142,23 +143,21 @@ impl AssetReaderVariant {
             // WASM 统一走 HTTP 读取
             #[cfg(not(feature = "http"))]
             {
-                return Err(anyhow::anyhow!("HTTP feature is not enabled"));
+                return Err(MythError::FeatureNotEnabled("http".to_string()));
             }
 
             let full_uri = if !source.is_http() {
-                let window = web_sys::window().ok_or_else(|| anyhow::anyhow!("No window found"))?;
+                let window = web_sys::window()
+                    .ok_or_else(|| MythError::WasmError("No window found".to_string()))?;
 
                 let location = window.location();
                 let href = location
                     .href()
-                    .map_err(|e| anyhow::anyhow!("Failed to get href: {:?}", e))?;
+                    .map_err(|e| MythError::WasmError(format!("Failed to get href: {:?}", e)))?;
 
-                let base = reqwest::Url::parse(&href)
-                    .map_err(|e| anyhow::anyhow!("Invalid base URL: {}", e))?;
+                let base = reqwest::Url::parse(&href)?;
 
-                base.join(&uri)
-                    .map_err(|e| anyhow::anyhow!("Failed to join URL: {}", e))?
-                    .to_string()
+                base.join(&uri)?.to_string()
             } else {
                 uri.to_string()
             };
@@ -168,7 +167,7 @@ impl AssetReaderVariant {
     }
 
     /// 异步读取字节数据
-    pub async fn read_bytes(&self, uri: &str) -> anyhow::Result<Vec<u8>> {
+    pub async fn read_bytes(&self, uri: &str) -> Result<Vec<u8>> {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Self::File(r) => r.read_bytes(uri).await,

@@ -120,7 +120,7 @@ impl AppHandler for MyApp {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> myth::Result<()> {
     App::new().with_title("Myth-Engine Demo").run::<MyApp>()
 }
 ```

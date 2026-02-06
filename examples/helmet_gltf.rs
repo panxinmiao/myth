@@ -81,7 +81,7 @@ impl AppHandler for HelmetGltf {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> myth::Result<()> {
     env_logger::init();
     App::new()
         .with_settings(RenderSettings {

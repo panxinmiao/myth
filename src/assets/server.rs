@@ -6,6 +6,7 @@ use crate::ColorSpace;
 use crate::assets::AssetReaderVariant;
 use crate::assets::io::AssetSource;
 use crate::assets::storage::AssetStorage;
+use crate::errors::{MythError, Result};
 use crate::resources::geometry::Geometry;
 use crate::resources::material::Material;
 use crate::resources::texture::{Sampler, Texture};
@@ -87,7 +88,7 @@ impl AssetServer {
         source: impl AssetSource,
         color_space: ColorSpace,
         generate_mipmaps: bool,
-    ) -> anyhow::Result<TextureHandle> {
+    ) -> Result<TextureHandle> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             get_asset_runtime().block_on(self.load_texture_async(
@@ -113,7 +114,7 @@ impl AssetServer {
         sources: [impl AssetSource; 6],
         color_space: ColorSpace,
         generate_mipmaps: bool,
-    ) -> anyhow::Result<TextureHandle> {
+    ) -> Result<TextureHandle> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             get_asset_runtime().block_on(self.load_cube_texture_async(
@@ -136,7 +137,7 @@ impl AssetServer {
     }
 
     /// Loads an HDR format environment map (Equirectangular format)
-    pub fn load_hdr_texture(&mut self, source: impl AssetSource) -> anyhow::Result<TextureHandle> {
+    pub fn load_hdr_texture(&mut self, source: impl AssetSource) -> Result<TextureHandle> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             get_asset_runtime().block_on(self.load_hdr_texture_async(source))
@@ -160,7 +161,7 @@ impl AssetServer {
         source: impl AssetSource,
         color_space: crate::assets::ColorSpace,
         generate_mipmaps: bool,
-    ) -> anyhow::Result<TextureHandle> {
+    ) -> Result<TextureHandle> {
         let reader = AssetReaderVariant::new(&source)?;
 
         let uri = source.uri();
@@ -189,7 +190,7 @@ impl AssetServer {
         sources: [impl AssetSource; 6],
         color_space: ColorSpace,
         generate_mipmaps: bool,
-    ) -> anyhow::Result<TextureHandle> {
+    ) -> Result<TextureHandle> {
         // 并发加载 6 张图
         let mut futures = Vec::with_capacity(6);
 
@@ -198,7 +199,6 @@ impl AssetServer {
         for source in sources {
             futures.push(async move {
                 let reader = AssetReaderVariant::new(&source)?;
-                // let uri = source.uri();
                 let filename = source
                     .filename()
                     .unwrap_or(std::borrow::Cow::Borrowed("unknown"));
@@ -206,7 +206,7 @@ impl AssetServer {
                 let bytes = reader.read_bytes(&filename).await?;
                 let image =
                     Self::decode_image_async(bytes, color_space, filename.to_string()).await?;
-                Ok::<crate::resources::image::Image, anyhow::Error>(image)
+                Ok::<crate::resources::image::Image, MythError>(image)
             });
         }
 
@@ -219,7 +219,9 @@ impl AssetServer {
             .iter()
             .any(|img| img.width() != width || img.height() != height)
         {
-            return Err(anyhow::anyhow!("Cube map images must have same dimensions"));
+            return Err(MythError::CubeMapError(
+                "Cube map images must have same dimensions".to_string(),
+            ));
         }
 
         let mut combined_data = Vec::with_capacity((width * height * 4 * 6) as usize);
@@ -255,10 +257,7 @@ impl AssetServer {
     }
 
     /// 异步加载 HDR 环境贴图
-    pub async fn load_hdr_texture_async(
-        &self,
-        source: impl AssetSource,
-    ) -> anyhow::Result<TextureHandle> {
+    pub async fn load_hdr_texture_async(&self, source: impl AssetSource) -> Result<TextureHandle> {
         let reader = AssetReaderVariant::new(&source)?;
         let filename = source
             .filename()
@@ -289,7 +288,7 @@ impl AssetServer {
         bytes: Vec<u8>,
         color_space: ColorSpace,
         label: String,
-    ) -> anyhow::Result<crate::resources::image::Image> {
+    ) -> Result<crate::resources::image::Image> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             // Native: 放到 blocking thread 执行
@@ -308,11 +307,12 @@ impl AssetServer {
         bytes: &[u8],
         color_space: ColorSpace,
         label: &str,
-    ) -> anyhow::Result<crate::resources::image::Image> {
+    ) -> Result<crate::resources::image::Image> {
         use image::GenericImageView;
 
-        let img = image::load_from_memory(bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to decode image {label}: {e}"))?;
+        let img = image::load_from_memory(bytes).map_err(|e| {
+            MythError::ImageDecodeError(format!("Failed to decode image {label}: {e}"))
+        })?;
 
         let (width, height) = img.dimensions();
         let rgba = img.to_rgba8();
@@ -332,7 +332,7 @@ impl AssetServer {
     }
 
     /// 统一的 HDR 解码帮助函数
-    async fn decode_hdr_async(bytes: Vec<u8>) -> anyhow::Result<crate::resources::image::Image> {
+    async fn decode_hdr_async(bytes: Vec<u8>) -> Result<crate::resources::image::Image> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             tokio::task::spawn_blocking(move || Self::decode_hdr_cpu(&bytes)).await?
@@ -344,11 +344,9 @@ impl AssetServer {
     }
 
     /// CPU HDR 解码逻辑 (转换为 `RGBA16Float`)
-    fn decode_hdr_cpu(bytes: &[u8]) -> anyhow::Result<crate::resources::image::Image> {
-        // use image::GenericImageView;
-
+    fn decode_hdr_cpu(bytes: &[u8]) -> Result<crate::resources::image::Image> {
         let img = image::load_from_memory(bytes)
-            .map_err(|e| anyhow::anyhow!("Failed to decode HDR: {e}"))?;
+            .map_err(|e| MythError::ImageDecodeError(format!("Failed to decode HDR: {e}")))?;
 
         let width = img.width();
         let height = img.height();

@@ -36,7 +36,7 @@ impl AppHandler for MyApp {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> myth::errors::Result<()> {
     App::new().with_title("My 3D App").run::<MyApp>()
 }
 ```
@@ -587,7 +587,7 @@ For users who prefer explicit module paths:
 use myth::app::winit::{App, AppHandler};
 
 // Scene graph
-use myth::scene::{Scene, Camera, Light, light};
+use myth::scene::{Scene, Camera, Light};
 
 // Resources
 use myth::resources::{Geometry, Material, Mesh};
@@ -630,16 +630,6 @@ let textures = TextureBundle {
     roughness: assets.load_texture("roughness.png", ColorSpace::Linear, true)?,
 };
 ```
-
-### Performance Tips
-
-1. **Batch similar materials** - Reduces pipeline switches
-2. **Use LOD** - Lower detail for distant objects
-3. **Cull invisible objects** - Set `node.visible = false`
-4. **Limit light count** - Use baked lighting where possible
-5. **Optimize textures** - Use compressed formats, appropriate sizes
-
----
 
 ## Feature Flags
 

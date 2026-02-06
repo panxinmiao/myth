@@ -61,7 +61,7 @@ impl AppHandler for HelloTriangle {
     }
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> myth::Result<()> {
     env_logger::init();
     App::new().run::<HelloTriangle>()
 }

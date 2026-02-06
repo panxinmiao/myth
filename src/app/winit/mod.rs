@@ -45,7 +45,7 @@
 //!     }
 //! }
 //!
-//! fn main() -> anyhow::Result<()> {
+//! fn main() -> myth::errors::Result<()> {
 //!     App::new()
 //!         .with_title("My Game")
 //!         .run::<GameApp>()
@@ -203,6 +203,8 @@ impl AppHandler for DefaultHandler {
 pub struct App {
     title: String,
     render_settings: RenderSettings,
+    #[cfg(target_arch = "wasm32")]
+    canvas_id: Option<String>,
 }
 
 impl App {
@@ -212,6 +214,8 @@ impl App {
         Self {
             title: "Myth Engine".into(),
             render_settings: RenderSettings::default(),
+            #[cfg(target_arch = "wasm32")]
+            canvas_id: None,
         }
     }
 
@@ -237,6 +241,18 @@ impl App {
         self
     }
 
+    #[cfg(target_arch = "wasm32")]
+    /// Sets the HTML canvas element ID to use for rendering (WASM only).
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The ID of the canvas element in the DOM
+    #[must_use]
+    pub fn with_canvas_id(mut self, id: impl Into<String>) -> Self {
+        self.canvas_id = Some(id.into());
+        self
+    }
+
     /// Runs the application with the specified handler.
     ///
     /// This method blocks until the application exits. The event loop
@@ -250,12 +266,14 @@ impl App {
     ///
     /// Returns an error if event loop creation or execution fails.
     #[cfg(not(target_arch = "wasm32"))]
-    pub fn run<H: AppHandler>(self) -> anyhow::Result<()> {
+    pub fn run<H: AppHandler>(self) -> crate::errors::Result<()> {
+        use crate::MythError;
+
         let event_loop = EventLoop::new()?;
         event_loop.set_control_flow(ControlFlow::Poll);
 
         let mut runner = AppRunner::<H>::new(self.title, self.render_settings);
-        event_loop.run_app(&mut runner).map_err(Into::into)
+        event_loop.run_app(&mut runner).map_err(MythError::from)
     }
 
     /// Runs the application with the specified handler (WASM version).
@@ -263,13 +281,13 @@ impl App {
     /// On WASM, this spawns an async task and returns immediately.
     /// The event loop runs via requestAnimationFrame.
     #[cfg(target_arch = "wasm32")]
-    pub fn run<H: AppHandler>(self) -> anyhow::Result<()> {
+    pub fn run<H: AppHandler>(self) -> crate::errors::Result<()> {
         use winit::platform::web::EventLoopExtWebSys;
 
         let event_loop = EventLoop::new()?;
         event_loop.set_control_flow(ControlFlow::Poll);
 
-        let runner = AppRunner::<H>::new(self.title, self.render_settings);
+        let runner = AppRunner::<H>::new(self.title, self.render_settings, self.canvas_id);
         event_loop.spawn_app(runner);
 
         Ok(())
@@ -289,6 +307,9 @@ impl Default for App {
 struct AppRunner<H: AppHandler> {
     title: String,
     render_settings: RenderSettings,
+
+    #[cfg(target_arch = "wasm32")]
+    canvas_id: Option<String>,
 
     window: Option<Arc<Window>>,
     engine: Option<MythEngine>,
@@ -333,11 +354,18 @@ impl<H: AppHandler> WasmInitState<H> {
 }
 
 impl<H: AppHandler> AppRunner<H> {
-    fn new(title: String, render_settings: RenderSettings) -> Self {
+    fn new(
+        title: String,
+        render_settings: RenderSettings,
+        #[cfg(target_arch = "wasm32")] canvas_id: Option<String>,
+    ) -> Self {
         let now = Instant::now();
         Self {
             title,
             render_settings,
+            #[cfg(target_arch = "wasm32")]
+            canvas_id,
+
             window: None,
             engine: None,
             user_state: None,
@@ -454,11 +482,17 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         // Get canvas from DOM
         let web_window = web_sys::window().expect("No window found");
         let document = web_window.document().expect("No document found");
+
+        let canvas_id = self.canvas_id.as_deref().unwrap_or("myth-canvas");
+
         let canvas = document
-            .get_element_by_id("myth-canvas")
-            .expect("Canvas element 'myth-canvas' not found")
+            .get_element_by_id(canvas_id)
+            .expect(&format!("Canvas element '{}' not found", canvas_id))
             .dyn_into::<web_sys::HtmlCanvasElement>()
             .expect("Element is not a canvas");
+
+        canvas.set_attribute("tabindex", "0").ok();
+        canvas.focus().ok();
 
         // Get canvas size
         let window = web_sys::window().unwrap();
@@ -501,6 +535,8 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                 }
                 Err(e) => {
                     log::error!("Fatal Renderer Error: {}", e);
+
+                    panic!("Failed to initialize engine: {}", e);
                 }
             }
         });

@@ -59,12 +59,12 @@ pub use io::FileAssetReader;
 #[cfg(feature = "http")]
 pub use io::HttpAssetReader;
 
-use anyhow::Context;
+use crate::errors::{MythError, Result};
 use image::GenericImageView;
 use std::path::Path;
 
-pub fn load_image_from_file(path: impl AsRef<Path>) -> anyhow::Result<(Vec<u8>, u32, u32)> {
-    let img = image::open(path).context("Failed to open image file")?;
+pub fn load_image_from_file(path: impl AsRef<Path>) -> Result<(Vec<u8>, u32, u32)> {
+    let img = image::open(&path)?;
 
     let (width, height) = img.dimensions();
 
@@ -84,7 +84,7 @@ pub enum ColorSpace {
 pub fn load_texture_from_file(
     path: impl AsRef<Path>,
     color_space: ColorSpace,
-) -> anyhow::Result<crate::resources::texture::Texture> {
+) -> Result<crate::resources::texture::Texture> {
     let (data, width, height) = load_image_from_file(&path)?;
 
     let texture = crate::resources::texture::Texture::new_2d(
@@ -114,8 +114,8 @@ pub fn load_texture_from_file(
 /// A texture that can be used for image-based lighting.
 pub fn load_hdr_texture_from_file(
     path: impl AsRef<Path>,
-) -> anyhow::Result<crate::resources::texture::Texture> {
-    let img = image::open(&path).context("Failed to open HDR file")?;
+) -> Result<crate::resources::texture::Texture> {
+    let img = image::open(&path)?;
 
     let width = img.width();
     let height = img.height();
@@ -163,7 +163,7 @@ pub fn load_hdr_texture_from_file(
 pub fn load_cube_texture_from_files(
     paths: &[impl AsRef<Path>; 6],
     color_space: ColorSpace,
-) -> anyhow::Result<crate::resources::texture::Texture> {
+) -> Result<crate::resources::texture::Texture> {
     let mut face_data = Vec::with_capacity(6);
     let mut width = 0;
     let mut height = 0;
@@ -174,8 +174,8 @@ pub fn load_cube_texture_from_files(
             width = w;
             height = h;
         } else if width != w || height != h {
-            return Err(anyhow::anyhow!(
-                "Cube texture faces must have the same dimensions"
+            return Err(MythError::CubeMapError(
+                "Cube texture faces must have the same dimensions".to_string(),
             ));
         }
         face_data.push(data);

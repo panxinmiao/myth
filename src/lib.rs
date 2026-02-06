@@ -39,7 +39,7 @@
 //!     }
 //! }
 //!
-//! fn main() -> anyhow::Result<()> {
+//! fn main() -> myth::errors::Result<()> {
 //!     App::new().with_title("My 3D App").run::<MyApp>()
 //! }
 //! ```
@@ -338,7 +338,7 @@ pub use renderer::graph::{FrameBuilder, FrameComposer, RenderStage};
 pub use renderer::settings::RenderSettings;
 
 // Errors
-pub use errors::MythError;
+pub use errors::{MythError, Result};
 
 // Utilities
 pub use utils::interner;
