@@ -48,7 +48,8 @@ impl SceneCullPass {
     /// 3. 查找/创建 Pipeline
     /// 4. 生成 `RenderCommand` 并分类
     /// 5. 排序命令列表
-    fn prepare_and_sort_commands(&self, ctx: &mut RenderContext) {
+    #[allow(clippy::too_many_lines)]
+    fn prepare_and_sort_commands(ctx: &mut RenderContext) {
         // 预先获取需要的配置（避免后续借用冲突）
         let color_format = ctx.get_scene_render_target_format();
         let depth_format = ctx.wgpu_ctx.depth_format;
@@ -58,7 +59,7 @@ impl SceneCullPass {
         let pipeline_settings_version = ctx.wgpu_ctx.pipeline_settings_version;
 
         // 获取 render_lists 的可变引用
-        let render_lists = &mut ctx.render_frame.render_lists;
+        let render_lists = &mut *ctx.render_frame.render_lists;
         render_lists.clear();
 
         // 获取全局状态
@@ -126,8 +127,7 @@ impl SceneCullPass {
 
                     let final_a2c_enable = match material.alpha_mode() {
                         AlphaMode::Mask(_, a2c) => a2c,
-                        AlphaMode::Blend => false,
-                        AlphaMode::Opaque => false,
+                        AlphaMode::Blend | AlphaMode::Opaque => false,
                     };
 
                     let mut options = ShaderCompilationOptions::from_merged(
@@ -225,8 +225,8 @@ impl SceneCullPass {
     /// 上传动态 Uniform 数据
     ///
     /// 为每个渲染命令计算并上传模型矩阵、逆矩阵、法线矩阵等。
-    fn upload_dynamic_uniforms(&self, ctx: &mut RenderContext) {
-        let render_lists = &mut ctx.render_frame.render_lists;
+    fn upload_dynamic_uniforms(ctx: &mut RenderContext) {
+        let render_lists = &mut *ctx.render_frame.render_lists;
 
         if render_lists.is_empty() {
             return;
@@ -283,10 +283,10 @@ impl RenderNode for SceneCullPass {
 
     fn prepare(&mut self, ctx: &mut RenderContext) {
         // 1. 准备并排序渲染命令
-        self.prepare_and_sort_commands(ctx);
+        Self::prepare_and_sort_commands(ctx);
 
         // 2. 上传动态 Uniform
-        self.upload_dynamic_uniforms(ctx);
+        Self::upload_dynamic_uniforms(ctx);
     }
 
     fn run(&self, _ctx: &mut RenderContext, _encoder: &mut wgpu::CommandEncoder) {

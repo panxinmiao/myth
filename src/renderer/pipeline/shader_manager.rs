@@ -44,7 +44,10 @@ pub fn get_env() -> &'static Environment<'static> {
 }
 
 fn shader_loader(name: &str) -> Result<Option<String>, Error> {
-    let filename = if name.ends_with(".wgsl") {
+    let filename = if std::path::Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("wgsl"))
+    {
         Cow::Borrowed(name)
     } else {
         Cow::Owned(format!("{name}.wgsl"))

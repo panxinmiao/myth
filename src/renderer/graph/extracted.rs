@@ -129,6 +129,7 @@ impl ExtractedScene {
     }
 
     /// Extract visible render items
+    #[allow(clippy::too_many_lines)]
     fn extract_render_items(
         &mut self,
         scene: &mut Scene,
@@ -231,15 +232,11 @@ impl ExtractedScene {
         for collected_mesh in &self.collected_meshes {
             let node_handle = collected_mesh.node_handle;
 
-            let node = if let Some(n) = scene.nodes.get(node_handle) {
-                n
-            } else {
+            let Some(node) = scene.nodes.get(node_handle) else {
                 continue;
             };
 
-            let mesh = if let Some(m) = scene.meshes.get_mut(node_handle) {
-                m
-            } else {
+            let Some(mesh) = scene.meshes.get_mut(node_handle) else {
                 continue;
             };
 
@@ -248,15 +245,13 @@ impl ExtractedScene {
 
             let skeleton = collected_mesh
                 .skeleton
-                .and_then(|key| scene.skeleton_pool.get(key).map(|s| s));
+                .and_then(|key| scene.skeleton_pool.get(key));
             mesh.update_morph_uniforms();
 
-            let object_bind_group =
-                if let Some(binding) = resource_manager.prepare_mesh(assets, mesh, skeleton) {
-                    binding
-                } else {
-                    continue;
-                };
+            let Some(object_bind_group) = resource_manager.prepare_mesh(assets, mesh, skeleton)
+            else {
+                continue;
+            };
 
             let distance_sq = camera_pos.distance_squared(node_world.translation);
             let mut item_shader_defines = ShaderDefines::with_capacity(1);

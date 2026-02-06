@@ -9,6 +9,7 @@ use crate::resources::input::{ButtonState, Input, Key, MouseButton};
 
 /// 将 Winit 的 `PhysicalKey` 转换为引擎的 Key
 #[must_use]
+#[allow(clippy::too_many_lines)]
 pub fn translate_key(physical_key: PhysicalKey) -> Option<Key> {
     let PhysicalKey::Code(code) = physical_key else {
         return None;

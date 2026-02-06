@@ -101,6 +101,7 @@ impl Spherical {
 /// // In update loop
 /// orbit.update(&mut camera_transform, &input, fov, dt);
 /// ```
+#[allow(clippy::struct_excessive_bools)]
 pub struct OrbitControls {
     /// Enable smooth damping for rotation and zoom.
     pub enable_damping: bool,

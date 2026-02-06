@@ -112,7 +112,6 @@ impl ResourceManager {
                 .get(&indices.buffer.id())
                 .expect("Index buffer should be prepared");
             let format = match indices.format {
-                wgpu::VertexFormat::Uint16 => wgpu::IndexFormat::Uint16,
                 wgpu::VertexFormat::Uint32 => wgpu::IndexFormat::Uint32,
                 _ => wgpu::IndexFormat::Uint16,
             };

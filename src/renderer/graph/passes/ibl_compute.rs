@@ -2,7 +2,7 @@ use crate::renderer::graph::{RenderContext, RenderNode};
 use crate::resources::texture::TextureSource;
 use std::borrow::Cow;
 use std::cell::RefCell;
-use wgpu::TextureViewDimension;
+use wgpu::{PipelineCompilationOptions, TextureViewDimension};
 
 const EQUIRECT_CUBE_SIZE: u32 = 1024;
 const PMREM_SIZE: u32 = 512;
@@ -20,6 +20,7 @@ pub struct IBLComputePass {
 
 impl IBLComputePass {
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn new(device: &wgpu::Device) -> Self {
         let pmrem_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("IBL Prefilter Shader"),
@@ -86,7 +87,7 @@ impl IBLComputePass {
             layout: Some(&pmrem_layout),
             module: &pmrem_shader,
             entry_point: Some("main"),
-            compilation_options: Default::default(),
+            compilation_options: PipelineCompilationOptions::default(),
             cache: None,
         });
 
@@ -141,7 +142,7 @@ impl IBLComputePass {
             layout: Some(&equirect_pipeline_layout),
             module: &equirect_shader,
             entry_point: Some("main"),
-            compilation_options: Default::default(),
+            compilation_options: PipelineCompilationOptions::default(),
             cache: None,
         });
 
@@ -161,6 +162,7 @@ impl RenderNode for IBLComputePass {
         "IBL Compute Pass"
     }
 
+    #[allow(clippy::too_many_lines, clippy::cast_sign_loss)]
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
         let env = &ctx.scene.environment;
 
@@ -192,9 +194,7 @@ impl RenderNode for IBLComputePass {
             TextureSource::Asset(handle) => {
                 ctx.resource_manager.prepare_texture(ctx.assets, *handle);
 
-                let texture_asset = if let Some(asset) = ctx.assets.textures.get(*handle) {
-                    asset
-                } else {
+                let Some(texture_asset) = ctx.assets.textures.get(*handle) else {
                     log::error!("IBL Source Asset missing: {handle:?}");
                     return;
                 };

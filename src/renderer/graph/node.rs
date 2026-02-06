@@ -18,7 +18,6 @@ use super::context::RenderContext;
 /// - 避免在 `run` 中进行内存分配
 /// - 利用 `encoder.push_debug_group` 进行 GPU 调试
 ///
-
 pub trait RenderNode {
     /// 返回节点名称，用于调试和性能分析
     fn name(&self) -> &str;

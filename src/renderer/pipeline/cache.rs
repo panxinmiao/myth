@@ -116,6 +116,7 @@ impl PipelineCache {
         self.fast_cache.insert(fast_key, pipeline);
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn get_pipeline(
         &mut self,
         device: &wgpu::Device,
@@ -203,7 +204,7 @@ impl PipelineCache {
                 module: shader_module,
                 entry_point: Some("vs_main"),
                 buffers: &vertex_buffers_layout,
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
                 module: shader_module,
@@ -213,7 +214,7 @@ impl PipelineCache {
                     blend: canonical_key.blend_state,
                     write_mask: wgpu::ColorWrites::ALL,
                 })],
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
                 topology: canonical_key.topology,

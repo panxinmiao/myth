@@ -30,7 +30,8 @@ impl OwnedVertexBufferDesc {
 pub struct GeneratedVertexLayout {
     pub buffers: Vec<OwnedVertexBufferDesc>,
     pub vertex_input_code: String,
-    pub _attribute_locations: FxHashMap<String, u32>,
+    /// Attribute locations map (currently unused, reserved for future use)
+    pub attribute_locations: FxHashMap<String, u32>,
 }
 
 pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
@@ -100,10 +101,11 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
     GeneratedVertexLayout {
         buffers: owned_layouts,
         vertex_input_code,
-        _attribute_locations: location_map,
+        attribute_locations: location_map,
     }
 }
 
+#[allow(clippy::match_same_arms)]
 fn format_to_wgsl_type(format: VertexFormat) -> &'static str {
     match format {
         VertexFormat::Float32 => "f32",

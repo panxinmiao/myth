@@ -20,15 +20,15 @@ impl Default for PlaneOptions {
 }
 
 #[must_use]
-pub fn create_plane(options: PlaneOptions) -> Geometry {
+pub fn create_plane(options: &PlaneOptions) -> Geometry {
     let width_half = options.width / 2.0;
     let height_half = options.height / 2.0;
 
     let grid_x = options.width_segments;
     let grid_y = options.height_segments;
 
-    let grid_x1 = grid_x + 1;
-    let grid_y1 = grid_y + 1;
+    let grid_cols = grid_x + 1;
+    let grid_rows = grid_y + 1;
 
     let segment_width = options.width / grid_x as f32;
     let segment_height = options.height / grid_y as f32;
@@ -38,9 +38,9 @@ pub fn create_plane(options: PlaneOptions) -> Geometry {
     let mut uvs = Vec::new();
     let mut indices = Vec::new();
 
-    for iy in 0..grid_y1 {
+    for iy in 0..grid_rows {
         let y = iy as f32 * segment_height - height_half;
-        for ix in 0..grid_x1 {
+        for ix in 0..grid_cols {
             let x = ix as f32 * segment_width - width_half;
 
             positions.push([x, -y, 0.0]); // 注意 -y 是为了对应 UV 方向
@@ -52,10 +52,10 @@ pub fn create_plane(options: PlaneOptions) -> Geometry {
     // 索引
     for iy in 0..grid_y {
         for ix in 0..grid_x {
-            let a = ix + grid_x1 * iy;
-            let b = ix + grid_x1 * (iy + 1);
-            let c = (ix + 1) + grid_x1 * (iy + 1);
-            let d = (ix + 1) + grid_x1 * iy;
+            let a = ix + grid_cols * iy;
+            let b = ix + grid_cols * (iy + 1);
+            let c = (ix + 1) + grid_cols * (iy + 1);
+            let d = (ix + 1) + grid_cols * iy;
 
             indices.push(a as u16);
             indices.push(b as u16);

@@ -166,6 +166,7 @@ impl MeshPhysicalMaterial {
         self.toggle_feature(feature, true);
     }
 
+    #[must_use]
     pub fn with_clearcoat(self, factor: f32, roughness: f32) -> Self {
         {
             let mut uniforms = self.uniforms_mut();
@@ -177,6 +178,7 @@ impl MeshPhysicalMaterial {
         self
     }
 
+    #[must_use]
     pub fn with_sheen(self, color: Vec3, roughness: f32) -> Self {
         {
             let mut uniforms = self.uniforms_mut();
@@ -187,6 +189,7 @@ impl MeshPhysicalMaterial {
         self
     }
 
+    #[must_use]
     pub fn with_iridescence(
         self,
         intensity: f32,
@@ -205,6 +208,7 @@ impl MeshPhysicalMaterial {
         self
     }
 
+    #[must_use]
     pub fn with_anisotropy(self, anisotropy: f32, rotation: f32) -> Self {
         {
             let mut uniforms = self.uniforms_mut();
@@ -215,6 +219,7 @@ impl MeshPhysicalMaterial {
         self
     }
 
+    #[must_use]
     pub fn with_transmission(
         self,
         transmission: f32,
@@ -233,6 +238,7 @@ impl MeshPhysicalMaterial {
         self
     }
 
+    #[must_use]
     pub fn with_dispersion(self, dispersion: f32) -> Self {
         {
             let mut uniforms = self.uniforms_mut();

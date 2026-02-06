@@ -106,6 +106,7 @@ impl<'a> FrameComposer<'a> {
     ///     .render();
     /// ```
     #[inline]
+    #[must_use]
     pub fn add_node(mut self, stage: RenderStage, node: &'a mut dyn RenderNode) -> Self {
         self.builder.add_node(stage, node);
         self
@@ -121,6 +122,7 @@ impl<'a> FrameComposer<'a> {
     ///     .render();
     /// ```
     #[inline]
+    #[must_use]
     pub fn add_nodes<I>(mut self, stage: RenderStage, nodes: I) -> Self
     where
         I: IntoIterator<Item = &'a mut dyn RenderNode>,

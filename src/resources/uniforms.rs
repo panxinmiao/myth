@@ -318,14 +318,16 @@ macro_rules! define_gpu_data_struct {
     // Rule: Generate WGSL struct definition logic (for internal and external use)
     // --------------------------------------------------------
     (@gen_body $name_str:expr, { $( $vis:vis$field_name:ident : $field_type:ty ),* }) => {{
+        use std::fmt::Write;
         let mut code = format!("struct {} {{\n", $name_str);
         $(
             if !stringify!($field_name).starts_with("__") {
-                code.push_str(&format!(
-                    "    {}: {},\n",
+                let _ = writeln!(
+                    code,
+                    "    {}: {},", 
                     stringify!($field_name),
                     <$field_type as WgslType>::wgsl_type_name()
-                ));
+                );
             }
         )*
         code.push_str("};\n");
@@ -590,7 +592,7 @@ define_gpu_data_struct!(
         pub outer_cone_cos: f32,
 
         pub light_type: u32,
-        pub(crate) _padding1: f32,
+        pub(crate) __padding1: f32,
     }
 );
 
@@ -599,7 +601,7 @@ define_gpu_data_struct!(
         pub count: u32,
         pub vertex_count: u32,
         pub flags: u32,
-        pub _pad: u32,
+        pub(crate) __padding: u32,
 
         // 32 morph target weights and indices, packed into Vec4 to satisfy Uniform buffer 16-byte alignment requirement
         // weights[0] = Vec4(w0, w1, w2, w3), weights[1] = Vec4(w4, w5, w6, w7), ...

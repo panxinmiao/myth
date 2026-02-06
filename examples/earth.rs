@@ -16,7 +16,7 @@ impl AppHandler for Earth {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. 准备资源
         let geometry =
-            myth_engine::create_sphere(myth_engine::resources::primitives::SphereOptions {
+            myth_engine::create_sphere(&myth_engine::resources::primitives::SphereOptions {
                 radius: 63.71,
                 width_segments: 100,
                 height_segments: 50,

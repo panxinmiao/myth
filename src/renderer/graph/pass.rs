@@ -48,13 +48,9 @@ impl<'a> TrackedRenderPass<'a> {
     ) {
         let slot = index as usize;
         let needs_update = if let Some(state) = &self.current_bind_groups[slot] {
-            if state.id != bind_group_resource_id {
-                true
-            } else if state.offset_count as usize != offsets.len() {
-                true
-            } else {
-                &state.offsets[..offsets.len()] != offsets
-            }
+            state.id != bind_group_resource_id
+                || state.offset_count as usize != offsets.len()
+                || &state.offsets[..offsets.len()] != offsets
         } else {
             true
         };

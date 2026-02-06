@@ -56,7 +56,7 @@ pub use prefab::{Prefab, PrefabNode, PrefabSkeleton, SharedPrefab};
 #[cfg(not(target_arch = "wasm32"))]
 pub use io::FileAssetReader;
 
-#[cfg(all(feature = "http"))]
+#[cfg(feature = "http")]
 pub use io::HttpAssetReader;
 
 use anyhow::Context;
@@ -161,14 +161,14 @@ pub fn load_hdr_texture_from_file(
 }
 
 pub fn load_cube_texture_from_files(
-    paths: [impl AsRef<Path>; 6],
+    paths: &[impl AsRef<Path>; 6],
     color_space: ColorSpace,
 ) -> anyhow::Result<crate::resources::texture::Texture> {
     let mut face_data = Vec::with_capacity(6);
     let mut width = 0;
     let mut height = 0;
 
-    for path in &paths {
+    for path in paths {
         let (data, w, h) = load_image_from_file(path)?;
         if width == 0 && height == 0 {
             width = w;

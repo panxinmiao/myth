@@ -386,6 +386,7 @@ pub struct ResourceManager {
 
 impl ResourceManager {
     #[must_use]
+    #[allow(clippy::too_many_lines)]
     pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
         // 创建 dummy 2D image
         let dummy_image = {
@@ -514,17 +515,17 @@ impl ResourceManager {
 
         // 初始化 Model GPU Buffer 映射
         let gpu_buffers = {
-            let model_cpu_buffer = model_allocator.cpu_buffer();
-            let buffer_guard = model_cpu_buffer.read();
-            let model_gpu_buffer = GpuBuffer::new(
+            let cpu_buf = model_allocator.cpu_buffer();
+            let buffer_guard = cpu_buf.read();
+            let gpu_buf = GpuBuffer::new(
                 &device,
                 buffer_guard.as_bytes(),
-                model_cpu_buffer.usage(),
-                model_cpu_buffer.label(),
+                cpu_buf.usage(),
+                cpu_buf.label(),
             );
 
             let mut map = FxHashMap::default();
-            map.insert(model_cpu_buffer.id(), model_gpu_buffer);
+            map.insert(cpu_buf.id(), gpu_buf);
             map
         };
 

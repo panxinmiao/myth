@@ -5,7 +5,7 @@
 //! # Pass 分类
 //!
 //! ## 数据准备 Pass
-//! - [`SceneCullPass`]: 场景剔除、命令生成与排序
+//! - [`SceneCullPass`][]: 场景剔除、命令生成与排序
 //!
 //! ## 绘制 Pass (Simple Path - LDR)
 //! - [`SimpleForwardPass`][]: 单 Pass 完成不透明+透明绘制
@@ -16,11 +16,11 @@
 //! - [`TransparentPass`][]: 仅绘制透明物体
 //!
 //! ## 计算 Pass
-//! - [`BRDFLutComputePass`][]: BRDF LUT 预计算
-//! - [`IBLComputePass`][]: IBL 预滤波
+//! - [`BRDFLutComputePass`]: BRDF LUT 预计算
+//! - [`IBLComputePass`]: IBL 预滤波
 //!
 //! ## 后处理 Pass
-//! - [`ToneMapPass`][]: 色调映射（HDR → LDR）
+//! - [`ToneMapPass`]: 色调映射（HDR → LDR）
 //!
 //! # 渲染管线拓扑
 //!

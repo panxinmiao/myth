@@ -125,7 +125,7 @@ impl AssetServer {
         #[cfg(target_arch = "wasm32")]
         {
             let mut texture = crate::assets::load_cube_texture_from_files(
-                sources.map(|s| s.uri().to_string()),
+                &sources.map(|s| s.uri().to_string()),
                 color_space,
             )?;
             texture.generate_mipmaps = generate_mipmaps;
@@ -293,32 +293,32 @@ impl AssetServer {
         #[cfg(not(target_arch = "wasm32"))]
         {
             // Native: 放到 blocking thread 执行
-            tokio::task::spawn_blocking(move || Self::decode_image_cpu(bytes, color_space, label))
+            tokio::task::spawn_blocking(move || Self::decode_image_cpu(&bytes, color_space, &label))
                 .await?
         }
         #[cfg(target_arch = "wasm32")]
         {
             // WASM: 目前只能在主线程执行 (除非引入 WebWorker 架构)
-            Self::decode_image_cpu(bytes, color_space, label)
+            Self::decode_image_cpu(&bytes, color_space, &label)
         }
     }
 
     /// CPU 图片解码逻辑
     fn decode_image_cpu(
-        bytes: Vec<u8>,
+        bytes: &[u8],
         color_space: ColorSpace,
-        label: String,
+        label: &str,
     ) -> anyhow::Result<crate::resources::image::Image> {
         use image::GenericImageView;
 
-        let img = image::load_from_memory(&bytes)
+        let img = image::load_from_memory(bytes)
             .map_err(|e| anyhow::anyhow!("Failed to decode image {label}: {e}"))?;
 
         let (width, height) = img.dimensions();
         let rgba = img.to_rgba8();
 
         Ok(crate::resources::image::Image::new(
-            Some(&label),
+            Some(label),
             width,
             height,
             1,
@@ -335,19 +335,19 @@ impl AssetServer {
     async fn decode_hdr_async(bytes: Vec<u8>) -> anyhow::Result<crate::resources::image::Image> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            tokio::task::spawn_blocking(move || Self::decode_hdr_cpu(bytes)).await?
+            tokio::task::spawn_blocking(move || Self::decode_hdr_cpu(&bytes)).await?
         }
         #[cfg(target_arch = "wasm32")]
         {
-            Self::decode_hdr_cpu(bytes)
+            Self::decode_hdr_cpu(&bytes)
         }
     }
 
     /// CPU HDR 解码逻辑 (转换为 `RGBA16Float`)
-    fn decode_hdr_cpu(bytes: Vec<u8>) -> anyhow::Result<crate::resources::image::Image> {
+    fn decode_hdr_cpu(bytes: &[u8]) -> anyhow::Result<crate::resources::image::Image> {
         // use image::GenericImageView;
 
-        let img = image::load_from_memory(&bytes)
+        let img = image::load_from_memory(bytes)
             .map_err(|e| anyhow::anyhow!("Failed to decode HDR: {e}"))?;
 
         let width = img.width();

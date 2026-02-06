@@ -42,7 +42,6 @@ impl SimpleForwardPass {
     ///
     /// 返回 (`color_view`, `resolve_view`)
     fn get_render_target<'a>(
-        &self,
         ctx: &'a RenderContext,
     ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
         let target_view = ctx.get_scene_render_target_view();
@@ -130,7 +129,7 @@ impl RenderNode for SimpleForwardPass {
             return;
         };
 
-        let (color_view, resolve_target) = self.get_render_target(ctx);
+        let (color_view, resolve_target) = Self::get_render_target(ctx);
         let depth_view = &ctx.frame_resources.depth_view;
 
         // 计算最终的 store/resolve 配置

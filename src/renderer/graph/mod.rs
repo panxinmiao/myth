@@ -25,6 +25,7 @@ pub mod composer;
 pub mod context;
 pub mod extracted;
 pub mod frame;
+#[allow(clippy::module_inception)]
 pub mod graph;
 pub mod node;
 pub mod pass;

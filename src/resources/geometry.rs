@@ -591,9 +591,8 @@ impl Geometry {
 
     pub fn compute_vertex_normals(&mut self) {
         // 1. Get position attribute (must exist)
-        let pos_attr = match self.attributes.get("position") {
-            Some(attr) => attr,
-            None => return,
+        let Some(pos_attr) = self.attributes.get("position") else {
+            return;
         };
 
         // Get position data reference
@@ -699,9 +698,8 @@ impl Geometry {
     }
 
     pub fn compute_bounding_volume(&self) {
-        let pos_attr = match self.attributes.get("position") {
-            Some(attr) => attr,
-            None => return,
+        let Some(pos_attr) = self.attributes.get("position") else {
+            return;
         };
 
         let data = match &pos_attr.data {
@@ -887,7 +885,7 @@ impl Geometry {
 
     #[must_use]
     pub fn new_sphere(radius: f32) -> Self {
-        primitives::create_sphere(primitives::SphereOptions {
+        primitives::create_sphere(&primitives::SphereOptions {
             radius,
             ..Default::default()
         })
@@ -895,7 +893,7 @@ impl Geometry {
 
     #[must_use]
     pub fn new_plane(width: f32, height: f32) -> Self {
-        primitives::create_plane(primitives::PlaneOptions {
+        primitives::create_plane(&primitives::PlaneOptions {
             width,
             height,
             ..Default::default()

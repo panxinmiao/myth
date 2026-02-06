@@ -315,37 +315,35 @@ impl ResourceManager {
                         );
                     }
                 }
-                BindingResource::Texture(source_opt) => {
-                    if let Some(source) = source_opt {
-                        match source {
-                            // 只有 Asset 类型的纹理需要 Prepare (上传/更新)
-                            TextureSource::Asset(handle) => {
-                                self.prepare_texture(assets, *handle);
-                            }
-                            // Attachment 类型是 GPU 内部生成的，无需 CPU->GPU 上传
-                            TextureSource::Attachment(_, _) => {
-                                // Do nothing
-                            }
+                BindingResource::Texture(Some(source)) => {
+                    match source {
+                        // 只有 Asset 类型的纹理需要 Prepare (上传/更新)
+                        TextureSource::Asset(handle) => {
+                            self.prepare_texture(assets, *handle);
+                        }
+                        // Attachment 类型是 GPU 内部生成的，无需 CPU->GPU 上传
+                        TextureSource::Attachment(_, _) => {
+                            // Do nothing
                         }
                     }
                 }
 
-                BindingResource::Sampler(source) => {
-                    if let Some(source) = source {
-                        match source {
-                            SamplerSource::FromTexture(_handle) => {
-                                // 应该在 prepare_texture 阶段已经准备好了
-                            }
-                            SamplerSource::Asset(handle) => {
-                                self.prepare_sampler(assets, *handle);
-                            }
-                            SamplerSource::Default => {
-                                // Do nothing
-                            }
+                BindingResource::Sampler(Some(source)) => {
+                    match source {
+                        SamplerSource::FromTexture(_handle) => {
+                            // 应该在 prepare_texture 阶段已经准备好了
+                        }
+                        SamplerSource::Asset(handle) => {
+                            self.prepare_sampler(assets, *handle);
+                        }
+                        SamplerSource::Default => {
+                            // Do nothing
                         }
                     }
                 }
-                _ => {}
+                BindingResource::Texture(None)
+                | BindingResource::Sampler(None)
+                | BindingResource::_Phantom(_) => {}
             }
         }
     }

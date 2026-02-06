@@ -66,8 +66,9 @@ impl std::hash::Hash for Image {
 }
 
 impl Image {
+    #[allow(unused_variables)]
     pub fn new(
-        _label: Option<&str>,
+        label: Option<&str>,
         width: u32,
         height: u32,
         depth_or_array_layers: u32,
@@ -80,7 +81,7 @@ impl Image {
             id: NEXT_IMAGE_ID.fetch_add(1, Ordering::Relaxed),
             uuid: Uuid::new_v4(),
             #[cfg(debug_assertions)]
-            label: _label.map_or(Cow::Borrowed("Unnamed Image"), |s| {
+            label: label.map_or(Cow::Borrowed("Unnamed Image"), |s| {
                 Cow::Owned(s.to_string())
             }),
 

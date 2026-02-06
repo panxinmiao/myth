@@ -53,13 +53,13 @@ impl AssetReader for FileAssetReader {
 
 /// HTTP 网络读取器
 /// reqwest 跨平台特性 (Native 使用 tokio, WASM 使用 fetch)
-#[cfg(all(feature = "http"))]
+#[cfg(feature = "http")]
 pub struct HttpAssetReader {
     root_url: reqwest::Url,
     client: reqwest::Client,
 }
 
-#[cfg(all(feature = "http"))]
+#[cfg(feature = "http")]
 impl HttpAssetReader {
     pub fn new(url_str: &str) -> anyhow::Result<Self> {
         let url = reqwest::Url::parse(url_str)?;
@@ -93,7 +93,7 @@ impl HttpAssetReader {
     }
 }
 
-#[cfg(all(feature = "http"))]
+#[cfg(feature = "http")]
 impl AssetReader for HttpAssetReader {
     async fn read_bytes(&self, uri: &str) -> anyhow::Result<Vec<u8>> {
         let url = self.root_url.join(uri)?;
@@ -111,7 +111,7 @@ impl AssetReader for HttpAssetReader {
 pub enum AssetReaderVariant {
     #[cfg(not(target_arch = "wasm32"))]
     File(Arc<FileAssetReader>),
-    #[cfg(all(feature = "http"))]
+    #[cfg(feature = "http")]
     Http(Arc<HttpAssetReader>),
 }
 
@@ -172,7 +172,7 @@ impl AssetReaderVariant {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
             Self::File(r) => r.read_bytes(uri).await,
-            #[cfg(all(feature = "http"))]
+            #[cfg(feature = "http")]
             Self::Http(r) => r.read_bytes(uri).await,
         }
     }

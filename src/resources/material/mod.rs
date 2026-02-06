@@ -432,6 +432,7 @@ impl Drop for SettingsGuard<'_> {
 /// - [`MeshStandardMaterial`]: PBR metallic-roughness workflow
 /// - [`MeshPhysicalMaterial`]: Advanced PBR with clearcoat, transmission, etc.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub enum MaterialType {
     /// Unlit material (no lighting calculations)
     Basic(MeshBasicMaterial),

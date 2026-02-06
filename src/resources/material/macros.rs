@@ -87,6 +87,7 @@ macro_rules! impl_material_api {
             $(
                 paste::paste! {
                     #[doc = $u_doc]
+                    #[allow(clippy::float_cmp)]
                     pub fn [<set_ $u_field>](&self, value: $u_type) {
                         // self.uniforms.write().$u_field = value;
                         // 1. Fast path: acquire read lock (Shared Lock), minimal overhead

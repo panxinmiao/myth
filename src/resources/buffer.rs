@@ -32,12 +32,13 @@ pub struct BufferRef {
     pub version: u64, // Version number, used to track content changes
 }
 
+#[allow(unused_variables)]
 impl BufferRef {
-    pub fn new(size: usize, usage: wgpu::BufferUsages, _label: Option<&str>) -> Self {
+    pub fn new(size: usize, usage: wgpu::BufferUsages, label: Option<&str>) -> Self {
         Self {
             id: NEXT_BUFFER_ID.fetch_add(1, Ordering::Relaxed),
             #[cfg(debug_assertions)]
-            label: _label.map_or(Cow::Borrowed("Unnamed Buffer"), |s| {
+            label: label.map_or(Cow::Borrowed("Unnamed Buffer"), |s| {
                 Cow::Owned(s.to_string())
             }),
             usage,
@@ -80,12 +81,12 @@ impl BufferRef {
         size: usize,
         usage: wgpu::BufferUsages,
         version: u64,
-        _label: Option<&str>,
+        label: Option<&str>,
     ) -> Self {
         Self {
             id,
             #[cfg(debug_assertions)]
-            label: _label.map_or(Cow::Borrowed("Unnamed Buffer"), |s| {
+            label: label.map_or(Cow::Borrowed("Unnamed Buffer"), |s| {
                 Cow::Owned(s.to_string())
             }),
             usage,
@@ -209,8 +210,9 @@ impl<T: GpuData> CpuBuffer<T> {
         }
     }
 
+    /// Creates a default `TypedBuffer` with UNIFORM usage
     #[must_use]
-    pub fn default() -> Self
+    pub fn new_default() -> Self
     where
         T: Default,
     {

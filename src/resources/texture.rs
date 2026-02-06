@@ -230,7 +230,10 @@ impl Texture {
         if max_dim == 0 {
             return 1;
         }
-        (max_dim as f32).log2().floor() as u32 + 1
+        // SAFETY: log2 of positive integer is always non-negative
+        #[allow(clippy::cast_sign_loss)]
+        let result = (max_dim as f32).log2().floor() as u32 + 1;
+        result
     }
 
     pub fn version(&self) -> u64 {

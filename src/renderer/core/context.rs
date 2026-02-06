@@ -159,11 +159,6 @@ impl WgpuContext {
         texture.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
-    /// Returns the surface color format.
-    // pub fn color_format(&self) -> wgpu::TextureFormat {
-    //     self.config.format
-    // }
-
     /// Returns the current surface dimensions.
     #[inline]
     pub fn size(&self) -> (u32, u32) {

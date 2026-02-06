@@ -146,33 +146,6 @@ impl<'a> FrameBuilder<'a> {
         self.next_order = 0;
     }
 
-    /// 构建并执行渲染图
-    ///
-    /// 将节点按阶段排序，然后构建 `RenderGraph` 并执行。
-    ///
-    /// # 执行顺序
-    ///
-    /// 1. 按 `RenderStage` 排序（PreProcess → UI）
-    /// 2. 同阶段内按添加顺序排序
-    /// 3. 构建 `RenderGraph` 并执行
-    // pub fn execute(mut self, ctx: &mut RenderContext) {
-    //     if self.nodes.is_empty() {
-    //         return;
-    //     }
-
-    //     // 排序：先按阶段，再按插入顺序
-    //     self.nodes.sort_unstable_by_key(|e| (e.stage.order(), e.order));
-
-    //     // 构建 RenderGraph
-    //     let mut graph = RenderGraph::with_capacity(self.nodes.len());
-    //     for entry in &self.nodes {
-    //         graph.add_node(entry.node);
-    //     }
-
-    //     // 执行
-    //     graph.execute(ctx);
-    // }
-
     /// 构建 `RenderGraph` 但不执行（用于调试或延迟执行）
     ///
     /// # 注意

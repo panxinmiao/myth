@@ -133,7 +133,7 @@ fn sanitize_glb(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     let chunk0_len = u32::from_le_bytes(data[12..16].try_into()?) as usize;
     let chunk0_type = u32::from_le_bytes(data[16..20].try_into()?);
 
-    if chunk0_type != 0x4E4F534A {
+    if chunk0_type != 0x4E4F_534A {
         return Ok(Cow::Borrowed(data));
     }
 
@@ -149,7 +149,7 @@ fn sanitize_glb(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     let new_chunk0_len = new_json_bytes.len() + padding;
 
     let mut new_glb = Vec::with_capacity(
-        data.len() + (new_chunk0_len as isize - chunk0_len as isize).unsigned_abs(),
+        data.len() + (new_chunk0_len.cast_signed() - chunk0_len.cast_signed()).unsigned_abs(),
     );
 
     new_glb.extend_from_slice(&data[0..8]);
@@ -159,9 +159,7 @@ fn sanitize_glb(data: &[u8]) -> anyhow::Result<Cow<'_, [u8]>> {
     new_glb.extend_from_slice(&chunk0_type.to_le_bytes());
 
     new_glb.extend_from_slice(&new_json_bytes);
-    for _ in 0..padding {
-        new_glb.push(0x20);
-    }
+    new_glb.extend(std::iter::repeat_n(0x20, padding));
 
     let rest_offset = 20 + chunk0_len;
     if rest_offset < data.len() {
@@ -422,7 +420,7 @@ impl GltfLoader {
     ) -> anyhow::Result<Arc<Prefab>> {
         self.load_textures_async(gltf, buffers).await?;
         self.load_materials(gltf)?;
-        let prefab = self.build_prefab(gltf, buffers)?;
+        let prefab = self.build_prefab(gltf, buffers);
         Ok(Arc::new(prefab))
     }
 
@@ -572,7 +570,7 @@ impl GltfLoader {
 
             let uri_opt = match img_source {
                 gltf::image::Source::Uri { uri, .. } => Some(uri.to_string()),
-                _ => None,
+                gltf::image::Source::View { .. } => None,
             };
 
             let buffer_view_data = match img_source {
@@ -581,7 +579,7 @@ impl GltfLoader {
                     let end = start + view.length();
                     Some(buffers[view.buffer().index()][start..end].to_vec())
                 }
-                _ => None,
+                gltf::image::Source::Uri { .. } => None,
             };
 
             // 创建加载和解码任务
@@ -660,19 +658,13 @@ impl GltfLoader {
                 .map_or(wgpu::FilterMode::Linear, |f| match f {
                     gltf::texture::MinFilter::Nearest => wgpu::FilterMode::Nearest,
                     gltf::texture::MinFilter::Linear => wgpu::FilterMode::Linear,
-                    gltf::texture::MinFilter::NearestMipmapNearest => {
+                    gltf::texture::MinFilter::NearestMipmapNearest
+                    | gltf::texture::MinFilter::NearestMipmapLinear => {
                         generate_mipmaps = true;
                         wgpu::FilterMode::Nearest
                     }
-                    gltf::texture::MinFilter::LinearMipmapNearest => {
-                        generate_mipmaps = true;
-                        wgpu::FilterMode::Linear
-                    }
-                    gltf::texture::MinFilter::NearestMipmapLinear => {
-                        generate_mipmaps = true;
-                        wgpu::FilterMode::Nearest
-                    }
-                    gltf::texture::MinFilter::LinearMipmapLinear => {
+                    gltf::texture::MinFilter::LinearMipmapNearest
+                    | gltf::texture::MinFilter::LinearMipmapLinear => {
                         generate_mipmaps = true;
                         wgpu::FilterMode::Linear
                     }
@@ -774,6 +766,7 @@ impl GltfLoader {
         Ok(())
     }
 
+    #[allow(clippy::too_many_lines)]
     fn load_materials(&mut self, gltf: &gltf::Gltf) -> anyhow::Result<()> {
         for material in gltf.materials() {
             let pbr = material.pbr_metallic_roughness();
@@ -928,9 +921,9 @@ impl GltfLoader {
         Ok(())
     }
 
-    fn build_prefab(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<Prefab> {
+    fn build_prefab(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> Prefab {
         for node in gltf.nodes() {
-            let prefab_node = self.create_prefab_node(&node)?;
+            let prefab_node = Self::create_prefab_node(&node);
             self.prefab_nodes.push(prefab_node);
         }
 
@@ -943,10 +936,10 @@ impl GltfLoader {
             }
         }
 
-        self.load_skins(gltf, buffers)?;
+        self.load_skins(gltf, buffers);
 
         for node in gltf.nodes() {
-            self.bind_node_mesh_and_skin(&node, buffers)?;
+            self.bind_node_mesh_and_skin(&node, buffers);
         }
 
         let root_indices: Vec<usize> =
@@ -956,17 +949,17 @@ impl GltfLoader {
                 Vec::new()
             };
 
-        let animations = self.load_animations(gltf, buffers)?;
+        let animations = Self::load_animations(gltf, buffers);
 
-        Ok(Prefab {
+        Prefab {
             nodes: std::mem::take(&mut self.prefab_nodes),
             root_indices,
             skeletons: std::mem::take(&mut self.prefab_skeletons),
             animations,
-        })
+        }
     }
 
-    fn create_prefab_node(&self, node: &gltf::Node) -> anyhow::Result<PrefabNode> {
+    fn create_prefab_node(node: &gltf::Node) -> PrefabNode {
         let node_name = node.name().map(std::string::ToString::to_string);
 
         let mut prefab_node = PrefabNode::new();
@@ -977,10 +970,10 @@ impl GltfLoader {
         prefab_node.transform.rotation = Quat::from_array(r);
         prefab_node.transform.scale = Vec3::from_array(s);
 
-        Ok(prefab_node)
+        prefab_node
     }
 
-    fn load_skins(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> anyhow::Result<()> {
+    fn load_skins(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) {
         for skin in gltf.skins() {
             let name = skin.name().unwrap_or("Skeleton").to_string();
 
@@ -1035,16 +1028,14 @@ impl GltfLoader {
                 inverse_bind_matrices: ibms,
             });
         }
-
-        Ok(())
     }
 
     fn build_engine_mesh(
         &mut self,
         primitive: &gltf::Primitive,
         buffers: &[Vec<u8>],
-    ) -> anyhow::Result<crate::resources::mesh::Mesh> {
-        let geo_handle = self.load_primitive_geometry(primitive, buffers)?;
+    ) -> crate::resources::mesh::Mesh {
+        let geo_handle = self.load_primitive_geometry(primitive, buffers);
 
         let mat_idx = primitive.material().index();
         let mat_handle = if let Some(idx) = mat_idx {
@@ -1062,14 +1053,14 @@ impl GltfLoader {
                 .init_morph_targets(geometry.morph_target_count, geometry.morph_vertex_count);
         }
 
-        Ok(engine_mesh)
+        engine_mesh
     }
 
     fn bind_node_mesh_and_skin(
         &mut self,
         node: &gltf::Node,
         buffers: &[Vec<u8>],
-    ) -> anyhow::Result<()> {
+    ) {
         let node_idx = node.index();
 
         let initial_weights = if let Some(weights) = node.weights() {
@@ -1088,7 +1079,7 @@ impl GltfLoader {
             match primitives.len() {
                 0 => {}
                 1 => {
-                    let engine_mesh = self.build_engine_mesh(&primitives[0], buffers)?;
+                    let engine_mesh = self.build_engine_mesh(&primitives[0], buffers);
                     self.prefab_nodes[node_idx].mesh = Some(engine_mesh);
                 }
                 _ => {
@@ -1096,7 +1087,7 @@ impl GltfLoader {
                     let parent_name = self.prefab_nodes[node_idx].name.clone();
 
                     for (i, primitive) in primitives.iter().enumerate() {
-                        let engine_mesh = self.build_engine_mesh(primitive, buffers)?;
+                        let engine_mesh = self.build_engine_mesh(primitive, buffers);
 
                         let mut sub_node = PrefabNode::new();
                         sub_node.name = Some(format!(
@@ -1123,8 +1114,6 @@ impl GltfLoader {
         if let Some(skin) = node.skin() {
             self.prefab_nodes[node_idx].skin_index = Some(skin.index());
         }
-
-        Ok(())
     }
 
     fn build_interleaved_buffer(
@@ -1188,11 +1177,12 @@ impl GltfLoader {
         Some((buffer, attributes))
     }
 
+    #[allow(clippy::too_many_lines)]
     fn load_primitive_geometry(
         &mut self,
         primitive: &gltf::Primitive,
         buffers: &[Vec<u8>],
-    ) -> anyhow::Result<GeometryHandle> {
+    ) -> GeometryHandle {
         let mut geometry = Geometry::new();
         let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
@@ -1203,7 +1193,7 @@ impl GltfLoader {
 
         let vertex_count = positions.len();
         if vertex_count == 0 {
-            return Ok(self.assets.geometries.add(geometry));
+            return self.assets.geometries.add(geometry);
         }
 
         geometry.set_attribute(
@@ -1349,24 +1339,21 @@ impl GltfLoader {
 
         geometry.topology = match primitive.mode() {
             gltf::mesh::Mode::Points => PrimitiveTopology::PointList,
-            gltf::mesh::Mode::Lines => PrimitiveTopology::LineList,
-            gltf::mesh::Mode::LineLoop => PrimitiveTopology::LineList,
+            gltf::mesh::Mode::Lines | gltf::mesh::Mode::LineLoop => PrimitiveTopology::LineList,
             gltf::mesh::Mode::LineStrip => PrimitiveTopology::LineStrip,
-            gltf::mesh::Mode::Triangles => PrimitiveTopology::TriangleList,
+            gltf::mesh::Mode::Triangles | gltf::mesh::Mode::TriangleFan => {
+                PrimitiveTopology::TriangleList
+            }
             gltf::mesh::Mode::TriangleStrip => PrimitiveTopology::TriangleStrip,
-            gltf::mesh::Mode::TriangleFan => PrimitiveTopology::TriangleList,
         };
         geometry.build_morph_storage_buffers();
         geometry.compute_bounding_volume();
 
-        Ok(self.assets.geometries.add(geometry))
+        self.assets.geometries.add(geometry)
     }
 
-    fn load_animations(
-        &self,
-        gltf: &gltf::Gltf,
-        buffers: &[Vec<u8>],
-    ) -> anyhow::Result<Vec<AnimationClip>> {
+    #[allow(clippy::too_many_lines)]
+    fn load_animations(gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> Vec<AnimationClip> {
         let mut animations = Vec::new();
 
         for anim in gltf.animations() {
@@ -1504,7 +1491,7 @@ impl GltfLoader {
             animations.push(clip);
         }
 
-        Ok(animations)
+        animations
     }
 }
 
@@ -1572,6 +1559,8 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
 
                 let glossiness_normalized = (f32::from(glossiness) / 255.0) * glossiness_factor;
                 let roughness_normalized = 1.0 - glossiness_normalized;
+                // SAFETY: roughness_normalized is clamped to [0, 1] by the formula
+                #[allow(clippy::cast_sign_loss)]
                 let roughness_byte = (roughness_normalized * 255.0) as u8;
 
                 roughness_data.push(0);

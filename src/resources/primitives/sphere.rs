@@ -19,7 +19,7 @@ impl Default for SphereOptions {
 }
 
 #[must_use]
-pub fn create_sphere(options: SphereOptions) -> Geometry {
+pub fn create_sphere(options: &SphereOptions) -> Geometry {
     let radius = options.radius;
     let width_segments = options.width_segments.max(3);
     let height_segments = options.height_segments.max(2);
@@ -72,14 +72,14 @@ pub fn create_sphere(options: SphereOptions) -> Geometry {
             let v3 = v2 + 1;
 
             // If not the last row (south pole doesn't need the first triangle, but for simplicity we usually don't do special culling, degenerate triangles will be ignored by the GPU)
-            if y != 0 || true {
+            if y != 0 {
                 indices.push(v0 as u16);
                 indices.push(v1 as u16);
                 indices.push(v2 as u16);
             }
 
             // If not the first row (north pole)
-            if y != height_segments - 1 || true {
+            if y != height_segments - 1 {
                 indices.push(v1 as u16);
                 indices.push(v3 as u16);
                 indices.push(v2 as u16);

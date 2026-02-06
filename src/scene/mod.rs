@@ -47,6 +47,7 @@ pub mod environment;
 pub mod light;
 pub mod manager;
 pub mod node;
+#[allow(clippy::module_inception)]
 pub mod scene;
 pub mod skeleton;
 pub mod transform;

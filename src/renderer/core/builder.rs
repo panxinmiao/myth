@@ -268,12 +268,7 @@ impl<'a> ResourceBuilder<'a> {
                         let access = if read_only { "read" } else { "read_write" };
                         let struct_type_name = struct_type_name.expect("need a struct name");
                         format!(
-                            "@group({}) @binding({}) var<storage, {}> st_{}: {};",
-                            group_index,
-                            binding_index,
-                            access,
-                            name,
-                            format!("array<{}>", struct_type_name)
+                            "@group({group_index}) @binding({binding_index}) var<storage, {access}> st_{name}: array<{struct_type_name}>;"
                         )
                     }
                 },
@@ -283,16 +278,12 @@ impl<'a> ResourceBuilder<'a> {
                     ..
                 } => {
                     let type_str = match (view_dimension, sample_type) {
-                        (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Float { .. }) => {
-                            "texture_2d<f32>"
-                        }
                         (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Depth) => {
                             "texture_depth_2d"
                         }
-                        (
-                            wgpu::TextureViewDimension::Cube,
-                            wgpu::TextureSampleType::Float { .. },
-                        ) => "texture_cube<f32>",
+                        (wgpu::TextureViewDimension::Cube, wgpu::TextureSampleType::Float { .. }) => {
+                            "texture_cube<f32>"
+                        }
                         _ => "texture_2d<f32>",
                     };
                     format!(
