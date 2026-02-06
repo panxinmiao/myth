@@ -1,6 +1,6 @@
 //! UI Pass 插件模块
 //!
-//! 这是一个外部插件示例，演示如何将 egui 集成到 myth-engine 渲染引擎中。
+//! 这是一个外部插件示例，演示如何将 egui 集成到 myth 渲染引擎中。
 //! 该模块暂时**不属于**引擎核心，是"用户代码"(User Land Code)。
 //! 未来，它可能会被移入引擎核心，作为官方 UI 解决方案提供。
 //!
@@ -17,7 +17,7 @@ use wgpu::{Device, TextureFormat};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
-use myth_engine::{
+use myth::{
     assets::TextureHandle,
     renderer::graph::{RenderContext, RenderNode},
 };

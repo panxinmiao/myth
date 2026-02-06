@@ -33,12 +33,12 @@ use std::sync::Mutex;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use myth_engine::RenderableMaterialTrait;
-use myth_engine::assets::SharedPrefab;
-use myth_engine::prelude::*;
-use myth_engine::renderer::core::{BindingResource, ResourceBuilder};
-use myth_engine::resources::texture::TextureSource;
-use myth_engine::utils::FpsCounter;
+use myth::RenderableMaterialTrait;
+use myth::assets::SharedPrefab;
+use myth::prelude::*;
+use myth::renderer::core::{BindingResource, ResourceBuilder};
+use myth::resources::texture::TextureSource;
+use myth::utils::FpsCounter;
 
 use ui_pass::UiPass;
 
@@ -255,7 +255,7 @@ impl AppHandler for GltfViewer {
             let map_path = "royal_esplanade_2k.hdr.jpg";
             let env_map_path = format!("{}{}", ASSET_PATH, map_path);
 
-            // match asset_server.load_cube_texture_async(env_map_path, myth_engine::ColorSpace::Srgb, true).await {
+            // match asset_server.load_cube_texture_async(env_map_path, ColorSpace::Srgb, true).await {
             match asset_server
                 .load_texture_async(env_map_path, ColorSpace::Srgb, false)
                 .await
@@ -428,7 +428,7 @@ impl AppHandler for GltfViewer {
         }
     }
 
-    fn compose_frame<'a>(&'a mut self, composer: myth_engine::renderer::graph::FrameComposer<'a>) {
+    fn compose_frame<'a>(&'a mut self, composer: myth::renderer::graph::FrameComposer<'a>) {
         if self.show_ui {
             composer
                 .add_node(RenderStage::UI, &mut self.ui_pass)
@@ -765,7 +765,7 @@ impl GltfViewer {
     /// 从材质中收集纹理信息
     fn collect_textures_from_material(
         &mut self,
-        material: &myth_engine::Material,
+        material: &Material,
         mat_name: &str,
         assets: &AssetServer,
         visited: &mut std::collections::HashSet<TextureHandle>,
@@ -773,7 +773,7 @@ impl GltfViewer {
         // 使用通用方式收集纹理：通过 visit_textures trait 方法
         let mut collected = Vec::new();
         material.as_renderable().visit_textures(&mut |tex_source| {
-            if let myth_engine::resources::texture::TextureSource::Asset(handle) = tex_source {
+            if let myth::resources::texture::TextureSource::Asset(handle) = tex_source {
                 if !visited.contains(handle) {
                     visited.insert(*handle);
                     collected.push(*handle);
@@ -822,7 +822,7 @@ impl GltfViewer {
         ctx: &egui::Context,
         scene: &mut Scene,
         assets: &AssetServer,
-        renderer: &mut myth_engine::Renderer,
+        renderer: &mut myth::Renderer,
     ) {
         egui::Window::new("Control Panel (Press Tab to Toggle)")
             .default_pos([10.0, 10.0])
@@ -1102,7 +1102,7 @@ impl GltfViewer {
                                 .width(120.0)
                                 .selected_text(current_mode.name())
                                 .show_ui(ui, |ui| {
-                                    for mode in myth_engine::ToneMappingMode::all() {
+                                    for mode in myth::ToneMappingMode::all() {
                                         if ui
                                             .selectable_label(current_mode == *mode, mode.name())
                                             .clicked()
@@ -1244,7 +1244,7 @@ impl GltfViewer {
     fn render_node_tree(
         &mut self,
         ui: &mut egui::Ui,
-        scene: &myth_engine::Scene,
+        scene: &Scene,
         node: NodeHandle,
         depth: usize,
     ) {
@@ -1296,7 +1296,7 @@ impl GltfViewer {
     fn render_node_details(
         &self,
         ui: &mut egui::Ui,
-        scene: &mut myth_engine::Scene,
+        scene: &mut Scene,
         node: NodeHandle,
         assets: &AssetServer,
     ) {
@@ -1424,7 +1424,7 @@ impl GltfViewer {
 
                 // 只处理 Physical 材质
                 match &material.data {
-                    myth_engine::MaterialType::Physical(m) => {
+                    MaterialType::Physical(m) => {
                         {
                             // uniforms
                             // let mut uniform_mut = m.uniforms_mut();
@@ -1493,21 +1493,9 @@ impl GltfViewer {
                             egui::ComboBox::from_id_salt("side_combo")
                                 .selected_text(format!("{:?}", settings.side))
                                 .show_ui(ui, |ui| {
-                                    ui.selectable_value(
-                                        &mut settings.side,
-                                        myth_engine::Side::Front,
-                                        "Front",
-                                    );
-                                    ui.selectable_value(
-                                        &mut settings.side,
-                                        myth_engine::Side::Back,
-                                        "Back",
-                                    );
-                                    ui.selectable_value(
-                                        &mut settings.side,
-                                        myth_engine::Side::Double,
-                                        "Double",
-                                    );
+                                    ui.selectable_value(&mut settings.side, Side::Front, "Front");
+                                    ui.selectable_value(&mut settings.side, Side::Back, "Back");
+                                    ui.selectable_value(&mut settings.side, Side::Double, "Double");
                                 });
                             ui.end_row();
 
@@ -1515,61 +1503,46 @@ impl GltfViewer {
                             ui.label("Alpha Mode:");
                             egui::ComboBox::from_id_salt("alpha_mode_combo")
                                 .selected_text(match settings.alpha_mode {
-                                    myth_engine::AlphaMode::Opaque => "Opaque",
-                                    myth_engine::AlphaMode::Mask(..) => "Mask",
-                                    myth_engine::AlphaMode::Blend => "Blend",
+                                    AlphaMode::Opaque => "Opaque",
+                                    AlphaMode::Mask(..) => "Mask",
+                                    AlphaMode::Blend => "Blend",
                                 })
                                 .show_ui(ui, |ui| {
                                     // 切换模式时，如果是 Mask 需要保留默认阈值
                                     if ui
                                         .selectable_label(
-                                            matches!(
-                                                settings.alpha_mode,
-                                                myth_engine::AlphaMode::Opaque
-                                            ),
+                                            matches!(settings.alpha_mode, AlphaMode::Opaque),
                                             "Opaque",
                                         )
                                         .clicked()
                                     {
-                                        settings.alpha_mode = myth_engine::AlphaMode::Opaque;
+                                        settings.alpha_mode = AlphaMode::Opaque;
                                     }
                                     if ui
                                         .selectable_label(
-                                            matches!(
-                                                settings.alpha_mode,
-                                                myth_engine::AlphaMode::Mask(..)
-                                            ),
+                                            matches!(settings.alpha_mode, AlphaMode::Mask(..)),
                                             "Mask",
                                         )
                                         .clicked()
                                     {
                                         // 如果之前不是 Mask，设为默认 0.5，否则保持
-                                        if !matches!(
-                                            settings.alpha_mode,
-                                            myth_engine::AlphaMode::Mask(..)
-                                        ) {
-                                            settings.alpha_mode =
-                                                myth_engine::AlphaMode::Mask(0.5, false);
+                                        if !matches!(settings.alpha_mode, AlphaMode::Mask(..)) {
+                                            settings.alpha_mode = AlphaMode::Mask(0.5, false);
                                         }
                                     }
                                     if ui
                                         .selectable_label(
-                                            matches!(
-                                                settings.alpha_mode,
-                                                myth_engine::AlphaMode::Blend
-                                            ),
+                                            matches!(settings.alpha_mode, AlphaMode::Blend),
                                             "Blend",
                                         )
                                         .clicked()
                                     {
-                                        settings.alpha_mode = myth_engine::AlphaMode::Blend;
+                                        settings.alpha_mode = AlphaMode::Blend;
                                     }
                                 });
 
                             // 如果是 Mask 模式，额外显示阈值滑块
-                            if let myth_engine::AlphaMode::Mask(cutoff, a2c) =
-                                &mut settings.alpha_mode
-                            {
+                            if let AlphaMode::Mask(cutoff, a2c) = &mut settings.alpha_mode {
                                 ui.horizontal(|ui| {
                                     // ui[1].add(egui::DragValue::new(cutoff).speed(0.01).range(0.0..=1.0).prefix(""));
                                     ui.add(

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use myth_engine::prelude::*;
+use myth::prelude::*;
 use winit::window::Window;
 
 /// Basic Rotating Cube Example

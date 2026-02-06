@@ -5,7 +5,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use myth_engine::render::RenderSettings;
+//! use myth::render::RenderSettings;
 //!
 //! let settings = RenderSettings {
 //!     vsync: false,
@@ -47,7 +47,7 @@
 /// # Example
 ///
 /// ```rust,ignore
-/// use myth_engine::render::RenderSettings;
+/// use myth::render::RenderSettings;
 ///
 /// // High-performance settings for games
 /// let game_settings = RenderSettings {

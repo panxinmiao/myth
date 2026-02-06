@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use glam::Vec3;
 
-use myth_engine::prelude::*;
-use myth_engine::utils::FpsCounter;
+use myth::prelude::*;
+use myth::utils::FpsCounter;
 use winit::window::Window;
 
 /// glTF PBR Helmet Example

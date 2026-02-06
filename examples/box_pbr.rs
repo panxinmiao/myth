@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use myth_engine::prelude::*;
-use myth_engine::utils::fps_counter::FpsCounter;
+use myth::prelude::*;
+use myth::utils::fps_counter::FpsCounter;
 use winit::window::Window;
 
 /// PBR Material Cube Example
@@ -45,7 +45,7 @@ impl AppHandler for PbrBox {
                     "examples/assets/Park2/posz.jpg",
                     "examples/assets/Park2/negz.jpg",
                 ],
-                myth_engine::ColorSpace::Srgb,
+                ColorSpace::Srgb,
                 true,
             )
             .expect("Failed to load environment map");

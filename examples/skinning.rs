@@ -2,8 +2,8 @@ use std::env;
 use std::path::Path;
 use std::sync::Arc;
 
-use myth_engine::prelude::*;
-use myth_engine::utils::FpsCounter;
+use myth::prelude::*;
+use myth::utils::FpsCounter;
 use winit::window::Window;
 
 /// Skinning Animation Example

@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use myth_engine::{MythEngine, RenderSettings};
+//! use myth::{MythEngine, RenderSettings};
 //!
 //! // Create engine with custom settings
 //! let mut engine = MythEngine::new(RenderSettings::default());

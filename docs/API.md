@@ -5,7 +5,7 @@ A high-performance 3D rendering engine built with Rust and wgpu, inspired by Thr
 ## Quick Start
 
 ```rust
-use myth_engine::prelude::*;
+use myth::prelude::*;
 
 struct MyApp;
 
@@ -31,7 +31,7 @@ impl AppHandler for MyApp {
         MyApp
     }
     
-    fn update(&mut self, _: &mut myth_engineEngine, _: &Arc<Window>, _: &FrameState) {
+    fn update(&mut self, _: &mut MythEngine, _: &Arc<Window>, _: &FrameState) {
         // Update logic here
     }
 }
@@ -47,27 +47,27 @@ fn main() -> anyhow::Result<()> {
 
 ```rust
 // Recommended: Use prelude for common types
-use myth_engine::prelude::*;
+use myth::prelude::*;
 
 // Alternative: Import specific modules
-use myth_engine::scene::{Scene, Camera, Light};
-use myth_engine::resources::{Geometry, Material, Mesh};
-use myth_engine::math::{Vec3, Quat, Mat4};
+use myth::scene::{Scene, Camera, Light};
+use myth::resources::{Geometry, Material, Mesh};
+use myth::math::{Vec3, Quat, Mat4};
 ```
 
 ### Module Hierarchy
 
 | Module | Description |
 |--------|-------------|
-| `myth_engine::prelude` | Common imports for everyday use |
-| `myth_engine::app` | Application lifecycle and windowing |
-| `myth_engine::engine` | Core engine instance |
-| `myth_engine::scene` | Scene graph (nodes, cameras, lights) |
-| `myth_engine::resources` | Resource definitions (geometry, material, texture) |
-| `myth_engine::assets` | Asset loading and management |
-| `myth_engine::animation` | Skeletal and morph target animations |
-| `myth_engine::math` | Math types (re-exported from glam) |
-| `myth_engine::render` | Rendering configuration and advanced APIs |
+| `myth::prelude` | Common imports for everyday use |
+| `myth::app` | Application lifecycle and windowing |
+| `myth::engine` | Core engine instance |
+| `myth::scene` | Scene graph (nodes, cameras, lights) |
+| `myth::resources` | Resource definitions (geometry, material, texture) |
+| `myth::assets` | Asset loading and management |
+| `myth::animation` | Skeletal and morph target animations |
+| `myth::math` | Math types (re-exported from glam) |
+| `myth::render` | Rendering configuration and advanced APIs |
 
 ---
 
@@ -338,7 +338,7 @@ let material = assets.materials.get_mut(mat_handle);
 ### glTF Loading
 
 ```rust
-use myth_engine::assets::GltfLoader;
+use myth::assets::GltfLoader;
 
 // Load glTF/GLB file
 let prefab = GltfLoader::load(&assets, "model.gltf").await?;
@@ -387,7 +387,7 @@ if let Some(mixer) = scene.animation_mixers.get_mut(node) {
 ### Creating Custom Animations
 
 ```rust
-use myth_engine::animation::{AnimationClip, Track, TrackData};
+use myth::animation::{AnimationClip, Track, TrackData};
 
 let clip = AnimationClip::new("bounce")
     .with_track(Track {
@@ -438,7 +438,7 @@ fn update(&mut self, engine: &mut MythEngine, _: &Arc<Window>, _: &FrameState) {
 ### RenderSettings
 
 ```rust
-use myth_engine::render::RenderSettings;
+use myth::render::RenderSettings;
 
 let settings = RenderSettings {
     power_preference: wgpu::PowerPreference::HighPerformance,
@@ -456,7 +456,7 @@ App::new()
 ### Custom Render Passes
 
 ```rust
-use myth_engine::render::{FrameComposer, RenderStage, RenderNode};
+use myth::render::{FrameComposer, RenderStage, RenderNode};
 
 impl AppHandler for MyApp {
     fn compose_frame<'a>(&'a self, composer: FrameComposer<'a>) {
@@ -477,7 +477,7 @@ impl AppHandler for MyApp {
 Camera orbit controller for interactive viewing.
 
 ```rust
-use myth_engine::OrbitControls;
+use myth::OrbitControls;
 
 // Create controller
 let orbit = OrbitControls::new(
@@ -501,7 +501,7 @@ orbit.update(&mut transform, &input, camera.fov, dt);
 Built-in functions to create common geometry shapes.
 
 ```rust
-use myth_engine::{create_box, create_sphere, SphereOptions, create_plane, PlaneOptions};
+use myth::{create_box, create_sphere, SphereOptions, create_plane, PlaneOptions};
 
 // Simple box
 let box_geo = create_box(1.0, 1.0, 1.0);
@@ -535,7 +535,7 @@ For users who need deeper control over the rendering system.
 Implement `MaterialTrait` and `RenderableMaterialTrait` for custom materials:
 
 ```rust
-use myth_engine::{MaterialTrait, RenderableMaterialTrait, ShaderDefines, TextureSlot};
+use myth::{MaterialTrait, RenderableMaterialTrait, ShaderDefines, TextureSlot};
 
 pub struct MyCustomMaterial {
     pub color: Vec4,
@@ -567,7 +567,7 @@ impl RenderableMaterialTrait for MyCustomMaterial {
 Access wgpu context and resource management:
 
 ```rust
-use myth_engine::render::core::{WgpuContext, ResourceManager, BindingResource, ResourceBuilder};
+use myth::render::core::{WgpuContext, ResourceManager, BindingResource, ResourceBuilder};
 
 // In RenderNode implementation
 fn render(&self, ctx: &mut RenderContext) {
@@ -584,21 +584,21 @@ For users who prefer explicit module paths:
 
 ```rust
 // Application
-use myth_engine::app::winit::{App, AppHandler};
+use myth::app::winit::{App, AppHandler};
 
 // Scene graph
-use myth_engine::scene::{Scene, Camera, Light, light};
+use myth::scene::{Scene, Camera, Light, light};
 
 // Resources
-use myth_engine::resources::{Geometry, Material, Mesh};
-use myth_engine::resources::primitives::{create_sphere, SphereOptions};
+use myth::resources::{Geometry, Material, Mesh};
+use myth::resources::primitives::{create_sphere, SphereOptions};
 
 // Renderer internals
-use myth_engine::renderer::core::{BindingResource, ResourceBuilder};
-use myth_engine::renderer::graph::{RenderNode, RenderStage};
+use myth::renderer::core::{BindingResource, ResourceBuilder};
+use myth::renderer::graph::{RenderNode, RenderStage};
 
 // Assets
-use myth_engine::assets::{GltfLoader, AssetServer};
+use myth::assets::{GltfLoader, AssetServer};
 ```
 
 ---
@@ -651,7 +651,7 @@ let textures = TextureBundle {
 
 ```toml
 [dependencies]
-myth_engine = { version = "0.1", default-features = false, features = ["winit", "gltf"] }
+myth = { version = "0.1", default-features = false, features = ["winit", "gltf"] }
 ```
 
 ---

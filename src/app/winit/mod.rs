@@ -20,8 +20,8 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use myth_engine::app::winit::{App, AppHandler};
-//! use myth_engine::engine::{MythEngine, FrameState};
+//! use myth::app::winit::{App, AppHandler};
+//! use myth::engine::{MythEngine, FrameState};
 //! use std::sync::Arc;
 //! use winit::window::Window;
 //!

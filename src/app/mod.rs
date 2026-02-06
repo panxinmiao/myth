@@ -21,7 +21,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use myth_engine::app::winit::{App, AppHandler};
+//! use myth::app::winit::{App, AppHandler};
 //!
 //! struct MyGame;
 //!

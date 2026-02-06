@@ -5,9 +5,8 @@ edition = "2024"
 authors = ["Pan Xinmiao <pan_xinmiao@163.com>"]
 description = "A developer-friendly, high-performance 3D rendering engine written in Rust."
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/panxinmiao/myth-engine"
-homepage = "https://github.com/panxinmiao/myth-engine"
-documentation = "https://docs.rs/myth-engine"
+repository = "https://github.com/panxinmiao/myth"
+homepage = "https://github.com/panxinmiao/myth"
 readme = "README.md"
 keywords = ["3d", "wgpu", "graphics", "gamedev", "engine"]
 categories = ["game-development", "graphics", "rendering::engine"]
@@ -21,6 +20,8 @@ exclude = [
 ]
 
 [lib]
+name = "myth"
+path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 # =================================================================

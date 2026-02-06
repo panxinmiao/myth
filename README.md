@@ -1,19 +1,17 @@
 <div align="center">
 
-# Myth Engine
+# Myth
 
 **A High-Performance, WGPU-Based Rendering Engine for Rust.**
 
-[![Crates.io](https://img.shields.io/crates/v/myth-engine.svg)](https://crates.io/crates/myth-engine)
-[![Docs.rs](https://docs.rs/myth-engine/badge.svg)](https://docs.rs/myth-engine)
-[![CI](https://github.com/panxinmiao/myth-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/panxinmiao/myth-engine/actions/workflows/ci.yml)
-[![GitHub Pages](https://github.com/panxinmiao/myth-engine/actions/workflows/deploy.yml/badge.svg)](https://github.com/panxinmiao/myth-engine/actions/workflows/deploy.yml)
+[![CI](https://github.com/panxinmiao/myth/actions/workflows/ci.yml/badge.svg)](https://github.com/panxinmiao/myth/actions/workflows/ci.yml)
+[![GitHub Pages](https://github.com/panxinmiao/myth/actions/workflows/deploy.yml/badge.svg)](https://github.com/panxinmiao/myth/actions/workflows/deploy.yml)
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](LICENSE)
 [![WebGPU Ready](https://img.shields.io/badge/WebGPU-Ready-green.svg)](https://gpuweb.github.io/gpuweb/)
 
 ![Myth Engine Hero](docs/images/hero.png)
 
-[**Online Web Demo**](https://panxinmiao.github.io/myth-engine/) | [**Documentation**](https://docs.rs/myth-engine) | [**Examples**](examples/)
+[**Online Web Demo**](https://panxinmiao.github.io/myth/) | [**Examples**](examples/)
 
 </div>
 
@@ -21,11 +19,11 @@
 
 > ⚠️ **Warning: Early Development Stage**
 >
-> Myth Engine is currently in **active alpha development**. APIs are unstable and subject to **drastic breaking changes**. 
+> Myth is currently in **active alpha development**. APIs are unstable and subject to **drastic breaking changes**. 
 
 ## ✨ Introduction
 
-**Myth Engine** (myth-engine) is a developer-friendly, high-performance 3D rendering engine written in **Rust**. 
+**Myth** is a developer-friendly, high-performance 3D rendering engine written in **Rust**. 
 
 Inspired by the simplicity of **Three.js** and built on the modern power of **wgpu**, Myth aims to bridge the gap between low-level graphics APIs and high-level game engines. It provides a familiar object-oriented API for rapid development, backed by a **Transient Render Graph** architecture for industrial-grade performance.
 
@@ -35,7 +33,7 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
 * **⚡ Modern Architecture**: Built on **wgpu**, fully supporting **Vulkan**, **Metal**, **DX12**, and **WebGPU**.
 * **✨ Advanced PBR**: Industry-standard Physically Based Rendering pipeline.
     * Metalness/Roughness workflow.
-    * **IBL** (auto PMREM generation, CubeMap & Equirectangular env maps).
+    * **IBL** (support cubeMap & equirectangular env maps, with auto PMREM generation).
     * **Clearcoat** (car paint, varnished wood).
     * **Iridescence** (soap bubbles, oil films).
     * **Sheen** (cloth-like materials).
@@ -53,7 +51,7 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
 
 Experience the engine directly in your browser (Chrome/Edge 113+ required for WebGPU):
 
-👉 **[Launch glTF Viewer & Inspector](https://panxinmiao.github.io/myth-engine/)**
+👉 **[Launch glTF Viewer & Inspector](https://panxinmiao.github.io/myth/)**
 
 * **Drag & Drop** your own `.glb` / `.gltf` files to view them.
 * Inspect node hierarchy and tweak PBR material parameters in real-time.
@@ -63,20 +61,21 @@ Experience the engine directly in your browser (Chrome/Edge 113+ required for We
 
 ## 📦 Quick Start
 
-Add `myth-engine` to your `Cargo.toml`:
+Add `myth` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-myth-engine = { git = "[https://github.com/panxinmiao/myth-engine](https://github.com/panxinmiao/myth-engine)", branch = "main" }
+myth = { git = "https://github.com/panxinmiao/myth", branch = "main" }
 
 ```
 
 ### The "Hello World" (Three.js Style)
 
+A spinning cube with a checkerboard texture within less than 50 lines of code.
 Notice how similar this feels to the JS equivalent, but statically typed:
 
 ```rust
-use myth_engine::prelude::*;
+use myth::prelude::*;
 
 struct MyApp;
 

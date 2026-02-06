@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use myth_engine::prelude::*;
+use myth::prelude::*;
 use winit::window::Window;
 
 /// Hello Triangle Example
@@ -13,7 +13,7 @@ impl AppHandler for HelloTriangle {
         let mut geometry = Geometry::new();
         geometry.set_attribute(
             "position",
-            myth_engine::Attribute::new_planar(
+            myth::Attribute::new_planar(
                 &[[0.0f32, 0.5, 0.0], [-0.5, -0.5, 0.0], [0.5, -0.5, 0.0]],
                 wgpu::VertexFormat::Float32x3,
             ),
@@ -21,7 +21,7 @@ impl AppHandler for HelloTriangle {
 
         geometry.set_attribute(
             "uv",
-            myth_engine::Attribute::new_planar(
+            myth::Attribute::new_planar(
                 &[[0.5f32, 1.0], [0.0, 0.0], [1.0, 0.0]],
                 wgpu::VertexFormat::Float32x2,
             ),

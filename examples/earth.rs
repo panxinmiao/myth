@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use myth_engine::prelude::*;
-use myth_engine::utils::fps_counter::FpsCounter;
+use myth::prelude::*;
+use myth::utils::fps_counter::FpsCounter;
 use winit::window::Window;
 
 /// Earth Example
@@ -15,13 +15,12 @@ struct Earth {
 impl AppHandler for Earth {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         // 1. Prepare resources
-        let geometry =
-            myth_engine::create_sphere(&myth_engine::resources::primitives::SphereOptions {
-                radius: 63.71,
-                width_segments: 100,
-                height_segments: 50,
-                ..Default::default()
-            });
+        let geometry = myth::create_sphere(&myth::resources::primitives::SphereOptions {
+            radius: 63.71,
+            width_segments: 100,
+            height_segments: 50,
+            ..Default::default()
+        });
 
         let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
 

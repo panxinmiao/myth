@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use myth_engine::prelude::*;
+use myth::prelude::*;
 use winit::window::Window;
 
 /// 带纹理的旋转立方体 + 轨道控制器

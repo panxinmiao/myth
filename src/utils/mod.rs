@@ -14,7 +14,7 @@
 //! can be compared in O(1) time.
 //!
 //! ```rust,ignore
-//! use myth_engine::utils::interner;
+//! use myth::utils::interner;
 //!
 //! let sym1 = interner::intern("HAS_NORMAL_MAP");
 //! let sym2 = interner::intern("HAS_NORMAL_MAP");

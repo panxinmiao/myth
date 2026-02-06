@@ -28,7 +28,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use myth_engine::scene::{Scene, Node, Camera, Light};
+//! use myth::scene::{Scene, Node, Camera, Light};
 //!
 //! let mut scene = Scene::new();
 //!

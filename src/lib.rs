@@ -1,4 +1,4 @@
-//! # Myth-Engine - A High-Performance WebGPU Rendering Engine
+//! # Myth - A High-Performance WebGPU Rendering Engine
 //!
 //! Myth-Engine is a modern 3D rendering engine built with Rust and wgpu, inspired by Three.js.
 //! It provides a flexible, high-performance foundation for real-time graphics applications.
@@ -8,7 +8,7 @@
 //! For the simplest way to get started, use the [`prelude`] module:
 //!
 //! ```rust,ignore
-//! use myth_engine::prelude::*;
+//! use myth::prelude::*;
 //!
 //! struct MyApp;
 //!
@@ -133,7 +133,7 @@ pub mod utils;
 /// Import everything you need for basic usage with a single line:
 ///
 /// ```rust,ignore
-/// use myth_engine::prelude::*;
+/// use myth::prelude::*;
 /// ```
 ///
 /// This includes:
@@ -192,7 +192,7 @@ pub mod prelude {
 /// # Example
 ///
 /// ```rust,ignore
-/// use myth_engine::math::{Vec3, Quat, Mat4};
+/// use myth::math::{Vec3, Quat, Mat4};
 ///
 /// let position = Vec3::new(1.0, 2.0, 3.0);
 /// let rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
@@ -231,7 +231,7 @@ pub mod math {
 /// # Basic Usage
 ///
 /// ```rust,ignore
-/// use myth_engine::render::RenderSettings;
+/// use myth::render::RenderSettings;
 ///
 /// let settings = RenderSettings {
 ///     vsync: true,
@@ -250,7 +250,7 @@ pub mod math {
 /// rendering passes:
 ///
 /// ```rust,ignore
-/// use myth_engine::render::{FrameComposer, RenderStage, RenderNode};
+/// use myth::render::{FrameComposer, RenderStage, RenderNode};
 ///
 /// impl AppHandler for MyApp {
 ///     fn compose_frame<'a>(&'a self, composer: FrameComposer<'a>) {

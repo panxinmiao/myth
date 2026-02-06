@@ -5,7 +5,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use myth_engine::prelude::*;
+//! use myth::prelude::*;
 //!
 //! struct MyApp {
 //!     orbit: OrbitControls,
