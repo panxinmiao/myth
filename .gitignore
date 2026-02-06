@@ -1,5 +1,4 @@
 /target
 .vscode/
-/docs
 *.glb
 /debug

@@ -2,21 +2,26 @@
 
 # Myth Engine
 
-**The Mythical 3D Engine for Rust.**
+**A High-Performance, WGPU-Based Rendering Engine for Rust.**
 
 [![Crates.io](https://img.shields.io/crates/v/myth-engine.svg)](https://crates.io/crates/myth-engine)
 [![Docs.rs](https://docs.rs/myth-engine/badge.svg)](https://docs.rs/myth-engine)
-[![Build Status](https://img.shields.io/github/actions/workflow/status/panxinmiao/myth-engine/ci.yml)](https://github.com/panxinmiao/myth-engine/actions)
+[![CI](https://github.com/panxinmiao/myth-engine/actions/workflows/ci.yml/badge.svg)](https://github.com/panxinmiao/myth-engine/actions/workflows/ci.yml)
+[![GitHub Pages](https://github.com/panxinmiao/myth-engine/actions/workflows/deploy.yml/badge.svg)](https://github.com/panxinmiao/myth-engine/actions/workflows/deploy.yml)
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](LICENSE)
 [![WebGPU Ready](https://img.shields.io/badge/WebGPU-Ready-green.svg)](https://gpuweb.github.io/gpuweb/)
 
-![Myth Engine Hero](docs/images/hero_render.jpg)
+![Myth Engine Hero](docs/images/hero.png)
 
 [**在线体验 Web Demo**](https://panxinmiao.github.io/myth-engine/) | [**文档**](https://docs.rs/myth-engine) | [**示例**](examples/)
 
 </div>
 
 ---
+
+> ⚠️ **Warning: Early Development Stage**
+>
+> Myth Engine is currently in **active alpha development**. APIs are unstable and subject to **drastic breaking changes**. 
 
 ## ✨ Introduction
 
@@ -28,12 +33,17 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
 ## 🚀 Features
 
 * **⚡ Modern Architecture**: Built on **wgpu**, fully supporting **Vulkan**, **Metal**, **DX12**, and **WebGPU**.
-* **🎨 Advanced PBR**: Industry-standard Physically Based Rendering pipeline.
+* **✨ Advanced PBR**: Industry-standard Physically Based Rendering pipeline.
     * Metalness/Roughness workflow.
+    * **IBL** (auto PMREM generation, CubeMap & Equirectangular env maps).
     * **Clearcoat** (car paint, varnished wood).
-    * **Transmission** (glass, water).
     * **Iridescence** (soap bubbles, oil films).
-    * **HDR** Environment Lighting (IBL).
+    * **Sheen** (cloth-like materials).
+    * **Anisotropy** (brushed metals).
+    * **Transmission** (glass, water).
+* **✨ Full glTF 2.0 Support**: Complete support for glTF 2.0 specification, including PBR materials, animations, and scene hierarchy.
+* **🎨 HDR Rendering Pipeline**: Full support for HDR Rendering, variable tone mapping mode.
+* **🛡️ MSAA**: Built-in Multi-Sample Anti-Aliasing.
 * **🕸️ Transient Render Graph**: A highly optimized, frame-graph based rendering architecture that minimizes overhead and maximizes flexibility.
 * **📦 Asset System**: Asynchronous asset loading with `AssetServer`, built-in **glTF 2.0** support (geometry, materials, animations).
 * **🛠️ Tooling Ready**: Includes a powerful `gltf_viewer` example with an embedded **Inspector UI** (based on egui), capable of inspecting scene nodes, materials, and textures at runtime.
@@ -48,7 +58,8 @@ Experience the engine directly in your browser (Chrome/Edge 113+ required for We
 * **Drag & Drop** your own `.glb` / `.gltf` files to view them.
 * Inspect node hierarchy and tweak PBR material parameters in real-time.
 
-![Web Editor Preview](docs/images/editor_preview.jpg)
+![Web Editor Preview](docs/images/inspector.png)
+
 
 ## 📦 Quick Start
 
@@ -56,4 +67,94 @@ Add `myth-engine` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-myth-engine = "0.0.1"
+myth-engine = "0.1.0"
+
+```
+
+### The "Hello World" (Three.js Style)
+
+Notice how similar this feels to the JS equivalent, but statically typed:
+
+```rust
+use std::sync::Arc;
+
+use myth_engine::prelude::*;
+use winit::window::Window;
+
+struct MyApp;
+
+impl AppHandler for MyApp {
+    fn init(engine: &mut MythEngine, _: &Arc<Window>) -> Self {
+        // 0. Create a Scene
+        let scene = engine.scene_manager.create_active();
+
+        // 1. Create a PBR Material
+        let material = MeshPhysicalMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0)); // Gold
+        let mat_handle = engine.assets.materials.add(material);
+
+        // 2. Create Geometry & Mesh
+        let geometry = Geometry::new_box(1.0, 1.0, 1.0);
+        let geo_handle = engine.assets.geometries.add(geometry);
+        let mesh = Mesh::new(geo_handle, mat_handle);
+        let mesh_handle = scene.add_mesh(mesh);
+        
+        // 3. Setup Camera
+        let camera = Camera::new_perspective(60.0, 16.0/9.0, 0.1);
+        let cam_node = scene.add_camera(camera);
+        // Move camera back
+        scene.nodes.get_mut(cam_node).unwrap().transform.position = Vec3::new(0.0, 0.0, 5.0);
+        scene.active_camera = Some(cam_node);
+        
+        // 4. Add Light
+        scene.add_light(Light::new_directional(Vec3::ONE, 5.0));
+
+        // 5. Setup update callback to rotate the cube
+        scene.on_update(move |scene, _input, _dt| {
+            if let Some(node) = scene.get_node_mut(mesh_handle) {
+                let rot_y = Quat::from_rotation_y(0.02);
+                let rot_x = Quat::from_rotation_x(0.01);
+                node.transform.rotation = node.transform.rotation * rot_y * rot_x;
+            }
+        });
+        
+        Self {}
+    }
+}
+
+fn main() -> anyhow::Result<()> {
+    App::new().with_title("Myth-Engine Demo").run::<MyApp>()
+}
+```
+
+### 🏃 Running Examples
+
+Clone the repository and run the examples directly:
+
+```bash
+# Run the PBR Box example
+cargo run --example box_pbr
+
+# Run the glTF Viewer (Desktop)
+cargo run --example gltf_viewer --release
+
+# Run the glTF Viewer (Web/WASM)
+cd examples/gltf_viewer/web
+./build_wasm.sh
+python3 -m http.server 8080
+
+```
+
+## 🤝 Roadmap
+
+* [x] Basic Scene Graph & Camera
+* [x] WebGPU Render Backend
+* [x] PBR Material System & IBL
+* [x] glTF Loader & Animation Mixer
+* [ ] Shadow Mapping (CSM)
+* [ ] Post-processing Pipeline (Bloom, TAA)
+* [ ] Deferred Rendering Path
+* [ ] Gizmos & Editor Tools
+
+## 📄 License
+
+This project is licensed under the **MIT License** or **Apache-2.0 License**.

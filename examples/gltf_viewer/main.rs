@@ -243,7 +243,6 @@ impl AppHandler for GltfViewer {
 
         let asset_server = engine.assets.clone();
         execute_future(async move {
-            // AssetSource 会自动处理路径/URL
             // let env_map_path = [
             //     format!("{}{}", ASSET_PATH, "Park2/posx.jpg"),
             //     format!("{}{}", ASSET_PATH, "Park2/negx.jpg"),
@@ -822,12 +821,12 @@ impl GltfViewer {
         assets: &AssetServer,
         renderer: &mut myth_engine::Renderer,
     ) {
-        egui::Window::new("Control Panel")
+        egui::Window::new("Control Panel (Press Tab to Toggle)")
             .default_pos([10.0, 10.0])
             .default_width(320.0)
             .show(ctx, |ui| {
                 // ===== 远程模型加载 =====
-                ui.collapsing("🌐 Remote Models", |ui| {
+                ui.collapsing("🌐 Remote Models (KhronosGroup glTF-Sample-Assets)", |ui| {
                     let is_loading = matches!(
                         self.loading_state,
                         LoadingState::LoadingList | LoadingState::LoadingModel(_)

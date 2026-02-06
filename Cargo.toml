@@ -1,6 +1,6 @@
 [package]
 name = "myth-engine"
-version = "0.0.1"
+version = "0.1.0"
 edition = "2024"
 authors = ["Pan Xinmiao <pan_xinmiao@163.com>"]
 description = "A developer-friendly, high-performance 3D rendering engine written in Rust."
