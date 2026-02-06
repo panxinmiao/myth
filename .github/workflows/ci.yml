@@ -1,0 +1,41 @@
+name: CI
+
+on:
+  # push:
+  #   branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: Check & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      # Install Rust Toolchain
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        
+      # Cache dependencies to speed up build
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # 1. Check if code compiles
+      - name: Check
+        run: cargo check --verbose
+
+      # 2. Run tests
+      - name: Run tests
+        run: cargo test --verbose
+        
+      # 3. Run Clippy linter
+      - name: Clippy
+        run: cargo clippy -- -D warnings
+        
+      # 4. Check if documentation can be generated
+      - name: Doc Check
+        run: cargo doc --no-deps

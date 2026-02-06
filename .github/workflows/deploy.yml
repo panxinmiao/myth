@@ -1,0 +1,38 @@
+name: Deploy to GitHub Pages
+
+on:
+  # push:
+  #   branches: [ "main" ] 
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout 🛎️
+        uses: actions/checkout@v4
+
+      - name: Install Rust 🦀
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Install wasm-pack 📦
+        uses: jetli/wasm-pack-action@v0.4.0
+
+      - name: Build WASM 🛠️
+        run: |
+          cd examples/gltf_viewer/web
+          
+          chmod +x build_wasm.sh
+          
+          ./build_wasm.sh
+
+      - name: Deploy 🚀
+        uses: JamesIves/github-pages-deploy-action@v4
+        with:
+          branch: gh-pages
+          folder: examples/gltf_viewer/web

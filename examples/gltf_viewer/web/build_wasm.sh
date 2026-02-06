@@ -39,7 +39,7 @@ cd "$PROJECT_ROOT"
 wasm-pack build \
     --target web \
     $BUILD_MODE \
-    --out-dir "examples/gltf_viewer/web/pkg" \
+    --out-dir pkg ../../ \
     --out-name gltf_viewer \
     -- --example gltf_viewer
 
