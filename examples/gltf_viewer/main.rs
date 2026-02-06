@@ -256,7 +256,10 @@ impl AppHandler for GltfViewer {
             let env_map_path = format!("{}{}", ASSET_PATH, map_path);
 
             // match asset_server.load_cube_texture_async(env_map_path, myth_engine::ColorSpace::Srgb, true).await {
-            match asset_server.load_hdr_texture_async(env_map_path).await {
+            match asset_server
+                .load_texture_async(env_map_path, ColorSpace::Srgb, false)
+                .await
+            {
                 Ok(handle) => {
                     log::info!("HDR loaded");
                     let _ = hdr_tx.send(handle); // 发送 Handle 回主线程
@@ -826,65 +829,73 @@ impl GltfViewer {
             .default_width(320.0)
             .show(ctx, |ui| {
                 // ===== 远程模型加载 =====
-                ui.collapsing("🌐 Remote Models (KhronosGroup glTF-Sample-Assets)", |ui| {
-                    let is_loading = matches!(
-                        self.loading_state,
-                        LoadingState::LoadingList | LoadingState::LoadingModel(_)
-                    );
+                ui.collapsing(
+                    "🌐 Remote Models (KhronosGroup glTF-Sample-Assets)",
+                    |ui| {
+                        let is_loading = matches!(
+                            self.loading_state,
+                            LoadingState::LoadingList | LoadingState::LoadingModel(_)
+                        );
 
-                    ui.add_enabled_ui(!is_loading, |ui| {
-                        ui.horizontal(|ui| {
-                            let model_names: Vec<_> =
-                                self.model_list.iter().map(|m| m.name.as_str()).collect();
-                            ui.label("Model:");
+                        ui.add_enabled_ui(!is_loading, |ui| {
+                            ui.horizontal(|ui| {
+                                let model_names: Vec<_> =
+                                    self.model_list.iter().map(|m| m.name.as_str()).collect();
+                                ui.label("Model:");
 
-                            let combo = egui::ComboBox::from_id_salt("remote_model_selector")
-                                .width(180.0)
-                                .selected_text(
-                                    model_names
-                                        .get(self.selected_model_index)
-                                        .copied()
-                                        .unwrap_or("Select a model..."),
-                                );
+                                let combo = egui::ComboBox::from_id_salt("remote_model_selector")
+                                    .width(180.0)
+                                    .selected_text(
+                                        model_names
+                                            .get(self.selected_model_index)
+                                            .copied()
+                                            .unwrap_or("Select a model..."),
+                                    );
 
-                            combo.show_ui(ui, |ui| {
-                                ui.set_min_width(250.0);
-                                for (i, name) in model_names.iter().enumerate() {
-                                    ui.selectable_value(&mut self.selected_model_index, i, *name);
+                                combo.show_ui(ui, |ui| {
+                                    ui.set_min_width(250.0);
+                                    for (i, name) in model_names.iter().enumerate() {
+                                        ui.selectable_value(
+                                            &mut self.selected_model_index,
+                                            i,
+                                            *name,
+                                        );
+                                    }
+                                });
+
+                                if ui.button("Load").clicked() {
+                                    if let Some(url) =
+                                        self.build_remote_url(self.selected_model_index)
+                                    {
+                                        self.load_model(ModelSource::Remote(url), assets.clone());
+                                    }
                                 }
                             });
-
-                            if ui.button("Load").clicked() {
-                                if let Some(url) = self.build_remote_url(self.selected_model_index)
-                                {
-                                    self.load_model(ModelSource::Remote(url), assets.clone());
-                                }
-                            }
                         });
-                    });
 
-                    // 显示加载状态
-                    match &self.loading_state {
-                        LoadingState::LoadingList => {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label("Loading model list...");
-                            });
+                        // 显示加载状态
+                        match &self.loading_state {
+                            LoadingState::LoadingList => {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label("Loading model list...");
+                                });
+                            }
+                            LoadingState::LoadingModel(name) => {
+                                ui.horizontal(|ui| {
+                                    ui.spinner();
+                                    ui.label(format!("Loading {}...", name));
+                                });
+                            }
+                            LoadingState::Error(e) => {
+                                ui.colored_label(egui::Color32::RED, format!("⚠ Error: {}", e));
+                            }
+                            LoadingState::Idle => {}
                         }
-                        LoadingState::LoadingModel(name) => {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label(format!("Loading {}...", name));
-                            });
-                        }
-                        LoadingState::Error(e) => {
-                            ui.colored_label(egui::Color32::RED, format!("⚠ Error: {}", e));
-                        }
-                        LoadingState::Idle => {}
-                    }
 
-                    ui.label(format!("{} models available", self.model_list.len()));
-                });
+                        ui.label(format!("{} models available", self.model_list.len()));
+                    },
+                );
 
                 ui.separator();
 

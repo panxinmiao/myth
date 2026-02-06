@@ -4,8 +4,7 @@ use myth_engine::prelude::*;
 use myth_engine::utils::FpsCounter;
 use winit::window::Window;
 
-/// HDR 环境贴图示例
-/// 演示如何使用 HDR 格式的 Equirectangular 环境贴图进行 IBL 渲染
+/// HDR Environment Map Demo
 struct HdrEnvDemo {
     cam_node_id: NodeHandle,
     controls: OrbitControls,
@@ -14,17 +13,10 @@ struct HdrEnvDemo {
 
 impl AppHandler for HdrEnvDemo {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
-        // 1. 加载 HDR 环境贴图 (Equirectangular 格式)
         let env_texture_handle = engine
             .assets
             .load_hdr_texture("examples/assets/blouberg_sunrise_2_1k.hdr")
             .expect("Failed to load HDR environment map");
-
-        // let env_texture_handle = engine.assets.load_texture_from_file(
-        //     "examples/assets/royal_esplanade_2k.hdr.jpg",
-        //     ColorSpace::Srgb,
-        //     false
-        // ).expect("Failed to load HDR environment map");
 
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
@@ -32,11 +24,9 @@ impl AppHandler for HdrEnvDemo {
         scene.environment.set_env_map(Some(env_texture_handle));
         scene.environment.set_intensity(1.0);
 
-        // 2. 添加灯光
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
         scene.add_light(light);
 
-        // 3. 加载 glTF 模型
         let gltf_path =
             std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
         println!("Loading glTF model from: {}", gltf_path.display());
@@ -47,13 +37,11 @@ impl AppHandler for HdrEnvDemo {
 
         println!("Successfully loaded root node: {:?}", gltf_node);
 
-        // 4. 调整模型位置/缩放
         if let Some(node) = scene.get_node_mut(gltf_node) {
             node.transform.scale = Vec3::splat(1.0);
             node.transform.position = Vec3::new(0.0, 0.0, 0.0);
         }
 
-        // 5. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
 

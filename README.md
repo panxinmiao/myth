@@ -13,7 +13,7 @@
 
 ![Myth Engine Hero](docs/images/hero.png)
 
-[**在线体验 Web Demo**](https://panxinmiao.github.io/myth-engine/) | [**文档**](https://docs.rs/myth-engine) | [**示例**](examples/)
+[**Online Web Demo**](https://panxinmiao.github.io/myth-engine/) | [**Documentation**](https://docs.rs/myth-engine) | [**Examples**](examples/)
 
 </div>
 
@@ -42,7 +42,7 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
     * **Anisotropy** (brushed metals).
     * **Transmission** (glass, water).
 * **✨ Full glTF 2.0 Support**: Complete support for glTF 2.0 specification, including PBR materials, animations, and scene hierarchy.
-* **🎨 HDR Rendering Pipeline**: Full support for HDR Rendering, variable tone mapping mode.
+* **🎨 HDR Rendering Pipeline**: Full support for HDR Rendering, various tone mapping mode.
 * **🛡️ MSAA**: Built-in Multi-Sample Anti-Aliasing.
 * **🕸️ Transient Render Graph**: A highly optimized, frame-graph based rendering architecture that minimizes overhead and maximizes flexibility.
 * **📦 Asset System**: Asynchronous asset loading with `AssetServer`, built-in **glTF 2.0** support (geometry, materials, animations).
@@ -67,7 +67,7 @@ Add `myth-engine` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-myth-engine = "0.1.0"
+myth-engine = { git = "[https://github.com/panxinmiao/myth-engine](https://github.com/panxinmiao/myth-engine)", branch = "main" }
 
 ```
 
@@ -76,20 +76,20 @@ myth-engine = "0.1.0"
 Notice how similar this feels to the JS equivalent, but statically typed:
 
 ```rust
-use std::sync::Arc;
-
 use myth_engine::prelude::*;
-use winit::window::Window;
 
 struct MyApp;
 
 impl AppHandler for MyApp {
-    fn init(engine: &mut MythEngine, _: &Arc<Window>) -> Self {
+    fn init(engine: &mut MythEngine, _: &std::sync::Arc<winit::window::Window>) -> Self {
         // 0. Create a Scene
         let scene = engine.scene_manager.create_active();
 
-        // 1. Create a PBR Material
-        let material = MeshPhysicalMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0)); // Gold
+        // 1. Create a Material
+        let material = MeshPhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0));
+        let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
+        let tex_handle = engine.assets.textures.add(texture);
+        material.set_map(Some(tex_handle));
         let mat_handle = engine.assets.materials.add(material);
 
         // 2. Create Geometry & Mesh
@@ -99,7 +99,7 @@ impl AppHandler for MyApp {
         let mesh_handle = scene.add_mesh(mesh);
         
         // 3. Setup Camera
-        let camera = Camera::new_perspective(60.0, 16.0/9.0, 0.1);
+        let camera = Camera::new_perspective(45.0, 16.0/9.0, 0.1);
         let cam_node = scene.add_camera(camera);
         // Move camera back
         scene.nodes.get_mut(cam_node).unwrap().transform.position = Vec3::new(0.0, 0.0, 5.0);
@@ -143,17 +143,6 @@ cd examples/gltf_viewer/web
 python3 -m http.server 8080
 
 ```
-
-## 🤝 Roadmap
-
-* [x] Basic Scene Graph & Camera
-* [x] WebGPU Render Backend
-* [x] PBR Material System & IBL
-* [x] glTF Loader & Animation Mixer
-* [ ] Shadow Mapping (CSM)
-* [ ] Post-processing Pipeline (Bloom, TAA)
-* [ ] Deferred Rendering Path
-* [ ] Gizmos & Editor Tools
 
 ## 📄 License
 

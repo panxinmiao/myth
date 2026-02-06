@@ -19,14 +19,11 @@ impl AppHandler for TexturedBox {
         let tex_handle = engine.assets.textures.add(texture);
 
         basic_mat.set_map(Some(tex_handle));
-        basic_mat.set_color(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         let geo_handle = engine.assets.geometries.add(geometry);
         let mat_handle = engine.assets.materials.add(basic_mat);
 
-        engine.scene_manager.create_active();
-
-        let scene = engine.scene_manager.active_scene_mut().unwrap();
+        let scene = engine.scene_manager.create_active();
 
         // 3. 创建 Mesh 并加入场景
         let mesh = Mesh::new(geo_handle, mat_handle);

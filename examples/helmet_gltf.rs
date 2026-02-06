@@ -6,7 +6,7 @@ use myth_engine::prelude::*;
 use myth_engine::utils::FpsCounter;
 use winit::window::Window;
 
-/// glTF PBR 头盔示例
+/// glTF PBR Helmet Example
 struct HelmetGltf {
     cam_node_id: NodeHandle,
     controls: OrbitControls,
@@ -15,7 +15,6 @@ struct HelmetGltf {
 
 impl AppHandler for HelmetGltf {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
-        // 1. 加载环境贴图 (PBR 需要 IBL)
         let env_texture_handle = engine
             .assets
             .load_cube_texture(
@@ -37,10 +36,8 @@ impl AppHandler for HelmetGltf {
 
         scene.environment.set_env_map(Some(env_texture_handle));
 
-        // 2. 添加灯光
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
         scene.add_light(light);
-        // 3. 加载 glTF 模型
         let gltf_path =
             std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
         println!("Loading glTF model from: {}", gltf_path.display());
@@ -51,7 +48,6 @@ impl AppHandler for HelmetGltf {
 
         println!("Successfully loaded root node: {:?}", gltf_node);
 
-        // 4. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
 
@@ -73,13 +69,12 @@ impl AppHandler for HelmetGltf {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
-        // 轨道控制器
+
         if let Some(cam_node) = scene.get_node_mut(self.cam_node_id) {
             self.controls
                 .update(&mut cam_node.transform, &engine.input, 45.0, frame.dt);
         }
 
-        // FPS 显示
         if let Some(fps) = self.fps_counter.update() {
             window.set_title(&format!("glTF PBR Demo - FPS: {:.0}", fps));
         }

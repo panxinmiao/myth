@@ -14,7 +14,6 @@ struct HttpGltfExample {
 
 impl AppHandler for HttpGltfExample {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
-        // 1. 加载环境贴图 (PBR 需要 IBL)
         let env_texture_handle = engine
             .assets
             .load_cube_texture(
@@ -36,7 +35,6 @@ impl AppHandler for HttpGltfExample {
 
         scene.environment.set_env_map(Some(env_texture_handle));
 
-        // 2. 添加灯光
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
         scene.add_light(light);
 

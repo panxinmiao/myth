@@ -1056,11 +1056,7 @@ impl GltfLoader {
         engine_mesh
     }
 
-    fn bind_node_mesh_and_skin(
-        &mut self,
-        node: &gltf::Node,
-        buffers: &[Vec<u8>],
-    ) {
+    fn bind_node_mesh_and_skin(&mut self, node: &gltf::Node, buffers: &[Vec<u8>]) {
         let node_idx = node.index();
 
         let initial_weights = if let Some(weights) = node.weights() {

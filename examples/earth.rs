@@ -4,7 +4,7 @@ use myth_engine::prelude::*;
 use myth_engine::utils::fps_counter::FpsCounter;
 use winit::window::Window;
 
-/// 地球渲染示例
+/// Earth Example
 struct Earth {
     earth_node_id: NodeHandle,
     cloud_node_id: NodeHandle,
@@ -14,7 +14,7 @@ struct Earth {
 
 impl AppHandler for Earth {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
-        // 1. 准备资源
+        // 1. Prepare resources
         let geometry =
             myth_engine::create_sphere(&myth_engine::resources::primitives::SphereOptions {
                 radius: 63.71,
@@ -25,7 +25,7 @@ impl AppHandler for Earth {
 
         let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
-        // 加载纹理
+        // Load textures
         let earth_tex_handle = engine
             .assets
             .load_texture(
@@ -82,7 +82,7 @@ impl AppHandler for Earth {
         let geo_handle = engine.assets.geometries.add(geometry);
         let mat_handle = engine.assets.materials.add(mat);
 
-        // 云层材质
+        // Cloud layer material
         let mut cloud_material = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
         if let Some(phong) = cloud_material.as_phong_mut() {
             phong.set_map(Some(clouds_tex_handle));
@@ -93,7 +93,7 @@ impl AppHandler for Earth {
         }
         let cloud_material_handle = engine.assets.materials.add(cloud_material);
 
-        // 2. 创建 Mesh 并加入场景
+        // 2. Create Meshes and add to scene
         let mesh = Mesh::new(geo_handle, mat_handle);
         let cloud_mesh = Mesh::new(geo_handle, cloud_material_handle);
 
@@ -111,7 +111,7 @@ impl AppHandler for Earth {
             clouds.transform.rotation = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.0, 0.41);
         }
 
-        // 3. 添加灯光
+        // 3. Add Sun Light
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
         let light_handle = scene.add_light(light);
         scene
@@ -123,7 +123,7 @@ impl AppHandler for Earth {
             light_node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
 
-        // 4. 设置相机
+        // 4. Setup Camera
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
 
@@ -150,23 +150,23 @@ impl AppHandler for Earth {
         let rot = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.001 * 60.0 * frame.dt, 0.0);
         let rot_clouds = Quat::from_euler(glam::EulerRot::XYZ, 0.0, 0.00125 * 60.0 * frame.dt, 0.0);
 
-        // 地球自转
+        // Earth self-rotation
         if let Some(node) = scene.get_node_mut(self.earth_node_id) {
             node.transform.rotation = rot * node.transform.rotation;
         }
 
-        // 云层自转
+        // Cloud layer self-rotation
         if let Some(clouds) = scene.get_node_mut(self.cloud_node_id) {
             clouds.transform.rotation = rot_clouds * clouds.transform.rotation;
         }
 
-        // 轨道控制器
+        // Orbit controls
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
             self.controls
                 .update(transform, &engine.input, camera.fov, frame.dt);
         }
 
-        // FPS 显示
+        // FPS Display
         if let Some(fps) = self.fps_counter.update() {
             window.set_title(&format!("Earth | FPS: {:.2}", fps));
         }

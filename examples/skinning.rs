@@ -6,9 +6,8 @@ use myth_engine::prelude::*;
 use myth_engine::utils::FpsCounter;
 use winit::window::Window;
 
-/// 骨骼动画示例
+/// Skinning Animation Example
 ///
-/// 用法: skinning [path_to_model.glb]
 struct SkinningDemo {
     controls: OrbitControls,
     fps_counter: FpsCounter,
@@ -16,10 +15,10 @@ struct SkinningDemo {
 
 impl AppHandler for SkinningDemo {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
-        // === 1. 解析启动参数 ===
+        // === 1. Parse command line arguments for model path ===
         let args: Vec<String> = env::args().collect();
 
-        // 默认模型路径 (如果没有传参数，就用这个)
+        // Provide a default model path if none is given
         let default_path = "examples/assets/Michelle.glb";
 
         let gltf_path_str = if args.len() > 1 {
@@ -33,7 +32,7 @@ impl AppHandler for SkinningDemo {
 
         let gltf_path = Path::new(gltf_path_str);
 
-        // === 2. 加载环境贴图 (保持不变) ===
+        // === 2. Load environment map ===
         let env_texture_handle = engine
             .assets
             .load_cube_texture(
@@ -54,10 +53,11 @@ impl AppHandler for SkinningDemo {
 
         scene.environment.set_env_map(Some(env_texture_handle));
 
-        // === 3. 添加灯光 ===
+        // === 3. Add light ===
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
         scene.add_light(light);
-        // === 4. 加载 glTF 模型 ===
+
+        // === 4. Load glTF model with skinning animation ===
         println!("Loading glTF model from: {:?}", gltf_path);
 
         let prefab = match GltfLoader::load(gltf_path, engine.assets.clone()) {
@@ -71,7 +71,7 @@ impl AppHandler for SkinningDemo {
 
         println!("Successfully loaded root node: {:?}", gltf_node);
 
-        //  查询动画列表
+        //  Play skinning animation if available  ---
         if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
             println!("Loaded animations:");
 
@@ -84,7 +84,7 @@ impl AppHandler for SkinningDemo {
             mixer.play("SambaDance");
         }
 
-        // === 5. 设置相机 ===
+        // === 5. Setup Camera ===
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
 

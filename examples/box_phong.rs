@@ -3,7 +3,7 @@ use std::sync::Arc;
 use myth_engine::prelude::*;
 use winit::window::Window;
 
-/// Phong 材质立方体示例
+/// Phong Material Cube Example
 struct PhongBox {
     cube_node_id: NodeHandle,
     controls: OrbitControls,

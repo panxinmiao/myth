@@ -28,12 +28,14 @@
 ///
 /// | Field | Description | Default |
 /// |-------|-------------|---------|
+/// | `enable_hdr` | Enable HDR rendering mode | `true` |
+/// | `msaa_samples` | Number of MSAA samples | `1` |
+/// | `vsync` | Vertical sync enabled | `true` |
+/// | `clear_color` | Background clear color | Black |
 /// | `power_preference` | GPU selection preference | `HighPerformance` |
 /// | `required_features` | Required wgpu features | Empty |
 /// | `required_limits` | Required wgpu limits | Default |
-/// | `clear_color` | Background clear color | Black |
 /// | `depth_format` | Depth buffer format | `Depth32Float` |
-/// | `vsync` | Vertical sync enabled | `true` |
 ///
 /// # GPU Selection
 ///
@@ -63,22 +65,12 @@
 /// ```
 #[derive(Debug, Clone)]
 pub struct RenderSettings {
-    /// GPU adapter selection preference.
+    /// Whether to use straightforward rendering mode.
     ///
-    /// - `HighPerformance`: Prefer discrete/dedicated GPU
-    /// - `LowPower`: Prefer integrated GPU
-    pub power_preference: wgpu::PowerPreference,
-
-    /// Required wgpu features that must be supported by the adapter.
-    ///
-    /// The engine will fail to initialize if these features are not available.
-    /// Use with caution on WebGPU targets where feature support varies.
-    pub required_features: wgpu::Features,
-
-    /// Required wgpu limits that must be supported by the adapter.
-    ///
-    /// Limits define maximum resource sizes, binding counts, etc.
-    pub required_limits: wgpu::Limits,
+    /// if false, the main scene will be rendered directly to the screen surface,
+    /// bypassing intermediate render targets and post-processing.
+    /// This can improve performance for simple scenes without effects.
+    pub enable_hdr: bool,
 
     /// Background clear color for the main render target.
     ///
@@ -99,18 +91,28 @@ pub struct RenderSettings {
     /// Higher values improve quality but increase GPU load.
     pub msaa_samples: u32,
 
+    /// GPU adapter selection preference.
+    ///
+    /// - `HighPerformance`: Prefer discrete/dedicated GPU
+    /// - `LowPower`: Prefer integrated GPU
+    pub power_preference: wgpu::PowerPreference,
+
+    /// Required wgpu features that must be supported by the adapter.
+    ///
+    /// The engine will fail to initialize if these features are not available.
+    /// Use with caution on WebGPU targets where feature support varies.
+    pub required_features: wgpu::Features,
+
+    /// Required wgpu limits that must be supported by the adapter.
+    ///
+    /// Limits define maximum resource sizes, binding counts, etc.
+    pub required_limits: wgpu::Limits,
+
     /// Depth buffer texture format.
     ///
     /// `Depth32Float` is recommended for reverse-Z rendering (better precision).
     /// `Depth24PlusStencil8` can be used if stencil buffer is needed.
     pub depth_format: wgpu::TextureFormat,
-
-    /// Whether to use straightforward rendering mode.
-    ///
-    /// if false, the main scene will be rendered directly to the screen surface,
-    /// bypassing intermediate render targets and post-processing.
-    /// This can improve performance for simple scenes without effects.
-    pub enable_hdr: bool,
 }
 
 impl Default for RenderSettings {

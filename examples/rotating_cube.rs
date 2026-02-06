@@ -3,28 +3,24 @@ use std::sync::Arc;
 use myth_engine::prelude::*;
 use winit::window::Window;
 
-/// 旋转立方体示例
+/// Basic Rotating Cube Example
 ///
-/// 演示带动画更新的 AppHandler 模式
 struct RotatingCube {
     cube_node_id: NodeHandle,
 }
 
 impl AppHandler for RotatingCube {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
-        // 1. 创建并添加几何体和材质到资产服务器
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let geo_handle = engine.assets.geometries.add(geometry);
 
         let material = Material::new_basic(Vec4::new(0.8, 0.3, 0.3, 1.0));
         let mat_handle = engine.assets.materials.add(material);
 
-        // 2. 创建 Mesh 并添加到场景
         let mesh = Mesh::new(geo_handle, mat_handle);
         let scene = engine.scene_manager.create_active();
         let cube_node_id = scene.add_mesh(mesh);
 
-        // 3. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let camera_node_id = scene.add_camera(camera);
 
@@ -42,7 +38,6 @@ impl AppHandler for RotatingCube {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
-        // 让立方体旋转
         if let Some(cube_node) = scene.get_node_mut(self.cube_node_id) {
             let rotation_y = Quat::from_rotation_y(frame.time * 0.5);
             let rotation_x = Quat::from_rotation_x(frame.time * 0.3);

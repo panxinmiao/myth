@@ -4,7 +4,7 @@ use myth_engine::prelude::*;
 use myth_engine::utils::FpsCounter;
 use winit::window::Window;
 
-/// Morph Target (变形目标) 动画示例
+/// Morph Target
 struct MorphTargetDemo {
     cam_node_id: NodeHandle,
     controls: OrbitControls,
@@ -14,11 +14,11 @@ struct MorphTargetDemo {
 impl AppHandler for MorphTargetDemo {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
         let scene = engine.scene_manager.create_active();
-        // 1. 添加灯光和环境
+
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 2.0);
         scene.add_light(light);
         scene.environment.set_ambient_color(Vec3::splat(0.3));
-        // 加载环境贴图
+
         let env_texture_handle = engine
             .assets
             .load_cube_texture(
@@ -37,7 +37,6 @@ impl AppHandler for MorphTargetDemo {
 
         scene.environment.set_env_map(Some(env_texture_handle));
 
-        // 2. 加载 glTF 模型 (带 Morph Target)
         let gltf_path = std::path::Path::new("examples/assets/facecap.glb");
         println!("Loading glTF model from: {}", gltf_path.display());
 
@@ -47,7 +46,6 @@ impl AppHandler for MorphTargetDemo {
 
         println!("Successfully loaded root node: {:?}", gltf_node);
 
-        //  查询动画列表
         if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
             println!("Loaded animations:");
 
@@ -59,7 +57,6 @@ impl AppHandler for MorphTargetDemo {
             mixer.play("Key|Take 001|BaseLayer");
         }
 
-        // 输出 Mesh Morph Target 信息
         for (node_handle, mesh) in scene.meshes.iter() {
             if let Some(geometry) = engine.assets.geometries.get(mesh.geometry) {
                 if geometry.has_morph_targets() {
@@ -71,7 +68,6 @@ impl AppHandler for MorphTargetDemo {
             }
         }
 
-        // 4. 设置相机
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
         if let Some(node) = scene.get_node_mut(cam_node_id) {

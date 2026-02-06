@@ -324,7 +324,7 @@ macro_rules! define_gpu_data_struct {
             if !stringify!($field_name).starts_with("__") {
                 let _ = writeln!(
                     code,
-                    "    {}: {},", 
+                    "    {}: {},",
                     stringify!($field_name),
                     <$field_type as WgslType>::wgsl_type_name()
                 );

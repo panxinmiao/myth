@@ -4,7 +4,7 @@ use myth_engine::prelude::*;
 use myth_engine::utils::fps_counter::FpsCounter;
 use winit::window::Window;
 
-/// PBR 材质立方体示例
+/// PBR Material Cube Example
 struct PbrBox {
     cube_node_id: NodeHandle,
     controls: OrbitControls,
@@ -13,31 +13,27 @@ struct PbrBox {
 
 impl AppHandler for PbrBox {
     fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
-        // 1. 准备资源
+        // 1. prepare resources
+        let scene = engine.scene_manager.create_active();
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
 
-        // 创建具体材质类型，便于访问类型特定的方法
-        let standard_mat = MeshPhysicalMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
-
+        // 2. Create PBR Material
+        let physical_mat = MeshPhysicalMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
         let tex_handle = engine.assets.textures.add(texture);
-        standard_mat.set_map(Some(tex_handle));
+        physical_mat.set_map(Some(tex_handle));
 
+        // 3. Create Mesh and add to scene
         let geo_handle = engine.assets.geometries.add(geometry);
-        // 在最后需要时才转换为通用 Material 类型
-        let mat_handle = engine.assets.materials.add(standard_mat);
-
-        let scene = engine.scene_manager.create_active();
-        //let scene = ctx.scenes.active_scene_mut().unwrap();
-
-        // 2. 创建 Mesh 并加入场景
+        let mat_handle = engine.assets.materials.add(physical_mat);
         let mesh = Mesh::new(geo_handle, mat_handle);
         let cube_node_id = scene.add_mesh(mesh);
-        // 3. 添加灯光
-        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 0.0);
+
+        // 4. Add Light
+        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
         scene.add_light(light);
 
-        // 4. 加载环境贴图
+        // 5. Load environment map
         let env_texture_handle = engine
             .assets
             .load_cube_texture(
@@ -56,7 +52,7 @@ impl AppHandler for PbrBox {
 
         scene.environment.set_env_map(Some(env_texture_handle));
 
-        // 5. 设置相机
+        // 6. Setup Camera
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
 
@@ -78,20 +74,20 @@ impl AppHandler for PbrBox {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
-        // 旋转立方体
+        // Rotate cube
         if let Some(node) = scene.get_node_mut(self.cube_node_id) {
             let rot_y = Quat::from_rotation_y(0.02 * 60.0 * frame.dt);
             let rot_x = Quat::from_rotation_x(0.01 * 60.0 * frame.dt);
             node.transform.rotation = node.transform.rotation * rot_y * rot_x;
         }
 
-        // 轨道控制器
+        // Orbit controls
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
             self.controls
                 .update(transform, &engine.input, camera.fov, frame.dt);
         }
 
-        // FPS 显示
+        // FPS display
         if let Some(fps) = self.fps_counter.update() {
             window.set_title(&format!("Box PBR | FPS: {:.2}", fps));
         }
