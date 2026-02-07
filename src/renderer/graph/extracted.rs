@@ -319,12 +319,8 @@ mod tests {
     fn test_extracted_render_item_size() {
         // Ensure struct size is reasonable
         let size = std::mem::size_of::<ExtractedRenderItem>();
-        println!("ExtractedRenderItem size: {} bytes", size);
+        println!("ExtractedRenderItem size: {size} bytes");
         // Should be within reasonable range (not exceeding 256 bytes)
-        assert!(
-            size < 256,
-            "ExtractedRenderItem is too large: {} bytes",
-            size
-        );
+        assert!(size < 256, "ExtractedRenderItem is too large: {size} bytes");
     }
 }

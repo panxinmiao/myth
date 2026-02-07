@@ -633,18 +633,18 @@ mod tests {
     fn test_wgsl_generation() {
         let standard_wgsl = MeshStandardUniforms::wgsl_struct_def("MeshStandardUniforms");
         let standard_default = MeshStandardUniforms::default();
-        println!("WGSL for MeshStandardUniforms:\n{}", standard_wgsl);
-        println!("Default Standard Uniforms: {:?}", standard_default);
+        println!("WGSL for MeshStandardUniforms:\n{standard_wgsl}");
+        println!("Default Standard Uniforms: {standard_default:?}");
 
         let basic_wgsl = DynamicModelUniforms::wgsl_struct_def("DynamicModelUniforms");
         let basic_default = DynamicModelUniforms::default();
-        println!("WGSL for DynamicModelUniforms:\n{}", basic_wgsl);
-        println!("Default DynamicModelUniforms: {:?}", basic_default);
+        println!("WGSL for DynamicModelUniforms:\n{basic_wgsl}");
+        println!("Default DynamicModelUniforms: {basic_default:?}");
     }
 
     #[test]
     fn test_nested_wgsl() {
         let wgsl = GpuLightStorage::wgsl_struct_def("GpuLightStorage");
-        println!("{}", wgsl);
+        println!("{wgsl}");
     }
 }

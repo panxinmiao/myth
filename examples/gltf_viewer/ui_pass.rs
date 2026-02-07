@@ -73,15 +73,8 @@ impl UiPass {
         let id = egui_ctx.viewport_id();
         let state = egui_winit::State::new(egui_ctx.clone(), id, window, None, None, None);
 
-        // 类型转换 (wgpu 版本兼容)
-        let output_format_egui: egui_wgpu::wgpu::TextureFormat =
-            unsafe { std::mem::transmute(output_format) };
-
-        let renderer = egui_wgpu::Renderer::new(
-            unsafe { std::mem::transmute::<&Device, &egui_wgpu::wgpu::Device>(device) },
-            output_format_egui,
-            egui_wgpu::RendererOptions::default(),
-        );
+        let renderer =
+            egui_wgpu::Renderer::new(device, output_format, egui_wgpu::RendererOptions::default());
 
         Self {
             egui_ctx,
@@ -154,12 +147,9 @@ impl UiPass {
         view: &wgpu::TextureView,
         filter: wgpu::FilterMode,
     ) -> egui::TextureId {
-        let device_egui: &egui_wgpu::wgpu::Device = unsafe { std::mem::transmute(device) };
-        let view_egui: &egui_wgpu::wgpu::TextureView = unsafe { std::mem::transmute(view) };
-
         self.renderer
             .borrow_mut()
-            .register_native_texture(device_egui, view_egui, filter)
+            .register_native_texture(device, view, filter)
     }
 
     /// 每帧开始时调用
@@ -283,22 +273,15 @@ impl RenderNode for UiPass {
         }
 
         // 将未就绪的请求放回队列
-        if !remaining_requests.is_empty() {
-            if let Ok(mut reqs) = self.texture_requests.try_borrow_mut() {
-                reqs.extend(remaining_requests);
-            }
+        if !remaining_requests.is_empty()
+            && let Ok(mut reqs) = self.texture_requests.try_borrow_mut()
+        {
+            reqs.extend(remaining_requests);
         }
 
         let device = &ctx.wgpu_ctx.device;
         let queue = &ctx.wgpu_ctx.queue;
         let view = ctx.surface_view;
-
-        // 转换为 egui_wgpu 版本的类型
-        let device_egui: &egui_wgpu::wgpu::Device = unsafe { std::mem::transmute(device) };
-        let queue_egui: &egui_wgpu::wgpu::Queue = unsafe { std::mem::transmute(queue) };
-        let encoder_egui: &mut egui_wgpu::wgpu::CommandEncoder =
-            unsafe { std::mem::transmute(encoder) };
-        let view_egui: &egui_wgpu::wgpu::TextureView = unsafe { std::mem::transmute(view) };
 
         // 尝试获取渲染器锁，添加防重入保护
         let mut renderer = match self.renderer.try_borrow_mut() {
@@ -324,25 +307,19 @@ impl RenderNode for UiPass {
 
         // 1. 更新纹理
         for (id, delta) in &textures_delta.set {
-            renderer.update_texture(device_egui, queue_egui, *id, delta);
+            renderer.update_texture(device, queue, *id, delta);
         }
 
         // 2. 更新几何缓冲
-        renderer.update_buffers(
-            device_egui,
-            queue_egui,
-            encoder_egui,
-            &paint_jobs,
-            &screen_desc,
-        );
+        renderer.update_buffers(device, queue, encoder, &paint_jobs, &screen_desc);
 
         // 3. 录制绘制命令
         {
-            let mut rpass =
-                encoder_egui.begin_render_pass(&egui_wgpu::wgpu::RenderPassDescriptor {
+            let mut rpass = encoder
+                .begin_render_pass(&egui_wgpu::wgpu::RenderPassDescriptor {
                     label: Some("egui Pass"),
                     color_attachments: &[Some(egui_wgpu::wgpu::RenderPassColorAttachment {
-                        view: view_egui,
+                        view,
                         resolve_target: None,
                         ops: egui_wgpu::wgpu::Operations {
                             load: egui_wgpu::wgpu::LoadOp::Load, // 覆盖在原画面上
@@ -354,7 +331,8 @@ impl RenderNode for UiPass {
                     timestamp_writes: None,
                     occlusion_query_set: None,
                     multiview_mask: None,
-                });
+                })
+                .forget_lifetime();
 
             renderer.render(&mut rpass, &paint_jobs, &screen_desc);
         }
@@ -362,6 +340,7 @@ impl RenderNode for UiPass {
         // 4. 释放已删除的纹理
         for id in &textures_delta.free {
             renderer.free_texture(id);
+            self.texture_map.borrow_mut().retain(|_, &mut v| v != *id);
         }
 
         // 清空 delta 防止重复处理

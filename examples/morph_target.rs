@@ -58,13 +58,13 @@ impl AppHandler for MorphTargetDemo {
         }
 
         for (node_handle, mesh) in scene.meshes.iter() {
-            if let Some(geometry) = engine.assets.geometries.get(mesh.geometry) {
-                if geometry.has_morph_targets() {
-                    println!(
-                        "Node {:?} has mesh with {} morph targets, {} vertices per target",
-                        node_handle, geometry.morph_target_count, geometry.morph_vertex_count
-                    );
-                }
+            if let Some(geometry) = engine.assets.geometries.get(mesh.geometry)
+                && geometry.has_morph_targets()
+            {
+                println!(
+                    "Node {:?} has mesh with {} morph targets, {} vertices per target",
+                    node_handle, geometry.morph_target_count, geometry.morph_vertex_count
+                );
             }
         }
 

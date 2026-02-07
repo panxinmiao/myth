@@ -173,20 +173,20 @@ pub enum RenderError {
 
 impl From<image::ImageError> for AssetError {
     fn from(err: image::ImageError) -> Self {
-        AssetError::Format(format!("Image error: {}", err))
+        AssetError::Format(format!("Image error: {err}"))
     }
 }
 
 #[cfg(feature = "gltf")]
 impl From<gltf::Error> for AssetError {
     fn from(err: gltf::Error) -> Self {
-        AssetError::Format(format!("glTF error: {}", err))
+        AssetError::Format(format!("glTF error: {err}"))
     }
 }
 
 impl From<serde_json::Error> for AssetError {
     fn from(err: serde_json::Error) -> Self {
-        AssetError::Format(format!("JSON error: {}", err))
+        AssetError::Format(format!("JSON error: {err}"))
     }
 }
 

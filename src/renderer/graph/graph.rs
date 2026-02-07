@@ -70,7 +70,7 @@ impl<'a> RenderGraph<'a> {
     ///
     /// # 性能注意
     /// - 所有节点共享同一个 CommandEncoder，减少提交次数
-    /// - Debug Group 用于 GPU 调试，Release 模式下开销极小
+    /// - Debug Group 用于 GPU 调试
     pub fn execute(&self, ctx: &mut RenderContext) {
         let mut encoder =
             ctx.wgpu_ctx
@@ -80,8 +80,10 @@ impl<'a> RenderGraph<'a> {
                 });
 
         for node in &self.nodes {
+            #[cfg(debug_assertions)]
             encoder.push_debug_group(node.name());
             node.run(ctx, &mut encoder);
+            #[cfg(debug_assertions)]
             encoder.pop_debug_group();
         }
 

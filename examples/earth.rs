@@ -19,7 +19,6 @@ impl AppHandler for Earth {
             radius: 63.71,
             width_segments: 100,
             height_segments: 50,
-            ..Default::default()
         });
 
         let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));

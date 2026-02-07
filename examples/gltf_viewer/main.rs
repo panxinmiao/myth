@@ -404,10 +404,10 @@ impl AppHandler for GltfViewer {
         }
 
         // 2. 更新动画播放速度
-        if let Some(gltf_node) = self.gltf_node {
-            if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
-                mixer.time_scale = self.playback_speed;
-            }
+        if let Some(gltf_node) = self.gltf_node
+            && let Some(mixer) = scene.animation_mixers.get_mut(gltf_node)
+        {
+            mixer.time_scale = self.playback_speed;
         }
 
         // 3. 相机控制
@@ -476,12 +476,12 @@ impl GltfViewer {
 
         // 处理 HDR 环境贴图加载结果
 
-        if let Some(rx) = &self.hdr_receiver {
-            if let Ok(texture) = rx.try_recv() {
-                log::info!("Applying HDR environment map");
-                scene.environment.set_env_map(Some(texture));
-                scene.environment.set_intensity(1.0);
-            }
+        if let Some(rx) = &self.hdr_receiver
+            && let Ok(texture) = rx.try_recv()
+        {
+            log::info!("Applying HDR environment map");
+            scene.environment.set_env_map(Some(texture));
+            scene.environment.set_intensity(1.0);
         }
 
         // 处理 Prefab 加载结果 - 实例化到场景中
@@ -773,11 +773,11 @@ impl GltfViewer {
         // 使用通用方式收集纹理：通过 visit_textures trait 方法
         let mut collected = Vec::new();
         material.as_renderable().visit_textures(&mut |tex_source| {
-            if let myth::resources::texture::TextureSource::Asset(handle) = tex_source {
-                if !visited.contains(handle) {
-                    visited.insert(*handle);
-                    collected.push(*handle);
-                }
+            if let myth::resources::texture::TextureSource::Asset(handle) = tex_source
+                && !visited.contains(handle)
+            {
+                visited.insert(*handle);
+                collected.push(*handle);
             }
         });
 
@@ -857,11 +857,10 @@ impl GltfViewer {
                                 }
                             });
 
-                            if ui.button("Load").clicked() {
-                                if let Some(url) = self.build_remote_url(self.selected_model_index)
-                                {
-                                    self.load_model(ModelSource::Remote(url), assets.clone());
-                                }
+                            if ui.button("Load").clicked()
+                                && let Some(url) = self.build_remote_url(self.selected_model_index)
+                            {
+                                self.load_model(ModelSource::Remote(url), assets.clone());
                             }
                         });
                     });
@@ -959,15 +958,12 @@ impl GltfViewer {
                                         if ui
                                             .selectable_value(&mut self.current_animation, i, clip)
                                             .changed()
+                                            && let Some(gltf_node) = self.gltf_node
+                                            && let Some(mixer) =
+                                                scene.animation_mixers.get_mut(gltf_node)
                                         {
-                                            if let Some(gltf_node) = self.gltf_node {
-                                                if let Some(mixer) =
-                                                    scene.animation_mixers.get_mut(gltf_node)
-                                                {
-                                                    mixer.stop_all();
-                                                    mixer.play(clip);
-                                                }
-                                            }
+                                            mixer.stop_all();
+                                            mixer.play(clip);
                                         }
                                     }
                                 });
@@ -984,17 +980,17 @@ impl GltfViewer {
                                 .clicked()
                             {
                                 self.is_playing = !self.is_playing;
-                                if let Some(gltf_node) = self.gltf_node {
-                                    if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
-                                        if self.is_playing {
-                                            if let Some(anim) =
-                                                self.animations.get(self.current_animation)
-                                            {
-                                                mixer.play(anim);
-                                            }
-                                        } else {
-                                            mixer.stop_all();
+                                if let Some(gltf_node) = self.gltf_node
+                                    && let Some(mixer) = scene.animation_mixers.get_mut(gltf_node)
+                                {
+                                    if self.is_playing {
+                                        if let Some(anim) =
+                                            self.animations.get(self.current_animation)
+                                        {
+                                            mixer.play(anim);
                                         }
+                                    } else {
+                                        mixer.stop_all();
                                     }
                                 }
                             }
@@ -1114,17 +1110,16 @@ impl GltfViewer {
                 ui.separator();
 
                 // ===== Inspector 开关 =====
-                if self.gltf_node.is_some() {
-                    if ui
+                if self.gltf_node.is_some()
+                    && ui
                         .button(if self.show_inspector {
                             "🔍 Hide Inspector"
                         } else {
                             "🔍 Show Inspector"
                         })
                         .clicked()
-                    {
-                        self.show_inspector = !self.show_inspector;
-                    }
+                {
+                    self.show_inspector = !self.show_inspector;
                 }
 
                 ui.separator();
@@ -1415,204 +1410,194 @@ impl GltfViewer {
                 ui.end_row();
 
                 // 只处理 Physical 材质
-                match &material.data {
-                    MaterialType::Physical(m) => {
+                if let MaterialType::Physical(m) = &material.data {
+                    {
+                        // uniforms
+                        // let mut uniform_mut = m.uniforms_mut();
+                        let mut uniform_mut = m.uniforms_mut();
+
+                        ui.label("Type:");
+                        ui.label("MeshPhysicalMaterial");
+                        ui.end_row();
+
+                        ui.label("Color:");
+                        let mut color_arr = uniform_mut.color.to_array();
+                        if ui
+                            .color_edit_button_rgba_unmultiplied(&mut color_arr)
+                            .changed()
                         {
-                            // uniforms
-                            // let mut uniform_mut = m.uniforms_mut();
-                            let mut uniform_mut = m.uniforms_mut();
-
-                            ui.label("Type:");
-                            ui.label("MeshPhysicalMaterial");
-                            ui.end_row();
-
-                            ui.label("Color:");
-                            let mut color_arr = uniform_mut.color.to_array();
-                            if ui
-                                .color_edit_button_rgba_unmultiplied(&mut color_arr)
-                                .changed()
-                            {
-                                uniform_mut.color = glam::Vec4::from_array(color_arr);
-                            }
-                            ui.end_row();
-
-                            ui.label("Metalness:");
-                            // ui.add(egui::DragValue::new(&mut uniform_mut.metalness).speed(0.01));
-                            ui.add(egui::DragValue::new(&mut uniform_mut.metalness).speed(0.01));
-                            ui.end_row();
-
-                            ui.label("Roughness:");
-                            ui.add(egui::DragValue::new(&mut uniform_mut.roughness).speed(0.01));
-                            ui.end_row();
-
-                            ui.label("Specular Intensity:");
-                            ui.add(
-                                egui::DragValue::new(&mut uniform_mut.specular_intensity)
-                                    .speed(0.01),
-                            );
-                            ui.end_row();
-
-                            ui.label("Specular Color:");
-                            let mut spec_arr = uniform_mut.specular_color.to_array();
-                            if ui.color_edit_button_rgb(&mut spec_arr).changed() {
-                                uniform_mut.specular_color = glam::Vec3::from_array(spec_arr);
-                            }
-                            ui.end_row();
-
-                            ui.label("Clearcoat:");
-                            ui.add(egui::DragValue::new(&mut uniform_mut.clearcoat).speed(0.01));
-                            ui.end_row();
-
-                            ui.label("Clearcoat Roughness:");
-                            ui.add(
-                                egui::DragValue::new(&mut uniform_mut.clearcoat_roughness)
-                                    .speed(0.01),
-                            );
-                            ui.end_row();
-
-                            ui.label("IOR:");
-                            ui.add(egui::DragValue::new(&mut uniform_mut.ior).speed(0.01));
-                            ui.end_row();
+                            uniform_mut.color = glam::Vec4::from_array(color_arr);
                         }
-
-                        ui.separator();
                         ui.end_row();
 
-                        {
-                            // settings
-                            let mut settings = m.settings_mut();
-                            ui.label("Side");
-                            egui::ComboBox::from_id_salt("side_combo")
-                                .selected_text(format!("{:?}", settings.side))
-                                .show_ui(ui, |ui| {
-                                    ui.selectable_value(&mut settings.side, Side::Front, "Front");
-                                    ui.selectable_value(&mut settings.side, Side::Back, "Back");
-                                    ui.selectable_value(&mut settings.side, Side::Double, "Double");
-                                });
-                            ui.end_row();
-
-                            // 透明度模式
-                            ui.label("Alpha Mode:");
-                            egui::ComboBox::from_id_salt("alpha_mode_combo")
-                                .selected_text(match settings.alpha_mode {
-                                    AlphaMode::Opaque => "Opaque",
-                                    AlphaMode::Mask(..) => "Mask",
-                                    AlphaMode::Blend => "Blend",
-                                })
-                                .show_ui(ui, |ui| {
-                                    // 切换模式时，如果是 Mask 需要保留默认阈值
-                                    if ui
-                                        .selectable_label(
-                                            matches!(settings.alpha_mode, AlphaMode::Opaque),
-                                            "Opaque",
-                                        )
-                                        .clicked()
-                                    {
-                                        settings.alpha_mode = AlphaMode::Opaque;
-                                    }
-                                    if ui
-                                        .selectable_label(
-                                            matches!(settings.alpha_mode, AlphaMode::Mask(..)),
-                                            "Mask",
-                                        )
-                                        .clicked()
-                                    {
-                                        // 如果之前不是 Mask，设为默认 0.5，否则保持
-                                        if !matches!(settings.alpha_mode, AlphaMode::Mask(..)) {
-                                            settings.alpha_mode = AlphaMode::Mask(0.5, false);
-                                        }
-                                    }
-                                    if ui
-                                        .selectable_label(
-                                            matches!(settings.alpha_mode, AlphaMode::Blend),
-                                            "Blend",
-                                        )
-                                        .clicked()
-                                    {
-                                        settings.alpha_mode = AlphaMode::Blend;
-                                    }
-                                });
-
-                            // 如果是 Mask 模式，额外显示阈值滑块
-                            if let AlphaMode::Mask(cutoff, a2c) = &mut settings.alpha_mode {
-                                ui.horizontal(|ui| {
-                                    // ui[1].add(egui::DragValue::new(cutoff).speed(0.01).range(0.0..=1.0).prefix(""));
-                                    ui.add(
-                                        egui::DragValue::new(cutoff)
-                                            .speed(0.01)
-                                            .range(0.0..=1.0)
-                                            .prefix("Cutoff: "),
-                                    );
-                                    ui.checkbox(a2c, "A2C");
-                                });
-                            }
-                            ui.end_row();
-
-                            // --- Depth ---
-                            ui.label("Depth:");
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut settings.depth_test, "Test");
-                                ui.checkbox(&mut settings.depth_write, "Write");
-                            });
-                            ui.end_row();
-                        }
-                        // 纹理绑定
-                        ui.separator();
+                        ui.label("Metalness:");
+                        // ui.add(egui::DragValue::new(&mut uniform_mut.metalness).speed(0.01));
+                        ui.add(egui::DragValue::new(&mut uniform_mut.metalness).speed(0.01));
                         ui.end_row();
 
-                        ui.label("Textures:");
+                        ui.label("Roughness:");
+                        ui.add(egui::DragValue::new(&mut uniform_mut.roughness).speed(0.01));
                         ui.end_row();
-                        let builder = &mut ResourceBuilder::new();
-                        m.define_bindings(builder);
-                        for (binding, name) in builder.resources.iter().zip(builder.names.iter()) {
-                            match binding {
-                                BindingResource::Texture(source) => {
-                                    // ui.horizontal(|ui| {
-                                    ui.label(format!("{}:", name));
 
-                                    if let Some(s) = source {
-                                        match s {
-                                            TextureSource::Asset(tex_handle) => {
-                                                if ui.label(name).clicked() {
-                                                    self.inspector_target =
-                                                        Some(InspectorTarget::Texture(*tex_handle));
-                                                }
+                        ui.label("Specular Intensity:");
+                        ui.add(
+                            egui::DragValue::new(&mut uniform_mut.specular_intensity).speed(0.01),
+                        );
+                        ui.end_row();
 
-                                                if let Some(tex) = assets.textures.get(*tex_handle)
-                                                {
-                                                    let tex_name = tex
-                                                        .name()
-                                                        .or_else(|| {
-                                                            self.inspector_textures
-                                                                .iter()
-                                                                .find(|t| t.handle == *tex_handle)
-                                                                .map(|t| t.name.as_str())
-                                                        })
-                                                        .unwrap_or("Unnamed");
-
-                                                    if ui.link(tex_name).clicked() {
-                                                        self.inspector_target = Some(
-                                                            InspectorTarget::Texture(*tex_handle),
-                                                        );
-                                                    }
-                                                } else {
-                                                    ui.label("None");
-                                                }
-                                            }
-                                            _ => {
-                                                ui.label("Non-asset texture");
-                                            }
-                                        }
-                                    }
-
-                                    // });
-                                    ui.end_row();
-                                }
-                                _ => {}
-                            };
+                        ui.label("Specular Color:");
+                        let mut spec_arr = uniform_mut.specular_color.to_array();
+                        if ui.color_edit_button_rgb(&mut spec_arr).changed() {
+                            uniform_mut.specular_color = glam::Vec3::from_array(spec_arr);
                         }
+                        ui.end_row();
+
+                        ui.label("Clearcoat:");
+                        ui.add(egui::DragValue::new(&mut uniform_mut.clearcoat).speed(0.01));
+                        ui.end_row();
+
+                        ui.label("Clearcoat Roughness:");
+                        ui.add(
+                            egui::DragValue::new(&mut uniform_mut.clearcoat_roughness).speed(0.01),
+                        );
+                        ui.end_row();
+
+                        ui.label("IOR:");
+                        ui.add(egui::DragValue::new(&mut uniform_mut.ior).speed(0.01));
+                        ui.end_row();
                     }
-                    _ => {}
+
+                    ui.separator();
+                    ui.end_row();
+
+                    {
+                        // settings
+                        let mut settings = m.settings_mut();
+                        ui.label("Side");
+                        egui::ComboBox::from_id_salt("side_combo")
+                            .selected_text(format!("{:?}", settings.side))
+                            .show_ui(ui, |ui| {
+                                ui.selectable_value(&mut settings.side, Side::Front, "Front");
+                                ui.selectable_value(&mut settings.side, Side::Back, "Back");
+                                ui.selectable_value(&mut settings.side, Side::Double, "Double");
+                            });
+                        ui.end_row();
+
+                        // 透明度模式
+                        ui.label("Alpha Mode:");
+                        egui::ComboBox::from_id_salt("alpha_mode_combo")
+                            .selected_text(match settings.alpha_mode {
+                                AlphaMode::Opaque => "Opaque",
+                                AlphaMode::Mask(..) => "Mask",
+                                AlphaMode::Blend => "Blend",
+                            })
+                            .show_ui(ui, |ui| {
+                                // 切换模式时，如果是 Mask 需要保留默认阈值
+                                if ui
+                                    .selectable_label(
+                                        matches!(settings.alpha_mode, AlphaMode::Opaque),
+                                        "Opaque",
+                                    )
+                                    .clicked()
+                                {
+                                    settings.alpha_mode = AlphaMode::Opaque;
+                                }
+                                if ui
+                                    .selectable_label(
+                                        matches!(settings.alpha_mode, AlphaMode::Mask(..)),
+                                        "Mask",
+                                    )
+                                    .clicked()
+                                {
+                                    // 如果之前不是 Mask，设为默认 0.5，否则保持
+                                    if !matches!(settings.alpha_mode, AlphaMode::Mask(..)) {
+                                        settings.alpha_mode = AlphaMode::Mask(0.5, false);
+                                    }
+                                }
+                                if ui
+                                    .selectable_label(
+                                        matches!(settings.alpha_mode, AlphaMode::Blend),
+                                        "Blend",
+                                    )
+                                    .clicked()
+                                {
+                                    settings.alpha_mode = AlphaMode::Blend;
+                                }
+                            });
+
+                        // 如果是 Mask 模式，额外显示阈值滑块
+                        if let AlphaMode::Mask(cutoff, a2c) = &mut settings.alpha_mode {
+                            ui.horizontal(|ui| {
+                                // ui[1].add(egui::DragValue::new(cutoff).speed(0.01).range(0.0..=1.0).prefix(""));
+                                ui.add(
+                                    egui::DragValue::new(cutoff)
+                                        .speed(0.01)
+                                        .range(0.0..=1.0)
+                                        .prefix("Cutoff: "),
+                                );
+                                ui.checkbox(a2c, "A2C");
+                            });
+                        }
+                        ui.end_row();
+
+                        // --- Depth ---
+                        ui.label("Depth:");
+                        ui.horizontal(|ui| {
+                            ui.checkbox(&mut settings.depth_test, "Test");
+                            ui.checkbox(&mut settings.depth_write, "Write");
+                        });
+                        ui.end_row();
+                    }
+                    // 纹理绑定
+                    ui.separator();
+                    ui.end_row();
+
+                    ui.label("Textures:");
+                    ui.end_row();
+                    let builder = &mut ResourceBuilder::new();
+                    m.define_bindings(builder);
+                    for (binding, name) in builder.resources.iter().zip(builder.names.iter()) {
+                        if let BindingResource::Texture(source) = binding {
+                            // ui.horizontal(|ui| {
+                            ui.label(format!("{}:", name));
+
+                            if let Some(s) = source {
+                                match s {
+                                    TextureSource::Asset(tex_handle) => {
+                                        if ui.label(name).clicked() {
+                                            self.inspector_target =
+                                                Some(InspectorTarget::Texture(*tex_handle));
+                                        }
+
+                                        if let Some(tex) = assets.textures.get(*tex_handle) {
+                                            let tex_name = tex
+                                                .name()
+                                                .or_else(|| {
+                                                    self.inspector_textures
+                                                        .iter()
+                                                        .find(|t| t.handle == *tex_handle)
+                                                        .map(|t| t.name.as_str())
+                                                })
+                                                .unwrap_or("Unnamed");
+
+                                            if ui.link(tex_name).clicked() {
+                                                self.inspector_target =
+                                                    Some(InspectorTarget::Texture(*tex_handle));
+                                            }
+                                        } else {
+                                            ui.label("None");
+                                        }
+                                    }
+                                    _ => {
+                                        ui.label("Non-asset texture");
+                                    }
+                                }
+                            }
+
+                            // });
+                            ui.end_row();
+                        };
+                    }
                 }
             });
     }
