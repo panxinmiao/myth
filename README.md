@@ -80,7 +80,7 @@ use myth::prelude::*;
 struct MyApp;
 
 impl AppHandler for MyApp {
-    fn init(engine: &mut MythEngine, _: &std::sync::Arc<winit::window::Window>) -> Self {
+    fn init(engine: &mut Engine, _: &std::sync::Arc<winit::window::Window>) -> Self {
         // 0. Create a Scene
         let scene = engine.scene_manager.create_active();
 

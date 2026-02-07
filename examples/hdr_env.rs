@@ -12,7 +12,7 @@ struct HdrEnvDemo {
 }
 
 impl AppHandler for HdrEnvDemo {
-    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
         let env_texture_handle = engine
             .assets
             .load_hdr_texture("examples/assets/blouberg_sunrise_2_1k.hdr")
@@ -62,7 +62,7 @@ impl AppHandler for HdrEnvDemo {
         }
     }
 
-    fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };

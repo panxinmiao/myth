@@ -21,7 +21,7 @@
 //!
 //! ```rust,ignore
 //! use myth::app::winit::{App, AppHandler};
-//! use myth::engine::{MythEngine, FrameState};
+//! use myth::engine::{Engine, FrameState};
 //! use std::sync::Arc;
 //! use winit::window::Window;
 //!
@@ -30,12 +30,12 @@
 //! }
 //!
 //! impl AppHandler for GameApp {
-//!     fn init(engine: &mut MythEngine, window: &Arc<Window>) -> Self {
+//!     fn init(engine: &mut Engine, window: &Arc<Window>) -> Self {
 //!         // Initialize scene, load assets, etc.
 //!         GameApp {}
 //!     }
 //!
-//!     fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
+//!     fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
 //!         // Update game logic
 //!     }
 //!
@@ -65,7 +65,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
 pub use winit::window::{Window, WindowId};
 
-use crate::engine::{FrameState, MythEngine};
+use crate::engine::{Engine, FrameState};
 use crate::renderer::graph::FrameComposer;
 use crate::renderer::settings::RenderSettings;
 
@@ -87,12 +87,12 @@ pub mod input_adapter;
 ///
 /// ```rust,ignore
 /// impl AppHandler for MyApp {
-///     fn init(engine: &mut MythEngine, window: &Arc<Window>) -> Self {
+///     fn init(engine: &mut Engine, window: &Arc<Window>) -> Self {
 ///         // Load assets, create scene
 ///         MyApp { /* ... */ }
 ///     }
 ///
-///     fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
+///     fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
 ///         // Update animations, physics, etc.
 ///     }
 /// }
@@ -107,7 +107,7 @@ pub trait AppHandler: Sized + 'static {
     ///
     /// * `engine` - Mutable reference to the engine instance
     /// * `window` - Reference to the window (for querying size, etc.)
-    fn init(engine: &mut MythEngine, window: &Arc<Window>) -> Self;
+    fn init(engine: &mut Engine, window: &Arc<Window>) -> Self;
 
     /// Handles window events.
     ///
@@ -125,12 +125,7 @@ pub trait AppHandler: Sized + 'static {
     ///
     /// `true` if the event was consumed, `false` otherwise.
     #[allow(unused_variables)]
-    fn on_event(
-        &mut self,
-        engine: &mut MythEngine,
-        window: &Arc<Window>,
-        event: &WindowEvent,
-    ) -> bool {
+    fn on_event(&mut self, engine: &mut Engine, window: &Arc<Window>, event: &WindowEvent) -> bool {
         false
     }
 
@@ -145,7 +140,7 @@ pub trait AppHandler: Sized + 'static {
     /// * `window` - Reference to the window
     /// * `frame` - Frame timing information
     #[allow(unused_variables)]
-    fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {}
+    fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {}
 
     /// Configures the render pipeline for this frame.
     ///
@@ -178,10 +173,10 @@ pub trait AppHandler: Sized + 'static {
 pub struct DefaultHandler;
 
 impl AppHandler for DefaultHandler {
-    fn init(_ctx: &mut MythEngine, _window: &Arc<Window>) -> Self {
+    fn init(_ctx: &mut Engine, _window: &Arc<Window>) -> Self {
         Self
     }
-    fn update(&mut self, _engine: &mut MythEngine, _window: &Arc<Window>, _frame: &FrameState) {}
+    fn update(&mut self, _engine: &mut Engine, _window: &Arc<Window>, _frame: &FrameState) {}
 }
 
 /// Application builder for configuring and launching the engine.
@@ -312,7 +307,7 @@ struct AppRunner<H: AppHandler> {
     canvas_id: Option<String>,
 
     window: Option<Arc<Window>>,
-    engine: Option<MythEngine>,
+    engine: Option<Engine>,
     user_state: Option<H>,
 
     start_time: Instant,
@@ -327,7 +322,7 @@ struct AppRunner<H: AppHandler> {
 #[cfg(target_arch = "wasm32")]
 struct WasmInitState<H: AppHandler> {
     pending: bool,
-    result: Option<(MythEngine, H)>,
+    result: Option<(Engine, H)>,
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -343,7 +338,7 @@ impl<H: AppHandler> Default for WasmInitState<H> {
 #[cfg(target_arch = "wasm32")]
 impl<H: AppHandler> WasmInitState<H> {
     /// Try to take the result if available, returns None if not ready or already taken
-    fn try_take_result(&mut self) -> Option<(MythEngine, H)> {
+    fn try_take_result(&mut self) -> Option<(Engine, H)> {
         self.result.take()
     }
 
@@ -452,7 +447,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
 
         log::info!("Initializing Renderer Backend...");
 
-        let mut engine = MythEngine::new(self.render_settings.clone());
+        let mut engine = Engine::new(self.render_settings.clone());
         let size = window.inner_size();
 
         if let Err(e) = pollster::block_on(engine.init(window.clone(), size.width, size.height)) {
@@ -520,7 +515,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         let window_clone = window.clone();
 
         wasm_bindgen_futures::spawn_local(async move {
-            let mut engine = MythEngine::new(render_settings);
+            let mut engine = Engine::new(render_settings);
             let size = window_clone.inner_size();
             let w = size.width.max(1);
             let h = size.height.max(1);

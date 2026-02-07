@@ -1,6 +1,6 @@
 //! Engine Core Module
 //!
-//! This module contains [`MythEngine`], the central coordinator of the rendering engine.
+//! This module contains [`Engine`], the central coordinator of the rendering engine.
 //! It is a pure engine instance without any window management logic, allowing it to be
 //! driven by different frontends (Winit, Python bindings, WebAssembly, etc.).
 //!
@@ -16,10 +16,10 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use myth::{MythEngine, RenderSettings};
+//! use myth::{Engine, RenderSettings};
 //!
 //! // Create engine with custom settings
-//! let mut engine = MythEngine::new(RenderSettings::default());
+//! let mut engine = Engine::new(RenderSettings::default());
 //!
 //! // Initialize GPU context with a window
 //! engine.init(window, 1280, 720).await?;
@@ -41,7 +41,7 @@ use crate::scene::manager::SceneManager;
 
 /// The core engine instance that orchestrates all rendering subsystems.
 ///
-/// `MythEngine` is a pure engine implementation without window management,
+/// `Engine` is a pure engine implementation without window management,
 /// making it suitable for integration with various windowing systems and platforms.
 ///
 /// # Components
@@ -53,11 +53,11 @@ use crate::scene::manager::SceneManager;
 ///
 /// # Lifecycle
 ///
-/// 1. Create with [`MythEngine::new`] or [`MythEngine::default`]
-/// 2. Initialize GPU with [`MythEngine::init`]
-/// 3. Update each frame with [`MythEngine::update`]
+/// 1. Create with [`Engine::new`] or [`Engine::default`]
+/// 2. Initialize GPU with [`Engine::init`]
+/// 3. Update each frame with [`Engine::update`]
 /// 4. Render using [`Renderer::begin_frame`]
-pub struct MythEngine {
+pub struct Engine {
     pub renderer: Renderer,
     pub scene_manager: SceneManager,
     pub assets: AssetServer,
@@ -67,7 +67,7 @@ pub struct MythEngine {
     pub(crate) frame_count: u64,
 }
 
-impl MythEngine {
+impl Engine {
     /// Creates a new engine instance with the specified render settings.
     ///
     /// This only creates the engine configuration. GPU resources are not
@@ -179,7 +179,7 @@ impl MythEngine {
     }
 }
 
-impl Default for MythEngine {
+impl Default for Engine {
     fn default() -> Self {
         Self::new(RenderSettings::default())
     }

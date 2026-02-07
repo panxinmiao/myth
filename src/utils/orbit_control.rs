@@ -12,7 +12,7 @@
 //! }
 //!
 //! impl AppHandler for MyApp {
-//!     fn init(engine: &mut MythEngine, _: &Arc<Window>) -> Self {
+//!     fn init(engine: &mut Engine, _: &Arc<Window>) -> Self {
 //!         let camera_pos = Vec3::new(0.0, 5.0, 10.0);
 //!         let target = Vec3::ZERO;
 //!         Self {
@@ -20,7 +20,7 @@
 //!         }
 //!     }
 //!
-//!     fn update(&mut self, engine: &mut MythEngine, _: &Arc<Window>, frame: &FrameState) {
+//!     fn update(&mut self, engine: &mut Engine, _: &Arc<Window>, frame: &FrameState) {
 //!         if let Some((transform, camera)) = engine.scene_manager
 //!             .active_scene_mut()
 //!             .and_then(|s| s.query_main_camera_bundle())

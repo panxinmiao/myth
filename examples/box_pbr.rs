@@ -12,7 +12,7 @@ struct PbrBox {
 }
 
 impl AppHandler for PbrBox {
-    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
         // 1. prepare resources
         let scene = engine.scene_manager.create_active();
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
@@ -70,7 +70,7 @@ impl AppHandler for PbrBox {
         }
     }
 
-    fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };

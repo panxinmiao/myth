@@ -13,7 +13,7 @@
 //! struct MyApp;
 //!
 //! impl AppHandler for MyApp {
-//!     fn init(engine: &mut MythEngine, window: &Arc<Window>) -> Self {
+//!     fn init(engine: &mut Engine, window: &Arc<Window>) -> Self {
 //!         // Create a scene with a mesh
 //!         let scene = engine.scene_manager.create_active();
 //!         
@@ -34,7 +34,7 @@
 //!         MyApp
 //!     }
 //!     
-//!     fn update(&mut self, engine: &mut MythEngine, _: &Arc<Window>, frame: &FrameState) {
+//!     fn update(&mut self, engine: &mut Engine, _: &Arc<Window>, frame: &FrameState) {
 //!         // Update logic here
 //!     }
 //! }
@@ -54,7 +54,7 @@
 //! │               (Winit integration, event loop)              │
 //! ├─────────────────────────────────────────────────────────────┤
 //! │                       Engine Layer                         │
-//! │              (MythEngine, SceneManager)                   │
+//! │              (Engine, SceneManager)                   │
 //! ├─────────────────────────────────────────────────────────────┤
 //! │   Scene Graph   │    Renderer     │      Animation        │
 //! │  (Node, Camera, │  (Core, Graph,  │  (Mixer, Clip, Track) │
@@ -80,7 +80,7 @@
 //! | Module | Description |
 //! |--------|-------------|
 //! | [`app`] | Application lifecycle and window management |
-//! | [`engine`] | Core engine instance ([`MythEngine`]) |
+//! | [`engine`] | Core engine instance ([`Engine`]) |
 //! | [`scene`] | Scene graph with nodes, cameras, and lights |
 //! | [`resources`] | Resource definitions (geometry, material, texture) |
 //! | [`assets`] | Asset loading and management (glTF, images) |
@@ -137,7 +137,7 @@ pub mod utils;
 /// ```
 ///
 /// This includes:
-/// - Application types: [`App`], [`AppHandler`], [`MythEngine`], [`FrameState`]
+/// - Application types: [`App`], [`AppHandler`], [`Engine`], [`FrameState`]
 /// - Scene types: [`Scene`], [`Node`], [`NodeHandle`], [`Camera`], [`Light`]
 /// - Resource types: [`Mesh`], [`Geometry`], [`Material`], [`Texture`]
 /// - Common math types from `glam`
@@ -146,7 +146,7 @@ pub mod prelude {
     // Application
     #[cfg(feature = "winit")]
     pub use crate::app::winit::{App, AppHandler};
-    pub use crate::engine::{FrameState, MythEngine};
+    pub use crate::engine::{Engine, FrameState};
 
     // Scene graph
     pub use crate::scene::{
@@ -287,7 +287,7 @@ pub mod render {
 // Application
 #[cfg(feature = "winit")]
 pub use app::winit::{App, AppHandler};
-pub use engine::{FrameState, MythEngine};
+pub use engine::{Engine, FrameState};
 
 // Scene (most common types)
 pub use scene::{Camera, Light, Node, NodeHandle, Scene, Transform};

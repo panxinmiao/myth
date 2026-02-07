@@ -229,7 +229,7 @@ const ASSET_PATH: &str = "examples/assets/";
 const ASSET_PATH: &str = "assets/";
 
 impl AppHandler for GltfViewer {
-    fn init(engine: &mut MythEngine, window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, window: &Arc<Window>) -> Self {
         // 1. Create UI Pass
         let wgpu_ctx = engine
             .renderer
@@ -352,7 +352,7 @@ impl AppHandler for GltfViewer {
 
     fn on_event(
         &mut self,
-        _engine: &mut MythEngine,
+        _engine: &mut Engine,
         window: &Arc<Window>,
         event: &WindowEvent,
     ) -> bool {
@@ -383,7 +383,7 @@ impl AppHandler for GltfViewer {
         false
     }
 
-    fn update(&mut self, engine: &mut MythEngine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
@@ -800,7 +800,7 @@ impl GltfViewer {
     // UI 渲染
     // ========================================================================
 
-    fn render_ui(&mut self, engine: &mut MythEngine) {
+    fn render_ui(&mut self, engine: &mut Engine) {
         let egui_ctx = self.ui_pass.context().clone();
 
         let Some(scene) = engine.scene_manager.active_scene_mut() else {

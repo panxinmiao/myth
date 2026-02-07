@@ -10,7 +10,7 @@ struct PhongBox {
 }
 
 impl AppHandler for PhongBox {
-    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
         let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
@@ -49,7 +49,7 @@ impl AppHandler for PhongBox {
         }
     }
 
-    fn update(&mut self, engine: &mut MythEngine, _window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, _window: &Arc<Window>, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };

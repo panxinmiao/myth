@@ -325,8 +325,7 @@ impl LoadContext<'_, '_> {
             .get(gltf_texture_index)
             .ok_or_else(|| {
                 Error::Asset(AssetError::InvalidData(format!(
-                    "Texture index out of bounds: {}",
-                    gltf_texture_index
+                    "Texture index out of bounds: {gltf_texture_index}"
                 )))
             })?;
 

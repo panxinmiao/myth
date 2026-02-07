@@ -10,7 +10,7 @@ use myth::prelude::*;
 struct MyApp;
 
 impl AppHandler for MyApp {
-    fn init(engine: &mut MythEngine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
         // Create an active scene
         let scene = engine.scene_manager.create_active();
         
@@ -31,7 +31,7 @@ impl AppHandler for MyApp {
         MyApp
     }
     
-    fn update(&mut self, _: &mut MythEngine, _: &Arc<Window>, _: &FrameState) {
+    fn update(&mut self, _: &mut Engine, _: &Arc<Window>, _: &FrameState) {
         // Update logic here
     }
 }
@@ -73,12 +73,12 @@ use myth::math::{Vec3, Quat, Mat4};
 
 ## Core Types
 
-### MythEngine
+### Engine
 
 The central engine instance that orchestrates all subsystems.
 
 ```rust
-pub struct MythEngine {
+pub struct Engine {
     pub renderer: Renderer,
     pub scene_manager: SceneManager,
     pub assets: AssetServer,
@@ -90,10 +90,10 @@ pub struct MythEngine {
 
 ```rust
 // Create with default settings
-let engine = MythEngine::default();
+let engine = Engine::default();
 
 // Create with custom settings
-let engine = MythEngine::new(RenderSettings {
+let engine = Engine::new(RenderSettings {
     vsync: false,
     ..Default::default()
 });
@@ -406,7 +406,7 @@ let clip = AnimationClip::new("bounce")
 
 ```rust
 // In update callback
-fn update(&mut self, engine: &mut MythEngine, _: &Arc<Window>, _: &FrameState) {
+fn update(&mut self, engine: &mut Engine, _: &Arc<Window>, _: &FrameState) {
     let input = &engine.input;
     
     // Keyboard
