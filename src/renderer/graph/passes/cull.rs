@@ -141,6 +141,10 @@ impl SceneCullPass {
                         options.add_define("ALPHA_TO_COVERAGE", "1");
                     }
 
+                    if ctx.wgpu_ctx.enable_hdr {
+                        options.add_define("HDR", "1");
+                    }
+
                     let shader_hash = options.compute_hash();
 
                     let canonical_key = PipelineKey {

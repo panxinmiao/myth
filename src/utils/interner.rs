@@ -144,6 +144,7 @@ pub fn preload_common_macros() {
         "MASK",
         "BLEND",
         "ALPHA_TO_COVERAGE",
+        "HDR",
         // Common values
         "0",
         "1",

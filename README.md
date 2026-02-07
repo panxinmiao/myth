@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](LICENSE)
 [![WebGPU Ready](https://img.shields.io/badge/WebGPU-Ready-green.svg)](https://gpuweb.github.io/gpuweb/)
 
-![Myth Engine Hero](docs/images/hero.png)
+![Myth Engine Hero](docs/images/helmet.png)
 
 [**Online Web Demo**](https://panxinmiao.github.io/myth/) | [**Examples**](examples/)
 
