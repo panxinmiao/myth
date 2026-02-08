@@ -1,6 +1,6 @@
 # Myth Engine API Reference
 
-A high-performance 3D rendering engine built with Rust and wgpu, inspired by Three.js.
+A high-performance 3D rendering engine built with Rust and wgpu.
 
 ## Quick Start
 
@@ -672,6 +672,5 @@ Check the `examples/` directory for complete working examples:
 Run examples with:
 
 ```bash
-cargo run --example rotating_cube
-cargo run --example gltf_viewer
+cargo run --example gltf_viewer --release
 ```

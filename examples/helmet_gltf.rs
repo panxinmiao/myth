@@ -15,20 +15,11 @@ struct HelmetGltf {
 
 impl AppHandler for HelmetGltf {
     fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
+        let map_path = "examples/assets/royal_esplanade_2k.hdr.jpg";
+
         let env_texture_handle = engine
             .assets
-            .load_cube_texture(
-                [
-                    "examples/assets/Park2/posx.jpg",
-                    "examples/assets/Park2/negx.jpg",
-                    "examples/assets/Park2/posy.jpg",
-                    "examples/assets/Park2/negy.jpg",
-                    "examples/assets/Park2/posz.jpg",
-                    "examples/assets/Park2/negz.jpg",
-                ],
-                ColorSpace::Srgb,
-                true,
-            )
+            .load_texture(map_path, ColorSpace::Srgb, false)
             .expect("Failed to load environment map");
 
         engine.scene_manager.create_active();

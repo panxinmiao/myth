@@ -31,8 +31,7 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
 ## 🚀 Features
 
 * **⚡ Modern Architecture**: Built on **wgpu**, fully supporting **Vulkan**, **Metal**, **DX12**, and **WebGPU**.
-* **✨ Advanced PBR**: Industry-standard Physically Based Rendering pipeline.
-    * Metalness/Roughness workflow.
+* **🖌️ Advanced PBR Materials**: Physically Based Rendering with a rich set of material features:
     * **IBL** (support cubeMap & equirectangular env maps, with auto PMREM generation).
     * **Clearcoat** (car paint, varnished wood).
     * **Iridescence** (soap bubbles, oil films).
@@ -56,7 +55,7 @@ Experience the engine directly in your browser (Chrome/Edge 113+ required for We
 * **Drag & Drop** your own `.glb` / `.gltf` files to view them.
 * Inspect node hierarchy and tweak PBR material parameters in real-time.
 
-![Web Editor Preview](docs/images/inspector.png)
+![Web Editor Preview](docs/images/inspector.gif)
 
 
 ## 📦 Quick Start

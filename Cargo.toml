@@ -25,66 +25,66 @@ path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
 # =================================================================
-# 核心通用依赖 (Core Dependencies)
+# Core Dependencies
 # =================================================================
 [dependencies]
-# 图形与数学
+# Graphics and Math
 wgpu = { version = "28.0", features = ["wgsl"] } #
-glam = { version = "0.31.0", features = ["bytemuck", "scalar-math"] }
-bytemuck = { version = "1.25.0", features = ["derive", "min_const_generics"] }
+glam = { version = "0.31", features = ["bytemuck", "scalar-math"] }
+bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
 
-# 窗口与输入
+# Windowing and Input
 winit = { version = "0.30", optional = true }
 raw-window-handle = "0.6"
 
-# 资源与序列化
+# Resources and Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 image = { version = "0.25" }
-gltf = {git = "https://github.com/panxinmiao/gltf.git",  rev = "077dd0af4fccd6bd441b210dc7f2cc1f2c5f1b9f",features = [
+gltf = {git = "https://github.com/panxinmiao/gltf.git", rev = "077dd0af4fccd6bd441b210dc7f2cc1f2c5f1b9f", features = [
     "extensions", "KHR_materials_pbrSpecularGlossiness", 
     "KHR_materials_specular", "KHR_materials_emissive_strength", 
     "KHR_materials_ior", "KHR_texture_transform", "allow_empty_animation_target_node"
 ], optional = true }
 base64 = "0.22"
 
-# 网络 (通用)
+# Networking (HTTP)
 reqwest = { version = "0.13.1", default-features = false, optional = true }
 url = { version = "2.5", optional = true }
 
-# 工具库
+# Utilities
 thiserror = "2.0"
 log = "0.4"
 env_logger = "0.11"
 pollster = "0.4"
 paste = "1.0"
 uuid = { version = "1.20.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
-xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 slotmap = { version = "1.1.1", features = ["serde"] } 
-smallvec = "1.13"
-half = "2.4"
-rustc-hash = "2.1.1" 
+smallvec = "1.15"
+half = "2.7"
+rustc-hash = "2.1" 
 lasso = { version = "0.7", features = ["multi-threaded"] } 
 parking_lot = { version = "0.12", features = ["deadlock_detection"] } 
 futures = "0.3"
 bitflags = "2.10.0"
 
-# 模板引擎
-minijinja = { version = "2.15.1", features = ["loader", "custom_syntax"] }
+# Templating
+minijinja = { version = "2.15", features = ["loader", "custom_syntax"] }
 rust-embed = "8.11.0"
 
 # =================================================================
-# Native 平台 (Windows, Linux, macOS)
+# Native Platform (Windows, Linux, macOS)
 # =================================================================
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1.43", features = ["fs", "rt-multi-thread", "macros"] }
-reqwest = { version = "0.13.1", features = ["default-tls", "stream"]} 
+tokio = { version = "1.49", features = ["fs", "rt-multi-thread", "macros"] }
+reqwest = { version = "0.13", features = ["default-tls", "stream"]} 
 
 # =================================================================
-# Web (WASM) 平台
+# Web (WASM) Platform
 # =================================================================
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-# Web 特定库
+# Web Specific Libraries
 wasm-bindgen = "0.2.108"
 wasm-bindgen-futures = "0.4.58"
 web-sys = { version = "0.3.85", features = [
@@ -93,20 +93,20 @@ web-sys = { version = "0.3.85", features = [
     "File", "FileList", "FileReader", "Blob", "ProgressEvent", "console"
 ]}
 js-sys = "0.3.85"
-web-time = "1.1" # 替代 std::time
+web-time = "1.1"
 
-# 日志与Panic处理
+# Logging and Panic Handling
 console_error_panic_hook = "0.1.7"
 console_log = "1.0"
 
-rust-embed = { version = "8.11.0", features = ["debug-embed"] }
+rust-embed = { version = "8.11", features = ["debug-embed"] }
 wgpu = { version = "28.0", features = ["webgpu", "webgl"] }
 
 parking_lot = { version = "0.12", features = [] }
 lasso = { version = "0.7", features = [] } 
 
 # =================================================================
-# 开发依赖 (Dev Dependencies) & Egui
+# Development Dependencies & Egui
 # =================================================================
 [dev-dependencies]
 anyhow = "1.0.101"
@@ -115,7 +115,7 @@ rfd = { version = "0.17.2" }
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = "0.3"
 
-# --- Egui 统一配置  ---
+# --- Egui Configuration ---
 
 # Native Egui
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.egui]
