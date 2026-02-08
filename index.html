@@ -162,13 +162,12 @@
             document.body.style.opacity = "1.0";
         }
 
-        // 绑定事件到 Body (确保覆盖全屏)
+
         document.body.addEventListener('dragenter', handleDragOver, false);
         document.body.addEventListener('dragover', handleDragOver, false);
         document.body.addEventListener('dragleave', handleDragLeave, false);
         document.body.addEventListener('drop', handleDrop, false);
-        
-        // 同样绑定到 Canvas，以防万一
+
         const canvas = document.getElementById('myth-canvas');
         canvas.addEventListener('dragenter', handleDragOver, false);
         canvas.addEventListener('dragover', handleDragOver, false);

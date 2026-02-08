@@ -5,11 +5,11 @@
     "Pan Xinmiao <pan_xinmiao@163.com>"
   ],
   "description": "A developer-friendly, high-performance 3D rendering engine written in Rust.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "license": "MIT OR Apache-2.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/panxinmiao/myth-engine"
+    "url": "https://github.com/panxinmiao/myth"
   },
   "files": [
     "gltf_viewer_bg.wasm",
@@ -17,7 +17,7 @@
     "gltf_viewer.d.ts"
   ],
   "main": "gltf_viewer.js",
-  "homepage": "https://github.com/panxinmiao/myth-engine",
+  "homepage": "https://github.com/panxinmiao/myth",
   "types": "gltf_viewer.d.ts",
   "sideEffects": [
     "./snippets/*"
