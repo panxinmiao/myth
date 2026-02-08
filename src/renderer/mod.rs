@@ -286,12 +286,19 @@ impl Renderer {
         let mut frame_builder = FrameBuilder::new();
 
         // ========================================
-        // 1. 公共准备阶段 (PreProcess)
+        // 1. Compute passes (conditional)
         // ========================================
-        frame_builder
-            .add_node(RenderStage::PreProcess, &mut state.brdf_pass)
-            .add_node(RenderStage::PreProcess, &mut state.ibl_pass)
-            .add_node(RenderStage::PreProcess, &mut state.cull_pass);
+        if state.resource_manager.needs_brdf_compute {
+            frame_builder.add_node(RenderStage::PreProcess, &mut state.brdf_pass);
+        }
+        if state.resource_manager.pending_ibl_source.is_some() {
+            frame_builder.add_node(RenderStage::PreProcess, &mut state.ibl_pass);
+        }
+
+        // ========================================
+        // 2. Scene culling
+        // ========================================
+        frame_builder.add_node(RenderStage::PreProcess, &mut state.cull_pass);
 
         // ========================================
         // 2. 路径选择：HDR (PBR Path) vs LDR (Simple Path)

@@ -76,149 +76,150 @@ impl SceneCullPass {
         render_lists.gpu_global_bind_group_id = gpu_world.bind_group_id;
         render_lists.gpu_global_bind_group = Some(gpu_world.bind_group.clone());
 
-        let geo_guard = ctx.assets.geometries.read_lock();
-        let mat_guard = ctx.assets.materials.read_lock();
-
         let mut use_transmission = false;
+        {
+            let geo_guard = ctx.assets.geometries.read_lock();
+            let mat_guard = ctx.assets.materials.read_lock();
 
-        for item_idx in 0..ctx.extracted_scene.render_items.len() {
-            let item = &ctx.extracted_scene.render_items[item_idx];
+            for item_idx in 0..ctx.extracted_scene.render_items.len() {
+                let item = &ctx.extracted_scene.render_items[item_idx];
 
-            let Some(geometry) = geo_guard.map.get(item.geometry) else {
-                warn!("Geometry {:?} missing during render prepare", item.geometry);
-                continue;
-            };
-            let Some(material) = mat_guard.map.get(item.material) else {
-                warn!("Material {:?} missing during render prepare", item.material);
-                continue;
-            };
-
-            let object_bind_group = &item.object_bind_group;
-
-            let Some(gpu_geometry) = ctx.resource_manager.get_geometry(item.geometry) else {
-                error!("CRITICAL: GpuGeometry missing for {:?}", item.geometry);
-                continue;
-            };
-            let Some(gpu_material) = ctx.resource_manager.get_material(item.material) else {
-                error!("CRITICAL: GpuMaterial missing for {:?}", item.material);
-                continue;
-            };
-
-            // Build fast cache key using version numbers
-            let fast_key = FastPipelineKey {
-                material_handle: item.material,
-                material_version: gpu_material.version,
-                geometry_handle: item.geometry,
-                geometry_version: geometry.layout_version(),
-                instance_variants: item.item_variant_flags,
-                global_state_id: gpu_world.id,
-                pipeline_settings_version,
-            };
-
-            // ========== Hot Path Optimization: Check L1 Cache First ==========
-            let (pipeline, pipeline_id) =
-                if let Some(p) = ctx.pipeline_cache.get_pipeline_fast(fast_key) {
-                    // L1 cache hit: Directly use cached Pipeline
-                    p.clone()
-                } else {
-                    // L1 cache miss: Need full shader_defines computation
-                    let geo_defines = geometry.shader_defines();
-                    let mat_defines = material.shader_defines();
-
-                    let final_a2c_enable = match material.alpha_mode() {
-                        AlphaMode::Mask(_, a2c) => a2c,
-                        AlphaMode::Blend | AlphaMode::Opaque => false,
-                    };
-
-                    let mut options = ShaderCompilationOptions::from_merged(
-                        &mat_defines,
-                        &geo_defines,
-                        &ctx.extracted_scene.scene_defines,
-                        &item.item_shader_defines,
-                    );
-
-                    if final_a2c_enable {
-                        options.add_define("ALPHA_TO_COVERAGE", "1");
-                    }
-
-                    if ctx.wgpu_ctx.enable_hdr {
-                        options.add_define("HDR", "1");
-                    }
-
-                    let shader_hash = options.compute_hash();
-
-                    let canonical_key = PipelineKey {
-                        shader_hash,
-                        topology: geometry.topology,
-                        cull_mode: match material.side() {
-                            Side::Front => Some(wgpu::Face::Back),
-                            Side::Back => Some(wgpu::Face::Front),
-                            Side::Double => None,
-                        },
-                        depth_write: material.depth_write(),
-                        depth_compare: if material.depth_test() {
-                            wgpu::CompareFunction::Greater
-                        } else {
-                            wgpu::CompareFunction::Always
-                        },
-                        blend_state: if material.alpha_mode() == AlphaMode::Blend {
-                            Some(wgpu::BlendState::ALPHA_BLENDING)
-                        } else {
-                            None
-                        },
-                        color_format,
-                        depth_format,
-                        sample_count,
-                        alpha_to_coverage: final_a2c_enable,
-                        front_face: if item.item_variant_flags & 0x1 != 0 {
-                            wgpu::FrontFace::Cw
-                        } else {
-                            wgpu::FrontFace::Ccw
-                        },
-                    };
-
-                    let (pipeline, pipeline_id) = ctx.pipeline_cache.get_pipeline(
-                        &ctx.wgpu_ctx.device,
-                        material.shader_name(),
-                        canonical_key,
-                        &options,
-                        &gpu_geometry.layout_info,
-                        gpu_material,
-                        object_bind_group,
-                        gpu_world,
-                        ctx.frame_resources,
-                    );
-
-                    ctx.pipeline_cache
-                        .insert_pipeline_fast(fast_key, (pipeline.clone(), pipeline_id));
-                    (pipeline, pipeline_id)
+                let Some(geometry) = geo_guard.map.get(item.geometry) else {
+                    warn!("Geometry {:?} missing during render prepare", item.geometry);
+                    continue;
+                };
+                let Some(material) = mat_guard.map.get(item.material) else {
+                    warn!("Material {:?} missing during render prepare", item.material);
+                    continue;
                 };
 
-            let mat_id = item.material.data().as_ffi() as u32;
+                let object_bind_group = &item.object_bind_group;
 
-            let has_transmission = material.use_transmission();
-            if has_transmission {
-                use_transmission = true;
-            }
+                let Some(gpu_geometry) = ctx.resource_manager.get_geometry(item.geometry) else {
+                    error!("CRITICAL: GpuGeometry missing for {:?}", item.geometry);
+                    continue;
+                };
+                let Some(gpu_material) = ctx.resource_manager.get_material(item.material) else {
+                    error!("CRITICAL: GpuMaterial missing for {:?}", item.material);
+                    continue;
+                };
 
-            let is_transparent = material.alpha_mode() == AlphaMode::Blend || has_transmission;
-            let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq, is_transparent);
+                // Build fast cache key using version numbers
+                let fast_key = FastPipelineKey {
+                    material_handle: item.material,
+                    material_version: gpu_material.version,
+                    geometry_handle: item.geometry,
+                    geometry_version: geometry.layout_version(),
+                    instance_variants: item.item_variant_flags,
+                    global_state_id: gpu_world.id,
+                    pipeline_settings_version,
+                };
 
-            let cmd = RenderCommand {
-                object_bind_group: object_bind_group.clone(),
-                geometry_handle: item.geometry,
-                material_handle: item.material,
-                pipeline_id,
-                pipeline,
-                model_matrix: item.world_matrix,
-                sort_key,
-                dynamic_offset: 0,
-            };
+                // ========== Hot Path Optimization: Check L1 Cache First ==========
+                let (pipeline, pipeline_id) =
+                    if let Some(p) = ctx.pipeline_cache.get_pipeline_fast(fast_key) {
+                        // L1 cache hit: Directly use cached Pipeline
+                        p.clone()
+                    } else {
+                        // L1 cache miss: Need full shader_defines computation
+                        let geo_defines = geometry.shader_defines();
+                        let mat_defines = material.shader_defines();
 
-            if is_transparent {
-                ctx.render_frame.render_lists.insert_transparent(cmd);
-            } else {
-                ctx.render_frame.render_lists.insert_opaque(cmd);
+                        let final_a2c_enable = match material.alpha_mode() {
+                            AlphaMode::Mask(_, a2c) => a2c,
+                            AlphaMode::Blend | AlphaMode::Opaque => false,
+                        };
+
+                        let mut options = ShaderCompilationOptions::from_merged(
+                            &mat_defines,
+                            &geo_defines,
+                            &ctx.extracted_scene.scene_defines,
+                            &item.item_shader_defines,
+                        );
+
+                        if final_a2c_enable {
+                            options.add_define("ALPHA_TO_COVERAGE", "1");
+                        }
+
+                        if ctx.wgpu_ctx.enable_hdr {
+                            options.add_define("HDR", "1");
+                        }
+
+                        let shader_hash = options.compute_hash();
+
+                        let canonical_key = PipelineKey {
+                            shader_hash,
+                            topology: geometry.topology,
+                            cull_mode: match material.side() {
+                                Side::Front => Some(wgpu::Face::Back),
+                                Side::Back => Some(wgpu::Face::Front),
+                                Side::Double => None,
+                            },
+                            depth_write: material.depth_write(),
+                            depth_compare: if material.depth_test() {
+                                wgpu::CompareFunction::Greater
+                            } else {
+                                wgpu::CompareFunction::Always
+                            },
+                            blend_state: if material.alpha_mode() == AlphaMode::Blend {
+                                Some(wgpu::BlendState::ALPHA_BLENDING)
+                            } else {
+                                None
+                            },
+                            color_format,
+                            depth_format,
+                            sample_count,
+                            alpha_to_coverage: final_a2c_enable,
+                            front_face: if item.item_variant_flags & 0x1 != 0 {
+                                wgpu::FrontFace::Cw
+                            } else {
+                                wgpu::FrontFace::Ccw
+                            },
+                        };
+
+                        let (pipeline, pipeline_id) = ctx.pipeline_cache.get_pipeline(
+                            &ctx.wgpu_ctx.device,
+                            material.shader_name(),
+                            canonical_key,
+                            &options,
+                            &gpu_geometry.layout_info,
+                            gpu_material,
+                            object_bind_group,
+                            gpu_world,
+                            ctx.frame_resources,
+                        );
+
+                        ctx.pipeline_cache
+                            .insert_pipeline_fast(fast_key, (pipeline.clone(), pipeline_id));
+                        (pipeline, pipeline_id)
+                    };
+
+                let mat_id = item.material.data().as_ffi() as u32;
+
+                let has_transmission = material.use_transmission();
+                if has_transmission {
+                    use_transmission = true;
+                }
+
+                let is_transparent = material.alpha_mode() == AlphaMode::Blend || has_transmission;
+                let sort_key = RenderKey::new(pipeline_id, mat_id, item.distance_sq, is_transparent);
+
+                let cmd = RenderCommand {
+                    object_bind_group: object_bind_group.clone(),
+                    geometry_handle: item.geometry,
+                    material_handle: item.material,
+                    pipeline_id,
+                    pipeline,
+                    model_matrix: item.world_matrix,
+                    sort_key,
+                    dynamic_offset: 0,
+                };
+
+                if is_transparent {
+                    ctx.render_frame.render_lists.insert_transparent(cmd);
+                } else {
+                    ctx.render_frame.render_lists.insert_opaque(cmd);
+                }
             }
         }
 

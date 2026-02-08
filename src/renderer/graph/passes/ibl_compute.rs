@@ -1,27 +1,61 @@
+use crate::renderer::core::resources::environment::CubeSourceType;
 use crate::renderer::graph::{RenderContext, RenderNode};
 use crate::resources::texture::TextureSource;
 use std::borrow::Cow;
-use std::cell::RefCell;
 use wgpu::{PipelineCompilationOptions, TextureViewDimension};
 
-const EQUIRECT_CUBE_SIZE: u32 = 1024;
-const PMREM_SIZE: u32 = 512;
+/// Fullscreen-triangle blit shader (same as MipmapGenerator).
+/// Used to copy individual cube faces from source → owned cube texture.
+const BLIT_WGSL: &str = r"
+struct VertexOutput {
+    @builtin(position) position : vec4<f32>,
+    @location(0) uv : vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vertexIndex : u32) -> VertexOutput {
+    var pos = array<vec2<f32>, 3>(
+        vec2<f32>(-1.0, -1.0),
+        vec2<f32>( 3.0, -1.0),
+        vec2<f32>(-1.0,  3.0)
+    );
+    var output : VertexOutput;
+    output.position = vec4<f32>(pos[vertexIndex], 0.0, 1.0);
+    output.uv = pos[vertexIndex] * 0.5 + 0.5;
+    output.uv.y = 1.0 - output.uv.y;
+    return output;
+}
+
+@group(0) @binding(0) var t_diffuse : texture_2d<f32>;
+@group(0) @binding(1) var s_diffuse : sampler;
+
+@fragment
+fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
+    return textureSample(t_diffuse, s_diffuse, in.uv);
+}
+";
 
 pub struct IBLComputePass {
+    // PMREM prefilter
     pmrem_pipeline: wgpu::ComputePipeline,
     pmrem_layout_source: wgpu::BindGroupLayout,
     pmrem_layout_dest: wgpu::BindGroupLayout,
 
+    // Equirectangular → Cube
     equirect_pipeline: wgpu::ComputePipeline,
     equirect_layout: wgpu::BindGroupLayout,
 
-    last_processed_source: RefCell<Option<(TextureSource, u64)>>,
+    // Face blit (for CubeNoMipmaps: copy source cube → owned cube)
+    blit_pipeline: wgpu::RenderPipeline,
+    blit_layout: wgpu::BindGroupLayout,
+    blit_sampler: wgpu::Sampler,
 }
 
 impl IBLComputePass {
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn new(device: &wgpu::Device) -> Self {
+        // ====== PMREM prefilter pipeline ======
         let pmrem_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("IBL Prefilter Shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
@@ -91,6 +125,7 @@ impl IBLComputePass {
             cache: None,
         });
 
+        // ====== Equirectangular → Cube pipeline ======
         let equirect_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Equirect to Cube Shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
@@ -146,13 +181,161 @@ impl IBLComputePass {
             cache: None,
         });
 
+        // ====== Blit pipeline (for CubeNoMipmaps face copy) ======
+        let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("IBL Blit Shader"),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(BLIT_WGSL)),
+        });
+
+        let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("IBL Blit Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+
+        let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("IBL Blit Pipeline"),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("IBL Blit Pipeline Layout"),
+                    bind_group_layouts: &[&blit_layout],
+                    immediate_size: 0,
+                }),
+            ),
+            vertex: wgpu::VertexState {
+                module: &blit_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &blit_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let blit_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("IBL Blit Sampler"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            mipmap_filter: wgpu::MipmapFilterMode::Linear,
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            ..Default::default()
+        });
+
         Self {
             pmrem_pipeline,
             pmrem_layout_source,
             pmrem_layout_dest,
             equirect_pipeline,
             equirect_layout,
-            last_processed_source: RefCell::new(None),
+            blit_pipeline,
+            blit_layout,
+            blit_sampler,
+        }
+    }
+
+    /// Blit individual cube faces from `src_texture` to `dst_texture` mip 0
+    /// using the blit render pipeline.
+    fn blit_cube_faces(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        src_texture: &wgpu::Texture,
+        dst_texture: &wgpu::Texture,
+    ) {
+        let layer_count = src_texture
+            .depth_or_array_layers()
+            .min(dst_texture.depth_or_array_layers());
+
+        for layer in 0..layer_count {
+            let src_view = src_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("Blit Src Face"),
+                dimension: Some(TextureViewDimension::D2),
+                base_array_layer: layer,
+                array_layer_count: Some(1),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
+                ..Default::default()
+            });
+
+            let dst_view = dst_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("Blit Dst Face"),
+                dimension: Some(TextureViewDimension::D2),
+                base_array_layer: layer,
+                array_layer_count: Some(1),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                usage: Some(wgpu::TextureUsages::RENDER_ATTACHMENT),
+                ..Default::default()
+            });
+
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Blit BG"),
+                layout: &self.blit_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&src_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.blit_sampler),
+                    },
+                ],
+            });
+
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Blit Cube Face"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &dst_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            rpass.set_pipeline(&self.blit_pipeline);
+            rpass.set_bind_group(0, &bind_group, &[]);
+            rpass.draw(0..3, 0..1);
         }
     }
 }
@@ -164,220 +347,203 @@ impl RenderNode for IBLComputePass {
 
     #[allow(clippy::too_many_lines, clippy::cast_sign_loss)]
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-        let env = &ctx.scene.environment;
-
-        let current_source = match &env.source_env_map {
-            Some(s) => *s,
+        let source = match ctx.resource_manager.pending_ibl_source.take() {
+            Some(s) => s,
             None => return,
         };
 
-        let mut current_version = 0;
-
-        if let TextureSource::Asset(handle) = &current_source
-            && let Some(tex) = ctx.assets.textures.get(*handle)
-        {
-            current_version = tex.version();
-        }
-
-        let needs_update = if let Some((last_src, last_ver)) = &*self.last_processed_source.borrow()
-        {
-            *last_src != current_source || *last_ver != current_version
-        } else {
-            true
-        };
-
-        if !needs_update && env.pmrem_map.is_some() {
-            return;
-        }
-
-        let (source_view_dim, cpu_image_id) = match &current_source {
-            TextureSource::Asset(handle) => {
-                ctx.resource_manager.prepare_texture(ctx.assets, *handle);
-
-                let Some(texture_asset) = ctx.assets.textures.get(*handle) else {
-                    log::error!("IBL Source Asset missing: {handle:?}");
-                    return;
-                };
-                let view_dim = texture_asset.view_dimension;
-                let img_id = texture_asset.image.id();
-
-                if ctx.resource_manager.get_image(img_id).is_none() {
-                    log::error!("IBL Source GpuImage missing for handle: {handle:?}");
-                    return;
-                }
-                (view_dim, Some(img_id))
+        // Temporarily take GpuEnvironment to split borrows:
+        // we need simultaneous access to textures (in gpu_env) and
+        // mipmap_generator / gpu_images (in resource_manager).
+        let mut gpu_env = match ctx.resource_manager.environment_map_cache.remove(&source) {
+            Some(env) if env.needs_compute => env,
+            Some(env) => {
+                ctx.resource_manager
+                    .environment_map_cache
+                    .insert(source, env);
+                return;
             }
-            TextureSource::Attachment(_, view_dim) => (*view_dim, None),
+            None => return,
         };
 
-        let is_2d_source = source_view_dim == TextureViewDimension::D2;
+        let source_type = gpu_env.source_type;
 
-        let converted_cube_texture = if is_2d_source {
-            let source_view = match &current_source {
-                TextureSource::Asset(_) => {
-                    &ctx.resource_manager
-                        .get_image(cpu_image_id.unwrap())
-                        .unwrap()
-                        .default_view
-                }
-                TextureSource::Attachment(id, _) => {
-                    ctx.resource_manager.internal_resources.get(id).unwrap()
-                }
-            };
+        // ================================================================
+        // Phase 1: Prepare mipmapped cube source for PMREM
+        // ================================================================
+        match source_type {
+            CubeSourceType::Equirectangular => {
+                // Step 1a: Equirectangular 2D → Cube mip 0
+                let cube_texture = gpu_env
+                    .cube_texture
+                    .as_ref()
+                    .expect("owned cube_texture must exist for Equirectangular source");
 
-            let mip_levels = (EQUIRECT_CUBE_SIZE as f32).log2().floor() as u32 + 1;
-            let format = wgpu::TextureFormat::Rgba16Float;
+                let cube_size = cube_texture.width();
 
-            let cube_texture = ctx
-                .wgpu_ctx
-                .device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some("Env Equirect2Cube"),
-                    size: wgpu::Extent3d {
-                        width: EQUIRECT_CUBE_SIZE,
-                        height: EQUIRECT_CUBE_SIZE,
-                        depth_or_array_layers: 6,
-                    },
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage: wgpu::TextureUsages::STORAGE_BINDING
-                        | wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    mip_level_count: mip_levels,
-                    sample_count: 1,
-                    view_formats: &[],
-                });
+                {
+                    let source_view = match &source {
+                        TextureSource::Asset(handle) => {
+                            let tex_asset = ctx.assets.textures.get(*handle).unwrap();
+                            let img_id = tex_asset.image.id();
+                            &ctx.resource_manager.get_image(img_id).unwrap().default_view
+                        }
+                        TextureSource::Attachment(id, _) => {
+                            ctx.resource_manager.internal_resources.get(id).unwrap()
+                        }
+                    };
 
-            let dest_view = cube_texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                mip_level_count: Some(1),
-                base_mip_level: 0,
-                ..Default::default()
-            });
-
-            let clamp_sampler = ctx
-                .wgpu_ctx
-                .device
-                .create_sampler(&wgpu::SamplerDescriptor {
-                    label: Some("IBL Clamp Sampler"),
-                    address_mode_u: wgpu::AddressMode::Repeat, // 水平循环
-                    address_mode_v: wgpu::AddressMode::ClampToEdge, // 垂直钳制 (关键!)
-                    address_mode_w: wgpu::AddressMode::ClampToEdge,
-                    mag_filter: wgpu::FilterMode::Linear,
-                    min_filter: wgpu::FilterMode::Linear,
-                    ..Default::default()
-                });
-
-            let bind_group = ctx
-                .wgpu_ctx
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Equirect BindGroup"),
-                    layout: &self.equirect_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(source_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&clamp_sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::TextureView(&dest_view),
-                        },
-                    ],
-                });
-
-            {
-                let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                    label: Some("Equirect to Cube"),
-                    timestamp_writes: None,
-                });
-                cpass.set_pipeline(&self.equirect_pipeline);
-                cpass.set_bind_group(0, &bind_group, &[]);
-
-                let group_count = EQUIRECT_CUBE_SIZE.div_ceil(8);
-                cpass.dispatch_workgroups(group_count, group_count, 6);
-            }
-
-            // generate mipmaps for the cubemap
-            ctx.resource_manager.mipmap_generator.generate(
-                &ctx.wgpu_ctx.device,
-                encoder,
-                &cube_texture,
-            );
-
-            Some(cube_texture)
-        } else {
-            None
-        };
-
-        // 释放旧的processed_env_map资源
-        if let Some(TextureSource::Attachment(old_id, _)) = ctx.scene.environment.processed_env_map
-        {
-            ctx.resource_manager.release_internal_texture(old_id);
-        }
-
-        let pmrem_source_view = if let Some(ref cube_tex) = converted_cube_texture {
-            let cube_view = cube_tex.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::Cube),
-                ..Default::default()
-            });
-
-            let converted_view_id = ctx.resource_manager.register_internal_texture(cube_view);
-            ctx.scene.environment.processed_env_map = Some(TextureSource::Attachment(
-                converted_view_id,
-                wgpu::TextureViewDimension::Cube,
-            ));
-
-            cube_tex.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::Cube),
-                ..Default::default()
-            })
-        } else {
-            ctx.scene.environment.processed_env_map = Some(current_source);
-
-            match &current_source {
-                TextureSource::Asset(_) => ctx
-                    .resource_manager
-                    .get_image(cpu_image_id.unwrap())
-                    .unwrap()
-                    .texture
-                    .create_view(&wgpu::TextureViewDescriptor {
-                        dimension: Some(wgpu::TextureViewDimension::Cube),
+                    let dest_view = cube_texture.create_view(&wgpu::TextureViewDescriptor {
+                        dimension: Some(TextureViewDimension::D2Array),
+                        mip_level_count: Some(1),
+                        base_mip_level: 0,
                         ..Default::default()
-                    }),
+                    });
+
+                    let clamp_sampler =
+                        ctx.wgpu_ctx
+                            .device
+                            .create_sampler(&wgpu::SamplerDescriptor {
+                                label: Some("IBL Clamp Sampler"),
+                                address_mode_u: wgpu::AddressMode::Repeat,
+                                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                                mag_filter: wgpu::FilterMode::Linear,
+                                min_filter: wgpu::FilterMode::Linear,
+                                ..Default::default()
+                            });
+
+                    let bind_group = ctx
+                        .wgpu_ctx
+                        .device
+                        .create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("Equirect BindGroup"),
+                            layout: &self.equirect_layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(source_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::Sampler(&clamp_sampler),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: wgpu::BindingResource::TextureView(&dest_view),
+                                },
+                            ],
+                        });
+
+                    {
+                        let mut cpass =
+                            encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                                label: Some("Equirect to Cube"),
+                                timestamp_writes: None,
+                            });
+                        cpass.set_pipeline(&self.equirect_pipeline);
+                        cpass.set_bind_group(0, &bind_group, &[]);
+
+                        let group_count = cube_size.div_ceil(8);
+                        cpass.dispatch_workgroups(group_count, group_count, 6);
+                    }
+                }
+
+                // Step 1b: Generate mipmaps for owned cube
+                ctx.resource_manager.mipmap_generator.generate(
+                    &ctx.wgpu_ctx.device,
+                    encoder,
+                    cube_texture,
+                );
+            }
+
+            CubeSourceType::CubeNoMipmaps => {
+                // Step 1a: Blit source cube faces → owned cube mip 0
+                let cube_texture = gpu_env
+                    .cube_texture
+                    .as_ref()
+                    .expect("owned cube_texture must exist for CubeNoMipmaps source");
+
+                {
+                    let source_texture = match &source {
+                        TextureSource::Asset(handle) => {
+                            let tex_asset = ctx.assets.textures.get(*handle).unwrap();
+                            let img_id = tex_asset.image.id();
+                            &ctx.resource_manager.get_image(img_id).unwrap().texture
+                        }
+                        TextureSource::Attachment(_, _) => {
+                            // Attachment cube without mipmaps not supported
+                            gpu_env.needs_compute = false;
+                            ctx.resource_manager
+                                .environment_map_cache
+                                .insert(source, gpu_env);
+                            return;
+                        }
+                    };
+
+                    self.blit_cube_faces(
+                        &ctx.wgpu_ctx.device,
+                        encoder,
+                        source_texture,
+                        cube_texture,
+                    );
+                }
+
+                // Step 1b: Generate mipmaps for owned cube
+                ctx.resource_manager.mipmap_generator.generate(
+                    &ctx.wgpu_ctx.device,
+                    encoder,
+                    cube_texture,
+                );
+            }
+
+            CubeSourceType::CubeWithMipmaps => {
+                // No cube pre-processing needed; PMREM reads directly from
+                // the asset's mipmapped cube texture.
+            }
+        }
+
+        // ================================================================
+        // Phase 2: PMREM prefiltering (common to all source types)
+        // ================================================================
+        let pmrem_source_view = match source_type {
+            CubeSourceType::Equirectangular | CubeSourceType::CubeNoMipmaps => gpu_env
+                .cube_texture
+                .as_ref()
+                .unwrap()
+                .create_view(&wgpu::TextureViewDescriptor {
+                    dimension: Some(TextureViewDimension::Cube),
+                    ..Default::default()
+                }),
+            CubeSourceType::CubeWithMipmaps => match &source {
+                TextureSource::Asset(handle) => {
+                    let tex_asset = ctx.assets.textures.get(*handle).unwrap();
+                    let img_id = tex_asset.image.id();
+                    ctx.resource_manager
+                        .get_image(img_id)
+                        .unwrap()
+                        .texture
+                        .create_view(&wgpu::TextureViewDescriptor {
+                            dimension: Some(TextureViewDimension::Cube),
+                            ..Default::default()
+                        })
+                }
                 TextureSource::Attachment(_, _) => {
+                    gpu_env.needs_compute = false;
+                    ctx.resource_manager
+                        .environment_map_cache
+                        .insert(source, gpu_env);
                     return;
                 }
-            }
+            },
         };
 
-        let mip_levels = (PMREM_SIZE as f32).log2().floor() as u32 + 1;
+        let mip_levels = gpu_env.pmrem_texture.mip_level_count();
+        let pmrem_size = gpu_env.pmrem_texture.width();
         let format = wgpu::TextureFormat::Rgba16Float;
 
-        let pmrem_texture = ctx
-            .wgpu_ctx
-            .device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("PMREM Cubemap"),
-                size: wgpu::Extent3d {
-                    width: PMREM_SIZE,
-                    height: PMREM_SIZE,
-                    depth_or_array_layers: 6,
-                },
-                mip_level_count: mip_levels,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format,
-                usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
-
         for mip in 0..mip_levels {
-            let mip_size = (PMREM_SIZE >> mip).max(1);
+            let mip_size = (pmrem_size >> mip).max(1);
             let roughness = mip as f32 / (mip_levels - 1) as f32;
 
             let params = [roughness, mip_size as f32, 0.0, 0.0];
@@ -418,17 +584,20 @@ impl RenderNode for IBLComputePass {
                     ],
                 });
 
-            let dest_view = pmrem_texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some(&format!("PMREM Mip {mip}")),
-                format: Some(format),
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                aspect: wgpu::TextureAspect::All,
-                base_mip_level: mip,
-                mip_level_count: Some(1),
-                base_array_layer: 0,
-                array_layer_count: Some(6),
-                usage: Some(wgpu::TextureUsages::STORAGE_BINDING),
-            });
+            let dest_view =
+                gpu_env
+                    .pmrem_texture
+                    .create_view(&wgpu::TextureViewDescriptor {
+                        label: Some(&format!("PMREM Mip {mip}")),
+                        format: Some(format),
+                        dimension: Some(TextureViewDimension::D2Array),
+                        aspect: wgpu::TextureAspect::All,
+                        base_mip_level: mip,
+                        mip_level_count: Some(1),
+                        base_array_layer: 0,
+                        array_layer_count: Some(6),
+                        usage: Some(wgpu::TextureUsages::STORAGE_BINDING),
+                    });
 
             let bg_dst = ctx
                 .wgpu_ctx
@@ -456,31 +625,15 @@ impl RenderNode for IBLComputePass {
             }
         }
 
-        let pmrem_cube_view = pmrem_texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("PMREM Cube View"),
-            dimension: Some(wgpu::TextureViewDimension::Cube),
-            ..Default::default()
-        });
-
-        // 释放旧的pmrem_map资源
-        if let Some(TextureSource::Attachment(old_id, _)) = ctx.scene.environment.pmrem_map {
-            ctx.resource_manager.release_internal_texture(old_id);
-        }
-
-        let id = ctx
-            .resource_manager
-            .register_internal_texture(pmrem_cube_view);
-
-        ctx.scene.environment.pmrem_map = Some(TextureSource::Attachment(
-            id,
-            wgpu::TextureViewDimension::Cube,
-        ));
-        ctx.scene.environment.env_map_max_mip_level = (mip_levels - 1) as f32;
-        *self.last_processed_source.borrow_mut() = Some((current_source, current_version));
+        // Mark done and return to cache
+        gpu_env.needs_compute = false;
+        ctx.resource_manager
+            .environment_map_cache
+            .insert(source, gpu_env);
 
         log::info!(
-            "IBL PMREM generated. Source type: {}",
-            if is_2d_source { "2D HDR" } else { "CubeMap" }
+            "IBL PMREM generated. Source type: {:?}",
+            source_type
         );
     }
 }

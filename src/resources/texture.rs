@@ -11,7 +11,7 @@ use wgpu::{AddressMode, TextureDimension, TextureFormat, TextureViewDimension};
 ///
 /// Allows materials to reference textures from the `AssetServer` or
 /// internal render target attachments.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TextureSource {
     /// Asset from `AssetServer` (with version tracking and automatic upload)
     Asset(TextureHandle),

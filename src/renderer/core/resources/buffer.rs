@@ -2,8 +2,112 @@
 
 use rustc_hash::FxHashMap;
 
-use super::{EnsureResult, GpuBuffer, ResourceManager};
-use crate::resources::buffer::BufferRef;
+use super::{EnsureResult, ResourceManager};
+use crate::{renderer::core::resources::generate_gpu_resource_id, resources::buffer::BufferRef};
+
+
+pub struct GpuBuffer {
+    pub id: u64,
+    pub buffer: wgpu::Buffer,
+    pub size: u64,
+    pub usage: wgpu::BufferUsages,
+    pub label: String,
+    pub last_used_frame: u64,
+    pub version: u64,
+    pub last_uploaded_version: u64,
+    shadow_data: Option<Vec<u8>>,
+}
+
+impl GpuBuffer {
+    #[must_use]
+    pub fn new(
+        device: &wgpu::Device,
+        data: &[u8],
+        usage: wgpu::BufferUsages,
+        label: Option<&str>,
+    ) -> Self {
+        use wgpu::util::DeviceExt;
+        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label,
+            contents: data,
+            usage,
+        });
+
+        Self {
+            id: generate_gpu_resource_id(),
+            buffer,
+            size: data.len() as u64,
+            usage,
+            label: label.unwrap_or("Buffer").to_string(),
+            last_used_frame: 0,
+            version: 0,
+            last_uploaded_version: 0,
+            shadow_data: None,
+        }
+    }
+
+    pub fn enable_shadow_copy(&mut self) {
+        if self.shadow_data.is_none() {
+            self.shadow_data = Some(Vec::new());
+        }
+    }
+
+    pub fn update_with_data(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &[u8],
+    ) -> bool {
+        if let Some(prev) = &mut self.shadow_data {
+            if prev == data {
+                return false;
+            }
+            if prev.len() != data.len() {
+                *prev = vec![0u8; data.len()];
+            }
+            prev.copy_from_slice(data);
+        }
+        self.write_to_gpu(device, queue, data)
+    }
+
+    pub fn update_with_version(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &[u8],
+        new_version: u64,
+    ) -> bool {
+        if new_version <= self.version {
+            return false;
+        }
+        self.version = new_version;
+        self.write_to_gpu(device, queue, data)
+    }
+
+    fn write_to_gpu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) -> bool {
+        let new_size = data.len() as u64;
+        if new_size > self.size {
+            self.resize(device, new_size);
+            queue.write_buffer(&self.buffer, 0, data);
+            return true;
+        }
+        queue.write_buffer(&self.buffer, 0, data);
+        false
+    }
+
+    fn resize(&mut self, device: &wgpu::Device, new_size: u64) {
+        self.buffer.destroy();
+        self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some(&self.label),
+            size: new_size,
+            usage: self.usage,
+            mapped_at_creation: false,
+        });
+        self.size = new_size;
+        self.id = generate_gpu_resource_id();
+    }
+}
+
 
 impl ResourceManager {
     /// 静态辅助方法：只借用必要的字段，解决 borrow checker 冲突

@@ -283,11 +283,25 @@ impl RenderFrame {
     ) {
         resource_manager.next_frame();
 
-        // 1. Extract：复用内存，避免每帧分配
+        // 1. Extract: reuse memory, avoid per-frame allocation
         self.extracted_scene
             .extract_into(scene, camera, assets, resource_manager);
 
-        // 2. Prepare：准备全局 GPU 资源
+        // 2. Resolve GPU environment and BRDF LUT before prepare_global.
+        //    This creates textures in the cache and determines env_map_max_mip_level.
+        let env_max_mip =
+            resource_manager.resolve_gpu_environment(assets, &scene.environment);
+        resource_manager.ensure_brdf_lut();
+
+        // Patch env_map_max_mip_level into the scene uniform buffer
+        {
+            let current = scene.uniforms_buffer.read().env_map_max_mip_level;
+            if current != env_max_mip {
+                scene.uniforms_buffer.write().env_map_max_mip_level = env_max_mip;
+            }
+        }
+
+        // 3. Prepare: global GPU resources
         self.render_state.update(camera, time);
         resource_manager.prepare_global(assets, scene, &self.render_state);
     }

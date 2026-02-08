@@ -5,14 +5,13 @@
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use crate::assets::TextureHandle;
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::renderer::graph::RenderState;
 use crate::resources::buffer::BufferRef;
 use crate::resources::geometry::Geometry;
 use crate::resources::material::{Material, RenderableMaterialTrait};
 use crate::resources::texture::{SamplerSource, TextureSource};
-use crate::resources::uniforms::{MorphUniforms, RenderStateUniforms, WgslStruct};
+use crate::resources::uniforms::{MorphUniforms, RenderStateUniforms};
 use crate::{Mesh, Scene};
 
 /// 实际的绑定资源数据 (用于生成 `BindGroup`)
@@ -117,79 +116,12 @@ impl Bindings for RenderState {
 }
 
 impl Bindings for Scene {
-    fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
-        // Binding 1: Environment Uniforms
-        builder.add_uniform_buffer(
-            "environment",
-            &self.uniforms_buffer.handle(),
-            None,
-            wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
-            false,
-            None,
-            Some(crate::renderer::core::builder::WgslStructName::Generator(
-                crate::resources::uniforms::EnvironmentUniforms::wgsl_struct_def,
-            )),
-        );
-
-        // Binding 2: Light Storage Buffer
-        builder.add_storage_buffer(
-            "lights",
-            &self.light_storage_buffer.handle(),
-            None,
-            true,
-            wgpu::ShaderStages::FRAGMENT,
-            Some(crate::renderer::core::builder::WgslStructName::Generator(
-                crate::resources::uniforms::GpuLightStorage::wgsl_struct_def,
-            )),
-        );
-
-        // Binding 3-4: Environment Map (Cube) and Sampler - use processed_env_map for Skybox
-        let env_map_handle = self
-            .environment
-            .get_processed_env_map()
-            .copied()
-            .unwrap_or(TextureHandle::dummy_env_map().into());
-        builder.add_texture(
-            "env_map",
-            Some(env_map_handle),
-            wgpu::TextureSampleType::Float { filterable: true },
-            wgpu::TextureViewDimension::Cube,
-            wgpu::ShaderStages::FRAGMENT,
-        );
-        builder.add_sampler(
-            "env_map",
-            Some(SamplerSource::Default),
-            wgpu::SamplerBindingType::Filtering,
-            wgpu::ShaderStages::FRAGMENT,
-        );
-
-        builder.add_texture(
-            "pmrem_map",
-            self.environment.pmrem_map,
-            wgpu::TextureSampleType::Float { filterable: true },
-            wgpu::TextureViewDimension::Cube,
-            wgpu::ShaderStages::FRAGMENT,
-        );
-        builder.add_sampler(
-            "pmrem_map",
-            Some(SamplerSource::Default),
-            wgpu::SamplerBindingType::Filtering,
-            wgpu::ShaderStages::FRAGMENT,
-        );
-
-        builder.add_texture(
-            "brdf_lut",
-            self.environment.brdf_lut,
-            wgpu::TextureSampleType::Float { filterable: true },
-            wgpu::TextureViewDimension::D2,
-            wgpu::ShaderStages::FRAGMENT,
-        );
-        builder.add_sampler(
-            "brdf_lut",
-            Some(SamplerSource::Default),
-            wgpu::SamplerBindingType::Filtering,
-            wgpu::ShaderStages::FRAGMENT,
-        );
+    fn define_bindings<'a>(&'a self, _builder: &mut ResourceBuilder<'a>) {
+        // Scene-level global bindings are now built by
+        // `ResourceManager::define_global_scene_bindings` which resolves
+        // environment textures from the GPU cache instead of from Environment.
+        // This impl is kept empty for trait coherence; the actual bindings
+        // are constructed in `ResourceManager::create_global_state`.
     }
 }
 

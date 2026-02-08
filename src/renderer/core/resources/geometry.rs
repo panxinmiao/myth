@@ -1,9 +1,27 @@
 //! Geometry 相关操作
 
+use std::ops::Range;
+
 use crate::assets::{AssetServer, GeometryHandle};
+use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 use crate::resources::geometry::Geometry;
 
-use super::{GpuGeometry, ResourceManager};
+use super::{ResourceManager};
+
+/// GPU 端几何体资源
+///
+/// Vertex Buffer IDs 用于 Pipeline 缓存验证，不影响 `BindGroup`
+pub struct GpuGeometry {
+    pub layout_info: GeneratedVertexLayout,
+    pub vertex_buffers: Vec<wgpu::Buffer>,
+    pub vertex_buffer_ids: Vec<u64>,
+    pub index_buffer: Option<(wgpu::Buffer, wgpu::IndexFormat, u32, u64)>,
+    pub draw_range: Range<u32>,
+    pub instance_range: Range<u32>,
+    pub version: u64,
+    pub last_data_version: u64,
+    pub last_used_frame: u64,
+}
 
 /// Geometry 准备结果
 ///

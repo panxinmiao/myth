@@ -1,13 +1,9 @@
-use crate::{
-    renderer::graph::{RenderContext, RenderNode},
-    resources::texture::TextureSource,
-};
-use std::{borrow::Cow, cell::RefCell};
+use crate::renderer::graph::{RenderContext, RenderNode};
+use std::borrow::Cow;
 
 pub struct BRDFLutComputePass {
     pipeline: wgpu::ComputePipeline,
     bind_group_layout: wgpu::BindGroupLayout,
-    brdf_lut_texture_handle: RefCell<Option<u64>>,
 }
 
 impl BRDFLutComputePass {
@@ -52,7 +48,6 @@ impl BRDFLutComputePass {
         Self {
             pipeline,
             bind_group_layout,
-            brdf_lut_texture_handle: RefCell::new(None),
         }
     }
 }
@@ -63,40 +58,18 @@ impl RenderNode for BRDFLutComputePass {
     }
 
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-        // 检查是否已经生成过 BRDF LUT
-        if ctx.scene.environment.brdf_lut.is_some() {
-            return;
-        }
-        if self.brdf_lut_texture_handle.borrow().is_some() {
-            ctx.scene.environment.brdf_lut = Some(TextureSource::Attachment(
-                self.brdf_lut_texture_handle.borrow().unwrap(),
-                wgpu::TextureViewDimension::D2,
-            ));
+        if !ctx.resource_manager.needs_brdf_compute {
             return;
         }
 
-        // 1. 创建 LUT 纹理 (512x512 Rgba16Float)
-        let size = 512;
-        let texture_desc = wgpu::TextureDescriptor {
-            label: Some("BRDF LUT"),
-            size: wgpu::Extent3d {
-                width: size,
-                height: size,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::STORAGE_BINDING | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        };
+        let texture = ctx
+            .resource_manager
+            .brdf_lut_texture
+            .as_ref()
+            .expect("BRDF LUT texture must be created by ensure_brdf_lut");
 
-        // 使用 ResourceManager 分配 (假设你有这个 API，或者直接用 device 创建并注册)
-        let texture = ctx.wgpu_ctx.device.create_texture(&texture_desc);
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        // 2. 创建 BindGroup
         let bind_group = ctx
             .wgpu_ctx
             .device
@@ -109,7 +82,7 @@ impl RenderNode for BRDFLutComputePass {
                 }],
             });
 
-        // 3. Dispatch
+        let size = 512u32;
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("BRDF LUT Pass"),
@@ -120,17 +93,6 @@ impl RenderNode for BRDFLutComputePass {
             cpass.dispatch_workgroups(size / 8, size / 8, 1);
         }
 
-        // 4. 将生成的纹理注册到 Asset 系统并保存 Handle 到 Environment
-        let handle = ctx
-            .resource_manager
-            .register_internal_texture_by_name("BRDF_LUT", view);
-        ctx.scene.environment.brdf_lut = Some(TextureSource::Attachment(
-            handle,
-            wgpu::TextureViewDimension::D2,
-        ));
-
-        self.brdf_lut_texture_handle.replace(Some(handle));
-
-        // println!("BRDF LUT generated and registered with handle {}", handle);
+        ctx.resource_manager.needs_brdf_compute = false;
     }
 }

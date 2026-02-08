@@ -13,6 +13,7 @@ use crate::resources::buffer::CpuBuffer;
 use crate::resources::geometry::Geometry;
 use crate::resources::texture::{SamplerSource, TextureSource};
 use crate::resources::uniforms::DynamicModelUniforms;
+use crate::resources::uniforms::WgslStruct;
 use crate::scene::Scene;
 use crate::scene::SkeletonKey;
 use crate::scene::skeleton::Skeleton;
@@ -492,43 +493,30 @@ impl ResourceManager {
         scene: &Scene,
         render_state: &RenderState,
     ) -> u32 {
-        // === Ensure 阶段: 确保所有 Buffer 已上传，获取物理资源 ID ===
+        // === Ensure: upload all buffers, obtain physical resource IDs ===
         let camera_result = self.ensure_buffer(render_state.uniforms());
         let env_result = self.ensure_buffer(&scene.uniforms_buffer);
         let light_result = self.ensure_buffer(&scene.light_storage_buffer);
         let scene_uniform_result = self.ensure_buffer(&scene.uniforms_buffer);
 
-        // 处理后的环境贴图 ID (用于 Skybox)
-        let processed_env_map_id =
-            scene
-                .environment
-                .get_processed_env_map()
-                .map_or(0, |h| match h {
-                    TextureSource::Asset(handle) => {
-                        self.prepare_texture(assets, *handle);
-                        self.texture_bindings.get(*handle).map_or(0, |b| b.view_id)
-                    }
-                    TextureSource::Attachment(id, _) => *id,
-                });
+        // Resolve environment texture IDs from GpuEnvironment cache.
+        // resolve_gpu_environment runs before prepare_global and always creates
+        // cache entries, so a miss here should not happen in normal operation.
+        let (processed_env_map_id, pmrem_map_id) =
+            if let Some(source) = scene.environment.source_env_map {
+                if let Some(gpu_env) = self.environment_map_cache.get(&source) {
+                    (gpu_env.cube_view_id, gpu_env.pmrem_view_id)
+                } else {
+                    log::warn!("GpuEnvironment cache miss in prepare_global");
+                    (self.dummy_env_image.id, self.dummy_env_image.id)
+                }
+            } else {
+                (self.dummy_env_image.id, self.dummy_env_image.id)
+            };
 
-        // PMREM 贴图 ID (用于 IBL)
-        let pmrem_map_id = scene.environment.pmrem_map.map_or(0, |h| match h {
-            TextureSource::Asset(handle) => {
-                self.prepare_texture(assets, handle);
-                self.texture_bindings.get(handle).map_or(0, |b| b.view_id)
-            }
-            TextureSource::Attachment(id, _) => id,
-        });
+        let brdf_lut_id = self.brdf_lut_view_id.unwrap_or(self.dummy_image.id);
 
-        let brdf_lut_id = scene.environment.brdf_lut.map_or(0, |h| match h {
-            TextureSource::Asset(handle) => {
-                self.prepare_texture(assets, handle);
-                self.texture_bindings.get(handle).map_or(0, |b| b.view_id)
-            }
-            TextureSource::Attachment(id, _) => id,
-        });
-
-        // === Collect 阶段: 收集所有资源 ID ===
+        // === Collect: gather all resource IDs ===
         let mut current_ids = super::ResourceIdSet::with_capacity(8);
         current_ids.push(camera_result.resource_id);
         current_ids.push(env_result.resource_id);
@@ -538,10 +526,9 @@ impl ResourceManager {
         current_ids.push(pmrem_map_id);
         current_ids.push(brdf_lut_id);
 
-        // 使用 (render_state.id, light_buffer_id) 组合作为缓存键，支持多场景并发渲染
         let state_id = Self::compute_global_state_key(render_state.id, scene.id);
 
-        // === Check 阶段: 快速指纹比较 ===
+        // === Check: fast fingerprint comparison ===
         if let Some(gpu_state) = self.global_states.get_mut(&state_id)
             && gpu_state.resource_ids.matches_slice(current_ids.as_slice())
         {
@@ -549,7 +536,7 @@ impl ResourceManager {
             return gpu_state.id;
         }
 
-        // === Rebind 阶段: 指纹不匹配，重建 BindGroup ===
+        // === Rebind: fingerprint mismatch, rebuild BindGroup ===
         self.create_global_state(assets, state_id, render_state, scene, current_ids)
     }
 
@@ -568,7 +555,9 @@ impl ResourceManager {
     ) -> u32 {
         let mut builder = ResourceBuilder::new();
         render_state.define_bindings(&mut builder);
-        scene.define_bindings(&mut builder);
+
+        // Build scene bindings (environment uniforms, lights, env textures)
+        self.define_global_scene_bindings(&mut builder, scene);
 
         self.prepare_binding_resources(assets, &builder.resources);
         let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
@@ -595,7 +584,110 @@ impl ResourceManager {
         new_id
     }
 
-    /// 获取全局状态
+    /// Build the scene-level global bindings (Group 0, after RenderState).
+    ///
+    /// This replaces the old `Scene::define_bindings`, resolving environment
+    /// textures from `ResourceManager`'s caches instead of `Environment`.
+    fn define_global_scene_bindings<'a>(
+        &self,
+        builder: &mut ResourceBuilder<'a>,
+        scene: &'a Scene,
+    ) {
+        use crate::renderer::core::builder::WgslStructName;
+        use crate::resources::uniforms::{EnvironmentUniforms, GpuLightStorage};
+
+        // Environment Uniforms
+        builder.add_uniform_buffer(
+            "environment",
+            &scene.uniforms_buffer.handle(),
+            None,
+            wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
+            false,
+            None,
+            Some(WgslStructName::Generator(
+                EnvironmentUniforms::wgsl_struct_def,
+            )),
+        );
+
+        // Light Storage Buffer
+        builder.add_storage_buffer(
+            "lights",
+            &scene.light_storage_buffer.handle(),
+            None,
+            true,
+            wgpu::ShaderStages::FRAGMENT,
+            Some(WgslStructName::Generator(
+                GpuLightStorage::wgsl_struct_def,
+            )),
+        );
+
+        // Resolve env_map from GpuEnvironment cache
+        let env_map_source = scene
+            .environment
+            .source_env_map
+            .and_then(|src| self.environment_map_cache.get(&src))
+            .map(|gpu_env| {
+                TextureSource::Attachment(gpu_env.cube_view_id, wgpu::TextureViewDimension::Cube)
+            })
+            .unwrap_or_else(|| TextureHandle::dummy_env_map().into());
+
+        builder.add_texture(
+            "env_map",
+            Some(env_map_source),
+            wgpu::TextureSampleType::Float { filterable: true },
+            wgpu::TextureViewDimension::Cube,
+            wgpu::ShaderStages::FRAGMENT,
+        );
+        builder.add_sampler(
+            "env_map",
+            Some(SamplerSource::Default),
+            wgpu::SamplerBindingType::Filtering,
+            wgpu::ShaderStages::FRAGMENT,
+        );
+
+        // Resolve pmrem_map from GpuEnvironment cache
+        let pmrem_source = scene
+            .environment
+            .source_env_map
+            .and_then(|src| self.environment_map_cache.get(&src))
+            .map(|gpu_env| {
+                TextureSource::Attachment(gpu_env.pmrem_view_id, wgpu::TextureViewDimension::Cube)
+            });
+
+        builder.add_texture(
+            "pmrem_map",
+            pmrem_source,
+            wgpu::TextureSampleType::Float { filterable: true },
+            wgpu::TextureViewDimension::Cube,
+            wgpu::ShaderStages::FRAGMENT,
+        );
+        builder.add_sampler(
+            "pmrem_map",
+            Some(SamplerSource::Default),
+            wgpu::SamplerBindingType::Filtering,
+            wgpu::ShaderStages::FRAGMENT,
+        );
+
+        // Resolve brdf_lut from ResourceManager
+        let brdf_lut_source = self.brdf_lut_view_id.map(|id| {
+            TextureSource::Attachment(id, wgpu::TextureViewDimension::D2)
+        });
+
+        builder.add_texture(
+            "brdf_lut",
+            brdf_lut_source,
+            wgpu::TextureSampleType::Float { filterable: true },
+            wgpu::TextureViewDimension::D2,
+            wgpu::ShaderStages::FRAGMENT,
+        );
+        builder.add_sampler(
+            "brdf_lut",
+            Some(SamplerSource::Default),
+            wgpu::SamplerBindingType::Filtering,
+            wgpu::ShaderStages::FRAGMENT,
+        );
+    }
+
     pub fn get_global_state(&self, render_state_id: u32, scene_id: u32) -> Option<&GpuGlobalState> {
         let state_id = Self::compute_global_state_key(render_state_id, scene_id);
         self.global_states.get(&state_id)

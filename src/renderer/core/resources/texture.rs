@@ -14,7 +14,95 @@ use crate::renderer::core::resources::generate_gpu_resource_id;
 use crate::resources::image::{Image, ImageInner};
 use crate::resources::texture::{SamplerSource, TextureSampler};
 
-use super::{GpuImage, GpuSampler, ResourceManager, TextureBinding, TextureViewKey};
+use super::{ResourceManager};
+
+/// 纹理资源映射
+///
+/// 将 `TextureHandle` 映射到对应的 `GpuImage` ID、View ID 和 `GpuSampler` ID
+#[derive(Debug, Clone, Copy)]
+pub struct TextureBinding {
+    /// GPU 端图像视图 ID
+    pub view_id: u64,
+    /// CPU 端图像 ID
+    pub cpu_image_id: u64,
+    pub sampler_id: u64,
+    /// CPU 端 Texture 版本（用于检测采样参数变化）
+    pub texture_version: u64,
+}
+
+/// 纹理视图缓存键
+///
+/// 用于按需创建和缓存不同配置的 `TextureView`。
+/// Key 包含 `view_id，确保底层` Image 重建时自动失效。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TextureViewKey {
+    pub view_id: u64,
+    pub format: Option<wgpu::TextureFormat>,
+    pub dimension: Option<wgpu::TextureViewDimension>,
+    pub base_mip_level: u32,
+    pub mip_level_count: Option<u32>,
+    pub base_array_layer: u32,
+    pub array_layer_count: Option<u32>,
+    pub aspect: wgpu::TextureAspect,
+}
+
+impl TextureViewKey {
+    #[inline]
+    #[must_use]
+    pub fn new(view_id: u64, desc: &wgpu::TextureViewDescriptor) -> Self {
+        Self {
+            view_id,
+            format: desc.format,
+            dimension: desc.dimension,
+            base_mip_level: desc.base_mip_level,
+            mip_level_count: desc.mip_level_count,
+            base_array_layer: desc.base_array_layer,
+            array_layer_count: desc.array_layer_count,
+            aspect: desc.aspect,
+        }
+    }
+
+    // #[inline]
+    // #[must_use]
+    // pub fn default_for_view(view_id: u64) -> Self {
+    //     Self {
+    //         view_id,
+    //         format: None,
+    //         dimension: None,
+    //         base_mip_level: 0,
+    //         mip_level_count: None,
+    //         base_array_layer: 0,
+    //         array_layer_count: None,
+    //         aspect: wgpu::TextureAspect::All,
+    //     }
+    // }
+}
+
+/// GPU 端图像资源
+///
+/// 包含物理纹理和默认视图，不包含采样器
+pub struct GpuImage {
+    pub id: u64,
+    pub texture: wgpu::Texture,
+    pub default_view: wgpu::TextureView,
+    pub default_view_dimension: wgpu::TextureViewDimension,
+    pub size: wgpu::Extent3d,
+    pub format: wgpu::TextureFormat,
+    pub mip_level_count: u32,
+    pub usage: wgpu::TextureUsages,
+    pub version: u64,
+    pub generation_id: u64,
+    pub mipmaps_generated: bool,
+    pub last_used_frame: u64,
+}
+
+/// GPU 端采样器资源
+///
+/// 与 `GpuImage` 分离，实现全局缓存和复用
+pub struct GpuSampler {
+    pub id: u64,
+    pub sampler: wgpu::Sampler,
+}
 
 impl GpuImage {
     pub fn new(

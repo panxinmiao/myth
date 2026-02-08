@@ -27,25 +27,29 @@ mod material;
 mod mipmap;
 mod resource_ids;
 mod texture;
+pub(crate) mod environment;
 mod tracked;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use core::ops::Range;
 use glam::Mat4;
 use rustc_hash::FxHashMap;
 use slotmap::SecondaryMap;
 
 use crate::assets::server::SamplerHandle;
 
-use crate::resources::texture::TextureSampler;
+pub(crate) use crate::renderer::core::resources::environment::GpuEnvironment;
+pub(crate) use crate::renderer::core::resources::buffer::GpuBuffer;
+pub(crate) use crate::renderer::core::resources::geometry::GpuGeometry;
+pub(crate) use crate::renderer::core::resources::material::GpuMaterial;
+pub(crate) use crate::renderer::core::resources::texture::{GpuImage, GpuSampler, TextureBinding, TextureViewKey};
+pub(crate) use crate::resources::texture::TextureSampler;
 
 use crate::assets::{GeometryHandle, MaterialHandle, TextureHandle};
 use crate::resources::buffer::{CpuBuffer, GpuData};
+use crate::resources::texture::TextureSource;
 use crate::scene::SkeletonKey;
-
-use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 
 pub use crate::renderer::core::resources::mipmap::MipmapGenerator;
 pub use allocator::ModelBufferAllocator;
@@ -58,245 +62,6 @@ static NEXT_GPU_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
 
 pub fn generate_gpu_resource_id() -> u64 {
     NEXT_GPU_RESOURCE_ID.fetch_add(1, Ordering::Relaxed)
-}
-
-// ============================================================================
-// GPU 资源包装器
-// ============================================================================
-
-pub struct GpuBuffer {
-    pub id: u64,
-    pub buffer: wgpu::Buffer,
-    pub size: u64,
-    pub usage: wgpu::BufferUsages,
-    pub label: String,
-    pub last_used_frame: u64,
-    pub version: u64,
-    pub last_uploaded_version: u64,
-    shadow_data: Option<Vec<u8>>,
-}
-
-impl GpuBuffer {
-    #[must_use]
-    pub fn new(
-        device: &wgpu::Device,
-        data: &[u8],
-        usage: wgpu::BufferUsages,
-        label: Option<&str>,
-    ) -> Self {
-        use wgpu::util::DeviceExt;
-        let buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-            label,
-            contents: data,
-            usage,
-        });
-
-        Self {
-            id: generate_gpu_resource_id(),
-            buffer,
-            size: data.len() as u64,
-            usage,
-            label: label.unwrap_or("Buffer").to_string(),
-            last_used_frame: 0,
-            version: 0,
-            last_uploaded_version: 0,
-            shadow_data: None,
-        }
-    }
-
-    pub fn enable_shadow_copy(&mut self) {
-        if self.shadow_data.is_none() {
-            self.shadow_data = Some(Vec::new());
-        }
-    }
-
-    pub fn update_with_data(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        data: &[u8],
-    ) -> bool {
-        if let Some(prev) = &mut self.shadow_data {
-            if prev == data {
-                return false;
-            }
-            if prev.len() != data.len() {
-                *prev = vec![0u8; data.len()];
-            }
-            prev.copy_from_slice(data);
-        }
-        self.write_to_gpu(device, queue, data)
-    }
-
-    pub fn update_with_version(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        data: &[u8],
-        new_version: u64,
-    ) -> bool {
-        if new_version <= self.version {
-            return false;
-        }
-        self.version = new_version;
-        self.write_to_gpu(device, queue, data)
-    }
-
-    fn write_to_gpu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) -> bool {
-        let new_size = data.len() as u64;
-        if new_size > self.size {
-            self.resize(device, new_size);
-            queue.write_buffer(&self.buffer, 0, data);
-            return true;
-        }
-        queue.write_buffer(&self.buffer, 0, data);
-        false
-    }
-
-    fn resize(&mut self, device: &wgpu::Device, new_size: u64) {
-        self.buffer.destroy();
-        self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some(&self.label),
-            size: new_size,
-            usage: self.usage,
-            mapped_at_creation: false,
-        });
-        self.size = new_size;
-        self.id = generate_gpu_resource_id();
-    }
-}
-
-/// 纹理资源映射
-///
-/// 将 `TextureHandle` 映射到对应的 `GpuImage` ID、View ID 和 `GpuSampler` ID
-#[derive(Debug, Clone, Copy)]
-pub struct TextureBinding {
-    /// GPU 端图像视图 ID
-    pub view_id: u64,
-    /// CPU 端图像 ID
-    pub cpu_image_id: u64,
-    pub sampler_id: u64,
-    /// CPU 端 Texture 版本（用于检测采样参数变化）
-    pub texture_version: u64,
-}
-
-/// 纹理视图缓存键
-///
-/// 用于按需创建和缓存不同配置的 `TextureView`。
-/// Key 包含 `view_id，确保底层` Image 重建时自动失效。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct TextureViewKey {
-    pub view_id: u64,
-    pub format: Option<wgpu::TextureFormat>,
-    pub dimension: Option<wgpu::TextureViewDimension>,
-    pub base_mip_level: u32,
-    pub mip_level_count: Option<u32>,
-    pub base_array_layer: u32,
-    pub array_layer_count: Option<u32>,
-    pub aspect: wgpu::TextureAspect,
-}
-
-impl TextureViewKey {
-    #[inline]
-    #[must_use]
-    pub fn new(view_id: u64, desc: &wgpu::TextureViewDescriptor) -> Self {
-        Self {
-            view_id,
-            format: desc.format,
-            dimension: desc.dimension,
-            base_mip_level: desc.base_mip_level,
-            mip_level_count: desc.mip_level_count,
-            base_array_layer: desc.base_array_layer,
-            array_layer_count: desc.array_layer_count,
-            aspect: desc.aspect,
-        }
-    }
-
-    #[inline]
-    #[must_use]
-    pub fn default_for_view(view_id: u64) -> Self {
-        Self {
-            view_id,
-            format: None,
-            dimension: None,
-            base_mip_level: 0,
-            mip_level_count: None,
-            base_array_layer: 0,
-            array_layer_count: None,
-            aspect: wgpu::TextureAspect::All,
-        }
-    }
-}
-
-/// GPU 端图像资源
-///
-/// 包含物理纹理和默认视图，不包含采样器
-pub struct GpuImage {
-    pub id: u64,
-    pub texture: wgpu::Texture,
-    pub default_view: wgpu::TextureView,
-    pub default_view_dimension: wgpu::TextureViewDimension,
-    pub size: wgpu::Extent3d,
-    pub format: wgpu::TextureFormat,
-    pub mip_level_count: u32,
-    pub usage: wgpu::TextureUsages,
-    pub version: u64,
-    pub generation_id: u64,
-    pub mipmaps_generated: bool,
-    pub last_used_frame: u64,
-}
-
-/// GPU 端采样器资源
-///
-/// 与 `GpuImage` 分离，实现全局缓存和复用
-pub struct GpuSampler {
-    pub id: u64,
-    pub sampler: wgpu::Sampler,
-}
-
-/// GPU 端几何体资源
-///
-/// Vertex Buffer IDs 用于 Pipeline 缓存验证，不影响 `BindGroup`
-pub struct GpuGeometry {
-    pub layout_info: GeneratedVertexLayout,
-    pub vertex_buffers: Vec<wgpu::Buffer>,
-    pub vertex_buffer_ids: Vec<u64>,
-    pub index_buffer: Option<(wgpu::Buffer, wgpu::IndexFormat, u32, u64)>,
-    pub draw_range: Range<u32>,
-    pub instance_range: Range<u32>,
-    pub version: u64,
-    pub last_data_version: u64,
-    pub last_used_frame: u64,
-}
-
-/// GPU 端材质资源
-///
-/// 使用资源 ID 追踪机制自动检测变化
-///
-/// # 版本追踪三维分离
-///
-/// 1. **资源拓扑 (`BindGroup`)**: 由 `resource_ids` 追踪
-///    - 纹理/采样器/Buffer ID 变化 -> 重建 `BindGroup`
-///
-/// 2. **资源内容 (Buffer Data)**: 由 `BufferRef` 追踪（外部）
-///    - Atomic 版本号变化 -> 上传 Buffer
-///
-/// 3. **管线状态 (`RenderPipeline`)**: 由 `version` 追踪
-///    - 深度写入/透明度/双面渲染等变化 -> 切换 Pipeline
-pub struct GpuMaterial {
-    pub bind_group: wgpu::BindGroup,
-    pub bind_group_id: u64,
-    pub layout: wgpu::BindGroupLayout,
-    pub layout_id: u64,
-    /// Layout entries 的哈希值（用于快速比较是否需要重建 Layout）
-    pub layout_hash: u64,
-    pub binding_wgsl: String,
-    /// 所有依赖资源的物理 ID 集合（守卫 `BindGroup` 的有效性）
-    pub resource_ids: ResourceIdSet,
-    /// 记录生成此 `GpuMaterial` 时的 Material 版本（用于 Pipeline 缓存）
-    pub version: u64,
-    pub last_used_frame: u64,
-    pub last_verified_frame: u64,
 }
 
 /// GPU 全局状态 (Group 0)
@@ -371,6 +136,14 @@ pub struct ResourceManager {
     // === Object BindGroup 缓存 ===
     pub(crate) object_bind_group_cache: FxHashMap<ObjectBindGroupKey, BindGroupContext>,
     pub(crate) bind_group_id_lookup: FxHashMap<u64, BindGroupContext>,
+
+    // === Environment Map Cache ===
+    pub(crate) environment_map_cache: FxHashMap<TextureSource, GpuEnvironment>,
+    pub(crate) brdf_lut_texture: Option<wgpu::Texture>,
+    pub(crate) brdf_lut_view_id: Option<u64>,
+    pub(crate) needs_brdf_compute: bool,
+    /// Source that needs IBL compute this frame (set by `resolve_gpu_environment`)
+    pub(crate) pending_ibl_source: Option<TextureSource>,
 
     /// 存储内部生成的纹理视图 (Render Targets / Attachments)
     /// Key: Resource ID (u64)
@@ -555,6 +328,11 @@ impl ResourceManager {
             model_allocator,
             object_bind_group_cache: FxHashMap::default(),
             bind_group_id_lookup: FxHashMap::default(),
+            environment_map_cache: FxHashMap::default(),
+            brdf_lut_texture: None,
+            brdf_lut_view_id: None,
+            needs_brdf_compute: false,
+            pending_ibl_source: None,
             internal_resources: FxHashMap::default(),
             internal_name_lookup: FxHashMap::default(),
             skeleton_buffers: FxHashMap::default(),

@@ -805,16 +805,15 @@ impl Scene {
             ambient_light: env.ambient_color,
             num_lights: light_count as u32,
             env_map_intensity: env.intensity,
-            env_map_max_mip_level: env.env_map_max_mip_level,
+            // env_map_max_mip_level is set by ResourceManager::resolve_gpu_environment
+            // during the prepare phase, so we preserve the existing value here.
+            env_map_max_mip_level: self.uniforms_buffer.read().env_map_max_mip_level,
             ..Default::default()
         };
 
         let needs_update = *self.uniforms_buffer.read() != new_uniforms;
 
         if needs_update {
-            // .write() returns BufferGuard
-            // *guard = ... triggers DerefMut assignment
-            // When Guard is destroyed, it automatically increments version and marks dirty
             *self.uniforms_buffer.write() = new_uniforms;
         }
     }
