@@ -59,7 +59,7 @@ impl SceneCullPass {
         let pipeline_settings_version = ctx.wgpu_ctx.pipeline_settings_version;
 
         // 获取 render_lists 的可变引用
-        let render_lists = &mut *ctx.render_frame.render_lists;
+        let render_lists = &mut *ctx.render_lists;
         render_lists.clear();
 
         // 获取全局状态
@@ -216,22 +216,22 @@ impl SceneCullPass {
                 };
 
                 if is_transparent {
-                    ctx.render_frame.render_lists.insert_transparent(cmd);
+                    ctx.render_lists.insert_transparent(cmd);
                 } else {
-                    ctx.render_frame.render_lists.insert_opaque(cmd);
+                    ctx.render_lists.insert_opaque(cmd);
                 }
             }
         }
 
-        ctx.render_frame.render_lists.use_transmission = use_transmission;
-        ctx.render_frame.render_lists.sort();
+        ctx.render_lists.use_transmission = use_transmission;
+        ctx.render_lists.sort();
     }
 
     /// 上传动态 Uniform 数据
     ///
     /// 为每个渲染命令计算并上传模型矩阵、逆矩阵、法线矩阵等。
     fn upload_dynamic_uniforms(ctx: &mut RenderContext) {
-        let render_lists = &mut *ctx.render_frame.render_lists;
+        let render_lists = &mut *ctx.render_lists;
 
         if render_lists.is_empty() {
             return;

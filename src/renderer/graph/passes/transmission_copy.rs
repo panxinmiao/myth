@@ -48,7 +48,7 @@ impl RenderNode for TransmissionCopyPass {
     }
 
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-        let render_lists = &ctx.render_frame.render_lists;
+        let render_lists = &ctx.render_lists;
 
         // 检查是否需要执行
         if !render_lists.use_transmission {

@@ -114,7 +114,7 @@ impl RenderNode for OpaquePass {
     }
 
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-        let render_lists = &ctx.render_frame.render_lists;
+        let render_lists = &ctx.render_lists;
 
         // 获取全局 BindGroup
         let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {

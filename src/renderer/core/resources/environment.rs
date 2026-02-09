@@ -6,7 +6,8 @@ use crate::resources::texture::TextureSource;
 use super::{ResourceManager, generate_gpu_resource_id};
 
 const EQUIRECT_CUBE_SIZE: u32 = 1024;
-pub(crate) const PMREM_SIZE: u32 = 512;
+pub const PMREM_SIZE: u32 = 512;
+pub const BRDF_LUT_SIZE: u32 = 128;
 
 /// How the environment source needs to be processed by `IBLComputePass`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,12 +238,11 @@ impl ResourceManager {
             return id;
         }
 
-        let size = 512u32;
         let texture = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("BRDF LUT"),
             size: wgpu::Extent3d {
-                width: size,
-                height: size,
+                width: BRDF_LUT_SIZE,
+                height: BRDF_LUT_SIZE,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,

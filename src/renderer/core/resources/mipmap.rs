@@ -6,35 +6,6 @@ use std::borrow::Cow;
 
 use rustc_hash::FxHashMap;
 
-const BLIT_WGSL: &str = r"
-struct VertexOutput {
-    @builtin(position) position : vec4<f32>,
-    @location(0) uv : vec2<f32>,
-};
-
-@vertex
-fn vs_main(@builtin(vertex_index) vertexIndex : u32) -> VertexOutput {
-    var pos = array<vec2<f32>, 3>(
-        vec2<f32>(-1.0, -1.0),
-        vec2<f32>( 3.0, -1.0),
-        vec2<f32>(-1.0,  3.0)
-    );
-    var output : VertexOutput;
-    output.position = vec4<f32>(pos[vertexIndex], 0.0, 1.0);
-    output.uv = pos[vertexIndex] * 0.5 + 0.5;
-    output.uv.y = 1.0 - output.uv.y;
-    return output;
-}
-
-@group(0) @binding(0) var t_diffuse : texture_2d<f32>;
-@group(0) @binding(1) var s_diffuse : sampler;
-
-@fragment
-fn fs_main(in : VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(t_diffuse, s_diffuse, in.uv);
-}
-";
-
 pub struct MipmapGenerator {
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
@@ -47,7 +18,9 @@ impl MipmapGenerator {
     pub fn new(device: &wgpu::Device) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Mipmap Blit Shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(BLIT_WGSL)),
+            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
+                "../../pipeline/shaders/program/blit.wgsl"
+            ))),
         });
 
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

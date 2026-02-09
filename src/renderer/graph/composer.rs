@@ -31,8 +31,6 @@ use crate::renderer::graph::stage::RenderStage;
 use crate::renderer::pipeline::PipelineCache;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
-
-use super::context::RenderFrameRef;
 use super::frame::RenderLists;
 
 pub struct ComposerContext<'a> {
@@ -172,9 +170,7 @@ impl<'a> FrameComposer<'a> {
             surface_view: &surface_view,
             render_state: self.ctx.render_state,
             extracted_scene: self.ctx.extracted_scene,
-            render_frame: RenderFrameRef {
-                render_lists: self.ctx.render_lists,
-            },
+            render_lists: self.ctx.render_lists,
             frame_resources: self.ctx.frame_resources,
             time: self.ctx.time,
 

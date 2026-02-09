@@ -114,7 +114,7 @@ impl RenderNode for TransparentPass {
     }
 
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-        let render_lists = &ctx.render_frame.render_lists;
+        let render_lists = &ctx.render_lists;
 
         // 获取全局 BindGroup（即使没有透明物体也需要，因为可能需要 resolve）
         let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {

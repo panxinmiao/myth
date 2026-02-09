@@ -42,7 +42,7 @@ pub struct RenderContext<'a> {
     /// 提取的场景数据
     pub extracted_scene: &'a ExtractedScene,
     /// 渲染列表（由 `SceneCullPass` 填充，供各个绘制 Pass 消费）
-    pub render_frame: RenderFrameRef<'a>,
+    pub render_lists: &'a mut RenderLists,
     /// 帧资源
     pub frame_resources: &'a FrameResources,
     /// 当前时间
@@ -57,12 +57,6 @@ pub struct RenderContext<'a> {
     pub(crate) color_view_flip_flop: usize,
 }
 
-/// `RenderFrame` 的可变引用包装
-///
-/// 用于在 `RenderContext` 中安全地访问 `RenderLists`
-pub struct RenderFrameRef<'a> {
-    pub render_lists: &'a mut RenderLists,
-}
 
 impl RenderContext<'_> {
     /// 获取 Post Process 的 Input 和 Output
@@ -98,17 +92,6 @@ impl RenderContext<'_> {
         }
     }
 
-    // pub fn get_output_format(
-    //     &self,
-    //     output_to_screen: bool,
-    // ) -> wgpu::TextureFormat {
-    //     if output_to_screen {
-    //         self.wgpu_ctx.surface_view_format
-    //     } else {
-    //         self.wgpu_ctx.color_format
-    //     }
-    // }
-
     #[must_use]
     pub fn get_scene_render_target_format(&self) -> wgpu::TextureFormat {
         if self.wgpu_ctx.enable_hdr {
@@ -120,21 +103,6 @@ impl RenderContext<'_> {
         }
     }
 
-    // /// 获取场景渲染的目标 View
-    // ///
-    // /// - 如果开启后处理：返回 FrameResources.scene_color_view (HDR)
-    // /// - 如果关闭后处理：返回 Surface View (LDR/sRGB)
-    // pub fn scene_output_view(&self) -> &'a wgpu::TextureView {
-    //     // 这里的逻辑需要在 begin_frame 构建 Context 时确定
-    //     // 或者在 Context 里存一个字段指向当前的 target
-    //     self.current_render_target
-    // }
-
-    // /// 获取场景渲染的格式
-    // pub fn scene_output_format(&self) -> wgpu::TextureFormat {
-    //      // 同上，可能是 Rgba16Float 或 Bgra8UnormSrgb
-    //      self.current_render_target_format
-    // }
 }
 
 pub struct FrameResources {
