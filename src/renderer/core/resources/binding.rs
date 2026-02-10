@@ -584,7 +584,7 @@ impl ResourceManager {
         new_id
     }
 
-    /// Build the scene-level global bindings (Group 0, after RenderState).
+    /// Build the scene-level global bindings (Group 0, after `RenderState`).
     ///
     /// This replaces the old `Scene::define_bindings`, resolving environment
     /// textures from `ResourceManager`'s caches instead of `Environment`.
@@ -624,10 +624,15 @@ impl ResourceManager {
             .environment
             .source_env_map
             .and_then(|src| self.environment_map_cache.get(&src))
-            .map(|gpu_env| {
-                TextureSource::Attachment(gpu_env.cube_view_id, wgpu::TextureViewDimension::Cube)
-            })
-            .unwrap_or_else(|| TextureHandle::dummy_env_map().into());
+            .map_or_else(
+                || TextureHandle::dummy_env_map().into(),
+                |gpu_env| {
+                    TextureSource::Attachment(
+                        gpu_env.cube_view_id,
+                        wgpu::TextureViewDimension::Cube,
+                    )
+                },
+            );
 
         builder.add_texture(
             "env_map",

@@ -153,3 +153,22 @@ default = ["winit", "gltf", "http"]
 winit = ["dep:winit"]
 gltf = ["dep:gltf"]
 http = ["dep:reqwest", "dep:url"]
+
+[lints.rust]
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+
+pedantic = { level = "warn", priority = -1 }
+
+# special exceptions for graphics engine
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+
+module_name_repetitions = "allow"
+
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+too_many_arguments = "allow"
+doc_markdown = "allow"

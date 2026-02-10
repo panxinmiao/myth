@@ -295,7 +295,7 @@ impl RenderFrame {
         // Patch env_map_max_mip_level into the scene uniform buffer
         {
             let current = scene.uniforms_buffer.read().env_map_max_mip_level;
-            if current != env_max_mip {
+            if (current - env_max_mip).abs() > f32::EPSILON {
                 scene.uniforms_buffer.write().env_map_max_mip_level = env_max_mip;
             }
         }

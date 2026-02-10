@@ -316,11 +316,10 @@ impl RenderNode for IBLComputePass {
         "IBL Compute Pass"
     }
 
-    #[allow(clippy::too_many_lines, clippy::cast_sign_loss)]
+    #[allow(clippy::too_many_lines)]
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
-        let source = match ctx.resource_manager.pending_ibl_source.take() {
-            Some(s) => s,
-            None => return,
+        let Some(source) = ctx.resource_manager.pending_ibl_source.take() else {
+            return;
         };
 
         // Temporarily take GpuEnvironment to split borrows:
@@ -600,6 +599,6 @@ impl RenderNode for IBLComputePass {
             .environment_map_cache
             .insert(source, gpu_env);
 
-        log::info!("IBL PMREM generated. Source type: {:?}", source_type);
+        log::info!("IBL PMREM generated. Source type: {source_type:?}");
     }
 }

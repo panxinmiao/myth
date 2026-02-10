@@ -1577,7 +1577,6 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
                 let glossiness_normalized = (f32::from(glossiness) / 255.0) * glossiness_factor;
                 let roughness_normalized = 1.0 - glossiness_normalized;
                 // SAFETY: roughness_normalized is clamped to [0, 1] by the formula
-                #[allow(clippy::cast_sign_loss)]
                 let roughness_byte = (roughness_normalized * 255.0) as u8;
 
                 roughness_data.push(0);

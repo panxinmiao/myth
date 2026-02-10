@@ -12,9 +12,9 @@ pub const BRDF_LUT_SIZE: u32 = 128;
 /// How the environment source needs to be processed by `IBLComputePass`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CubeSourceType {
-    /// 2D equirectangular HDR → equirect_to_cube + mipmap_gen + PMREM
+    /// 2D equirectangular HDR → `equirect_to_cube` + `mipmap_gen` + PMREM
     Equirectangular,
-    /// Cube map without mipmaps → blit to owned cube + mipmap_gen + PMREM
+    /// Cube map without mipmaps → blit to owned cube + `mipmap_gen` + PMREM
     CubeNoMipmaps,
     /// Cube map with mipmaps → PMREM only (uses source cube directly)
     CubeWithMipmaps,
@@ -50,20 +50,20 @@ impl ResourceManager {
     ///
     /// This must be called before `prepare_global` so that the uniform buffer
     /// can be populated with the correct `env_map_max_mip_level`, and so that
-    /// real resource IDs are available for BindGroup creation.
+    /// real resource IDs are available for `BindGroup` creation.
     ///
     /// All GPU textures (cube, PMREM) are created here; `IBLComputePass` only
     /// writes into them — it never creates or removes cache entries.
     ///
     /// Returns the resolved `env_map_max_mip_level` (0.0 if no env map).
+    #[allow(clippy::too_many_lines)]
     pub fn resolve_gpu_environment(
         &mut self,
         assets: &AssetServer,
         environment: &crate::scene::environment::Environment,
     ) -> f32 {
-        let source = match environment.source_env_map {
-            Some(s) => s,
-            None => return 0.0,
+        let Some(source) = environment.source_env_map else {
+            return 0.0;
         };
 
         let mut current_version: u64 = 0;
@@ -265,10 +265,10 @@ impl ResourceManager {
 
     /// Get the `env_map_max_mip_level` for a given environment source.
     pub fn get_env_map_max_mip_level(&self, source: Option<TextureSource>) -> f32 {
-        if let Some(src) = source {
-            if let Some(gpu_env) = self.environment_map_cache.get(&src) {
-                return gpu_env.env_map_max_mip_level;
-            }
+        if let Some(src) = source
+            && let Some(gpu_env) = self.environment_map_cache.get(&src)
+        {
+            return gpu_env.env_map_max_mip_level;
         }
         0.0
     }

@@ -101,15 +101,6 @@
 //! - **Type Safety**: `SlotMap` handles for safe resource references
 //! - **Cross-Platform**: WebGPU/Vulkan/Metal/DX12 via wgpu
 
-#![warn(clippy::all)]
-#![warn(clippy::pedantic)]
-#![allow(clippy::cast_precision_loss)]
-#![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::module_name_repetitions)]
-#![allow(clippy::missing_errors_doc)]
-#![allow(clippy::missing_panics_doc)]
-#![allow(clippy::too_many_arguments)]
-
 // ============================================================================
 // Internal Module Declarations
 // ============================================================================

@@ -257,7 +257,7 @@ impl FrameResources {
         self.resize(wgpu_ctx, size);
     }
 
-    #[allow(clippy::too_many_lines, clippy::cast_sign_loss)]
+    #[allow(clippy::too_many_lines)]
     pub fn resize(&mut self, wgpu_ctx: &WgpuContext, size: (u32, u32)) {
         if self.size == size {
             return;
@@ -388,7 +388,6 @@ impl FrameResources {
         }
     }
 
-    #[allow(clippy::cast_sign_loss)]
     pub fn ensure_transmission_resource(&mut self, device: &wgpu::Device) -> &wgpu::BindGroup {
         if self.transmission_view.is_none() {
             let mip_level_count = ((self.size.0.max(self.size.1) as f32).log2().floor() as u32) + 1;

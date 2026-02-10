@@ -81,7 +81,6 @@ impl<'a> FrameComposer<'a> {
     /// 创建新的帧合成器
     ///
     /// 内部会自动注入内置 Pass（BRDF LUT、IBL、Forward）。
-    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(builder: FrameBuilder<'a>, ctx: ComposerContext<'a>) -> Self {
         Self { ctx, builder }
     }
