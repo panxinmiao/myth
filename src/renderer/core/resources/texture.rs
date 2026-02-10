@@ -14,7 +14,7 @@ use crate::renderer::core::resources::generate_gpu_resource_id;
 use crate::resources::image::{Image, ImageInner};
 use crate::resources::texture::{SamplerSource, TextureSampler};
 
-use super::{ResourceManager};
+use super::ResourceManager;
 
 /// 纹理资源映射
 ///

@@ -384,34 +384,33 @@ impl RenderNode for IBLComputePass {
                                 ..Default::default()
                             });
 
-                    let bind_group = ctx
-                        .wgpu_ctx
-                        .device
-                        .create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("Equirect BindGroup"),
-                            layout: &self.equirect_layout,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: wgpu::BindingResource::TextureView(source_view),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: wgpu::BindingResource::Sampler(&clamp_sampler),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 2,
-                                    resource: wgpu::BindingResource::TextureView(&dest_view),
-                                },
-                            ],
-                        });
+                    let bind_group =
+                        ctx.wgpu_ctx
+                            .device
+                            .create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("Equirect BindGroup"),
+                                layout: &self.equirect_layout,
+                                entries: &[
+                                    wgpu::BindGroupEntry {
+                                        binding: 0,
+                                        resource: wgpu::BindingResource::TextureView(source_view),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 1,
+                                        resource: wgpu::BindingResource::Sampler(&clamp_sampler),
+                                    },
+                                    wgpu::BindGroupEntry {
+                                        binding: 2,
+                                        resource: wgpu::BindingResource::TextureView(&dest_view),
+                                    },
+                                ],
+                            });
 
                     {
-                        let mut cpass =
-                            encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                                label: Some("Equirect to Cube"),
-                                timestamp_writes: None,
-                            });
+                        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("Equirect to Cube"),
+                            timestamp_writes: None,
+                        });
                         cpass.set_pipeline(&self.equirect_pipeline);
                         cpass.set_bind_group(0, &bind_group, &[]);
 
@@ -458,7 +457,6 @@ impl RenderNode for IBLComputePass {
                         source_texture,
                         cube_texture,
                     );
-                    
                 }
 
                 // Step 1b: Generate mipmaps for owned cube
@@ -556,20 +554,19 @@ impl RenderNode for IBLComputePass {
                     ],
                 });
 
-            let dest_view =
-                gpu_env
-                    .pmrem_texture
-                    .create_view(&wgpu::TextureViewDescriptor {
-                        label: Some(&format!("PMREM Mip {mip}")),
-                        format: Some(format),
-                        dimension: Some(TextureViewDimension::D2Array),
-                        aspect: wgpu::TextureAspect::All,
-                        base_mip_level: mip,
-                        mip_level_count: Some(1),
-                        base_array_layer: 0,
-                        array_layer_count: Some(6),
-                        usage: Some(wgpu::TextureUsages::STORAGE_BINDING),
-                    });
+            let dest_view = gpu_env
+                .pmrem_texture
+                .create_view(&wgpu::TextureViewDescriptor {
+                    label: Some(&format!("PMREM Mip {mip}")),
+                    format: Some(format),
+                    dimension: Some(TextureViewDimension::D2Array),
+                    aspect: wgpu::TextureAspect::All,
+                    base_mip_level: mip,
+                    mip_level_count: Some(1),
+                    base_array_layer: 0,
+                    array_layer_count: Some(6),
+                    usage: Some(wgpu::TextureUsages::STORAGE_BINDING),
+                });
 
             let bg_dst = ctx
                 .wgpu_ctx
@@ -603,9 +600,6 @@ impl RenderNode for IBLComputePass {
             .environment_map_cache
             .insert(source, gpu_env);
 
-        log::info!(
-            "IBL PMREM generated. Source type: {:?}",
-            source_type
-        );
+        log::info!("IBL PMREM generated. Source type: {:?}", source_type);
     }
 }

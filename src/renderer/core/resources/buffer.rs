@@ -5,7 +5,6 @@ use rustc_hash::FxHashMap;
 use super::{EnsureResult, ResourceManager};
 use crate::{renderer::core::resources::generate_gpu_resource_id, resources::buffer::BufferRef};
 
-
 pub struct GpuBuffer {
     pub id: u64,
     pub buffer: wgpu::Buffer,
@@ -107,7 +106,6 @@ impl GpuBuffer {
         self.id = generate_gpu_resource_id();
     }
 }
-
 
 impl ResourceManager {
     /// 静态辅助方法：只借用必要的字段，解决 borrow checker 冲突

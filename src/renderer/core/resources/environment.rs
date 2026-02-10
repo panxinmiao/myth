@@ -264,10 +264,7 @@ impl ResourceManager {
     }
 
     /// Get the `env_map_max_mip_level` for a given environment source.
-    pub fn get_env_map_max_mip_level(
-        &self,
-        source: Option<TextureSource>,
-    ) -> f32 {
+    pub fn get_env_map_max_mip_level(&self, source: Option<TextureSource>) -> f32 {
         if let Some(src) = source {
             if let Some(gpu_env) = self.environment_map_cache.get(&src) {
                 return gpu_env.env_map_max_mip_level;

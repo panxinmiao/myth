@@ -616,9 +616,7 @@ impl ResourceManager {
             None,
             true,
             wgpu::ShaderStages::FRAGMENT,
-            Some(WgslStructName::Generator(
-                GpuLightStorage::wgsl_struct_def,
-            )),
+            Some(WgslStructName::Generator(GpuLightStorage::wgsl_struct_def)),
         );
 
         // Resolve env_map from GpuEnvironment cache
@@ -669,9 +667,9 @@ impl ResourceManager {
         );
 
         // Resolve brdf_lut from ResourceManager
-        let brdf_lut_source = self.brdf_lut_view_id.map(|id| {
-            TextureSource::Attachment(id, wgpu::TextureViewDimension::D2)
-        });
+        let brdf_lut_source = self
+            .brdf_lut_view_id
+            .map(|id| TextureSource::Attachment(id, wgpu::TextureViewDimension::D2));
 
         builder.add_texture(
             "brdf_lut",

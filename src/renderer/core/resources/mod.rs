@@ -22,12 +22,12 @@
 mod allocator;
 mod binding;
 mod buffer;
+pub(crate) mod environment;
 mod geometry;
 mod material;
 mod mipmap;
 mod resource_ids;
 mod texture;
-pub(crate) mod environment;
 mod tracked;
 
 use std::sync::Arc;
@@ -39,11 +39,13 @@ use slotmap::SecondaryMap;
 
 use crate::assets::server::SamplerHandle;
 
-pub(crate) use crate::renderer::core::resources::environment::GpuEnvironment;
 pub(crate) use crate::renderer::core::resources::buffer::GpuBuffer;
+pub(crate) use crate::renderer::core::resources::environment::GpuEnvironment;
 pub(crate) use crate::renderer::core::resources::geometry::GpuGeometry;
 pub(crate) use crate::renderer::core::resources::material::GpuMaterial;
-pub(crate) use crate::renderer::core::resources::texture::{GpuImage, GpuSampler, TextureBinding, TextureViewKey};
+pub(crate) use crate::renderer::core::resources::texture::{
+    GpuImage, GpuSampler, TextureBinding, TextureViewKey,
+};
 pub(crate) use crate::resources::texture::TextureSampler;
 
 use crate::assets::{GeometryHandle, MaterialHandle, TextureHandle};

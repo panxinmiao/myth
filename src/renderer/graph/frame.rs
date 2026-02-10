@@ -289,8 +289,7 @@ impl RenderFrame {
 
         // 2. Resolve GPU environment and BRDF LUT before prepare_global.
         //    This creates textures in the cache and determines env_map_max_mip_level.
-        let env_max_mip =
-            resource_manager.resolve_gpu_environment(assets, &scene.environment);
+        let env_max_mip = resource_manager.resolve_gpu_environment(assets, &scene.environment);
         resource_manager.ensure_brdf_lut();
 
         // Patch env_map_max_mip_level into the scene uniform buffer

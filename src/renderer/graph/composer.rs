@@ -19,6 +19,7 @@
 //!     .render();
 //! ```
 
+use super::frame::RenderLists;
 use crate::assets::AssetServer;
 use crate::render::RenderState;
 use crate::renderer::core::binding::GlobalBindGroupCache;
@@ -31,7 +32,6 @@ use crate::renderer::graph::stage::RenderStage;
 use crate::renderer::pipeline::PipelineCache;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
-use super::frame::RenderLists;
 
 pub struct ComposerContext<'a> {
     pub wgpu_ctx: &'a mut WgpuContext,

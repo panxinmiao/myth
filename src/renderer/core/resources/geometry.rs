@@ -6,7 +6,7 @@ use crate::assets::{AssetServer, GeometryHandle};
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 use crate::resources::geometry::Geometry;
 
-use super::{ResourceManager};
+use super::ResourceManager;
 
 /// GPU 端几何体资源
 ///

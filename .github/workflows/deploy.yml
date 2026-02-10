@@ -25,12 +25,12 @@ jobs:
 
       - name: Build WASM 🛠️
         run: |
-          cd examples/gltf_viewer/web
-          chmod +x build_wasm.sh
-          ./build_wasm.sh
+          chmod +x scripts/build_wasm.sh
+          ./scripts/build_wasm.sh gltf_viewer
 
           echo "Removing .gitignore from pkg directory..."
-          rm pkg/.gitignore
+          rm examples/gltf_viewer/web/pkg/.gitignore
+          rm examples/gltf_viewer/web/assets/.gitignore
 
       - name: Deploy 🚀
         uses: JamesIves/github-pages-deploy-action@v4

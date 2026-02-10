@@ -136,9 +136,13 @@ cargo run --example box_pbr
 cargo run --example gltf_viewer --release
 
 # Run the glTF Viewer (Web/WASM)
-cd examples/gltf_viewer/web
-./build_wasm.sh
-python3 -m http.server 8080
+# gltf_viewer example also includes an embedded Inspector UI
+./scripts/build_wasm.sh gltf_viewer
+python -m http.server 8080 --directory examples\gltf_viewer\web
+
+# Run the Showcase example (Web/WASM)
+./scripts/build_wasm.sh showcase
+python -m http.server 8080 --directory examples\showcase\web
 
 ```
 

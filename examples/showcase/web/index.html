@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Myth Engine Showcase</title>
+    <style>
+        :root {
+            --bg-color: #1a1a2e;
+            --card-bg: #252540;
+            --text-color: #ffffff;
+            --accent-color: #4a9eff;
+        }
+
+        body {
+            margin: 0;
+            padding: 40px;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        h1 {
+            text-align: center;
+            margin-bottom: 40px;
+            font-weight: 300;
+            letter-spacing: 2px;
+        }
+
+        /* 4x4 Grid 布局核心 */
+        .gallery-grid {
+            display: grid;
+            /* 自动适应宽度，最小 250px，最大占满 */
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 25px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        /* 单个卡片样式 */
+        .model-card {
+            background-color: var(--card-bg);
+            border-radius: 12px;
+            overflow: hidden;
+            text-decoration: none;
+            color: inherit;
+            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), 
+                        box-shadow 0.3s ease;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .model-card:hover {
+            transform: translateY(-8px);
+            box-shadow: 0 12px 20px rgba(0,0,0,0.4);
+            border: 1px solid var(--accent-color);
+        }
+
+        /* 缩略图容器 */
+        .card-image {
+            width: 100%;
+            height: 200px; /* 固定高度，保证整齐 */
+            object-fit: cover; /* 保持比例填充 */
+            background-color: #000;
+        }
+
+        .card-info {
+            padding: 15px;
+            text-align: center;
+        }
+
+        .card-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .card-tag {
+            font-size: 0.8em;
+            color: #aaa;
+            background: rgba(255,255,255,0.1);
+            padding: 4px 8px;
+            border-radius: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>MYTH ENGINE SHOWCASE</h1>
+
+    <div class="gallery-grid" id="gallery">
+        </div>
+
+    <script>
+        const BASE_URL= "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/";
+        // 定义要展示的模型列表
+        // model 链接直接使用 Khronos 官方的 glTF-Binary (.glb)
+        const models = [
+            {
+                name: "Damaged Helmet",
+                img: BASE_URL+"DamagedHelmet/screenshot/screenshot.png",
+                url: BASE_URL+"DamagedHelmet/glTF-Binary/DamagedHelmet.glb"
+            },
+            {
+                name: "A Beautiful Game",
+                img: BASE_URL+"ABeautifulGame/screenshot/screenshot.jpg",
+                url: BASE_URL+"ABeautifulGame/glTF-Binary/ABeautifulGame.glb"
+            },
+            {
+                name: "Chronograph Watch",
+                img: BASE_URL+"ChronographWatch/screenshot/screenshot.jpg",
+                url: BASE_URL+"ChronographWatch/glTF-Binary/ChronographWatch.glb"
+            },
+            {
+                name: "Glass Hurricane Candle Holder",
+                img: BASE_URL+"GlassHurricaneCandleHolder/screenshot/screenshot.jpg",
+                url: BASE_URL+"GlassHurricaneCandleHolder/glTF-Binary/GlassHurricaneCandleHolder.glb"
+            },
+            {
+                name: "Commercial Refrigerator",
+                img: BASE_URL+"CommercialRefrigerator/screenshot/screenshot.jpg",
+                url: BASE_URL+"CommercialRefrigerator/glTF-Binary/CommercialRefrigerator.glb"
+            },
+            {
+                name: "Iridescence Lamp",
+                img: BASE_URL+"IridescenceLamp/screenshot/screenshot.jpg",
+                url: BASE_URL+"IridescenceLamp/glTF-Binary/IridescenceLamp.glb"
+            },
+            {
+                name: "Iridescent Dish with Olives",
+                img: BASE_URL+"IridescentDishWithOlives/screenshot/screenshot.jpg",
+                url: BASE_URL+"IridescentDishWithOlives/glTF-Binary/IridescentDishWithOlives.glb"
+            },
+            {
+                name: "Mosquito In Amber",
+                img: BASE_URL+"MosquitoInAmber/screenshot/screenshot.jpg",
+                url: BASE_URL+"MosquitoInAmber/glTF-Binary/MosquitoInAmber.glb"
+            },
+             {
+                name: "Sheen Chair",
+                img: BASE_URL+"SheenChair/screenshot/screenshot.jpg",
+                url: BASE_URL+"SheenChair/glTF-Binary/SheenChair.glb"
+            },
+             {
+                name: "Sunglasses Khronos",
+                img: BASE_URL+"SunglassesKhronos/screenshot/screenshot.jpg",
+                url: BASE_URL+"SunglassesKhronos/glTF-Binary/SunglassesKhronos.glb"
+            },
+            {
+                name: "Toy Car",
+                img: BASE_URL+"ToyCar/screenshot/screenshot.jpg",
+                url: BASE_URL+"ToyCar/glTF-Binary/ToyCar.glb"
+            },
+             {
+                name: "Stained Glass Lamp",
+                img: BASE_URL+"StainedGlassLamp/screenshot/screenshot.jpg",
+                url: BASE_URL+"StainedGlassLamp/glTF-Binary/StainedGlassLamp.glb"
+            },
+             {
+                name: "Materials Variants Shoe",
+                img: BASE_URL+"MaterialsVariantsShoe/screenshot/screenshot.jpg",
+                url: BASE_URL+"MaterialsVariantsShoe/glTF-Binary/MaterialsVariantsShoe.glb"
+            },
+             {
+                name: "Specular Silk Pouf",
+                img: BASE_URL+"SpecularSilkPouf/screenshot/screenshot.jpg",
+                url: BASE_URL+"SpecularSilkPouf/glTF-Binary/SpecularSilkPouf.glb"
+            },
+             {
+                name: "Car Concept",
+                img: BASE_URL+"CarConcept/screenshot/screenshot.jpg",
+                url: BASE_URL+"CarConcept/glTF-Binary/CarConcept.glb"
+            },
+            {
+                name: "Pot Of Coals",
+                img: BASE_URL+"PotOfCoals/screenshot/screenshot.jpg",
+                url: BASE_URL+"PotOfCoals/glTF-Binary/PotOfCoals.glb"
+            }
+        ];
+
+        const container = document.getElementById('gallery');
+
+        models.forEach(model => {
+            const link = document.createElement('a');
+            link.className = 'model-card';
+            // 核心逻辑：链接指向 viewer.html 并带上参数
+            link.href = `viewer.html?model=${encodeURIComponent(model.url)}`;
+            link.target = "_blank"; // 在新标签页打开，或者去掉这行在当前页打开
+
+            link.innerHTML = `
+                <img src="${model.img}" alt="${model.name}" class="card-image" loading="lazy">
+                <div class="card-info">
+                    <div class="card-title">${model.name}</div>
+                    <span class="card-tag">PBR / glTF</span>
+                </div>
+            `;
+            container.appendChild(link);
+        });
+    </script>
+</body>
+</html>

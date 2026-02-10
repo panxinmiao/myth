@@ -90,7 +90,8 @@ wasm-bindgen-futures = "0.4.58"
 web-sys = { version = "0.3.85", features = [
     "Document", "Window", "Element", "HtmlCanvasElement", "HtmlInputElement",
     "Location", "Request", "RequestInit", "RequestMode", "Response", "Headers",
-    "File", "FileList", "FileReader", "Blob", "ProgressEvent", "console"
+    "File", "FileList", "FileReader", "Blob", "ProgressEvent", "console",
+    "UrlSearchParams"
 ]}
 js-sys = "0.3.85"
 web-time = "1.1"

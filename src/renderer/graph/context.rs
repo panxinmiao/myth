@@ -57,7 +57,6 @@ pub struct RenderContext<'a> {
     pub(crate) color_view_flip_flop: usize,
 }
 
-
 impl RenderContext<'_> {
     /// 获取 Post Process 的 Input 和 Output
     ///
@@ -102,7 +101,6 @@ impl RenderContext<'_> {
             self.wgpu_ctx.surface_view_format
         }
     }
-
 }
 
 pub struct FrameResources {

@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Myth Engine Showcase</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background-color: #1a1a2e; }
+        canvas { display: block; width: 100vw; height: 100vh; }
+        
+        #loading {
+            position: absolute;
+            top: 50%; left: 50%; transform: translate(-50%, -50%);
+            color: white; font-family: sans-serif; pointer-events: none;
+            transition: opacity 0.5s;
+        }
+        .hidden { opacity: 0; }
+    </style>
+</head>
+<body>
+    <div id="loading">Initialize Engine...</div>
+    <canvas id="myth-canvas"></canvas>
+
+    <script type="module">
+        import init from './pkg/showcase.js';
+
+        async function run() {
+            try {
+                await init();
+
+                setTimeout(() => {
+                    document.getElementById('loading').classList.add('hidden');
+                }, 1000);
+            } catch (e) {
+                console.error("Failed to start engine:", e);
+                document.getElementById('loading').innerText = "Error: " + e;
+            }
+        }
+
+        run();
+    </script>
+</body>
+</html>
