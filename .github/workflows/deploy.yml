@@ -12,18 +12,20 @@ jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout 🛎️
+      - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Install Rust 🦀
+      - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
 
-      - name: Install wasm-pack 📦
-        uses: jetli/wasm-pack-action@v0.4.0
+      - name: Install wasm-bindgen-cli
+        uses: jetli/wasm-bindgen-action@v0.2.0
+        with:
+          version: 0.2.108
 
-      - name: Build WASM 🛠️
+      - name: Build WASM
         run: |
           chmod +x scripts/build_wasm.sh
           ./scripts/build_wasm.sh gltf_viewer
@@ -32,7 +34,7 @@ jobs:
           rm examples/gltf_viewer/web/pkg/.gitignore
           rm examples/gltf_viewer/web/assets/.gitignore
 
-      - name: Deploy 🚀
+      - name: Deploy
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           branch: gh-pages
