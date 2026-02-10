@@ -243,15 +243,6 @@ impl AppHandler for GltfViewer {
 
         let asset_server = engine.assets.clone();
         execute_future(async move {
-            // let env_map_path = [
-            //     format!("{}{}", ASSET_PATH, "Park2/posx.jpg"),
-            //     format!("{}{}", ASSET_PATH, "Park2/negx.jpg"),
-            //     format!("{}{}", ASSET_PATH, "Park2/posy.jpg"),
-            //     format!("{}{}", ASSET_PATH, "Park2/negy.jpg"),
-            //     format!("{}{}", ASSET_PATH, "Park2/posz.jpg"),
-            //     format!("{}{}", ASSET_PATH, "Park2/negz.jpg"),
-            // ];
-
             let map_path = "royal_esplanade_2k.hdr.jpg";
             let env_map_path = format!("{}{}", ASSET_PATH, map_path);
 
@@ -346,6 +337,14 @@ impl AppHandler for GltfViewer {
 
         // 6. 启动加载远程模型列表
         viewer.fetch_model_list();
+
+        viewer.load_model(
+            ModelSource::Remote(format!(
+                "{}/Models/ChronographWatch/glTF-Binary/ChronographWatch.glb",
+                BASE_URL
+            )),
+            engine.assets.clone(),
+        );
 
         viewer
     }

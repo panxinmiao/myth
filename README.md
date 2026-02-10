@@ -129,8 +129,8 @@ fn main() -> myth::Result<()> {
 Clone the repository and run the examples directly:
 
 ```bash
-# Run the PBR Box example
-cargo run --example box_pbr
+# Run the earth example
+cargo run --example earth --release
 
 # Run the glTF Viewer (Desktop)
 cargo run --example gltf_viewer --release
