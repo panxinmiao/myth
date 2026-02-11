@@ -177,31 +177,17 @@ impl ResourceManager {
         current_ids.push(self.model_allocator.buffer_id());
         current_ids.push(morph_result.resource_id);
         current_ids.push_optional(skeleton.map(|s| s.joint_matrices.handle().id));
-        // current_ids.push(mat_prep_result.layout_id);
 
-        // === Check 阶段: 快速指纹比较 ===
-        if mesh.bind_group_cache.fingerprint_matches(&current_ids)
-            && let Some(cached_id) = mesh.bind_group_cache.bind_group_id
-            && let Some(data) = self.get_cached_bind_group(cached_id)
-        {
-            return Some(data.clone());
-        }
-
-        // === Rebind 阶段: 指纹不匹配，重建 BindGroup ===
         let cache_key = current_ids.hash_value();
 
         // 检查全局缓存
         if let Some(binding_data) = self.object_bind_group_cache.get(&cache_key) {
-            mesh.bind_group_cache.bind_group_id = Some(binding_data.bind_group_id);
-            mesh.bind_group_cache.resource_ids = current_ids;
             return Some(binding_data.clone());
         }
 
         // 创建新 GpuObject
         let binding_data =
             self.create_object_bind_group_internal(assets, &geometry, mesh, skeleton, cache_key);
-        mesh.bind_group_cache.bind_group_id = Some(binding_data.bind_group_id);
-        mesh.bind_group_cache.resource_ids = current_ids;
         Some(binding_data)
     }
 

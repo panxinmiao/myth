@@ -1,54 +1,31 @@
 use crate::assets::{GeometryHandle, MaterialHandle};
-use crate::renderer::core::resources::ResourceIdSet;
 use crate::resources::buffer::{BufferReadGuard, CpuBuffer};
 use crate::resources::uniforms::MorphUniforms;
 
 pub const MAX_MORPH_TARGETS: usize = 32;
 pub const MORPH_WEIGHT_THRESHOLD: f32 = 0.001;
 
-/// 渲染代理缓存
-///
-/// 采用 "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" 模式
-#[derive(Debug, Clone, Default)]
-pub struct BindGroupCache {
-    pub bind_group_id: Option<u64>,
-    /// 缓存的资源 ID 集合（用于指纹比较）
-    pub(crate) resource_ids: ResourceIdSet,
-}
-
-impl BindGroupCache {
-    #[inline]
-    #[must_use]
-    pub fn fingerprint_matches(&self, current_ids: &ResourceIdSet) -> bool {
-        self.bind_group_id.is_some() && self.resource_ids.matches_slice(current_ids.as_slice())
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct Mesh {
     pub name: String,
 
-    // === 资源引用 ===
+    // === Rescources ===
     pub geometry: GeometryHandle,
     pub material: MaterialHandle,
 
-    // === 实例特定的渲染设置 ===
+    // === Instance-specific rendering settings ===
     pub visible: bool,
 
-    // 绘制顺序 (Render Order)
+    // Render Order
     pub render_order: i32,
 
-    /// Morph Target 原始权重 (所有 target 的权重，CPU 逻辑用)
+    /// Morph Target original influences
     pub morph_target_influences: Vec<f32>,
 
-    /// Morph Uniform Buffer (GPU 用，每帧更新)
+    /// Morph Uniform Buffer (used by GPU, updated every frame)
     pub(crate) morph_uniforms: CpuBuffer<MorphUniforms>,
 
     pub(crate) morph_dirty: bool,
-
-    // === 渲染缓存 ===
-    /// 渲染代理缓存，避免每帧重复查找
-    pub(crate) bind_group_cache: BindGroupCache,
 }
 
 impl Mesh {
@@ -63,7 +40,6 @@ impl Mesh {
             morph_target_influences: Vec::new(),
             morph_uniforms: CpuBuffer::new_uniform(None),
             morph_dirty: false,
-            bind_group_cache: BindGroupCache::default(),
         }
     }
 
@@ -77,26 +53,26 @@ impl Mesh {
         self.morph_uniforms.write()
     }
 
-    /// 初始化 morph target influences 数组
-    /// 应在加载 geometry 后调用
+    /// initialize morph target influences
+    /// should be called after loading geometry
     pub fn init_morph_targets(&mut self, target_count: u32, vertex_count: u32) {
         self.morph_target_influences = vec![0.0; target_count as usize];
 
-        // 初始化 uniform buffer
+        // initialize uniform buffer
         let mut uniforms = self.morph_uniforms.write();
         uniforms.vertex_count = vertex_count;
         uniforms.count = 0;
         uniforms.flags = 0;
     }
 
-    /// 设置单个 morph target 的权重
+    /// set influence for a single morph target
     pub fn set_morph_target_influence(&mut self, index: usize, weight: f32) {
         if index < self.morph_target_influences.len() {
             self.morph_target_influences[index] = weight;
         }
     }
 
-    /// 批量设置 morph target 权重
+    /// batch set morph target influences
     pub fn set_morph_target_influences(&mut self, weights: &[f32]) {
         let len = weights.len().min(self.morph_target_influences.len());
         if self.morph_target_influences[..len] != weights[..len] {
@@ -105,14 +81,14 @@ impl Mesh {
         }
     }
 
-    /// 更新 Morph Uniforms (排序剔除并填充 GPU buffer)
-    /// 应在每帧渲染前调用
+    /// update Morph Uniforms (sort, cull, and fill GPU buffer)
+    /// should be called before each frame rendering
     pub fn update_morph_uniforms(&mut self) {
         if self.morph_target_influences.is_empty() || !self.morph_dirty {
             return;
         }
 
-        // 1. 收集激活的权重 (过滤掉极小值)
+        // 1. Collect active influences (filter out very small values)
         let mut active_targets: Vec<(usize, f32)> = self
             .morph_target_influences
             .iter()
@@ -121,38 +97,33 @@ impl Mesh {
             .map(|(i, w)| (i, *w))
             .collect();
 
-        // 2. 按权重从大到小排序
+        // 2. Sort by weight descending
         active_targets.sort_by(|a, b| {
             b.1.abs()
                 .partial_cmp(&a.1.abs())
                 .unwrap_or(std::cmp::Ordering::Equal)
         });
 
-        // 3. 截断到最大容量
+        // 3. Truncate to maximum capacity
         active_targets.truncate(MAX_MORPH_TARGETS);
 
-        // 4. 填充 Uniform Buffer (打包到 Vec4/UVec4 中)
+        // 4. Fill Uniform Buffer (packed into Vec4/UVec4)
         let mut uniforms = self.morph_uniforms.write();
         uniforms.count = active_targets.len() as u32;
 
-        // 清空数组 (8 个 Vec4，每个包含 4 个值)
+        // Clear arrays (8 Vec4s, each containing 4 values)
         for i in 0..8 {
             uniforms.weights[i] = glam::Vec4::ZERO;
             uniforms.indices[i] = glam::UVec4::ZERO;
         }
 
-        // 填充激活的 targets (将索引 i 映射到 Vec4[i/4][i%4])
+        // Fill active targets (map index i to Vec4[i/4][i%4])
         for (i, (target_idx, weight)) in active_targets.iter().enumerate() {
-            let vec_idx = i / 4; // 哪个 Vec4
-            let component = i % 4; // Vec4 中的哪个分量
+            let vec_idx = i / 4; // which Vec4
+            let component = i % 4; // which component in Vec4
             uniforms.weights[vec_idx][component] = *weight;
             uniforms.indices[vec_idx][component] = *target_idx as u32;
         }
         self.morph_dirty = false;
     }
-
-    // 使渲染缓存失效（当 geometry 或 material 改变时调用）
-    // pub fn invalidate_cache(&mut self) {
-    //     self.render_cache.invalidate();
-    // }
 }
