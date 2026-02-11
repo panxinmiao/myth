@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>glTF Viewer - Myth-Engine WebGPU</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            background-color: #1a1a2e;
+        }
+        
+        #myth-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+            touch-action: none;
+        }
+        
+        #loading {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            background-color: #1a1a2e;
+            color: #eee;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            z-index: 1000;
+        }
+        
+        #loading.hidden {
+            display: none;
+        }
+        
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid #333;
+            border-top-color: #4a9eff;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 20px;
+        }
+        
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        
+        .loading-text {
+            font-size: 18px;
+            margin-bottom: 10px;
+        }
+        
+        .loading-status {
+            font-size: 14px;
+            color: #888;
+        }
+        
+        #error {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: #2a1a1a;
+            border: 1px solid #ff4444;
+            border-radius: 8px;
+            padding: 30px;
+            color: #eee;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 500px;
+            text-align: center;
+            display: none;
+            z-index: 1001;
+        }
+        
+        #error h2 {
+            color: #ff6666;
+            margin-bottom: 15px;
+        }
+        
+        #error p {
+            margin-bottom: 10px;
+            line-height: 1.5;
+        }
+        
+        #error a {
+            color: #4a9eff;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading glTF Viewer...</div>
+        <div class="loading-status" id="loading-status">Initializing WebGPU...</div>
+    </div>
+    
+    <div id="error">
+        <h2>⚠️ WebGPU Not Supported</h2>
+        <p>Your browser does not support WebGPU, which is required for this application.</p>
+        <p>Please try one of the following:</p>
+        <ul style="text-align: left; margin: 15px 0;">
+            <li>Use Chrome 113+ or Edge 113+</li>
+            <li>Use Firefox Nightly with WebGPU enabled</li>
+            <li>On Safari, enable WebGPU in Experimental Features</li>
+        </ul>
+        <p><a href="https://caniuse.com/webgpu" target="_blank">Check WebGPU support</a></p>
+    </div>
+    
+    <canvas id="myth-canvas"></canvas>
+    
+    <script type="module">
+        let wasm_exports = null;
+
+        async function handleDrop(e) {
+            e.preventDefault();
+            e.stopPropagation();
+
+            document.body.style.opacity = "1.0"; 
+
+            const dt = e.dataTransfer;
+            const files = dt.files;
+
+            if (files.length > 0 && wasm_exports) {
+                const file = files[0];
+                console.log("Reading dropped file:", file.name);
+
+                try {
+                    const arrayBuffer = await file.arrayBuffer();
+                    const data = new Uint8Array(arrayBuffer);
+                    wasm_exports.receive_dropped_file(file.name, data);
+                    
+                } catch (err) {
+                    console.error("Error reading file:", err);
+                }
+            }
+        }
+
+        function handleDragOver(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            e.dataTransfer.dropEffect = 'copy';
+            document.body.style.opacity = "0.7"; 
+        }
+
+        function handleDragLeave(e) {
+            e.preventDefault();
+            e.stopPropagation();
+            document.body.style.opacity = "1.0";
+        }
+
+
+        document.body.addEventListener('dragenter', handleDragOver, false);
+        document.body.addEventListener('dragover', handleDragOver, false);
+        document.body.addEventListener('dragleave', handleDragLeave, false);
+        document.body.addEventListener('drop', handleDrop, false);
+
+        const canvas = document.getElementById('myth-canvas');
+        canvas.addEventListener('dragenter', handleDragOver, false);
+        canvas.addEventListener('dragover', handleDragOver, false);
+        canvas.addEventListener('dragleave', handleDragLeave, false);
+        canvas.addEventListener('drop', handleDrop, false);
+
+
+        // Check for WebGPU support
+        async function checkWebGPU() {
+            if (!navigator.gpu) {
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('loading').classList.add('hidden');
+                return false;
+            }
+            
+            try {
+                const adapter = await navigator.gpu.requestAdapter();
+                if (!adapter) {
+                    document.getElementById('error').style.display = 'block';
+                    document.getElementById('loading').classList.add('hidden');
+                    return false;
+                }
+                return true;
+            } catch (e) {
+                console.error('WebGPU check failed:', e);
+                document.getElementById('error').style.display = 'block';
+                document.getElementById('loading').classList.add('hidden');
+                return false;
+            }
+        }
+        
+        async function init() {
+            const hasWebGPU = await checkWebGPU();
+            if (!hasWebGPU) return;
+            
+            document.getElementById('loading-status').textContent = 'Loading WASM module...';
+            
+            try {
+                // Import the WASM module
+                const wasm = await import('./pkg/gltf_viewer.js');
+                await wasm.default();
+
+                wasm_exports = wasm;
+                
+                // Hide loading screen after a short delay
+                setTimeout(() => {
+                    document.getElementById('loading').classList.add('hidden');
+                }, 500);
+                
+            } catch (e) {
+                console.error('Failed to load WASM:', e);
+                document.getElementById('loading-status').textContent = 'Failed to load: ' + e.message;
+            }
+        }
+        
+        init();
+    </script>
+</body>
+</html>

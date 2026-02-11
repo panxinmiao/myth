@@ -3,227 +3,279 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>glTF Viewer - Myth-Engine WebGPU</title>
+    <title>Myth Engine Showcase</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     <style>
-        * {
+        :root {
+            --bg-color: #0a0a0e;
+            --card-bg: #16161e;
+            --text-main: #ffffff;
+            --text-muted: #a9b1d6;
+            --accent: #7aa2f7;
+            --accent-glow: rgba(122, 162, 247, 0.4);
+            --border: #24283b;
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
             margin: 0;
-            padding: 0;
-            box-sizing: border-box;
+            background-color: var(--bg-color);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
         }
-        
-        html, body {
-            width: 100%;
-            height: 100%;
+
+        /* === Header Section === */
+        header {
+            background: radial-gradient(circle at 50% 0%, #1f2335 0%, var(--bg-color) 100%);
+            padding: 80px 20px 60px;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+        }
+
+        h1 {
+            font-size: 3.5rem;
+            margin: 0;
+            background: linear-gradient(135deg, #fff 0%, #7aa2f7 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -1px;
+        }
+
+        .subtitle {
+            margin-top: 15px;
+            color: var(--text-muted);
+            font-size: 1.2rem;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            line-height: 1.6;
+        }
+
+        .engine-badge {
+            display: inline-block;
+            margin-top: 20px;
+            background: rgba(122, 162, 247, 0.1);
+            color: var(--accent);
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            border: 1px solid rgba(122, 162, 247, 0.2);
+        }
+
+        /* === Grid Section === */
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 60px 20px;
+        }
+
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 30px;
+        }
+
+        /* === Card Design === */
+        .model-card {
+            background-color: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 16px;
             overflow: hidden;
-            background-color: #1a1a2e;
-        }
-        
-        #myth-canvas {
-            width: 100%;
-            height: 100%;
-            display: block;
-            touch-action: none;
-        }
-        
-        #loading {
-            position: fixed;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
+            text-decoration: none;
+            transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+            position: relative;
             display: flex;
             flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            background-color: #1a1a2e;
-            color: #eee;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            z-index: 1000;
         }
-        
-        #loading.hidden {
-            display: none;
+
+        .model-card:hover {
+            transform: translateY(-10px);
+            box-shadow: 0 20px 40px -5px rgba(0, 0, 0, 0.5);
+            border-color: var(--accent);
         }
-        
-        .spinner {
-            width: 50px;
-            height: 50px;
-            border: 3px solid #333;
-            border-top-color: #4a9eff;
+
+        /* Image Container */
+        .card-image-wrapper {
+            width: 100%;
+            height: 220px;
+            overflow: hidden;
+            background: #000;
+            position: relative;
+        }
+
+        .card-image {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.6s ease;
+            opacity: 0.9;
+        }
+
+        .model-card:hover .card-image {
+            transform: scale(1.05);
+            opacity: 1;
+        }
+
+        /* Overlay Icon on Hover */
+        .play-icon {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0.5);
+            width: 50px; height: 50px;
+            background: rgba(0,0,0,0.6);
             border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin-bottom: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255,255,255,0.2);
         }
         
-        @keyframes spin {
-            to { transform: rotate(360deg); }
+        .play-icon::after {
+            content: '';
+            border-style: solid;
+            border-width: 8px 0 8px 14px;
+            border-color: transparent transparent transparent #fff;
+            margin-left: 4px;
         }
-        
-        .loading-text {
-            font-size: 18px;
-            margin-bottom: 10px;
+
+        .model-card:hover .play-icon {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
         }
-        
-        .loading-status {
-            font-size: 14px;
-            color: #888;
+
+        /* Info Section */
+        .card-info {
+            padding: 20px;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }
-        
-        #error {
-            position: fixed;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background-color: #2a1a1a;
-            border: 1px solid #ff4444;
-            border-radius: 8px;
-            padding: 30px;
-            color: #eee;
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            max-width: 500px;
-            text-align: center;
-            display: none;
-            z-index: 1001;
+
+        .card-title {
+            color: var(--text-main);
+            font-size: 1.15rem;
+            font-weight: 600;
+            margin-bottom: 8px;
         }
-        
-        #error h2 {
-            color: #ff6666;
-            margin-bottom: 15px;
+
+        .card-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
         }
-        
-        #error p {
-            margin-bottom: 10px;
-            line-height: 1.5;
+
+        .tag {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            background: #1f2335;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: 500;
         }
-        
-        #error a {
-            color: #4a9eff;
+
+        .arrow {
+            color: var(--accent);
+            opacity: 0;
+            transform: translateX(-10px);
+            transition: all 0.3s ease;
+        }
+
+        .model-card:hover .arrow {
+            opacity: 1;
+            transform: translateX(0);
         }
     </style>
 </head>
 <body>
-    <div id="loading">
-        <div class="spinner"></div>
-        <div class="loading-text">Loading glTF Viewer...</div>
-        <div class="loading-status" id="loading-status">Initializing WebGPU...</div>
+
+    <header>
+        <div class="engine-badge">MYTH ENGINE v0.1.0</div>
+        <h1>High Performance Rendering</h1>
+        <p class="subtitle">
+            A Rust-based real-time 3D rendering engine. 
+            Featuring PBR pipeline, glTF support, and efficient resource management.
+        </p>
+    </header>
+
+    <div class="container">
+        <div class="gallery-grid" id="gallery">
+            </div>
     </div>
-    
-    <div id="error">
-        <h2>⚠️ WebGPU Not Supported</h2>
-        <p>Your browser does not support WebGPU, which is required for this application.</p>
-        <p>Please try one of the following:</p>
-        <ul style="text-align: left; margin: 15px 0;">
-            <li>Use Chrome 113+ or Edge 113+</li>
-            <li>Use Firefox Nightly with WebGPU enabled</li>
-            <li>On Safari, enable WebGPU in Experimental Features</li>
-        </ul>
-        <p><a href="https://caniuse.com/webgpu" target="_blank">Check WebGPU support</a></p>
-    </div>
-    
-    <canvas id="myth-canvas"></canvas>
-    
-    <script type="module">
-        let wasm_exports = null;
 
-        async function handleDrop(e) {
-            e.preventDefault();
-            e.stopPropagation();
-
-            document.body.style.opacity = "1.0"; 
-
-            const dt = e.dataTransfer;
-            const files = dt.files;
-
-            if (files.length > 0 && wasm_exports) {
-                const file = files[0];
-                console.log("Reading dropped file:", file.name);
-
-                try {
-                    const arrayBuffer = await file.arrayBuffer();
-                    const data = new Uint8Array(arrayBuffer);
-                    wasm_exports.receive_dropped_file(file.name, data);
-                    
-                } catch (err) {
-                    console.error("Error reading file:", err);
-                }
-            }
-        }
-
-        function handleDragOver(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            e.dataTransfer.dropEffect = 'copy';
-            document.body.style.opacity = "0.7"; 
-        }
-
-        function handleDragLeave(e) {
-            e.preventDefault();
-            e.stopPropagation();
-            document.body.style.opacity = "1.0";
-        }
-
-
-        document.body.addEventListener('dragenter', handleDragOver, false);
-        document.body.addEventListener('dragover', handleDragOver, false);
-        document.body.addEventListener('dragleave', handleDragLeave, false);
-        document.body.addEventListener('drop', handleDrop, false);
-
-        const canvas = document.getElementById('myth-canvas');
-        canvas.addEventListener('dragenter', handleDragOver, false);
-        canvas.addEventListener('dragover', handleDragOver, false);
-        canvas.addEventListener('dragleave', handleDragLeave, false);
-        canvas.addEventListener('drop', handleDrop, false);
-
-
-        // Check for WebGPU support
-        async function checkWebGPU() {
-            if (!navigator.gpu) {
-                document.getElementById('error').style.display = 'block';
-                document.getElementById('loading').classList.add('hidden');
-                return false;
-            }
-            
-            try {
-                const adapter = await navigator.gpu.requestAdapter();
-                if (!adapter) {
-                    document.getElementById('error').style.display = 'block';
-                    document.getElementById('loading').classList.add('hidden');
-                    return false;
-                }
-                return true;
-            } catch (e) {
-                console.error('WebGPU check failed:', e);
-                document.getElementById('error').style.display = 'block';
-                document.getElementById('loading').classList.add('hidden');
-                return false;
-            }
-        }
+    <script>
+        const BASE_URL= "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/";
         
-        async function init() {
-            const hasWebGPU = await checkWebGPU();
-            if (!hasWebGPU) return;
-            
-            document.getElementById('loading-status').textContent = 'Loading WASM module...';
-            
-            try {
-                // Import the WASM module
-                const wasm = await import('./pkg/gltf_viewer.js');
-                await wasm.default();
+        const models = [
+            { name: "Damaged Helmet", path: "DamagedHelmet", type: "glb" },
+            { name: "Sci-Fi Game Board", path: "ABeautifulGame", type: "glb" },
+            { name: "Chronograph Watch", path: "ChronographWatch", type: "glb" },
+            { name: "Glass Hurricane", path: "GlassHurricaneCandleHolder", type: "glb" },
+            { name: "Vintage Fridge", path: "CommercialRefrigerator", type: "glb" },
+            { name: "Iridescence Lamp", path: "IridescenceLamp", type: "glb" },
+            { name: "Olives Dish", path: "IridescentDishWithOlives", type: "glb" },
+            { name: "Mosquito Amber", path: "MosquitoInAmber", type: "glb" },
+            { name: "Velvet Chair", path: "SheenChair", type: "glb" },
+            { name: "Khronos Sunglasses", path: "SunglassesKhronos", type: "glb" },
+            { name: "Toy Car", path: "ToyCar", type: "glb" },
+            { name: "Sheen Cloth", path: "SheenCloth", type: "gltf" },
+            { name: "Stained Glass Lamp", path: "StainedGlassLamp", type: "gltf" },
+            { name: "Silk Pouf", path: "SpecularSilkPouf", type: "glb" },
+            { name: "Concept Car", path: "CarConcept", type: "glb" },
+            { name: "Pot Of Coals", path: "PotOfCoals", type: "glb" },
+        ];
 
-                wasm_exports = wasm;
-                
-                // Hide loading screen after a short delay
-                setTimeout(() => {
-                    document.getElementById('loading').classList.add('hidden');
-                }, 500);
-                
-            } catch (e) {
-                console.error('Failed to load WASM:', e);
-                document.getElementById('loading-status').textContent = 'Failed to load: ' + e.message;
+        const container = document.getElementById('gallery');
+
+        models.forEach(model => {
+
+            if (model.type === undefined) {
+                model.type = "glb";
             }
-        }
-        
-        init();
+
+            let variant = "glTF-Binary";
+
+            if (model.type == "glb") {
+                variant = "glTF-Binary";
+            } else if (model.type == "gltf") {
+                variant = "glTF";
+            }
+
+            const glbUrl = `${BASE_URL}${model.path}/${variant}/${model.path}.${model.type}`;
+            
+            let imgExt = "jpg";
+            if (model.path === "DamagedHelmet") imgExt = "png";
+            
+            const imgUrl = `${BASE_URL}${model.path}/screenshot/screenshot.${imgExt}`;
+
+            const link = document.createElement('a');
+            link.className = 'model-card';
+            link.href = `viewer.html?model=${encodeURIComponent(glbUrl)}`;
+            link.target = "_blank"; 
+
+            link.innerHTML = `
+                <div class="card-image-wrapper">
+                    <img src="${imgUrl}" alt="${model.name}" class="card-image" loading="lazy">
+                    <div class="play-icon"></div>
+                </div>
+                <div class="card-info">
+                    <div class="card-title">${model.name}</div>
+                    <div class="card-meta">
+                        <span class="tag">glTF 2.0</span>
+                        <span class="arrow">View Demo &rarr;</span>
+                    </div>
+                </div>
+            `;
+            container.appendChild(link);
+        });
     </script>
 </body>
 </html>
