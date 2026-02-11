@@ -1,4 +1,5 @@
 use glam::Vec3;
+use std::hash::{Hash, Hasher};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -46,6 +47,7 @@ pub enum LightKind {
 #[derive(Debug, Clone)]
 pub struct Light {
     pub uuid: Uuid,
+    pub id: u64,
     pub color: Vec3,
     pub intensity: f32, // Suggestion: specify units, e.g. in PBR: Point uses Candela, Directional uses Lux
     pub kind: LightKind,
@@ -54,10 +56,18 @@ pub struct Light {
 }
 
 impl Light {
+    fn generate_id_from_uuid(uuid: &Uuid) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        uuid.hash(&mut hasher);
+        hasher.finish()
+    }
+
     #[must_use]
     pub fn new_directional(color: Vec3, intensity: f32) -> Self {
+        let uuid = Uuid::new_v4();
         Self {
-            uuid: Uuid::new_v4(),
+            uuid,
+            id: Self::generate_id_from_uuid(&uuid),
             color,
             intensity,
             kind: LightKind::Directional(DirectionalLight {
@@ -69,8 +79,10 @@ impl Light {
 
     #[must_use]
     pub fn new_point(color: Vec3, intensity: f32, range: f32) -> Self {
+        let uuid = Uuid::new_v4();
         Self {
-            uuid: Uuid::new_v4(),
+            uuid,
+            id: Self::generate_id_from_uuid(&uuid),
             color,
             intensity,
             kind: LightKind::Point(PointLight { range }),
@@ -86,8 +98,10 @@ impl Light {
         inner_cone: f32,
         outer_cone: f32,
     ) -> Self {
+        let uuid = Uuid::new_v4();
         Self {
-            uuid: Uuid::new_v4(),
+            uuid,
+            id: Self::generate_id_from_uuid(&uuid),
             color,
             intensity,
             kind: LightKind::Spot(SpotLight {
