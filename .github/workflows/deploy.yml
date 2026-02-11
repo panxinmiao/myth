@@ -25,17 +25,38 @@ jobs:
         with:
           version: 0.2.108
 
-      - name: Build WASM
+      - name: Build WASM Examples
         run: |
           chmod +x scripts/build_wasm.sh
-          ./scripts/build_wasm.sh gltf_viewer
+          
+          echo "🚀 Building Showcase (Main Page)..."
+          ./scripts/build_wasm.sh showcase release
+          
+          echo "🚀 Building glTF Viewer (Sub Page)..."
+          ./scripts/build_wasm.sh gltf_viewer release
 
-          echo "Removing .gitignore from pkg directory..."
-          rm examples/gltf_viewer/web/pkg/.gitignore
-          rm examples/gltf_viewer/web/assets/.gitignore
+      - name: Organize Deployment Files
+        run: |
+          # create dist directory
+          mkdir -p dist
+          
+          # 1. Copy Showcase to root directory (as main page)
+          # Note: cp -r copies all contents of the directory
+          cp -r examples/showcase/web/* dist/
+          
+          # 2. Copy glTF Viewer to subdirectory
+          mkdir -p dist/gltf_viewer
+          cp -r examples/gltf_viewer/web/* dist/gltf_viewer/
+          
+          # 3. Clean up .gitignore files
+          # build_wasm.sh generates .gitignore in pkg and assets, which need to be removed for deployment
+          find dist -name ".gitignore" -type f -delete
+          
+          echo "✅ Deployment folder structure prepared:"
+          ls -R dist
 
       - name: Deploy
         uses: JamesIves/github-pages-deploy-action@v4
         with:
           branch: gh-pages
-          folder: examples/gltf_viewer/web
+          folder: dist

@@ -88,7 +88,7 @@ reqwest = { version = "0.13", features = ["default-tls", "stream"]}
 wasm-bindgen = "0.2.108"
 wasm-bindgen-futures = "0.4.58"
 web-sys = { version = "0.3.85", features = [
-    "Document", "Window", "Element", "HtmlCanvasElement", "HtmlInputElement",
+    "Document", "Window", "Element", "DomTokenList", "HtmlCanvasElement", "HtmlInputElement",
     "Location", "Request", "RequestInit", "RequestMode", "Response", "Headers",
     "File", "FileList", "FileReader", "Blob", "ProgressEvent", "console",
     "UrlSearchParams"

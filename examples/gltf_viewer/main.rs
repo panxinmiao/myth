@@ -338,14 +338,6 @@ impl AppHandler for GltfViewer {
         // 6. 启动加载远程模型列表
         viewer.fetch_model_list();
 
-        viewer.load_model(
-            ModelSource::Remote(format!(
-                "{}/Models/ChronographWatch/glTF-Binary/ChronographWatch.glb",
-                BASE_URL
-            )),
-            engine.assets.clone(),
-        );
-
         viewer
     }
 

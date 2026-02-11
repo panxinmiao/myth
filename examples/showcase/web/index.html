@@ -4,195 +4,274 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Myth Engine Showcase</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
     <style>
         :root {
-            --bg-color: #1a1a2e;
-            --card-bg: #252540;
-            --text-color: #ffffff;
-            --accent-color: #4a9eff;
+            --bg-color: #0a0a0e;
+            --card-bg: #16161e;
+            --text-main: #ffffff;
+            --text-muted: #a9b1d6;
+            --accent: #7aa2f7;
+            --accent-glow: rgba(122, 162, 247, 0.4);
+            --border: #24283b;
         }
+
+        * { box-sizing: border-box; }
 
         body {
             margin: 0;
-            padding: 40px;
             background-color: var(--bg-color);
-            color: var(--text-color);
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+        }
+
+        /* === Header Section === */
+        header {
+            background: radial-gradient(circle at 50% 0%, #1f2335 0%, var(--bg-color) 100%);
+            padding: 80px 20px 60px;
+            text-align: center;
+            border-bottom: 1px solid var(--border);
         }
 
         h1 {
-            text-align: center;
-            margin-bottom: 40px;
-            font-weight: 300;
-            letter-spacing: 2px;
+            font-size: 3.5rem;
+            margin: 0;
+            background: linear-gradient(135deg, #fff 0%, #7aa2f7 100%);
+            -webkit-background-clip: text;
+            background-clip: text;
+            -webkit-text-fill-color: transparent;
+            letter-spacing: -1px;
         }
 
-        /* 4x4 Grid 布局核心 */
-        .gallery-grid {
-            display: grid;
-            /* 自动适应宽度，最小 250px，最大占满 */
-            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-            gap: 25px;
+        .subtitle {
+            margin-top: 15px;
+            color: var(--text-muted);
+            font-size: 1.2rem;
+            max-width: 600px;
+            margin-left: auto;
+            margin-right: auto;
+            line-height: 1.6;
+        }
+
+        .engine-badge {
+            display: inline-block;
+            margin-top: 20px;
+            background: rgba(122, 162, 247, 0.1);
+            color: var(--accent);
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.9rem;
+            border: 1px solid rgba(122, 162, 247, 0.2);
+        }
+
+        /* === Grid Section === */
+        .container {
             max-width: 1400px;
             margin: 0 auto;
+            padding: 60px 20px;
         }
 
-        /* 单个卡片样式 */
+        .gallery-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 30px;
+        }
+
+        /* === Card Design === */
         .model-card {
             background-color: var(--card-bg);
-            border-radius: 12px;
+            border: 1px solid var(--border);
+            border-radius: 16px;
             overflow: hidden;
             text-decoration: none;
-            color: inherit;
-            transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), 
-                        box-shadow 0.3s ease;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
+            position: relative;
             display: flex;
             flex-direction: column;
         }
 
         .model-card:hover {
-            transform: translateY(-8px);
-            box-shadow: 0 12px 20px rgba(0,0,0,0.4);
-            border: 1px solid var(--accent-color);
+            transform: translateY(-10px);
+            box-shadow: 0 20px 40px -5px rgba(0, 0, 0, 0.5);
+            border-color: var(--accent);
         }
 
-        /* 缩略图容器 */
+        /* Image Container */
+        .card-image-wrapper {
+            width: 100%;
+            height: 220px;
+            overflow: hidden;
+            background: #000;
+            position: relative;
+        }
+
         .card-image {
             width: 100%;
-            height: 200px; /* 固定高度，保证整齐 */
-            object-fit: cover; /* 保持比例填充 */
-            background-color: #000;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.6s ease;
+            opacity: 0.9;
         }
 
+        .model-card:hover .card-image {
+            transform: scale(1.05);
+            opacity: 1;
+        }
+
+        /* Overlay Icon on Hover */
+        .play-icon {
+            position: absolute;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%) scale(0.5);
+            width: 50px; height: 50px;
+            background: rgba(0,0,0,0.6);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            transition: all 0.3s ease;
+            backdrop-filter: blur(4px);
+            border: 1px solid rgba(255,255,255,0.2);
+        }
+        
+        .play-icon::after {
+            content: '';
+            border-style: solid;
+            border-width: 8px 0 8px 14px;
+            border-color: transparent transparent transparent #fff;
+            margin-left: 4px;
+        }
+
+        .model-card:hover .play-icon {
+            opacity: 1;
+            transform: translate(-50%, -50%) scale(1);
+        }
+
+        /* Info Section */
         .card-info {
-            padding: 15px;
-            text-align: center;
+            padding: 20px;
+            flex-grow: 1;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
         }
 
         .card-title {
-            font-size: 1.1em;
+            color: var(--text-main);
+            font-size: 1.15rem;
             font-weight: 600;
-            margin-bottom: 5px;
+            margin-bottom: 8px;
         }
 
-        .card-tag {
-            font-size: 0.8em;
-            color: #aaa;
-            background: rgba(255,255,255,0.1);
-            padding: 4px 8px;
-            border-radius: 4px;
+        .card-meta {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-top: 15px;
+        }
+
+        .tag {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            background: #1f2335;
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-weight: 500;
+        }
+
+        .arrow {
+            color: var(--accent);
+            opacity: 0;
+            transform: translateX(-10px);
+            transition: all 0.3s ease;
+        }
+
+        .model-card:hover .arrow {
+            opacity: 1;
+            transform: translateX(0);
         }
     </style>
 </head>
 <body>
 
-    <h1>MYTH ENGINE SHOWCASE</h1>
+    <header>
+        <div class="engine-badge">MYTH ENGINE v0.1.0</div>
+        <h1>High Performance Rendering</h1>
+        <p class="subtitle">
+            A Rust-based real-time 3D rendering engine. 
+            Featuring PBR pipeline, glTF support, and efficient resource management.
+        </p>
+    </header>
 
-    <div class="gallery-grid" id="gallery">
-        </div>
+    <div class="container">
+        <div class="gallery-grid" id="gallery">
+            </div>
+    </div>
 
     <script>
         const BASE_URL= "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/";
-        // 定义要展示的模型列表
-        // model 链接直接使用 Khronos 官方的 glTF-Binary (.glb)
+        
         const models = [
-            {
-                name: "Damaged Helmet",
-                img: BASE_URL+"DamagedHelmet/screenshot/screenshot.png",
-                url: BASE_URL+"DamagedHelmet/glTF-Binary/DamagedHelmet.glb"
-            },
-            {
-                name: "A Beautiful Game",
-                img: BASE_URL+"ABeautifulGame/screenshot/screenshot.jpg",
-                url: BASE_URL+"ABeautifulGame/glTF-Binary/ABeautifulGame.glb"
-            },
-            {
-                name: "Chronograph Watch",
-                img: BASE_URL+"ChronographWatch/screenshot/screenshot.jpg",
-                url: BASE_URL+"ChronographWatch/glTF-Binary/ChronographWatch.glb"
-            },
-            {
-                name: "Glass Hurricane Candle Holder",
-                img: BASE_URL+"GlassHurricaneCandleHolder/screenshot/screenshot.jpg",
-                url: BASE_URL+"GlassHurricaneCandleHolder/glTF-Binary/GlassHurricaneCandleHolder.glb"
-            },
-            {
-                name: "Commercial Refrigerator",
-                img: BASE_URL+"CommercialRefrigerator/screenshot/screenshot.jpg",
-                url: BASE_URL+"CommercialRefrigerator/glTF-Binary/CommercialRefrigerator.glb"
-            },
-            {
-                name: "Iridescence Lamp",
-                img: BASE_URL+"IridescenceLamp/screenshot/screenshot.jpg",
-                url: BASE_URL+"IridescenceLamp/glTF-Binary/IridescenceLamp.glb"
-            },
-            {
-                name: "Iridescent Dish with Olives",
-                img: BASE_URL+"IridescentDishWithOlives/screenshot/screenshot.jpg",
-                url: BASE_URL+"IridescentDishWithOlives/glTF-Binary/IridescentDishWithOlives.glb"
-            },
-            {
-                name: "Mosquito In Amber",
-                img: BASE_URL+"MosquitoInAmber/screenshot/screenshot.jpg",
-                url: BASE_URL+"MosquitoInAmber/glTF-Binary/MosquitoInAmber.glb"
-            },
-             {
-                name: "Sheen Chair",
-                img: BASE_URL+"SheenChair/screenshot/screenshot.jpg",
-                url: BASE_URL+"SheenChair/glTF-Binary/SheenChair.glb"
-            },
-             {
-                name: "Sunglasses Khronos",
-                img: BASE_URL+"SunglassesKhronos/screenshot/screenshot.jpg",
-                url: BASE_URL+"SunglassesKhronos/glTF-Binary/SunglassesKhronos.glb"
-            },
-            {
-                name: "Toy Car",
-                img: BASE_URL+"ToyCar/screenshot/screenshot.jpg",
-                url: BASE_URL+"ToyCar/glTF-Binary/ToyCar.glb"
-            },
-             {
-                name: "Stained Glass Lamp",
-                img: BASE_URL+"StainedGlassLamp/screenshot/screenshot.jpg",
-                url: BASE_URL+"StainedGlassLamp/glTF-Binary/StainedGlassLamp.glb"
-            },
-             {
-                name: "Materials Variants Shoe",
-                img: BASE_URL+"MaterialsVariantsShoe/screenshot/screenshot.jpg",
-                url: BASE_URL+"MaterialsVariantsShoe/glTF-Binary/MaterialsVariantsShoe.glb"
-            },
-             {
-                name: "Specular Silk Pouf",
-                img: BASE_URL+"SpecularSilkPouf/screenshot/screenshot.jpg",
-                url: BASE_URL+"SpecularSilkPouf/glTF-Binary/SpecularSilkPouf.glb"
-            },
-             {
-                name: "Car Concept",
-                img: BASE_URL+"CarConcept/screenshot/screenshot.jpg",
-                url: BASE_URL+"CarConcept/glTF-Binary/CarConcept.glb"
-            },
-            {
-                name: "Pot Of Coals",
-                img: BASE_URL+"PotOfCoals/screenshot/screenshot.jpg",
-                url: BASE_URL+"PotOfCoals/glTF-Binary/PotOfCoals.glb"
-            }
+            { name: "Damaged Helmet", path: "DamagedHelmet", type: "glb" },
+            { name: "Sci-Fi Game Board", path: "ABeautifulGame", type: "glb" },
+            { name: "Chronograph Watch", path: "ChronographWatch", type: "glb" },
+            { name: "Glass Hurricane", path: "GlassHurricaneCandleHolder", type: "glb" },
+            { name: "Vintage Fridge", path: "CommercialRefrigerator", type: "glb" },
+            { name: "Iridescence Lamp", path: "IridescenceLamp", type: "glb" },
+            { name: "Olives Dish", path: "IridescentDishWithOlives", type: "glb" },
+            { name: "Mosquito Amber", path: "MosquitoInAmber", type: "glb" },
+            { name: "Velvet Chair", path: "SheenChair", type: "glb" },
+            { name: "Khronos Sunglasses", path: "SunglassesKhronos", type: "glb" },
+            { name: "Toy Car", path: "ToyCar", type: "glb" },
+            { name: "Sheen Cloth", path: "SheenCloth", type: "gltf" },
+            { name: "Stained Glass Lamp", path: "StainedGlassLamp", type: "gltf" },
+            { name: "Silk Pouf", path: "SpecularSilkPouf", type: "glb" },
+            { name: "Concept Car", path: "CarConcept", type: "glb" },
+            { name: "Pot Of Coals", path: "PotOfCoals", type: "glb" },
         ];
 
         const container = document.getElementById('gallery');
 
         models.forEach(model => {
+
+            if (model.type === undefined) {
+                model.type = "glb";
+            }
+
+            let variant = "glTF-Binary";
+
+            if (model.type == "glb") {
+                variant = "glTF-Binary";
+            } else if (model.type == "gltf") {
+                variant = "glTF";
+            }
+
+            const glbUrl = `${BASE_URL}${model.path}/${variant}/${model.path}.${model.type}`;
+            
+            let imgExt = "jpg";
+            if (model.path === "DamagedHelmet") imgExt = "png";
+            
+            const imgUrl = `${BASE_URL}${model.path}/screenshot/screenshot.${imgExt}`;
+
             const link = document.createElement('a');
             link.className = 'model-card';
-            // 核心逻辑：链接指向 viewer.html 并带上参数
-            link.href = `viewer.html?model=${encodeURIComponent(model.url)}`;
-            link.target = "_blank"; // 在新标签页打开，或者去掉这行在当前页打开
+            link.href = `viewer.html?model=${encodeURIComponent(glbUrl)}`;
+            link.target = "_blank"; 
 
             link.innerHTML = `
-                <img src="${model.img}" alt="${model.name}" class="card-image" loading="lazy">
+                <div class="card-image-wrapper">
+                    <img src="${imgUrl}" alt="${model.name}" class="card-image" loading="lazy">
+                    <div class="play-icon"></div>
+                </div>
                 <div class="card-info">
                     <div class="card-title">${model.name}</div>
-                    <span class="card-tag">PBR / glTF</span>
+                    <div class="card-meta">
+                        <span class="tag">glTF 2.0</span>
+                        <span class="arrow">View Demo &rarr;</span>
+                    </div>
                 </div>
             `;
             container.appendChild(link);

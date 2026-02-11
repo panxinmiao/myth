@@ -11,7 +11,7 @@
 
 ![Myth Engine Hero](docs/images/helmet.png)
 
-[**Online Web Demo**](https://panxinmiao.github.io/myth/) | [**Examples**](examples/)
+[**Showcase**](https://panxinmiao.github.io/myth/) | [**glTF Viewer & Inspector**](https://panxinmiao.github.io/myth/gltf_viewer/)  | [**Examples**](examples/)
 
 </div>
 
@@ -50,7 +50,8 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
 
 Experience the engine directly in your browser (Chrome/Edge 113+ required for WebGPU):
 
-👉 **[Launch glTF Viewer & Inspector](https://panxinmiao.github.io/myth/)**
+- 🌟 **[Showcase (Home)](https://panxinmiao.github.io/myth/)**: High-performance rendering showcase.
+- 🛠️ **[Launch glTF Viewer & Inspector](https://panxinmiao.github.io/myth/gltf_viewer/)**: Inspect your glTF models online.
 
 * **Drag & Drop** your own `.glb` / `.gltf` files to view them.
 * Inspect node hierarchy and tweak PBR material parameters in real-time.

@@ -147,6 +147,18 @@ impl AppHandler for ShowcaseApp {
                     log::info!("Model loaded successfully: {}", url);
                     self.instantiate_and_focus(scene, &prefab, &engine.assets);
                     self.model_loaded = true;
+
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        use web_sys::window;
+                        if let Some(win) = window() {
+                            if let Some(doc) = win.document() {
+                                if let Some(el) = doc.get_element_by_id("loading-overlay") {
+                                    let _ = el.class_list().add_1("hidden");
+                                }
+                            }
+                        }
+                    }
                 }
             }
         }
