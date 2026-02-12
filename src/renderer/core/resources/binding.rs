@@ -4,18 +4,15 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use glam::Mat4;
 use wgpu::ShaderStages;
 
 use crate::Mesh;
 use crate::assets::{AssetServer, TextureHandle};
-use crate::resources::buffer::CpuBuffer;
 use crate::resources::geometry::Geometry;
 use crate::resources::texture::{SamplerSource, TextureSource};
 use crate::resources::uniforms::DynamicModelUniforms;
 use crate::resources::uniforms::WgslStruct;
 use crate::scene::Scene;
-use crate::scene::SkeletonKey;
 use crate::scene::skeleton::Skeleton;
 
 use crate::renderer::core::binding::{BindingResource, Bindings};
@@ -121,11 +118,6 @@ impl ResourceManager {
                     .unwrap_or(&self.dummy_image.default_view)
             }
         }
-    }
-
-    /// 获取骨骼 Buffer
-    pub fn get_skeleton_buffer(&self, skeleton_id: SkeletonKey) -> Option<&CpuBuffer<Vec<Mat4>>> {
-        self.skeleton_buffers.get(&skeleton_id)
     }
 
     // ========================================================================

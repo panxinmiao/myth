@@ -82,7 +82,7 @@ impl RenderNode for BRDFLutComputePass {
                 }],
             });
 
-        let size = crate::renderer::core::resources::environment::BRDF_LUT_SIZE;
+        let size = crate::renderer::core::resources::BRDF_LUT_SIZE;
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("BRDF LUT Pass"),

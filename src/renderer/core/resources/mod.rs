@@ -22,7 +22,7 @@
 mod allocator;
 mod binding;
 mod buffer;
-pub(crate) mod environment;
+mod environment;
 mod geometry;
 mod material;
 mod mipmap;
@@ -33,7 +33,6 @@ mod tracked;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use glam::Mat4;
 use rustc_hash::FxHashMap;
 use slotmap::SecondaryMap;
 
@@ -41,6 +40,7 @@ use crate::assets::server::SamplerHandle;
 
 pub(crate) use crate::renderer::core::resources::buffer::GpuBuffer;
 pub(crate) use crate::renderer::core::resources::environment::GpuEnvironment;
+pub(crate) use crate::renderer::core::resources::environment::{BRDF_LUT_SIZE, CubeSourceType};
 pub(crate) use crate::renderer::core::resources::geometry::GpuGeometry;
 pub(crate) use crate::renderer::core::resources::material::GpuMaterial;
 pub(crate) use crate::renderer::core::resources::texture::{
@@ -51,7 +51,6 @@ pub(crate) use crate::resources::texture::TextureSampler;
 use crate::assets::{GeometryHandle, MaterialHandle, TextureHandle};
 use crate::resources::buffer::{CpuBuffer, GpuData};
 use crate::resources::texture::TextureSource;
-use crate::scene::SkeletonKey;
 
 pub use crate::renderer::core::resources::mipmap::MipmapGenerator;
 pub use allocator::ModelBufferAllocator;
@@ -154,9 +153,11 @@ pub struct ResourceManager {
 
     /// 内部纹理的名称到 ID 的映射，保证 ID 跨帧稳定
     pub(crate) internal_name_lookup: FxHashMap<String, u64>,
-
-    // === 骨骼 Buffer ===
-    pub(crate) skeleton_buffers: FxHashMap<SkeletonKey, CpuBuffer<Vec<Mat4>>>,
+    // /// 阴影资源
+    // /// 2D 阵列纹理视图，用于 Directional 和 Spot 光源
+    // pub(crate) shadow_2d_array: Option<wgpu::TextureView>,
+    // /// 立方体阵列纹理视图，用于 Point 光源
+    // pub(crate) shadow_cube_array: Option<wgpu::TextureView>,
 }
 
 impl ResourceManager {
@@ -337,7 +338,8 @@ impl ResourceManager {
             pending_ibl_source: None,
             internal_resources: FxHashMap::default(),
             internal_name_lookup: FxHashMap::default(),
-            skeleton_buffers: FxHashMap::default(),
+            // shadow_2d_array: None,
+            // shadow_cube_array: None,
         }
     }
 

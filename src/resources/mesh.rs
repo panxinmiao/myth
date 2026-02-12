@@ -1,3 +1,5 @@
+use uuid::Uuid;
+
 use crate::assets::{GeometryHandle, MaterialHandle};
 use crate::resources::buffer::{BufferReadGuard, CpuBuffer};
 use crate::resources::uniforms::MorphUniforms;
@@ -7,6 +9,7 @@ pub const MORPH_WEIGHT_THRESHOLD: f32 = 0.001;
 
 #[derive(Debug, Clone)]
 pub struct Mesh {
+    pub uuid: Uuid,
     pub name: String,
 
     // === Rescources ===
@@ -15,6 +18,9 @@ pub struct Mesh {
 
     // === Instance-specific rendering settings ===
     pub visible: bool,
+
+    pub cast_shadow: bool,
+    pub receive_shadow: bool,
 
     // Render Order
     pub render_order: i32,
@@ -31,11 +37,15 @@ pub struct Mesh {
 impl Mesh {
     #[must_use]
     pub fn new(geometry: GeometryHandle, material: MaterialHandle) -> Self {
+        let uuid = Uuid::new_v4();
         Self {
-            name: "Mesh".to_string(),
+            uuid,
+            name: format!("Mesh_{}", uuid),
             geometry,
             material,
             visible: true,
+            cast_shadow: false,
+            receive_shadow: false,
             render_order: 0,
             morph_target_influences: Vec::new(),
             morph_uniforms: CpuBuffer::new_uniform(None),
