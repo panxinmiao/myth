@@ -1,4 +1,4 @@
-use crate::renderer::core::resources::environment::CubeSourceType;
+use crate::renderer::core::resources::CubeSourceType;
 use crate::renderer::graph::{RenderContext, RenderNode};
 use crate::resources::texture::TextureSource;
 use std::borrow::Cow;

@@ -21,45 +21,45 @@
 >
 > Myth is currently in **active alpha development**. APIs are unstable and subject to **drastic breaking changes**. 
 
-## ✨ Introduction
+## Introduction
 
 **Myth** is a developer-friendly, high-performance 3D rendering engine written in **Rust**. 
 
 Inspired by the simplicity of **Three.js** and built on the modern power of **wgpu**, Myth aims to bridge the gap between low-level graphics APIs and high-level game engines. It provides a familiar object-oriented API for rapid development, backed by a **Transient Render Graph** architecture for industrial-grade performance.
 
 
-## 🚀 Features
+## Features
 
-* **⚡ Modern Architecture**: Built on **wgpu**, fully supporting **Vulkan**, **Metal**, **DX12**, and **WebGPU**.
-* **🖌️ Advanced PBR Materials**: Physically Based Rendering with a rich set of material features:
+* **Modern Architecture**: Built on **wgpu**, fully supporting **Vulkan**, **Metal**, **DX12**, and **WebGPU**.
+* **Advanced PBR Materials**: Physically Based Rendering with a rich set of material features:
     * **IBL** (support cubeMap & equirectangular env maps, with auto PMREM generation).
     * **Clearcoat** (car paint, varnished wood).
     * **Iridescence** (soap bubbles, oil films).
     * **Sheen** (cloth-like materials).
     * **Anisotropy** (brushed metals).
     * **Transmission** (glass, water).
-* **✨ Full glTF 2.0 Support**: Complete support for glTF 2.0 specification, including PBR materials, animations, and scene hierarchy.
-* **🎨 HDR Rendering Pipeline**: Full support for HDR Rendering, various tone mapping mode.
-* **🛡️ MSAA**: Built-in Multi-Sample Anti-Aliasing.
-* **🕸️ Transient Render Graph**: A highly optimized, frame-graph based rendering architecture that minimizes overhead and maximizes flexibility.
-* **📦 Asset System**: Asynchronous asset loading with `AssetServer`, built-in **glTF 2.0** support (geometry, materials, animations).
-* **🛠️ Tooling Ready**: Includes a powerful `gltf_viewer` example with an embedded **Inspector UI** (based on egui), capable of inspecting scene nodes, materials, and textures at runtime.
-* **🌐 Web First**: First-class support for **WASM** and **WebGPU**. Write once, run everywhere.
+* **Full glTF 2.0 Support**: Complete support for glTF 2.0 specification, including PBR materials, animations, and scene hierarchy.
+* **HDR Rendering Pipeline**: Full support for HDR Rendering, various tone mapping mode.
+* **MSAA**: Built-in Multi-Sample Anti-Aliasing.
+* **Transient Render Graph**: A highly optimized, frame-graph based rendering architecture that minimizes overhead and maximizes flexibility.
+* **Asset System**: Asynchronous asset loading with `AssetServer`, built-in **glTF 2.0** support (geometry, materials, animations).
+* **Tooling Ready**: Includes a powerful `gltf_viewer` example with an embedded **Inspector UI** (based on egui), capable of inspecting scene nodes, materials, and textures at runtime.
+* **Web First**: First-class support for **WASM** and **WebGPU**. Write once, run everywhere.
 
-## 🎮 Online Demo
+## Online Demo
 
 Experience the engine directly in your browser (Chrome/Edge 113+ required for WebGPU):
 
-- 🌟 **[Showcase (Home)](https://panxinmiao.github.io/myth/)**: High-performance rendering showcase.
-- 🛠️ **[Launch glTF Viewer & Inspector](https://panxinmiao.github.io/myth/gltf_viewer/)**: Inspect your glTF models online.
+- **[Showcase (Home)](https://panxinmiao.github.io/myth/)**: High-performance rendering showcase.
+- **[Launch glTF Viewer & Inspector](https://panxinmiao.github.io/myth/gltf_viewer/)**: Inspect your glTF models online.
 
-* **Drag & Drop** your own `.glb` / `.gltf` files to view them.
+* **Drag & Drop** your own `.glb` files to view them.
 * Inspect node hierarchy and tweak PBR material parameters in real-time.
 
 ![Web Editor Preview](docs/images/inspector.gif)
 
 
-## 📦 Quick Start
+## Quick Start
 
 Add `myth` to your `Cargo.toml`:
 
@@ -125,7 +125,7 @@ fn main() -> myth::Result<()> {
 }
 ```
 
-### 🏃 Running Examples
+### Running Examples
 
 Clone the repository and run the examples directly:
 
@@ -147,6 +147,6 @@ python -m http.server 8080 --directory examples\showcase\web
 
 ```
 
-## 📄 License
+## License
 
 This project is licensed under the **MIT License** or **Apache-2.0 License**.
