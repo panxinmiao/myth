@@ -271,10 +271,9 @@ impl SceneCullPass {
 
             let queue = ctx.render_lists.shadow_queues.entry(light.id).or_default();
 
-            for item in &ctx.extracted_scene.render_items {
-                if !item.cast_shadows {
-                    continue;
-                }
+            // Use shadow_caster_items: these include ALL cast_shadows=true objects,
+            // even those outside the main camera frustum.
+            for item in &ctx.extracted_scene.shadow_caster_items {
 
                 let Some(geometry) = geo_guard.map.get(item.geometry) else {
                     continue;

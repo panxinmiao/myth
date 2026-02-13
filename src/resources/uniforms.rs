@@ -594,7 +594,17 @@ define_gpu_data_struct!(
         pub light_type: u32,
         pub shadow_layer_index: i32,
 
-        pub shadow_matrix: Mat4,
+        // Shadow parameters
+        pub shadow_bias: f32,
+        pub shadow_normal_bias: f32,
+        pub cascade_count: u32,
+        pub __shadow_pad: f32,
+
+        // Cascade split distances (view-space depth thresholds)
+        pub cascade_splits: Vec4,
+
+        // Shadow VP matrices: up to 4 cascades for directional, 1 for spot
+        pub shadow_matrices: UniformArray<Mat4, 4>,
     }
 );
 

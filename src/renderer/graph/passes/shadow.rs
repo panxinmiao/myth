@@ -1,8 +1,12 @@
-use glam::{Mat4, Vec3};
+use glam::{Mat4, Vec3, Vec4};
 
 use crate::renderer::graph::RenderNode;
 use crate::renderer::graph::context::RenderContext;
+use crate::scene::camera::RenderCamera;
 use crate::scene::light::LightKind;
+
+/// Maximum number of cascades per directional light.
+const MAX_CASCADES: u32 = 4;
 
 pub struct ShadowPass {
     light_uniform_buffer: wgpu::Buffer,
@@ -105,33 +109,164 @@ impl ShadowPass {
         self.light_uniform_capacity = capacity;
     }
 
-    fn build_light_vp(light_kind: &LightKind, position: Vec3, direction: Vec3, camera_pos: Vec3) -> Mat4 {
+    // ========================================================================
+    // Spot Light VP Matrix
+    // ========================================================================
+
+    fn build_spot_vp(position: Vec3, direction: Vec3, spot: &crate::scene::light::SpotLight) -> Mat4 {
         let safe_dir = if direction.length_squared() > 1e-6 {
             direction.normalize()
         } else {
             -Vec3::Z
         };
+        let up = if safe_dir.y.abs() > 0.99 { Vec3::X } else { Vec3::Y };
+        let view = Mat4::look_at_rh(position, position + safe_dir, up);
+        let fov = (spot.outer_cone * 2.0).clamp(0.1, std::f32::consts::PI - 0.01);
+        let far = spot.range.max(1.0);
+        let proj = Mat4::perspective_rh(fov, 1.0, 0.1, far);
+        proj * view
+    }
+
+    // ========================================================================
+    // CSM: Cascade Split Computation (Practical Split Scheme)
+    // ========================================================================
+
+    /// Computes cascade split distances using the Practical Split Scheme.
+    ///
+    /// `lambda` blends between uniform (0.0) and logarithmic (1.0) distribution.
+    /// Returns an array of far distances for each cascade (in view space).
+    fn compute_cascade_splits(
+        cascade_count: u32,
+        near: f32,
+        far: f32,
+        lambda: f32,
+    ) -> [f32; MAX_CASCADES as usize] {
+        let mut splits = [0.0f32; MAX_CASCADES as usize];
+        let n = cascade_count.min(MAX_CASCADES) as usize;
+
+        for i in 0..n {
+            let p = (i + 1) as f32 / n as f32;
+            let log_split = near * (far / near).powf(p);
+            let uni_split = near + (far - near) * p;
+            splits[i] = lambda * log_split + (1.0 - lambda) * uni_split;
+        }
+
+        // Ensure the last split reaches the far plane
+        if n > 0 {
+            splits[n - 1] = far;
+        }
+
+        splits
+    }
+
+    // ========================================================================
+    // CSM: Frustum Corners in World Space
+    // ========================================================================
+
+    /// Computes the 8 frustum corners of a view-space frustum slice in world space.
+    fn compute_frustum_corners_world(
+        camera: &RenderCamera,
+        slice_near: f32,
+        slice_far: f32,
+    ) -> [Vec3; 8] {
+        // Extract fov and aspect from the projection matrix.
+        // For perspective_infinite_reverse_rh: proj[1][1] = 1/tan(fov/2),
+        //                                     proj[0][0] = proj[1][1]/aspect
+        let proj = camera.projection_matrix;
+        let tan_half_fov = 1.0 / proj.y_axis.y;
+        let aspect = proj.y_axis.y / proj.x_axis.x;
+
+        let h_near = tan_half_fov * slice_near;
+        let w_near = h_near * aspect;
+        let h_far = tan_half_fov * slice_far;
+        let w_far = h_far * aspect;
+
+        // Corners in view space (RH: -Z is forward)
+        let corners_view = [
+            // Near face (z = -slice_near)
+            Vec3::new(-w_near, -h_near, -slice_near),
+            Vec3::new( w_near, -h_near, -slice_near),
+            Vec3::new( w_near,  h_near, -slice_near),
+            Vec3::new(-w_near,  h_near, -slice_near),
+            // Far face (z = -slice_far)
+            Vec3::new(-w_far, -h_far, -slice_far),
+            Vec3::new( w_far, -h_far, -slice_far),
+            Vec3::new( w_far,  h_far, -slice_far),
+            Vec3::new(-w_far,  h_far, -slice_far),
+        ];
+
+        // Transform to world space using inverse view matrix
+        let inv_view = camera.view_matrix.inverse();
+        let mut corners_world = [Vec3::ZERO; 8];
+        for (i, c) in corners_view.iter().enumerate() {
+            corners_world[i] = inv_view.transform_point3(*c);
+        }
+        corners_world
+    }
+
+    // ========================================================================
+    // CSM: Build Cascade VP Matrix
+    // ========================================================================
+
+    /// Builds an orthographic VP matrix for one cascade.
+    ///
+    /// Calculates the light-space AABB of the frustum slice,
+    /// applies texel alignment to prevent shimmer when the camera moves.
+    fn build_cascade_vp(
+        light_direction: Vec3,
+        frustum_corners: &[Vec3; 8],
+        shadow_map_size: u32,
+    ) -> Mat4 {
+        let safe_dir = if light_direction.length_squared() > 1e-6 {
+            light_direction.normalize()
+        } else {
+            -Vec3::Z
+        };
+
+        // Compute frustum center
+        let mut center = Vec3::ZERO;
+        for c in frustum_corners {
+            center += *c;
+        }
+        center /= 8.0;
 
         let up = if safe_dir.y.abs() > 0.99 { Vec3::X } else { Vec3::Y };
+        let light_view = Mat4::look_at_rh(center - safe_dir, center, up);
 
-        match light_kind {
-            LightKind::Directional(_) => {
-                let _ = camera_pos;
-                let center = Vec3::ZERO;
-                let eye = center - safe_dir * 50.0;
-                let view = Mat4::look_at_rh(eye, center, up);
-                let proj = Mat4::orthographic_rh(-30.0, 30.0, -30.0, 30.0, 0.1, 150.0);
-                proj * view
-            }
-            LightKind::Spot(spot) => {
-                let view = Mat4::look_at_rh(position, position + safe_dir, up);
-                let fov = (spot.outer_cone * 2.0).clamp(0.1, std::f32::consts::PI - 0.01);
-                let far = spot.range.max(1.0);
-                let proj = Mat4::perspective_rh(fov, 1.0, 0.1, far);
-                proj * view
-            }
-            LightKind::Point(_) => Mat4::IDENTITY,
+        // Compute light-space AABB of frustum corners
+        let mut ls_min = Vec3::splat(f32::MAX);
+        let mut ls_max = Vec3::splat(f32::MIN);
+        for c in frustum_corners {
+            let ls = light_view.transform_point3(*c);
+            ls_min = ls_min.min(ls);
+            ls_max = ls_max.max(ls);
         }
+
+        // Extend the Z range to capture shadow casters behind the camera
+        let z_range = ls_max.z - ls_min.z;
+        let z_margin = z_range.max(50.0);
+        ls_min.z -= z_margin;
+
+        // Texel alignment: snap the ortho bounds to texel grid to prevent shimmer
+        let world_units_per_texel_x = (ls_max.x - ls_min.x) / shadow_map_size as f32;
+        let world_units_per_texel_y = (ls_max.y - ls_min.y) / shadow_map_size as f32;
+
+        if world_units_per_texel_x > 0.0 {
+            ls_min.x = (ls_min.x / world_units_per_texel_x).floor() * world_units_per_texel_x;
+            ls_max.x = (ls_max.x / world_units_per_texel_x).ceil() * world_units_per_texel_x;
+        }
+        if world_units_per_texel_y > 0.0 {
+            ls_min.y = (ls_min.y / world_units_per_texel_y).floor() * world_units_per_texel_y;
+            ls_max.y = (ls_max.y / world_units_per_texel_y).ceil() * world_units_per_texel_y;
+        }
+
+        let proj = Mat4::orthographic_rh(
+            ls_min.x, ls_max.x,
+            ls_min.y, ls_max.y,
+            -ls_max.z, -ls_min.z, // glam orthographic_rh: near/far are positive distances
+        );
+
+        proj * light_view
     }
 }
 
@@ -155,6 +290,9 @@ impl RenderNode for ShadowPass {
             .resource_manager
             .get_or_create_layout(&shadow_layout_entries);
 
+        // ============================================================
+        // 1. Collect active shadow lights
+        // ============================================================
         let mut active_shadow_lights = Vec::with_capacity(ctx.extracted_scene.lights.len());
         let mut max_map_size = 1u32;
 
@@ -162,81 +300,185 @@ impl RenderNode for ShadowPass {
             if !light.cast_shadows {
                 continue;
             }
-
             if !matches!(light.kind, LightKind::Directional(_) | LightKind::Spot(_)) {
                 continue;
             }
-
             let Some(queue) = ctx.render_lists.shadow_queues.get(&light.id) else {
                 continue;
             };
             if queue.is_empty() {
                 continue;
             }
-
-            max_map_size = max_map_size.max(light.shadow.as_ref().map_or(1024, |shadow| shadow.map_size));
+            max_map_size = max_map_size.max(
+                light.shadow.as_ref().map_or(1024, |s| s.map_size),
+            );
             active_shadow_lights.push((light_index, light.clone()));
         }
 
-        let required_count = active_shadow_lights.len() as u32;
+        // ============================================================
+        // 2. Count total shadow layers (Directional uses N cascades, Spot uses 1)
+        // ============================================================
+        let mut total_layers = 0u32;
+        let mut light_layer_assignments: smallvec::SmallVec<[(u32, u32); 8]> = smallvec::SmallVec::new(); // (base_layer, cascade_count)
+
+        for (_idx, light) in &active_shadow_lights {
+            let cascade_count = match &light.kind {
+                LightKind::Directional(_) => {
+                    let cfg = light.shadow.as_ref().map_or(4, |s| s.cascade_count);
+                    cfg.clamp(1, MAX_CASCADES)
+                }
+                _ => 1,
+            };
+            light_layer_assignments.push((total_layers, cascade_count));
+            total_layers += cascade_count;
+        }
+
+        // ============================================================
+        // 3. Ensure GPU resources
+        // ============================================================
         ctx.resource_manager
-            .ensure_shadow_maps(required_count, max_map_size);
+            .ensure_shadow_maps(total_layers, max_map_size);
         self.ensure_light_uniform_capacity(
             &ctx.wgpu_ctx.device,
             &shadow_global_layout,
-            required_count.max(1),
+            total_layers.max(1),
         );
         self.recreate_light_bind_group(&ctx.wgpu_ctx.device, &shadow_global_layout);
 
         ctx.render_lists.shadow_lights.clear();
 
+        // ============================================================
+        // 4. Compute VP matrices and write to GPU
+        // ============================================================
         {
             let mut light_storage = ctx.scene.light_storage_buffer.write();
             for light in light_storage.iter_mut() {
                 light.shadow_layer_index = -1;
-                light.shadow_matrix = Mat4::IDENTITY;
+                light.shadow_matrices.0 = [Mat4::IDENTITY; 4];
+                light.cascade_count = 0;
+                light.cascade_splits = Vec4::ZERO;
             }
 
-            if required_count != 0 {
-                let mut shadow_matrices =
-                    vec![0u8; (self.light_uniform_stride as usize) * (required_count as usize)];
-                let camera_pos = ctx.camera.position.to_array().into();
+            if total_layers != 0 {
+                let mut shadow_uniform_data =
+                    vec![0u8; (self.light_uniform_stride as usize) * (total_layers as usize)];
 
-                for (layer_index, (light_buffer_index, light)) in
-                    active_shadow_lights.iter().enumerate()
-                {
-                    let light_vp = Self::build_light_vp(
-                        &light.kind,
-                        light.position,
-                        light.direction,
-                        camera_pos,
-                    );
-                    let layer_offset = layer_index * self.light_uniform_stride as usize;
-                    let bytes = bytemuck::bytes_of(&light_vp);
-                    shadow_matrices[layer_offset..layer_offset + bytes.len()].copy_from_slice(bytes);
+                for (i, (light_buffer_index, light)) in active_shadow_lights.iter().enumerate() {
+                    let (base_layer, cascade_count) = light_layer_assignments[i];
+                    let shadow_cfg = light.shadow.clone().unwrap_or_default();
+                    let map_size = shadow_cfg.map_size;
 
-                    if let Some(gpu_light) = light_storage.get_mut(*light_buffer_index) {
-                        gpu_light.shadow_layer_index = layer_index as i32;
-                        gpu_light.shadow_matrix = light_vp;
+                    match &light.kind {
+                        LightKind::Directional(_) => {
+                            // CSM: compute cascade splits and VP matrices
+                            let cam_near = ctx.camera.near.max(0.1);
+                            let cam_far = if ctx.camera.far.is_finite() {
+                                ctx.camera.far
+                            } else {
+                                shadow_cfg.max_shadow_distance
+                            };
+                            let shadow_far = shadow_cfg.max_shadow_distance.min(cam_far);
+
+                            let splits = Self::compute_cascade_splits(
+                                cascade_count,
+                                cam_near,
+                                shadow_far,
+                                shadow_cfg.cascade_split_lambda,
+                            );
+
+                            let mut cascade_matrices = [Mat4::IDENTITY; MAX_CASCADES as usize];
+                            let mut prev_split = cam_near;
+
+                            for c in 0..cascade_count as usize {
+                                let slice_near = prev_split;
+                                let slice_far = splits[c];
+                                prev_split = slice_far;
+
+                                let corners = Self::compute_frustum_corners_world(
+                                    ctx.camera,
+                                    slice_near,
+                                    slice_far,
+                                );
+
+                                let vp = Self::build_cascade_vp(
+                                    light.direction,
+                                    &corners,
+                                    map_size,
+                                );
+
+                                cascade_matrices[c] = vp;
+
+                                // Write to per-layer uniform buffer for the shadow depth pass
+                                let layer_idx = (base_layer + c as u32) as usize;
+                                let offset = layer_idx * self.light_uniform_stride as usize;
+                                let bytes = bytemuck::bytes_of(&vp);
+                                shadow_uniform_data[offset..offset + bytes.len()]
+                                    .copy_from_slice(bytes);
+
+                                // Each cascade layer gets a ShadowLightInstance
+                                ctx.render_lists.shadow_lights.push(
+                                    crate::renderer::graph::frame::ShadowLightInstance {
+                                        light_id: light.id,
+                                        layer_index: base_layer + c as u32,
+                                        light_buffer_index: *light_buffer_index,
+                                        light_view_projection: vp,
+                                    },
+                                );
+                            }
+
+                            // Write to light storage buffer
+                            if let Some(gpu_light) = light_storage.get_mut(*light_buffer_index) {
+                                gpu_light.shadow_layer_index = base_layer as i32;
+                                gpu_light.shadow_matrices.0 = cascade_matrices;
+                                gpu_light.cascade_count = cascade_count;
+                                gpu_light.cascade_splits = Vec4::new(
+                                    splits[0],
+                                    splits[1.min(cascade_count as usize - 1)],
+                                    splits[2.min(cascade_count as usize - 1)],
+                                    splits[3.min(cascade_count as usize - 1)],
+                                );
+                                gpu_light.shadow_bias = shadow_cfg.bias;
+                                gpu_light.shadow_normal_bias = shadow_cfg.normal_bias;
+                            }
+                        }
+                        LightKind::Spot(spot) => {
+                            let vp = Self::build_spot_vp(light.position, light.direction, spot);
+
+                            let layer_idx = base_layer as usize;
+                            let offset = layer_idx * self.light_uniform_stride as usize;
+                            let bytes = bytemuck::bytes_of(&vp);
+                            shadow_uniform_data[offset..offset + bytes.len()]
+                                .copy_from_slice(bytes);
+
+                            if let Some(gpu_light) = light_storage.get_mut(*light_buffer_index) {
+                                gpu_light.shadow_layer_index = base_layer as i32;
+                                gpu_light.shadow_matrices.0[0] = vp;
+                                gpu_light.cascade_count = 1;
+                                gpu_light.shadow_bias = shadow_cfg.bias;
+                                gpu_light.shadow_normal_bias = shadow_cfg.normal_bias;
+                            }
+
+                            ctx.render_lists.shadow_lights.push(
+                                crate::renderer::graph::frame::ShadowLightInstance {
+                                    light_id: light.id,
+                                    layer_index: base_layer,
+                                    light_buffer_index: *light_buffer_index,
+                                    light_view_projection: vp,
+                                },
+                            );
+                        }
+                        LightKind::Point(_) => {}
                     }
-
-                    ctx.render_lists.shadow_lights.push(
-                        crate::renderer::graph::frame::ShadowLightInstance {
-                            light_id: light.id,
-                            layer_index: layer_index as u32,
-                            light_buffer_index: *light_buffer_index,
-                            light_view_projection: light_vp,
-                        },
-                    );
                 }
 
                 ctx.wgpu_ctx
                     .queue
-                    .write_buffer(&self.light_uniform_buffer, 0, &shadow_matrices);
+                    .write_buffer(&self.light_uniform_buffer, 0, &shadow_uniform_data);
             }
         }
 
-        ctx.resource_manager.ensure_buffer(&ctx.scene.light_storage_buffer);
+        ctx.resource_manager
+            .ensure_buffer(&ctx.scene.light_storage_buffer);
     }
 
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
