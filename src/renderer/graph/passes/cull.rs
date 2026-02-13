@@ -243,6 +243,7 @@ impl SceneCullPass {
     fn prepare_shadow_commands(ctx: &mut RenderContext) {
         let depth_format = wgpu::TextureFormat::Depth32Float;
         let pipeline_settings_version = ctx.wgpu_ctx.pipeline_settings_version;
+        let camera_pos: glam::Vec3 = ctx.camera.position.to_array().into();
         let shadow_layout_entries = [wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::VERTEX,
@@ -269,6 +270,23 @@ impl SceneCullPass {
                 continue;
             }
 
+            let directional_max_distance = light
+                .shadow
+                .as_ref()
+                .map_or(100.0, |s| s.max_shadow_distance.max(1.0));
+
+            let spot_cull_params = match &light.kind {
+                LightKind::Spot(spot) => {
+                    let spot_dir = if light.direction.length_squared() > 1e-6 {
+                        light.direction.normalize()
+                    } else {
+                        -glam::Vec3::Z
+                    };
+                    Some((spot.range.max(1.0), spot.outer_cone.cos(), spot_dir))
+                }
+                _ => None,
+            };
+
             let queue = ctx.render_lists.shadow_queues.entry(light.id).or_default();
 
             // Use shadow_caster_items: these include ALL cast_shadows=true objects,
@@ -278,6 +296,60 @@ impl SceneCullPass {
                 let Some(geometry) = geo_guard.map.get(item.geometry) else {
                     continue;
                 };
+
+                let (caster_center_ws, caster_radius_ws) =
+                    if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
+                        let sx = item.world_matrix.x_axis.truncate().length();
+                        let sy = item.world_matrix.y_axis.truncate().length();
+                        let sz = item.world_matrix.z_axis.truncate().length();
+                        let uniform_scale = sx.max(sy).max(sz);
+                        (
+                            item.world_matrix.transform_point3(bs.center),
+                            bs.radius * uniform_scale,
+                        )
+                    } else if let Some(bb) = geometry.bounding_box.read().as_ref() {
+                        let sx = item.world_matrix.x_axis.truncate().length();
+                        let sy = item.world_matrix.y_axis.truncate().length();
+                        let sz = item.world_matrix.z_axis.truncate().length();
+                        let half = bb.size() * 0.5;
+                        let scaled_half = glam::Vec3::new(half.x * sx, half.y * sy, half.z * sz);
+                        (
+                            item.world_matrix.transform_point3(bb.center()),
+                            scaled_half.length(),
+                        )
+                    } else {
+                        (item.world_matrix.w_axis.truncate(), 0.0)
+                    };
+
+                match &light.kind {
+                    LightKind::Directional(_) => {
+                        let max_dist = directional_max_distance + caster_radius_ws;
+                        if camera_pos.distance_squared(caster_center_ws) > max_dist * max_dist {
+                            continue;
+                        }
+                    }
+                    LightKind::Spot(_) => {
+                        if let Some((spot_range, outer_cone_cos, spot_dir)) = spot_cull_params {
+                            let to_center = caster_center_ws - light.position;
+                            let dist_sq = to_center.length_squared();
+                            let max_dist = spot_range + caster_radius_ws;
+
+                            if dist_sq > max_dist * max_dist {
+                                continue;
+                            }
+
+                            if dist_sq > 1e-6 {
+                                let dist = dist_sq.sqrt();
+                                let cos_theta = spot_dir.dot(to_center / dist);
+                                let radius_slack = caster_radius_ws / dist;
+                                if cos_theta + radius_slack < outer_cone_cos {
+                                    continue;
+                                }
+                            }
+                        }
+                    }
+                    LightKind::Point(_) => {}
+                }
 
                 let Some(material) = mat_guard.map.get(item.material) else {
                     continue;
