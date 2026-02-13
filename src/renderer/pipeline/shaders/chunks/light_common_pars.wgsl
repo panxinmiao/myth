@@ -52,7 +52,7 @@ struct ReflectedLight {
 };
 
 $$ if USE_SHADOWS is defined
-fn sample_shadow(shadow_matrix: mat4x4<f32>, shadow_layer_index: i32, world_position: vec3<f32>) -> f32 {
+fn sample_shadow(shadow_matrix: mat4x4<f32>, shadow_layer_index: i32, world_position: vec3<f32>, bias: f32) -> f32 {
     if (shadow_layer_index < 0) {
         return 1.0;
     }
@@ -77,13 +77,25 @@ fn sample_shadow(shadow_matrix: mat4x4<f32>, shadow_layer_index: i32, world_posi
         return 1.0;
     }
 
-    return textureSampleCompare(
-        t_shadow_map_2d_array,
-        s_shadow_map_compare,
-        shadow_uv,
-        shadow_layer_index,
-        shadow_depth - 0.004
-    );
+    // 3x3 PCF (Percentage Closer Filtering)
+    let dim = textureDimensions(t_shadow_map_2d_array);
+    let texel_size = vec2<f32>(1.0 / f32(dim.x), 1.0 / f32(dim.y));
+    let biased_depth = shadow_depth - bias;
+    var shadow_sum = 0.0;
+
+    for (var x = -1; x <= 1; x++) {
+        for (var y = -1; y <= 1; y++) {
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+            shadow_sum += textureSampleCompare(
+                t_shadow_map_2d_array,
+                s_shadow_map_compare,
+                shadow_uv + offset,
+                shadow_layer_index,
+                biased_depth
+            );
+        }
+    }
+    return shadow_sum / 9.0;
 }
 $$ endif
 

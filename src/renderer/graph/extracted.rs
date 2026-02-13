@@ -71,6 +71,9 @@ pub struct ExtractedSkeleton {
 pub struct ExtractedScene {
     /// List of visible render items (already frustum culled)
     pub render_items: Vec<ExtractedRenderItem>,
+    /// Shadow casters: ALL `cast_shadows = true` objects, regardless of main camera visibility.
+    /// Used by the shadow pass for independent shadow culling.
+    pub shadow_caster_items: Vec<ExtractedRenderItem>,
     /// Scene's shader macro definitions
     pub scene_defines: ShaderDefines,
     pub scene_id: u32,
@@ -86,6 +89,10 @@ pub struct ExtractedScene {
 struct CollectedMesh {
     pub node_handle: NodeHandle,
     pub skeleton: Option<SkeletonKey>,
+    /// True if this mesh passed the main camera frustum cull.
+    pub is_camera_visible: bool,
+    /// True if this mesh should cast shadows.
+    pub cast_shadows: bool,
 }
 
 impl ExtractedScene {
@@ -94,6 +101,7 @@ impl ExtractedScene {
     pub fn new() -> Self {
         Self {
             render_items: Vec::new(),
+            shadow_caster_items: Vec::new(),
             scene_defines: ShaderDefines::new(),
             scene_id: 0,
             background: None,
@@ -110,6 +118,7 @@ impl ExtractedScene {
     pub fn with_capacity(item_capacity: usize) -> Self {
         Self {
             render_items: Vec::with_capacity(item_capacity),
+            shadow_caster_items: Vec::with_capacity(item_capacity),
             scene_defines: ShaderDefines::new(),
             scene_id: 0,
             background: None,
@@ -124,6 +133,7 @@ impl ExtractedScene {
     /// Clear data for reuse
     pub fn clear(&mut self) {
         self.render_items.clear();
+        self.shadow_caster_items.clear();
         // self.skeletons.clear();
         self.scene_defines.clear();
         self.scene_id = 0;
@@ -240,13 +250,16 @@ impl ExtractedScene {
                     }
                 };
 
-                if !is_visible {
+                // Collect if camera-visible OR if the mesh casts shadows
+                if !is_visible && !mesh.cast_shadows {
                     continue;
                 }
 
                 self.collected_meshes.push(CollectedMesh {
                     node_handle,
                     skeleton: skin_binding.map(|skin| skin.skeleton),
+                    is_camera_visible: is_visible,
+                    cast_shadows: mesh.cast_shadows,
                 });
 
                 if let Some(binding) = skin_binding {
@@ -313,7 +326,7 @@ impl ExtractedScene {
             // compose item variant flags (has_negative_scale, has_skeleton)
             let item_variant_flags = has_negative_scale_flag | has_skeleton_flag;
 
-            self.render_items.push(ExtractedRenderItem {
+            let extracted_item = ExtractedRenderItem {
                 node_handle,
                 world_matrix,
                 object_bind_group,
@@ -324,7 +337,17 @@ impl ExtractedScene {
                 cast_shadows: mesh.cast_shadows,
                 receive_shadows: mesh.receive_shadows,
                 distance_sq,
-            });
+            };
+
+            // Add to camera-visible render items
+            if collected_mesh.is_camera_visible {
+                self.render_items.push(extracted_item.clone());
+            }
+
+            // Add to shadow caster items (independent of camera visibility)
+            if collected_mesh.cast_shadows {
+                self.shadow_caster_items.push(extracted_item);
+            }
         }
     }
 

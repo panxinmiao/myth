@@ -7,14 +7,25 @@ pub struct ShadowConfig {
     pub bias: f32,
     pub normal_bias: f32,
     pub map_size: u32,
+    /// Number of cascades for directional light CSM (1-4, default 4).
+    /// Ignored for spot/point lights.
+    pub cascade_count: u32,
+    /// Blend factor between logarithmic and uniform cascade split (0.0-1.0, default 0.5).
+    pub cascade_split_lambda: f32,
+    /// Maximum shadow distance for directional lights (default 100.0).
+    /// Beyond this distance, no shadow is rendered.
+    pub max_shadow_distance: f32,
 }
 
 impl Default for ShadowConfig {
     fn default() -> Self {
         Self {
-            bias: 0.005,
+            bias: 0.001,
             normal_bias: 0.02,
             map_size: 1024,
+            cascade_count: 4,
+            cascade_split_lambda: 0.5,
+            max_shadow_distance: 100.0,
         }
     }
 }
