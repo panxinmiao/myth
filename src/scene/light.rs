@@ -52,7 +52,7 @@ pub struct Light {
     pub intensity: f32, // Suggestion: specify units, e.g. in PBR: Point uses Candela, Directional uses Lux
     pub kind: LightKind,
 
-    pub cast_shadow: bool,
+    pub cast_shadows: bool,
     pub shadow: Option<ShadowConfig>,
 }
 
@@ -74,7 +74,7 @@ impl Light {
             kind: LightKind::Directional(DirectionalLight {
                 // cascades: 4,
             }),
-            cast_shadow: false,
+            cast_shadows: false,
             shadow: Some(ShadowConfig::default()),
         }
     }
@@ -88,7 +88,7 @@ impl Light {
             color,
             intensity,
             kind: LightKind::Point(PointLight { range }),
-            cast_shadow: false,
+            cast_shadows: false,
             shadow: Some(ShadowConfig::default()),
         }
     }
@@ -112,7 +112,7 @@ impl Light {
                 inner_cone,
                 outer_cone,
             }),
-            cast_shadow: false,
+            cast_shadows: false,
             shadow: Some(ShadowConfig::default()),
         }
     }

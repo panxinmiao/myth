@@ -282,9 +282,17 @@ impl<'a> ResourceBuilder<'a> {
                             "texture_depth_2d"
                         }
                         (
+                            wgpu::TextureViewDimension::D2Array,
+                            wgpu::TextureSampleType::Depth,
+                        ) => "texture_depth_2d_array",
+                        (
                             wgpu::TextureViewDimension::Cube,
                             wgpu::TextureSampleType::Float { .. },
                         ) => "texture_cube<f32>",
+                        (
+                            wgpu::TextureViewDimension::D2Array,
+                            wgpu::TextureSampleType::Float { .. },
+                        ) => "texture_2d_array<f32>",
                         _ => "texture_2d<f32>",
                     };
                     format!(

@@ -65,9 +65,30 @@ pub struct FastPipelineKey {
     pub pipeline_settings_version: u64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
+pub struct FastShadowPipelineKey {
+    pub material_handle: MaterialHandle,
+    pub material_version: u64,
+    pub geometry_handle: GeometryHandle,
+    pub geometry_version: u64,
+    pub instance_variants: u32,
+    pub pipeline_settings_version: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ShadowPipelineKey {
+    pub shader_hash: u64,
+    pub topology: wgpu::PrimitiveTopology,
+    pub cull_mode: Option<wgpu::Face>,
+    pub depth_format: wgpu::TextureFormat,
+    pub front_face: wgpu::FrontFace,
+}
+
 pub struct PipelineCache {
     fast_cache: FxHashMap<FastPipelineKey, (wgpu::RenderPipeline, u16)>,
     canonical_cache: FxHashMap<PipelineKey, (wgpu::RenderPipeline, u16)>,
+    fast_shadow_cache: FxHashMap<FastShadowPipelineKey, wgpu::RenderPipeline>,
+    canonical_shadow_cache: FxHashMap<ShadowPipelineKey, wgpu::RenderPipeline>,
     module_cache: FxHashMap<u128, wgpu::ShaderModule>,
     next_id: u16,
 }
@@ -84,6 +105,8 @@ impl PipelineCache {
         Self {
             fast_cache: FxHashMap::default(),
             canonical_cache: FxHashMap::default(),
+            fast_shadow_cache: FxHashMap::default(),
+            canonical_shadow_cache: FxHashMap::default(),
             module_cache: FxHashMap::default(),
             next_id: 0,
         }
@@ -96,6 +119,8 @@ impl PipelineCache {
     pub fn clear(&mut self) {
         self.fast_cache.clear();
         self.canonical_cache.clear();
+        self.fast_shadow_cache.clear();
+        self.canonical_shadow_cache.clear();
         // Note: module_cache is NOT cleared since shader code doesn't depend on MSAA/HDR settings
         // This saves expensive shader recompilation
     }
@@ -114,6 +139,22 @@ impl PipelineCache {
         pipeline: (wgpu::RenderPipeline, u16),
     ) {
         self.fast_cache.insert(fast_key, pipeline);
+    }
+
+    #[must_use]
+    pub fn get_shadow_pipeline_fast(
+        &self,
+        fast_key: FastShadowPipelineKey,
+    ) -> Option<&wgpu::RenderPipeline> {
+        self.fast_shadow_cache.get(&fast_key)
+    }
+
+    pub fn insert_shadow_pipeline_fast(
+        &mut self,
+        fast_key: FastShadowPipelineKey,
+        pipeline: wgpu::RenderPipeline,
+    ) {
+        self.fast_shadow_cache.insert(fast_key, pipeline);
     }
 
     #[allow(clippy::too_many_lines)]
@@ -245,5 +286,99 @@ impl PipelineCache {
             .insert(canonical_key, (pipeline.clone(), id));
 
         (pipeline, id)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub fn get_shadow_pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        canonical_key: ShadowPipelineKey,
+        options: &ShaderCompilationOptions,
+        vertex_layout: &GeneratedVertexLayout,
+        shadow_global_layout: &wgpu::BindGroupLayout,
+        shadow_binding_wgsl: &str,
+        gpu_material: &GpuMaterial,
+        object_bind_group: &BindGroupContext,
+    ) -> wgpu::RenderPipeline {
+        if let Some(cached) = self.canonical_shadow_cache.get(&canonical_key) {
+            return cached.clone();
+        }
+
+        let binding_code = format!(
+            "{}\n{}\n{}",
+            shadow_binding_wgsl, &gpu_material.binding_wgsl, &object_bind_group.binding_wgsl
+        );
+
+        let shader_source = ShaderGenerator::generate_shader(
+            &vertex_layout.vertex_input_code,
+            &binding_code,
+            "templates/shadow_depth",
+            options,
+        );
+
+        let code_hash = xxh3_128(shader_source.as_bytes());
+
+        let shader_module =
+            self.module_cache
+                .entry(code_hash)
+                .or_insert(device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                    label: Some("Shadow Shader Module"),
+                    source: wgpu::ShaderSource::Wgsl(shader_source.into()),
+                }));
+
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Shadow Pipeline Layout"),
+            bind_group_layouts: &[
+                shadow_global_layout,
+                &gpu_material.layout,
+                &object_bind_group.layout,
+            ],
+            immediate_size: 0,
+        });
+
+        let vertex_buffers_layout: Vec<_> =
+            vertex_layout.buffers.iter().map(|l| l.as_wgpu()).collect();
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("Shadow Pipeline"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState {
+                module: shader_module,
+                entry_point: Some("vs_main"),
+                buffers: &vertex_buffers_layout,
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader_module,
+                entry_point: Some("fs_main"),
+                targets: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: canonical_key.topology,
+                front_face: canonical_key.front_face,
+                cull_mode: canonical_key.cull_mode,
+                ..Default::default()
+            },
+            depth_stencil: Some(wgpu::DepthStencilState {
+                format: canonical_key.depth_format,
+                depth_write_enabled: true,
+                depth_compare: wgpu::CompareFunction::LessEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState {
+                    constant: 2,
+                    slope_scale: 2.0,
+                    clamp: 0.0,
+                },
+            }),
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+
+        self.canonical_shadow_cache
+            .insert(canonical_key, pipeline.clone());
+
+        pipeline
     }
 }

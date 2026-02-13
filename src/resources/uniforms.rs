@@ -592,7 +592,9 @@ define_gpu_data_struct!(
         pub outer_cone_cos: f32,
 
         pub light_type: u32,
-        pub(crate) __padding1: f32,
+        pub shadow_layer_index: i32,
+
+        pub shadow_matrix: Mat4,
     }
 );
 

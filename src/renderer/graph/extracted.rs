@@ -11,13 +11,14 @@
 
 use std::collections::HashSet;
 
-use glam::Mat4;
+use glam::{Mat4, Vec3};
 
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::renderer::core::{BindGroupContext, ResourceManager};
 use crate::resources::shader_defines::ShaderDefines;
 use crate::scene::camera::RenderCamera;
 use crate::scene::environment::Environment;
+use crate::scene::light::{LightKind, ShadowConfig};
 use crate::scene::{NodeHandle, Scene, SkeletonKey};
 
 /// Minimal render item, containing only data needed by GPU
@@ -40,8 +41,21 @@ pub struct ExtractedRenderItem {
 
     pub item_shader_defines: ShaderDefines,
 
+    pub cast_shadows: bool,
+    pub receive_shadows: bool,
+
     /// Squared distance to camera (for sorting)
     pub distance_sq: f32,
+}
+
+#[derive(Clone)]
+pub struct ExtractedLight {
+    pub id: u64,
+    pub cast_shadows: bool,
+    pub kind: LightKind,
+    pub position: Vec3,
+    pub direction: Vec3,
+    pub shadow: Option<ShadowConfig>,
 }
 
 /// Extracted skeleton data
@@ -63,6 +77,7 @@ pub struct ExtractedScene {
     pub background: Option<glam::Vec4>,
     pub envvironment: Environment,
     pub has_transmission: bool,
+    pub lights: Vec<ExtractedLight>,
 
     collected_meshes: Vec<CollectedMesh>,
     collected_skeleton_keys: HashSet<SkeletonKey>,
@@ -84,6 +99,7 @@ impl ExtractedScene {
             background: None,
             envvironment: Environment::default(),
             has_transmission: false,
+            lights: Vec::new(),
             collected_meshes: Vec::new(),
             collected_skeleton_keys: HashSet::default(),
         }
@@ -99,6 +115,7 @@ impl ExtractedScene {
             background: None,
             envvironment: Environment::default(),
             has_transmission: false,
+            lights: Vec::with_capacity(16),
             collected_meshes: Vec::with_capacity(item_capacity),
             collected_skeleton_keys: HashSet::default(),
         }
@@ -110,6 +127,7 @@ impl ExtractedScene {
         // self.skeletons.clear();
         self.scene_defines.clear();
         self.scene_id = 0;
+        self.lights.clear();
 
         self.collected_meshes.clear();
         self.collected_skeleton_keys.clear();
@@ -124,8 +142,31 @@ impl ExtractedScene {
         resource_manager: &mut ResourceManager,
     ) {
         self.clear();
+        self.extract_lights(scene);
         self.extract_render_items(scene, camera, assets, resource_manager);
         self.extract_environment(scene);
+
+        if self.lights.iter().any(|light| light.cast_shadows) {
+            self.scene_defines.set("USE_SHADOWS", "1");
+        }
+    }
+
+    fn extract_lights(&mut self, scene: &Scene) {
+        self.lights.reserve(scene.lights.len());
+
+        for (light, world_matrix) in scene.iter_active_lights() {
+            let position = world_matrix.translation.to_vec3();
+            let direction = world_matrix.transform_vector3(-glam::Vec3::Z).normalize_or_zero();
+
+            self.lights.push(ExtractedLight {
+                id: light.id,
+                cast_shadows: light.cast_shadows,
+                kind: light.kind.clone(),
+                position,
+                direction,
+                shadow: light.shadow.clone(),
+            });
+        }
     }
 
     /// Extract visible render items
@@ -259,6 +300,9 @@ impl ExtractedScene {
             if skeleton.is_some() {
                 item_shader_defines.set("HAS_SKINNING", "1");
             }
+            if mesh.receive_shadows {
+                item_shader_defines.set("RECEIVE_SHADOWS", "1");
+            }
 
             let has_negative_scale = world_matrix.determinant() < 0.0;
             let has_negative_scale_flag = u32::from(has_negative_scale);
@@ -277,6 +321,8 @@ impl ExtractedScene {
                 material: mesh.material,
                 item_variant_flags,
                 item_shader_defines,
+                cast_shadows: mesh.cast_shadows,
+                receive_shadows: mesh.receive_shadows,
                 distance_sq,
             });
         }

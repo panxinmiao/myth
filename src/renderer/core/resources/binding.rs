@@ -391,6 +391,9 @@ impl ResourceManager {
                                     wgpu::TextureViewDimension::D2 => {
                                         &self.dummy_image.default_view
                                     }
+                                    wgpu::TextureViewDimension::D2Array => {
+                                        &self.dummy_shadow_map.default_view
+                                    }
                                     wgpu::TextureViewDimension::Cube => {
                                         &self.dummy_env_image.default_view
                                     }
@@ -433,10 +436,28 @@ impl ResourceManager {
                                 }
                             }
                             // 情况 3: 默认采样器 (用于 Render Target)
-                            SamplerSource::Default => &self.dummy_sampler.sampler,
+                            SamplerSource::Default => {
+                                if matches!(
+                                    layout_entries[i].ty,
+                                    wgpu::BindingType::Sampler(
+                                        wgpu::SamplerBindingType::Comparison
+                                    )
+                                ) {
+                                    &self.shadow_compare_sampler.sampler
+                                } else {
+                                    &self.dummy_sampler.sampler
+                                }
+                            }
                         }
                     } else {
-                        &self.dummy_sampler.sampler
+                        if matches!(
+                            layout_entries[i].ty,
+                            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison)
+                        ) {
+                            &self.shadow_compare_sampler.sampler
+                        } else {
+                            &self.dummy_sampler.sampler
+                        }
                     };
                     wgpu::BindingResource::Sampler(sampler)
                 }
@@ -493,9 +514,10 @@ impl ResourceManager {
             };
 
         let brdf_lut_id = self.brdf_lut_view_id.unwrap_or(self.dummy_image.id);
+        let shadow_2d_id = self.shadow_2d_array_id.unwrap_or(self.dummy_shadow_map.id);
 
         // === Collect: gather all resource IDs ===
-        let mut current_ids = super::ResourceIdSet::with_capacity(8);
+        let mut current_ids = super::ResourceIdSet::with_capacity(9);
         current_ids.push(camera_result.resource_id);
         current_ids.push(env_result.resource_id);
         current_ids.push(light_result.resource_id);
@@ -503,6 +525,7 @@ impl ResourceManager {
         current_ids.push(processed_env_map_id);
         current_ids.push(pmrem_map_id);
         current_ids.push(brdf_lut_id);
+        current_ids.push(shadow_2d_id);
 
         let state_id = Self::compute_global_state_key(render_state.id, scene.id);
 
@@ -665,6 +688,24 @@ impl ResourceManager {
             "brdf_lut",
             Some(SamplerSource::Default),
             wgpu::SamplerBindingType::Filtering,
+            wgpu::ShaderStages::FRAGMENT,
+        );
+
+        let shadow_2d_source = self
+            .shadow_2d_array_id
+            .map(|id| TextureSource::Attachment(id, wgpu::TextureViewDimension::D2Array));
+
+        builder.add_texture(
+            "shadow_map_2d_array",
+            shadow_2d_source,
+            wgpu::TextureSampleType::Depth,
+            wgpu::TextureViewDimension::D2Array,
+            wgpu::ShaderStages::FRAGMENT,
+        );
+        builder.add_sampler(
+            "shadow_map_compare",
+            Some(SamplerSource::Default),
+            wgpu::SamplerBindingType::Comparison,
             wgpu::ShaderStages::FRAGMENT,
         );
     }
