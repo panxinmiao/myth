@@ -216,6 +216,7 @@ impl ShadowPass {
         light_direction: Vec3,
         frustum_corners: &[Vec3; 8],
         shadow_map_size: u32,
+        caster_extension: f32,
     ) -> Mat4 {
         let safe_dir = if light_direction.length_squared() > 1e-6 {
             light_direction.normalize()
@@ -242,10 +243,13 @@ impl ShadowPass {
             ls_max = ls_max.max(ls);
         }
 
-        // Extend the Z range to capture shadow casters behind the camera
-        let z_range = ls_max.z - ls_min.z;
-        let z_margin = z_range.max(50.0);
-        ls_min.z -= z_margin;
+        // Expand Z to include potential casters between camera and light.
+        // In RH light view, ls_max.z is near (towards light), ls_min.z is far.
+        let base_z_range = (ls_max.z - ls_min.z).max(1.0);
+        let near_extension = caster_extension.max(base_z_range);
+        let far_extension = base_z_range.max(50.0);
+        ls_max.z += near_extension;
+        ls_min.z -= far_extension;
 
         // Texel alignment: snap the ortho bounds to texel grid to prevent shimmer
         let world_units_per_texel_x = (ls_max.x - ls_min.x) / shadow_map_size as f32;
@@ -347,6 +351,48 @@ impl RenderNode for ShadowPass {
 
         ctx.render_lists.shadow_lights.clear();
 
+        // Estimate caster coverage from current shadow casters (world-space bounds).
+        // Used to adaptively extend directional cascade near plane toward the light.
+        let scene_caster_extent = {
+            let geo_guard = ctx.assets.geometries.read_lock();
+            let camera_pos: Vec3 = ctx.camera.position.to_array().into();
+            let mut max_distance = 0.0f32;
+
+            for item in &ctx.extracted_scene.shadow_caster_items {
+                let Some(geometry) = geo_guard.map.get(item.geometry) else {
+                    continue;
+                };
+
+                let (center_ws, radius_ws) = if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
+                    let sx = item.world_matrix.x_axis.truncate().length();
+                    let sy = item.world_matrix.y_axis.truncate().length();
+                    let sz = item.world_matrix.z_axis.truncate().length();
+                    let uniform_scale = sx.max(sy).max(sz);
+                    (
+                        item.world_matrix.transform_point3(bs.center),
+                        bs.radius * uniform_scale,
+                    )
+                } else if let Some(bb) = geometry.bounding_box.read().as_ref() {
+                    let sx = item.world_matrix.x_axis.truncate().length();
+                    let sy = item.world_matrix.y_axis.truncate().length();
+                    let sz = item.world_matrix.z_axis.truncate().length();
+                    let half = bb.size() * 0.5;
+                    let scaled_half = Vec3::new(half.x * sx, half.y * sy, half.z * sz);
+                    (
+                        item.world_matrix.transform_point3(bb.center()),
+                        scaled_half.length(),
+                    )
+                } else {
+                    (item.world_matrix.w_axis.truncate(), 0.0)
+                };
+
+                let distance = camera_pos.distance(center_ws) + radius_ws;
+                max_distance = max_distance.max(distance);
+            }
+
+            max_distance.max(50.0)
+        };
+
         // ============================================================
         // 4. Compute VP matrices and write to GPU
         // ============================================================
@@ -378,6 +424,7 @@ impl RenderNode for ShadowPass {
                                 shadow_cfg.max_shadow_distance
                             };
                             let shadow_far = shadow_cfg.max_shadow_distance.min(cam_far);
+                            let caster_extension = scene_caster_extent.max(shadow_cfg.max_shadow_distance);
 
                             let splits = Self::compute_cascade_splits(
                                 cascade_count,
@@ -404,6 +451,7 @@ impl RenderNode for ShadowPass {
                                     light.direction,
                                     &corners,
                                     map_size,
+                                    caster_extension,
                                 );
 
                                 cascade_matrices[c] = vp;
