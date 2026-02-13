@@ -59,7 +59,7 @@ use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
     BRDFLutComputePass, IBLComputePass, OpaquePass, SceneCullPass, SimpleForwardPass, ToneMapPass,
-    TransmissionCopyPass, TransparentPass,
+    TransmissionCopyPass, TransparentPass, ShadowPass,
 };
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
@@ -112,6 +112,7 @@ struct RendererState {
 
     // Data Preparation
     pub(crate) cull_pass: SceneCullPass,
+    pub(crate) shadow_pass: ShadowPass,
 
     // Simple Path (LDR)
     pub(crate) simple_forward_pass: SimpleForwardPass,
@@ -183,6 +184,7 @@ impl Renderer {
         // Build passes
         // Data Preparation
         let cull_pass = SceneCullPass::new();
+        let shadow_pass = ShadowPass::new(&wgpu_ctx.device);
 
         // Simple Path (LDR)
         let simple_forward_pass = SimpleForwardPass::new(self.settings.clear_color);
@@ -212,6 +214,7 @@ impl Renderer {
             global_bind_group_cache,
 
             cull_pass,
+            shadow_pass,
             simple_forward_pass,
             opaque_pass,
             transparent_pass,
@@ -301,7 +304,12 @@ impl Renderer {
         frame_builder.add_node(RenderStage::PreProcess, &mut state.cull_pass);
 
         // ========================================
-        // 2. 路径选择：HDR (PBR Path) vs LDR (Simple Path)
+        // 2. 阴影
+        // ========================================
+        frame_builder.add_node(RenderStage::ShadowMap, &mut state.shadow_pass);
+
+        // ========================================
+        // 3. 路径选择：HDR (PBR Path) vs LDR (Simple Path)
         // ========================================
         //
         // PBR Path: OpaquePass → [TransmissionCopyPass] → TransparentPass → ToneMapPass

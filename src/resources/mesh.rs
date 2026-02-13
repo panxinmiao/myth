@@ -19,8 +19,8 @@ pub struct Mesh {
     // === Instance-specific rendering settings ===
     pub visible: bool,
 
-    pub cast_shadow: bool,
-    pub receive_shadow: bool,
+    pub cast_shadows: bool,
+    pub receive_shadows: bool,
 
     // Render Order
     pub render_order: i32,
@@ -44,8 +44,8 @@ impl Mesh {
             geometry,
             material,
             visible: true,
-            cast_shadow: false,
-            receive_shadow: false,
+            cast_shadows: false,
+            receive_shadows: false,
             render_order: 0,
             morph_target_influences: Vec::new(),
             morph_uniforms: CpuBuffer::new_uniform(None),

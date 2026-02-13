@@ -23,6 +23,7 @@
 //! ```
 
 use glam::Mat4;
+use std::collections::HashMap;
 
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::renderer::core::{BindGroupContext, ResourceManager};
@@ -63,6 +64,21 @@ pub struct RenderCommand {
     pub dynamic_offset: u32,
 }
 
+pub struct ShadowRenderCommand {
+    pub object_bind_group: BindGroupContext,
+    pub geometry_handle: GeometryHandle,
+    pub material_handle: MaterialHandle,
+    pub pipeline: wgpu::RenderPipeline,
+    pub dynamic_offset: u32,
+}
+
+pub struct ShadowLightInstance {
+    pub light_id: u64,
+    pub layer_index: u32,
+    pub light_buffer_index: usize,
+    pub light_view_projection: Mat4,
+}
+
 /// 渲染列表
 ///
 /// 存储经过剔除和排序的渲染命令，由 `SceneCullPass` 填充，
@@ -77,6 +93,8 @@ pub struct RenderLists {
     pub opaque: Vec<RenderCommand>,
     /// 透明物体命令列表（Back-to-Front 排序）
     pub transparent: Vec<RenderCommand>,
+    pub shadow_queues: HashMap<u64, Vec<ShadowRenderCommand>>,
+    pub shadow_lights: Vec<ShadowLightInstance>,
 
     /// 全局 `BindGroup` ID（用于状态追踪）
     pub gpu_global_bind_group_id: u64,
@@ -94,6 +112,8 @@ impl RenderLists {
         Self {
             opaque: Vec::with_capacity(512),
             transparent: Vec::with_capacity(128),
+            shadow_queues: HashMap::with_capacity(16),
+            shadow_lights: Vec::with_capacity(16),
             gpu_global_bind_group_id: 0,
             gpu_global_bind_group: None,
             use_transmission: false,
@@ -105,6 +125,8 @@ impl RenderLists {
     pub fn clear(&mut self) {
         self.opaque.clear();
         self.transparent.clear();
+        self.shadow_queues.clear();
+        self.shadow_lights.clear();
         self.gpu_global_bind_group = None;
         self.use_transmission = false;
     }

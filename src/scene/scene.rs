@@ -764,19 +764,24 @@ impl Scene {
                     intensity: light.intensity,
                     position: pos,
                     direction: dir,
+                    shadow_layer_index: -1,
                     ..Default::default()
                 };
 
                 match &light.kind {
                     LightKind::Point(point) => {
+                        gpu_light.light_type = 1;
                         gpu_light.range = point.range;
                     }
                     LightKind::Spot(spot) => {
+                        gpu_light.light_type = 2;
                         gpu_light.range = spot.range;
                         gpu_light.inner_cone_cos = spot.inner_cone.cos();
                         gpu_light.outer_cone_cos = spot.outer_cone.cos();
                     }
-                    LightKind::Directional(_) => {}
+                    LightKind::Directional(_) => {
+                        gpu_light.light_type = 0;
+                    }
                 }
 
                 cache.push(gpu_light);

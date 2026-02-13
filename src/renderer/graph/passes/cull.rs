@@ -17,12 +17,15 @@
 use log::{error, warn};
 use slotmap::Key;
 
-use crate::renderer::graph::frame::{RenderCommand, RenderKey};
+use crate::renderer::graph::frame::{RenderCommand, RenderKey, ShadowRenderCommand};
 use crate::renderer::graph::{RenderContext, RenderNode};
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
-use crate::renderer::pipeline::{FastPipelineKey, PipelineKey};
+use crate::renderer::pipeline::{
+    FastPipelineKey, FastShadowPipelineKey, PipelineKey, ShadowPipelineKey,
+};
 use crate::resources::material::{AlphaMode, Side};
 use crate::resources::uniforms::{DynamicModelUniforms, Mat3Uniform};
+use crate::scene::light::LightKind;
 
 /// 场景剔除 Pass
 ///
@@ -33,6 +36,14 @@ use crate::resources::uniforms::{DynamicModelUniforms, Mat3Uniform};
 /// - 批量上传动态 Uniform 减少 GPU 调用
 /// - 排序使用 `sort_unstable_by` 避免额外分配
 pub struct SceneCullPass;
+
+const SHADOW_BINDING_WGSL: &str = "
+struct Struct_shadow_light {
+    view_projection: mat4x4<f32>,
+};
+
+@group(0) @binding(0) var<uniform> u_shadow_light: Struct_shadow_light;
+";
 
 impl SceneCullPass {
     #[must_use]
@@ -228,6 +239,142 @@ impl SceneCullPass {
         ctx.render_lists.sort();
     }
 
+    #[allow(clippy::too_many_lines)]
+    fn prepare_shadow_commands(ctx: &mut RenderContext) {
+        let depth_format = wgpu::TextureFormat::Depth32Float;
+        let pipeline_settings_version = ctx.wgpu_ctx.pipeline_settings_version;
+        let shadow_layout_entries = [wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::VERTEX,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: true,
+                min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<glam::Mat4>() as u64),
+            },
+            count: None,
+        }];
+        let (shadow_global_layout, _) = ctx
+            .resource_manager
+            .get_or_create_layout(&shadow_layout_entries);
+
+        let geo_guard = ctx.assets.geometries.read_lock();
+        let mat_guard = ctx.assets.materials.read_lock();
+
+        for light in &ctx.extracted_scene.lights {
+            if !light.cast_shadows {
+                continue;
+            }
+
+            if !matches!(light.kind, LightKind::Directional(_) | LightKind::Spot(_)) {
+                continue;
+            }
+
+            let queue = ctx.render_lists.shadow_queues.entry(light.id).or_default();
+
+            for item in &ctx.extracted_scene.render_items {
+                if !item.cast_shadows {
+                    continue;
+                }
+
+                let Some(geometry) = geo_guard.map.get(item.geometry) else {
+                    continue;
+                };
+
+                let Some(material) = mat_guard.map.get(item.material) else {
+                    continue;
+                };
+
+                if material.alpha_mode() == AlphaMode::Blend {
+                    continue;
+                }
+
+                let Some(gpu_geometry) = ctx.resource_manager.get_geometry(item.geometry) else {
+                    continue;
+                };
+                let Some(gpu_material) = ctx.resource_manager.get_material(item.material) else {
+                    continue;
+                };
+
+                let fast_key = FastShadowPipelineKey {
+                    material_handle: item.material,
+                    material_version: gpu_material.version,
+                    geometry_handle: item.geometry,
+                    geometry_version: geometry.layout_version(),
+                    instance_variants: item.item_variant_flags,
+                    pipeline_settings_version,
+                };
+
+                let pipeline = if let Some(p) = ctx.pipeline_cache.get_shadow_pipeline_fast(fast_key)
+                {
+                    p.clone()
+                } else {
+                    let geo_defines = geometry.shader_defines();
+                    let mat_defines = material.shader_defines();
+
+                    let mut options = ShaderCompilationOptions::from_merged(
+                        &mat_defines,
+                        &geo_defines,
+                        &crate::resources::shader_defines::ShaderDefines::new(),
+                        &item.item_shader_defines,
+                    );
+
+                    options.add_define("SHADOW_PASS", "1");
+
+                    let shader_hash = options.compute_hash();
+                    let canonical_key = ShadowPipelineKey {
+                        shader_hash,
+                        topology: geometry.topology,
+                        cull_mode: match material.side() {
+                            Side::Front => Some(wgpu::Face::Back),
+                            Side::Back => Some(wgpu::Face::Front),
+                            Side::Double => None,
+                        },
+                        depth_format,
+                        front_face: if item.item_variant_flags & 0x1 != 0 {
+                            wgpu::FrontFace::Cw
+                        } else {
+                            wgpu::FrontFace::Ccw
+                        },
+                    };
+
+                    let pipeline = ctx.pipeline_cache.get_shadow_pipeline(
+                        &ctx.wgpu_ctx.device,
+                        canonical_key,
+                        &options,
+                        &gpu_geometry.layout_info,
+                        &shadow_global_layout,
+                        SHADOW_BINDING_WGSL,
+                        gpu_material,
+                        &item.object_bind_group,
+                    );
+
+                    ctx.pipeline_cache
+                        .insert_shadow_pipeline_fast(fast_key, pipeline.clone());
+                    pipeline
+                };
+
+                let world_matrix_inverse = item.world_matrix.inverse();
+                let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
+                let dynamic_offset = ctx
+                    .resource_manager
+                    .allocate_model_uniform(DynamicModelUniforms {
+                        world_matrix: item.world_matrix,
+                        world_matrix_inverse,
+                        normal_matrix,
+                        ..Default::default()
+                    });
+
+                queue.push(ShadowRenderCommand {
+                    object_bind_group: item.object_bind_group.clone(),
+                    geometry_handle: item.geometry,
+                    material_handle: item.material,
+                    pipeline,
+                    dynamic_offset,
+                });
+            }
+        }
+    }
+
     /// 上传动态 Uniform 数据
     ///
     /// 为每个渲染命令计算并上传模型矩阵、逆矩阵、法线矩阵等。
@@ -291,7 +438,10 @@ impl RenderNode for SceneCullPass {
         // 1. 准备并排序渲染命令
         Self::prepare_and_sort_commands(ctx);
 
-        // 2. 上传动态 Uniform
+        // 2. 生成阴影渲染命令
+        Self::prepare_shadow_commands(ctx);
+
+        // 3. 上传动态 Uniform
         Self::upload_dynamic_uniforms(ctx);
     }
 

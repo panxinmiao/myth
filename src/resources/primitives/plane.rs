@@ -34,7 +34,7 @@ pub fn create_plane(options: &PlaneOptions) -> Geometry {
     let segment_height = options.height / grid_y as f32;
 
     let mut positions = Vec::new();
-    let mut normals = Vec::new();
+    let mut normals: Vec<[f32; 3]> = Vec::new();
     let mut uvs = Vec::new();
     let mut indices = Vec::new();
 

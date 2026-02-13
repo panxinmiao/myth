@@ -153,11 +153,14 @@ pub struct ResourceManager {
 
     /// 内部纹理的名称到 ID 的映射，保证 ID 跨帧稳定
     pub(crate) internal_name_lookup: FxHashMap<String, u64>,
-    // /// 阴影资源
-    // /// 2D 阵列纹理视图，用于 Directional 和 Spot 光源
-    // pub(crate) shadow_2d_array: Option<wgpu::TextureView>,
-    // /// 立方体阵列纹理视图，用于 Point 光源
-    // pub(crate) shadow_cube_array: Option<wgpu::TextureView>,
+
+    pub(crate) shadow_2d_texture: Option<wgpu::Texture>,
+    pub shadow_2d_array: Option<wgpu::TextureView>,
+    pub(crate) shadow_2d_array_id: Option<u64>,
+    pub(crate) shadow_2d_capacity: u32,
+    pub(crate) shadow_map_size: u32,
+    pub(crate) dummy_shadow_map: GpuImage,
+    pub(crate) shadow_compare_sampler: GpuSampler,
 }
 
 impl ResourceManager {
@@ -286,6 +289,61 @@ impl ResourceManager {
             }),
         };
 
+        let dummy_shadow_map = {
+            let size = wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            };
+
+            let texture = device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Dummy Shadow 2D Array"),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Depth32Float,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            });
+
+            let view = texture.create_view(&wgpu::TextureViewDescriptor {
+                dimension: Some(wgpu::TextureViewDimension::D2Array),
+                ..Default::default()
+            });
+
+            GpuImage {
+                id: generate_gpu_resource_id(),
+                texture,
+                default_view: view,
+                default_view_dimension: wgpu::TextureViewDimension::D2Array,
+                size,
+                format: wgpu::TextureFormat::Depth32Float,
+                mip_level_count: 1,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                version: 0,
+                generation_id: 0,
+                mipmaps_generated: true,
+                last_used_frame: u64::MAX,
+            }
+        };
+
+        let shadow_compare_sampler = GpuSampler {
+            id: generate_gpu_resource_id(),
+            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("Shadow Comparison Sampler"),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+                compare: Some(wgpu::CompareFunction::LessEqual),
+                ..Default::default()
+            }),
+        };
+
         let mipmap_generator = MipmapGenerator::new(&device);
         let model_allocator = ModelBufferAllocator::new();
 
@@ -308,6 +366,10 @@ impl ResourceManager {
         // 初始化 sampler_id_lookup 并添加 dummy_sampler
         let mut sampler_id_lookup = FxHashMap::default();
         sampler_id_lookup.insert(dummy_sampler.id, dummy_sampler.sampler.clone());
+        sampler_id_lookup.insert(
+            shadow_compare_sampler.id,
+            shadow_compare_sampler.sampler.clone(),
+        );
 
         Self {
             device,
@@ -327,6 +389,8 @@ impl ResourceManager {
             dummy_image,
             dummy_env_image,
             dummy_sampler,
+            dummy_shadow_map,
+            shadow_compare_sampler,
             mipmap_generator,
             model_allocator,
             object_bind_group_cache: FxHashMap::default(),
@@ -338,8 +402,11 @@ impl ResourceManager {
             pending_ibl_source: None,
             internal_resources: FxHashMap::default(),
             internal_name_lookup: FxHashMap::default(),
-            // shadow_2d_array: None,
-            // shadow_cube_array: None,
+            shadow_2d_texture: None,
+            shadow_2d_array: None,
+            shadow_2d_array_id: None,
+            shadow_2d_capacity: 0,
+            shadow_map_size: 1,
         }
     }
 
@@ -350,6 +417,72 @@ impl ResourceManager {
 
     pub fn frame_index(&self) -> u64 {
         self.frame_index
+    }
+
+    pub fn ensure_shadow_maps(&mut self, required_2d_count: u32, required_map_size: u32) {
+        if required_2d_count == 0 {
+            return;
+        }
+
+        let mut target_capacity = self.shadow_2d_capacity.max(1);
+        while target_capacity < required_2d_count {
+            target_capacity = target_capacity.saturating_mul(2);
+        }
+
+        let target_size = required_map_size.max(1);
+        let need_recreate = self.shadow_2d_array.is_none()
+            || target_capacity > self.shadow_2d_capacity
+            || target_size > self.shadow_map_size;
+
+        if !need_recreate {
+            return;
+        }
+
+        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Shadow 2D Array"),
+            size: wgpu::Extent3d {
+                width: target_size,
+                height: target_size,
+                depth_or_array_layers: target_capacity,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Depth32Float,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+
+        let array_view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Shadow 2D Array View"),
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        });
+
+        if let Some(old_id) = self.shadow_2d_array_id {
+            self.internal_resources.remove(&old_id);
+        }
+
+        self.shadow_2d_texture = Some(texture);
+        self.shadow_2d_array = Some(array_view);
+        let view_id = generate_gpu_resource_id();
+        if let Some(view) = &self.shadow_2d_array {
+            self.internal_resources.insert(view_id, view.clone());
+        }
+        self.shadow_2d_array_id = Some(view_id);
+        self.shadow_2d_capacity = target_capacity;
+        self.shadow_map_size = target_size;
+    }
+
+    pub fn create_shadow_2d_layer_view(&self, layer_index: u32) -> Option<wgpu::TextureView> {
+        let texture = self.shadow_2d_texture.as_ref()?;
+        Some(texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Shadow Layer View"),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_array_layer: layer_index,
+            array_layer_count: Some(1),
+            ..Default::default()
+        }))
     }
 
     // 确保 Model Buffer 容量并同步 GPU 资源
