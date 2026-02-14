@@ -306,16 +306,15 @@ impl ExtractedScene {
                 && let Some(skel) = scene.skeleton_pool.get(binding.skeleton)
             {
                 if let Some(local_bounds) = skel.local_bounds() {
-                    let world_bounds = local_bounds.transform(&node_world);
-                    world_bounds
+                    local_bounds.transform(&node_world)
                 } else {
                     // Skeleton bounds not yet computed, treat as always visible
                     BoundingBox::infinite()
                 }
             } else if let Some(geometry) = geo_guard.map.get(mesh.geometry) {
                 let bbox = geometry.bounding_box;
-                let world_bounds = bbox.transform(&node_world);
-                world_bounds
+
+                bbox.transform(&node_world)
             } else {
                 #[cfg(debug_assertions)]
                 log::warn!(

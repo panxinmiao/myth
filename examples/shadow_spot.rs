@@ -45,7 +45,7 @@ impl AppHandler for ShadowSpotDemo {
         let mut spot = Light::new_spot(Vec3::new(1.0, 0.95, 0.9), 30.0, 40.0, 0.35, 0.55);
         spot.cast_shadows = true;
         if let Some(shadow) = spot.shadow.as_mut() {
-            shadow.map_size = 1024;
+            shadow.map_size = 2048;
         }
         let spot_node = scene.add_light(spot);
         if let Some(node) = scene.get_node_mut(spot_node) {

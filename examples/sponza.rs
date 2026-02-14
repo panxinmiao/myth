@@ -14,20 +14,11 @@ struct HttpGltfExample {
 
 impl AppHandler for HttpGltfExample {
     fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
+        let map_path = "examples/assets/royal_esplanade_2k.hdr.jpg";
+
         let env_texture_handle = engine
             .assets
-            .load_cube_texture(
-                [
-                    "examples/assets/Park2/posx.jpg",
-                    "examples/assets/Park2/negx.jpg",
-                    "examples/assets/Park2/posy.jpg",
-                    "examples/assets/Park2/negy.jpg",
-                    "examples/assets/Park2/posz.jpg",
-                    "examples/assets/Park2/negz.jpg",
-                ],
-                ColorSpace::Srgb,
-                true,
-            )
+            .load_texture(map_path, ColorSpace::Srgb, false)
             .expect("Failed to load environment map");
 
         engine.scene_manager.create_active();
@@ -35,14 +26,23 @@ impl AppHandler for HttpGltfExample {
 
         scene.environment.set_env_map(Some(env_texture_handle));
 
-        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
-        scene.add_light(light);
+        let mut dir_light = Light::new_directional(Vec3::ONE, 5.0);
+        dir_light.cast_shadows = true;
+        if let Some(shadow) = dir_light.shadow.as_mut() {
+            shadow.map_size = 2048;
+        }
+        let light_node = scene.add_light(dir_light);
+
+        if let Some(node) = scene.get_node_mut(light_node) {
+            node.transform.position = Vec3::new(2.0, 12.0, 4.0);
+            node.transform.look_at(Vec3::ZERO, Vec3::Y);
+        }
 
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
 
         if let Some(node) = scene.get_node_mut(cam_node_id) {
-            node.transform.position = Vec3::new(0.0, 0.5, 2.0);
+            node.transform.position = Vec3::new(6.0, 4.0, 0.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
 
@@ -50,7 +50,7 @@ impl AppHandler for HttpGltfExample {
 
         Self {
             cam_node_id,
-            controls: OrbitControls::new(Vec3::new(0.0, 0.5, 2.0), Vec3::ZERO),
+            controls: OrbitControls::new(Vec3::new(6.0, 4.0, 0.0), Vec3::new(0.0, 2.0, 0.0)),
             fps_counter: FpsCounter::new(),
             loaded: false,
             _model_root: None,
@@ -62,7 +62,7 @@ impl AppHandler for HttpGltfExample {
             self.loaded = true;
 
             println!("Loading glTF model from network...");
-            let url = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/refs/heads/main/Models/ABeautifulGame/glTF/ABeautifulGame.gltf";
+            let url = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/refs/heads/main/Models/Sponza/glTF/Sponza.gltf";
 
             let scene = engine.scene_manager.active_scene_mut().unwrap();
 
@@ -87,7 +87,7 @@ impl AppHandler for HttpGltfExample {
         }
 
         if let Some(fps) = self.fps_counter.update() {
-            window.set_title(&format!("HTTP glTF Loading - FPS: {:.0}", fps));
+            window.set_title(&format!("Sponza Lighting Example - FPS: {:.0}", fps));
         }
     }
 }
@@ -95,9 +95,7 @@ impl AppHandler for HttpGltfExample {
 fn main() -> myth::Result<()> {
     env_logger::init();
 
-    println!("=== HTTP glTF Loading Example ===");
-    println!("This example demonstrates loading glTF models from HTTP URLs.");
-    println!("Loading: ABeautifulGame from Khronos glTF-Sample-Assets");
+    println!("=== Sponza Lighting Example ===");
 
     App::new()
         .with_settings(RenderSettings {

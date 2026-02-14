@@ -598,7 +598,7 @@ define_gpu_data_struct!(
         pub shadow_bias: f32,
         pub shadow_normal_bias: f32,
         pub cascade_count: u32,
-        pub __shadow_pad: f32,
+        pub(crate) __shadow_pad: f32,
 
         // Cascade split distances (view-space depth thresholds)
         pub cascade_splits: Vec4,

@@ -15,8 +15,6 @@ impl AppHandler for ShadowBasicDemo {
     fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
         let scene = engine.scene_manager.create_active();
 
-        // scene.environment.ambient_color = Vec3::new(0.1, 0.1, 0.15);
-
         let cube_geo = engine
             .assets
             .geometries
@@ -24,7 +22,7 @@ impl AppHandler for ShadowBasicDemo {
         let cube_mat = engine
             .assets
             .materials
-            .add(MeshPhysicalMaterial::new(Vec4::new(0.9, 0.3, 0.2, 1.0)));
+            .add(MeshPhongMaterial::new(Vec4::new(0.9, 0.3, 0.2, 1.0)));
         let mut cube = Mesh::new(cube_geo, cube_mat);
         cube.cast_shadows = true;
         cube.receive_shadows = true;
@@ -39,7 +37,7 @@ impl AppHandler for ShadowBasicDemo {
             height: 30.0,
             ..Default::default()
         }));
-        let ground_material = MeshPhysicalMaterial::new(Vec4::new(0.8, 0.8, 0.85, 1.0));
+        let ground_material = MeshPhongMaterial::new(Vec4::new(0.8, 0.8, 0.85, 1.0));
         ground_material.set_side(Side::Double);
         let ground_mat = engine.assets.materials.add(ground_material);
         let mut ground = Mesh::new(ground_geo, ground_mat);

@@ -7,6 +7,7 @@ use crate::resources::uniforms::MorphUniforms;
 pub const MAX_MORPH_TARGETS: usize = 32;
 pub const MORPH_WEIGHT_THRESHOLD: f32 = 0.001;
 
+#[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone)]
 pub struct Mesh {
     pub uuid: Uuid,
@@ -40,12 +41,12 @@ impl Mesh {
         let uuid = Uuid::new_v4();
         Self {
             uuid,
-            name: format!("Mesh_{}", uuid),
+            name: format!("Mesh_{uuid}"),
             geometry,
             material,
             visible: true,
-            cast_shadows: false,
-            receive_shadows: false,
+            cast_shadows: true,
+            receive_shadows: true,
             render_order: 0,
             morph_target_influences: Vec::new(),
             morph_uniforms: CpuBuffer::new_uniform(None),

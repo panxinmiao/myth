@@ -263,6 +263,7 @@ impl BoundingBox {
         }
     }
 
+    #[must_use]
     pub fn infinite() -> Self {
         Self {
             min: Vec3::splat(f32::NEG_INFINITY),
@@ -362,24 +363,29 @@ impl Geometry {
     }
 
     // Version accessors
+    #[must_use]
     pub fn layout_version(&self) -> u64 {
         self.layout_version
     }
 
+    #[must_use]
     pub fn structure_version(&self) -> u64 {
         self.structure_version
     }
 
+    #[must_use]
     pub fn data_version(&self) -> u64 {
         self.data_version
     }
 
     // Attributes accessors
+    #[must_use]
     pub fn attributes(&self) -> &FxHashMap<String, Attribute> {
         &self.attributes
     }
 
     // Index attribute accessors
+    #[must_use]
     pub fn index_attribute(&self) -> Option<&Attribute> {
         self.index_attribute.as_ref()
     }
@@ -421,6 +427,7 @@ impl Geometry {
         removed
     }
 
+    #[must_use]
     pub fn get_attribute(&self, name: &str) -> Option<&Attribute> {
         self.attributes.get(name)
     }
@@ -539,6 +546,7 @@ impl Geometry {
     }
 
     /// Gets the byte slice of morph position data
+    #[must_use]
     pub fn morph_position_bytes(&self) -> Option<&[u8]> {
         self.morph_position_data
             .as_ref()
@@ -546,6 +554,7 @@ impl Geometry {
     }
 
     /// Gets the byte slice of morph normal data
+    #[must_use]
     pub fn morph_normal_bytes(&self) -> Option<&[u8]> {
         self.morph_normal_data
             .as_ref()
@@ -553,6 +562,7 @@ impl Geometry {
     }
 
     /// Gets the byte slice of morph tangent data
+    #[must_use]
     pub fn morph_tangent_bytes(&self) -> Option<&[u8]> {
         self.morph_tangent_data
             .as_ref()
@@ -560,6 +570,7 @@ impl Geometry {
     }
 
     /// Checks if morph targets exist
+    #[must_use]
     pub fn has_morph_targets(&self) -> bool {
         self.morph_target_count > 0 && self.morph_position_buffer.is_some()
     }
@@ -891,6 +902,7 @@ impl Geometry {
     ///
     /// Uses internal caching mechanism, only recalculates when `layout_version` changes.
     /// This avoids Map traversal overhead on the hot path.
+    #[must_use]
     pub fn shader_defines(&self) -> &ShaderDefines {
         &self.shader_defines
     }

@@ -6,10 +6,10 @@ use crate::renderer::graph::context::RenderContext;
 use crate::renderer::graph::shadow_utils::MAX_CASCADES;
 
 pub struct ShadowPass {
-    light_uniform_buffer: wgpu::Buffer,
-    light_uniform_capacity: u32,
-    light_uniform_stride: u32,
-    light_bind_group: wgpu::BindGroup,
+    uniform_buffer: wgpu::Buffer,
+    uniform_capacity: u32,
+    uniform_stride: u32,
+    bind_group: wgpu::BindGroup,
 }
 
 impl ShadowPass {
@@ -33,20 +33,20 @@ impl ShadowPass {
                 }],
             });
 
-        let light_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Shadow Light Uniform Buffer"),
             size: u64::from(stride),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
-        let light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Shadow Light BindGroup"),
             layout: &light_bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &light_uniform_buffer,
+                    buffer: &uniform_buffer,
                     offset: 0,
                     size: wgpu::BufferSize::new(std::mem::size_of::<Mat4>() as u64),
                 }),
@@ -54,25 +54,25 @@ impl ShadowPass {
         });
 
         Self {
-            light_uniform_buffer,
-            light_uniform_capacity: 1,
-            light_uniform_stride: stride,
-            light_bind_group,
+            uniform_buffer,
+            uniform_capacity: 1,
+            uniform_stride: stride,
+            bind_group,
         }
     }
 
     fn recreate_light_bind_group(
         &mut self,
         device: &wgpu::Device,
-        light_bind_group_layout: &wgpu::BindGroupLayout,
+        bind_group_layout: &wgpu::BindGroupLayout,
     ) {
-        self.light_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Shadow Light BindGroup"),
-            layout: light_bind_group_layout,
+            layout: bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                    buffer: &self.light_uniform_buffer,
+                    buffer: &self.uniform_buffer,
                     offset: 0,
                     size: wgpu::BufferSize::new(std::mem::size_of::<Mat4>() as u64),
                 }),
@@ -86,25 +86,25 @@ impl ShadowPass {
         light_bind_group_layout: &wgpu::BindGroupLayout,
         required_count: u32,
     ) {
-        if required_count <= self.light_uniform_capacity {
+        if required_count <= self.uniform_capacity {
             return;
         }
 
-        let mut capacity = self.light_uniform_capacity.max(1);
+        let mut capacity = self.uniform_capacity.max(1);
         while capacity < required_count {
             capacity = capacity.saturating_mul(2);
         }
 
-        self.light_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        self.uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Shadow Light Uniform Buffer"),
-            size: u64::from(self.light_uniform_stride) * u64::from(capacity),
+            size: u64::from(self.uniform_stride) * u64::from(capacity),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         self.recreate_light_bind_group(device, light_bind_group_layout);
 
-        self.light_uniform_capacity = capacity;
+        self.uniform_capacity = capacity;
     }
 }
 
@@ -189,7 +189,7 @@ impl RenderNode for ShadowPass {
         //    create ShadowLightInstance entries
         // ============================================================
         let mut shadow_uniform_data =
-            vec![0u8; (self.light_uniform_stride as usize) * (total_layers as usize)];
+            vec![0u8; (self.uniform_stride as usize) * (total_layers as usize)];
 
         for view in &ctx.render_lists.active_views {
             let ViewTarget::ShadowLight {
@@ -201,7 +201,7 @@ impl RenderNode for ShadowPass {
             };
 
             // Write VP matrix to the uniform buffer at this layer's slot
-            let offset = layer_index as usize * self.light_uniform_stride as usize;
+            let offset = layer_index as usize * self.uniform_stride as usize;
             let bytes = bytemuck::bytes_of(&view.view_projection);
             shadow_uniform_data[offset..offset + bytes.len()].copy_from_slice(bytes);
 
@@ -218,7 +218,7 @@ impl RenderNode for ShadowPass {
 
         ctx.wgpu_ctx
             .queue
-            .write_buffer(&self.light_uniform_buffer, 0, &shadow_uniform_data);
+            .write_buffer(&self.uniform_buffer, 0, &shadow_uniform_data);
 
         // ============================================================
         // 5. Update light storage buffer with per-light shadow metadata
@@ -290,7 +290,7 @@ impl RenderNode for ShadowPass {
                 }
 
                 if let Some(gpu_light) = light_storage.get_mut(light_buffer_index) {
-                    gpu_light.shadow_layer_index = base_layer as i32;
+                    gpu_light.shadow_layer_index = base_layer.cast_signed();
                     gpu_light.shadow_matrices.0 = cascade_matrices;
                     gpu_light.cascade_count = cascade_count;
                     gpu_light.cascade_splits = Vec4::new(
@@ -339,8 +339,8 @@ impl RenderNode for ShadowPass {
             };
 
             let mut pass = encoder.begin_render_pass(&pass_desc);
-            let dynamic_offset = shadow_light.layer_index * self.light_uniform_stride;
-            pass.set_bind_group(0, &self.light_bind_group, &[dynamic_offset]);
+            let dynamic_offset = shadow_light.layer_index * self.uniform_stride;
+            pass.set_bind_group(0, &self.bind_group, &[dynamic_offset]);
 
             // Look up per-view command queue using (light_id, layer_index)
             let Some(commands) = ctx
@@ -388,5 +388,5 @@ impl Default for ShadowPass {
 }
 
 fn align_to(value: u32, alignment: u32) -> u32 {
-    ((value + alignment - 1) / alignment) * alignment
+    value.div_ceil(alignment) * alignment
 }

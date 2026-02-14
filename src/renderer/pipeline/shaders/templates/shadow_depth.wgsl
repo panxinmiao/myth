@@ -34,7 +34,7 @@ fn fs_main(varyings: VertexOutput) {
     var opacity = u_material.opacity;
 
     $$ if HAS_MAP
-    let tex_color = textureSample(t_map, s_map, varyings.map_uv);
+    let tex_color = textureSample(t_map, s_map, varyings.uv);
     opacity *= tex_color.a;
     $$ endif
 
