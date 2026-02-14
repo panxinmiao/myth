@@ -20,7 +20,7 @@ pub struct ShadowConfig {
 impl Default for ShadowConfig {
     fn default() -> Self {
         Self {
-            bias: 0.001,
+            bias: 0.0,
             normal_bias: 0.02,
             map_size: 2048,
             cascade_count: 4,

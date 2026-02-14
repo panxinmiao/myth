@@ -16,7 +16,7 @@ fn fetch_morph_position(vertex_index: u32, target_index: u32) -> vec3<f32> {
     );
 }
 
-$$ if HAS_MORPH_NORMALS
+$$ if HAS_MORPH_NORMALS and not SHADOW_PASS
 /// 从紧凑 Storage Buffer 获取 Morph Normal 位移
 fn fetch_morph_normal(vertex_index: u32, target_index: u32) -> vec3<f32> {
     let start_idx = (target_index * u_morph_targets.vertex_count + vertex_index) * 3u;
@@ -28,7 +28,7 @@ fn fetch_morph_normal(vertex_index: u32, target_index: u32) -> vec3<f32> {
 }
 $$ endif
 
-$$ if HAS_MORPH_TANGENTS
+$$ if HAS_MORPH_TANGENTS and not SHADOW_PASS
 /// 从紧凑 Storage Buffer 获取 Morph Tangent 位移
 fn fetch_morph_tangent(vertex_index: u32, target_index: u32) -> vec3<f32> {
     let start_idx = (target_index * u_morph_targets.vertex_count + vertex_index) * 3u;
