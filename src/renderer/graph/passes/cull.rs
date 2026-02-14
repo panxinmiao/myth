@@ -109,9 +109,7 @@ impl SceneCullPass {
 
                 // ========== Main Camera Frustum Culling ==========
                 let (center, radius) = item.world_bounding_sphere;
-                if radius.is_finite()
-                    && !camera_frustum.intersects_sphere(center, radius)
-                {
+                if radius.is_finite() && !camera_frustum.intersects_sphere(center, radius) {
                     continue;
                 }
 
@@ -237,8 +235,7 @@ impl SceneCullPass {
                 // Compute distance to camera for sorting (deferred from Extract phase)
                 let item_pos = glam::Vec3A::from(item.world_matrix.w_axis.truncate());
                 let distance_sq = camera_pos.distance_squared(item_pos);
-                let sort_key =
-                    RenderKey::new(pipeline_id, mat_id, distance_sq, is_transparent);
+                let sort_key = RenderKey::new(pipeline_id, mat_id, distance_sq, is_transparent);
 
                 let cmd = RenderCommand {
                     object_bind_group: object_bind_group.clone(),

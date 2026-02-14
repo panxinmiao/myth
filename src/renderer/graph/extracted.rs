@@ -318,19 +318,18 @@ impl ExtractedScene {
                     (node_world.translation.into(), f32::INFINITY)
                 }
             } else if let Some(geometry) = geo_guard.map.get(mesh.geometry) {
-                if let Some(bbox) = geometry.bounding_box.read().as_ref() {
-                    let world_bounds = bbox.transform(&node_world);
-                    let center = (world_bounds.min + world_bounds.max) * 0.5;
-                    let radius = (world_bounds.max - world_bounds.min).length() * 0.5;
-                    (center, radius)
-                } else if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
-                    let scale = node.transform.scale.max_element();
-                    let center = node_world.transform_point3(bs.center);
-                    (center, bs.radius * scale)
-                } else {
-                    (node_world.translation.into(), f32::INFINITY)
-                }
+                let bbox = geometry.bounding_box;
+                let world_bounds = bbox.transform(&node_world);
+                let center = (world_bounds.min + world_bounds.max) * 0.5;
+                let radius = (world_bounds.max - world_bounds.min).length() * 0.5;
+                (center, radius)
             } else {
+                #[cfg(debug_assertions)]
+                log::warn!(
+                    "Geometry {:?} has zero bounds! Did you forget to set position?",
+                    mesh.geometry
+                );
+
                 (node_world.translation.into(), f32::INFINITY)
             };
 
@@ -352,7 +351,7 @@ impl ExtractedScene {
     /// Extract environment data
     fn extract_environment(&mut self, scene: &Scene) {
         // self.background = scene.background;
-        self.scene_defines = scene.shader_defines();
+        self.scene_defines = scene.shader_defines.clone();
         self.scene_id = scene.id;
         self.envvironment = scene.environment.clone();
     }
