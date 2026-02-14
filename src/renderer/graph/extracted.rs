@@ -5,9 +5,10 @@
 //!
 //! # Design Principles
 //! - Only copy "minimal data" needed for rendering, don't copy actual Mesh/Material resources
-//! - Front-load frustum culling, only extract visible objects
+//! - Extract ALL active meshes without frustum culling (culling is deferred to the Cull phase)
 //! - Use Copy types to minimize overhead
 //! - Carry cache IDs to avoid repeated lookups each frame
+//! - Single source of truth: one `render_items` list consumed by all `RenderView`s
 
 use std::collections::HashSet;
 
@@ -23,7 +24,8 @@ use crate::scene::{NodeHandle, Scene, SkeletonKey};
 
 /// Minimal render item, containing only data needed by GPU
 ///
-/// Uses Clone instead of Copy because `SkinBinding` contains non-Copy types
+/// Uses Clone instead of Copy because `SkinBinding` contains non-Copy types.
+/// Contains all per-object attributes needed for view-independent filtering and culling.
 #[derive(Clone)]
 pub struct ExtractedRenderItem {
     /// Node handle (for debugging and cache write-back)
@@ -44,8 +46,10 @@ pub struct ExtractedRenderItem {
     pub cast_shadows: bool,
     pub receive_shadows: bool,
 
-    /// Squared distance to camera (for sorting)
-    pub distance_sq: f32,
+    /// World-space bounding sphere (center, radius).
+    /// Pre-computed during Extract for efficient frustum culling in the Cull phase.
+    /// If no bounding volume is available, `radius` is `f32::INFINITY` (always passes culling).
+    pub world_bounding_sphere: (Vec3, f32),
 }
 
 #[derive(Clone)]
@@ -68,12 +72,17 @@ pub struct ExtractedSkeleton {
 ///
 /// This is a lightweight structure containing only the minimal dataset needed for current frame rendering.
 /// Populated during Extract phase, after which the Scene borrow can be safely released.
+///
+/// # "Single Source of Truth" Design
+///
+/// `render_items` is the **single, unified list** of all active renderables.
+/// No frustum culling is performed during extraction — that is deferred to the
+/// Cull phase where each `RenderView` (main camera, shadow cascades, etc.)
+/// performs its own culling against this shared list.
 pub struct ExtractedScene {
-    /// List of visible render items (already frustum culled)
+    /// All active render items (NOT frustum-culled).
+    /// Each `RenderView` in the Cull phase filters and culls from this list.
     pub render_items: Vec<ExtractedRenderItem>,
-    /// Shadow casters: ALL `cast_shadows = true` objects, regardless of main camera visibility.
-    /// Used by the shadow pass for independent shadow culling.
-    pub shadow_caster_items: Vec<ExtractedRenderItem>,
     /// Scene's shader macro definitions
     pub scene_defines: ShaderDefines,
     pub scene_id: u32,
@@ -89,10 +98,6 @@ pub struct ExtractedScene {
 struct CollectedMesh {
     pub node_handle: NodeHandle,
     pub skeleton: Option<SkeletonKey>,
-    /// True if this mesh passed the main camera frustum cull.
-    pub is_camera_visible: bool,
-    /// True if this mesh should cast shadows.
-    pub cast_shadows: bool,
 }
 
 impl ExtractedScene {
@@ -101,7 +106,6 @@ impl ExtractedScene {
     pub fn new() -> Self {
         Self {
             render_items: Vec::new(),
-            shadow_caster_items: Vec::new(),
             scene_defines: ShaderDefines::new(),
             scene_id: 0,
             background: None,
@@ -118,7 +122,6 @@ impl ExtractedScene {
     pub fn with_capacity(item_capacity: usize) -> Self {
         Self {
             render_items: Vec::with_capacity(item_capacity),
-            shadow_caster_items: Vec::with_capacity(item_capacity),
             scene_defines: ShaderDefines::new(),
             scene_id: 0,
             background: None,
@@ -133,8 +136,6 @@ impl ExtractedScene {
     /// Clear data for reuse
     pub fn clear(&mut self) {
         self.render_items.clear();
-        self.shadow_caster_items.clear();
-        // self.skeletons.clear();
         self.scene_defines.clear();
         self.scene_id = 0;
         self.lights.clear();
@@ -143,7 +144,11 @@ impl ExtractedScene {
         self.collected_skeleton_keys.clear();
     }
 
-    /// Reuse current instance memory, extract data from Scene
+    /// Reuse current instance memory, extract data from Scene.
+    ///
+    /// Extracts ALL active meshes into `render_items` without frustum culling.
+    /// Frustum culling is deferred to the Cull phase where each `RenderView`
+    /// independently culls from this unified list.
     pub fn extract_into(
         &mut self,
         scene: &mut Scene,
@@ -181,20 +186,25 @@ impl ExtractedScene {
         }
     }
 
-    /// Extract visible render items
+    /// Extract all active render items (no frustum culling).
+    ///
+    /// Only performs lightweight validity checks:
+    /// - `mesh.visible` and `node.visible` flags
+    /// - Geometry asset exists
+    ///
+    /// World-space bounding spheres are pre-computed here so the Cull phase
+    /// can test each item against multiple `RenderView` frustums without
+    /// re-acquiring the geometry read lock.
     #[allow(clippy::too_many_lines)]
     fn extract_render_items(
         &mut self,
         scene: &mut Scene,
-        camera: &RenderCamera,
+        _camera: &RenderCamera,
         assets: &AssetServer,
         resource_manager: &mut ResourceManager,
     ) {
-        let frustum = camera.frustum;
-        let camera_pos = camera.position;
-
         // =========================================================
-        // Phase 1: Frustum culling & collection (holding read lock)
+        // Phase 1: Collect active meshes (holding read lock)
         // =========================================================
         {
             let geo_guard = assets.geometries.read_lock();
@@ -213,55 +223,17 @@ impl ExtractedScene {
                 }
 
                 let geo_handle = mesh.geometry;
-                // let mat_handle = mesh.material;
 
-                let Some(geometry) = geo_guard.map.get(geo_handle) else {
+                if !geo_guard.map.contains_key(geo_handle) {
                     log::warn!("Node {node_handle:?} refers to missing Geometry {geo_handle:?}");
                     continue;
-                };
-
-                let node_world = node.transform.world_matrix;
-                let skin_binding = scene.skins.get(node_handle);
-
-                // Frustum culling: select different bounding box based on skeleton binding
-                let is_visible = if let Some(binding) = skin_binding {
-                    // Has skeleton binding: use Skeleton's bounding box
-                    if let Some(skeleton) = scene.skeleton_pool.get(binding.skeleton) {
-                        if let Some(local_bounds) = skeleton.local_bounds() {
-                            let world_bounds = local_bounds.transform(&node_world);
-                            frustum.intersects_box(world_bounds.min, world_bounds.max)
-                        } else {
-                            // Bounding box not yet computed, default to visible
-                            true
-                        }
-                    } else {
-                        true
-                    }
-                } else {
-                    // No skeleton binding: use Geometry's bounding box
-                    if let Some(bbox) = geometry.bounding_box.read().as_ref() {
-                        let world_bounds = bbox.transform(&node_world);
-                        frustum.intersects_box(world_bounds.min, world_bounds.max)
-                    } else if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
-                        // Fallback to bounding sphere
-                        let scale = node.transform.scale.max_element();
-                        let center = node_world.transform_point3(bs.center);
-                        frustum.intersects_sphere(center, bs.radius * scale)
-                    } else {
-                        true
-                    }
-                };
-
-                // Collect if camera-visible OR if the mesh casts shadows
-                if !is_visible && !mesh.cast_shadows {
-                    continue;
                 }
+
+                let skin_binding = scene.skins.get(node_handle);
 
                 self.collected_meshes.push(CollectedMesh {
                     node_handle,
                     skeleton: skin_binding.map(|skin| skin.skeleton),
-                    is_camera_visible: is_visible,
-                    cast_shadows: mesh.cast_shadows,
                 });
 
                 if let Some(binding) = skin_binding {
@@ -271,7 +243,7 @@ impl ExtractedScene {
         }
 
         // =========================================================
-        // Phase 2: Prepare resources (no lock held)
+        // Phase 2: Prepare resources & build render items (no lock)
         // =========================================================
 
         // Prepare skeleton data
@@ -284,7 +256,9 @@ impl ExtractedScene {
         // Ensure model buffer capacity
         resource_manager.ensure_model_buffer_capacity(self.collected_meshes.len());
 
-        // Update and populate render items
+        // Pre-compute world bounding spheres (requires geo lock)
+        let geo_guard = assets.geometries.read_lock();
+
         for collected_mesh in &self.collected_meshes {
             let node_handle = collected_mesh.node_handle;
 
@@ -309,7 +283,6 @@ impl ExtractedScene {
                 continue;
             };
 
-            let distance_sq = camera_pos.distance_squared(node_world.translation);
             let mut item_shader_defines = ShaderDefines::with_capacity(1);
 
             if skeleton.is_some() {
@@ -328,7 +301,40 @@ impl ExtractedScene {
             // compose item variant flags (has_negative_scale, has_skeleton)
             let item_variant_flags = has_negative_scale_flag | has_skeleton_flag;
 
-            let extracted_item = ExtractedRenderItem {
+            // Pre-compute world-space bounding sphere for frustum culling in Cull phase.
+            // Priority: skeleton bounds > geometry AABB > geometry bounding sphere > infinite
+            let world_bounding_sphere = if let Some(binding) = scene.skins.get(node_handle) {
+                if let Some(skel) = scene.skeleton_pool.get(binding.skeleton) {
+                    if let Some(local_bounds) = skel.local_bounds() {
+                        let world_bounds = local_bounds.transform(&node_world);
+                        let center = (world_bounds.min + world_bounds.max) * 0.5;
+                        let radius = (world_bounds.max - world_bounds.min).length() * 0.5;
+                        (center, radius)
+                    } else {
+                        // Skeleton bounds not yet computed, treat as always visible
+                        (node_world.translation.into(), f32::INFINITY)
+                    }
+                } else {
+                    (node_world.translation.into(), f32::INFINITY)
+                }
+            } else if let Some(geometry) = geo_guard.map.get(mesh.geometry) {
+                if let Some(bbox) = geometry.bounding_box.read().as_ref() {
+                    let world_bounds = bbox.transform(&node_world);
+                    let center = (world_bounds.min + world_bounds.max) * 0.5;
+                    let radius = (world_bounds.max - world_bounds.min).length() * 0.5;
+                    (center, radius)
+                } else if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
+                    let scale = node.transform.scale.max_element();
+                    let center = node_world.transform_point3(bs.center);
+                    (center, bs.radius * scale)
+                } else {
+                    (node_world.translation.into(), f32::INFINITY)
+                }
+            } else {
+                (node_world.translation.into(), f32::INFINITY)
+            };
+
+            self.render_items.push(ExtractedRenderItem {
                 node_handle,
                 world_matrix,
                 object_bind_group,
@@ -338,18 +344,8 @@ impl ExtractedScene {
                 item_shader_defines,
                 cast_shadows: mesh.cast_shadows,
                 receive_shadows: mesh.receive_shadows,
-                distance_sq,
-            };
-
-            // Add to camera-visible render items
-            if collected_mesh.is_camera_visible {
-                self.render_items.push(extracted_item.clone());
-            }
-
-            // Add to shadow caster items (independent of camera visibility)
-            if collected_mesh.cast_shadows {
-                self.shadow_caster_items.push(extracted_item);
-            }
+                world_bounding_sphere,
+            });
         }
     }
 

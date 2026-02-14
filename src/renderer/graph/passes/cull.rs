@@ -1,17 +1,19 @@
 //! Scene Cull Pass
 //!
-//! 负责场景剔除、渲染命令生成与排序。
-//! 此 Pass 仅执行 `prepare` 阶段，不进行实际绘制。
+//! Performs unified view-based culling, render command generation, and sorting.
+//! This Pass only executes the `prepare` phase, no actual drawing.
 //!
-//! # 职责
-//! - 遍历 `ExtractedScene` 中的可见物体
-//! - 生成 `RenderCommand` 并分类到 opaque/transparent 列表
-//! - 上传动态 Uniform（模型矩阵、法线矩阵等）
-//! - 对命令列表进行排序
+//! # "Everything is a View" Architecture
 //!
-//! # 数据流
+//! All rendering viewpoints (main camera, shadow cascades, etc.) are expressed
+//! as `RenderView` instances. The cull pass tests every renderable against
+//! every view's frustum, producing per-view command queues.
+//!
+//! # Data Flow
 //! ```text
-//! ExtractedScene → SceneCullPass → RenderLists
+//! ExtractedScene.render_items (all active renderables)
+//!     → [Main Camera View]  → RenderLists.opaque / .transparent
+//!     → [Shadow View 1..N]  → RenderLists.shadow_queues
 //! ```
 
 use log::{error, warn};
@@ -29,14 +31,15 @@ use crate::resources::material::{AlphaMode, Side};
 use crate::resources::uniforms::{DynamicModelUniforms, Mat3Uniform};
 use crate::scene::light::LightKind;
 
-/// 场景剔除 Pass
+/// Scene Cull Pass
 ///
-/// 仅执行 prepare 阶段，将渲染命令写入 `RenderFrame.render_lists`。
+/// Unified culling and command generation for all `RenderView`s.
 ///
-/// # 性能考虑
-/// - 利用 L1/L2 Pipeline 缓存避免重复编译
-/// - 批量上传动态 Uniform 减少 GPU 调用
-/// - 排序使用 `sort_unstable_by` 避免额外分配
+/// # Performance Considerations
+/// - L1/L2 Pipeline cache avoids repeated shader compilation
+/// - Batch dynamic Uniform upload reduces GPU calls
+/// - `sort_unstable_by` avoids extra allocation
+/// - Pre-computed world bounding spheres in `ExtractedRenderItem` avoid geometry lookups during culling
 pub struct SceneCullPass;
 
 const SHADOW_BINDING_WGSL: &str = "
@@ -53,29 +56,29 @@ impl SceneCullPass {
         Self
     }
 
-    /// 准备渲染命令并排序
+    /// Prepare main camera render commands with frustum culling and sorting.
     ///
-    /// # 流程
-    /// 1. 清空 `render_lists`
-    /// 2. 遍历 `extracted_scene.render_items`
-    /// 3. 查找/创建 Pipeline
-    /// 4. 生成 `RenderCommand` 并分类
-    /// 5. 排序命令列表
+    /// # Flow
+    /// 1. Clear `render_lists`
+    /// 2. Frustum-cull `extracted_scene.render_items` against main camera
+    /// 3. For visible items: lookup/create Pipeline, generate `RenderCommand`
+    /// 4. Classify into opaque/transparent lists
+    /// 5. Sort command lists
     #[allow(clippy::too_many_lines)]
     fn prepare_and_sort_commands(ctx: &mut RenderContext) {
-        // 预先获取需要的配置（避免后续借用冲突）
+        // Pre-fetch config to avoid borrow conflicts
         let color_format = ctx.get_scene_render_target_format();
         let depth_format = ctx.wgpu_ctx.depth_format;
         let sample_count = ctx.wgpu_ctx.msaa_samples;
         let render_state_id = ctx.render_state.id;
         let scene_id = ctx.extracted_scene.scene_id;
         let pipeline_settings_version = ctx.wgpu_ctx.pipeline_settings_version;
+        let camera_frustum = ctx.camera.frustum;
+        let camera_pos = ctx.camera.position;
 
-        // 获取 render_lists 的可变引用
         let render_lists = &mut *ctx.render_lists;
         render_lists.clear();
 
-        // 获取全局状态
         let Some(gpu_world) = ctx
             .resource_manager
             .get_global_state(render_state_id, scene_id)
@@ -89,6 +92,13 @@ impl SceneCullPass {
         render_lists.gpu_global_bind_group_id = gpu_world.bind_group_id;
         render_lists.gpu_global_bind_group = Some(gpu_world.bind_group.clone());
 
+        // Store main camera view for downstream use
+        render_lists.active_views.push(RenderView::new_main_camera(
+            ctx.camera.view_projection_matrix,
+            camera_frustum,
+            ctx.wgpu_ctx.size(),
+        ));
+
         let mut use_transmission = false;
         {
             let geo_guard = ctx.assets.geometries.read_lock();
@@ -96,6 +106,14 @@ impl SceneCullPass {
 
             for item_idx in 0..ctx.extracted_scene.render_items.len() {
                 let item = &ctx.extracted_scene.render_items[item_idx];
+
+                // ========== Main Camera Frustum Culling ==========
+                let (center, radius) = item.world_bounding_sphere;
+                if radius.is_finite()
+                    && !camera_frustum.intersects_sphere(center, radius)
+                {
+                    continue;
+                }
 
                 let Some(geometry) = geo_guard.map.get(item.geometry) else {
                     warn!("Geometry {:?} missing during render prepare", item.geometry);
@@ -215,8 +233,12 @@ impl SceneCullPass {
                 }
 
                 let is_transparent = material.alpha_mode() == AlphaMode::Blend || has_transmission;
+
+                // Compute distance to camera for sorting (deferred from Extract phase)
+                let item_pos = glam::Vec3A::from(item.world_matrix.w_axis.truncate());
+                let distance_sq = camera_pos.distance_squared(item_pos);
                 let sort_key =
-                    RenderKey::new(pipeline_id, mat_id, item.distance_sq, is_transparent);
+                    RenderKey::new(pipeline_id, mat_id, distance_sq, is_transparent);
 
                 let cmd = RenderCommand {
                     object_bind_group: object_bind_group.clone(),
@@ -244,10 +266,10 @@ impl SceneCullPass {
     /// Generate shadow [`RenderView`]s and per-view culled shadow commands.
     ///
     /// # Flow
-    /// 1. Compute `scene_caster_extent` (max caster distance from camera).
+    /// 1. Compute `scene_caster_extent` from `render_items` (items with `cast_shadows`).
     /// 2. For each shadow-casting light, build `RenderView`(s) via `shadow_utils`.
-    /// 3. For each view, frustum-cull `shadow_caster_items` → per-view `ShadowRenderCommand`.
-    /// 4. Store views in `render_lists.active_views`, commands in `render_lists.shadow_queues`.
+    /// 3. For each view, frustum-cull `render_items` (filtered by `cast_shadows`) → per-view `ShadowRenderCommand`.
+    /// 4. Append views to `render_lists.active_views`, commands to `render_lists.shadow_queues`.
     #[allow(clippy::too_many_lines)]
     fn prepare_shadow_commands(ctx: &mut RenderContext) {
         let depth_format = wgpu::TextureFormat::Depth32Float;
@@ -268,42 +290,25 @@ impl SceneCullPass {
 
         // ================================================================
         // 1. Compute scene caster extent (for CSM Z extension)
+        //    Uses pre-computed world_bounding_sphere from Extract phase.
         // ================================================================
         let scene_caster_extent = {
-            let geo_guard = ctx.assets.geometries.read_lock();
             let camera_pos: glam::Vec3 = ctx.camera.position.to_array().into();
             let mut max_distance = 0.0f32;
 
-            for item in &ctx.extracted_scene.shadow_caster_items {
-                let Some(geometry) = geo_guard.map.get(item.geometry) else {
+            for item in &ctx.extracted_scene.render_items {
+                if !item.cast_shadows {
                     continue;
+                }
+
+                let (center_ws, radius_ws) = item.world_bounding_sphere;
+                // Items with infinite radius are unbounded; use position only
+                let effective_radius = if radius_ws.is_finite() {
+                    radius_ws
+                } else {
+                    0.0
                 };
-
-                let (center_ws, radius_ws) =
-                    if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
-                        let sx = item.world_matrix.x_axis.truncate().length();
-                        let sy = item.world_matrix.y_axis.truncate().length();
-                        let sz = item.world_matrix.z_axis.truncate().length();
-                        let uniform_scale = sx.max(sy).max(sz);
-                        (
-                            item.world_matrix.transform_point3(bs.center),
-                            bs.radius * uniform_scale,
-                        )
-                    } else if let Some(bb) = geometry.bounding_box.read().as_ref() {
-                        let sx = item.world_matrix.x_axis.truncate().length();
-                        let sy = item.world_matrix.y_axis.truncate().length();
-                        let sz = item.world_matrix.z_axis.truncate().length();
-                        let half = bb.size() * 0.5;
-                        let scaled_half = glam::Vec3::new(half.x * sx, half.y * sy, half.z * sz);
-                        (
-                            item.world_matrix.transform_point3(bb.center()),
-                            scaled_half.length(),
-                        )
-                    } else {
-                        (item.world_matrix.w_axis.truncate(), 0.0)
-                    };
-
-                let distance = camera_pos.distance(center_ws) + radius_ws;
+                let distance = camera_pos.distance(center_ws) + effective_radius;
                 max_distance = max_distance.max(distance);
             }
 
@@ -367,6 +372,7 @@ impl SceneCullPass {
 
         // ================================================================
         // 3. Per-view frustum culling + command generation
+        //    Uses pre-computed world_bounding_sphere for fast culling.
         // ================================================================
         let geo_guard = ctx.assets.geometries.read_lock();
         let mat_guard = ctx.assets.materials.read_lock();
@@ -386,43 +392,25 @@ impl SceneCullPass {
                 .entry((light_id, layer_index))
                 .or_default();
 
-            for item in &ctx.extracted_scene.shadow_caster_items {
-                let Some(geometry) = geo_guard.map.get(item.geometry) else {
+            for item in &ctx.extracted_scene.render_items {
+                // Attribute filter: only shadow casters
+                if !item.cast_shadows {
                     continue;
-                };
+                }
 
-                // Compute world-space bounding sphere for frustum test
-                let (caster_center_ws, caster_radius_ws) =
-                    if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
-                        let sx = item.world_matrix.x_axis.truncate().length();
-                        let sy = item.world_matrix.y_axis.truncate().length();
-                        let sz = item.world_matrix.z_axis.truncate().length();
-                        let uniform_scale = sx.max(sy).max(sz);
-                        (
-                            item.world_matrix.transform_point3(bs.center),
-                            bs.radius * uniform_scale,
-                        )
-                    } else if let Some(bb) = geometry.bounding_box.read().as_ref() {
-                        let sx = item.world_matrix.x_axis.truncate().length();
-                        let sy = item.world_matrix.y_axis.truncate().length();
-                        let sz = item.world_matrix.z_axis.truncate().length();
-                        let half = bb.size() * 0.5;
-                        let scaled_half = glam::Vec3::new(half.x * sx, half.y * sy, half.z * sz);
-                        (
-                            item.world_matrix.transform_point3(bb.center()),
-                            scaled_half.length(),
-                        )
-                    } else {
-                        (item.world_matrix.w_axis.truncate(), 0.0)
-                    };
-
-                // Per-view frustum culling: use the view's frustum
-                if !view
-                    .frustum
-                    .intersects_sphere(caster_center_ws, caster_radius_ws)
+                // Per-view frustum culling using pre-computed bounding sphere
+                let (caster_center_ws, caster_radius_ws) = item.world_bounding_sphere;
+                if caster_radius_ws.is_finite()
+                    && !view
+                        .frustum
+                        .intersects_sphere(caster_center_ws, caster_radius_ws)
                 {
                     continue;
                 }
+
+                let Some(geometry) = geo_guard.map.get(item.geometry) else {
+                    continue;
+                };
 
                 let Some(material) = mat_guard.map.get(item.material) else {
                     continue;
@@ -522,9 +510,9 @@ impl SceneCullPass {
         drop(mat_guard);
 
         // ================================================================
-        // 4. Store views for downstream passes (ShadowPass reads these)
+        // 4. Append shadow views to active_views (main camera view is already there)
         // ================================================================
-        ctx.render_lists.active_views = shadow_views;
+        ctx.render_lists.active_views.extend(shadow_views);
     }
 
     /// 上传动态 Uniform 数据
