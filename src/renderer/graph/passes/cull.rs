@@ -17,7 +17,9 @@
 use log::{error, warn};
 use slotmap::Key;
 
+use crate::renderer::core::view::{RenderView, ViewTarget};
 use crate::renderer::graph::frame::{RenderCommand, RenderKey, ShadowRenderCommand};
+use crate::renderer::graph::shadow_utils;
 use crate::renderer::graph::{RenderContext, RenderNode};
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::renderer::pipeline::{
@@ -239,11 +241,17 @@ impl SceneCullPass {
         ctx.render_lists.sort();
     }
 
+    /// Generate shadow [`RenderView`]s and per-view culled shadow commands.
+    ///
+    /// # Flow
+    /// 1. Compute `scene_caster_extent` (max caster distance from camera).
+    /// 2. For each shadow-casting light, build `RenderView`(s) via `shadow_utils`.
+    /// 3. For each view, frustum-cull `shadow_caster_items` → per-view `ShadowRenderCommand`.
+    /// 4. Store views in `render_lists.active_views`, commands in `render_lists.shadow_queues`.
     #[allow(clippy::too_many_lines)]
     fn prepare_shadow_commands(ctx: &mut RenderContext) {
         let depth_format = wgpu::TextureFormat::Depth32Float;
         let pipeline_settings_version = ctx.wgpu_ctx.pipeline_settings_version;
-        let camera_pos: glam::Vec3 = ctx.camera.position.to_array().into();
         let shadow_layout_entries = [wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::VERTEX,
@@ -258,45 +266,132 @@ impl SceneCullPass {
             .resource_manager
             .get_or_create_layout(&shadow_layout_entries);
 
-        let geo_guard = ctx.assets.geometries.read_lock();
-        let mat_guard = ctx.assets.materials.read_lock();
+        // ================================================================
+        // 1. Compute scene caster extent (for CSM Z extension)
+        // ================================================================
+        let scene_caster_extent = {
+            let geo_guard = ctx.assets.geometries.read_lock();
+            let camera_pos: glam::Vec3 = ctx.camera.position.to_array().into();
+            let mut max_distance = 0.0f32;
 
-        for light in &ctx.extracted_scene.lights {
-            if !light.cast_shadows {
-                continue;
-            }
-
-            if !matches!(light.kind, LightKind::Directional(_) | LightKind::Spot(_)) {
-                continue;
-            }
-
-            let directional_max_distance = light
-                .shadow
-                .as_ref()
-                .map_or(100.0, |s| s.max_shadow_distance.max(1.0));
-
-            let spot_cull_params = match &light.kind {
-                LightKind::Spot(spot) => {
-                    let spot_dir = if light.direction.length_squared() > 1e-6 {
-                        light.direction.normalize()
-                    } else {
-                        -glam::Vec3::Z
-                    };
-                    Some((spot.range.max(1.0), spot.outer_cone.cos(), spot_dir))
-                }
-                _ => None,
-            };
-
-            let queue = ctx.render_lists.shadow_queues.entry(light.id).or_default();
-
-            // Use shadow_caster_items: these include ALL cast_shadows=true objects,
-            // even those outside the main camera frustum.
             for item in &ctx.extracted_scene.shadow_caster_items {
-
                 let Some(geometry) = geo_guard.map.get(item.geometry) else {
                     continue;
                 };
 
+                let (center_ws, radius_ws) =
+                    if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
+                        let sx = item.world_matrix.x_axis.truncate().length();
+                        let sy = item.world_matrix.y_axis.truncate().length();
+                        let sz = item.world_matrix.z_axis.truncate().length();
+                        let uniform_scale = sx.max(sy).max(sz);
+                        (
+                            item.world_matrix.transform_point3(bs.center),
+                            bs.radius * uniform_scale,
+                        )
+                    } else if let Some(bb) = geometry.bounding_box.read().as_ref() {
+                        let sx = item.world_matrix.x_axis.truncate().length();
+                        let sy = item.world_matrix.y_axis.truncate().length();
+                        let sz = item.world_matrix.z_axis.truncate().length();
+                        let half = bb.size() * 0.5;
+                        let scaled_half = glam::Vec3::new(half.x * sx, half.y * sy, half.z * sz);
+                        (
+                            item.world_matrix.transform_point3(bb.center()),
+                            scaled_half.length(),
+                        )
+                    } else {
+                        (item.world_matrix.w_axis.truncate(), 0.0)
+                    };
+
+                let distance = camera_pos.distance(center_ws) + radius_ws;
+                max_distance = max_distance.max(distance);
+            }
+
+            max_distance.max(50.0)
+        };
+
+        // ================================================================
+        // 2. Build shadow RenderViews for all shadow-casting lights
+        // ================================================================
+        let mut shadow_views: Vec<RenderView> = Vec::with_capacity(16);
+
+        for (light_buffer_index, light) in ctx.extracted_scene.lights.iter().enumerate() {
+            if !light.cast_shadows {
+                continue;
+            }
+
+            let shadow_cfg = light.shadow.clone().unwrap_or_default();
+
+            match &light.kind {
+                LightKind::Directional(_) => {
+                    let cam_far = if ctx.camera.far.is_finite() {
+                        ctx.camera.far
+                    } else {
+                        shadow_cfg.max_shadow_distance
+                    };
+                    let shadow_far = shadow_cfg.max_shadow_distance.min(cam_far);
+                    let caster_extension = scene_caster_extent.max(shadow_cfg.max_shadow_distance);
+
+                    // Compute base layer: count previously emitted views
+                    let base_layer = shadow_views.len() as u32;
+
+                    let (views, _splits) = shadow_utils::build_directional_views(
+                        light.id,
+                        light.direction,
+                        light_buffer_index,
+                        ctx.camera,
+                        &shadow_cfg,
+                        shadow_far,
+                        caster_extension,
+                        base_layer,
+                    );
+                    shadow_views.extend(views);
+                }
+                LightKind::Spot(spot) => {
+                    let base_layer = shadow_views.len() as u32;
+                    shadow_views.push(shadow_utils::build_spot_view(
+                        light.id,
+                        light_buffer_index,
+                        light.position,
+                        light.direction,
+                        spot,
+                        &shadow_cfg,
+                        base_layer,
+                    ));
+                }
+                LightKind::Point(_) => {
+                    // Future: build 6 cubemap face views
+                }
+            }
+        }
+
+        // ================================================================
+        // 3. Per-view frustum culling + command generation
+        // ================================================================
+        let geo_guard = ctx.assets.geometries.read_lock();
+        let mat_guard = ctx.assets.materials.read_lock();
+
+        for view in &shadow_views {
+            let ViewTarget::ShadowLight {
+                light_id,
+                layer_index,
+            } = view.target
+            else {
+                continue;
+            };
+
+            let queue = ctx
+                .render_lists
+                .shadow_queues
+                .entry((light_id, layer_index))
+                .or_default();
+
+            for item in &ctx.extracted_scene.shadow_caster_items {
+                let Some(geometry) = geo_guard.map.get(item.geometry) else {
+                    continue;
+                };
+
+                // Compute world-space bounding sphere for frustum test
                 let (caster_center_ws, caster_radius_ws) =
                     if let Some(bs) = geometry.bounding_sphere.read().as_ref() {
                         let sx = item.world_matrix.x_axis.truncate().length();
@@ -321,34 +416,12 @@ impl SceneCullPass {
                         (item.world_matrix.w_axis.truncate(), 0.0)
                     };
 
-                match &light.kind {
-                    LightKind::Directional(_) => {
-                        let max_dist = directional_max_distance + caster_radius_ws;
-                        if camera_pos.distance_squared(caster_center_ws) > max_dist * max_dist {
-                            continue;
-                        }
-                    }
-                    LightKind::Spot(_) => {
-                        if let Some((spot_range, outer_cone_cos, spot_dir)) = spot_cull_params {
-                            let to_center = caster_center_ws - light.position;
-                            let dist_sq = to_center.length_squared();
-                            let max_dist = spot_range + caster_radius_ws;
-
-                            if dist_sq > max_dist * max_dist {
-                                continue;
-                            }
-
-                            if dist_sq > 1e-6 {
-                                let dist = dist_sq.sqrt();
-                                let cos_theta = spot_dir.dot(to_center / dist);
-                                let radius_slack = caster_radius_ws / dist;
-                                if cos_theta + radius_slack < outer_cone_cos {
-                                    continue;
-                                }
-                            }
-                        }
-                    }
-                    LightKind::Point(_) => {}
+                // Per-view frustum culling: use the view's frustum
+                if !view
+                    .frustum
+                    .intersects_sphere(caster_center_ws, caster_radius_ws)
+                {
+                    continue;
                 }
 
                 let Some(material) = mat_guard.map.get(item.material) else {
@@ -375,65 +448,65 @@ impl SceneCullPass {
                     pipeline_settings_version,
                 };
 
-                let pipeline = if let Some(p) = ctx.pipeline_cache.get_shadow_pipeline_fast(fast_key)
-                {
-                    p.clone()
-                } else {
-                    let geo_defines = geometry.shader_defines();
-                    let mat_defines = material.shader_defines();
+                let pipeline =
+                    if let Some(p) = ctx.pipeline_cache.get_shadow_pipeline_fast(fast_key) {
+                        p.clone()
+                    } else {
+                        let geo_defines = geometry.shader_defines();
+                        let mat_defines = material.shader_defines();
 
-                    let mut options = ShaderCompilationOptions::from_merged(
-                        &mat_defines,
-                        &geo_defines,
-                        &crate::resources::shader_defines::ShaderDefines::new(),
-                        &item.item_shader_defines,
-                    );
+                        let mut options = ShaderCompilationOptions::from_merged(
+                            &mat_defines,
+                            &geo_defines,
+                            &crate::resources::shader_defines::ShaderDefines::new(),
+                            &item.item_shader_defines,
+                        );
 
-                    options.add_define("SHADOW_PASS", "1");
+                        options.add_define("SHADOW_PASS", "1");
 
-                    let shader_hash = options.compute_hash();
-                    let canonical_key = ShadowPipelineKey {
-                        shader_hash,
-                        topology: geometry.topology,
-                        cull_mode: match material.side() {
-                            Side::Front => Some(wgpu::Face::Back),
-                            Side::Back => Some(wgpu::Face::Front),
-                            Side::Double => None,
-                        },
-                        depth_format,
-                        front_face: if item.item_variant_flags & 0x1 != 0 {
-                            wgpu::FrontFace::Cw
-                        } else {
-                            wgpu::FrontFace::Ccw
-                        },
+                        let shader_hash = options.compute_hash();
+                        let canonical_key = ShadowPipelineKey {
+                            shader_hash,
+                            topology: geometry.topology,
+                            cull_mode: match material.side() {
+                                Side::Front => Some(wgpu::Face::Back),
+                                Side::Back => Some(wgpu::Face::Front),
+                                Side::Double => None,
+                            },
+                            depth_format,
+                            front_face: if item.item_variant_flags & 0x1 != 0 {
+                                wgpu::FrontFace::Cw
+                            } else {
+                                wgpu::FrontFace::Ccw
+                            },
+                        };
+
+                        let pipeline = ctx.pipeline_cache.get_shadow_pipeline(
+                            &ctx.wgpu_ctx.device,
+                            canonical_key,
+                            &options,
+                            &gpu_geometry.layout_info,
+                            &shadow_global_layout,
+                            SHADOW_BINDING_WGSL,
+                            gpu_material,
+                            &item.object_bind_group,
+                        );
+
+                        ctx.pipeline_cache
+                            .insert_shadow_pipeline_fast(fast_key, pipeline.clone());
+                        pipeline
                     };
-
-                    let pipeline = ctx.pipeline_cache.get_shadow_pipeline(
-                        &ctx.wgpu_ctx.device,
-                        canonical_key,
-                        &options,
-                        &gpu_geometry.layout_info,
-                        &shadow_global_layout,
-                        SHADOW_BINDING_WGSL,
-                        gpu_material,
-                        &item.object_bind_group,
-                    );
-
-                    ctx.pipeline_cache
-                        .insert_shadow_pipeline_fast(fast_key, pipeline.clone());
-                    pipeline
-                };
 
                 let world_matrix_inverse = item.world_matrix.inverse();
                 let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
-                let dynamic_offset = ctx
-                    .resource_manager
-                    .allocate_model_uniform(DynamicModelUniforms {
-                        world_matrix: item.world_matrix,
-                        world_matrix_inverse,
-                        normal_matrix,
-                        ..Default::default()
-                    });
+                let dynamic_offset =
+                    ctx.resource_manager
+                        .allocate_model_uniform(DynamicModelUniforms {
+                            world_matrix: item.world_matrix,
+                            world_matrix_inverse,
+                            normal_matrix,
+                            ..Default::default()
+                        });
 
                 queue.push(ShadowRenderCommand {
                     object_bind_group: item.object_bind_group.clone(),
@@ -444,6 +517,14 @@ impl SceneCullPass {
                 });
             }
         }
+
+        drop(geo_guard);
+        drop(mat_guard);
+
+        // ================================================================
+        // 4. Store views for downstream passes (ShadowPass reads these)
+        // ================================================================
+        ctx.render_lists.active_views = shadow_views;
     }
 
     /// 上传动态 Uniform 数据

@@ -58,8 +58,8 @@ use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
-    BRDFLutComputePass, IBLComputePass, OpaquePass, SceneCullPass, SimpleForwardPass, ToneMapPass,
-    TransmissionCopyPass, TransparentPass, ShadowPass,
+    BRDFLutComputePass, IBLComputePass, OpaquePass, SceneCullPass, ShadowPass, SimpleForwardPass,
+    ToneMapPass, TransmissionCopyPass, TransparentPass,
 };
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;

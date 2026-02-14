@@ -36,6 +36,6 @@ pub mod shader_manager;
 pub mod vertex;
 
 pub use cache::{
-	FastPipelineKey, FastShadowPipelineKey, PipelineCache, PipelineKey, ShadowPipelineKey,
+    FastPipelineKey, FastShadowPipelineKey, PipelineCache, PipelineKey, ShadowPipelineKey,
 };
 pub use shader_gen::ShaderCompilationOptions;

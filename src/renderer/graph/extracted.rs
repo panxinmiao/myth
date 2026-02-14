@@ -166,7 +166,9 @@ impl ExtractedScene {
 
         for (light, world_matrix) in scene.iter_active_lights() {
             let position = world_matrix.translation.to_vec3();
-            let direction = world_matrix.transform_vector3(-glam::Vec3::Z).normalize_or_zero();
+            let direction = world_matrix
+                .transform_vector3(-glam::Vec3::Z)
+                .normalize_or_zero();
 
             self.lights.push(ExtractedLight {
                 id: light.id,
