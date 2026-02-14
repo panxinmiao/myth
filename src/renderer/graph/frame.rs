@@ -23,10 +23,10 @@
 //! ```
 
 use glam::Mat4;
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
-use crate::renderer::core::{BindGroupContext, ResourceManager};
+use crate::renderer::core::{BindGroupContext, RenderView, ResourceManager};
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
@@ -93,8 +93,17 @@ pub struct RenderLists {
     pub opaque: Vec<RenderCommand>,
     /// 透明物体命令列表（Back-to-Front 排序）
     pub transparent: Vec<RenderCommand>,
-    pub shadow_queues: HashMap<u64, Vec<ShadowRenderCommand>>,
+    /// Shadow command queues, keyed by `(light_id, layer_index)` for per-view culling.
+    ///
+    /// Each cascade of a directional light (or each spot light) gets its own queue.
+    pub shadow_queues: FxHashMap<(u64, u32), Vec<ShadowRenderCommand>>,
     pub shadow_lights: Vec<ShadowLightInstance>,
+
+    /// All active render views for the current frame.
+    ///
+    /// Populated by `SceneCullPass`, consumed by `ShadowPass` and other passes.
+    /// Contains main camera view + all shadow views.
+    pub active_views: Vec<RenderView>,
 
     /// 全局 `BindGroup` ID（用于状态追踪）
     pub gpu_global_bind_group_id: u64,
@@ -112,8 +121,9 @@ impl RenderLists {
         Self {
             opaque: Vec::with_capacity(512),
             transparent: Vec::with_capacity(128),
-            shadow_queues: HashMap::with_capacity(16),
+            shadow_queues: FxHashMap::default(),
             shadow_lights: Vec::with_capacity(16),
+            active_views: Vec::with_capacity(16),
             gpu_global_bind_group_id: 0,
             gpu_global_bind_group: None,
             use_transmission: false,
@@ -127,6 +137,7 @@ impl RenderLists {
         self.transparent.clear();
         self.shadow_queues.clear();
         self.shadow_lights.clear();
+        self.active_views.clear();
         self.gpu_global_bind_group = None;
         self.use_transmission = false;
     }

@@ -17,7 +17,10 @@ impl AppHandler for ShadowBasicDemo {
 
         // scene.environment.ambient_color = Vec3::new(0.1, 0.1, 0.15);
 
-        let cube_geo = engine.assets.geometries.add(Geometry::new_box(1.5, 1.5, 1.5));
+        let cube_geo = engine
+            .assets
+            .geometries
+            .add(Geometry::new_box(1.5, 1.5, 1.5));
         let cube_mat = engine
             .assets
             .materials

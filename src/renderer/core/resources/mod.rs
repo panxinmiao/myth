@@ -321,7 +321,8 @@ impl ResourceManager {
                 size,
                 format: wgpu::TextureFormat::Depth32Float,
                 mip_level_count: 1,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
                 version: 0,
                 generation_id: 0,
                 mipmaps_generated: true,

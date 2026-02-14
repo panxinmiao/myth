@@ -119,6 +119,10 @@ pub struct Frustum {
 }
 
 impl Frustum {
+    /// Extract frustum planes from a **reverse-Z, infinite-far** VP matrix.
+    ///
+    /// This is the default for the main camera (using `perspective_infinite_reverse_rh`).
+    /// Far plane is set to zero (disabled) since the camera has infinite far.
     #[must_use]
     pub fn from_matrix(m: Mat4) -> Self {
         let rows = [m.row(0), m.row(1), m.row(2), m.row(3)];
@@ -141,41 +145,70 @@ impl Frustum {
         // Keep condition: z_c <= w_c => w_c - z_c >= 0
         planes[4] = rows[3] - rows[2]; // Near
 
-        // Infinite far
-        planes[5] = Vec4::new(0.0, 0.0, 0.0, 0.0);
+        // Infinite far — disabled
+        planes[5] = Vec4::ZERO;
 
-        // Normalize with Safety Check
-        for (i, plane) in planes.iter_mut().enumerate() {
-            // Skip Far Plane normalization to prevent NaN
-            if i == 5 {
-                continue;
-            }
+        Self::normalize_planes(&mut planes);
+        Self { planes }
+    }
 
+    /// Extract frustum planes from a **standard-Z [0, 1]** VP matrix.
+    ///
+    /// Use this for shadow projection matrices (both orthographic and perspective)
+    /// where the depth range is standard (near → 0, far → 1).
+    /// Both near and far planes are active.
+    #[must_use]
+    pub fn from_matrix_standard_z(m: Mat4) -> Self {
+        let rows = [m.row(0), m.row(1), m.row(2), m.row(3)];
+
+        let mut planes = [Vec4::ZERO; 6];
+
+        // Left/Right/Bottom/Top: identical to reverse-Z
+        planes[0] = rows[3] + rows[0];
+        planes[1] = rows[3] - rows[0];
+        planes[2] = rows[3] + rows[1];
+        planes[3] = rows[3] - rows[1];
+
+        // Standard Z [0, 1]:
+        // Near:  z_ndc >= 0 → z_c >= 0 → row3
+        // Far:   z_ndc <= 1 → w_c - z_c >= 0 → row4 - row3
+        planes[4] = rows[2];
+        planes[5] = rows[3] - rows[2];
+
+        Self::normalize_planes(&mut planes);
+        Self { planes }
+    }
+
+    /// Extract frustum planes for shadow caster culling from a **standard-Z** VP matrix.
+    ///
+    /// Like [`Self::from_matrix_standard_z`] but disables the near plane so that
+    /// shadow casters towards the light source are never clipped.
+    /// The Left/Right/Bottom/Top/Far planes still provide tight XY and depth culling.
+    #[must_use]
+    pub fn from_matrix_shadow_caster(m: Mat4) -> Self {
+        let mut f = Self::from_matrix_standard_z(m);
+        // Disable near plane — include all casters towards the light
+        f.planes[4] = Vec4::ZERO;
+        f
+    }
+
+    /// Normalize all planes, setting degenerate planes to zero.
+    fn normalize_planes(planes: &mut [Vec4; 6]) {
+        for plane in planes.iter_mut() {
             let length = Vec3::new(plane.x, plane.y, plane.z).length();
-            // Add epsilon check to prevent division by zero
             if length > 1e-6 {
                 *plane /= length;
             } else {
-                // If normal length is 0 (abnormal case), invalidate the plane (never cull)
-                // Set to 0,0,0,0, so dot(center) + 0 < -r is always false (0 < negative)?
-                // No, 0 < -r (r>0) is false. So the object is visible. Safe.
                 *plane = Vec4::ZERO;
             }
         }
-
-        Self { planes }
     }
 
     // Simple sphere intersection test
     #[must_use]
     pub fn intersects_sphere(&self, center: Vec3, radius: f32) -> bool {
-        for (i, plane) in self.planes.iter().enumerate() {
-            // [Optional] Explicitly skip Far Plane (index 5)
-            if i == 5 {
-                continue;
-            }
-
-            // If plane is a zero vector (invalid plane), skip it
+        for plane in &self.planes {
+            // Zero-normal planes are disabled (e.g. infinite far, or disabled near for shadow casters)
             if plane.x == 0.0 && plane.y == 0.0 && plane.z == 0.0 {
                 continue;
             }
@@ -192,13 +225,8 @@ impl Frustum {
     /// Uses plane-AABB test, returns false if AABB is completely outside any plane
     #[must_use]
     pub fn intersects_box(&self, min: Vec3, max: Vec3) -> bool {
-        for (i, plane) in self.planes.iter().enumerate() {
-            // Skip Far Plane
-            if i == 5 {
-                continue;
-            }
-
-            // If plane is a zero vector (invalid plane), skip it
+        for plane in &self.planes {
+            // Zero-normal planes are disabled (e.g. infinite far, or disabled near for shadow casters)
             if plane.x == 0.0 && plane.y == 0.0 && plane.z == 0.0 {
                 continue;
             }

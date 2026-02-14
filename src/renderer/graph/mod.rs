@@ -31,6 +31,7 @@ pub mod node;
 pub mod pass;
 pub mod passes;
 pub mod render_state;
+pub mod shadow_utils;
 pub mod stage;
 
 pub use builder::FrameBuilder;
