@@ -1,6 +1,5 @@
 use core::ops::Range;
 use glam::{Affine3A, Vec3, Vec4};
-use parking_lot::RwLock;
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -304,11 +303,11 @@ pub struct Geometry {
     pub topology: PrimitiveTopology,
     pub draw_range: Range<u32>,
 
-    pub bounding_box: RwLock<Option<BoundingBox>>,
-    pub bounding_sphere: RwLock<Option<BoundingSphere>>,
+    pub bounding_box: BoundingBox,
+    pub bounding_sphere: BoundingSphere,
 
     /// `ShaderDefines` cache: (`layout_version`, `cached_defines`)
-    cached_shader_defines: RwLock<Option<(u64, ShaderDefines)>>,
+    shader_defines: ShaderDefines,
 }
 
 impl Default for Geometry {
@@ -339,9 +338,9 @@ impl Geometry {
             morph_target_count: 0,
             topology: PrimitiveTopology::TriangleList,
             draw_range: 0..u32::MAX,
-            bounding_box: RwLock::new(None),
-            bounding_sphere: RwLock::new(None),
-            cached_shader_defines: RwLock::new(None),
+            bounding_box: BoundingBox::default(),
+            bounding_sphere: BoundingSphere::default(),
+            shader_defines: ShaderDefines::default(),
         }
     }
 
@@ -385,9 +384,14 @@ impl Geometry {
 
         if layout_changed {
             self.layout_version = self.layout_version.wrapping_add(1);
+            self.recompute_shader_defines();
         }
         self.structure_version = self.structure_version.wrapping_add(1);
         self.data_version = self.data_version.wrapping_add(1);
+
+        if name == "position" {
+            self.compute_bounding_volume();
+        }
     }
 
     pub fn remove_attribute(&mut self, name: &str) -> Option<Attribute> {
@@ -395,6 +399,7 @@ impl Geometry {
         if removed.is_some() {
             self.layout_version = self.layout_version.wrapping_add(1);
             self.structure_version = self.structure_version.wrapping_add(1);
+            self.recompute_shader_defines();
         }
         removed
     }
@@ -513,6 +518,7 @@ impl Geometry {
         }
 
         self.data_version = self.data_version.wrapping_add(1);
+        self.recompute_shader_defines();
     }
 
     /// Gets the byte slice of morph position data
@@ -697,7 +703,7 @@ impl Geometry {
         self.set_attribute("normal", normal_attr);
     }
 
-    pub fn compute_bounding_volume(&self) {
+    pub fn compute_bounding_volume(&mut self) {
         let Some(pos_attr) = self.attributes.get("position") else {
             return;
         };
@@ -746,7 +752,7 @@ impl Geometry {
         }
 
         // Update BoundingBox
-        *self.bounding_box.write() = Some(BoundingBox { min, max });
+        self.bounding_box = BoundingBox { min, max };
 
         // Use AABB geometric center as sphere center
         let aabb_center = (min + max) * 0.5;
@@ -774,10 +780,10 @@ impl Geometry {
             }
         }
 
-        *self.bounding_sphere.write() = Some(BoundingSphere {
+        self.bounding_sphere = BoundingSphere {
             center: aabb_center,
             radius: max_dist_sq.sqrt(),
-        });
+        };
     }
 
     /// Sets interleaved attributes
@@ -826,36 +832,25 @@ impl Geometry {
         if let Some(attr) = self.attributes.get_mut(name) {
             attr.update_region(offset_bytes, data);
             self.data_version = self.data_version.wrapping_add(1);
+
+            if name == "position" {
+                self.compute_bounding_volume();
+            }
         }
     }
 
-    /// Computes the geometry's shader macro definitions
-    ///
-    /// Uses internal caching mechanism, only recalculates when `layout_version` changes.
-    /// This avoids Map traversal overhead on the hot path.
-    pub fn shader_defines(&self) -> ShaderDefines {
-        // Fast path: check cache
-        {
-            let cache = self.cached_shader_defines.read();
-            if let Some((cached_version, cached_defines)) = cache.as_ref()
-                && *cached_version == self.layout_version
-            {
-                return cached_defines.clone();
-            }
-        }
-
-        // Slow path: recalculate
+    fn recompute_shader_defines(&mut self) {
         let mut defines = ShaderDefines::new();
 
+        // 1. Attribute-based defines
         for name in self.attributes.keys() {
             let macro_name = format!("HAS_{}", name.to_uppercase());
             defines.set(&macro_name, "1");
         }
 
-        // Morph Target feature detection
+        // 2.Morph Target feature detection
         if self.has_morph_targets() {
             defines.set("HAS_MORPH_TARGETS", "1");
-
             if self.morph_normal_buffer.is_some() {
                 defines.set("HAS_MORPH_NORMALS", "1");
             }
@@ -864,18 +859,23 @@ impl Geometry {
             }
         }
 
-        // Skinning feature detection
+        // 3. Skinning feature detection
         let has_joints = self.attributes.contains_key("joints");
         let has_weights = self.attributes.contains_key("weights");
-
         if has_joints && has_weights {
             defines.set("SUPPORT_SKINNING", "1");
         }
 
-        // Update cache
-        *self.cached_shader_defines.write() = Some((self.layout_version, defines.clone()));
+        // 4. Cache the computed defines
+        self.shader_defines = defines;
+    }
 
-        defines
+    /// Computes the geometry's shader macro definitions
+    ///
+    /// Uses internal caching mechanism, only recalculates when `layout_version` changes.
+    /// This avoids Map traversal overhead on the hot path.
+    pub fn shader_defines(&self) -> &ShaderDefines {
+        &self.shader_defines
     }
 
     #[must_use]

@@ -7,7 +7,6 @@ struct VertexOutput {
     $$ if HAS_UV
     @location({{ loc.next() }}) uv: vec2<f32>,
     $$ endif
-    {$ include 'uv_vetex_output' $}
 };
 
 @vertex
@@ -25,7 +24,6 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 
     $$ if HAS_UV
     out.uv = in.uv;
-    {$ include 'uv_vertex' $}
     $$ endif
 
     return out;

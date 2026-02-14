@@ -1,5 +1,4 @@
 use std::borrow::Cow;
-use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -139,10 +138,11 @@ pub struct Scene {
     // === GPU Resource Descriptors ===
     pub(crate) light_storage_buffer: CpuBuffer<Vec<GpuLightStorage>>,
     pub(crate) uniforms_buffer: CpuBuffer<EnvironmentUniforms>,
-    light_data_cache: RefCell<Vec<GpuLightStorage>>,
+    light_data_cache: Vec<GpuLightStorage>,
 
-    /// Scene `shader_defines` cache: (`environment_version`, `cached_defines`)
-    cached_shader_defines: RefCell<Option<(u64, ShaderDefines)>>,
+    pub shader_defines: ShaderDefines,
+
+    last_env_version: u64,
 
     // === Scene Logic System ===
     pub(crate) logics: Vec<Box<dyn SceneLogic>>,
@@ -195,9 +195,10 @@ impl Scene {
                 Some("SceneEnvironmentUniforms"),
             ),
 
-            light_data_cache: RefCell::new(Vec::with_capacity(16)),
+            light_data_cache: Vec::with_capacity(16),
 
-            cached_shader_defines: RefCell::new(None),
+            shader_defines: ShaderDefines::default(),
+            last_env_version: 0,
 
             logics: Vec::new(),
         }
@@ -680,32 +681,30 @@ impl Scene {
         self.split_primitive_tags.insert(handle, SplitPrimitiveTag);
     }
 
+    /// Synchronizes shader macro definitions based on the current scene state.
+    fn sync_shader_defines(&mut self) {
+        let current_env_version = self.environment.version();
+
+        // Only recompute if the environment version has changed since the last computation
+        if self.last_env_version != current_env_version {
+            let mut defines = ShaderDefines::new();
+
+            // Recompute logic
+            if self.environment.has_env_map() {
+                defines.set("HAS_ENV_MAP", "1");
+            }
+            // ... additional defines based on scene state can be added here ...
+
+            self.shader_defines = defines;
+            self.last_env_version = current_env_version;
+        }
+    }
+
     /// Computes the scene's shader macro definitions
     ///
     /// Uses internal caching mechanism, only recalculates when Environment version changes.
-    pub fn shader_defines(&self) -> ShaderDefines {
-        let env_version = self.environment.version();
-
-        // Fast path: check cache
-        {
-            let cache = self.cached_shader_defines.borrow();
-            if let Some((cached_version, cached_defines)) = cache.as_ref()
-                && *cached_version == env_version
-            {
-                return cached_defines.clone();
-            }
-        }
-
-        // Slow path: recalculate
-        let mut defines = ShaderDefines::new();
-        if self.environment.has_env_map() {
-            defines.set("HAS_ENV_MAP", "1");
-        }
-
-        // Update cache
-        *self.cached_shader_defines.borrow_mut() = Some((env_version, defines.clone()));
-
-        defines
+    pub fn shader_defines(&self) -> &ShaderDefines {
+        &self.shader_defines
     }
 
     // ========================================================================
@@ -740,6 +739,7 @@ impl Scene {
         self.update_matrix_world();
         self.update_skeletons();
         self.sync_morph_weights();
+        self.sync_shader_defines();
         self.sync_gpu_buffers();
     }
 
@@ -751,53 +751,55 @@ impl Scene {
 
     /// Syncs light data to GPU Buffer
     fn sync_light_buffer(&mut self) {
-        {
-            let mut cache = self.light_data_cache.borrow_mut();
-            cache.clear();
+        let mut cache = std::mem::take(&mut self.light_data_cache);
 
-            for (light, world_matrix) in self.iter_active_lights() {
-                let pos = world_matrix.translation.to_vec3();
-                let dir = world_matrix.transform_vector3(-Vec3::Z).normalize();
+        cache.clear();
 
-                let mut gpu_light = GpuLightStorage {
-                    color: light.color,
-                    intensity: light.intensity,
-                    position: pos,
-                    direction: dir,
-                    shadow_layer_index: -1,
-                    ..Default::default()
-                };
+        for (light, world_matrix) in self.iter_active_lights() {
+            let pos = world_matrix.translation.to_vec3();
+            let dir = world_matrix.transform_vector3(-Vec3::Z).normalize();
 
-                match &light.kind {
-                    LightKind::Point(point) => {
-                        gpu_light.light_type = 1;
-                        gpu_light.range = point.range;
-                    }
-                    LightKind::Spot(spot) => {
-                        gpu_light.light_type = 2;
-                        gpu_light.range = spot.range;
-                        gpu_light.inner_cone_cos = spot.inner_cone.cos();
-                        gpu_light.outer_cone_cos = spot.outer_cone.cos();
-                    }
-                    LightKind::Directional(_) => {
-                        gpu_light.light_type = 0;
-                    }
+            let mut gpu_light = GpuLightStorage {
+                color: light.color,
+                intensity: light.intensity,
+                position: pos,
+                direction: dir,
+                shadow_layer_index: -1,
+                ..Default::default()
+            };
+
+            match &light.kind {
+                LightKind::Point(point) => {
+                    gpu_light.light_type = 1;
+                    gpu_light.range = point.range;
                 }
-
-                cache.push(gpu_light);
+                LightKind::Spot(spot) => {
+                    gpu_light.light_type = 2;
+                    gpu_light.range = spot.range;
+                    gpu_light.inner_cone_cos = spot.inner_cone.cos();
+                    gpu_light.outer_cone_cos = spot.outer_cone.cos();
+                }
+                LightKind::Directional(_) => {
+                    gpu_light.light_type = 0;
+                }
             }
 
-            if cache.is_empty() {
-                cache.push(GpuLightStorage::default());
-            }
+            cache.push(gpu_light);
         }
 
-        let cache_ref = self.light_data_cache.borrow();
+        if cache.is_empty() {
+            cache.push(GpuLightStorage::default());
+        }
 
-        let needs_update = self.light_storage_buffer.read().as_slice() != cache_ref.as_slice();
+        self.light_data_cache = cache;
+
+        let needs_update =
+            self.light_storage_buffer.read().as_slice() != self.light_data_cache.as_slice();
 
         if needs_update {
-            self.light_storage_buffer.write().clone_from(&cache_ref);
+            self.light_storage_buffer
+                .write()
+                .clone_from(&self.light_data_cache);
         }
     }
 
@@ -917,13 +919,7 @@ impl Scene {
         }
 
         // When there's no skeleton binding, use Geometry's bounding box
-        let local_bbox = if let Some(bbox) = geometry.bounding_box.read().as_ref() {
-            *bbox
-        } else {
-            geometry.compute_bounding_volume();
-            *geometry.bounding_box.read().as_ref()?
-        };
-
+        let local_bbox = geometry.bounding_box;
         Some(local_bbox.transform(&node.transform.world_matrix))
     }
 
