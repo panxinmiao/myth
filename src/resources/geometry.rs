@@ -206,14 +206,17 @@ pub struct BoundingBox {
 
 impl BoundingBox {
     #[must_use]
+    #[inline]
     pub fn center(&self) -> Vec3 {
         (self.min + self.max) * 0.5
     }
     #[must_use]
+    #[inline]
     pub fn size(&self) -> Vec3 {
         self.max - self.min
     }
     #[must_use]
+    #[inline]
     pub fn union(&self, other: &BoundingBox) -> BoundingBox {
         BoundingBox {
             min: self.min.min(other.min),
@@ -252,11 +255,25 @@ impl BoundingBox {
 
     // Simple inflation method
     #[must_use]
+    #[inline]
     pub fn inflate(&self, amount: f32) -> Self {
         Self {
             min: self.min * Vec3::splat(1.0 - amount),
             max: self.max * Vec3::splat(1.0 + amount),
         }
+    }
+
+    pub fn infinite() -> Self {
+        Self {
+            min: Vec3::splat(f32::NEG_INFINITY),
+            max: Vec3::splat(f32::INFINITY),
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_finite(&self) -> bool {
+        self.min.is_finite() && self.max.is_finite()
     }
 }
 
