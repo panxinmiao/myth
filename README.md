@@ -41,6 +41,7 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
 * **Full glTF 2.0 Support**: Complete support for glTF 2.0 specification, including PBR materials, animations, and scene hierarchy.
 * **HDR Rendering Pipeline**: Full support for HDR Rendering, various tone mapping mode.
 * **MSAA**: Built-in Multi-Sample Anti-Aliasing.
+* **Shadows**: Cascaded shadow maps.
 * **Transient Render Graph**: A highly optimized, frame-graph based rendering architecture that minimizes overhead and maximizes flexibility.
 * **Asset System**: Asynchronous asset loading with `AssetServer`, built-in **glTF 2.0** support (geometry, materials, animations).
 * **Tooling Ready**: Includes a powerful `gltf_viewer` example with an embedded **Inspector UI** (based on egui), capable of inspecting scene nodes, materials, and textures at runtime.
