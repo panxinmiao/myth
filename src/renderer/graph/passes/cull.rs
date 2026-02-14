@@ -161,7 +161,7 @@ impl SceneCullPass {
 
                         let mut options = ShaderCompilationOptions::from_merged(
                             &mat_defines,
-                            &geo_defines,
+                            geo_defines,
                             &ctx.extracted_scene.scene_defines,
                             &item.item_shader_defines,
                         );
@@ -439,7 +439,7 @@ impl SceneCullPass {
 
                         let mut options = ShaderCompilationOptions::from_merged(
                             &mat_defines,
-                            &geo_defines,
+                            geo_defines,
                             &crate::resources::shader_defines::ShaderDefines::new(),
                             &item.item_shader_defines,
                         );

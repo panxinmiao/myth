@@ -34,6 +34,7 @@ pub struct GeneratedVertexLayout {
     pub attribute_locations: FxHashMap<String, u32>,
 }
 
+#[must_use]
 pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
     let mut buffer_groups: FxHashMap<u64, Vec<(&String, &Attribute)>> = FxHashMap::default();
 

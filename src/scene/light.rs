@@ -22,7 +22,7 @@ impl Default for ShadowConfig {
         Self {
             bias: 0.001,
             normal_bias: 0.02,
-            map_size: 1024,
+            map_size: 2048,
             cascade_count: 4,
             cascade_split_lambda: 0.5,
             max_shadow_distance: 100.0,

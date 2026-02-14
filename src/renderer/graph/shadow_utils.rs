@@ -38,11 +38,11 @@ pub fn compute_cascade_splits(
     let mut splits = [0.0f32; MAX_CASCADES as usize];
     let n = cascade_count.min(MAX_CASCADES) as usize;
 
-    for i in 0..n {
+    for (i, split) in splits.iter_mut().enumerate().take(n) {
         let p = (i + 1) as f32 / n as f32;
         let log_split = near * (far / near).powf(p);
         let uni_split = near + (far - near) * p;
-        splits[i] = lambda * log_split + (1.0 - lambda) * uni_split;
+        *split = lambda * log_split + (1.0 - lambda) * uni_split;
     }
 
     // Ensure the last split reaches the far plane
@@ -239,9 +239,9 @@ pub fn build_directional_views(
     let mut views = Vec::with_capacity(cascade_count as usize);
     let mut prev_split = cam_near;
 
-    for c in 0..cascade_count as usize {
+    for (c, split) in splits.iter().enumerate().take(cascade_count as usize) {
         let slice_near = prev_split;
-        let slice_far = splits[c];
+        let slice_far = *split;
         prev_split = slice_far;
 
         let corners = compute_frustum_corners_world(camera, slice_near, slice_far);

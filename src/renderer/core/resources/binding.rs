@@ -348,6 +348,7 @@ impl ResourceManager {
         (layout, id)
     }
 
+    #[allow(clippy::too_many_lines)]
     pub fn create_bind_group(
         &self,
         layout: &wgpu::BindGroupLayout,
@@ -449,15 +450,13 @@ impl ResourceManager {
                                 }
                             }
                         }
+                    } else if matches!(
+                        layout_entries[i].ty,
+                        wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison)
+                    ) {
+                        &self.shadow_compare_sampler.sampler
                     } else {
-                        if matches!(
-                            layout_entries[i].ty,
-                            wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison)
-                        ) {
-                            &self.shadow_compare_sampler.sampler
-                        } else {
-                            &self.dummy_sampler.sampler
-                        }
+                        &self.dummy_sampler.sampler
                     };
                     wgpu::BindingResource::Sampler(sampler)
                 }
