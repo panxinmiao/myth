@@ -97,6 +97,12 @@ pub struct ExtractedScene {
 struct CollectedMesh {
     pub node_handle: NodeHandle,
     pub skeleton: Option<SkeletonKey>,
+
+    pub world_matrix: Mat4,
+    pub world_aabb: BoundingBox,
+    pub item_variant_flags: u32,
+    pub cast_shadows: bool,
+    pub receive_shadows: bool,
 }
 
 impl ExtractedScene {
@@ -221,25 +227,51 @@ impl ExtractedScene {
                     continue;
                 }
 
-                let geo_handle = mesh.geometry;
-
-                if !geo_guard.map.contains_key(geo_handle) {
-                    log::warn!("Node {node_handle:?} refers to missing Geometry {geo_handle:?}");
+                let Some(geometry) = geo_guard.map.get(mesh.geometry) else {
+                    log::warn!("Node {node_handle:?} refers to missing Geometry");
                     continue;
-                }
+                };
 
+                // 2. prepare basic data
+                let node_world = node.transform.world_matrix;
+                let world_matrix = Mat4::from(node_world);
                 let skin_binding = scene.skins.get(node_handle);
+                let skeleton_key = skin_binding.map(|s| s.skeleton);
+
+                // 3. calculate Flags (pure math calculation)
+                let has_negative_scale = world_matrix.determinant() < 0.0;
+                let has_negative_scale_flag = u32::from(has_negative_scale);
+                let has_skeleton_flag = u32::from(skeleton_key.is_some()) << 1;
+                let item_variant_flags = has_negative_scale_flag | has_skeleton_flag;
+
+                // Pre-compute world-space axis-aligned bounding box for frustum culling in Cull phase.
+                // Priority: skeleton bounds > geometry AABB > geometry bounding sphere > infinite
+                let world_aabb = if let Some(key) = skeleton_key
+                    && let Some(skel) = scene.skeleton_pool.get(key)
+                    && let Some(local_bounds) = skel.local_bounds()
+                {
+                    // Skeleton bounds (if available) provide a better fit than static geometry bounds, because they account for animation deformation.
+                    local_bounds.transform(&node_world)
+                } else {
+                    // Static mesh bounding box
+                    geometry.bounding_box.transform(&node_world)
+                };
 
                 self.collected_meshes.push(CollectedMesh {
                     node_handle,
-                    skeleton: skin_binding.map(|skin| skin.skeleton),
+                    skeleton: skeleton_key,
+                    world_matrix,
+                    world_aabb,
+                    item_variant_flags,
+                    cast_shadows: mesh.cast_shadows,
+                    receive_shadows: mesh.receive_shadows,
                 });
 
-                if let Some(binding) = skin_binding {
-                    self.collected_skeleton_keys.insert(binding.skeleton);
+                if let Some(key) = skeleton_key {
+                    self.collected_skeleton_keys.insert(key);
                 }
             }
-        }
+        } // release geometry read lock here
 
         // =========================================================
         // Phase 2: Prepare resources & build render items (no lock)
@@ -255,26 +287,14 @@ impl ExtractedScene {
         // Ensure model buffer capacity
         resource_manager.ensure_model_buffer_capacity(self.collected_meshes.len());
 
-        // Pre-compute world bounding spheres (requires geo lock)
-        let geo_guard = assets.geometries.read_lock();
+        for item in &self.collected_meshes {
+            // let node_handle = collected_mesh.node_handle;
 
-        for collected_mesh in &self.collected_meshes {
-            let node_handle = collected_mesh.node_handle;
-
-            let Some(node) = scene.nodes.get(node_handle) else {
+            let Some(mesh) = scene.meshes.get_mut(item.node_handle) else {
                 continue;
             };
+            let skeleton = item.skeleton.and_then(|k| scene.skeleton_pool.get(k));
 
-            let Some(mesh) = scene.meshes.get_mut(node_handle) else {
-                continue;
-            };
-
-            let node_world = node.transform.world_matrix;
-            let world_matrix = Mat4::from(node_world);
-
-            let skeleton = collected_mesh
-                .skeleton
-                .and_then(|key| scene.skeleton_pool.get(key));
             mesh.update_morph_uniforms();
 
             let Some(object_bind_group) = resource_manager.prepare_mesh(assets, mesh, skeleton)
@@ -291,51 +311,17 @@ impl ExtractedScene {
                 item_shader_defines.set("RECEIVE_SHADOWS", "1");
             }
 
-            let has_negative_scale = world_matrix.determinant() < 0.0;
-            let has_negative_scale_flag = u32::from(has_negative_scale);
-
-            let has_skeleton = skeleton.is_some();
-            let has_skeleton_flag = u32::from(has_skeleton) << 1;
-
-            // compose item variant flags (has_negative_scale, has_skeleton)
-            let item_variant_flags = has_negative_scale_flag | has_skeleton_flag;
-
-            // Pre-compute world-space axis-aligned bounding box for frustum culling in Cull phase.
-            // Priority: skeleton bounds > geometry AABB > geometry bounding sphere > infinite
-            let world_aabb = if let Some(binding) = scene.skins.get(node_handle)
-                && let Some(skel) = scene.skeleton_pool.get(binding.skeleton)
-            {
-                if let Some(local_bounds) = skel.local_bounds() {
-                    local_bounds.transform(&node_world)
-                } else {
-                    // Skeleton bounds not yet computed, treat as always visible
-                    BoundingBox::infinite()
-                }
-            } else if let Some(geometry) = geo_guard.map.get(mesh.geometry) {
-                let bbox = geometry.bounding_box;
-
-                bbox.transform(&node_world)
-            } else {
-                #[cfg(debug_assertions)]
-                log::warn!(
-                    "Geometry {:?} has zero bounds! Did you forget to set position?",
-                    mesh.geometry
-                );
-
-                BoundingBox::infinite()
-            };
-
             self.render_items.push(ExtractedRenderItem {
-                node_handle,
-                world_matrix,
+                node_handle: item.node_handle,
+                world_matrix: item.world_matrix,
                 object_bind_group,
                 geometry: mesh.geometry,
                 material: mesh.material,
-                item_variant_flags,
+                item_variant_flags: item.item_variant_flags,
                 item_shader_defines,
-                cast_shadows: mesh.cast_shadows,
-                receive_shadows: mesh.receive_shadows,
-                world_aabb,
+                cast_shadows: item.cast_shadows,
+                receive_shadows: item.receive_shadows,
+                world_aabb: item.world_aabb,
             });
         }
     }
