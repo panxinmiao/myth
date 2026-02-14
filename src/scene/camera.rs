@@ -2,6 +2,8 @@ use glam::{Affine3A, Mat4, Vec3, Vec3A, Vec4};
 use std::borrow::Cow;
 use uuid::Uuid;
 
+use crate::resources::BoundingBox;
+
 /// [New] Pure stack-based render camera object (POD)
 /// TODO: Consider directly satisfying std140 alignment requirements?
 #[repr(C)]
@@ -206,6 +208,7 @@ impl Frustum {
 
     // Simple sphere intersection test
     #[must_use]
+    #[inline]
     pub fn intersects_sphere(&self, center: Vec3, radius: f32) -> bool {
         for plane in &self.planes {
             // Zero-normal planes are disabled (e.g. infinite far, or disabled near for shadow casters)
@@ -224,6 +227,7 @@ impl Frustum {
     /// AABB vs frustum intersection test
     /// Uses plane-AABB test, returns false if AABB is completely outside any plane
     #[must_use]
+    #[inline]
     pub fn intersects_box(&self, min: Vec3, max: Vec3) -> bool {
         for plane in &self.planes {
             // Zero-normal planes are disabled (e.g. infinite far, or disabled near for shadow casters)
@@ -245,5 +249,12 @@ impl Frustum {
             }
         }
         true
+    }
+
+    /// AABB vs frustum intersection test
+    #[must_use]
+    #[inline]
+    pub fn intersects_aabb(&self, aabb: &BoundingBox) -> bool {
+        self.intersects_box(aabb.min, aabb.max)
     }
 }

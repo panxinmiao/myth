@@ -16,6 +16,7 @@ use glam::{Mat4, Vec3};
 
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::renderer::core::{BindGroupContext, ResourceManager};
+use crate::resources::BoundingBox;
 use crate::resources::shader_defines::ShaderDefines;
 use crate::scene::camera::RenderCamera;
 use crate::scene::environment::Environment;
@@ -46,10 +47,8 @@ pub struct ExtractedRenderItem {
     pub cast_shadows: bool,
     pub receive_shadows: bool,
 
-    /// World-space bounding sphere (center, radius).
-    /// Pre-computed during Extract for efficient frustum culling in the Cull phase.
-    /// If no bounding volume is available, `radius` is `f32::INFINITY` (always passes culling).
-    pub world_bounding_sphere: (Vec3, f32),
+    /// World-space axis-aligned bounding box.
+    pub world_aabb: BoundingBox,
 }
 
 #[derive(Clone)]
@@ -301,28 +300,22 @@ impl ExtractedScene {
             // compose item variant flags (has_negative_scale, has_skeleton)
             let item_variant_flags = has_negative_scale_flag | has_skeleton_flag;
 
-            // Pre-compute world-space bounding sphere for frustum culling in Cull phase.
+            // Pre-compute world-space axis-aligned bounding box for frustum culling in Cull phase.
             // Priority: skeleton bounds > geometry AABB > geometry bounding sphere > infinite
-            let world_bounding_sphere = if let Some(binding) = scene.skins.get(node_handle) {
-                if let Some(skel) = scene.skeleton_pool.get(binding.skeleton) {
-                    if let Some(local_bounds) = skel.local_bounds() {
-                        let world_bounds = local_bounds.transform(&node_world);
-                        let center = (world_bounds.min + world_bounds.max) * 0.5;
-                        let radius = (world_bounds.max - world_bounds.min).length() * 0.5;
-                        (center, radius)
-                    } else {
-                        // Skeleton bounds not yet computed, treat as always visible
-                        (node_world.translation.into(), f32::INFINITY)
-                    }
+            let world_aabb = if let Some(binding) = scene.skins.get(node_handle)
+                && let Some(skel) = scene.skeleton_pool.get(binding.skeleton)
+            {
+                if let Some(local_bounds) = skel.local_bounds() {
+                    let world_bounds = local_bounds.transform(&node_world);
+                    world_bounds
                 } else {
-                    (node_world.translation.into(), f32::INFINITY)
+                    // Skeleton bounds not yet computed, treat as always visible
+                    BoundingBox::infinite()
                 }
             } else if let Some(geometry) = geo_guard.map.get(mesh.geometry) {
                 let bbox = geometry.bounding_box;
                 let world_bounds = bbox.transform(&node_world);
-                let center = (world_bounds.min + world_bounds.max) * 0.5;
-                let radius = (world_bounds.max - world_bounds.min).length() * 0.5;
-                (center, radius)
+                world_bounds
             } else {
                 #[cfg(debug_assertions)]
                 log::warn!(
@@ -330,7 +323,7 @@ impl ExtractedScene {
                     mesh.geometry
                 );
 
-                (node_world.translation.into(), f32::INFINITY)
+                BoundingBox::infinite()
             };
 
             self.render_items.push(ExtractedRenderItem {
@@ -343,7 +336,7 @@ impl ExtractedScene {
                 item_shader_defines,
                 cast_shadows: mesh.cast_shadows,
                 receive_shadows: mesh.receive_shadows,
-                world_bounding_sphere,
+                world_aabb,
             });
         }
     }

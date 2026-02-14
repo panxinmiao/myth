@@ -108,8 +108,8 @@ impl SceneCullPass {
                 let item = &ctx.extracted_scene.render_items[item_idx];
 
                 // ========== Main Camera Frustum Culling ==========
-                let (center, radius) = item.world_bounding_sphere;
-                if radius.is_finite() && !camera_frustum.intersects_sphere(center, radius) {
+                let aabb = item.world_aabb;
+                if aabb.is_finite() && !camera_frustum.intersects_aabb(&aabb) {
                     continue;
                 }
 
@@ -298,13 +298,14 @@ impl SceneCullPass {
                     continue;
                 }
 
-                let (center_ws, radius_ws) = item.world_bounding_sphere;
+                let aabb = item.world_aabb;
                 // Items with infinite radius are unbounded; use position only
-                let effective_radius = if radius_ws.is_finite() {
-                    radius_ws
+                let effective_radius = if aabb.is_finite() {
+                    aabb.size().length() * 0.5
                 } else {
                     0.0
                 };
+                let center_ws = aabb.center();
                 let distance = camera_pos.distance(center_ws) + effective_radius;
                 max_distance = max_distance.max(distance);
             }
@@ -395,13 +396,9 @@ impl SceneCullPass {
                     continue;
                 }
 
-                // Per-view frustum culling using pre-computed bounding sphere
-                let (caster_center_ws, caster_radius_ws) = item.world_bounding_sphere;
-                if caster_radius_ws.is_finite()
-                    && !view
-                        .frustum
-                        .intersects_sphere(caster_center_ws, caster_radius_ws)
-                {
+                // Per-view frustum culling using pre-computed bounding boxes
+                let aabb = item.world_aabb;
+                if aabb.is_finite() && !view.frustum.intersects_aabb(&aabb) {
                     continue;
                 }
 
