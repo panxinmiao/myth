@@ -202,6 +202,8 @@ struct GltfViewer {
     // === Render Settings ===
     /// IBL toggle
     ibl_enabled: bool,
+
+    light_node: NodeHandle,
     /// HDR rendering toggle (cached from renderer)
     hdr_enabled: bool,
     /// MSAA sample count (cached from renderer)
@@ -259,7 +261,7 @@ impl AppHandler for GltfViewer {
             }
         });
 
-        scene.environment.set_ambient_color(Vec3::splat(0.3));
+        scene.environment.set_ambient_color(Vec3::splat(0.1));
 
         // 3. 添加灯光
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0);
@@ -327,6 +329,7 @@ impl AppHandler for GltfViewer {
 
             // 渲染设置
             ibl_enabled: true,
+            light_node: light_node,
             hdr_enabled: true, // Match RenderSettings in main()
             msaa_samples: 4,   // Match RenderSettings in main()
 
@@ -472,7 +475,7 @@ impl GltfViewer {
         {
             log::info!("Applying HDR environment map");
             scene.environment.set_env_map(Some(texture));
-            scene.environment.set_intensity(1.0);
+            scene.environment.set_intensity(3.0);
         }
 
         // 处理 Prefab 加载结果 - 实例化到场景中
@@ -1042,14 +1045,37 @@ impl GltfViewer {
                     ui.separator();
 
                     // --- IBL 环境贴图 ---
-                    if ui
-                        .checkbox(&mut self.ibl_enabled, "IBL (Environment Map)")
-                        .changed()
-                    {
-                        scene
-                            .environment
-                            .set_intensity(if self.ibl_enabled { 1.0 } else { 0.0 });
-                    }
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut self.ibl_enabled, "IBL").changed() {
+                            scene.environment.set_intensity(if self.ibl_enabled {
+                                3.0
+                            } else {
+                                0.0
+                            });
+                        }
+
+                        if self.ibl_enabled {
+                            ui.add(
+                                egui::Slider::new(&mut scene.environment.intensity, 0.1..=5.0)
+                                    .step_by(0.1)
+                                    .logarithmic(true),
+                            );
+                        }
+                    });
+
+                    ui.horizontal(|ui| {
+                        if let Some(light_bundle) = scene.get_light_bundle(self.light_node) {
+                            ui.checkbox(&mut light_bundle.1.visible, "Light");
+                            if light_bundle.1.visible {
+                                ui.add(
+                                    egui::Slider::new(&mut light_bundle.0.intensity, 0.1..=5.0)
+                                        .step_by(0.1)
+                                        .logarithmic(true),
+                                );
+                                // ui.checkbox(&mut light_bundle.0.cast_shadows, "Cast Shadows");
+                            }
+                        }
+                    });
 
                     ui.separator();
 

@@ -316,14 +316,14 @@ impl RenderNode for UiPass {
         // 3. 录制绘制命令
         {
             let mut rpass = encoder
-                .begin_render_pass(&egui_wgpu::wgpu::RenderPassDescriptor {
+                .begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("egui Pass"),
-                    color_attachments: &[Some(egui_wgpu::wgpu::RenderPassColorAttachment {
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                         view,
                         resolve_target: None,
-                        ops: egui_wgpu::wgpu::Operations {
-                            load: egui_wgpu::wgpu::LoadOp::Load, // 覆盖在原画面上
-                            store: egui_wgpu::wgpu::StoreOp::Store,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Load,
+                            store: wgpu::StoreOp::Store,
                         },
                         depth_slice: None,
                     })],

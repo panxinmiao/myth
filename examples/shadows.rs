@@ -2,8 +2,8 @@ use std::env;
 use std::path::Path;
 use std::sync::Arc;
 
+use myth::prelude::*;
 use myth::utils::FpsCounter;
-use myth::{PlaneOptions, create_plane, prelude::*};
 use winit::window::Window;
 
 /// Skinning Animation Example
@@ -25,7 +25,7 @@ impl AppHandler for SkinningDemo {
             &args[1]
         } else {
             println!("Tip: You can pass a model path as an argument.");
-            println!("Usage: cargo run --example skinning -- <path_to_gltf>");
+            println!("Usage: cargo run --example shadows -- <path_to_gltf>");
             println!("No path provided, loading default: {}", default_path);
             default_path
         };
@@ -53,16 +53,15 @@ impl AppHandler for SkinningDemo {
         let light_node = scene.add_light(dir_light);
 
         if let Some(node) = scene.get_node_mut(light_node) {
-            node.transform.position = Vec3::new(8.0, 12.0, 6.0);
+            node.transform.position = Vec3::new(0.0, 12.0, 6.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
 
-        let ground_geo = engine.assets.geometries.add(create_plane(&PlaneOptions {
-            width: 30.0,
-            height: 30.0,
-            ..Default::default()
-        }));
-        let ground_material = MeshPhongMaterial::new(Vec4::new(0.8, 0.8, 0.85, 1.0));
+        let ground_geo = engine
+            .assets
+            .geometries
+            .add(Geometry::new_plane(30.0, 30.0));
+        let ground_material = MeshPhongMaterial::new(Vec4::new(0.2, 0.3, 0.4, 1.0));
         ground_material.set_side(Side::Double);
         let ground_mat = engine.assets.materials.add(ground_material);
         let mut ground = Mesh::new(ground_geo, ground_mat);
@@ -106,7 +105,7 @@ impl AppHandler for SkinningDemo {
         let cam_node_id = scene.add_camera(camera);
 
         if let Some(node) = scene.get_node_mut(cam_node_id) {
-            node.transform.position = Vec3::new(0.0, 1.5, 4.0); // 稍微抬高一点视角
+            node.transform.position = Vec3::new(0.0, 1.5, 4.0);
             node.transform.look_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y);
         }
         scene.active_camera = Some(cam_node_id);
