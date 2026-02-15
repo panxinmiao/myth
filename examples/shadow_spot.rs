@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use myth::prelude::*;
 use myth::utils::fps_counter::FpsCounter;
-use myth::{PlaneOptions, create_plane};
 use winit::window::Window;
 
 struct ShadowSpotDemo {
@@ -27,11 +26,10 @@ impl AppHandler for ShadowSpotDemo {
             node.transform.position = Vec3::new(0.0, 1.0, 0.0);
         }
 
-        let floor_geo = engine.assets.geometries.add(create_plane(&PlaneOptions {
-            width: 25.0,
-            height: 25.0,
-            ..Default::default()
-        }));
+        let floor_geo = engine
+            .assets
+            .geometries
+            .add(Geometry::new_plane(30.0, 30.0));
         let floor_material = MeshPhysicalMaterial::new(Vec4::new(0.9, 0.9, 0.9, 1.0));
         floor_material.set_side(Side::Double);
         let floor_mat = engine.assets.materials.add(floor_material);

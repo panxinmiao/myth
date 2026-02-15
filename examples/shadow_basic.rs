@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use myth::prelude::*;
 use myth::utils::fps_counter::FpsCounter;
-use myth::{PlaneOptions, create_plane};
 use winit::window::Window;
 
 struct ShadowBasicDemo {
@@ -32,11 +31,10 @@ impl AppHandler for ShadowBasicDemo {
             node.transform.position = Vec3::new(0.0, 3.2, 0.0);
         }
 
-        let ground_geo = engine.assets.geometries.add(create_plane(&PlaneOptions {
-            width: 30.0,
-            height: 30.0,
-            ..Default::default()
-        }));
+        let ground_geo = engine
+            .assets
+            .geometries
+            .add(Geometry::new_plane(30.0, 30.0));
         let ground_material = MeshPhongMaterial::new(Vec4::new(0.8, 0.8, 0.85, 1.0));
         ground_material.set_side(Side::Double);
         let ground_mat = engine.assets.materials.add(ground_material);
