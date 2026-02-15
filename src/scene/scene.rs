@@ -388,6 +388,13 @@ impl Scene {
         self.lights.get_mut(handle)
     }
 
+    /// Gets both the Light component and Transform for a node (for light processing)
+    pub fn get_light_bundle(&mut self, handle: NodeHandle) -> Option<(&mut Light, &mut Node)> {
+        let light = self.lights.get_mut(handle)?;
+        let node = self.nodes.get_mut(handle)?;
+        Some((light, node))
+    }
+
     /// Binds a skeleton to a node
     pub fn bind_skeleton(
         &mut self,
@@ -449,7 +456,11 @@ impl Scene {
     pub fn iter_active_lights(&self) -> impl Iterator<Item = (&Light, &Affine3A)> {
         self.lights.iter().filter_map(move |(node_handle, light)| {
             let node = self.nodes.get(node_handle)?;
-            Some((light, &node.transform.world_matrix))
+            if node.visible {
+                Some((light, &node.transform.world_matrix))
+            } else {
+                None
+            }
         })
     }
 
