@@ -34,7 +34,7 @@ impl AppHandler for HttpGltfExample {
         let light_node = scene.add_light(dir_light);
 
         if let Some(node) = scene.get_node_mut(light_node) {
-            node.transform.position = Vec3::new(2.0, 12.0, 4.0);
+            node.transform.position = Vec3::new(2.0, 12.0, 6.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
 

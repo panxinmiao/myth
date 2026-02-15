@@ -30,7 +30,7 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # Graphics and Math
 wgpu = { version = "28.0", features = ["wgsl"] } #
-glam = { version = "0.31", features = ["bytemuck", "scalar-math"] }
+glam = { version = "0.32", features = ["bytemuck", "scalar-math"] }
 bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
 
 # Windowing and Input
@@ -49,16 +49,16 @@ gltf = {git = "https://github.com/panxinmiao/gltf.git", rev = "077dd0af4fccd6bd4
 base64 = "0.22"
 
 # Networking (HTTP)
-reqwest = { version = "0.13.1", default-features = false, optional = true }
+reqwest = { version = "0.13.2", default-features = false, optional = true }
 url = { version = "2.5", optional = true }
 
 # Utilities
 thiserror = "2.0"
 log = "0.4"
-env_logger = "0.11"
+env_logger = "0.11.9"
 pollster = "0.4"
 paste = "1.0"
-uuid = { version = "1.20.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
+uuid = { version = "1.21.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 slotmap = { version = "1.1.1", features = ["serde"] } 
 smallvec = "1.15"
@@ -66,8 +66,8 @@ half = "2.7"
 rustc-hash = "2.1" 
 lasso = { version = "0.7", features = ["multi-threaded"] } 
 parking_lot = { version = "0.12", features = ["deadlock_detection"] } 
-futures = "0.3"
-bitflags = "2.10.0"
+futures = "0.3.32"
+bitflags = "2.11.0"
 
 # Templating
 minijinja = { version = "2.15", features = ["loader", "custom_syntax"] }
