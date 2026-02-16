@@ -18,6 +18,7 @@ use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::renderer::core::{BindGroupContext, ResourceManager};
 use crate::resources::BoundingBox;
 use crate::resources::shader_defines::ShaderDefines;
+use crate::scene::background::BackgroundMode;
 use crate::scene::camera::RenderCamera;
 use crate::scene::environment::Environment;
 use crate::scene::light::{LightKind, ShadowConfig};
@@ -85,7 +86,7 @@ pub struct ExtractedScene {
     /// Scene's shader macro definitions
     pub scene_defines: ShaderDefines,
     pub scene_id: u32,
-    pub background: Option<glam::Vec4>,
+    pub background: BackgroundMode,
     pub envvironment: Environment,
     pub has_transmission: bool,
     pub lights: Vec<ExtractedLight>,
@@ -113,7 +114,7 @@ impl ExtractedScene {
             render_items: Vec::new(),
             scene_defines: ShaderDefines::new(),
             scene_id: 0,
-            background: None,
+            background: BackgroundMode::default(),
             envvironment: Environment::default(),
             has_transmission: false,
             lights: Vec::new(),
@@ -129,7 +130,7 @@ impl ExtractedScene {
             render_items: Vec::with_capacity(item_capacity),
             scene_defines: ShaderDefines::new(),
             scene_id: 0,
-            background: None,
+            background: BackgroundMode::default(),
             envvironment: Environment::default(),
             has_transmission: false,
             lights: Vec::with_capacity(16),
@@ -328,7 +329,7 @@ impl ExtractedScene {
 
     /// Extract environment data
     fn extract_environment(&mut self, scene: &Scene) {
-        // self.background = scene.background;
+        self.background = scene.background.clone();
         self.scene_defines = scene.shader_defines.clone();
         self.scene_id = scene.id;
         self.envvironment = scene.environment.clone();

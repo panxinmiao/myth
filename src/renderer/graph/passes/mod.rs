@@ -15,6 +15,9 @@
 //! - [`TransmissionCopyPass`][]: 复制场景颜色供 Transmission 使用
 //! - [`TransparentPass`][]: 仅绘制透明物体
 //!
+//! ## 天空/背景 Pass
+//! - [`SkyboxPass`]: 渲染天空盒/渐变/全景贴图背景
+//!
 //! ## 计算 Pass
 //! - [`BRDFLutComputePass`]: BRDF LUT 预计算
 //! - [`IBLComputePass`]: IBL 预滤波
@@ -31,7 +34,7 @@
 //!
 //! ## PBR Path (HDR/Physical)
 //! ```text
-//! SceneCullPass → OpaquePass → [TransmissionCopyPass] → TransparentPass → ToneMapPass → Surface
+//! SceneCullPass → OpaquePass → [SkyboxPass] → [TransmissionCopyPass] → TransparentPass → ToneMapPass → Surface
 //! ```
 
 mod brdf_lut_compute;
@@ -40,6 +43,7 @@ mod ibl_compute;
 mod opaque;
 mod shadow;
 mod simple_forward;
+mod skybox;
 mod tone_mapping;
 mod transmission_copy;
 mod transparent;
@@ -50,6 +54,7 @@ pub use ibl_compute::IBLComputePass;
 pub use opaque::OpaquePass;
 pub use shadow::ShadowPass;
 pub use simple_forward::SimpleForwardPass;
+pub use skybox::SkyboxPass;
 pub use tone_mapping::ToneMapPass;
 pub use transmission_copy::TransmissionCopyPass;
 pub use transparent::TransparentPass;

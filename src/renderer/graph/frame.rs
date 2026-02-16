@@ -79,6 +79,18 @@ pub struct ShadowLightInstance {
     pub light_view_projection: Mat4,
 }
 
+/// Prepared skybox draw state for inline rendering (LDR path).
+///
+/// Populated by [`SkyboxPass::prepare()`] and consumed by
+/// [`SimpleForwardPass::run()`] to draw the skybox between
+/// opaque and transparent objects within a single render pass.
+pub struct PreparedSkyboxDraw {
+    /// The skybox render pipeline (variant-specific).
+    pub pipeline: wgpu::RenderPipeline,
+    /// The skybox bind group (uniforms + optional texture/sampler).
+    pub bind_group: wgpu::BindGroup,
+}
+
 /// 渲染列表
 ///
 /// 存储经过剔除和排序的渲染命令，由 `SceneCullPass` 填充，
@@ -112,6 +124,11 @@ pub struct RenderLists {
 
     /// 是否需要 Transmission 拷贝
     pub use_transmission: bool,
+
+    /// Prepared skybox draw state for inline rendering in the LDR path.
+    ///
+    /// Set by `SkyboxPass::prepare()`, consumed by `SimpleForwardPass::run()`.
+    pub prepared_skybox: Option<PreparedSkyboxDraw>,
 }
 
 impl RenderLists {
@@ -127,6 +144,7 @@ impl RenderLists {
             gpu_global_bind_group_id: 0,
             gpu_global_bind_group: None,
             use_transmission: false,
+            prepared_skybox: None,
         }
     }
 
@@ -140,6 +158,7 @@ impl RenderLists {
         self.active_views.clear();
         self.gpu_global_bind_group = None;
         self.use_transmission = false;
+        self.prepared_skybox = None;
     }
 
     /// 插入不透明命令

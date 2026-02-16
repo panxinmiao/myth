@@ -42,6 +42,7 @@
 //! scene.set_light(light_node, Light::new_directional(Vec3::ONE, 1.0));
 //! ```
 
+pub mod background;
 pub mod camera;
 pub mod environment;
 pub mod light;
@@ -56,6 +57,7 @@ pub mod transform_system;
 pub mod wrapper;
 
 // Re-export common types
+pub use background::{BackgroundMapping, BackgroundMode};
 pub use camera::{Camera, ProjectionType};
 pub use light::{Light, LightKind};
 pub use node::Node;

@@ -107,4 +107,29 @@ impl<'a> TrackedRenderPass<'a> {
     ) {
         self.pass.draw_indexed(indices, base_vertex, instances);
     }
+
+    /// Returns a mutable reference to the underlying `wgpu::RenderPass`.
+    ///
+    /// Use this for operations that bypass state tracking (e.g., drawing
+    /// with an external pipeline not managed by the tracked pass).
+    /// After using the raw pass directly, call [`invalidate_state`](Self::invalidate_state)
+    /// to ensure subsequent tracked operations re-set state on the GPU.
+    #[inline]
+    pub fn raw_pass(&mut self) -> &mut wgpu::RenderPass<'a> {
+        &mut self.pass
+    }
+
+    /// Invalidates all cached state.
+    ///
+    /// After calling this, the next `set_pipeline`, `set_bind_group`,
+    /// `set_vertex_buffer`, and `set_index_buffer` calls will unconditionally
+    /// issue GPU state changes, even if the resource IDs match previously
+    /// cached values.
+    #[inline]
+    pub fn invalidate_state(&mut self) {
+        self.current_pipeline_id = None;
+        self.current_bind_groups = [None; 4];
+        self.current_vertex_buffers = [None; 8];
+        self.current_index_buffer = None;
+    }
 }

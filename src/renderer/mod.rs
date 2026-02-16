@@ -59,7 +59,7 @@ use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
     BRDFLutComputePass, IBLComputePass, OpaquePass, SceneCullPass, ShadowPass, SimpleForwardPass,
-    ToneMapPass, TransmissionCopyPass, TransparentPass,
+    SkyboxPass, ToneMapPass, TransmissionCopyPass, TransparentPass,
 };
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
@@ -121,6 +121,9 @@ struct RendererState {
     pub(crate) opaque_pass: OpaquePass,
     pub(crate) transparent_pass: TransparentPass,
     pub(crate) transmission_copy_pass: TransmissionCopyPass,
+
+    // Skybox / Background
+    pub(crate) skybox_pass: SkyboxPass,
 
     // Compute Passes
     pub(crate) brdf_pass: BRDFLutComputePass,
@@ -201,6 +204,9 @@ impl Renderer {
         // Post Processing
         let tone_mapping_pass = ToneMapPass::new(&wgpu_ctx.device);
 
+        // Skybox / Background
+        let skybox_pass = SkyboxPass::new(&wgpu_ctx.device);
+
         // 6. Assemble state
         self.context = Some(RendererState {
             wgpu_ctx,
@@ -222,6 +228,7 @@ impl Renderer {
             brdf_pass,
             ibl_pass,
             tone_mapping_pass,
+            skybox_pass,
         });
 
         log::info!("Renderer Initialized");
@@ -326,6 +333,11 @@ impl Renderer {
             // Opaque rendering
             frame_builder.add_node(RenderStage::Opaque, &mut state.opaque_pass);
 
+            // Skybox / Background (after opaque, before transparent)
+            if scene.background.needs_skybox_pass() {
+                frame_builder.add_node(RenderStage::Skybox, &mut state.skybox_pass);
+            }
+
             // Transmission copy (conditional)
             // 注意：TransmissionCopyPass 内部会检查 use_transmission 标志
             // 如果场景中没有使用 Transmission 的材质，此 Pass 会提前返回
@@ -338,6 +350,12 @@ impl Renderer {
             frame_builder.add_node(RenderStage::PostProcess, &mut state.tone_mapping_pass);
         } else {
             // === Simple Path (LDR) ===
+            // Prepare skybox for potential inline drawing by SimpleForwardPass.
+            // SkyboxPass::prepare() stores pipeline/bind_group in render_lists.
+            // SkyboxPass::run() is a no-op in LDR mode (checked via enable_hdr).
+            if scene.background.needs_skybox_pass() {
+                frame_builder.add_node(RenderStage::PreProcess, &mut state.skybox_pass);
+            }
             frame_builder.add_node(RenderStage::Opaque, &mut state.simple_forward_pass);
         }
 
