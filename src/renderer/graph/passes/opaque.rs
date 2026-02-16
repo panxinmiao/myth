@@ -125,13 +125,18 @@ impl RenderNode for OpaquePass {
         let (color_view, _resolve_target) = Self::get_render_target(ctx);
         let depth_view = &ctx.frame_resources.depth_view;
 
+        // Use scene background color for clearing.
+        // When a skybox pass follows, the clear color only shows through
+        // debug visualization; otherwise it is the final background.
+        let clear_color = ctx.scene.background.clear_color();
+
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("Opaque Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: color_view,
                 resolve_target: None, // Opaque Pass 不 resolve，等 Transparent Pass 完成后再 resolve
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(self.clear_color),
+                    load: wgpu::LoadOp::Clear(clear_color),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,

@@ -17,12 +17,13 @@ use crate::scene::environment::Environment;
 use crate::scene::light::Light;
 use crate::scene::light::LightKind;
 use crate::scene::node::Node;
+use crate::scene::background::BackgroundMode;
 use crate::scene::resolve::{ResolveGeometry, ResolveMaterial};
 use crate::scene::skeleton::{BindMode, Skeleton, SkinBinding};
 use crate::scene::transform::Transform;
 use crate::scene::transform_system;
 use crate::scene::wrapper::SceneNode;
-use glam::{Affine3A, Vec3, Vec4};
+use glam::{Affine3A, Vec3};
 use slotmap::{SecondaryMap, SlotMap, SparseSecondaryMap};
 
 use crate::scene::{NodeHandle, SkeletonKey};
@@ -137,8 +138,8 @@ pub struct Scene {
     pub environment: Environment,
     /// Tone mapping settings (exposure, mode)
     pub tone_mapping: ToneMappingSettings,
-    /// Background color (None for transparent)
-    pub background: Option<Vec4>,
+    /// Background rendering mode (solid color, gradient, or texture)
+    pub background: BackgroundMode,
     /// Currently active camera for rendering
     pub active_camera: Option<NodeHandle>,
 
@@ -188,7 +189,7 @@ impl Scene {
 
             environment: Environment::new(),
             tone_mapping: ToneMappingSettings::default(),
-            background: Some(Vec4::new(0.0, 0.0, 0.0, 1.0)),
+            background: BackgroundMode::default(),
 
             active_camera: None,
 
@@ -960,6 +961,15 @@ impl Scene {
         }
 
         combined_bbox
+    }
+
+    // ========================================================================
+    // Background API
+    // ========================================================================
+
+    /// Sets the background to a solid color.
+    pub fn set_background_color(&mut self, r: f32, g: f32, b: f32) {
+        self.background = BackgroundMode::color(r, g, b);
     }
 
     // ========================================================================

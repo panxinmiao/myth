@@ -142,8 +142,9 @@ pub mod prelude {
 
     // Scene graph
     pub use crate::scene::{
-        Camera, Light, LightKind, Node, NodeHandle, ProjectionType, ResolveGeometry,
-        ResolveMaterial, Scene, SceneLogic, SceneNode, SkeletonKey, Transform,
+        BackgroundMapping, BackgroundMode, Camera, Light, LightKind, Node, NodeHandle,
+        ProjectionType, ResolveGeometry, ResolveMaterial, Scene, SceneLogic, SceneNode,
+        SkeletonKey, Transform,
     };
 
     // Resources
@@ -283,7 +284,9 @@ pub use app::{AppHandler, Window};
 pub use engine::{Engine, FrameState};
 
 // Scene (most common types)
-pub use scene::{Camera, Light, Node, NodeHandle, Scene, Transform};
+pub use scene::{
+    BackgroundMapping, BackgroundMode, Camera, Light, Node, NodeHandle, Scene, Transform,
+};
 
 // Resources (most common types)
 pub use resources::{

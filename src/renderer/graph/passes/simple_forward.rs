@@ -147,7 +147,7 @@ impl RenderNode for SimpleForwardPass {
                 view: color_view,
                 resolve_target: final_resolve_target,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(self.clear_color),
+                    load: wgpu::LoadOp::Clear(ctx.scene.background.clear_color()),
                     store: store_op,
                 },
                 depth_slice: None,
@@ -179,6 +179,32 @@ impl RenderNode for SimpleForwardPass {
 
         // 先绘制不透明物体（Front-to-Back）
         Self::draw_list(ctx, &mut tracked_pass, &render_lists.opaque);
+
+        // ── Skybox: draw between opaque and transparent ──────────────
+        //
+        // In the LDR path, SkyboxPass::prepare() stores the prepared pipeline
+        // and bind group in render_lists.prepared_skybox. We draw the skybox
+        // here using the raw pass to bypass TrackedRenderPass state tracking,
+        // then invalidate cached state so that transparent draws re-set
+        // everything correctly.
+        if let Some(skybox) = &ctx.render_lists.prepared_skybox {
+            let raw = tracked_pass.raw_pass();
+            raw.set_pipeline(&skybox.pipeline);
+            raw.set_bind_group(0, &skybox.bind_group, &[]);
+            raw.draw(0..3, 0..1);
+
+            // Invalidate all tracked state — the skybox used a completely
+            // different pipeline and bind group layout at slot 0.
+            tracked_pass.invalidate_state();
+
+            // Re-set global bind group for subsequent transparent draws.
+            tracked_pass.set_bind_group(
+                0,
+                render_lists.gpu_global_bind_group_id,
+                gpu_global_bind_group,
+                &[],
+            );
+        }
 
         // 再绘制透明物体（Back-to-Front）
         Self::draw_list(ctx, &mut tracked_pass, &render_lists.transparent);
