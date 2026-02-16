@@ -323,7 +323,7 @@ impl SkyboxPass {
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Skybox Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_u: wgpu::AddressMode::Repeat, // use Repeat for seamless cubemap/equirectangular sampling
             address_mode_v: wgpu::AddressMode::ClampToEdge,
             address_mode_w: wgpu::AddressMode::ClampToEdge,
             mag_filter: wgpu::FilterMode::Linear,
