@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use myth::prelude::*;
 use myth::utils::FpsCounter;
-use winit::window::Window;
 
 struct HttpGltfExample {
     cam_node_id: NodeHandle,
@@ -13,7 +10,7 @@ struct HttpGltfExample {
 }
 
 impl AppHandler for HttpGltfExample {
-    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         let map_path = "examples/assets/royal_esplanade_2k.hdr.jpg";
 
         let env_texture_handle = engine
@@ -57,7 +54,7 @@ impl AppHandler for HttpGltfExample {
         }
     }
 
-    fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
         if !self.loaded {
             self.loaded = true;
 

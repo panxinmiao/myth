@@ -23,9 +23,9 @@
 
 mod ui_pass;
 
+use std::any::Any;
 #[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 #[cfg(target_arch = "wasm32")]
@@ -42,9 +42,9 @@ use myth::utils::FpsCounter;
 
 use ui_pass::UiPass;
 
+// winit types needed for on_event downcasting (advanced egui integration)
 use winit::event::WindowEvent;
 use winit::keyboard::PhysicalKey;
-use winit::window::Window;
 
 #[cfg(target_arch = "wasm32")]
 static DROP_SENDER: std::sync::LazyLock<Mutex<Option<Sender<(String, Vec<u8>)>>>> =
@@ -231,13 +231,18 @@ const ASSET_PATH: &str = "examples/assets/";
 const ASSET_PATH: &str = "assets/";
 
 impl AppHandler for GltfViewer {
-    fn init(engine: &mut Engine, window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, window: &dyn Window) -> Self {
         // 1. Create UI Pass
         let wgpu_ctx = engine
             .renderer
             .wgpu_ctx()
             .expect("Renderer not initialized");
-        let ui_pass = UiPass::new(&wgpu_ctx.device, wgpu_ctx.surface_view_format, window);
+        // Downcast to winit::Window for egui-winit integration
+        let winit_window = window
+            .as_any()
+            .downcast_ref::<winit::window::Window>()
+            .expect("Expected winit window backend");
+        let ui_pass = UiPass::new(&wgpu_ctx.device, wgpu_ctx.surface_view_format, winit_window);
 
         let scene = engine.scene_manager.create_active();
 
@@ -344,12 +349,12 @@ impl AppHandler for GltfViewer {
         viewer
     }
 
-    fn on_event(
-        &mut self,
-        _engine: &mut Engine,
-        window: &Arc<Window>,
-        event: &WindowEvent,
-    ) -> bool {
+    fn on_event(&mut self, _engine: &mut Engine, window: &dyn Window, event: &dyn Any) -> bool {
+        // Downcast the event to winit::WindowEvent
+        let Some(event) = event.downcast_ref::<WindowEvent>() else {
+            return false;
+        };
+
         // Tab 键切换 UI 显示
         if let WindowEvent::KeyboardInput { event, .. } = event {
             let PhysicalKey::Code(code) = event.physical_key else {
@@ -363,21 +368,27 @@ impl AppHandler for GltfViewer {
             }
         }
 
+        // Downcast window for egui-winit integration
+        let winit_window = window
+            .as_any()
+            .downcast_ref::<winit::window::Window>()
+            .expect("Expected winit window backend");
+
         // UI 优先处理事件
-        if self.ui_pass.handle_input(window, event) {
+        if self.ui_pass.handle_input(winit_window, event) {
             return true;
         }
 
         // 处理窗口大小调整
         if let WindowEvent::Resized(size) = event {
-            let scale_factor = window.scale_factor() as f32;
+            let scale_factor = window.scale_factor();
             self.ui_pass.resize(size.width, size.height, scale_factor);
         }
 
         false
     }
 
-    fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
@@ -408,17 +419,19 @@ impl AppHandler for GltfViewer {
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
             self.controls
                 .update(transform, &engine.input, camera.fov, frame.dt);
-            // camera.near = self.controls.spherical.radius * 0.01;
-            // camera.update_projection_matrix();
         }
 
-        // 4. 构建 UI
+        // 4. 构建 UI (requires winit window for egui-winit integration)
         if self.show_ui {
-            self.ui_pass.begin_frame(window);
+            let winit_window = window
+                .as_any()
+                .downcast_ref::<winit::window::Window>()
+                .expect("Expected winit window backend");
+            self.ui_pass.begin_frame(winit_window);
             let egui_ctx = self.ui_pass.context().clone();
             self.handle_drag_and_drop(&egui_ctx, engine.assets.clone());
             self.render_ui(engine);
-            self.ui_pass.end_frame(window);
+            self.ui_pass.end_frame(winit_window);
         }
     }
 

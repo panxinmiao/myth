@@ -13,7 +13,7 @@
 //! struct MyApp;
 //!
 //! impl AppHandler for MyApp {
-//!     fn init(engine: &mut Engine, window: &Arc<Window>) -> Self {
+//!     fn init(engine: &mut Engine, window: &dyn Window) -> Self {
 //!         // Create a scene with a mesh
 //!         let scene = engine.scene_manager.create_active();
 //!         
@@ -34,7 +34,7 @@
 //!         MyApp
 //!     }
 //!     
-//!     fn update(&mut self, engine: &mut Engine, _: &Arc<Window>, frame: &FrameState) {
+//!     fn update(&mut self, engine: &mut Engine, _: &dyn Window, frame: &FrameState) {
 //!         // Update logic here
 //!     }
 //! }
@@ -136,7 +136,8 @@ pub mod utils;
 pub mod prelude {
     // Application
     #[cfg(feature = "winit")]
-    pub use crate::app::winit::{App, AppHandler};
+    pub use crate::app::winit::App;
+    pub use crate::app::{AppHandler, Window};
     pub use crate::engine::{Engine, FrameState};
 
     // Scene graph
@@ -277,7 +278,8 @@ pub mod render {
 
 // Application
 #[cfg(feature = "winit")]
-pub use app::winit::{App, AppHandler};
+pub use app::winit::App;
+pub use app::{AppHandler, Window};
 pub use engine::{Engine, FrameState};
 
 // Scene (most common types)

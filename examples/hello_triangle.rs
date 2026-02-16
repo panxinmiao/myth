@@ -1,14 +1,11 @@
-use std::sync::Arc;
-
 use myth::prelude::*;
-use winit::window::Window;
 
 /// Hello Triangle Example
 ///
 struct HelloTriangle;
 
 impl AppHandler for HelloTriangle {
-    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         // 1. Create triangle geometry
         let mut geometry = Geometry::new();
         geometry.set_attribute(

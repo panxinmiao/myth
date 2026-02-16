@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use myth::prelude::*;
 use myth::utils::FpsCounter;
-use winit::window::Window;
 
 /// Morph Target
 struct MorphTargetDemo {
@@ -12,7 +9,7 @@ struct MorphTargetDemo {
 }
 
 impl AppHandler for MorphTargetDemo {
-    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         let scene = engine.scene_manager.create_active();
 
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 2.0);
@@ -83,7 +80,7 @@ impl AppHandler for MorphTargetDemo {
         }
     }
 
-    fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
