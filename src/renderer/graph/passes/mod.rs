@@ -1,31 +1,31 @@
-//! 渲染 Pass 实现
+//! Render Pass Implementations
 //!
-//! 包含各种具体的渲染 Pass 实现。
+//! Contains various concrete render pass implementations.
 //!
-//! # Pass 分类
+//! # Pass Classification
 //!
-//! ## 数据准备 Pass
-//! - [`SceneCullPass`][]: 场景剔除、命令生成与排序
+//! ## Data Preparation Pass
+//! - [`SceneCullPass`][]: Scene culling, command generation, and sorting
 //!
-//! ## 绘制 Pass (Simple Path - LDR)
-//! - [`SimpleForwardPass`][]: 单 Pass 完成不透明+透明绘制
+//! ## Render Pass (Simple Path - LDR)
+//! - [`SimpleForwardPass`][]: Single pass rendering for opaque and transparent objects
 //!
-//! ## 绘制 Pass (PBR Path - HDR)
-//! - [`OpaquePass`][]: 仅绘制不透明物体
-//! - [`TransmissionCopyPass`][]: 复制场景颜色供 Transmission 使用
-//! - [`TransparentPass`][]: 仅绘制透明物体
+//! ## Render Pass (PBR Path - HDR)
+//! - [`OpaquePass`][]: Renders only opaque objects
+//! - [`TransmissionCopyPass`][]: Copies scene color for Transmission usage
+//! - [`TransparentPass`][]: Renders only transparent objects
 //!
-//! ## 天空/背景 Pass
-//! - [`SkyboxPass`]: 渲染天空盒/渐变/全景贴图背景
+//! ## Sky/Background Pass
+//! - [`SkyboxPass`]: Renders skybox/gradient/panoramic background
 //!
-//! ## 计算 Pass
-//! - [`BRDFLutComputePass`]: BRDF LUT 预计算
-//! - [`IBLComputePass`]: IBL 预滤波
+//! ## Compute Pass
+//! - [`BRDFLutComputePass`]: Precomputes BRDF LUT
+//! - [`IBLComputePass`]: Pre-filters IBL
 //!
-//! ## 后处理 Pass
-//! - [`ToneMapPass`]: 色调映射（HDR → LDR）
+//! ## Post-Processing Pass
+//! - [`ToneMapPass`]: Tone mapping (HDR → LDR)
 //!
-//! # 渲染管线拓扑
+//! # Render Pipeline Topology
 //!
 //! ## Simple Path (LDR/Fast)
 //! ```text

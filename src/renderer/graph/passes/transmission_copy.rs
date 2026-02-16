@@ -1,32 +1,33 @@
 //! Transmission Copy Pass
 //!
-//! 将当前场景颜色缓冲复制到 Transmission 纹理，
-//! 供透明物体的折射效果使用。
+
+//! Copy the current scene color buffer to the Transmission texture.
+//! will be used as the input for Transmission effects in the TransparentPass.
 //!
-//! # 数据流
+//! # Data Flow
 //! ```text
 //! HDR Scene Color → TransmissionCopyPass → Transmission Texture
 //! ```
 //!
-//! # 执行时机
-//! - 在 `OpaquePass` 之后
-//! - 在 `TransparentPass` 之前
+//! # Execution Timing
+//! - After `OpaquePass`
+//! - Before `TransparentPass`
 //!
-//! # 注意
-//! - 此 Pass 不使用 RenderPass，直接使用 `encoder.copy_texture_to_texture`
-//! - 仅在场景中存在使用 Transmission 的材质时执行
+//! # Note
+//! - This pass does not use a RenderPass, it directly uses `encoder.copy_texture_to_texture`
+//! - Only executed if there are materials using Transmission in the scene
 
 use crate::renderer::graph::{RenderContext, RenderNode};
 
 /// Transmission Copy Pass
 ///
-/// 将场景颜色缓冲复制到 Transmission 纹理。
-/// 此 Pass 不进行绘制，仅执行纹理拷贝。
+/// Copy the current scene color buffer to the Transmission texture.
+/// This pass does not perform any drawing, only executes a texture copy.
 ///
-/// # 条件执行
-/// - 仅当 `render_lists.use_transmission` 为 true 时执行
-/// - 仅当 HDR 模式启用时执行（Transmission 需要 HDR 缓冲）
-/// - 仅当 `transmission_view` 存在时执行
+/// # Conditional Execution
+/// - Only executed if `render_lists.use_transmission` is true
+/// - Only executed if HDR mode is enabled (Transmission requires HDR buffer)
+/// - Only executed if `transmission_view` exists
 pub struct TransmissionCopyPass;
 
 impl TransmissionCopyPass {
@@ -50,55 +51,55 @@ impl RenderNode for TransmissionCopyPass {
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
         let render_lists = &ctx.render_lists;
 
-        // 检查是否需要执行
+        // Check if execution is needed
         if !render_lists.use_transmission {
             return;
         }
 
-        // Transmission 需要 HDR 模式
+        // Transmission requires HDR mode
         if !ctx.wgpu_ctx.enable_hdr {
             log::warn!("TransmissionCopyPass: Transmission requires HDR mode, skipping");
             return;
         }
 
-        // 检查 Transmission 纹理是否存在
+        // Check if transmission texture exists
         let Some(transmission_view) = &ctx.frame_resources.transmission_view else {
             log::warn!("TransmissionCopyPass: transmission_view missing, skipping");
             return;
         };
 
-        // 获取源纹理（场景颜色缓冲）
+        // Get source texture (scene color buffer)
         let color_view = ctx.get_scene_render_target_view();
 
         let is_msaa = ctx.wgpu_ctx.msaa_samples > 1;
 
         if is_msaa {
-            // 如果开启了 MSAA，OpaquePass 尚未 Resolve，数据还在 MSAA View 中。
-            // 我们需要手动执行一次 Resolve，将不透明物体的结果保存到 color_view 中。
+            // If MSAA is enabled, OpaquePass has not yet resolved, and the data is still in the MSAA View.
+            // We need to manually perform a resolve to save the opaque results to the color_view.
             if let Some(msaa_view) = &ctx.frame_resources.scene_msaa_view {
                 let pass_desc = wgpu::RenderPassDescriptor {
                     label: Some("Transmission MSAA Resolve"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view: msaa_view,                  // 源：MSAA 缓冲
-                        resolve_target: Some(color_view), // 目标：普通纹理
+                        view: msaa_view,                  // Source: MSAA buffer
+                        resolve_target: Some(color_view), // Target: regular texture
                         ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,    // 加载已有内容
-                            store: wgpu::StoreOp::Store, // 必须 Store！因为 TransparentPass 还要继续在上面画
+                            load: wgpu::LoadOp::Load,    // Load existing content
+                            store: wgpu::StoreOp::Store, // Must store! Because TransparentPass will continue drawing on it
                         },
                         depth_slice: None,
                     })],
-                    depth_stencil_attachment: None, // 不需要深度，只是 Resolve 颜色
+                    depth_stencil_attachment: None, // No depth needed, just resolving color
                     timestamp_writes: None,
                     occlusion_query_set: None,
                     multiview_mask: None,
                 };
 
-                // 执行一个空的 RenderPass 来触发 Resolve
+                // Execute an empty RenderPass to trigger the resolve
                 let _ = encoder.begin_render_pass(&pass_desc);
             }
         }
 
-        // 执行纹理拷贝
+        // Execute texture copy
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
                 texture: color_view.texture(),

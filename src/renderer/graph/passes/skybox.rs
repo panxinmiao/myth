@@ -171,8 +171,7 @@ impl SkyboxVariant {
     fn texture_view_dimension(self) -> wgpu::TextureViewDimension {
         match self {
             Self::Cube => wgpu::TextureViewDimension::Cube,
-            Self::Equirectangular | Self::Planar => wgpu::TextureViewDimension::D2,
-            Self::Gradient => wgpu::TextureViewDimension::D2, // unused
+            _ => wgpu::TextureViewDimension::D2,
         }
     }
 }
@@ -189,7 +188,7 @@ fn create_uniform_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             // Binding 0: Camera uniforms
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -200,7 +199,7 @@ fn create_uniform_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
             // Binding 1: Skybox params
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -224,7 +223,7 @@ fn create_texture_layout(
             // Binding 0: Camera uniforms
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -235,7 +234,7 @@ fn create_texture_layout(
             // Binding 1: Skybox params
             wgpu::BindGroupLayoutEntry {
                 binding: 1,
-                visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -319,11 +318,8 @@ impl SkyboxPass {
             wgpu::TextureViewDimension::Cube,
             "Skybox Layout (Cube)",
         );
-        let layout_2d = create_texture_layout(
-            device,
-            wgpu::TextureViewDimension::D2,
-            "Skybox Layout (2D)",
-        );
+        let layout_2d =
+            create_texture_layout(device, wgpu::TextureViewDimension::D2, "Skybox Layout (2D)");
 
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Skybox Sampler"),
@@ -466,25 +462,24 @@ impl SkyboxPass {
         source: &TextureSource,
         mapping: BackgroundMapping,
     ) -> Option<&'a wgpu::TextureView> {
-        match mapping {
-            BackgroundMapping::Cube => {
-                // 1. Try the processed cubemap from the environment map cache
-                if let Some(gpu_env) = ctx.resource_manager.environment_map_cache.get(source) {
-                    if !gpu_env.needs_compute {
-                        if let Some(view) =
-                            ctx.resource_manager.internal_resources.get(&gpu_env.cube_view_id)
-                        {
-                            return Some(view);
-                        }
-                    }
-                }
-                // 2. Fallback: raw cubemap asset already uploaded as a Cube view
-                if let TextureSource::Asset(handle) = source {
-                    if let Some(binding) = ctx.resource_manager.texture_bindings.get(*handle) {
-                        if let Some(img) =
-                            ctx.resource_manager.gpu_images.get(&binding.cpu_image_id)
-                        {
+        match source {
+            // 1. 处理 Asset (普通纹理资源)
+            TextureSource::Asset(handle) => {
+                if let Some(binding) = ctx.resource_manager.texture_bindings.get(*handle)
+                    && let Some(img) = ctx.resource_manager.gpu_images.get(&binding.cpu_image_id)
+                {
+                    match mapping {
+                        BackgroundMapping::Cube => {
                             if img.default_view_dimension == wgpu::TextureViewDimension::Cube {
+                                return Some(&img.default_view);
+                            }
+                            log::warn!(
+                                "Skybox mapping is Cube but texture is {:?}",
+                                img.default_view_dimension
+                            );
+                        }
+                        BackgroundMapping::Equirectangular | BackgroundMapping::Planar => {
+                            if img.default_view_dimension == wgpu::TextureViewDimension::D2 {
                                 return Some(&img.default_view);
                             }
                         }
@@ -492,28 +487,17 @@ impl SkyboxPass {
                 }
                 None
             }
-            BackgroundMapping::Equirectangular | BackgroundMapping::Planar => {
-                // 2D texture asset
-                if let TextureSource::Asset(handle) = source {
-                    if let Some(binding) = ctx.resource_manager.texture_bindings.get(*handle) {
-                        if let Some(img) =
-                            ctx.resource_manager.gpu_images.get(&binding.cpu_image_id)
-                        {
-                            return Some(&img.default_view);
-                        }
-                    }
-                }
-                None
-            }
+            // 2. 处理 Attachment (动态生成的 RenderTarget 等)
+            TextureSource::Attachment(id, _) => ctx.resource_manager.internal_resources.get(id),
         }
     }
 }
 
 impl RenderNode for SkyboxPass {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Skybox Pass"
     }
-
+    #[allow(clippy::similar_names)]
     fn prepare(&mut self, ctx: &mut RenderContext) {
         let background = &ctx.scene.background;
 
@@ -563,6 +547,15 @@ impl RenderNode for SkyboxPass {
         let camera_cpu_id = self.camera_uniforms.id();
         let params_cpu_id = self.params_uniforms.id();
 
+        if let BackgroundMode::Texture {
+            source: TextureSource::Asset(handle),
+            ..
+        } = background
+        {
+            ctx.resource_manager
+                .prepare_texture(&ctx.scene.assets, *handle);
+        }
+
         // 5. Resolve texture view (if textured variant)
         let texture_view: Option<&wgpu::TextureView> =
             if let BackgroundMode::Texture {
@@ -587,7 +580,7 @@ impl RenderNode for SkyboxPass {
                 return;
             };
 
-            let tex_view_key = tex_view as *const wgpu::TextureView as u64;
+            let tex_view_key = std::ptr::from_ref::<wgpu::TextureView>(tex_view) as u64;
             let key = BindGroupKey::new(layout_id)
                 .with_resource(camera_gpu_id)
                 .with_resource(params_gpu_id)
@@ -608,31 +601,31 @@ impl RenderNode for SkyboxPass {
                     .get(&params_cpu_id)
                     .expect("Skybox params GPU buffer must exist after ensure");
 
-                let bg =
-                    ctx.wgpu_ctx
-                        .device
-                        .create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("Skybox BindGroup (Texture)"),
-                            layout,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: camera_gpu.buffer.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: params_gpu.buffer.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 2,
-                                    resource: wgpu::BindingResource::TextureView(tex_view),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 3,
-                                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                                },
-                            ],
-                        });
+                let bg = ctx
+                    .wgpu_ctx
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Skybox BindGroup (Texture)"),
+                        layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: camera_gpu.buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: params_gpu.buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(tex_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::Sampler(&self.sampler),
+                            },
+                        ],
+                    });
                 ctx.global_bind_group_cache.insert(key, bg.clone());
                 bg
             }
@@ -656,23 +649,23 @@ impl RenderNode for SkyboxPass {
                     .get(&params_cpu_id)
                     .expect("Skybox params GPU buffer must exist after ensure");
 
-                let bg =
-                    ctx.wgpu_ctx
-                        .device
-                        .create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("Skybox BindGroup (Gradient)"),
-                            layout,
-                            entries: &[
-                                wgpu::BindGroupEntry {
-                                    binding: 0,
-                                    resource: camera_gpu.buffer.as_entire_binding(),
-                                },
-                                wgpu::BindGroupEntry {
-                                    binding: 1,
-                                    resource: params_gpu.buffer.as_entire_binding(),
-                                },
-                            ],
-                        });
+                let bg = ctx
+                    .wgpu_ctx
+                    .device
+                    .create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Skybox BindGroup (Gradient)"),
+                        layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: camera_gpu.buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: params_gpu.buffer.as_entire_binding(),
+                            },
+                        ],
+                    });
                 ctx.global_bind_group_cache.insert(key, bg.clone());
                 bg
             }
@@ -711,8 +704,7 @@ impl RenderNode for SkyboxPass {
         }
 
         // Skip if no pipeline/bind group (Color mode or missing resources)
-        let (Some(pipeline), Some(bind_group)) =
-            (&self.current_pipeline, &self.current_bind_group)
+        let (Some(pipeline), Some(bind_group)) = (&self.current_pipeline, &self.current_bind_group)
         else {
             return;
         };

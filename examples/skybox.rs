@@ -8,7 +8,9 @@
 //! |-----|--------|
 //! | `1` | Solid color background (hardware clear, no skybox pass) |
 //! | `2` | Gradient background (procedural sky) |
-//! | `3` | Equirectangular HDR panorama as skybox |
+//! | `3` | Planar Texture |
+//! | `4` | Equirectangular HDR panorama as skybox |
+//! | `5` | Cubemap texture as skybox |
 //! | `H` | Toggle HDR / LDR rendering path |
 //! | Mouse drag | Orbit camera |
 //! | Scroll | Zoom |
@@ -22,7 +24,9 @@ use myth::utils::FpsCounter;
 enum DemoMode {
     SolidColor,
     Gradient,
+    Planar,
     Equirectangular,
+    CubeMap,
 }
 
 impl DemoMode {
@@ -31,6 +35,8 @@ impl DemoMode {
             Self::SolidColor => "Solid Color",
             Self::Gradient => "Gradient",
             Self::Equirectangular => "Equirectangular HDR",
+            Self::CubeMap => "Cubemap Skybox",
+            Self::Planar => "Planar Texture",
         }
     }
 }
@@ -46,6 +52,8 @@ struct SkyboxDemo {
     hdr_enabled: bool,
     /// HDR environment texture handle (reused for equirectangular skybox)
     env_texture: TextureHandle,
+    /// Cube map texture handle (if using CubeMap mode)
+    cube_env_texture: TextureHandle,
 }
 
 impl SkyboxDemo {
@@ -57,9 +65,9 @@ impl SkyboxDemo {
                 Vec4::new(0.05, 0.05, 0.25, 1.0), // deep blue top
                 Vec4::new(0.7, 0.45, 0.2, 1.0),   // warm orange bottom
             ),
-            DemoMode::Equirectangular => {
-                BackgroundMode::equirectangular(self.env_texture, 1.0)
-            }
+            DemoMode::Planar => BackgroundMode::planar(self.env_texture, 1.0),
+            DemoMode::CubeMap => BackgroundMode::cubemap(self.cube_env_texture, 1.0),
+            DemoMode::Equirectangular => BackgroundMode::equirectangular(self.env_texture, 1.0),
         };
     }
 
@@ -69,7 +77,9 @@ impl SkyboxDemo {
         println!("╠══════════════════════════════════════╣");
         println!("║  1 — Solid color (hardware clear)    ║");
         println!("║  2 — Gradient (procedural sky)       ║");
-        println!("║  3 — Equirectangular HDR panorama    ║");
+        println!("║  3 — Planar Texture                  ║");
+        println!("║  4 — Equirectangular HDR panorama    ║");
+        println!("║  5 — Cubemap Skybox                  ║");
         println!("║  H — Toggle HDR / LDR path           ║");
         println!("║  Mouse drag / Scroll — Orbit / Zoom  ║");
         println!("╚══════════════════════════════════════╝");
@@ -81,8 +91,24 @@ impl AppHandler for SkyboxDemo {
         // --- Load HDR environment texture (used for both IBL and equirectangular skybox) ---
         let env_texture = engine
             .assets
-            .load_hdr_texture("examples/assets/blouberg_sunrise_2_1k.hdr")
+            .load_hdr_texture("examples/assets/royal_esplanade_2k.hdr.jpg")
             .expect("Failed to load HDR environment map");
+
+        let cube_env_texture = engine
+            .assets
+            .load_cube_texture(
+                [
+                    "examples/assets/Park2/posx.jpg",
+                    "examples/assets/Park2/negx.jpg",
+                    "examples/assets/Park2/posy.jpg",
+                    "examples/assets/Park2/negy.jpg",
+                    "examples/assets/Park2/posz.jpg",
+                    "examples/assets/Park2/negz.jpg",
+                ],
+                ColorSpace::Srgb,
+                true,
+            )
+            .expect("Failed to load environment map");
 
         // --- Scene setup ---
         let scene = engine.scene_manager.create_active();
@@ -122,6 +148,7 @@ impl AppHandler for SkyboxDemo {
             mode,
             hdr_enabled,
             env_texture,
+            cube_env_texture,
         };
 
         // Apply initial mode
@@ -146,8 +173,16 @@ impl AppHandler for SkyboxDemo {
             self.mode = DemoMode::Gradient;
             mode_changed = true;
         }
-        if engine.input.get_key_down(Key::Key3) && self.mode != DemoMode::Equirectangular {
+        if engine.input.get_key_down(Key::Key3) && self.mode != DemoMode::Planar {
+            self.mode = DemoMode::Planar;
+            mode_changed = true;
+        }
+        if engine.input.get_key_down(Key::Key4) && self.mode != DemoMode::Equirectangular {
             self.mode = DemoMode::Equirectangular;
+            mode_changed = true;
+        }
+        if engine.input.get_key_down(Key::Key5) && self.mode != DemoMode::CubeMap {
+            self.mode = DemoMode::CubeMap;
             mode_changed = true;
         }
 

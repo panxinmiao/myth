@@ -1,30 +1,30 @@
 //! Transparent Render Pass
 //!
-//! 绘制透明物体的 Pass，用于 PBR/HDR 渲染路径。
+//! draw transparent objects, used in PBR/HDR rendering path.
 //!
-//! # 数据流
+//! # Data Flow
 //! ```text
 //! RenderLists.transparent → TransparentPass → HDR Scene Color
 //! ```
 //!
-//! # `RenderPass` 配置
-//! - `LoadOp`: Load (继承 `OpaquePass` 的结果)
-//! - `StoreOp`: Store (保留结果供后处理使用)
+//! # `RenderPass` Configuration
+//! - `LoadOp`: Load (inherit results from `OpaquePass`)
+//! - `StoreOp`: Store (retain results for post-processing)
 //!
-//! # 注意
-//! 此 Pass 在 `OpaquePass` 和可选的 `TransmissionCopyPass` 之后执行。
+//! # Note
+//! This pass runs after `OpaquePass` and an optional `TransmissionCopyPass`.
 
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::{RenderContext, RenderNode, TrackedRenderPass};
 
 /// Transparent Render Pass
 ///
-/// 仅绘制 `render_lists.transparent` 中的物体。
-/// 继承不透明渲染的结果，结果存储供后处理使用。
+/// Only draws objects in `render_lists.transparent`.
+/// Inherits results from the opaque pass, results are stored for post-processing.
 ///
-/// # 性能考虑
-/// - 命令列表按 Depth (Back-to-Front) 排序，确保正确的 Alpha 混合
-/// - 如果有 Transmission 效果，此 Pass 在 `TransmissionCopyPass` 之后执行
+/// # Performance Considerations
+/// - Command lists are sorted by Depth (Back-to-Front) to ensure correct Alpha blending
+/// - If there are Transmission effects, this Pass runs after `TransmissionCopyPass`
 pub struct TransparentPass;
 
 impl TransparentPass {
@@ -33,7 +33,7 @@ impl TransparentPass {
         Self
     }
 
-    /// 获取渲染目标
+    /// Determine render target views based on MSAA settings.
     fn get_render_target<'a>(
         ctx: &'a RenderContext,
     ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
@@ -52,7 +52,7 @@ impl TransparentPass {
         }
     }
 
-    /// 执行绘制列表
+    /// Execute the draw list
     fn draw_list<'pass>(
         ctx: &'pass RenderContext,
         pass: &mut TrackedRenderPass<'pass>,
@@ -116,7 +116,7 @@ impl RenderNode for TransparentPass {
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
         let render_lists = &ctx.render_lists;
 
-        // 获取全局 BindGroup（即使没有透明物体也需要，因为可能需要 resolve）
+        // Get global BindGroup (needed even if there are no transparent objects, for potential resolve)
         let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {
             log::warn!("TransparentPass: gpu_global_bind_group missing, skipping");
             return;
@@ -125,9 +125,9 @@ impl RenderNode for TransparentPass {
         let (color_view, resolve_target) = Self::get_render_target(ctx);
         let depth_view = &ctx.frame_resources.depth_view;
 
-        // 计算最终的 store/resolve 配置
+        // Determine final store/resolve configuration
         let (store_op, final_resolve_target) = if resolve_target.is_some() {
-            // MSAA: 最后 resolve，不保存 MSAA buffer
+            // MSAA: resolve at the end, do not store MSAA buffer
             (wgpu::StoreOp::Discard, resolve_target)
         } else {
             (wgpu::StoreOp::Store, None)
@@ -139,7 +139,7 @@ impl RenderNode for TransparentPass {
                 view: color_view,
                 resolve_target: final_resolve_target,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load, // 继承 OpaquePass 的结果
+                    load: wgpu::LoadOp::Load, // Inherit results from OpaquePass
                     store: store_op,
                 },
                 depth_slice: None,
@@ -147,7 +147,7 @@ impl RenderNode for TransparentPass {
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load, // 继承深度
+                    load: wgpu::LoadOp::Load, // Inherit depth
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
@@ -167,10 +167,10 @@ impl RenderNode for TransparentPass {
             &[],
         );
 
-        // 只有当有透明物体时才绘制
+        // Only draw when there are transparent objects
         if !render_lists.transparent.is_empty() {
             Self::draw_list(ctx, &mut tracked_pass, &render_lists.transparent);
         }
-        // 即使没有透明物体，也需要这个 Pass 来完成 MSAA resolve
+        // Even if there are no transparent objects, this pass is needed to complete MSAA resolve
     }
 }
