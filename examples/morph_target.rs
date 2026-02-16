@@ -14,21 +14,14 @@ impl AppHandler for MorphTargetDemo {
 
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 2.0);
         scene.add_light(light);
-        scene.environment.set_ambient_color(Vec3::splat(0.3));
+        scene.environment.set_ambient_color(Vec3::splat(0.01));
 
         let env_texture_handle = engine
             .assets
-            .load_cube_texture(
-                [
-                    "examples/assets/Park2/posx.jpg",
-                    "examples/assets/Park2/negx.jpg",
-                    "examples/assets/Park2/posy.jpg",
-                    "examples/assets/Park2/negy.jpg",
-                    "examples/assets/Park2/posz.jpg",
-                    "examples/assets/Park2/negz.jpg",
-                ],
+            .load_texture(
+                "examples/assets/royal_esplanade_2k.hdr.jpg",
                 ColorSpace::Srgb,
-                true,
+                false,
             )
             .expect("Failed to load environment map");
 

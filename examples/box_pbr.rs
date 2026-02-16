@@ -10,27 +10,25 @@ struct PbrBox {
 
 impl AppHandler for PbrBox {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
-        // 1. prepare resources
         let scene = engine.scene_manager.create_active();
-        let geometry = Geometry::new_box(2.0, 2.0, 2.0);
-        let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
 
-        // 2. Create PBR Material
-        let physical_mat = MeshPhysicalMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
-        let tex_handle = engine.assets.textures.add(texture);
-        physical_mat.set_map(Some(tex_handle));
+        let tex_handle =
+            engine
+                .assets
+                .textures
+                .add(Texture::create_checkerboard(Some("checker"), 512, 512, 64));
 
-        // 3. Create Mesh and add to scene
-        let geo_handle = engine.assets.geometries.add(geometry);
-        let mat_handle = engine.assets.materials.add(physical_mat);
-        let mesh = Mesh::new(geo_handle, mat_handle);
-        let cube_node_id = scene.add_mesh(mesh);
+        // spawn with builder-style PBR material
+        let cube_node_id = scene.spawn_box(
+            2.0,
+            2.0,
+            2.0,
+            MeshPhysicalMaterial::new(Vec4::ONE).with_map(tex_handle),
+        );
 
-        // 4. Add Light
-        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
-        scene.add_light(light);
+        scene.add_light(Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0));
 
-        // 5. Load environment map
+        // Load environment map
         let env_texture_handle = engine
             .assets
             .load_cube_texture(
@@ -46,18 +44,14 @@ impl AppHandler for PbrBox {
                 true,
             )
             .expect("Failed to load environment map");
-
         scene.environment.set_env_map(Some(env_texture_handle));
 
-        // 6. Setup Camera
-        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = scene.add_camera(camera);
-
-        if let Some(node) = scene.get_node_mut(cam_node_id) {
-            node.transform.position = Vec3::new(0.0, 3.0, 10.0);
-            node.transform.look_at(Vec3::ZERO, Vec3::Y);
-        }
-
+        // Camera
+        let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
+        scene
+            .node(&cam_node_id)
+            .set_position(0.0, 3.0, 10.0)
+            .look_at(Vec3::ZERO);
         scene.active_camera = Some(cam_node_id);
 
         Self {

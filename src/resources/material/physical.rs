@@ -4,8 +4,9 @@ use bitflags::bitflags;
 use glam::{Vec2, Vec3, Vec4};
 use parking_lot::RwLock;
 
+use crate::assets::TextureHandle;
 use crate::resources::buffer::CpuBuffer;
-use crate::resources::material::{MaterialSettings, TextureSlot};
+use crate::resources::material::{AlphaMode, MaterialSettings, Side, TextureSlot};
 use crate::resources::texture::SamplerSource;
 use crate::resources::uniforms::MeshPhysicalUniforms;
 use crate::{ShaderDefines, impl_material_api, impl_material_trait};
@@ -110,6 +111,119 @@ impl MeshPhysicalMaterial {
             auto_sync_texture_to_uniforms: false,
         }
     }
+
+    // -- Core builder methods (chainable at construction time) --
+
+    /// Sets the base color (builder).
+    #[must_use]
+    pub fn with_color(self, color: Vec4) -> Self {
+        self.uniforms.write().color = color;
+        self
+    }
+
+    /// Sets the roughness factor (builder).
+    #[must_use]
+    pub fn with_roughness(self, roughness: f32) -> Self {
+        self.uniforms.write().roughness = roughness;
+        self
+    }
+
+    /// Sets the metalness factor (builder).
+    #[must_use]
+    pub fn with_metalness(self, metalness: f32) -> Self {
+        self.uniforms.write().metalness = metalness;
+        self
+    }
+
+    /// Sets the emissive color and intensity (builder).
+    #[must_use]
+    pub fn with_emissive(self, color: Vec3, intensity: f32) -> Self {
+        {
+            let mut u = self.uniforms.write();
+            u.emissive = color;
+            u.emissive_intensity = intensity;
+        }
+        self
+    }
+
+    /// Sets the opacity (builder).
+    #[must_use]
+    pub fn with_opacity(self, opacity: f32) -> Self {
+        self.uniforms.write().opacity = opacity;
+        self
+    }
+
+    /// Sets the normal map scale (builder).
+    #[must_use]
+    pub fn with_normal_scale(self, scale: Vec2) -> Self {
+        self.uniforms.write().normal_scale = scale;
+        self
+    }
+
+    /// Sets the color map texture (builder).
+    #[must_use]
+    pub fn with_map(self, handle: TextureHandle) -> Self {
+        self.set_map(Some(handle));
+        self
+    }
+
+    /// Sets the normal map texture (builder).
+    #[must_use]
+    pub fn with_normal_map(self, handle: TextureHandle) -> Self {
+        self.set_normal_map(Some(handle));
+        self
+    }
+
+    /// Sets the roughness map texture (builder).
+    #[must_use]
+    pub fn with_roughness_map(self, handle: TextureHandle) -> Self {
+        self.set_roughness_map(Some(handle));
+        self
+    }
+
+    /// Sets the metalness map texture (builder).
+    #[must_use]
+    pub fn with_metalness_map(self, handle: TextureHandle) -> Self {
+        self.set_metalness_map(Some(handle));
+        self
+    }
+
+    /// Sets the emissive map texture (builder).
+    #[must_use]
+    pub fn with_emissive_map(self, handle: TextureHandle) -> Self {
+        self.set_emissive_map(Some(handle));
+        self
+    }
+
+    /// Sets the AO map texture (builder).
+    #[must_use]
+    pub fn with_ao_map(self, handle: TextureHandle) -> Self {
+        self.set_ao_map(Some(handle));
+        self
+    }
+
+    /// Sets the face culling side (builder).
+    #[must_use]
+    pub fn with_side(self, side: Side) -> Self {
+        self.set_side(side);
+        self
+    }
+
+    /// Sets the alpha mode (builder).
+    #[must_use]
+    pub fn with_alpha_mode(self, mode: AlphaMode) -> Self {
+        self.set_alpha_mode(mode);
+        self
+    }
+
+    /// Sets depth write (builder).
+    #[must_use]
+    pub fn with_depth_write(self, enabled: bool) -> Self {
+        self.set_depth_write(enabled);
+        self
+    }
+
+    // -- Advanced feature builders (existing) --
 
     pub(crate) fn extra_defines(&self, defines: &mut ShaderDefines) {
         let features = *self.features.read();

@@ -15,14 +15,10 @@ impl AppHandler for HdrEnvDemo {
             .load_hdr_texture("examples/assets/blouberg_sunrise_2_1k.hdr")
             .expect("Failed to load HDR environment map");
 
-        engine.scene_manager.create_active();
-        let scene = engine.scene_manager.active_scene_mut().unwrap();
-
+        let scene = engine.scene_manager.create_active();
         scene.environment.set_env_map(Some(env_texture_handle));
         scene.environment.set_intensity(1.0);
-
-        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
-        scene.add_light(light);
+        scene.add_light(Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0));
 
         let gltf_path =
             std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
@@ -31,22 +27,18 @@ impl AppHandler for HdrEnvDemo {
         let prefab =
             GltfLoader::load(gltf_path, engine.assets.clone()).expect("Failed to load glTF model");
         let gltf_node = scene.instantiate(&prefab);
-
         println!("Successfully loaded root node: {:?}", gltf_node);
 
-        if let Some(node) = scene.get_node_mut(gltf_node) {
-            node.transform.scale = Vec3::splat(1.0);
-            node.transform.position = Vec3::new(0.0, 0.0, 0.0);
-        }
+        scene
+            .node(&gltf_node)
+            .set_scale(1.0)
+            .set_position(0.0, 0.0, 0.0);
 
-        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = scene.add_camera(camera);
-
-        if let Some(node) = scene.get_node_mut(cam_node_id) {
-            node.transform.position = Vec3::new(0.0, 0.0, 3.0);
-            node.transform.look_at(Vec3::ZERO, Vec3::Y);
-        }
-
+        let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
+        scene
+            .node(&cam_node_id)
+            .set_position(0.0, 0.0, 3.0)
+            .look_at(Vec3::ZERO);
         scene.active_camera = Some(cam_node_id);
 
         println!("HDR environment map loaded successfully!");

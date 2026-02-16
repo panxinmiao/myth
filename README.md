@@ -81,34 +81,24 @@ use myth::prelude::*;
 struct MyApp;
 
 impl AppHandler for MyApp {
-    fn init(engine: &mut Engine, _: &std::sync::Arc<winit::window::Window>) -> Self {
+    fn init(engine: &mut Engine, _: &dyn Window) -> Self {
         // 0. Create a Scene
         let scene = engine.scene_manager.create_active();
 
-        // 1. Create a Material
-        let material = MeshPhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0));
+        // 1. Create a cube mesh with a checkerboard texture using builder-style chaining
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
         let tex_handle = engine.assets.textures.add(texture);
-        material.set_map(Some(tex_handle));
-        let mat_handle = engine.assets.materials.add(material);
-
-        // 2. Create Geometry & Mesh
-        let geometry = Geometry::new_box(1.0, 1.0, 1.0);
-        let geo_handle = engine.assets.geometries.add(geometry);
-        let mesh = Mesh::new(geo_handle, mat_handle);
-        let mesh_handle = scene.add_mesh(mesh);
+        let mesh_handle = scene.spawn_box(1.0,1.0,1.0,MeshPhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0)).with_map(tex_handle));
         
-        // 3. Setup Camera
-        let camera = Camera::new_perspective(45.0, 16.0/9.0, 0.1);
-        let cam_node = scene.add_camera(camera);
-        // Move camera back
-        scene.nodes.get_mut(cam_node).unwrap().transform.position = Vec3::new(0.0, 0.0, 5.0);
-        scene.active_camera = Some(cam_node);
+        // 2. Setup Camera
+        let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
+        scene.node(&cam_node_id).set_position(0.0, 0.0, 5.0).look_at(Vec3::ZERO);
+        scene.active_camera = Some(cam_node_id);
         
-        // 4. Add Light
+        // 3. Add Light
         scene.add_light(Light::new_directional(Vec3::ONE, 5.0));
 
-        // 5. Setup update callback to rotate the cube
+        // 4. Setup update callback to rotate the cube
         scene.on_update(move |scene, _input, _dt| {
             if let Some(node) = scene.get_node_mut(mesh_handle) {
                 let rot_y = Quat::from_rotation_y(0.02);

@@ -10,50 +10,46 @@ impl AppHandler for ShadowSpotDemo {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         let scene = engine.scene_manager.create_active();
 
-        let sphere_geo = engine.assets.geometries.add(Geometry::new_sphere(1.0));
-        let sphere_mat = engine
-            .assets
-            .materials
-            .add(MeshPhysicalMaterial::new(Vec4::new(0.2, 0.7, 1.0, 1.0)));
-        let mut sphere = Mesh::new(sphere_geo, sphere_mat);
-        sphere.cast_shadows = true;
-        sphere.receive_shadows = true;
-        let sphere_node = scene.add_mesh(sphere);
-        if let Some(node) = scene.get_node_mut(sphere_node) {
-            node.transform.position = Vec3::new(0.0, 1.0, 0.0);
-        }
+        // Sphere
+        let sphere_node = scene.spawn_sphere(
+            1.0,
+            MeshPhysicalMaterial::new(Vec4::new(0.2, 0.7, 1.0, 1.0)),
+        );
+        scene
+            .node(&sphere_node)
+            .set_position(0.0, 1.0, 0.0)
+            .set_shadows(true, true);
 
-        let floor_geo = engine
-            .assets
-            .geometries
-            .add(Geometry::new_plane(30.0, 30.0));
-        let floor_material = MeshPhysicalMaterial::new(Vec4::new(0.9, 0.9, 0.9, 1.0));
-        floor_material.set_side(Side::Double);
-        let floor_mat = engine.assets.materials.add(floor_material);
-        let mut floor = Mesh::new(floor_geo, floor_mat);
-        floor.receive_shadows = true;
-        let floor_node = scene.add_mesh(floor);
-        if let Some(node) = scene.get_node_mut(floor_node) {
-            node.transform.rotation = Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2);
-        }
+        // Floor
+        let floor_node = scene.spawn_plane(
+            30.0,
+            30.0,
+            MeshPhysicalMaterial::new(Vec4::new(0.9, 0.9, 0.9, 1.0)).with_side(Side::Double),
+        );
+        scene
+            .node(&floor_node)
+            .set_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+            .set_cast_shadows(false)
+            .set_receive_shadows(true);
 
+        // Spot light with shadows
         let mut spot = Light::new_spot(Vec3::new(1.0, 0.95, 0.9), 30.0, 40.0, 0.35, 0.55);
         spot.cast_shadows = true;
         if let Some(shadow) = spot.shadow.as_mut() {
             shadow.map_size = 2048;
         }
         let spot_node = scene.add_light(spot);
-        if let Some(node) = scene.get_node_mut(spot_node) {
-            node.transform.position = Vec3::new(6.0, 10.0, 4.0);
-            node.transform.look_at(Vec3::ZERO, Vec3::Y);
-        }
+        scene
+            .node(&spot_node)
+            .set_position(6.0, 10.0, 4.0)
+            .look_at(Vec3::ZERO);
 
-        let camera = Camera::new_perspective(45.0, 16.0 / 9.0, 0.1);
-        let cam_node = scene.add_camera(camera);
-        if let Some(node) = scene.get_node_mut(cam_node) {
-            node.transform.position = Vec3::new(8.0, 6.0, 8.0);
-            node.transform.look_at(Vec3::ZERO, Vec3::Y);
-        }
+        // Camera
+        let cam_node = scene.add_camera(Camera::new_perspective(45.0, 16.0 / 9.0, 0.1));
+        scene
+            .node(&cam_node)
+            .set_position(8.0, 6.0, 8.0)
+            .look_at(Vec3::ZERO);
         scene.active_camera = Some(cam_node);
 
         Self {

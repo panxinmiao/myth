@@ -142,8 +142,8 @@ pub mod prelude {
 
     // Scene graph
     pub use crate::scene::{
-        Camera, Light, LightKind, Node, NodeHandle, ProjectionType, Scene, SceneLogic, SkeletonKey,
-        Transform,
+        Camera, Light, LightKind, Node, NodeHandle, ProjectionType, ResolveGeometry,
+        ResolveMaterial, Scene, SceneLogic, SceneNode, SkeletonKey, Transform,
     };
 
     // Resources
