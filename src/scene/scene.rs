@@ -829,7 +829,7 @@ impl Scene {
         let light_count = self.lights.len();
 
         let new_uniforms = EnvironmentUniforms {
-            ambient_light: env.ambient_color,
+            ambient_light: env.ambient,
             num_lights: light_count as u32,
             env_map_intensity: env.intensity,
             // env_map_max_mip_level is set by ResourceManager::resolve_gpu_environment

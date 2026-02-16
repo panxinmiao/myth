@@ -14,7 +14,7 @@ impl AppHandler for MorphTargetDemo {
 
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 2.0);
         scene.add_light(light);
-        scene.environment.set_ambient_color(Vec3::splat(0.01));
+        scene.environment.set_ambient_light(Vec3::splat(0.01));
 
         let env_texture_handle = engine
             .assets
