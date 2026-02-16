@@ -7,33 +7,27 @@ struct TexturedBox {
 
 impl AppHandler for TexturedBox {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
-        // 1. 准备资源
-        let geometry = Geometry::new_box(2.0, 2.0, 2.0);
-        let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
-        let basic_mat = MeshBasicMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0));
-
-        // 2. 将资源添加到 AssetServer
-        let tex_handle = engine.assets.textures.add(texture);
-
-        basic_mat.set_map(Some(tex_handle));
-
-        let geo_handle = engine.assets.geometries.add(geometry);
-        let mat_handle = engine.assets.materials.add(basic_mat);
+        let tex_handle =
+            engine
+                .assets
+                .textures
+                .add(Texture::create_checkerboard(Some("checker"), 512, 512, 64));
 
         let scene = engine.scene_manager.create_active();
 
-        // 3. 创建 Mesh 并加入场景
-        let mesh = Mesh::new(geo_handle, mat_handle);
-        let cube_node_id = scene.add_mesh(mesh);
-        // 4. 设置相机
-        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = scene.add_camera(camera);
+        // spawn + builder material
+        let cube_node_id = scene.spawn_box(
+            2.0,
+            2.0,
+            2.0,
+            MeshBasicMaterial::new(Vec4::ONE).with_map(tex_handle),
+        );
 
-        if let Some(node) = scene.get_node_mut(cam_node_id) {
-            node.transform.position = Vec3::new(0.0, 3.0, 10.0);
-            node.transform.look_at(Vec3::ZERO, Vec3::Y);
-        }
-
+        let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
+        scene
+            .node(&cam_node_id)
+            .set_position(0.0, 3.0, 10.0)
+            .look_at(Vec3::ZERO);
         scene.active_camera = Some(cam_node_id);
 
         let controls = OrbitControls::new(Vec3::new(0.0, 3.0, 10.0), Vec3::ZERO);

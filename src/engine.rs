@@ -78,10 +78,11 @@ impl Engine {
     /// * `settings` - Render configuration including power preference, features, etc.
     #[must_use]
     pub fn new(settings: RenderSettings) -> Self {
+        let assets = AssetServer::new();
         Self {
             renderer: Renderer::new(settings),
-            scene_manager: SceneManager::new(),
-            assets: AssetServer::new(),
+            scene_manager: SceneManager::new(assets.clone()),
+            assets,
             input: Input::new(),
             time: 0.0,
             frame_count: 0,

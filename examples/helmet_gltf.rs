@@ -1,5 +1,3 @@
-use glam::Vec3;
-
 use myth::prelude::*;
 use myth::utils::FpsCounter;
 
@@ -13,19 +11,15 @@ struct HelmetGltf {
 impl AppHandler for HelmetGltf {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         let map_path = "examples/assets/royal_esplanade_2k.hdr.jpg";
-
         let env_texture_handle = engine
             .assets
             .load_texture(map_path, ColorSpace::Srgb, false)
             .expect("Failed to load environment map");
 
-        engine.scene_manager.create_active();
-        let scene = engine.scene_manager.active_scene_mut().unwrap();
-
+        let scene = engine.scene_manager.create_active();
         scene.environment.set_env_map(Some(env_texture_handle));
+        scene.add_light(Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0));
 
-        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
-        scene.add_light(light);
         let gltf_path =
             std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
         println!("Loading glTF model from: {}", gltf_path.display());
@@ -33,17 +27,13 @@ impl AppHandler for HelmetGltf {
         let prefab =
             GltfLoader::load(gltf_path, engine.assets.clone()).expect("Failed to load glTF model");
         let gltf_node = scene.instantiate(&prefab);
-
         println!("Successfully loaded root node: {:?}", gltf_node);
 
-        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = scene.add_camera(camera);
-
-        if let Some(node) = scene.get_node_mut(cam_node_id) {
-            node.transform.position = Vec3::new(0.0, 0.0, 3.0);
-            node.transform.look_at(Vec3::ZERO, Vec3::Y);
-        }
-
+        let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
+        scene
+            .node(&cam_node_id)
+            .set_position(0.0, 0.0, 3.0)
+            .look_at(Vec3::ZERO);
         scene.active_camera = Some(cam_node_id);
 
         Self {

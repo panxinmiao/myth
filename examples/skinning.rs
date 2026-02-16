@@ -13,12 +13,8 @@ struct SkinningDemo {
 
 impl AppHandler for SkinningDemo {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
-        // === 1. Parse command line arguments for model path ===
         let args: Vec<String> = env::args().collect();
-
-        // Provide a default model path if none is given
         let default_path = "examples/assets/Michelle.glb";
-
         let gltf_path_str = if args.len() > 1 {
             &args[1]
         } else {
@@ -27,37 +23,24 @@ impl AppHandler for SkinningDemo {
             println!("No path provided, loading default: {}", default_path);
             default_path
         };
-
         let gltf_path = Path::new(gltf_path_str);
 
-        // === 2. Load environment map ===
+        // Load environment map
         let env_texture_handle = engine
             .assets
-            .load_cube_texture(
-                [
-                    "examples/assets/Park2/posx.jpg",
-                    "examples/assets/Park2/negx.jpg",
-                    "examples/assets/Park2/posy.jpg",
-                    "examples/assets/Park2/negy.jpg",
-                    "examples/assets/Park2/posz.jpg",
-                    "examples/assets/Park2/negz.jpg",
-                ],
+            .load_texture(
+                "examples/assets/royal_esplanade_2k.hdr.jpg",
                 ColorSpace::Srgb,
-                true,
+                false,
             )
             .expect("Failed to load environment map");
 
         let scene = engine.scene_manager.create_active();
-
         scene.environment.set_env_map(Some(env_texture_handle));
+        scene.add_light(Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0));
 
-        // === 3. Add light ===
-        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
-        scene.add_light(light);
-
-        // === 4. Load glTF model with skinning animation ===
+        // Load glTF model
         println!("Loading glTF model from: {:?}", gltf_path);
-
         let prefab = match GltfLoader::load(gltf_path, engine.assets.clone()) {
             Ok(res) => res,
             Err(e) => {
@@ -66,30 +49,24 @@ impl AppHandler for SkinningDemo {
             }
         };
         let gltf_node = scene.instantiate(&prefab);
-
         println!("Successfully loaded root node: {:?}", gltf_node);
 
-        //  Play skinning animation if available  ---
+        // Play animation
         if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
             println!("Loaded animations:");
-
             let animations = mixer.list_animations();
-
             for anim_name in &animations {
                 println!(" - {}", anim_name);
             }
-
             mixer.play("SambaDance");
         }
 
-        // === 5. Setup Camera ===
-        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = scene.add_camera(camera);
-
-        if let Some(node) = scene.get_node_mut(cam_node_id) {
-            node.transform.position = Vec3::new(0.0, 1.5, 4.0); // 稍微抬高一点视角
-            node.transform.look_at(Vec3::new(0.0, 1.0, 0.0), Vec3::Y);
-        }
+        // Camera — chainable
+        let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
+        scene
+            .node(&cam_node_id)
+            .set_position(0.0, 1.5, 4.0)
+            .look_at(Vec3::new(0.0, 1.0, 0.0));
         scene.active_camera = Some(cam_node_id);
 
         Self {

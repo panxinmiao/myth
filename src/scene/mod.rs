@@ -47,21 +47,25 @@ pub mod environment;
 pub mod light;
 pub mod manager;
 pub mod node;
+pub mod resolve;
 #[allow(clippy::module_inception)]
 pub mod scene;
 pub mod skeleton;
 pub mod transform;
 pub mod transform_system;
+pub mod wrapper;
 
 // Re-export common types
 pub use camera::{Camera, ProjectionType};
 pub use light::{Light, LightKind};
 pub use node::Node;
+pub use resolve::{ResolveGeometry, ResolveMaterial};
 pub use scene::{Scene, SceneLogic};
 pub use transform::Transform;
 pub use transform_system::{
     LevelOrderBatches, build_level_order_batches, update_hierarchy_batched,
 };
+pub use wrapper::SceneNode;
 
 use slotmap::new_key_type;
 

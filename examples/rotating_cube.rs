@@ -8,24 +8,21 @@ struct RotatingCube {
 
 impl AppHandler for RotatingCube {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
-        let geometry = Geometry::new_box(2.0, 2.0, 2.0);
-        let geo_handle = engine.assets.geometries.add(geometry);
-
-        let material = Material::new_basic(Vec4::new(0.8, 0.3, 0.3, 1.0));
-        let mat_handle = engine.assets.materials.add(material);
-
-        let mesh = Mesh::new(geo_handle, mat_handle);
         let scene = engine.scene_manager.create_active();
-        let cube_node_id = scene.add_mesh(mesh);
 
-        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let camera_node_id = scene.add_camera(camera);
+        // One-liner: geometry + material auto-registered
+        let cube_node_id = scene.spawn_box(
+            2.0,
+            2.0,
+            2.0,
+            Material::new_basic(Vec4::new(0.8, 0.3, 0.3, 1.0)),
+        );
 
-        if let Some(cam_node) = scene.get_node_mut(camera_node_id) {
-            cam_node.transform.position = Vec3::new(0.0, 3.0, 20.0);
-            cam_node.transform.look_at(Vec3::ZERO, Vec3::Y);
-        }
-
+        let camera_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
+        scene
+            .node(&camera_node_id)
+            .set_position(0.0, 3.0, 20.0)
+            .look_at(Vec3::ZERO);
         scene.active_camera = Some(camera_node_id);
 
         Self { cube_node_id }

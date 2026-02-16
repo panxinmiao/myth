@@ -1,3 +1,4 @@
+use crate::AssetServer;
 use crate::Scene;
 use slotmap::{SlotMap, new_key_type};
 
@@ -9,20 +10,22 @@ new_key_type! {
 pub struct SceneManager {
     scenes: SlotMap<SceneHandle, Scene>,
     active_scene: Option<SceneHandle>,
+    assets: AssetServer,
 }
 
 impl SceneManager {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(assets: AssetServer) -> Self {
         Self {
             scenes: SlotMap::with_key(),
             active_scene: None,
+            assets,
         }
     }
 
     /// Creates a new scene and returns its handle
     pub fn create_scene(&mut self) -> SceneHandle {
-        self.scenes.insert(Scene::new())
+        self.scenes.insert(Scene::new(self.assets.clone()))
     }
 
     /// Removes a scene (with safety checks)
@@ -81,6 +84,6 @@ impl SceneManager {
 
 impl Default for SceneManager {
     fn default() -> Self {
-        Self::new()
+        Self::new(AssetServer::default())
     }
 }

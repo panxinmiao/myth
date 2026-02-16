@@ -8,36 +8,29 @@ struct PhongBox {
 
 impl AppHandler for PhongBox {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
-        let geometry = Geometry::new_box(2.0, 2.0, 2.0);
-        let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
-        let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
+        let tex_handle =
+            engine
+                .assets
+                .textures
+                .add(Texture::create_checkerboard(Some("checker"), 512, 512, 64));
 
-        let tex_handle = engine.assets.textures.add(texture);
+        let scene = engine.scene_manager.create_active();
 
-        if let Some(phong) = mat.as_phong_mut() {
-            phong.set_map(Some(tex_handle));
-        }
+        // Builder pattern: create material inline with chaining
+        let cube_node_id = scene.spawn_box(
+            2.0,
+            2.0,
+            2.0,
+            MeshPhongMaterial::new(Vec4::ONE).with_map(tex_handle),
+        );
 
-        let geo_handle = engine.assets.geometries.add(geometry);
-        let mat_handle = engine.assets.materials.add(mat);
+        scene.add_light(Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0));
 
-        engine.scene_manager.create_active();
-        let scene = engine.scene_manager.active_scene_mut().unwrap();
-
-        let mesh = Mesh::new(geo_handle, mat_handle);
-        let cube_node_id = scene.add_mesh(mesh);
-
-        let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0);
-        scene.add_light(light);
-
-        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
-        let cam_node_id = scene.add_camera(camera);
-
-        if let Some(node) = scene.get_node_mut(cam_node_id) {
-            node.transform.position = Vec3::new(0.0, 3.0, 10.0);
-            node.transform.look_at(Vec3::ZERO, Vec3::Y);
-        }
-
+        let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
+        scene
+            .node(&cam_node_id)
+            .set_position(0.0, 3.0, 10.0)
+            .look_at(Vec3::ZERO);
         scene.active_camera = Some(cam_node_id);
 
         Self {

@@ -6,6 +6,7 @@ use crate::AssetServer;
 use crate::animation::{AnimationAction, AnimationMixer, AnimationSystem, Binder};
 use crate::assets::prefab::Prefab;
 use crate::resources::buffer::CpuBuffer;
+use crate::resources::geometry::Geometry;
 use crate::resources::mesh::Mesh;
 use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::tone_mapping::ToneMappingSettings;
@@ -16,9 +17,11 @@ use crate::scene::environment::Environment;
 use crate::scene::light::Light;
 use crate::scene::light::LightKind;
 use crate::scene::node::Node;
+use crate::scene::resolve::{ResolveGeometry, ResolveMaterial};
 use crate::scene::skeleton::{BindMode, Skeleton, SkinBinding};
 use crate::scene::transform::Transform;
 use crate::scene::transform_system;
+use crate::scene::wrapper::SceneNode;
 use glam::{Affine3A, Vec3, Vec4};
 use slotmap::{SecondaryMap, SlotMap, SparseSecondaryMap};
 
@@ -95,6 +98,10 @@ pub struct Scene {
     /// Unique scene identifier
     pub id: u32,
 
+    /// Built-in asset server reference (cheap Arc clone).
+    /// Enables `spawn()` and other helpers to auto-register resources.
+    pub assets: AssetServer,
+
     // === Core Node Storage ===
     /// All nodes in the scene (`SlotMap` for O(1) access)
     pub nodes: SlotMap<NodeHandle, Node>,
@@ -150,14 +157,15 @@ pub struct Scene {
 
 impl Default for Scene {
     fn default() -> Self {
-        Self::new()
+        Self::new(AssetServer::default())
     }
 }
 
 impl Scene {
-    pub fn new() -> Self {
+    pub fn new(assets: AssetServer) -> Self {
         Self {
             id: NEXT_SCENE_ID.fetch_add(1, Ordering::Relaxed),
+            assets,
 
             nodes: SlotMap::with_key(),
             root_nodes: Vec::new(),
@@ -952,6 +960,81 @@ impl Scene {
         }
 
         combined_bbox
+    }
+
+    // ========================================================================
+    // High-Level Helpers (spawn, node wrapper)
+    // ========================================================================
+
+    /// Creates a mesh node from any geometry/material combination.
+    ///
+    /// Accepts either pre-registered handles or raw resource structs.
+    /// When structs are passed they are auto-registered via the scene's
+    /// built-in [`AssetServer`].
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// // Pass structs (auto-registered):
+    /// let cube = scene.spawn(
+    ///     Geometry::new_box(1.0, 1.0, 1.0),
+    ///     MeshPhongMaterial::new(Vec4::ONE),
+    /// );
+    ///
+    /// // Or pass existing handles:
+    /// let cube = scene.spawn(geo_handle, mat_handle);
+    /// ```
+    pub fn spawn(
+        &mut self,
+        geometry: impl ResolveGeometry,
+        material: impl ResolveMaterial,
+    ) -> NodeHandle {
+        let geo_handle = geometry.resolve(&self.assets);
+        let mat_handle = material.resolve(&self.assets);
+        let mesh = Mesh::new(geo_handle, mat_handle);
+        self.add_mesh(mesh)
+    }
+
+    /// Shortcut: spawn a box mesh.
+    pub fn spawn_box(
+        &mut self,
+        w: f32,
+        h: f32,
+        d: f32,
+        material: impl ResolveMaterial,
+    ) -> NodeHandle {
+        self.spawn(Geometry::new_box(w, h, d), material)
+    }
+
+    /// Shortcut: spawn a sphere mesh.
+    pub fn spawn_sphere(&mut self, radius: f32, material: impl ResolveMaterial) -> NodeHandle {
+        self.spawn(Geometry::new_sphere(radius), material)
+    }
+
+    /// Shortcut: spawn a plane mesh.
+    pub fn spawn_plane(
+        &mut self,
+        width: f32,
+        height: f32,
+        material: impl ResolveMaterial,
+    ) -> NodeHandle {
+        self.spawn(Geometry::new_plane(width, height), material)
+    }
+
+    /// Returns a chainable wrapper for the given node.
+    ///
+    /// Silently no-ops if the handle is stale, avoiding `unwrap()`.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// scene.node(&handle)
+    ///     .set_position(0.0, 3.0, 0.0)
+    ///     .set_scale(2.0)
+    ///     .look_at(Vec3::ZERO);
+    /// ```
+    pub fn node(&mut self, handle: &NodeHandle) -> SceneNode<'_> {
+        SceneNode::new(self, *handle)
     }
 
     /// Starts building a node
