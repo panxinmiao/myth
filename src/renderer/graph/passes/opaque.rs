@@ -1,27 +1,27 @@
 //! Opaque Render Pass
 //!
-//! 仅绘制不透明物体的 Pass，用于 PBR/HDR 渲染路径。
+//! Only draws opaque objects, used in PBR/HDR rendering path.
 //!
-//! # 数据流
+//! # Data Flow
 //! ```text
 //! RenderLists.opaque → OpaquePass → HDR Scene Color
 //! ```
 //!
-//! # `RenderPass` 配置
-//! - `LoadOp`: Clear (清空颜色和深度)
-//! - `StoreOp`: Store (保留结果供后续 Pass 使用)
+//! # `RenderPass` Configuration
+//! - `LoadOp`: Clear (clear color and depth)
+//! - `StoreOp`: Store (store results for subsequent passes)
 
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::{RenderContext, RenderNode, TrackedRenderPass};
 
 /// Opaque Render Pass
 ///
-/// 仅绘制 `render_lists.opaque` 中的物体。
-/// 清空颜色缓冲和深度缓冲，结果存储供后续 Pass 使用。
+/// Only draws objects in `render_lists.opaque`.
+/// Clears color and depth buffers, results are stored for subsequent passes.
 ///
-/// # 性能考虑
-/// - 命令列表按 Pipeline > Material > Depth 排序，最小化状态切换
-/// - Front-to-Back 排序利用 Early-Z 剔除
+/// # Performance Considerations
+/// - Command lists are sorted by Pipeline > Material > Depth to minimize state changes
+/// - Front-to-Back sorting leverages Early-Z culling
 pub struct OpaquePass {
     /// Clear color
     pub clear_color: wgpu::Color,
@@ -33,7 +33,7 @@ impl OpaquePass {
         Self { clear_color }
     }
 
-    /// 获取渲染目标
+    /// Determine render target views based on MSAA settings.
     fn get_render_target<'a>(
         ctx: &'a RenderContext,
     ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
@@ -52,7 +52,7 @@ impl OpaquePass {
         }
     }
 
-    /// 执行绘制列表
+    /// Execute the draw list
     fn draw_list<'pass>(
         ctx: &'pass RenderContext,
         pass: &mut TrackedRenderPass<'pass>,
@@ -116,7 +116,7 @@ impl RenderNode for OpaquePass {
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
         let render_lists = &ctx.render_lists;
 
-        // 获取全局 BindGroup
+        // Get global BindGroup
         let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {
             log::warn!("OpaquePass: gpu_global_bind_group missing, skipping");
             return;
@@ -134,7 +134,7 @@ impl RenderNode for OpaquePass {
             label: Some("Opaque Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: color_view,
-                resolve_target: None, // Opaque Pass 不 resolve，等 Transparent Pass 完成后再 resolve
+                resolve_target: None, // Opaque Pass does not resolve, wait for Transparent Pass to complete
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Clear(clear_color),
                     store: wgpu::StoreOp::Store,

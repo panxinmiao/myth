@@ -47,11 +47,7 @@ $$ endif
 // --- Vertex output ---
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
-$$ if SKYBOX_PLANAR
     @location(0) uv: vec2<f32>,
-$$ else
-    @location(0) world_dir: vec3<f32>,
-$$ endif
 };
 
 // --- Vertex Shader: Fullscreen Triangle ---
@@ -73,24 +69,7 @@ fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     // Depth test (GreaterEqual) will cull this behind any opaque geometry.
     out.position = vec4<f32>(ndc.x, ndc.y, 0.0, 1.0);
 
-$$ if SKYBOX_PLANAR
-    // Planar mode: pass UV directly (screen-space mapping)
-    out.uv = vec2<f32>(uv.x, 1.0 - uv.y);
-$$ else
-    // Reconstruct world-space view direction from clip coordinates.
-    // Use two depth values for numerical robustness (avoids singularity at far plane).
-    let clip_near = vec4<f32>(ndc.x, ndc.y, 1.0, 1.0);
-    let clip_mid  = vec4<f32>(ndc.x, ndc.y, 0.5, 1.0);
-
-    let world_near = u_camera.view_projection_inverse * clip_near;
-    let world_mid  = u_camera.view_projection_inverse * clip_mid;
-
-    let p_near = world_near.xyz / world_near.w;
-    let p_mid  = world_mid.xyz / world_mid.w;
-
-    out.world_dir = normalize(p_mid - p_near);
-$$ endif
-
+    out.uv = uv;
     return out;
 }
 
@@ -103,56 +82,67 @@ const INV_ATAN: vec2<f32> = vec2<f32>(0.15915494, 0.31830989); // (1/2π, 1/π)
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     var color: vec4<f32>;
 
+    // --- 1.Pixel-Perfect Ray Reconstruction ---
+    let ndc = in.uv * 2.0 - 1.0;
+
+    // Use Near Plane (Z=1.0) to get the direction vector without needing the actual depth value
+    let clip_pos = vec4<f32>(ndc.x, ndc.y, 1.0, 1.0);
+    
+    // Transform from clip space to world space
+    let world_pos_h = u_camera.view_projection_inverse * clip_pos;
+    let world_pos = world_pos_h.xyz / world_pos_h.w;
+    
+    // Compute world-space ray direction
+    let world_dir = normalize(world_pos - u_camera.camera_position);
+
 $$ if SKYBOX_GRADIENT
-    // --- Gradient mode ---
-    let dir = normalize(in.world_dir);
     // Smooth vertical blend based on Y component of view direction
-    let t = smoothstep(-0.5, 0.5, dir.y);
+    let t = smoothstep(-0.5, 0.5, world_dir.y);
     color = mix(u_params.color_bottom, u_params.color_top, t);
+
+    // Add Dithering to reduce banding in gradients, especially at low precision (e.g. 8-bit displays)
+    let noise = fract(sin(dot(in.position.xy, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+    color += (noise - 0.5) / 255.0;
 $$ endif
 
-$$ if SKYBOX_CUBE
-    // --- Cubemap mode ---
-    let dir = normalize(in.world_dir);
-
+$$ if SKYBOX_CUBE or SKYBOX_EQUIRECT
     // Apply Y-axis rotation
     let s = sin(u_params.rotation);
     let c = cos(u_params.rotation);
     let rot_dir = vec3<f32>(
-        dir.x * c - dir.z * s,
-        dir.y,
-        dir.x * s + dir.z * c
+        world_dir.x * c - world_dir.z * s,
+        world_dir.y,
+        world_dir.x * s + world_dir.z * c
     );
+$$ endif
 
+$$ if SKYBOX_CUBE
     color = textureSample(t_skybox_cube, s_skybox, rot_dir);
 $$ endif
 
 $$ if SKYBOX_EQUIRECT
-    // --- Equirectangular mode ---
-    let dir = normalize(in.world_dir);
-
-    // Apply Y-axis rotation
-    let s = sin(u_params.rotation);
-    let c = cos(u_params.rotation);
-    let rot_dir = vec3<f32>(
-        dir.x * c - dir.z * s,
-        dir.y,
-        dir.x * s + dir.z * c
-    );
-
     // Convert direction to equirectangular UV
     let eq_uv = vec2<f32>(
         atan2(rot_dir.z, rot_dir.x),
-        asin(clamp(rot_dir.y, -1.0, 1.0))
+        acos(clamp(rot_dir.y, -1.0, 1.0))
     );
-    let tex_uv = eq_uv * INV_ATAN + 0.5;
+
+    // var u = atan2(output.z, output.x) / TWO_PI + 0.5;
+    // // var v = asin(clamp(output.y, -1.0, 1.0)) / PI + 0.5;
+    // var v = acos(clamp(output.y, -1.0, 1.0)) / PI;
+
+    let tex_uv = vec2<f32>(
+        eq_uv.x * INV_ATAN.x + 0.5,
+        eq_uv.y * INV_ATAN.y
+    );
 
     color = textureSample(t_skybox_2d, s_skybox, tex_uv);
 $$ endif
 
 $$ if SKYBOX_PLANAR
     // --- Planar mode (screen-space mapping) ---
-    color = textureSample(t_skybox_2d, s_skybox, in.uv);
+    let planar_uv = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
+    color = textureSample(t_skybox_2d, s_skybox, planar_uv);
 $$ endif
 
     return vec4<f32>(color.rgb * u_params.intensity, color.a);

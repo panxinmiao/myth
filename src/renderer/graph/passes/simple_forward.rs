@@ -1,32 +1,32 @@
 //! Simple Forward Render Pass
 //!
-//! 简化版 Forward Pass，用于 LDR/非 HDR 渲染路径。
-//! 在单个 `RenderPass` 中依次绘制不透明和透明物体。
+//! Simplified Forward Pass for LDR/non-HDR rendering paths.
+//! Draws opaque and transparent objects in a single `RenderPass`.
 //!
-//! # 数据流
+//! # Data Flow
 //! ```text
 //! RenderLists (from SceneCullPass) → SimpleForwardPass → Surface/LDR Target
 //! ```
 //!
-//! # 使用场景
-//! - 低配模式
-//! - UI 场景
-//! - 非 PBR 场景
-//! - 不需要 Transmission 效果的场景
+//! # Use Cases
+//! - Low-end mode
+//! - UI scenes
+//! - Non-PBR scenes
+//! - Scenes without Transmission effects
 
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::{RenderContext, RenderNode, TrackedRenderPass};
 
 /// Simple Forward Render Pass
 ///
-/// 在单个 `RenderPass` 中完成所有绘制：
-/// 1. Clear 颜色和深度缓冲
-/// 2. 绘制不透明物体（Front-to-Back）
-/// 3. 绘制透明物体（Back-to-Front）
+/// In a single `RenderPass`, it completes all drawing:
+/// 1. Clear color and depth buffers
+/// 2. Draw opaque objects (Front-to-Back)
+/// 3. Draw transparent objects (Back-to-Front)
 ///
-/// # 性能考虑
-/// - 使用 `TrackedRenderPass` 避免冗余状态切换
-/// - 命令列表已预排序，无需额外排序开销
+/// # Performance Considerations
+/// - Use `TrackedRenderPass` to avoid redundant state changes
+/// - Command lists are pre-sorted, no additional sorting overhead
 pub struct SimpleForwardPass {
     /// Clear color
     pub clear_color: wgpu::Color,
@@ -38,9 +38,9 @@ impl SimpleForwardPass {
         Self { clear_color }
     }
 
-    /// 获取渲染目标
+    /// Determine render target views based on MSAA settings.
     ///
-    /// 返回 (`color_view`, `resolve_view`)
+    /// Returns (`color_view`, `resolve_view`)
     fn get_render_target<'a>(
         ctx: &'a RenderContext,
     ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
@@ -59,7 +59,7 @@ impl SimpleForwardPass {
         }
     }
 
-    /// 执行绘制列表
+    /// Execute the draw list
     fn draw_list<'pass>(
         ctx: &'pass RenderContext,
         pass: &mut TrackedRenderPass<'pass>,
@@ -123,7 +123,7 @@ impl RenderNode for SimpleForwardPass {
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
         let render_lists = &ctx.render_lists;
 
-        // 获取全局 BindGroup
+        // get global BindGroup
         let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {
             log::warn!("SimpleForwardPass: gpu_global_bind_group missing, skipping");
             return;
@@ -132,15 +132,15 @@ impl RenderNode for SimpleForwardPass {
         let (color_view, resolve_target) = Self::get_render_target(ctx);
         let depth_view = &ctx.frame_resources.depth_view;
 
-        // 计算最终的 store/resolve 配置
+        // compute final store/resolve configuration
         let (store_op, final_resolve_target) = if resolve_target.is_some() {
-            // MSAA: 最后 resolve，不保存 MSAA buffer
+            // MSAA: resolve at the end, do not store MSAA buffer
             (wgpu::StoreOp::Discard, resolve_target)
         } else {
             (wgpu::StoreOp::Store, None)
         };
 
-        // 单个 RenderPass：Clear → Opaque → Transparent → Resolve
+        // Single RenderPass: Clear → Opaque → Transparent → Resolve
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("Simple Forward Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -169,7 +169,7 @@ impl RenderNode for SimpleForwardPass {
         let raw_pass = encoder.begin_render_pass(&pass_desc);
         let mut tracked_pass = TrackedRenderPass::new(raw_pass);
 
-        // 设置全局 BindGroup
+        // setup global bind group (camera, lights, etc.)
         tracked_pass.set_bind_group(
             0,
             render_lists.gpu_global_bind_group_id,
@@ -177,7 +177,7 @@ impl RenderNode for SimpleForwardPass {
             &[],
         );
 
-        // 先绘制不透明物体（Front-to-Back）
+        // draw opaque objects first (Front-to-Back)
         Self::draw_list(ctx, &mut tracked_pass, &render_lists.opaque);
 
         // ── Skybox: draw between opaque and transparent ──────────────
@@ -189,9 +189,8 @@ impl RenderNode for SimpleForwardPass {
         // everything correctly.
         if let Some(skybox) = &ctx.render_lists.prepared_skybox {
             let raw = tracked_pass.raw_pass();
-            raw.set_pipeline(&skybox.pipeline);
-            raw.set_bind_group(0, &skybox.bind_group, &[]);
-            raw.draw(0..3, 0..1);
+
+            skybox.draw(raw);
 
             // Invalidate all tracked state — the skybox used a completely
             // different pipeline and bind group layout at slot 0.
@@ -206,9 +205,9 @@ impl RenderNode for SimpleForwardPass {
             );
         }
 
-        // 再绘制透明物体（Back-to-Front）
+        // Then draw transparent objects (Back-to-Front)
         Self::draw_list(ctx, &mut tracked_pass, &render_lists.transparent);
 
-        // RenderPass 结束时自动 resolve（如果配置了 resolve_target）
+        // RenderPass will automatically resolve MSAA if resolve_target is Some, and end when dropped
     }
 }

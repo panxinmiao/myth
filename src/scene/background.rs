@@ -156,10 +156,10 @@ impl BackgroundMode {
     pub fn clear_color(&self) -> wgpu::Color {
         match self {
             Self::Color(c) => wgpu::Color {
-                r: c.x as f64,
-                g: c.y as f64,
-                b: c.z as f64,
-                a: c.w as f64,
+                r: f64::from(c.x),
+                g: f64::from(c.y),
+                b: f64::from(c.z),
+                a: f64::from(c.w),
             },
             // For gradient/texture modes, clear to black.
             // The SkyboxPass will fill uncovered pixels.

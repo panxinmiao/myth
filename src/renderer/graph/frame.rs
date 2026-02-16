@@ -91,6 +91,14 @@ pub struct PreparedSkyboxDraw {
     pub bind_group: wgpu::BindGroup,
 }
 
+impl PreparedSkyboxDraw {
+    pub fn draw<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
+        pass.set_pipeline(&self.pipeline);
+        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.draw(0..3, 0..1);
+    }
+}
+
 /// 渲染列表
 ///
 /// 存储经过剔除和排序的渲染命令，由 `SceneCullPass` 填充，
