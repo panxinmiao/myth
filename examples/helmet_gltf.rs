@@ -1,10 +1,7 @@
-use std::sync::Arc;
-
 use glam::Vec3;
 
 use myth::prelude::*;
 use myth::utils::FpsCounter;
-use winit::window::Window;
 
 /// glTF PBR Helmet Example
 struct HelmetGltf {
@@ -14,7 +11,7 @@ struct HelmetGltf {
 }
 
 impl AppHandler for HelmetGltf {
-    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         let map_path = "examples/assets/royal_esplanade_2k.hdr.jpg";
 
         let env_texture_handle = engine
@@ -56,7 +53,7 @@ impl AppHandler for HelmetGltf {
         }
     }
 
-    fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };

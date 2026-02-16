@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
 use myth::prelude::*;
-use winit::window::Window;
 
 /// 带纹理的旋转立方体 + 轨道控制器
 struct TexturedBox {
@@ -9,7 +6,7 @@ struct TexturedBox {
 }
 
 impl AppHandler for TexturedBox {
-    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         // 1. 准备资源
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
@@ -53,7 +50,7 @@ impl AppHandler for TexturedBox {
         Self { controls }
     }
 
-    fn update(&mut self, engine: &mut Engine, _window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, _window: &dyn Window, frame: &FrameState) {
         let scene = engine.scene_manager.active_scene_mut().unwrap();
         // 轨道控制器
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {

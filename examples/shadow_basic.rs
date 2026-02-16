@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use myth::prelude::*;
 use myth::utils::fps_counter::FpsCounter;
-use winit::window::Window;
 
 struct ShadowBasicDemo {
     cube_node: NodeHandle,
@@ -11,7 +8,7 @@ struct ShadowBasicDemo {
 }
 
 impl AppHandler for ShadowBasicDemo {
-    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         let scene = engine.scene_manager.create_active();
 
         let cube_geo = engine
@@ -74,7 +71,7 @@ impl AppHandler for ShadowBasicDemo {
         }
     }
 
-    fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };

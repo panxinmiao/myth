@@ -1,8 +1,5 @@
-use std::sync::Arc;
-
 use myth::prelude::*;
 use myth::utils::fps_counter::FpsCounter;
-use winit::window::Window;
 
 /// Earth Example
 struct Earth {
@@ -13,7 +10,7 @@ struct Earth {
 }
 
 impl AppHandler for Earth {
-    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         // 1. Prepare resources
         let geometry = myth::create_sphere(&myth::resources::primitives::SphereOptions {
             radius: 63.71,
@@ -140,7 +137,7 @@ impl AppHandler for Earth {
         }
     }
 
-    fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };

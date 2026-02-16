@@ -1,10 +1,8 @@
 use std::env;
 use std::path::Path;
-use std::sync::Arc;
 
 use myth::prelude::*;
 use myth::utils::FpsCounter;
-use winit::window::Window;
 
 /// Skinning Animation Example
 ///
@@ -14,7 +12,7 @@ struct SkinningDemo {
 }
 
 impl AppHandler for SkinningDemo {
-    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         // === 1. Parse command line arguments for model path ===
         let args: Vec<String> = env::args().collect();
 
@@ -100,7 +98,7 @@ impl AppHandler for SkinningDemo {
         }
     }
 
-    fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };

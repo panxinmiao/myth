@@ -12,9 +12,7 @@
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use std::sync::Arc;
 use std::sync::mpsc::{Receiver, Sender, channel};
-use winit::window::Window;
 
 use myth::assets::SharedPrefab;
 use myth::prelude::*;
@@ -46,7 +44,7 @@ const ASSET_PATH: &str = "examples/assets/";
 const ASSET_PATH: &str = "assets/";
 
 impl AppHandler for ShowcaseApp {
-    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
 
@@ -102,7 +100,7 @@ impl AppHandler for ShowcaseApp {
         }
     }
 
-    fn update(&mut self, engine: &mut Engine, _window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, _window: &dyn Window, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };

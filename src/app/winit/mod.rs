@@ -8,40 +8,31 @@
 //! The framework consists of:
 //!
 //! - [`App`]: Builder for configuring and launching applications
-//! - [`AppHandler`]: Trait that users implement to define application behavior
+//! - [`AppHandler`](super::AppHandler): Trait that users implement to define application behavior
 //! - [`AppRunner`]: Internal event loop handler (not exposed publicly)
 //!
 //! # Usage
 //!
-//! 1. Implement [`AppHandler`] for your application struct
+//! 1. Implement [`AppHandler`](super::AppHandler) for your application struct
 //! 2. Use [`App`] builder to configure window settings
 //! 3. Call [`App::run`] to start the event loop
 //!
 //! # Example
 //!
 //! ```rust,ignore
-//! use myth::app::winit::{App, AppHandler};
+//! use myth::app::{AppHandler, Window};
 //! use myth::engine::{Engine, FrameState};
-//! use std::sync::Arc;
-//! use winit::window::Window;
 //!
-//! struct GameApp {
-//!     // Your game state here
-//! }
+//! struct GameApp;
 //!
 //! impl AppHandler for GameApp {
-//!     fn init(engine: &mut Engine, window: &Arc<Window>) -> Self {
-//!         // Initialize scene, load assets, etc.
+//!     fn init(engine: &mut Engine, window: &dyn Window) -> Self {
+//!         window.set_title("My Game");
 //!         GameApp {}
 //!     }
 //!
-//!     fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
-//!         // Update game logic
-//!     }
-//!
-//!     fn compose_frame<'a>(&'a self, composer: FrameComposer<'a>) {
-//!         // Add custom render passes if needed
-//!         composer.render();
+//!     fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
+//!         // Update game logic using engine.input
 //!     }
 //! }
 //!
@@ -60,124 +51,54 @@ use std::time::Instant;
 #[cfg(target_arch = "wasm32")]
 use web_time::Instant;
 
+use glam::Vec2;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
-pub use winit::window::{Window, WindowId};
+pub use winit::window::Window as WinitWindow;
+use winit::window::{Window, WindowId};
 
+use crate::app::AppHandler;
+use crate::app::window::Window as WindowTrait;
 use crate::engine::{Engine, FrameState};
-use crate::renderer::graph::FrameComposer;
 use crate::renderer::settings::RenderSettings;
 
 pub mod input_adapter;
 
-/// Trait for defining application behavior.
-///
-/// Implement this trait to create your application. The framework will call
-/// these methods at appropriate times during the application lifecycle.
-///
-/// # Lifecycle
-///
-/// 1. [`init`](Self::init) - Called once when the window is created
-/// 2. [`on_event`](Self::on_event) - Called for each window event
-/// 3. [`update`](Self::update) - Called each frame before rendering
-/// 4. [`compose_frame`](Self::compose_frame) - Called to configure the render pipeline
-///
-/// # Example
-///
-/// ```rust,ignore
-/// impl AppHandler for MyApp {
-///     fn init(engine: &mut Engine, window: &Arc<Window>) -> Self {
-///         // Load assets, create scene
-///         MyApp { /* ... */ }
-///     }
-///
-///     fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {
-///         // Update animations, physics, etc.
-///     }
-/// }
-/// ```
-pub trait AppHandler: Sized + 'static {
-    /// Initializes the application.
-    ///
-    /// Called once after the window is created and the renderer is initialized.
-    /// Use this to set up your scene, load assets, and prepare the initial state.
-    ///
-    /// # Arguments
-    ///
-    /// * `engine` - Mutable reference to the engine instance
-    /// * `window` - Reference to the window (for querying size, etc.)
-    fn init(engine: &mut Engine, window: &Arc<Window>) -> Self;
+// ============================================================================
+// Window Trait Implementation for winit::Window
+// ============================================================================
 
-    /// Handles window events.
-    ///
-    /// Called for each window event before the engine processes it.
-    /// Return `true` to consume the event (prevent default handling),
-    /// or `false` to allow normal processing.
-    ///
-    /// # Arguments
-    ///
-    /// * `engine` - Mutable reference to the engine
-    /// * `window` - Reference to the window
-    /// * `event` - The window event to handle
-    ///
-    /// # Returns
-    ///
-    /// `true` if the event was consumed, `false` otherwise.
-    #[allow(unused_variables)]
-    fn on_event(&mut self, engine: &mut Engine, window: &Arc<Window>, event: &WindowEvent) -> bool {
-        false
+impl WindowTrait for Window {
+    fn set_title(&self, title: &str) {
+        Window::set_title(self, title);
     }
 
-    /// Updates application state.
-    ///
-    /// Called once per frame before rendering. Use this for game logic,
-    /// animations, physics updates, etc.
-    ///
-    /// # Arguments
-    ///
-    /// * `engine` - Mutable reference to the engine
-    /// * `window` - Reference to the window
-    /// * `frame` - Frame timing information
-    #[allow(unused_variables)]
-    fn update(&mut self, engine: &mut Engine, window: &Arc<Window>, frame: &FrameState) {}
+    fn inner_size(&self) -> Vec2 {
+        let size = Window::inner_size(self);
+        Vec2::new(size.width as f32, size.height as f32)
+    }
 
-    /// Configures the render pipeline for this frame.
-    ///
-    /// Override this method to add custom render passes (UI, post-processing, etc.).
-    /// The default implementation only renders the built-in forward pass.
-    ///
-    /// # Arguments
-    ///
-    /// * `composer` - The frame composer for adding render nodes
-    ///
-    /// # Example
-    ///
-    /// ```rust,ignore
-    /// fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
-    ///     composer
-    ///         .add_node(RenderStage::UI, &mut self.ui_pass)
-    ///         .add_node(RenderStage::PostProcess, &mut self.bloom_pass)
-    ///         .render();
-    /// }
-    /// ```
-    fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
-        composer.render();
+    fn scale_factor(&self) -> f32 {
+        Window::scale_factor(self) as f32
+    }
+
+    fn request_redraw(&self) {
+        Window::request_redraw(self);
+    }
+
+    fn set_cursor_visible(&self, visible: bool) {
+        Window::set_cursor_visible(self, visible);
+    }
+
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
     }
 }
 
-/// A minimal no-op handler for testing or as a template.
-///
-/// This handler does nothing but can be used to verify that
-/// the engine initializes and runs correctly.
-pub struct DefaultHandler;
-
-impl AppHandler for DefaultHandler {
-    fn init(_ctx: &mut Engine, _window: &Arc<Window>) -> Self {
-        Self
-    }
-    fn update(&mut self, _engine: &mut Engine, _window: &Arc<Window>, _frame: &FrameState) {}
-}
+// ============================================================================
+// App Builder
+// ============================================================================
 
 /// Application builder for configuring and launching the engine.
 ///
@@ -215,10 +136,6 @@ impl App {
     }
 
     /// Sets the window title.
-    ///
-    /// # Arguments
-    ///
-    /// * `title` - The window title to display
     #[must_use]
     pub fn with_title(mut self, title: impl Into<String>) -> Self {
         self.title = title.into();
@@ -226,10 +143,6 @@ impl App {
     }
 
     /// Sets the render settings.
-    ///
-    /// # Arguments
-    ///
-    /// * `settings` - Custom render configuration
     #[must_use]
     pub fn with_settings(mut self, settings: RenderSettings) -> Self {
         self.render_settings = settings;
@@ -238,10 +151,6 @@ impl App {
 
     #[cfg(target_arch = "wasm32")]
     /// Sets the HTML canvas element ID to use for rendering (WASM only).
-    ///
-    /// # Arguments
-    ///
-    /// * `id` - The ID of the canvas element in the DOM
     #[must_use]
     pub fn with_canvas_id(mut self, id: impl Into<String>) -> Self {
         self.canvas_id = Some(id.into());
@@ -295,6 +204,10 @@ impl Default for App {
     }
 }
 
+// ============================================================================
+// Internal AppRunner
+// ============================================================================
+
 /// Internal application runner that implements winit's `ApplicationHandler`.
 ///
 /// This struct manages the application lifecycle including window creation,
@@ -337,15 +250,9 @@ impl<H: AppHandler> Default for WasmInitState<H> {
 
 #[cfg(target_arch = "wasm32")]
 impl<H: AppHandler> WasmInitState<H> {
-    /// Try to take the result if available, returns None if not ready or already taken
     fn try_take_result(&mut self) -> Option<(Engine, H)> {
         self.result.take()
     }
-
-    // Check if initialization is complete (result is ready)
-    // fn is_complete(&self) -> bool {
-    //     self.result.is_some()
-    // }
 }
 
 impl<H: AppHandler> AppRunner<H> {
@@ -389,7 +296,8 @@ impl<H: AppHandler> AppRunner<H> {
             frame_count: engine.frame_count,
         };
 
-        user_state.update(engine, window, &frame_state);
+        // Pass &dyn WindowTrait (winit::Window implements our Window trait)
+        user_state.update(engine, window.as_ref(), &frame_state);
         engine.update(dt);
     }
 
@@ -413,17 +321,14 @@ impl<H: AppHandler> AppRunner<H> {
 
         let render_camera = cam.extract_render_camera();
 
-        // Use new chained FrameComposer API
         if let Some(composer) =
             engine
                 .renderer
                 .begin_frame(scene, &render_camera, &engine.assets, engine.time)
         {
-            // User adds nodes via compose_frame chaining
             user_state.compose_frame(composer);
         }
 
-        // Periodically clean up resources
         engine.renderer.maybe_prune();
     }
 }
@@ -456,7 +361,8 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
             return;
         }
 
-        self.user_state = Some(H::init(&mut engine, &window));
+        // Pass &dyn WindowTrait to user init
+        self.user_state = Some(H::init(&mut engine, window.as_ref()));
 
         self.engine = Some(engine);
 
@@ -474,7 +380,6 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
             return;
         }
 
-        // Get canvas from DOM
         let web_window = web_sys::window().expect("No window found");
         let document = web_window.document().expect("No document found");
 
@@ -489,7 +394,6 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         canvas.set_attribute("tabindex", "0").ok();
         canvas.focus().ok();
 
-        // Get canvas size
         let window = web_sys::window().unwrap();
         let dpr = window.device_pixel_ratio();
         let width = (canvas.client_width() as f64 * dpr) as u32;
@@ -509,7 +413,6 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
 
         log::info!("Initializing WebGPU Renderer Backend...");
 
-        // On WASM, we must use true async initialization because requestAdapter is async
         let render_settings = self.render_settings.clone();
         let init_state = self.init_state.clone();
         let window_clone = window.clone();
@@ -523,14 +426,14 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
             match engine.init(window_clone.clone(), w, h).await {
                 Ok(_) => {
                     log::info!("WebGPU initialization successful");
-                    let user_state = H::init(&mut engine, &window_clone);
+                    // Pass &dyn WindowTrait to user init
+                    let user_state = H::init(&mut engine, window_clone.as_ref());
                     init_state.borrow_mut().result = Some((engine, user_state));
 
                     window_clone.request_redraw();
                 }
                 Err(e) => {
                     log::error!("Fatal Renderer Error: {}", e);
-
                     panic!("Failed to initialize engine: {}", e);
                 }
             }
@@ -553,7 +456,6 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         #[cfg(target_arch = "wasm32")]
         {
             if self.engine.is_none() {
-                // Try to get the result without panicking if already borrowed
                 let result = {
                     match self.init_state.try_borrow_mut() {
                         Ok(mut state) => state.try_take_result(),
@@ -564,7 +466,6 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                 };
 
                 if let Some((mut engine, user_state)) = result {
-                    // Immediately resize to correct dimensions after init completes
                     if let Some(window) = &self.window {
                         let size = window.inner_size();
                         let scale_factor = window.scale_factor() as f32;
@@ -578,7 +479,6 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                     self.user_state = Some(user_state);
                     log::info!("Engine initialization completed, starting render loop");
                 } else {
-                    // Still initializing
                     return;
                 }
             }
@@ -590,7 +490,8 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
             return;
         };
 
-        let consumed = { user_state.on_event(engine, window, &event) };
+        // Pass raw event to user via &dyn Any (platform-independent signature)
+        let consumed = user_state.on_event(engine, window.as_ref(), &event);
 
         if consumed {
             if let WindowEvent::Resized(ps) = event {
@@ -605,7 +506,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                 }
             }
         } else {
-            // Use adapter to translate winit events to engine Input
+            // Translate winit events to engine Input
             input_adapter::process_window_event(&mut engine.input, &event);
 
             match event {

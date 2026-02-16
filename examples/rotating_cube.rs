@@ -1,7 +1,4 @@
-use std::sync::Arc;
-
 use myth::prelude::*;
-use winit::window::Window;
 
 /// Basic Rotating Cube Example
 ///
@@ -10,7 +7,7 @@ struct RotatingCube {
 }
 
 impl AppHandler for RotatingCube {
-    fn init(engine: &mut Engine, _window: &Arc<Window>) -> Self {
+    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         let geometry = Geometry::new_box(2.0, 2.0, 2.0);
         let geo_handle = engine.assets.geometries.add(geometry);
 
@@ -34,7 +31,7 @@ impl AppHandler for RotatingCube {
         Self { cube_node_id }
     }
 
-    fn update(&mut self, engine: &mut Engine, _window: &Arc<Window>, frame: &FrameState) {
+    fn update(&mut self, engine: &mut Engine, _window: &dyn Window, frame: &FrameState) {
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
