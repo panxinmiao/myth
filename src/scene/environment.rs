@@ -15,8 +15,8 @@ pub struct Environment {
     pub intensity: f32,
     /// Environment map rotation angle (radians)
     pub rotation: f32,
-    /// Environment ambient color
-    pub ambient_color: glam::Vec3,
+    /// Environment ambient light
+    pub ambient: glam::Vec3,
 
     /// Version number (used to track changes affecting Pipeline)
     version: u64,
@@ -33,7 +33,7 @@ impl PartialEq for Environment {
         self.source_env_map == other.source_env_map
             && self.intensity == other.intensity
             && self.rotation == other.rotation
-            && self.ambient_color == other.ambient_color
+            && self.ambient == other.ambient
     }
 }
 
@@ -44,7 +44,7 @@ impl Environment {
             source_env_map: None,
             intensity: 1.0,
             rotation: 0.0,
-            ambient_color: glam::Vec3::ZERO,
+            ambient: glam::Vec3::ZERO,
             version: 0,
         }
     }
@@ -77,9 +77,9 @@ impl Environment {
         self.intensity = intensity;
     }
 
-    /// Sets the environment ambient color
-    pub fn set_ambient_color(&mut self, color: glam::Vec3) {
-        self.ambient_color = color;
+    /// Sets the environment ambient light
+    pub fn set_ambient_light(&mut self, color: glam::Vec3) {
+        self.ambient = color;
     }
 
     /// Whether there is a valid environment map

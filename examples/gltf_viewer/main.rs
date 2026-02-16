@@ -266,7 +266,7 @@ impl AppHandler for GltfViewer {
             }
         });
 
-        scene.environment.set_ambient_color(Vec3::splat(0.1));
+        scene.environment.set_ambient_light(Vec3::splat(0.1));
 
         // 3. 添加灯光
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0);

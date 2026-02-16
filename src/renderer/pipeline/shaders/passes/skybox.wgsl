@@ -44,34 +44,8 @@ $$ if SKYBOX_PLANAR
 @group(0) @binding(3) var s_skybox: sampler;
 $$ endif
 
-// --- Vertex output ---
-struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
-    @location(0) uv: vec2<f32>,
-};
 
-// --- Vertex Shader: Fullscreen Triangle ---
-@vertex
-fn vs_main(@builtin(vertex_index) vertex_index: u32) -> VertexOutput {
-    var out: VertexOutput;
-
-    // Generate fullscreen triangle covering the entire viewport:
-    //   vertex 0: (-1, -1)  uv (0, 0)
-    //   vertex 1: ( 3, -1)  uv (2, 0)
-    //   vertex 2: (-1,  3)  uv (0, 2)
-    let uv = vec2<f32>(
-        f32((vertex_index << 1u) & 2u),
-        f32(vertex_index & 2u)
-    );
-    let ndc = uv * 2.0 - 1.0;
-
-    // Force Z = 0.0 for Reverse-Z far plane (maximum distance).
-    // Depth test (GreaterEqual) will cull this behind any opaque geometry.
-    out.position = vec4<f32>(ndc.x, ndc.y, 0.0, 1.0);
-
-    out.uv = uv;
-    return out;
-}
+{$ include 'full_screen_vertex.wgsl' $}
 
 // --- Constants ---
 const PI: f32 = 3.14159265359;
@@ -86,7 +60,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let ndc = in.uv * 2.0 - 1.0;
 
     // Use Near Plane (Z=1.0) to get the direction vector without needing the actual depth value
-    let clip_pos = vec4<f32>(ndc.x, ndc.y, 1.0, 1.0);
+    let clip_pos = vec4<f32>(ndc.x, -ndc.y, 1.0, 1.0);
     
     // Transform from clip space to world space
     let world_pos_h = u_camera.view_projection_inverse * clip_pos;
@@ -127,10 +101,6 @@ $$ if SKYBOX_EQUIRECT
         acos(clamp(rot_dir.y, -1.0, 1.0))
     );
 
-    // var u = atan2(output.z, output.x) / TWO_PI + 0.5;
-    // // var v = asin(clamp(output.y, -1.0, 1.0)) / PI + 0.5;
-    // var v = acos(clamp(output.y, -1.0, 1.0)) / PI;
-
     let tex_uv = vec2<f32>(
         eq_uv.x * INV_ATAN.x + 0.5,
         eq_uv.y * INV_ATAN.y
@@ -141,8 +111,7 @@ $$ endif
 
 $$ if SKYBOX_PLANAR
     // --- Planar mode (screen-space mapping) ---
-    let planar_uv = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
-    color = textureSample(t_skybox_2d, s_skybox, planar_uv);
+    color = textureSample(t_skybox_2d, s_skybox, in.uv);
 $$ endif
 
     return vec4<f32>(color.rgb * u_params.intensity, color.a);

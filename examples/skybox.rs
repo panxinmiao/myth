@@ -69,6 +69,11 @@ impl SkyboxDemo {
             DemoMode::CubeMap => BackgroundMode::cubemap(self.cube_env_texture, 1.0),
             DemoMode::Equirectangular => BackgroundMode::equirectangular(self.env_texture, 1.0),
         };
+
+        scene.environment.set_env_map(match self.mode {
+            DemoMode::CubeMap => Some(self.cube_env_texture),
+            _ => Some(self.env_texture),
+        });
     }
 
     fn print_help() {

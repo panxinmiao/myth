@@ -68,7 +68,7 @@ impl AppHandler for ShowcaseApp {
         });
 
         // Set base ambient light as fallback before HDR loads
-        scene.environment.set_ambient_color(Vec3::splat(0.2));
+        scene.environment.set_ambient_light(Vec3::splat(0.2));
 
         // 3. Add directional light (auxiliary lighting)
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0);
