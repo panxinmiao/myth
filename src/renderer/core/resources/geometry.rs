@@ -3,6 +3,7 @@
 use std::ops::Range;
 
 use crate::assets::{AssetServer, GeometryHandle};
+use crate::renderer::core::resources::generate_gpu_resource_id;
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 use crate::resources::geometry::Geometry;
 
@@ -13,6 +14,7 @@ use super::ResourceManager;
 /// Vertex Buffer IDs 用于 Pipeline 缓存验证，不影响 `BindGroup`
 pub struct GpuGeometry {
     pub layout_info: GeneratedVertexLayout,
+    pub layout_id: u64,
     pub vertex_buffers: Vec<wgpu::Buffer>,
     pub vertex_buffer_ids: Vec<u64>,
     pub index_buffer: Option<(wgpu::Buffer, wgpu::IndexFormat, u32, u64)>,
@@ -112,6 +114,8 @@ impl ResourceManager {
     fn create_gpu_geometry(&mut self, geometry: &Geometry, handle: GeometryHandle) {
         let layout_info = crate::renderer::pipeline::vertex::generate_vertex_layout(geometry);
 
+        let layout_id = self.get_or_create_vertex_layout_id(&layout_info);
+
         let mut vertex_buffers = Vec::new();
         let mut vertex_buffer_ids = Vec::new();
 
@@ -151,6 +155,7 @@ impl ResourceManager {
 
         let gpu_geo = GpuGeometry {
             layout_info,
+            layout_id,
             vertex_buffers,
             vertex_buffer_ids,
             index_buffer,
@@ -166,5 +171,17 @@ impl ResourceManager {
 
     pub fn get_geometry(&self, handle: GeometryHandle) -> Option<&GpuGeometry> {
         self.gpu_geometries.get(handle)
+    }
+
+    pub fn get_or_create_vertex_layout_id(&mut self, layout: &GeneratedVertexLayout) -> u64 {
+        let signature = layout.to_signature();
+
+        if let Some(&id) = self.vertex_layout_cache.get(&signature) {
+            return id;
+        }
+
+        let id = generate_gpu_resource_id();
+        self.vertex_layout_cache.insert(signature, id);
+        id
     }
 }

@@ -25,8 +25,10 @@ use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 /// 实现更灵活的宏定义组合。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PipelineKey {
-    /// Shader 宏定义的组合哈希
     pub shader_hash: u64,
+    pub vertex_layout_id: u64,
+    // [Global, Material, Object, Screen]
+    pub bind_group_layout_ids: [u64; 4],
     pub topology: wgpu::PrimitiveTopology,
     pub cull_mode: Option<wgpu::Face>,
     pub depth_write: bool,

@@ -178,6 +178,13 @@ impl SceneCullPass {
 
                         let canonical_key = PipelineKey {
                             shader_hash,
+                            vertex_layout_id: gpu_geometry.layout_id,
+                            bind_group_layout_ids: [
+                                gpu_world.layout_id,
+                                gpu_material.layout_id,
+                                object_bind_group.layout_id,
+                                ctx.frame_resources.screen_bind_group_layout.id(),
+                            ],
                             topology: geometry.topology,
                             cull_mode: match material.side() {
                                 Side::Front => Some(wgpu::Face::Back),

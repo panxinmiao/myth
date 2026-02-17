@@ -46,6 +46,7 @@ pub(crate) use crate::renderer::core::resources::material::GpuMaterial;
 pub(crate) use crate::renderer::core::resources::texture::{
     GpuImage, GpuSampler, TextureBinding, TextureViewKey,
 };
+use crate::renderer::pipeline::vertex::VertexLayoutSignature;
 pub(crate) use crate::resources::texture::TextureSampler;
 
 use crate::assets::{GeometryHandle, MaterialHandle, TextureHandle};
@@ -92,6 +93,7 @@ pub(crate) type ObjectBindGroupKey = u64;
 #[derive(Clone)]
 pub struct BindGroupContext {
     pub layout: wgpu::BindGroupLayout,
+    pub layout_id: u64,
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
     pub binding_wgsl: Arc<str>,
@@ -125,6 +127,9 @@ pub struct ResourceManager {
     pub(crate) view_cache: FxHashMap<TextureViewKey, (wgpu::TextureView, u64)>,
     pub(crate) layout_cache:
         FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
+
+    /// 顶点布局缓存：Signature -> ID
+    pub vertex_layout_cache: FxHashMap<VertexLayoutSignature, u64>,
 
     pub(crate) dummy_image: GpuImage,
     pub(crate) dummy_env_image: GpuImage,
@@ -384,6 +389,7 @@ impl ResourceManager {
             gpu_buffers,
             gpu_images: FxHashMap::default(),
             layout_cache: FxHashMap::default(),
+            vertex_layout_cache: FxHashMap::default(),
             sampler_cache: FxHashMap::default(),
             sampler_id_lookup,
             view_cache: FxHashMap::default(),
