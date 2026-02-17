@@ -658,31 +658,43 @@ impl GltfLoader {
     /// Helper function to create texture sampler from glTF texture
     fn create_texture_sampler(texture: &gltf::Texture) -> (TextureSampler, bool) {
         let sampler = texture.sampler();
+
         let mut generate_mipmaps = false;
 
+        // Todo: for Normal and MetallicRoughness map,
+        // For now, use a simple linear mipmap for normal and metallic-roughness maps,
+        // it can cause distant objects to look more "wet/smooth" than they actually are,
+        // requiring some advanced generation algorithm (like Normal-Distribution-Function (NDF) filtering) to achieve a more correct appearance.
+        if let Some(min_filter) = sampler.min_filter() {
+            if matches!(
+                min_filter,
+                gltf::texture::MinFilter::NearestMipmapNearest
+                    | gltf::texture::MinFilter::NearestMipmapLinear
+                    | gltf::texture::MinFilter::LinearMipmapNearest
+                    | gltf::texture::MinFilter::LinearMipmapLinear
+            ) {
+                generate_mipmaps = true;
+            }
+        } else {
+            // If min_filter is not specified, it defaults to `Linear` which does not use mipmaps.
+            // However, many glTF files omit the sampler settings, and in practice mipmaps are often desirable for better quality.
+            // Therefore, we enable mipmap generation by default when min_filter is not set.
+            generate_mipmaps = true;
+        }
+
         let engine_sampler = TextureSampler {
-            mag_filter: sampler
-                .mag_filter()
-                .map_or(wgpu::FilterMode::Linear, |f| match f {
-                    gltf::texture::MagFilter::Nearest => wgpu::FilterMode::Nearest,
-                    gltf::texture::MagFilter::Linear => wgpu::FilterMode::Linear,
-                }),
-            min_filter: sampler
-                .min_filter()
-                .map_or(wgpu::FilterMode::Linear, |f| match f {
-                    gltf::texture::MinFilter::Nearest => wgpu::FilterMode::Nearest,
-                    gltf::texture::MinFilter::Linear => wgpu::FilterMode::Linear,
-                    gltf::texture::MinFilter::NearestMipmapNearest
-                    | gltf::texture::MinFilter::NearestMipmapLinear => {
-                        generate_mipmaps = true;
-                        wgpu::FilterMode::Nearest
-                    }
-                    gltf::texture::MinFilter::LinearMipmapNearest
-                    | gltf::texture::MinFilter::LinearMipmapLinear => {
-                        generate_mipmaps = true;
-                        wgpu::FilterMode::Linear
-                    }
-                }),
+            mag_filter: match sampler.mag_filter() {
+                Some(gltf::texture::MagFilter::Nearest) => wgpu::FilterMode::Nearest,
+                _ => wgpu::FilterMode::Linear,
+            },
+            min_filter: match sampler.min_filter() {
+                Some(
+                    gltf::texture::MinFilter::Nearest
+                    | gltf::texture::MinFilter::NearestMipmapNearest
+                    | gltf::texture::MinFilter::NearestMipmapLinear,
+                ) => wgpu::FilterMode::Nearest,
+                _ => wgpu::FilterMode::Linear,
+            },
             address_mode_u: match sampler.wrap_s() {
                 gltf::texture::WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
                 gltf::texture::WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
@@ -698,17 +710,7 @@ impl GltfLoader {
                 Some(
                     gltf::texture::MinFilter::NearestMipmapNearest
                     | gltf::texture::MinFilter::LinearMipmapNearest,
-                ) => {
-                    generate_mipmaps = true;
-                    wgpu::MipmapFilterMode::Nearest
-                }
-                Some(
-                    gltf::texture::MinFilter::NearestMipmapLinear
-                    | gltf::texture::MinFilter::LinearMipmapLinear,
-                ) => {
-                    generate_mipmaps = true;
-                    wgpu::MipmapFilterMode::Linear
-                }
+                ) => wgpu::MipmapFilterMode::Nearest,
                 _ => wgpu::MipmapFilterMode::Linear,
             },
             ..Default::default()
@@ -815,6 +817,16 @@ impl GltfLoader {
                     textures.normal_map.channel = info.tex_coord() as u8;
                     uniforms.normal_scale = Vec2::splat(info.scale());
 
+                    if let Some(transform) = info.texture_transform() {
+                        textures.normal_map.transform.offset = Vec2::from_array(transform.offset());
+                        textures.normal_map.transform.scale = Vec2::from_array(transform.scale());
+                        textures.normal_map.transform.rotation = transform.rotation();
+
+                        if let Some(tex_coord) = transform.tex_coord() {
+                            textures.normal_map.channel = tex_coord as u8;
+                        }
+                    }
+
                     let json_material = material
                         .index()
                         .and_then(|i| gltf.document.materials().nth(i));
@@ -834,6 +846,16 @@ impl GltfLoader {
                     textures.ao_map.texture = Some(tex_handle);
                     textures.ao_map.channel = info.tex_coord() as u8;
                     uniforms.ao_map_intensity = info.strength();
+
+                    if let Some(transform) = info.texture_transform() {
+                        textures.ao_map.transform.offset = Vec2::from_array(transform.offset());
+                        textures.ao_map.transform.scale = Vec2::from_array(transform.scale());
+                        textures.ao_map.transform.rotation = transform.rotation();
+
+                        if let Some(tex_coord) = transform.tex_coord() {
+                            textures.ao_map.channel = tex_coord as u8;
+                        }
+                    }
 
                     let json_material = material
                         .index()
