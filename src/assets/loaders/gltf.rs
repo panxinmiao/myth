@@ -978,10 +978,13 @@ impl GltfLoader {
     }
 
     fn create_prefab_node(node: &gltf::Node) -> PrefabNode {
-        let node_name = node.name().map(std::string::ToString::to_string);
+        let node_name = node.name().map_or_else(
+            || format!("Node_{}", node.index()),
+            std::string::ToString::to_string,
+        );
 
         let mut prefab_node = PrefabNode::new();
-        prefab_node.name = node_name;
+        prefab_node.name = Some(node_name);
 
         let (t, r, s) = node.transform().decomposed();
         prefab_node.transform.position = Vec3::from_array(t);
@@ -1077,6 +1080,8 @@ impl GltfLoader {
     fn bind_node_mesh_and_skin(&mut self, node: &gltf::Node, buffers: &[Vec<u8>]) {
         let node_idx = node.index();
 
+        let skin_index = node.skin().map(|s| s.index());
+
         let initial_weights = if let Some(weights) = node.weights() {
             Some(weights.to_vec())
         } else if let Some(mesh) = node.mesh() {
@@ -1086,6 +1091,7 @@ impl GltfLoader {
         };
 
         self.prefab_nodes[node_idx].morph_weights = initial_weights;
+        self.prefab_nodes[node_idx].skin_index = skin_index;
 
         if let Some(mesh) = node.mesh() {
             let primitives: Vec<_> = mesh.primitives().collect();
@@ -1113,6 +1119,11 @@ impl GltfLoader {
 
                         sub_node.is_split_primitive = true;
 
+                        sub_node.skin_index = skin_index;
+
+                        // TODO: make sure if we need also to clone weights for each sub-node?
+                        // sub_node.morph_weights = initial_weights.clone();
+
                         self.prefab_nodes.push(sub_node);
                     }
 
@@ -1123,10 +1134,6 @@ impl GltfLoader {
                     }
                 }
             }
-        }
-
-        if let Some(skin) = node.skin() {
-            self.prefab_nodes[node_idx].skin_index = Some(skin.index());
         }
     }
 
