@@ -34,6 +34,35 @@ pub struct GeneratedVertexLayout {
     pub attribute_locations: FxHashMap<String, u32>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VertexLayoutSignature {
+    pub buffers: Vec<VertexBufferLayoutSignature>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct VertexBufferLayoutSignature {
+    pub array_stride: u64,
+    pub step_mode: wgpu::VertexStepMode,
+    pub attributes: Vec<wgpu::VertexAttribute>,
+}
+
+impl GeneratedVertexLayout {
+    #[must_use]
+    pub fn to_signature(&self) -> VertexLayoutSignature {
+        let buffers = self
+            .buffers
+            .iter()
+            .map(|b| VertexBufferLayoutSignature {
+                array_stride: b.array_stride,
+                step_mode: b.step_mode,
+                attributes: b.attributes.clone(),
+            })
+            .collect();
+
+        VertexLayoutSignature { buffers }
+    }
+}
+
 #[must_use]
 pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
     let mut buffer_groups: FxHashMap<u64, Vec<(&String, &Attribute)>> = FxHashMap::default();
@@ -47,19 +76,33 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
     }
 
     let mut sorted_groups: Vec<_> = buffer_groups.into_iter().collect();
+
+    // 先对每个组内部的属性进行排序，确保 a.1[0] 是确定的（例如按 offset 或名字）
+    for (_, attrs) in &mut sorted_groups {
+        attrs.sort_by(|a, b| a.1.offset.cmp(&b.1.offset).then(a.0.cmp(b.0)));
+    }
+
+    // 然后再对组进行排序
     sorted_groups.sort_by(|a, b| {
+        // 这里沿用原本的逻辑，但现在它是稳定的了
         let name_a = a.1[0].0;
         let name_b = b.1[0].0;
         name_a.cmp(name_b)
     });
+
+    // sorted_groups.sort_by(|a, b| {
+    //     let name_a = a.1[0].0;
+    //     let name_b = b.1[0].0;
+    //     name_a.cmp(name_b)
+    // });
 
     let mut owned_layouts = Vec::new();
     let mut wgsl_struct_fields = Vec::new();
     let mut location_map = FxHashMap::default();
     let mut current_location = 0;
 
-    for (buffer_id, mut attrs) in sorted_groups {
-        attrs.sort_by(|a, b| a.1.offset.cmp(&b.1.offset).then(a.0.cmp(b.0)));
+    for (buffer_id, attrs) in sorted_groups {
+        // attrs.sort_by(|a, b| a.1.offset.cmp(&b.1.offset).then(a.0.cmp(b.0)));
 
         let first_attr = attrs[0].1;
         let stride = first_attr.stride;

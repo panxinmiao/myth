@@ -219,12 +219,13 @@ impl ResourceManager {
         let binding_wgsl = builder.generate_wgsl(2);
         let layout_entries = builder.layout_entries.clone();
 
-        let (layout, _) = self.get_or_create_layout(&layout_entries);
+        let (layout, layout_id) = self.get_or_create_layout(&layout_entries);
         self.prepare_binding_resources(assets, &builder.resources);
         let (bind_group, bind_group_id) = self.create_bind_group(&layout, &builder);
 
         let data = BindGroupContext {
             layout,
+            layout_id,
             bind_group,
             bind_group_id,
             binding_wgsl: binding_wgsl.into(),
