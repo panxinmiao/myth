@@ -43,7 +43,7 @@ serde_json = "1.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "hdr", "exr", "webp"] }
 gltf = {git = "https://github.com/panxinmiao/gltf.git", rev = "077dd0af4fccd6bd441b210dc7f2cc1f2c5f1b9f", features = [
     "extensions", "KHR_materials_pbrSpecularGlossiness", 
-    "KHR_materials_specular", "KHR_materials_emissive_strength", 
+    "KHR_materials_specular", "KHR_materials_emissive_strength", "EXT_texture_webp",
     "KHR_materials_ior", "KHR_texture_transform", "allow_empty_animation_target_node"
 ], optional = true }
 base64 = "0.22"
