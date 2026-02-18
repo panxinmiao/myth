@@ -666,6 +666,29 @@ impl Scene {
             self.animation_mixers.insert(root_handle, mixer);
         }
 
+        // Pass 7: Garbage collection of orphan nodes
+        // remove all nodes that are not part of the current scene hierarchy (root_indices)
+        {
+            let mut visited = vec![false; node_count];
+            let mut stack = prefab.root_indices.clone();
+
+            while let Some(idx) = stack.pop() {
+                if visited[idx] {
+                    continue;
+                }
+                visited[idx] = true;
+                for &child_idx in &prefab.nodes[idx].children_indices {
+                    stack.push(child_idx);
+                }
+            }
+
+            for (i, &handle) in node_map.iter().enumerate() {
+                if !visited[i] {
+                    self.remove_node(handle);
+                }
+            }
+        }
+
         root_handle
     }
 
