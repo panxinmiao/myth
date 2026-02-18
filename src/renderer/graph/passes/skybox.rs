@@ -518,6 +518,7 @@ impl RenderNode for SkyboxPass {
         }
 
         // 3. Update skybox params from scene background
+        // Todo: only update if background changed since last frame (need to track previous background in pass state)
         {
             let mut p = self.params_uniforms.write();
             match background {
