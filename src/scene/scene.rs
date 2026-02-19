@@ -9,6 +9,7 @@ use crate::resources::buffer::CpuBuffer;
 use crate::resources::geometry::Geometry;
 use crate::resources::mesh::Mesh;
 use crate::resources::shader_defines::ShaderDefines;
+use crate::resources::bloom::BloomSettings;
 use crate::resources::tone_mapping::ToneMappingSettings;
 use crate::resources::uniforms::{EnvironmentUniforms, GpuLightStorage};
 use crate::resources::{BoundingBox, Input};
@@ -138,6 +139,8 @@ pub struct Scene {
     pub environment: Environment,
     /// Tone mapping settings (exposure, mode)
     pub tone_mapping: ToneMappingSettings,
+    /// Bloom post-processing settings
+    pub bloom: BloomSettings,
     /// Background rendering mode (solid color, gradient, or texture)
     pub background: BackgroundMode,
     /// Currently active camera for rendering
@@ -189,6 +192,7 @@ impl Scene {
 
             environment: Environment::new(),
             tone_mapping: ToneMappingSettings::default(),
+            bloom: BloomSettings::default(),
             background: BackgroundMode::default(),
 
             active_camera: None,

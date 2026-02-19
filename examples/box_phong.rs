@@ -17,12 +17,8 @@ impl AppHandler for PhongBox {
         let scene = engine.scene_manager.create_active();
 
         // Builder pattern: create material inline with chaining
-        let cube_node_id = scene.spawn_box(
-            2.0,
-            2.0,
-            2.0,
-            MeshPhongMaterial::new(Vec4::ONE).with_map(tex_handle),
-        );
+        let mat = MeshPhongMaterial::new(Vec4::ONE).with_map(tex_handle);
+        let cube_node_id = scene.spawn_box(2.0, 2.0, 2.0, mat);
 
         scene.add_light(Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0));
 

@@ -24,6 +24,7 @@
 //! - **Shared ownership**: Use `Arc` for data that may be shared across objects
 
 pub mod buffer;
+pub mod bloom;
 pub mod geometry;
 pub mod image;
 pub mod input;
@@ -50,4 +51,5 @@ pub use input::{ButtonState, Input, Key, MouseButton};
 pub use shader_defines::ShaderDefines;
 pub use texture::{Texture, TextureSampler};
 pub use tone_mapping::{ToneMappingMode, ToneMappingSettings};
+pub use bloom::BloomSettings;
 pub use uniforms::{Mat3Uniform, WgslType};

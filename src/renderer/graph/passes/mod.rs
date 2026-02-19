@@ -23,8 +23,7 @@
 //! - [`IBLComputePass`]: Pre-filters IBL
 //!
 //! ## Post-Processing Pass
-//! - [`ToneMapPass`]: Tone mapping (HDR → LDR)
-//!
+//! - [`ToneMapPass`]: Tone mapping (HDR → LDR)/// - [`BloomPass`]: Physically-based bloom (HDR)//!
 //! # Render Pipeline Topology
 //!
 //! ## Simple Path (LDR/Fast)
@@ -34,9 +33,10 @@
 //!
 //! ## PBR Path (HDR/Physical)
 //! ```text
-//! SceneCullPass → OpaquePass → [SkyboxPass] → [TransmissionCopyPass] → TransparentPass → ToneMapPass → Surface
-//! ```
+/// SceneCullPass → OpaquePass → [SkyboxPass] → [TransmissionCopyPass] → TransparentPass → [BloomPass] → ToneMapPass → Surface
+/// ```
 
+mod bloom;
 mod brdf_lut_compute;
 mod cull;
 mod ibl_compute;
@@ -48,6 +48,7 @@ mod tone_mapping;
 mod transmission_copy;
 mod transparent;
 
+pub use bloom::BloomPass;
 pub use brdf_lut_compute::BRDFLutComputePass;
 pub use cull::SceneCullPass;
 pub use ibl_compute::IBLComputePass;
