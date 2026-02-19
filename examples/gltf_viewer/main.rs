@@ -1135,10 +1135,11 @@ impl GltfViewer {
                     if !self.hdr_enabled {
                         ui.label("ℹ Enable HDR to configure tone mapping");
                     }
-                });
 
-                // ===== Bloom 后处理 =====
-                ui.collapsing("🌸 Bloom", |ui| {
+                    ui.separator();
+
+                    // ===== Bloom 后处理 =====
+
                     // 开关 (always available when HDR is on)
                     ui.add_enabled_ui(self.hdr_enabled, |ui| {
                         let mut bloom_enabled = scene.bloom.enabled;
@@ -1148,6 +1149,7 @@ impl GltfViewer {
                     });
 
                     let bloom_enabled = scene.bloom.enabled;
+
                     ui.add_enabled_ui(self.hdr_enabled && bloom_enabled, |ui| {
                         // Strength
                         ui.horizontal(|ui| {

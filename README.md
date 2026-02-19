@@ -45,6 +45,7 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
 * **Shadows**: Cascaded shadow maps.
 * **Transient Render Graph**: A highly optimized, frame-graph based rendering architecture that minimizes overhead and maximizes flexibility.
 * **Asset System**: Asynchronous asset loading with `AssetServer`, built-in **glTF 2.0** support (geometry, materials, animations).
+* **Post-Processing Effects**: Built-in support for physically-based bloom, tone mapping, and more.
 * **Tooling Ready**: Includes a powerful `gltf_viewer` example with an embedded **Inspector UI** (based on egui), capable of inspecting scene nodes, materials, and textures at runtime.
 * **Web First**: First-class support for **WASM** and **WebGPU**. Write once, run everywhere.
 

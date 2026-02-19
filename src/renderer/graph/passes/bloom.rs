@@ -517,9 +517,9 @@ impl BloomPass {
         // The first downsample BindGroup is the only one that depends on the ping-pong scene color view,
         if self.downsample_bind_groups.is_empty() {
             self.downsample_bind_groups
-                .push(self._get_first_mip_bind_group(ctx));
+                .push(self.get_first_mip_bind_group(ctx));
         } else {
-            self.downsample_bind_groups[0] = self._get_first_mip_bind_group(ctx);
+            self.downsample_bind_groups[0] = self.get_first_mip_bind_group(ctx);
         }
 
         // Bloom works at half resolution
@@ -616,7 +616,7 @@ impl BloomPass {
                 .wgpu_ctx
                 .device
                 .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("Bloom US BG {}→{}", source_mip, target_mip)),
+                    label: Some(&format!("Bloom US BG {source_mip}→{target_mip}")),
                     layout: &self.upsample_layout,
                     entries: &[
                         wgpu::BindGroupEntry {
@@ -647,7 +647,7 @@ impl BloomPass {
         );
     }
 
-    fn _get_first_mip_bind_group(&self, ctx: &mut RenderContext) -> wgpu::BindGroup {
+    fn get_first_mip_bind_group(&self, ctx: &mut RenderContext) -> wgpu::BindGroup {
         // Select the appropriate static Karis buffer for the first downsample
         let karis_buffer = if ctx.scene.bloom.karis_average {
             &self.buffer_karis_on
@@ -671,7 +671,8 @@ impl BloomPass {
             .with_resource(buffer_id);
 
         // 3. 从缓存获取或创建
-        let first_bind_group = if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
+
+        if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
             cached.clone()
         } else {
             let new_bg = ctx
@@ -698,12 +699,10 @@ impl BloomPass {
 
             ctx.global_bind_group_cache.insert(key, new_bg.clone());
             new_bg
-        };
-
-        first_bind_group
+        }
     }
 
-    fn _get_composite_bind_group(&self, ctx: &mut RenderContext) -> wgpu::BindGroup {
+    fn get_composite_bind_group(&self, ctx: &mut RenderContext) -> wgpu::BindGroup {
         let input_view = ctx.get_scene_color_input();
         let bloom_view = &self.bloom_mip_views[0];
 
@@ -723,7 +722,8 @@ impl BloomPass {
             .with_resource(buffer_id);
 
         // 3. 从缓存获取或创建
-        let composite_bind_group = if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
+
+        if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
             cached.clone()
         } else {
             let new_bg = ctx
@@ -754,14 +754,12 @@ impl BloomPass {
 
             ctx.global_bind_group_cache.insert(key, new_bg.clone());
             new_bg
-        };
-
-        composite_bind_group
+        }
     }
 }
 
 impl RenderNode for BloomPass {
-    fn name(&self) -> &str {
+    fn name(&self) -> &'static str {
         "Bloom Pass"
     }
 
@@ -797,7 +795,7 @@ impl RenderNode for BloomPass {
         let (source_w, source_h) = ctx.wgpu_ctx.size();
         self.ensure_mip_chain(ctx, source_w, source_h, settings.max_mip_levels);
 
-        self.composite_bind_group = Some(self._get_composite_bind_group(ctx));
+        self.composite_bind_group = Some(self.get_composite_bind_group(ctx));
 
         self.output_view = Some(ctx.get_scene_color_output().clone());
 
@@ -835,25 +833,20 @@ impl RenderNode for BloomPass {
             return;
         }
 
-        let downsample_pipeline = match &self.downsample_pipeline {
-            Some(p) => p,
-            None => return,
+        let Some(downsample_pipeline) = &self.downsample_pipeline else {
+            return;
         };
-        let upsample_pipeline = match &self.upsample_pipeline {
-            Some(p) => p,
-            None => return,
+        let Some(upsample_pipeline) = &self.upsample_pipeline else {
+            return;
         };
-        let composite_pipeline = match &self.composite_pipeline {
-            Some(p) => p,
-            None => return,
+        let Some(composite_pipeline) = &self.composite_pipeline else {
+            return;
         };
-        let composite_bind_group = match &self.composite_bind_group {
-            Some(bg) => bg,
-            None => return,
+        let Some(composite_bind_group) = &self.composite_bind_group else {
+            return;
         };
-        let output_view = match &self.output_view {
-            Some(v) => v,
-            None => return,
+        let Some(output_view) = &self.output_view else {
+            return;
         };
 
         // =====================================================================
