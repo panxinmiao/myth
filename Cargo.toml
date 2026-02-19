@@ -101,7 +101,7 @@ console_error_panic_hook = "0.1.7"
 console_log = "1.0"
 
 rust-embed = { version = "8.11", features = ["debug-embed"] }
-wgpu = { version = "28.0", features = ["webgpu", "webgl"] }
+wgpu = { version = "28.0", features = ["webgpu"] }
 
 parking_lot = { version = "0.12", features = [] }
 lasso = { version = "0.7", features = [] } 

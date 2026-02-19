@@ -58,7 +58,7 @@ use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
-    BRDFLutComputePass, IBLComputePass, OpaquePass, SceneCullPass, ShadowPass, SimpleForwardPass,
+    BRDFLutComputePass, BloomPass, IBLComputePass, OpaquePass, SceneCullPass, ShadowPass, SimpleForwardPass,
     SkyboxPass, ToneMapPass, TransmissionCopyPass, TransparentPass,
 };
 use crate::scene::Scene;
@@ -130,6 +130,7 @@ struct RendererState {
     pub(crate) ibl_pass: IBLComputePass,
 
     // Post Processing
+    pub(crate) bloom_pass: BloomPass,
     pub(crate) tone_mapping_pass: ToneMapPass,
 }
 
@@ -202,6 +203,7 @@ impl Renderer {
         let ibl_pass = IBLComputePass::new(&wgpu_ctx.device);
 
         // Post Processing
+        let bloom_pass = BloomPass::new(&wgpu_ctx.device);
         let tone_mapping_pass = ToneMapPass::new(&wgpu_ctx.device);
 
         // Skybox / Background
@@ -227,6 +229,7 @@ impl Renderer {
             transmission_copy_pass,
             brdf_pass,
             ibl_pass,
+            bloom_pass,
             tone_mapping_pass,
             skybox_pass,
         });
@@ -345,6 +348,11 @@ impl Renderer {
 
             // Transparent rendering
             frame_builder.add_node(RenderStage::Transparent, &mut state.transparent_pass);
+
+            // Bloom (conditional — only when enabled in Scene.bloom)
+            if scene.bloom.enabled {
+                frame_builder.add_node(RenderStage::PostProcess, &mut state.bloom_pass);
+            }
 
             // Tone mapping (HDR → LDR)
             frame_builder.add_node(RenderStage::PostProcess, &mut state.tone_mapping_pass);
