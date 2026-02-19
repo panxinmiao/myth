@@ -1137,6 +1137,77 @@ impl GltfViewer {
                     }
                 });
 
+                // ===== Bloom 后处理 =====
+                ui.collapsing("🌸 Bloom", |ui| {
+                    // 开关 (always available when HDR is on)
+                    ui.add_enabled_ui(self.hdr_enabled, |ui| {
+                        let mut bloom_enabled = scene.bloom.enabled;
+                        if ui.checkbox(&mut bloom_enabled, "Enable Bloom").changed() {
+                            scene.bloom.set_enabled(bloom_enabled);
+                        }
+                    });
+
+                    let bloom_enabled = scene.bloom.enabled;
+                    ui.add_enabled_ui(self.hdr_enabled && bloom_enabled, |ui| {
+                        // Strength
+                        ui.horizontal(|ui| {
+                            ui.label("Strength:");
+                            let mut strength = scene.bloom.strength;
+                            if ui
+                                .add(
+                                    egui::Slider::new(&mut strength, 0.0..=1.0)
+                                        .step_by(0.005)
+                                        .fixed_decimals(3),
+                                )
+                                .changed()
+                            {
+                                scene.bloom.set_strength(strength);
+                            }
+                        });
+
+                        // Radius
+                        ui.horizontal(|ui| {
+                            ui.label("Radius:");
+                            let mut radius = scene.bloom.radius;
+                            if ui
+                                .add(
+                                    egui::Slider::new(&mut radius, 0.001..=0.05)
+                                        .step_by(0.001)
+                                        .fixed_decimals(3),
+                                )
+                                .changed()
+                            {
+                                scene.bloom.set_radius(radius);
+                            }
+                        });
+
+                        // Mip Levels
+                        ui.horizontal(|ui| {
+                            ui.label("Mip Levels:");
+                            let mut mip_levels = scene.bloom.max_mip_levels;
+                            if ui
+                                .add(egui::Slider::new(&mut mip_levels, 1..=10))
+                                .changed()
+                            {
+                                scene.bloom.set_max_mip_levels(mip_levels);
+                            }
+                        });
+
+                        // Karis Average
+                        let mut karis = scene.bloom.karis_average;
+                        if ui
+                            .checkbox(&mut karis, "Karis Average (anti-firefly)")
+                            .changed()
+                        {
+                            scene.bloom.set_karis_average(karis);
+                        }
+                    });
+
+                    if !self.hdr_enabled {
+                        ui.label("ℹ Enable HDR to configure bloom");
+                    }
+                });
+
                 ui.separator();
 
                 // ===== Inspector 开关 =====

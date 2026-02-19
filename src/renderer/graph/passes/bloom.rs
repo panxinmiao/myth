@@ -32,8 +32,12 @@
 //!
 //! - Mip chain texture is only recreated on resolution change
 //! - Pipelines are created once and cached
+//! - Internal BindGroups are cached and rebuilt only when mip chain changes
+//! - Two static uniform buffers (Karis on/off) avoid per-frame `write_buffer` calls
 //! - Version-based dirty checking avoids redundant uniform uploads
 //! - Uses `textureSampleLevel` for explicit LOD control (no mip auto-select overhead)
+//! - Only 2 BindGroups created per frame (first downsample + composite, both
+//!   depend on the ping-pong scene color view)
 
 use std::borrow::Cow;
 
@@ -70,10 +74,17 @@ struct CompositeUniforms {
 ///
 /// Pulls configuration from `Scene.bloom` each frame. Manages its own
 /// mip-chain texture and three internal sub-pipelines.
+///
+/// # BindGroup caching strategy
+///
+/// Internal mip-to-mip BindGroups are deterministic once the mip chain is
+/// allocated, so they are pre-built in [`ensure_mip_chain`] and reused every
+/// frame. Only the **first downsample** and **composite** BindGroups must be
+/// created per-frame because they reference the ping-pong scene color view
+/// which alternates each frame.
 pub struct BloomPass {
     // === Pipelines (created once, cached) ===
     downsample_pipeline: Option<wgpu::RenderPipeline>,
-    downsample_pipeline_first: Option<wgpu::RenderPipeline>,
     upsample_pipeline: Option<wgpu::RenderPipeline>,
     composite_pipeline: Option<wgpu::RenderPipeline>,
 
@@ -84,8 +95,18 @@ pub struct BloomPass {
 
     // === Shared Resources ===
     sampler: wgpu::Sampler,
-    downsample_uniform_buffer: wgpu::Buffer,
+
+    /// Static uniform buffer with `use_karis_average = 1`. Created once,
+    /// never written again after initialization.
+    buffer_karis_on: wgpu::Buffer,
+    /// Static uniform buffer with `use_karis_average = 0`. Created once,
+    /// never written again after initialization.
+    buffer_karis_off: wgpu::Buffer,
+    /// Dynamic uniform buffer for upsample `filter_radius`. Written only
+    /// when `BloomSettings.version` changes.
     upsample_uniform_buffer: wgpu::Buffer,
+    /// Dynamic uniform buffer for composite `bloom_strength`. Written only
+    /// when `BloomSettings.version` changes.
     composite_uniform_buffer: wgpu::Buffer,
 
     // === Mip Chain ===
@@ -97,6 +118,14 @@ pub struct BloomPass {
     bloom_size: (u32, u32),
     /// Actual number of mip levels in the current chain.
     mip_count: u32,
+
+    // === Cached BindGroups (rebuilt when mip chain changes) ===
+    /// `downsample_bind_groups[i]` binds `mip_views[i]` → `mip_views[i+1]`
+    /// using `buffer_karis_off`. Length = `mip_count - 1`.
+    downsample_bind_groups: Vec<wgpu::BindGroup>,
+    /// `upsample_bind_groups[i]` binds `mip_views[i+1]` as source for
+    /// upsampling into `mip_views[i]`. Length = `mip_count - 1`.
+    upsample_bind_groups: Vec<wgpu::BindGroup>,
 
     // === Version Tracking ===
     last_settings_version: u64,
@@ -239,14 +268,22 @@ impl BloomPass {
             ..Default::default()
         });
 
-        // --- Uniform Buffers ---
-        let downsample_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Bloom Downsample Uniforms"),
+        // --- Static Karis uniform buffers (written once at creation) ---
+        let buffer_karis_on = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Bloom Karis On"),
             size: std::mem::size_of::<DownsampleUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
+        let buffer_karis_off = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Bloom Karis Off"),
+            size: std::mem::size_of::<DownsampleUniforms>() as u64,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+
+        // --- Dynamic Uniform Buffers ---
         let upsample_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("Bloom Upsample Uniforms"),
             size: std::mem::size_of::<UpsampleUniforms>() as u64,
@@ -263,7 +300,6 @@ impl BloomPass {
 
         Self {
             downsample_pipeline: None,
-            downsample_pipeline_first: None,
             upsample_pipeline: None,
             composite_pipeline: None,
 
@@ -272,7 +308,8 @@ impl BloomPass {
             composite_layout,
 
             sampler,
-            downsample_uniform_buffer,
+            buffer_karis_on,
+            buffer_karis_off,
             upsample_uniform_buffer,
             composite_uniform_buffer,
 
@@ -281,9 +318,32 @@ impl BloomPass {
             bloom_size: (0, 0),
             mip_count: 0,
 
+            downsample_bind_groups: Vec::new(),
+            upsample_bind_groups: Vec::new(),
+
             last_settings_version: u64::MAX,
             enabled: false,
         }
+    }
+
+    // =========================================================================
+    // One-time Initialization (called once in first prepare)
+    // =========================================================================
+
+    /// Writes the two static Karis uniform buffers. Called exactly once during
+    /// the first `prepare` when we have access to the queue.
+    fn init_static_buffers(&self, queue: &wgpu::Queue) {
+        let on = DownsampleUniforms {
+            use_karis_average: 1,
+            _pad: [0; 3],
+        };
+        queue.write_buffer(&self.buffer_karis_on, 0, bytemuck::bytes_of(&on));
+
+        let off = DownsampleUniforms {
+            use_karis_average: 0,
+            _pad: [0; 3],
+        };
+        queue.write_buffer(&self.buffer_karis_off, 0, bytemuck::bytes_of(&off));
     }
 
     // =========================================================================
@@ -297,7 +357,7 @@ impl BloomPass {
 
         let options = ShaderCompilationOptions::default();
 
-        // --- Downsample pipelines ---
+        // --- Downsample pipeline ---
         let downsample_shader_code = ShaderGenerator::generate_shader(
             "",
             "",
@@ -316,7 +376,6 @@ impl BloomPass {
                 immediate_size: 0,
             });
 
-        // Standard downsample pipeline (no Karis)
         self.downsample_pipeline =
             Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("Bloom Downsample Pipeline"),
@@ -343,9 +402,6 @@ impl BloomPass {
                 multiview_mask: None,
                 cache: None,
             }));
-
-        // First downsample pipeline is the same shader — the Karis toggle is via uniform
-        self.downsample_pipeline_first = self.downsample_pipeline.clone();
 
         // --- Upsample pipeline (additive blend) ---
         let upsample_shader_code = ShaderGenerator::generate_shader(
@@ -452,7 +508,8 @@ impl BloomPass {
     // Mip Chain Management
     // =========================================================================
 
-    /// Recreates the bloom mip chain texture when the render target size changes.
+    /// Recreates the bloom mip chain texture and pre-builds all internal
+    /// BindGroups when the render target size changes.
     fn ensure_mip_chain(&mut self, device: &wgpu::Device, source_width: u32, source_height: u32, max_mip_levels: u32) {
         // Bloom works at half resolution
         let bloom_w = (source_width / 2).max(1);
@@ -498,11 +555,66 @@ impl BloomPass {
 
         self.bloom_texture = Some(texture);
 
+        // -----------------------------------------------------------------
+        // Pre-build internal BindGroups (deterministic, no ping-pong input)
+        // -----------------------------------------------------------------
+
+        // Downsample: mip[i] → mip[i+1], always with Karis OFF
+        self.downsample_bind_groups.clear();
+        for i in 0..(self.mip_count as usize).saturating_sub(1) {
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("Bloom DS BG {}->{}", i, i + 1)),
+                layout: &self.downsample_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&self.bloom_mip_views[i]),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.buffer_karis_off.as_entire_binding(),
+                    },
+                ],
+            });
+            self.downsample_bind_groups.push(bg);
+        }
+
+        // Upsample: mip[i+1] → mip[i] (additive blend into target)
+        self.upsample_bind_groups.clear();
+        for i in 0..(self.mip_count as usize).saturating_sub(1) {
+            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some(&format!("Bloom US BG {}→{}", i + 1, i)),
+                layout: &self.upsample_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(
+                            &self.bloom_mip_views[i + 1],
+                        ),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(&self.sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: self.upsample_uniform_buffer.as_entire_binding(),
+                    },
+                ],
+            });
+            self.upsample_bind_groups.push(bg);
+        }
+
         log::debug!(
-            "Bloom mip chain created: {}×{}, {} levels",
+            "Bloom mip chain created: {}×{}, {} levels, {} cached bind groups",
             bloom_w,
             bloom_h,
-            self.mip_count
+            self.mip_count,
+            self.downsample_bind_groups.len() + self.upsample_bind_groups.len(),
         );
     }
 }
@@ -524,25 +636,31 @@ impl RenderNode for BloomPass {
         self.enabled = true;
 
         let device = &ctx.wgpu_ctx.device;
+        let queue = &ctx.wgpu_ctx.queue;
 
         // 1. Ensure pipelines exist
         self.ensure_pipelines(device);
 
-        // 2. Ensure mip chain exists and matches current resolution
+        // 2. One-time: initialize static Karis buffers (safe to call every
+        //    frame — the guard is the version sentinel at u64::MAX)
+        if self.last_settings_version == u64::MAX {
+            self.init_static_buffers(queue);
+        }
+
+        // 3. Ensure mip chain exists and matches current resolution
         let (source_w, source_h) = ctx.wgpu_ctx.size();
         self.ensure_mip_chain(device, source_w, source_h, settings.max_mip_levels);
 
-        // 3. Upload uniforms if settings changed
+        // 4. Upload dynamic uniforms if settings changed
         if self.last_settings_version != settings.version() {
             self.last_settings_version = settings.version();
 
-            // Downsample uniforms (Karis toggle is set per-pass in run())
             // Upsample uniforms
             let upsample = UpsampleUniforms {
                 filter_radius: settings.radius,
                 _pad: [0; 3],
             };
-            ctx.wgpu_ctx.queue.write_buffer(
+            queue.write_buffer(
                 &self.upsample_uniform_buffer,
                 0,
                 bytemuck::bytes_of(&upsample),
@@ -553,7 +671,7 @@ impl RenderNode for BloomPass {
                 bloom_strength: settings.strength,
                 _pad: [0; 3],
             };
-            ctx.wgpu_ctx.queue.write_buffer(
+            queue.write_buffer(
                 &self.composite_uniform_buffer,
                 0,
                 bytemuck::bytes_of(&composite),
@@ -567,7 +685,6 @@ impl RenderNode for BloomPass {
         }
 
         let device = &ctx.wgpu_ctx.device;
-        let queue = &ctx.wgpu_ctx.queue;
 
         let downsample_pipeline = match &self.downsample_pipeline {
             Some(p) => p,
@@ -582,7 +699,12 @@ impl RenderNode for BloomPass {
             None => return,
         };
 
-        let karis_enabled = ctx.scene.bloom.karis_average;
+        // Select the appropriate static Karis buffer for the first downsample
+        let karis_buffer = if ctx.scene.bloom.karis_average {
+            &self.buffer_karis_on
+        } else {
+            &self.buffer_karis_off
+        };
 
         // =====================================================================
         // Phase 1: Downsample — Scene HDR → Bloom Mip Chain
@@ -592,20 +714,12 @@ impl RenderNode for BloomPass {
         let current_idx = ctx.color_view_flip_flop;
         let scene_color_view = &ctx.frame_resources.scene_color_view[current_idx];
 
-        // First downsample: scene → mip 0 (optionally with Karis average)
+        // First downsample: scene → mip 0 (optionally with Karis average).
+        // This is the only downsample BindGroup created per-frame because
+        // it depends on the ping-pong scene_color_view.
         {
-            let ds_uniforms = DownsampleUniforms {
-                use_karis_average: if karis_enabled { 1 } else { 0 },
-                _pad: [0; 3],
-            };
-            queue.write_buffer(
-                &self.downsample_uniform_buffer,
-                0,
-                bytemuck::bytes_of(&ds_uniforms),
-            );
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Bloom DS BG 0"),
+            let first_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Bloom DS BG scene→0"),
                 layout: &self.downsample_layout,
                 entries: &[
                     wgpu::BindGroupEntry {
@@ -618,7 +732,7 @@ impl RenderNode for BloomPass {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: self.downsample_uniform_buffer.as_entire_binding(),
+                        resource: karis_buffer.as_entire_binding(),
                     },
                 ],
             });
@@ -638,45 +752,18 @@ impl RenderNode for BloomPass {
             });
 
             pass.set_pipeline(downsample_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_bind_group(0, &first_bind_group, &[]);
             pass.draw(0..3, 0..1);
         }
 
-        // Subsequent downsamples: mip[i-1] → mip[i] (no Karis)
-        for i in 1..self.mip_count as usize {
-            let ds_uniforms = DownsampleUniforms {
-                use_karis_average: 0,
-                _pad: [0; 3],
-            };
-            queue.write_buffer(
-                &self.downsample_uniform_buffer,
-                0,
-                bytemuck::bytes_of(&ds_uniforms),
-            );
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Bloom DS BG"),
-                layout: &self.downsample_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&self.bloom_mip_views[i - 1]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.downsample_uniform_buffer.as_entire_binding(),
-                    },
-                ],
-            });
+        // Subsequent downsamples: mip[i] → mip[i+1] using cached BindGroups
+        for i in 0..self.downsample_bind_groups.len() {
+            let target_mip = i + 1;
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Bloom Downsample"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.bloom_mip_views[i],
+                    view: &self.bloom_mip_views[target_mip],
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -688,7 +775,7 @@ impl RenderNode for BloomPass {
             });
 
             pass.set_pipeline(downsample_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_bind_group(0, &self.downsample_bind_groups[i], &[]);
             pass.draw(0..3, 0..1);
         }
 
@@ -696,33 +783,11 @@ impl RenderNode for BloomPass {
         // Phase 2: Upsample — Accumulate bloom from coarsest to finest
         // =====================================================================
 
-        // Walk from the second-to-last mip upward, additively blending into
-        // each coarser level. The blend state on the pipeline handles the
-        // additive accumulation.
-        for i in (0..(self.mip_count as usize).saturating_sub(1)).rev() {
-            let source_mip = i + 1; // read from finer mip
-            let target_mip = i; // blend into coarser mip
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Bloom US BG"),
-                layout: &self.upsample_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(
-                            &self.bloom_mip_views[source_mip],
-                        ),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.upsample_uniform_buffer.as_entire_binding(),
-                    },
-                ],
-            });
+        // Walk from the coarsest mip upward, additively blending into each
+        // finer level. The blend state on the pipeline handles the additive
+        // accumulation. All BindGroups are cached.
+        for i in (0..self.upsample_bind_groups.len()).rev() {
+            let target_mip = i; // blend into this mip
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Bloom Upsample"),
@@ -740,7 +805,7 @@ impl RenderNode for BloomPass {
             });
 
             pass.set_pipeline(upsample_pipeline);
-            pass.set_bind_group(0, &bind_group, &[]);
+            pass.set_bind_group(0, &self.upsample_bind_groups[i], &[]);
             pass.draw(0..3, 0..1);
         }
 
@@ -748,7 +813,8 @@ impl RenderNode for BloomPass {
         // Phase 3: Composite — Original HDR + Bloom → Output
         // =====================================================================
 
-        // Use the ping-pong mechanism: read from current, write to the other
+        // Use the ping-pong mechanism: read from current, write to the other.
+        // This BindGroup must be created per-frame (depends on ping-pong state).
         let (input_view, output_view) = {
             let current_idx = ctx.color_view_flip_flop;
             let input = &ctx.frame_resources.scene_color_view[current_idx];
