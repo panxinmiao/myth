@@ -149,8 +149,8 @@ pub mod prelude {
 
     // Resources
     pub use crate::resources::{
-        AlphaMode, BloomSettings, Geometry, Image, Material, MaterialType, Mesh,
-        MeshBasicMaterial, MeshPhongMaterial, MeshPhysicalMaterial, Side, Texture, TextureSlot,
+        AlphaMode, BloomSettings, Geometry, Image, Material, MaterialType, Mesh, MeshBasicMaterial,
+        MeshPhongMaterial, MeshPhysicalMaterial, Side, Texture, TextureSlot,
     };
 
     // Assets

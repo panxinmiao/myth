@@ -1185,10 +1185,7 @@ impl GltfViewer {
                         ui.horizontal(|ui| {
                             ui.label("Mip Levels:");
                             let mut mip_levels = scene.bloom.max_mip_levels;
-                            if ui
-                                .add(egui::Slider::new(&mut mip_levels, 1..=10))
-                                .changed()
-                            {
+                            if ui.add(egui::Slider::new(&mut mip_levels, 1..=10)).changed() {
                                 scene.bloom.set_max_mip_levels(mip_levels);
                             }
                         });

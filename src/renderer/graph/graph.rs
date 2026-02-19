@@ -61,6 +61,9 @@ impl<'a> RenderGraph<'a> {
     pub fn prepare(&mut self, ctx: &mut RenderContext) {
         for node in &mut self.nodes {
             node.prepare(ctx);
+            if node.should_flip_ping_pong() {
+                ctx.swap_scene_color_buffer();
+            }
         }
     }
 
@@ -87,7 +90,7 @@ impl<'a> RenderGraph<'a> {
             encoder.pop_debug_group();
         }
 
-        ctx.wgpu_ctx.queue.submit(std::iter::once(encoder.finish()));
+        ctx.wgpu_ctx.queue.submit(Some(encoder.finish()));
     }
 
     /// 获取节点数量
