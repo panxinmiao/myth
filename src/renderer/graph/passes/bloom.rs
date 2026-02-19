@@ -43,6 +43,8 @@ use std::borrow::Cow;
 
 use crate::render::{RenderContext, RenderNode};
 use crate::renderer::HDR_TEXTURE_FORMAT;
+use crate::renderer::core::binding::BindGroupKey;
+use crate::renderer::core::resources::Tracked;
 use crate::renderer::pipeline::ShaderCompilationOptions;
 use crate::renderer::pipeline::shader_gen::ShaderGenerator;
 
@@ -89,31 +91,31 @@ pub struct BloomPass {
     composite_pipeline: Option<wgpu::RenderPipeline>,
 
     // === Bind Group Layouts ===
-    downsample_layout: wgpu::BindGroupLayout,
-    upsample_layout: wgpu::BindGroupLayout,
-    composite_layout: wgpu::BindGroupLayout,
+    downsample_layout: Tracked<wgpu::BindGroupLayout>,
+    upsample_layout: Tracked<wgpu::BindGroupLayout>,
+    composite_layout: Tracked<wgpu::BindGroupLayout>,
 
     // === Shared Resources ===
-    sampler: wgpu::Sampler,
+    sampler: Tracked<wgpu::Sampler>,
 
     /// Static uniform buffer with `use_karis_average = 1`. Created once,
     /// never written again after initialization.
-    buffer_karis_on: wgpu::Buffer,
+    buffer_karis_on: Tracked<wgpu::Buffer>,
     /// Static uniform buffer with `use_karis_average = 0`. Created once,
     /// never written again after initialization.
-    buffer_karis_off: wgpu::Buffer,
+    buffer_karis_off: Tracked<wgpu::Buffer>,
     /// Dynamic uniform buffer for upsample `filter_radius`. Written only
     /// when `BloomSettings.version` changes.
-    upsample_uniform_buffer: wgpu::Buffer,
+    upsample_uniform_buffer: Tracked<wgpu::Buffer>,
     /// Dynamic uniform buffer for composite `bloom_strength`. Written only
     /// when `BloomSettings.version` changes.
-    composite_uniform_buffer: wgpu::Buffer,
+    composite_uniform_buffer: Tracked<wgpu::Buffer>,
 
     // === Mip Chain ===
     /// The bloom mip chain texture (half-res at level 0, quarter at level 1, etc.)
     bloom_texture: Option<wgpu::Texture>,
     /// Per-mip views for the bloom chain.
-    bloom_mip_views: Vec<wgpu::TextureView>,
+    bloom_mip_views: Vec<Tracked<wgpu::TextureView>>,
     /// Current mip chain dimensions (width, height at mip 0).
     bloom_size: (u32, u32),
     /// Actual number of mip levels in the current chain.
@@ -126,6 +128,10 @@ pub struct BloomPass {
     /// `upsample_bind_groups[i]` binds `mip_views[i+1]` as source for
     /// upsampling into `mip_views[i]`. Length = `mip_count - 1`.
     upsample_bind_groups: Vec<wgpu::BindGroup>,
+
+    composite_bind_group: Option<wgpu::BindGroup>,
+
+    output_view: Option<Tracked<wgpu::TextureView>>,
 
     // === Version Tracking ===
     last_settings_version: u64,
@@ -141,122 +147,119 @@ impl BloomPass {
         // --- Bind Group Layouts ---
 
         // Downsample / Upsample share the same layout: texture + sampler + uniforms
-        let downsample_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Bloom Downsample Layout"),
-                entries: &[
-                    // Binding 0: Source texture
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+        let downsample_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Bloom Downsample Layout"),
+            entries: &[
+                // Binding 0: Source texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    // Binding 1: Sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
+                    count: None,
+                },
+                // Binding 1: Sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Binding 2: Uniforms
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    // Binding 2: Uniforms
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+            ],
+        });
 
-        let upsample_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Bloom Upsample Layout"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+        let upsample_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Bloom Upsample Layout"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+            ],
+        });
 
         // Composite layout: original_texture + bloom_texture + sampler + uniforms
-        let composite_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("Bloom Composite Layout"),
-                entries: &[
-                    // Binding 0: Original HDR texture
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+        let composite_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("Bloom Composite Layout"),
+            entries: &[
+                // Binding 0: Original HDR texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    // Binding 1: Bloom texture
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
+                    count: None,
+                },
+                // Binding 1: Bloom texture
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
                     },
-                    // Binding 2: Sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
+                    count: None,
+                },
+                // Binding 2: Sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                // Binding 3: Uniforms
+                wgpu::BindGroupLayoutEntry {
+                    binding: 3,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
                     },
-                    // Binding 3: Uniforms
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+                    count: None,
+                },
+            ],
+        });
 
         // --- Sampler ---
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
@@ -303,15 +306,15 @@ impl BloomPass {
             upsample_pipeline: None,
             composite_pipeline: None,
 
-            downsample_layout,
-            upsample_layout,
-            composite_layout,
+            downsample_layout: Tracked::new(downsample_layout),
+            upsample_layout: Tracked::new(upsample_layout),
+            composite_layout: Tracked::new(composite_layout),
 
-            sampler,
-            buffer_karis_on,
-            buffer_karis_off,
-            upsample_uniform_buffer,
-            composite_uniform_buffer,
+            sampler: Tracked::new(sampler),
+            buffer_karis_on: Tracked::new(buffer_karis_on),
+            buffer_karis_off: Tracked::new(buffer_karis_off),
+            upsample_uniform_buffer: Tracked::new(upsample_uniform_buffer),
+            composite_uniform_buffer: Tracked::new(composite_uniform_buffer),
 
             bloom_texture: None,
             bloom_mip_views: Vec::new(),
@@ -320,6 +323,9 @@ impl BloomPass {
 
             downsample_bind_groups: Vec::new(),
             upsample_bind_groups: Vec::new(),
+            composite_bind_group: None,
+
+            output_view: None,
 
             last_settings_version: u64::MAX,
             enabled: false,
@@ -358,12 +364,8 @@ impl BloomPass {
         let options = ShaderCompilationOptions::default();
 
         // --- Downsample pipeline ---
-        let downsample_shader_code = ShaderGenerator::generate_shader(
-            "",
-            "",
-            "passes/bloom_downsample",
-            &options,
-        );
+        let downsample_shader_code =
+            ShaderGenerator::generate_shader("", "", "passes/bloom_downsample", &options);
         let downsample_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Bloom Downsample Shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Owned(downsample_shader_code)),
@@ -376,8 +378,8 @@ impl BloomPass {
                 immediate_size: 0,
             });
 
-        self.downsample_pipeline =
-            Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        self.downsample_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
                 label: Some("Bloom Downsample Pipeline"),
                 layout: Some(&downsample_pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -401,15 +403,12 @@ impl BloomPass {
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
-            }));
+            },
+        ));
 
         // --- Upsample pipeline (additive blend) ---
-        let upsample_shader_code = ShaderGenerator::generate_shader(
-            "",
-            "",
-            "passes/bloom_upsample",
-            &options,
-        );
+        let upsample_shader_code =
+            ShaderGenerator::generate_shader("", "", "passes/bloom_upsample", &options);
         let upsample_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Bloom Upsample Shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Owned(upsample_shader_code)),
@@ -422,8 +421,8 @@ impl BloomPass {
                 immediate_size: 0,
             });
 
-        self.upsample_pipeline =
-            Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        self.upsample_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
                 label: Some("Bloom Upsample Pipeline"),
                 layout: Some(&upsample_pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -455,15 +454,12 @@ impl BloomPass {
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
-            }));
+            },
+        ));
 
         // --- Composite pipeline ---
-        let composite_shader_code = ShaderGenerator::generate_shader(
-            "",
-            "",
-            "passes/bloom_composite",
-            &options,
-        );
+        let composite_shader_code =
+            ShaderGenerator::generate_shader("", "", "passes/bloom_composite", &options);
         let composite_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Bloom Composite Shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Owned(composite_shader_code)),
@@ -476,8 +472,8 @@ impl BloomPass {
                 immediate_size: 0,
             });
 
-        self.composite_pipeline =
-            Some(device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+        self.composite_pipeline = Some(device.create_render_pipeline(
+            &wgpu::RenderPipelineDescriptor {
                 label: Some("Bloom Composite Pipeline"),
                 layout: Some(&composite_pipeline_layout),
                 vertex: wgpu::VertexState {
@@ -501,7 +497,8 @@ impl BloomPass {
                 multisample: wgpu::MultisampleState::default(),
                 multiview_mask: None,
                 cache: None,
-            }));
+            },
+        ));
     }
 
     // =========================================================================
@@ -510,7 +507,21 @@ impl BloomPass {
 
     /// Recreates the bloom mip chain texture and pre-builds all internal
     /// BindGroups when the render target size changes.
-    fn ensure_mip_chain(&mut self, device: &wgpu::Device, source_width: u32, source_height: u32, max_mip_levels: u32) {
+    fn ensure_mip_chain(
+        &mut self,
+        ctx: &mut RenderContext,
+        source_width: u32,
+        source_height: u32,
+        max_mip_levels: u32,
+    ) {
+        // The first downsample BindGroup is the only one that depends on the ping-pong scene color view,
+        if self.downsample_bind_groups.is_empty() {
+            self.downsample_bind_groups
+                .push(self._get_first_mip_bind_group(ctx));
+        } else {
+            self.downsample_bind_groups[0] = self._get_first_mip_bind_group(ctx);
+        }
+
         // Bloom works at half resolution
         let bloom_w = (source_width / 2).max(1);
         let bloom_h = (source_height / 2).max(1);
@@ -526,20 +537,24 @@ impl BloomPass {
         self.mip_count = max_mip_levels.min(max_possible).max(1);
 
         // Create the mip chain texture
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Bloom Mip Chain"),
-            size: wgpu::Extent3d {
-                width: bloom_w,
-                height: bloom_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: self.mip_count,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: HDR_TEXTURE_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
+        let texture = ctx
+            .wgpu_ctx
+            .device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("Bloom Mip Chain"),
+                size: wgpu::Extent3d {
+                    width: bloom_w,
+                    height: bloom_h,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: self.mip_count,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: HDR_TEXTURE_FORMAT,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
 
         // Create per-mip views
         self.bloom_mip_views.clear();
@@ -550,7 +565,7 @@ impl BloomPass {
                 mip_level_count: Some(1),
                 ..Default::default()
             });
-            self.bloom_mip_views.push(view);
+            self.bloom_mip_views.push(Tracked::new(view));
         }
 
         self.bloom_texture = Some(texture);
@@ -560,52 +575,66 @@ impl BloomPass {
         // -----------------------------------------------------------------
 
         // Downsample: mip[i] → mip[i+1], always with Karis OFF
-        self.downsample_bind_groups.clear();
-        for i in 0..(self.mip_count as usize).saturating_sub(1) {
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("Bloom DS BG {}->{}", i, i + 1)),
-                layout: &self.downsample_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&self.bloom_mip_views[i]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.buffer_karis_off.as_entire_binding(),
-                    },
-                ],
-            });
+        // The first downsample BindGroup (scene → mip 0) is created per-frame in _get_first_mip_bind_group()
+        // Only keep the first one and rebuild the rest based on the new mip views
+        self.downsample_bind_groups.truncate(1);
+
+        for i in 0..(self.mip_count - 1) as usize {
+            let source_mip = i;
+            let bg = ctx
+                .wgpu_ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("Bloom DS BG {}->{}", source_mip, source_mip + 1)),
+                    layout: &self.downsample_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(
+                                &self.bloom_mip_views[source_mip],
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: self.buffer_karis_off.as_entire_binding(),
+                        },
+                    ],
+                });
             self.downsample_bind_groups.push(bg);
         }
 
         // Upsample: mip[i+1] → mip[i] (additive blend into target)
         self.upsample_bind_groups.clear();
-        for i in 0..(self.mip_count as usize).saturating_sub(1) {
-            let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some(&format!("Bloom US BG {}→{}", i + 1, i)),
-                layout: &self.upsample_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(
-                            &self.bloom_mip_views[i + 1],
-                        ),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.upsample_uniform_buffer.as_entire_binding(),
-                    },
-                ],
-            });
+        for i in 0..(self.mip_count - 1) as usize {
+            let target_mip = i;
+            let source_mip = i + 1;
+            let bg = ctx
+                .wgpu_ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some(&format!("Bloom US BG {}→{}", source_mip, target_mip)),
+                    layout: &self.upsample_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(
+                                &self.bloom_mip_views[source_mip],
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: self.upsample_uniform_buffer.as_entire_binding(),
+                        },
+                    ],
+                });
             self.upsample_bind_groups.push(bg);
         }
 
@@ -617,11 +646,128 @@ impl BloomPass {
             self.downsample_bind_groups.len() + self.upsample_bind_groups.len(),
         );
     }
+
+    fn _get_first_mip_bind_group(&self, ctx: &mut RenderContext) -> wgpu::BindGroup {
+        // Select the appropriate static Karis buffer for the first downsample
+        let karis_buffer = if ctx.scene.bloom.karis_average {
+            &self.buffer_karis_on
+        } else {
+            &self.buffer_karis_off
+        };
+
+        let input_view = ctx.get_scene_color_input();
+
+        // 1. 准备 Cache Key 所需的 ID
+        let layout_id = self.downsample_layout.id();
+
+        let input_view_id = input_view.id();
+        let sampler_id = self.sampler.id();
+        let buffer_id = karis_buffer.id();
+
+        // 2. 构建 Key
+        let key = BindGroupKey::new(layout_id)
+            .with_resource(input_view_id)
+            .with_resource(sampler_id)
+            .with_resource(buffer_id);
+
+        // 3. 从缓存获取或创建
+        let first_bind_group = if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
+            cached.clone()
+        } else {
+            let new_bg = ctx
+                .wgpu_ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Bloom DS BG scene→0"),
+                    layout: &self.downsample_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(input_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: karis_buffer.as_entire_binding(), // 这个来自 self，不冲突
+                        },
+                    ],
+                });
+
+            ctx.global_bind_group_cache.insert(key, new_bg.clone());
+            new_bg
+        };
+
+        first_bind_group
+    }
+
+    fn _get_composite_bind_group(&self, ctx: &mut RenderContext) -> wgpu::BindGroup {
+        let input_view = ctx.get_scene_color_input();
+        let bloom_view = &self.bloom_mip_views[0];
+
+        // 1. 准备 Cache Key 所需的 ID
+        let layout_id = self.composite_layout.id();
+
+        let input_view_id = input_view.id();
+        let bloom_view_id = bloom_view.id();
+        let sampler_id = self.sampler.id();
+        let buffer_id = self.composite_uniform_buffer.id();
+
+        // 2. 构建 Key
+        let key = BindGroupKey::new(layout_id)
+            .with_resource(input_view_id)
+            .with_resource(bloom_view_id)
+            .with_resource(sampler_id)
+            .with_resource(buffer_id);
+
+        // 3. 从缓存获取或创建
+        let composite_bind_group = if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
+            cached.clone()
+        } else {
+            let new_bg = ctx
+                .wgpu_ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Bloom Composite BG"),
+                    layout: &self.composite_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(input_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(bloom_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(&self.sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: self.composite_uniform_buffer.as_entire_binding(),
+                        },
+                    ],
+                });
+
+            ctx.global_bind_group_cache.insert(key, new_bg.clone());
+            new_bg
+        };
+
+        composite_bind_group
+    }
 }
 
 impl RenderNode for BloomPass {
     fn name(&self) -> &str {
         "Bloom Pass"
+    }
+
+    fn should_flip_ping_pong(&self) -> bool {
+        // 如果 Bloom 没启用，就不翻转
+        self.enabled && self.mip_count > 0
     }
 
     fn prepare(&mut self, ctx: &mut RenderContext) {
@@ -649,8 +795,13 @@ impl RenderNode for BloomPass {
 
         // 3. Ensure mip chain exists and matches current resolution
         let (source_w, source_h) = ctx.wgpu_ctx.size();
-        self.ensure_mip_chain(device, source_w, source_h, settings.max_mip_levels);
+        self.ensure_mip_chain(ctx, source_w, source_h, settings.max_mip_levels);
 
+        self.composite_bind_group = Some(self._get_composite_bind_group(ctx));
+
+        self.output_view = Some(ctx.get_scene_color_output().clone());
+
+        let settings = &ctx.scene.bloom;
         // 4. Upload dynamic uniforms if settings changed
         if self.last_settings_version != settings.version() {
             self.last_settings_version = settings.version();
@@ -679,12 +830,10 @@ impl RenderNode for BloomPass {
         }
     }
 
-    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+    fn run(&self, _ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
         if !self.enabled || self.mip_count == 0 {
             return;
         }
-
-        let device = &ctx.wgpu_ctx.device;
 
         let downsample_pipeline = match &self.downsample_pipeline {
             Some(p) => p,
@@ -698,67 +847,20 @@ impl RenderNode for BloomPass {
             Some(p) => p,
             None => return,
         };
-
-        // Select the appropriate static Karis buffer for the first downsample
-        let karis_buffer = if ctx.scene.bloom.karis_average {
-            &self.buffer_karis_on
-        } else {
-            &self.buffer_karis_off
+        let composite_bind_group = match &self.composite_bind_group {
+            Some(bg) => bg,
+            None => return,
+        };
+        let output_view = match &self.output_view {
+            Some(v) => v,
+            None => return,
         };
 
         // =====================================================================
         // Phase 1: Downsample — Scene HDR → Bloom Mip Chain
         // =====================================================================
-
-        // Current scene color (input for bloom)
-        let current_idx = ctx.color_view_flip_flop;
-        let scene_color_view = &ctx.frame_resources.scene_color_view[current_idx];
-
-        // First downsample: scene → mip 0 (optionally with Karis average).
-        // This is the only downsample BindGroup created per-frame because
-        // it depends on the ping-pong scene_color_view.
-        {
-            let first_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Bloom DS BG scene→0"),
-                layout: &self.downsample_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(scene_color_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: karis_buffer.as_entire_binding(),
-                    },
-                ],
-            });
-
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Bloom Downsample 0"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.bloom_mip_views[0],
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                ..Default::default()
-            });
-
-            pass.set_pipeline(downsample_pipeline);
-            pass.set_bind_group(0, &first_bind_group, &[]);
-            pass.draw(0..3, 0..1);
-        }
-
-        // Subsequent downsamples: mip[i] → mip[i+1] using cached BindGroups
         for i in 0..self.downsample_bind_groups.len() {
-            let target_mip = i + 1;
+            let target_mip = i;
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Bloom Downsample"),
@@ -813,58 +915,22 @@ impl RenderNode for BloomPass {
         // Phase 3: Composite — Original HDR + Bloom → Output
         // =====================================================================
 
-        // Use the ping-pong mechanism: read from current, write to the other.
-        // This BindGroup must be created per-frame (depends on ping-pong state).
-        let (input_view, output_view) = {
-            let current_idx = ctx.color_view_flip_flop;
-            let input = &ctx.frame_resources.scene_color_view[current_idx];
-            let output = &ctx.frame_resources.scene_color_view[1 - current_idx];
-            // Flip the flip-flop for the next pass
-            ctx.color_view_flip_flop = 1 - current_idx;
-            (input, output)
-        };
-
-        let composite_bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Bloom Composite BG"),
-            layout: &self.composite_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(input_view),
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Bloom Composite"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: output_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    store: wgpu::StoreOp::Store,
                 },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::TextureView(&self.bloom_mip_views[0]),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::Sampler(&self.sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 3,
-                    resource: self.composite_uniform_buffer.as_entire_binding(),
-                },
-            ],
+                depth_slice: None,
+            })],
+            ..Default::default()
         });
 
-        {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Bloom Composite"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: output_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                ..Default::default()
-            });
-
-            pass.set_pipeline(composite_pipeline);
-            pass.set_bind_group(0, &composite_bind_group, &[]);
-            pass.draw(0..3, 0..1);
-        }
+        pass.set_pipeline(composite_pipeline);
+        pass.set_bind_group(0, composite_bind_group, &[]);
+        pass.draw(0..3, 0..1);
     }
 }

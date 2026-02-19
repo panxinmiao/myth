@@ -35,7 +35,6 @@
 //! ```text
 /// SceneCullPass → OpaquePass → [SkyboxPass] → [TransmissionCopyPass] → TransparentPass → [BloomPass] → ToneMapPass → Surface
 /// ```
-
 mod bloom;
 mod brdf_lut_compute;
 mod cull;

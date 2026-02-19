@@ -35,10 +35,7 @@ impl AppHandler for BloomDemo {
         scene.environment.set_intensity(1.5);
 
         // Add a bright directional light to create specular highlights
-        scene.add_light(Light::new_directional(
-            Vec3::new(1.0, 1.0, 1.0),
-            3.0,
-        ));
+        scene.add_light(Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0));
 
         // Load the DamagedHelmet model (has nice emissive and specular detail)
         let gltf_path =

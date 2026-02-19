@@ -58,30 +58,28 @@ pub struct RenderContext<'a> {
 }
 
 impl RenderContext<'_> {
-    /// 获取 Post Process 的 Input 和 Output
-    ///
-    /// 自动实现 Ping-Pong 切换：
-    /// - Input: 上一个 Pass 的输出
-    /// - Output: 下一个空闲的缓冲
-    ///
-    /// 调用此方法后，Context 的 `current_color_texture_view` 会自动更新指向 Output，
-    /// 供下一个 Pass 使用。
-    pub fn acquire_pass_io(&mut self) -> (&Tracked<wgpu::TextureView>, &wgpu::TextureView) {
-        let current_idx = self.color_view_flip_flop;
+    // 获取当前的“源”纹理（上一个 Pass 的输出）
+    #[must_use]
+    #[inline]
+    pub fn get_scene_color_input(&self) -> &Tracked<wgpu::TextureView> {
+        &self.frame_resources.scene_color_view[self.color_view_flip_flop]
+    }
 
-        // 1. 确定输入
-        let input = &self.frame_resources.scene_color_view[current_idx];
+    // 获取当前的“目标”纹理（当前 Pass 应该写入的地方）
+    #[must_use]
+    #[inline]
+    pub fn get_scene_color_output(&self) -> &Tracked<wgpu::TextureView> {
+        &self.frame_resources.scene_color_view[1 - self.color_view_flip_flop]
+    }
 
-        // 2. 确定输出
-        let output = &self.frame_resources.scene_color_view[1 - current_idx];
-
-        // 3. 状态流转
-        self.color_view_flip_flop = 1 - self.color_view_flip_flop; // 翻转索引
-
-        (input, output)
+    // 翻转 Ping-Pong 状态
+    #[inline]
+    pub(crate) fn swap_scene_color_buffer(&mut self) {
+        self.color_view_flip_flop = 1 - self.color_view_flip_flop;
     }
 
     #[must_use]
+    #[inline]
     pub fn get_scene_render_target_view(&self) -> &wgpu::TextureView {
         // 逻辑：如果是直连模式 ? Surface : SceneColor[0]
         if self.wgpu_ctx.enable_hdr {
@@ -92,6 +90,7 @@ impl RenderContext<'_> {
     }
 
     #[must_use]
+    #[inline]
     pub fn get_scene_render_target_format(&self) -> wgpu::TextureFormat {
         if self.wgpu_ctx.enable_hdr {
             // 强制使用 HDR 格式 (推荐 Rgba16Float)

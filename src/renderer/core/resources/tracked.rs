@@ -10,6 +10,7 @@ fn next_id() -> u64 {
 
 /// 带有唯一 ID 的资源包装器
 /// 用于给 `FrameResources` 或临时资源赋予身份标识
+#[derive(Debug, Clone)]
 pub struct Tracked<T> {
     inner: T,
     id: u64,

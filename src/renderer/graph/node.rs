@@ -35,4 +35,11 @@ pub trait RenderNode {
     /// - `ctx`: 渲染上下文，包含所有共享资源
     /// - `encoder`: GPU 命令编码器
     fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder);
+
+    // 标识当前 Node 是否会对 Scene Color 进行 Ping-Pong 写入。
+    // 如果返回 true，Graph 会在 run() 结束后自动翻转 input/output 索引。
+    // 默认返回 false (例如 ShadowPass, Skybox, 或者直接输出到屏幕的 Pass)
+    fn should_flip_ping_pong(&self) -> bool {
+        false
+    }
 }

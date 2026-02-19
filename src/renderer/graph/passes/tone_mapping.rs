@@ -272,10 +272,7 @@ impl RenderNode for ToneMapPass {
         // 2. Prepare GPU resources
         // =====================================================================
 
-        // Get ping-pong index (ToneMapPass outputs to screen, doesn't flip)
-        let current_idx = ctx.color_view_flip_flop;
-
-        let input_view_tracked = &ctx.frame_resources.scene_color_view[current_idx];
+        let input_view_tracked = &ctx.get_scene_color_input();
         let input_view_id = input_view_tracked.id();
 
         // Ensure buffer is ready
@@ -298,7 +295,7 @@ impl RenderNode for ToneMapPass {
                 .get(&cpu_buffer_id)
                 .expect("GpuBuffer must exist after ensure_buffer_id");
 
-            let input_view = &ctx.frame_resources.scene_color_view[current_idx];
+            let input_view = &ctx.get_scene_color_input();
 
             let new_bind_group =
                 ctx.wgpu_ctx
