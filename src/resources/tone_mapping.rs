@@ -9,6 +9,8 @@
 //! - **Vignette**: Edge darkening effect controlled by intensity and smoothness
 //! - **Color Grading (LUT)**: 3D lookup table for color manipulation
 
+use glam::Vec4;
+
 use crate::ShaderDefines;
 use crate::assets::TextureHandle;
 
@@ -110,6 +112,8 @@ pub struct ToneMappingSettings {
     pub vignette_intensity: f32,
     /// Vignette smoothness: controls the falloff curve (default: 0.5, range 0.1~1.0)
     pub vignette_smoothness: f32,
+    /// Vignette color: RGBA values for the vignette effect (default: [0.0, 0.0, 0.0, 1.0])
+    pub vignette_color: Vec4,
 
     // === Color Grading (3D LUT) ===
     /// Optional 3D LUT texture handle. When `Some`, the `USE_LUT` shader macro is enabled
@@ -129,6 +133,7 @@ impl Default for ToneMappingSettings {
             exposure: 1.0,
             vignette_intensity: 0.0,
             vignette_smoothness: 0.5,
+            vignette_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
             lut_texture: None,
             lut_contribution: 1.0,
             version: 0,
@@ -191,6 +196,16 @@ impl ToneMappingSettings {
     pub fn set_vignette_smoothness(&mut self, smoothness: f32) {
         if (self.vignette_smoothness - smoothness).abs() > 1e-5 {
             self.vignette_smoothness = smoothness;
+            self.bump_version();
+        }
+    }
+
+    /// Sets the vignette color.
+    /// This is the color used for the vignette effect (default: black with full alpha).
+    /// Only updates the version if the color actually changed.
+    pub fn set_vignette_color(&mut self, color: Vec4) {
+        if (self.vignette_color - color).length() > 1e-5 {
+            self.vignette_color = color;
             self.bump_version();
         }
     }

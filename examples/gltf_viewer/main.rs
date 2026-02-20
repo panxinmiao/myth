@@ -1139,7 +1139,7 @@ impl GltfViewer {
                             ui.label("Intensity:");
                             let mut intensity = scene.tone_mapping.vignette_intensity;
                             if ui
-                                .add(egui::Slider::new(&mut intensity, 0.0..=1.0).step_by(0.01))
+                                .add(egui::Slider::new(&mut intensity, 0.0..=2.0).step_by(0.01))
                                 .changed()
                             {
                                 scene.tone_mapping.set_vignette_intensity(intensity);
@@ -1154,6 +1154,19 @@ impl GltfViewer {
                                 .changed()
                             {
                                 scene.tone_mapping.set_vignette_smoothness(smoothness);
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Color:");
+                            let mut color_arr = scene.tone_mapping.vignette_color.to_array();
+                            if ui
+                                .color_edit_button_rgba_unmultiplied(&mut color_arr)
+                                .changed()
+                            {
+                                scene
+                                    .tone_mapping
+                                    .set_vignette_color(Vec4::from_array(color_arr));
                             }
                         });
 
