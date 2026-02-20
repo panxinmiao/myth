@@ -1130,6 +1130,55 @@ impl GltfViewer {
                                     }
                                 });
                         });
+
+                        // --- Vignette ---
+                        ui.separator();
+                        ui.label("Vignette:");
+
+                        ui.horizontal(|ui| {
+                            ui.label("Intensity:");
+                            let mut intensity = scene.tone_mapping.vignette_intensity;
+                            if ui
+                                .add(egui::Slider::new(&mut intensity, 0.0..=1.0).step_by(0.01))
+                                .changed()
+                            {
+                                scene.tone_mapping.set_vignette_intensity(intensity);
+                            }
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Smoothness:");
+                            let mut smoothness = scene.tone_mapping.vignette_smoothness;
+                            if ui
+                                .add(egui::Slider::new(&mut smoothness, 0.1..=1.0).step_by(0.01))
+                                .changed()
+                            {
+                                scene.tone_mapping.set_vignette_smoothness(smoothness);
+                            }
+                        });
+
+                        // --- Color Grading (LUT) ---
+                        ui.separator();
+                        ui.label("Color Grading (LUT):");
+
+                        ui.horizontal(|ui| {
+                            ui.label("Contribution:");
+                            let mut contribution = scene.tone_mapping.lut_contribution;
+                            if ui
+                                .add(egui::Slider::new(&mut contribution, 0.0..=1.0).step_by(0.05))
+                                .changed()
+                            {
+                                scene.tone_mapping.set_lut_contribution(contribution);
+                            }
+                        });
+
+                        if scene.tone_mapping.has_lut() {
+                            if ui.button("Remove LUT").clicked() {
+                                scene.tone_mapping.set_lut_texture(None);
+                            }
+                        } else {
+                            ui.label("No LUT loaded");
+                        }
                     });
 
                     if !self.hdr_enabled {
