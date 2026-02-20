@@ -78,7 +78,7 @@ impl Default for BloomSettings {
         Self {
             enabled: false,
             strength: 0.04,
-            max_mip_levels: 8,
+            max_mip_levels: 6,
             radius: 0.005,
             karis_average: true,
             version: 0,
