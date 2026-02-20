@@ -943,11 +943,7 @@ impl Scene {
         self.get_node(handle)
     }
 
-    fn get_bbox_of_one_node(
-        &self,
-        node_handle: NodeHandle,
-        assets: &AssetServer,
-    ) -> Option<BoundingBox> {
+    fn get_bbox_of_one_node(&self, node_handle: NodeHandle) -> Option<BoundingBox> {
         let node = self.get_node(node_handle)?;
         if !node.visible {
             return None;
@@ -956,7 +952,7 @@ impl Scene {
         if !mesh.visible {
             return None;
         }
-        let geometry = assets.geometries.get(mesh.geometry)?;
+        let geometry = self.assets.geometries.get(mesh.geometry)?;
 
         // When there's a skeleton binding, use Skeleton's bounding box
         if let Some(skeleton_binding) = self.skins.get(node_handle)
@@ -970,16 +966,12 @@ impl Scene {
         Some(local_bbox.transform(&node.transform.world_matrix))
     }
 
-    pub fn get_bbox_of_node(
-        &self,
-        node_handle: NodeHandle,
-        assets: &AssetServer,
-    ) -> Option<BoundingBox> {
-        let mut combined_bbox = self.get_bbox_of_one_node(node_handle, assets);
+    pub fn get_bbox_of_node(&self, node_handle: NodeHandle) -> Option<BoundingBox> {
+        let mut combined_bbox = self.get_bbox_of_one_node(node_handle);
 
         let node = self.get_node(node_handle)?;
         for &child_handle in &node.children {
-            if let Some(child_bbox) = self.get_bbox_of_node(child_handle, assets) {
+            if let Some(child_bbox) = self.get_bbox_of_node(child_handle) {
                 combined_bbox = match combined_bbox {
                     Some(existing_bbox) => Some(existing_bbox.union(&child_bbox)),
                     None => Some(child_bbox),
@@ -1094,6 +1086,26 @@ impl Scene {
         self.nodes
             .get(handle)
             .map_or(Affine3A::IDENTITY, |n| n.transform.world_matrix)
+    }
+
+    /// Plays a specific animation clip on the node (if an AnimationMixer is present)
+    pub fn play_animation(&mut self, node_handle: NodeHandle, clip_name: &str) {
+        if let Some(mixer) = self.animation_mixers.get_mut(node_handle) {
+            mixer.play(clip_name);
+        } else {
+            log::warn!("No animation mixer found for node {node_handle:?}");
+        }
+    }
+
+    /// Plays any animation on the node (used for simple cases where clip name is not important)
+    pub fn play_if_any_animation(&mut self, node_handle: NodeHandle) {
+        if let Some(mixer) = self.animation_mixers.get_mut(node_handle) {
+            mixer
+                .any_action()
+                .map(super::super::animation::mixer::ActionControl::play);
+        } else {
+            log::info!("No animation mixer found for node {node_handle:?}");
+        }
     }
 }
 

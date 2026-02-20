@@ -113,6 +113,21 @@ impl Camera {
             far: self.far,
         }
     }
+
+    pub fn fit_to_scene(&mut self, scene: &crate::scene::Scene, node_handle: crate::NodeHandle) {
+        if let Some(bbox) = scene.get_bbox_of_node(node_handle) {
+            let center = bbox.center();
+            let radius = bbox.size().length() * 0.5;
+            self.near = radius / 100.0;
+            self.update_projection_matrix();
+
+            // Position the camera at a distance proportional to the bounding sphere radius
+            let distance = radius * 2.5;
+            self.update_view_projection(&Affine3A::from_translation(
+                center + Vec3::new(0.0, 0.0, distance),
+            ));
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default)]

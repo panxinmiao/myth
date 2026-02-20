@@ -33,6 +33,7 @@
 
 use crate::resources::input::{Input, MouseButton};
 use crate::scene::transform::Transform;
+use crate::{NodeHandle, Scene};
 use glam::Vec3;
 
 /// Internal spherical coordinate representation.
@@ -302,6 +303,18 @@ impl OrbitControls {
         let offset = position - self.target;
         self.spherical.set_from_vec3(offset);
         self.target_radius = self.spherical.radius;
+    }
+
+    /// Instantly resets the camera to look at the target from a specific position.
+    pub fn fit(&mut self, scene: &mut Scene, node_handle: NodeHandle) {
+        scene.update_matrix_world();
+        if let Some(bbox) = scene.get_bbox_of_node(node_handle) {
+            let center = bbox.center();
+            let radius = bbox.size().length() * 0.5;
+
+            self.set_target(center);
+            self.set_position(center + Vec3::new(0.0, 0.0, radius * 2.5));
+        }
     }
 }
 
