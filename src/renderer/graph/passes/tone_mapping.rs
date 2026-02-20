@@ -24,6 +24,7 @@
 
 use std::borrow::Cow;
 
+use glam::Vec4;
 use rustc_hash::FxHashMap;
 
 use crate::ShaderDefines;
@@ -44,6 +45,7 @@ pub struct ToneMapUniforms {
     pub vignette_intensity: f32,
     pub vignette_smoothness: f32,
     pub lut_contribution: f32,
+    pub vignette_color: Vec4,
 }
 
 impl Default for ToneMapUniforms {
@@ -53,6 +55,7 @@ impl Default for ToneMapUniforms {
             vignette_intensity: 0.0,
             vignette_smoothness: 0.5,
             lut_contribution: 1.0,
+            vignette_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
         }
     }
 }
@@ -347,6 +350,7 @@ impl RenderNode for ToneMapPass {
                 data.vignette_intensity = settings.vignette_intensity;
                 data.vignette_smoothness = settings.vignette_smoothness;
                 data.lut_contribution = settings.lut_contribution;
+                data.vignette_color = settings.vignette_color;
             }
 
             // B. Handle mode or LUT state change (triggers pipeline rebuild)

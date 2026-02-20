@@ -7,6 +7,7 @@ struct Uniforms{
     vignette_intensity: f32,
     vignette_smoothness: f32,
     lut_contribution: f32,
+    vignette_color: vec4<f32>,
 };
 
 // bindings
@@ -27,8 +28,8 @@ $$ endif
 
 @fragment
 fn fs_main(varyings: VertexOutput) -> @location(0) vec4<f32> {
-    let texCoord = varyings.uv;
-    var color = textureSample(colorTex, texSampler, texCoord);
+    let uv = varyings.uv;
+    var color = textureSample(colorTex, texSampler, uv);
 
     // A. Apply tone mapping to RGB channels
     var rgb = toneMapping(color.rgb * u_effect.exposure);
@@ -52,10 +53,21 @@ $$ endif
 
     // C. Vignette (edge darkening) - controlled via uniform, no macro needed
     if (u_effect.vignette_intensity > 0.0) {
-        let center_dist = distance(texCoord, vec2<f32>(0.5, 0.5));
-        // smoothstep produces a soft falloff mask from edges
-        let vignette = smoothstep(0.8, u_effect.vignette_smoothness, center_dist * (1.0 + u_effect.vignette_intensity));
-        rgb *= vignette;
+        // compute a radial mask that peaks at the center and falls off towards edges
+        var v = uv.x * uv.y * (1.0 - uv.x) * (1.0 - uv.y) * 16.0;
+
+        // map smoothness to parabola exponent, where higher smoothness means a wider, softer highlight area
+        let power = mix(1.0, 0.1, u_effect.vignette_smoothness);
+        v = pow(v, power);
+
+        // invert to create a mask that is 1.0 at the center and falls to 0.0 at edges
+        var vignette_mask = 1.0 - v;
+
+        // apply intensity and clamp to [0, 1]
+        vignette_mask = clamp(vignette_mask * u_effect.vignette_intensity, 0.0, 1.0);
+
+        rgb = mix(rgb, u_effect.vignette_color.rgb, vignette_mask);
+
     }
 
     return vec4<f32>(rgb, color.a);
