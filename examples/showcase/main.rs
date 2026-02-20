@@ -143,7 +143,7 @@ impl AppHandler for ShowcaseApp {
                 }
                 AssetEvent::ModelLoaded { prefab, url } => {
                     log::info!("Model loaded successfully: {}", url);
-                    self.instantiate_and_focus(scene, &prefab, &engine.assets);
+                    self.instantiate_and_focus(scene, &prefab);
                     self.model_loaded = true;
 
                     #[cfg(target_arch = "wasm32")]
@@ -173,12 +173,7 @@ impl AppHandler for ShowcaseApp {
 }
 
 impl ShowcaseApp {
-    fn instantiate_and_focus(
-        &mut self,
-        scene: &mut Scene,
-        prefab: &SharedPrefab,
-        assets: &AssetServer,
-    ) {
+    fn instantiate_and_focus(&mut self, scene: &mut Scene, prefab: &SharedPrefab) {
         // 1. Instantiate model
         let root_node = scene.instantiate(prefab);
 
@@ -195,7 +190,7 @@ impl ShowcaseApp {
         }
 
         // 4. Calculate bounding box and focus camera
-        if let Some(bbox) = scene.get_bbox_of_node(root_node, assets) {
+        if let Some(bbox) = scene.get_bbox_of_node(root_node) {
             let center = bbox.center();
             let radius = bbox.size().length() * 0.5;
 

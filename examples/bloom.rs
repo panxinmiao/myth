@@ -38,24 +38,23 @@ impl AppHandler for BloomDemo {
         scene.add_light(Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0));
 
         // Load the DamagedHelmet model (has nice emissive and specular detail)
-        let gltf_path =
-            std::path::Path::new("examples/assets/DamagedHelmet/glTF/DamagedHelmet.gltf");
+        let gltf_path = std::path::Path::new("examples/assets/phoenix_bird.glb");
         let prefab =
             GltfLoader::load(gltf_path, engine.assets.clone()).expect("Failed to load glTF model");
         let gltf_node = scene.instantiate(&prefab);
-        scene
-            .node(&gltf_node)
-            .set_scale(1.0)
-            .set_position(0.0, 0.0, 0.0);
+
+        // Play animation
+        scene.play_if_any_animation(gltf_node);
+
+        let mut controls = OrbitControls::new(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO);
+
+        controls.fit(scene, gltf_node);
 
         // Configure bloom
         scene.bloom.set_enabled(true);
-        scene.bloom.set_strength(0.04);
+        scene.bloom.set_strength(0.4);
         scene.bloom.set_radius(0.005);
         scene.bloom.set_karis_average(true);
-
-        // Bump up exposure slightly for more visible bloom
-        scene.tone_mapping.set_exposure(1.2);
 
         // Setup camera
         let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
@@ -76,7 +75,7 @@ impl AppHandler for BloomDemo {
 
         Self {
             cam_node_id,
-            controls: OrbitControls::new(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO),
+            controls,
             fps_counter: FpsCounter::new(),
         }
     }
