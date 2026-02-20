@@ -27,5 +27,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Additive blend: original + bloom × strength
     let result = original.rgb + bloom.rgb * u_bloom.bloom_strength;
 
+    // The original LearnOpenGL text(https://learnopengl.com/Guest-Articles/2022/Phys.-Based-Bloom) uses "mix", 
+    // but I believe "additive" seems to be more appropriate. 
+    // TODO: confirm the correct approach.
+    // let result = mix(original.rgb, bloom.rgb, u_bloom.bloom_strength);
+
     return vec4<f32>(result, original.a);
 }

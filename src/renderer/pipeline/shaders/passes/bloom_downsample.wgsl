@@ -28,8 +28,6 @@ fn karis_weight(color: vec3<f32>) -> f32 {
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv = in.uv;
-    let tex_size = vec2<f32>(textureDimensions(src_texture, 0));
-    let texel = 1.0 / tex_size;
 
     // 13-tap sampling pattern (bilinear-friendly offsets)
     //
@@ -41,22 +39,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     //
     // 'e' is the center texel.
 
-    let a = textureSampleLevel(src_texture, src_sampler, uv + vec2<f32>(-2.0,  2.0) * texel, 0.0).rgb;
-    let b = textureSampleLevel(src_texture, src_sampler, uv + vec2<f32>( 0.0,  2.0) * texel, 0.0).rgb;
-    let c = textureSampleLevel(src_texture, src_sampler, uv + vec2<f32>( 2.0,  2.0) * texel, 0.0).rgb;
+    let a = textureSampleLevel(src_texture, src_sampler, uv, 0.0, vec2i(-2, 2)).rgb;
+    let b = textureSampleLevel(src_texture, src_sampler, uv, 0.0, vec2i(0, 2)).rgb;
+    let c = textureSampleLevel(src_texture, src_sampler, uv, 0.0, vec2i(2, 2)).rgb;
 
-    let d = textureSampleLevel(src_texture, src_sampler, uv + vec2<f32>(-2.0,  0.0) * texel, 0.0).rgb;
+    let d = textureSampleLevel(src_texture, src_sampler, uv, 0.0, vec2i(-2, 0)).rgb;
     let e = textureSampleLevel(src_texture, src_sampler, uv, 0.0).rgb;
-    let f = textureSampleLevel(src_texture, src_sampler, uv + vec2<f32>( 2.0,  0.0) * texel, 0.0).rgb;
+    let f = textureSampleLevel(src_texture, src_sampler, uv, 0.0, vec2i(2, 0)).rgb;
 
-    let g = textureSampleLevel(src_texture, src_sampler, uv + vec2<f32>(-2.0, -2.0) * texel, 0.0).rgb;
-    let h = textureSampleLevel(src_texture, src_sampler, uv + vec2<f32>( 0.0, -2.0) * texel, 0.0).rgb;
-    let i = textureSampleLevel(src_texture, src_sampler, uv + vec2<f32>( 2.0, -2.0) * texel, 0.0).rgb;
+    let g = textureSampleLevel(src_texture, src_sampler, uv, 0.0, vec2i(-2, -2)).rgb;
+    let h = textureSampleLevel(src_texture, src_sampler, uv, 0.0, vec2i(0, -2)).rgb;
+    let i = textureSampleLevel(src_texture, src_sampler, uv, 0.0, vec2i(2, -2)).rgb;
 
-    let j = textureSampleLevel(src_texture, src_sampler, uv + vec2<f32>(-1.0,  1.0) * texel, 0.0).rgb;
-    let k = textureSampleLevel(src_texture, src_sampler, uv + vec2<f32>( 1.0,  1.0) * texel, 0.0).rgb;
-    let l = textureSampleLevel(src_texture, src_sampler, uv + vec2<f32>(-1.0, -1.0) * texel, 0.0).rgb;
-    let m = textureSampleLevel(src_texture, src_sampler, uv + vec2<f32>( 1.0, -1.0) * texel, 0.0).rgb;
+    let j = textureSampleLevel(src_texture, src_sampler, uv, 0.0, vec2i(-1, 1)).rgb;
+    let k = textureSampleLevel(src_texture, src_sampler, uv, 0.0, vec2i(1, 1)).rgb;
+    let l = textureSampleLevel(src_texture, src_sampler, uv, 0.0, vec2i(-1, -1)).rgb;
+    let m = textureSampleLevel(src_texture, src_sampler, uv, 0.0, vec2i(1, -1)).rgb;
 
     var result: vec3<f32>;
 
