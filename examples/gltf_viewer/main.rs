@@ -28,6 +28,7 @@ use std::any::Any;
 use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, Sender, channel};
 
+use egui::CollapsingHeader;
 #[cfg(target_arch = "wasm32")]
 use std::sync::Mutex;
 #[cfg(target_arch = "wasm32")]
@@ -209,6 +210,8 @@ struct GltfViewer {
     /// MSAA sample count (cached from renderer)
     msaa_samples: u32,
 
+    vignette_breathing: bool,
+
     hdr_receiver: Option<Receiver<TextureHandle>>,
 
     show_ui: bool,
@@ -286,6 +289,18 @@ impl AppHandler for GltfViewer {
         }
         scene.active_camera = Some(cam_node_id);
 
+        // scene.on_update(
+        //     |scene: &mut Scene, input: &Input, dt: f32| {
+        //         let time = engine.time;
+        //         let tone_mapping =scene.tone_mapping.uniforms.write();
+        //         // 更新 vignette 呼吸效果
+        //         if self.vignette_breathing{
+        //             tone_mapping.vignette_intensity =
+        //                 0.5 + 0.5 * (time * 0.5).sin(); // 呼吸效果
+        //         }
+        //     },
+        // );
+
         // 5. 创建异步通道
         let (tx, rx) = channel();
         let (file_dialog_tx, file_dialog_rx) = channel();
@@ -337,6 +352,8 @@ impl AppHandler for GltfViewer {
             light_node: light_node,
             hdr_enabled: true, // Match RenderSettings in main()
             msaa_samples: 4,   // Match RenderSettings in main()
+
+            vignette_breathing: false,
 
             hdr_receiver: Some(hdr_rx),
 
@@ -421,6 +438,17 @@ impl AppHandler for GltfViewer {
                 .update(transform, &engine.input, camera.fov, frame.dt);
         }
 
+        if self.vignette_breathing{
+            let bpm = 30.0;
+            let period = 60.0 / bpm;
+            let t = engine.time % period;
+
+            let pulse = (-t * 3.0).exp();
+            let vignette_intensity = 0.0 + 0.5 * pulse;
+            scene.tone_mapping.uniforms.write().vignette_intensity = vignette_intensity;
+
+        }
+
         // 4. 构建 UI (requires winit window for egui-winit integration)
         if self.show_ui {
             let winit_window = window
@@ -435,7 +463,7 @@ impl AppHandler for GltfViewer {
         }
     }
 
-    fn compose_frame<'a>(&'a mut self, composer: myth::renderer::graph::FrameComposer<'a>) {
+    fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
         if self.show_ui {
             composer
                 .add_node(RenderStage::UI, &mut self.ui_pass)
@@ -833,483 +861,544 @@ impl GltfViewer {
     ) {
         egui::Window::new("Control Panel (Press Tab to Toggle)")
             .default_pos([10.0, 10.0])
-            .default_width(320.0)
+            .default_size([320.0, 200.0])
             .show(ctx, |ui| {
-                // ===== 远程模型加载 =====
-                ui.collapsing("🌐 KhronosGroup glTF-Sample-Assets (Remote)", |ui| {
-                    let is_loading = matches!(
-                        self.loading_state,
-                        LoadingState::LoadingList | LoadingState::LoadingModel(_)
-                    );
-
-                    ui.add_enabled_ui(!is_loading, |ui| {
-                        ui.horizontal(|ui| {
-                            let model_names: Vec<_> =
-                                self.model_list.iter().map(|m| m.name.as_str()).collect();
-                            ui.label("Model:");
-
-                            let combo = egui::ComboBox::from_id_salt("remote_model_selector")
-                                .width(180.0)
-                                .selected_text(
-                                    model_names
-                                        .get(self.selected_model_index)
-                                        .copied()
-                                        .unwrap_or("Select a model..."),
+                egui::ScrollArea::both()
+                    .min_scrolled_height(600.0)
+                    .show(ui, |ui| {
+                        // ===== 远程模型加载 =====
+                        CollapsingHeader::new("🌐 KhronosGroup glTF-Sample-Assets (Remote)")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                let is_loading = matches!(
+                                    self.loading_state,
+                                    LoadingState::LoadingList | LoadingState::LoadingModel(_)
                                 );
 
-                            combo.show_ui(ui, |ui| {
-                                ui.set_min_width(250.0);
-                                for (i, name) in model_names.iter().enumerate() {
-                                    ui.selectable_value(&mut self.selected_model_index, i, *name);
+                                ui.add_enabled_ui(!is_loading, |ui| {
+                                    ui.horizontal(|ui| {
+                                        let model_names: Vec<_> = self
+                                            .model_list
+                                            .iter()
+                                            .map(|m| m.name.as_str())
+                                            .collect();
+                                        ui.label("Model:");
+
+                                        let combo =
+                                            egui::ComboBox::from_id_salt("remote_model_selector")
+                                                .width(180.0)
+                                                .selected_text(
+                                                    model_names
+                                                        .get(self.selected_model_index)
+                                                        .copied()
+                                                        .unwrap_or("Select a model..."),
+                                                );
+
+                                        combo.show_ui(ui, |ui| {
+                                            ui.set_min_width(250.0);
+                                            for (i, name) in model_names.iter().enumerate() {
+                                                ui.selectable_value(
+                                                    &mut self.selected_model_index,
+                                                    i,
+                                                    *name,
+                                                );
+                                            }
+                                        });
+
+                                        if ui.button("Load").clicked()
+                                            && let Some(url) =
+                                                self.build_remote_url(self.selected_model_index)
+                                        {
+                                            self.load_model(
+                                                ModelSource::Remote(url),
+                                                assets.clone(),
+                                            );
+                                        }
+                                    });
+                                });
+
+                                // 显示加载状态
+                                match &self.loading_state {
+                                    LoadingState::LoadingList => {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.label("Loading model list...");
+                                        });
+                                    }
+                                    LoadingState::LoadingModel(name) => {
+                                        ui.horizontal(|ui| {
+                                            ui.spinner();
+                                            ui.label(format!("Loading {}...", name));
+                                        });
+                                    }
+                                    LoadingState::Error(e) => {
+                                        ui.colored_label(
+                                            egui::Color32::RED,
+                                            format!("⚠ Error: {}", e),
+                                        );
+                                    }
+                                    LoadingState::Idle => {}
                                 }
+
+                                ui.label(format!("{} models available", self.model_list.len()));
                             });
 
-                            if ui.button("Load").clicked()
-                                && let Some(url) = self.build_remote_url(self.selected_model_index)
-                            {
-                                self.load_model(ModelSource::Remote(url), assets.clone());
-                            }
-                        });
-                    });
+                        ui.separator();
 
-                    // 显示加载状态
-                    match &self.loading_state {
-                        LoadingState::LoadingList => {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label("Loading model list...");
-                            });
-                        }
-                        LoadingState::LoadingModel(name) => {
-                            ui.horizontal(|ui| {
-                                ui.spinner();
-                                ui.label(format!("Loading {}...", name));
-                            });
-                        }
-                        LoadingState::Error(e) => {
-                            ui.colored_label(egui::Color32::RED, format!("⚠ Error: {}", e));
-                        }
-                        LoadingState::Idle => {}
-                    }
+                        // ===== 本地文件加载 =====
+                        CollapsingHeader::new("📁 Local File")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                if ui.button("Open glTF/glb File...").clicked() {
+                                    // 克隆发送端，移动到异步块中
+                                    let sender = self.file_dialog_tx.clone();
 
-                    ui.label(format!("{} models available", self.model_list.len()));
-                });
+                                    // 生成异步任务
+                                    execute_future(async move {
+                                        let file = rfd::AsyncFileDialog::new()
+                                            .add_filter("glTF", &["gltf", "glb"])
+                                            .pick_file()
+                                            .await; // 这里 await 不会卡死 UI
 
-                ui.separator();
+                                        if let Some(file_handle) = file {
+                                            // 获取路径并发送回主线程
+                                            #[cfg(not(target_arch = "wasm32"))]
+                                            {
+                                                let path = file_handle.path().to_path_buf();
+                                                let _ = sender.send(path);
+                                            }
 
-                // ===== 本地文件加载 =====
-                ui.collapsing("📁 Local File", |ui| {
-                    if ui.button("Open glTF/glb File...").clicked() {
-                        // 克隆发送端，移动到异步块中
-                        let sender = self.file_dialog_tx.clone();
-
-                        // 生成异步任务
-                        execute_future(async move {
-                            let file = rfd::AsyncFileDialog::new()
-                                .add_filter("glTF", &["gltf", "glb"])
-                                .pick_file()
-                                .await; // 这里 await 不会卡死 UI
-
-                            if let Some(file_handle) = file {
-                                // 获取路径并发送回主线程
-                                #[cfg(not(target_arch = "wasm32"))]
-                                {
-                                    let path = file_handle.path().to_path_buf();
-                                    let _ = sender.send(path);
+                                            #[cfg(target_arch = "wasm32")]
+                                            {
+                                                let data = file_handle.read().await;
+                                                let file_name = file_handle.file_name();
+                                                let _ = sender.send((file_name, data));
+                                            }
+                                        }
+                                    });
                                 }
 
+                                if let Some(name) = &self.model_name {
+                                    ui.label(format!("Current: {}", name));
+                                } else {
+                                    ui.label("No model loaded");
+                                }
                                 #[cfg(target_arch = "wasm32")]
                                 {
-                                    let data = file_handle.read().await;
-                                    let file_name = file_handle.file_name();
-                                    let _ = sender.send((file_name, data));
+                                    ui.separator();
+                                    ui.label("💡 Tip: GLB format recommended");
+                                    ui.label("(contains all data in one file)");
                                 }
-                            }
-                        });
-                    }
+                            });
 
-                    if let Some(name) = &self.model_name {
-                        ui.label(format!("Current: {}", name));
-                    } else {
-                        ui.label("No model loaded");
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    {
                         ui.separator();
-                        ui.label("💡 Tip: GLB format recommended");
-                        ui.label("(contains all data in one file)");
-                    }
-                });
 
-                ui.separator();
-
-                // ===== 动画控制 =====
-                ui.collapsing("🎬 Animation", |ui| {
-                    if self.animations.is_empty() {
-                        ui.label("No animations available");
-                    } else {
-                        // 动画选择
-                        let anim_name = self
-                            .animations
-                            .get(self.current_animation)
-                            .cloned()
-                            .unwrap_or_else(|| "Select Animation".to_string());
-
-                        ui.horizontal(|ui| {
-                            ui.label("Clip:");
-                            egui::ComboBox::from_id_salt("animation_selector")
-                                .width(150.0)
-                                .selected_text(&anim_name)
-                                .show_ui(ui, |ui| {
-                                    for (i, clip) in self.animations.iter().enumerate() {
-                                        if ui
-                                            .selectable_value(&mut self.current_animation, i, clip)
-                                            .changed()
-                                            && let Some(gltf_node) = self.gltf_node
-                                            && let Some(mixer) =
-                                                scene.animation_mixers.get_mut(gltf_node)
-                                        {
-                                            mixer.stop_all();
-                                            mixer.play(clip);
-                                        }
-                                    }
-                                });
-                        });
-
-                        // 播放控制
-                        ui.horizontal(|ui| {
-                            if ui
-                                .button(if self.is_playing {
-                                    "⏸ Pause"
+                        // ===== 动画控制 =====
+                        CollapsingHeader::new("🎬 Animation")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                if self.animations.is_empty() {
+                                    ui.label("No animations available");
                                 } else {
-                                    "▶ Play"
-                                })
-                                .clicked()
-                            {
-                                self.is_playing = !self.is_playing;
-                                if let Some(gltf_node) = self.gltf_node
-                                    && let Some(mixer) = scene.animation_mixers.get_mut(gltf_node)
-                                {
-                                    if self.is_playing {
-                                        if let Some(anim) =
-                                            self.animations.get(self.current_animation)
-                                        {
-                                            mixer.play(anim);
-                                        }
-                                    } else {
-                                        mixer.stop_all();
-                                    }
-                                }
-                            }
-                        });
+                                    // 动画选择
+                                    let anim_name = self
+                                        .animations
+                                        .get(self.current_animation)
+                                        .cloned()
+                                        .unwrap_or_else(|| "Select Animation".to_string());
 
-                        // 播放速度
-                        ui.horizontal(|ui| {
-                            ui.label("Speed:");
-                            ui.add(
-                                egui::Slider::new(&mut self.playback_speed, 0.0..=2.0)
-                                    .step_by(0.1)
-                                    .suffix("x"),
-                            );
-                        });
-                    }
-                });
+                                    ui.horizontal(|ui| {
+                                        ui.label("Clip:");
+                                        egui::ComboBox::from_id_salt("animation_selector")
+                                            .width(150.0)
+                                            .selected_text(&anim_name)
+                                            .show_ui(ui, |ui| {
+                                                for (i, clip) in self.animations.iter().enumerate()
+                                                {
+                                                    if ui
+                                                        .selectable_value(
+                                                            &mut self.current_animation,
+                                                            i,
+                                                            clip,
+                                                        )
+                                                        .changed()
+                                                        && let Some(gltf_node) = self.gltf_node
+                                                        && let Some(mixer) = scene
+                                                            .animation_mixers
+                                                            .get_mut(gltf_node)
+                                                    {
+                                                        mixer.stop_all();
+                                                        mixer.play(clip);
+                                                    }
+                                                }
+                                            });
+                                    });
 
-                ui.separator();
-
-                // ===== 渲染设置 =====
-                ui.collapsing("⚙ Rendering", |ui| {
-                    // --- HDR 渲染 ---
-                    if ui
-                        .checkbox(&mut self.hdr_enabled, "HDR Rendering")
-                        .changed()
-                    {
-                        renderer.set_hdr_enabled(self.hdr_enabled);
-                    }
-
-                    // --- MSAA 抗锯齿 ---
-                    ui.horizontal(|ui| {
-                        ui.label("MSAA:");
-                        let msaa_options = [1u32, 4];
-                        egui::ComboBox::from_id_salt("msaa_selector")
-                            .width(60.0)
-                            .selected_text(if self.msaa_samples == 1 {
-                                "Off".to_string()
-                            } else {
-                                format!("{}x", self.msaa_samples)
-                            })
-                            .show_ui(ui, |ui| {
-                                for &samples in &msaa_options {
-                                    let label = if samples == 1 {
-                                        "Off".to_string()
-                                    } else {
-                                        format!("{}x", samples)
-                                    };
-                                    if ui
-                                        .selectable_value(&mut self.msaa_samples, samples, label)
-                                        .changed()
-                                    {
-                                        renderer.set_msaa_samples(self.msaa_samples);
-                                    }
-                                }
-                            });
-                    });
-
-                    ui.separator();
-
-                    // --- IBL 环境贴图 ---
-                    ui.horizontal(|ui| {
-                        if ui.checkbox(&mut self.ibl_enabled, "IBL").changed() {
-                            scene.environment.set_intensity(if self.ibl_enabled {
-                                3.0
-                            } else {
-                                0.0
-                            });
-                        }
-
-                        if self.ibl_enabled {
-                            ui.add(
-                                egui::Slider::new(&mut scene.environment.intensity, 0.1..=5.0)
-                                    .step_by(0.1)
-                                    .logarithmic(true),
-                            );
-                        }
-                    });
-
-                    ui.horizontal(|ui| {
-                        if let Some(light_bundle) = scene.get_light_bundle(self.light_node) {
-                            ui.checkbox(&mut light_bundle.1.visible, "Light");
-                            if light_bundle.1.visible {
-                                ui.add(
-                                    egui::Slider::new(&mut light_bundle.0.intensity, 0.1..=5.0)
-                                        .step_by(0.1)
-                                        .logarithmic(true),
-                                );
-                                // ui.checkbox(&mut light_bundle.0.cast_shadows, "Cast Shadows");
-                            }
-                        }
-                    });
-
-                    ui.separator();
-
-                    // --- Tone Mapping 设置 (仅在 HDR 模式下可用) ---
-                    ui.add_enabled_ui(self.hdr_enabled, |ui| {
-                        ui.label("Tone Mapping:");
-
-                        // 模式选择
-                        ui.horizontal(|ui| {
-                            ui.label("Mode:");
-                            let current_mode = scene.tone_mapping.mode;
-                            egui::ComboBox::from_id_salt("tone_mapping_mode")
-                                .width(120.0)
-                                .selected_text(current_mode.name())
-                                .show_ui(ui, |ui| {
-                                    for mode in myth::ToneMappingMode::all() {
+                                    // 播放控制
+                                    ui.horizontal(|ui| {
                                         if ui
-                                            .selectable_label(current_mode == *mode, mode.name())
+                                            .button(if self.is_playing {
+                                                "⏸ Pause"
+                                            } else {
+                                                "▶ Play"
+                                            })
                                             .clicked()
                                         {
-                                            scene.tone_mapping.set_mode(*mode);
+                                            self.is_playing = !self.is_playing;
+                                            if let Some(gltf_node) = self.gltf_node
+                                                && let Some(mixer) =
+                                                    scene.animation_mixers.get_mut(gltf_node)
+                                            {
+                                                if self.is_playing {
+                                                    if let Some(anim) =
+                                                        self.animations.get(self.current_animation)
+                                                    {
+                                                        mixer.play(anim);
+                                                    }
+                                                } else {
+                                                    mixer.stop_all();
+                                                }
+                                            }
                                         }
+                                    });
+
+                                    // 播放速度
+                                    ui.horizontal(|ui| {
+                                        ui.label("Speed:");
+                                        ui.add(
+                                            egui::Slider::new(&mut self.playback_speed, 0.0..=2.0)
+                                                .step_by(0.1)
+                                                .suffix("x"),
+                                        );
+                                    });
+                                }
+                            });
+
+                        ui.separator();
+
+                        // ===== 渲染设置 =====
+                        CollapsingHeader::new("⚙ Rendering").show(ui, |ui| {
+                            // --- HDR 渲染 ---
+                            if ui
+                                .checkbox(&mut self.hdr_enabled, "HDR Rendering")
+                                .changed()
+                            {
+                                renderer.set_hdr_enabled(self.hdr_enabled);
+                            }
+
+                            // --- MSAA 抗锯齿 ---
+                            ui.horizontal(|ui| {
+                                ui.label("MSAA:");
+                                let msaa_options = [1u32, 4];
+                                egui::ComboBox::from_id_salt("msaa_selector")
+                                    .width(60.0)
+                                    .selected_text(if self.msaa_samples == 1 {
+                                        "Off".to_string()
+                                    } else {
+                                        format!("{}x", self.msaa_samples)
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        for &samples in &msaa_options {
+                                            let label = if samples == 1 {
+                                                "Off".to_string()
+                                            } else {
+                                                format!("{}x", samples)
+                                            };
+                                            if ui
+                                                .selectable_value(
+                                                    &mut self.msaa_samples,
+                                                    samples,
+                                                    label,
+                                                )
+                                                .changed()
+                                            {
+                                                renderer.set_msaa_samples(self.msaa_samples);
+                                            }
+                                        }
+                                    });
+                            });
+
+                            ui.separator();
+
+                            // --- IBL 环境贴图 ---
+                            ui.horizontal(|ui| {
+                                if ui.checkbox(&mut self.ibl_enabled, "IBL").changed() {
+                                    scene.environment.set_intensity(if self.ibl_enabled {
+                                        3.0
+                                    } else {
+                                        0.0
+                                    });
+                                }
+
+                                if self.ibl_enabled {
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut scene.environment.intensity,
+                                            0.1..=5.0,
+                                        )
+                                        .step_by(0.1)
+                                        .logarithmic(true),
+                                    );
+                                }
+                            });
+
+                            ui.horizontal(|ui| {
+                                if let Some(light_bundle) = scene.get_light_bundle(self.light_node)
+                                {
+                                    ui.checkbox(&mut light_bundle.1.visible, "Light");
+                                    if light_bundle.1.visible {
+                                        ui.add(
+                                            egui::Slider::new(
+                                                &mut light_bundle.0.intensity,
+                                                0.1..=5.0,
+                                            )
+                                            .step_by(0.1)
+                                            .logarithmic(true),
+                                        );
+                                        // ui.checkbox(&mut light_bundle.0.cast_shadows, "Cast Shadows");
+                                    }
+                                }
+                            });
+
+                            ui.separator();
+
+                            // --- Tone Mapping 设置 (仅在 HDR 模式下可用) ---
+                            ui.add_enabled_ui(self.hdr_enabled, |ui| {
+                                ui.label("Tone Mapping:");
+
+                                // 模式选择
+                                ui.horizontal(|ui| {
+                                    ui.label("Mode:");
+                                    let current_mode = scene.tone_mapping.mode;
+                                    egui::ComboBox::from_id_salt("tone_mapping_mode")
+                                        .width(120.0)
+                                        .selected_text(current_mode.name())
+                                        .show_ui(ui, |ui| {
+                                            for mode in myth::ToneMappingMode::all() {
+                                                if ui
+                                                    .selectable_label(
+                                                        current_mode == *mode,
+                                                        mode.name(),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    scene.tone_mapping.set_mode(*mode);
+                                                }
+                                            }
+                                        });
+                                });
+
+                                let mut uniform_mut = scene.tone_mapping.uniforms.write();
+
+                                // 曝光度
+                                ui.horizontal(|ui| {
+                                    ui.label("Exposure:");
+                                    ui.add(
+                                        egui::Slider::new(&mut uniform_mut.exposure, 0.1..=5.0)
+                                            .step_by(0.1)
+                                            .logarithmic(true),
+                                    );
+                                });
+
+                                // --- Vignette ---
+                                ui.separator();
+                                ui.label("Vignette:");
+
+                                ui.checkbox(&mut self.vignette_breathing, "Breathing");
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Intensity:");
+
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut uniform_mut.vignette_intensity,
+                                            0.0..=2.0,
+                                        )
+                                        .step_by(0.01),
+                                    );
+                                });
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Smoothness:");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut uniform_mut.vignette_smoothness,
+                                            0.1..=1.0,
+                                        )
+                                        .step_by(0.01),
+                                    );
+                                });
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Color:");
+                                    let mut color_arr = uniform_mut.vignette_color.to_array();
+                                    if ui
+                                        .color_edit_button_rgba_unmultiplied(&mut color_arr)
+                                        .changed()
+                                    {
+                                        uniform_mut.vignette_color = Vec4::from_array(color_arr);
                                     }
                                 });
+
+                                // --- Chromatic Aberration、 Contrast & Saturation、 Film Grain ---
+                                ui.separator();
+                                ui.horizontal(|ui| {
+                                    ui.label("Chromatic Aberration:");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut uniform_mut.chromatic_aberration,
+                                            0.0..=5.0,
+                                        )
+                                        .step_by(0.01),
+                                    );
+                                });
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Contrast:");
+                                    ui.add(
+                                        egui::Slider::new(&mut uniform_mut.contrast, 0.5..=2.0)
+                                            .step_by(0.01),
+                                    );
+                                });
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Saturation:");
+                                    ui.add(
+                                        egui::Slider::new(&mut uniform_mut.saturation, 0.0..=2.0)
+                                            .step_by(0.01),
+                                    );
+                                });
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Film Grain:");
+                                    ui.add(
+                                        egui::Slider::new(&mut uniform_mut.film_grain, 0.0..=1.0)
+                                            .step_by(0.01),
+                                    );
+                                });
+
+                                // --- Color Grading (LUT) ---
+                                ui.separator();
+                                ui.label("Color Grading (LUT):");
+
+                                ui.horizontal(|ui| {
+                                    ui.label("Contribution:");
+                                    ui.add(
+                                        egui::Slider::new(
+                                            &mut uniform_mut.lut_contribution,
+                                            0.0..=1.0,
+                                        )
+                                        .step_by(0.05),
+                                    );
+                                });
+
+                                drop(uniform_mut);
+
+                                if scene.tone_mapping.has_lut() {
+                                    if ui.button("Remove LUT").clicked() {
+                                        scene.tone_mapping.set_lut_texture(None);
+                                    }
+                                } else {
+                                    ui.label("No LUT loaded");
+                                }
+                            });
+
+                            if !self.hdr_enabled {
+                                ui.label("ℹ Enable HDR to configure tone mapping");
+                            }
+
+                            ui.separator();
+
+                            // ===== Bloom 后处理 =====
+
+                            // 开关 (always available when HDR is on)
+                            ui.add_enabled_ui(self.hdr_enabled, |ui| {
+                                let mut bloom_enabled = scene.bloom.enabled;
+                                if ui.checkbox(&mut bloom_enabled, "Enable Bloom").changed() {
+                                    scene.bloom.set_enabled(bloom_enabled);
+                                }
+                            });
+
+                            let bloom_enabled = scene.bloom.enabled;
+
+                            ui.add_enabled_ui(self.hdr_enabled && bloom_enabled, |ui| {
+                                // Strength
+                                ui.horizontal(|ui| {
+                                    ui.label("Strength:");
+                                    let mut strength = scene.bloom.strength;
+                                    if ui
+                                        .add(
+                                            egui::Slider::new(&mut strength, 0.0..=1.0)
+                                                .step_by(0.005)
+                                                .fixed_decimals(3),
+                                        )
+                                        .changed()
+                                    {
+                                        scene.bloom.set_strength(strength);
+                                    }
+                                });
+
+                                // Radius
+                                ui.horizontal(|ui| {
+                                    ui.label("Radius:");
+                                    let mut radius = scene.bloom.radius;
+                                    if ui
+                                        .add(
+                                            egui::Slider::new(&mut radius, 0.001..=0.05)
+                                                .step_by(0.001)
+                                                .fixed_decimals(3),
+                                        )
+                                        .changed()
+                                    {
+                                        scene.bloom.set_radius(radius);
+                                    }
+                                });
+
+                                // Mip Levels
+                                ui.horizontal(|ui| {
+                                    ui.label("Mip Levels:");
+                                    let mut mip_levels = scene.bloom.max_mip_levels;
+                                    if ui.add(egui::Slider::new(&mut mip_levels, 1..=10)).changed()
+                                    {
+                                        scene.bloom.set_max_mip_levels(mip_levels);
+                                    }
+                                });
+
+                                // Karis Average
+                                let mut karis = scene.bloom.karis_average;
+                                if ui
+                                    .checkbox(&mut karis, "Karis Average (anti-firefly)")
+                                    .changed()
+                                {
+                                    scene.bloom.set_karis_average(karis);
+                                }
+                            });
+
+                            if !self.hdr_enabled {
+                                ui.label("ℹ Enable HDR to configure bloom");
+                            }
                         });
 
-                        let mut uniform_mut = scene.tone_mapping.uniforms.write();
-
-                        // 曝光度
-                        ui.horizontal(|ui| {
-                            ui.label("Exposure:");
-                            ui.add(
-                                egui::Slider::new(&mut uniform_mut.exposure, 0.1..=5.0)
-                                    .step_by(0.1)
-                                    .logarithmic(true),
-                            );
-                        });
-
-                        // --- Vignette ---
                         ui.separator();
-                        ui.label("Vignette:");
 
-                        ui.horizontal(|ui| {
-                            ui.label("Intensity:");
-
-                            ui.add(
-                                egui::Slider::new(&mut uniform_mut.vignette_intensity, 0.0..=2.0)
-                                    .step_by(0.01),
-                            );
-                        });
-
-                        ui.horizontal(|ui| {
-                            ui.label("Smoothness:");
-                            ui.add(
-                                egui::Slider::new(&mut uniform_mut.vignette_smoothness, 0.1..=1.0)
-                                    .step_by(0.01),
-                            );
-                        });
-
-                        ui.horizontal(|ui| {
-                            ui.label("Color:");
-                            let mut color_arr = uniform_mut.vignette_color.to_array();
-                            if ui
-                                .color_edit_button_rgba_unmultiplied(&mut color_arr)
-                                .changed()
-                            {
-                                uniform_mut.vignette_color = Vec4::from_array(color_arr);
-                            }
-                        });
-
-                        // --- Chromatic Aberration、 Contrast & Saturation、 Film Grain ---
-                        ui.separator();
-                        ui.horizontal(|ui| {
-                            ui.label("Chromatic Aberration:");
-                            ui.add(
-                                egui::Slider::new(&mut uniform_mut.chromatic_aberration, 0.0..=5.0)
-                                    .step_by(0.01),
-                            );
-                        });
-
-                        ui.horizontal(|ui| {
-                            ui.label("Contrast:");
-                            ui.add(
-                                egui::Slider::new(&mut uniform_mut.contrast, 0.5..=2.0)
-                                    .step_by(0.01),
-                            );
-                        });
-
-                        ui.horizontal(|ui| {
-                            ui.label("Saturation:");
-                            ui.add(
-                                egui::Slider::new(&mut uniform_mut.saturation, 0.0..=2.0)
-                                    .step_by(0.01),
-                            );
-                        });
-
-                        ui.horizontal(|ui| {
-                            ui.label("Film Grain:");
-                            ui.add(
-                                egui::Slider::new(&mut uniform_mut.film_grain, 0.0..=1.0)
-                                    .step_by(0.01),
-                            );
-                        });
-
-                        // --- Color Grading (LUT) ---
-                        ui.separator();
-                        ui.label("Color Grading (LUT):");
-
-                        ui.horizontal(|ui| {
-                            ui.label("Contribution:");
-                            ui.add(
-                                egui::Slider::new(&mut uniform_mut.lut_contribution, 0.0..=1.0)
-                                    .step_by(0.05),
-                            );
-                        });
-
-                        drop(uniform_mut);
-
-                        if scene.tone_mapping.has_lut() {
-                            if ui.button("Remove LUT").clicked() {
-                                scene.tone_mapping.set_lut_texture(None);
-                            }
-                        } else {
-                            ui.label("No LUT loaded");
-                        }
-                    });
-
-                    if !self.hdr_enabled {
-                        ui.label("ℹ Enable HDR to configure tone mapping");
-                    }
-
-                    ui.separator();
-
-                    // ===== Bloom 后处理 =====
-
-                    // 开关 (always available when HDR is on)
-                    ui.add_enabled_ui(self.hdr_enabled, |ui| {
-                        let mut bloom_enabled = scene.bloom.enabled;
-                        if ui.checkbox(&mut bloom_enabled, "Enable Bloom").changed() {
-                            scene.bloom.set_enabled(bloom_enabled);
-                        }
-                    });
-
-                    let bloom_enabled = scene.bloom.enabled;
-
-                    ui.add_enabled_ui(self.hdr_enabled && bloom_enabled, |ui| {
-                        // Strength
-                        ui.horizontal(|ui| {
-                            ui.label("Strength:");
-                            let mut strength = scene.bloom.strength;
-                            if ui
-                                .add(
-                                    egui::Slider::new(&mut strength, 0.0..=1.0)
-                                        .step_by(0.005)
-                                        .fixed_decimals(3),
-                                )
-                                .changed()
-                            {
-                                scene.bloom.set_strength(strength);
-                            }
-                        });
-
-                        // Radius
-                        ui.horizontal(|ui| {
-                            ui.label("Radius:");
-                            let mut radius = scene.bloom.radius;
-                            if ui
-                                .add(
-                                    egui::Slider::new(&mut radius, 0.001..=0.05)
-                                        .step_by(0.001)
-                                        .fixed_decimals(3),
-                                )
-                                .changed()
-                            {
-                                scene.bloom.set_radius(radius);
-                            }
-                        });
-
-                        // Mip Levels
-                        ui.horizontal(|ui| {
-                            ui.label("Mip Levels:");
-                            let mut mip_levels = scene.bloom.max_mip_levels;
-                            if ui.add(egui::Slider::new(&mut mip_levels, 1..=10)).changed() {
-                                scene.bloom.set_max_mip_levels(mip_levels);
-                            }
-                        });
-
-                        // Karis Average
-                        let mut karis = scene.bloom.karis_average;
-                        if ui
-                            .checkbox(&mut karis, "Karis Average (anti-firefly)")
-                            .changed()
+                        // ===== Inspector 开关 =====
+                        if self.gltf_node.is_some()
+                            && ui
+                                .button(if self.show_inspector {
+                                    "🔍 Hide Inspector"
+                                } else {
+                                    "🔍 Show Inspector"
+                                })
+                                .clicked()
                         {
-                            scene.bloom.set_karis_average(karis);
+                            self.show_inspector = !self.show_inspector;
                         }
+
+                        ui.separator();
+
+                        // ===== 信息显示 =====
+                        ui.label(format!("FPS: {:.1}", self.current_fps));
                     });
-
-                    if !self.hdr_enabled {
-                        ui.label("ℹ Enable HDR to configure bloom");
-                    }
-                });
-
-                ui.separator();
-
-                // ===== Inspector 开关 =====
-                if self.gltf_node.is_some()
-                    && ui
-                        .button(if self.show_inspector {
-                            "🔍 Hide Inspector"
-                        } else {
-                            "🔍 Show Inspector"
-                        })
-                        .clicked()
-                {
-                    self.show_inspector = !self.show_inspector;
-                }
-
-                ui.separator();
-
-                // ===== 信息显示 =====
-                ui.label(format!("FPS: {:.1}", self.current_fps));
             });
     }
 
