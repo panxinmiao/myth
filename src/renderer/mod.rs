@@ -56,12 +56,12 @@ use crate::errors::Result;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::context::FrameResources;
-use crate::renderer::graph::transient_pool::TransientTexturePool;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
     BRDFLutComputePass, BloomPass, IBLComputePass, OpaquePass, SceneCullPass, ShadowPass,
     SimpleForwardPass, SkyboxPass, ToneMapPass, TransmissionCopyPass, TransparentPass,
 };
+use crate::renderer::graph::transient_pool::TransientTexturePool;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 use crate::{FrameBuilder, RenderStage};

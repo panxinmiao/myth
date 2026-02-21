@@ -109,9 +109,8 @@ impl PooledTexture {
             view_formats: &[],
         });
 
-        let default_view = Tracked::new(
-            texture.create_view(&wgpu::TextureViewDescriptor::default()),
-        );
+        let default_view =
+            Tracked::new(texture.create_view(&wgpu::TextureViewDescriptor::default()));
 
         // Pre-build per-mip views for all levels
         let mip_views = (0..desc.mip_level_count)
