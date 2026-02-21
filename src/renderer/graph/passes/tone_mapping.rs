@@ -36,8 +36,6 @@ use crate::resources::texture::TextureSource;
 use crate::resources::tone_mapping::ToneMappingMode;
 
 /// GPU uniform data for tone mapping shader.
-///
-/// Layout: 4 × f32 = 16 bytes, naturally aligned to std140/std430 requirements.
 #[repr(C)]
 #[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
 pub struct ToneMapUniforms {
