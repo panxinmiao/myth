@@ -29,7 +29,7 @@ use rustc_hash::FxHashMap;
 
 use crate::ShaderDefines;
 use crate::render::RenderNode;
-use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
+use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::core::{binding::BindGroupKey, resources::Tracked};
 use crate::renderer::pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator};
 use crate::resources::buffer::{CpuBuffer, GpuData};
@@ -377,7 +377,7 @@ impl RenderNode for ToneMapPass {
             None
         };
 
-        let input_view_tracked = &ctx.get_scene_color_input();
+        let input_view_tracked = &ctx.get_resource_view(GraphResource::SceneColorInput);
         let input_view_id = input_view_tracked.id();
 
         // Ensure buffer is ready
@@ -407,7 +407,7 @@ impl RenderNode for ToneMapPass {
                 .get(&cpu_buffer_id)
                 .expect("GpuBuffer must exist after ensure_buffer_id");
 
-            let input_view = &ctx.get_scene_color_input();
+            let input_view = &ctx.get_resource_view(GraphResource::SceneColorInput);
 
             let mut entries = vec![
                 wgpu::BindGroupEntry {

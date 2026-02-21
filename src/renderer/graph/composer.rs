@@ -29,6 +29,7 @@ use crate::renderer::graph::builder::FrameBuilder;
 use crate::renderer::graph::context::{ExecuteContext, FrameResources, PrepareContext};
 use crate::renderer::graph::node::RenderNode;
 use crate::renderer::graph::stage::RenderStage;
+use crate::renderer::graph::transient_pool::TransientTexturePool;
 use crate::renderer::pipeline::PipelineCache;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
@@ -42,6 +43,7 @@ pub struct ComposerContext<'a> {
     pub render_state: &'a RenderState,
 
     pub frame_resources: &'a FrameResources,
+    pub transient_pool: &'a mut TransientTexturePool,
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
 
     /// 渲染列表（由 `SceneCullPass` 填充）
@@ -174,6 +176,7 @@ impl<'a> FrameComposer<'a> {
                 extracted_scene: self.ctx.extracted_scene,
                 render_lists: self.ctx.render_lists,
                 frame_resources: self.ctx.frame_resources,
+                transient_pool: self.ctx.transient_pool,
                 time: self.ctx.time,
                 global_bind_group_cache: self.ctx.global_bind_group_cache,
                 color_view_flip_flop: 0,
@@ -194,6 +197,7 @@ impl<'a> FrameComposer<'a> {
             self.ctx.extracted_scene,
             &*self.ctx.render_lists,
             self.ctx.frame_resources,
+            &*self.ctx.transient_pool,
             self.ctx.time,
             &*self.ctx.global_bind_group_cache,
         );
@@ -201,5 +205,8 @@ impl<'a> FrameComposer<'a> {
 
         // 5. Present
         output.present();
+
+        // 6. Return transient textures to the pool for next frame reuse
+        self.ctx.transient_pool.reset();
     }
 }

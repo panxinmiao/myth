@@ -18,7 +18,7 @@
 //! - Only executed if there are materials using Transmission in the scene
 
 use crate::renderer::graph::RenderNode;
-use crate::renderer::graph::context::ExecuteContext;
+use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 
 /// Transmission Copy Pass
 ///
@@ -64,7 +64,7 @@ impl RenderNode for TransmissionCopyPass {
         }
 
         // Check if transmission texture exists
-        let Some(transmission_view) = &ctx.frame_resources.transmission_view else {
+        let Some(transmission_view) = ctx.try_get_resource_view(GraphResource::Transmission) else {
             log::warn!("TransmissionCopyPass: transmission_view missing, skipping");
             return;
         };
@@ -77,7 +77,7 @@ impl RenderNode for TransmissionCopyPass {
         if is_msaa {
             // If MSAA is enabled, OpaquePass has not yet resolved, and the data is still in the MSAA View.
             // We need to manually perform a resolve to save the opaque results to the color_view.
-            if let Some(msaa_view) = &ctx.frame_resources.scene_msaa_view {
+            if let Some(msaa_view) = ctx.try_get_resource_view(GraphResource::SceneMsaa) {
                 let pass_desc = wgpu::RenderPassDescriptor {
                     label: Some("Transmission MSAA Resolve"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {

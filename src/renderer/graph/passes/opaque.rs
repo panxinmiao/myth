@@ -13,7 +13,7 @@
 
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::{RenderNode, TrackedRenderPass};
-use crate::renderer::graph::context::ExecuteContext;
+use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 
 /// Opaque Render Pass
 ///
@@ -39,14 +39,8 @@ impl OpaquePass {
         ctx: &'a ExecuteContext,
     ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
         let target_view = ctx.get_scene_render_target_view();
-        let is_msaa = ctx.wgpu_ctx.msaa_samples > 1;
 
-        if is_msaa {
-            let msaa_view = ctx
-                .frame_resources
-                .scene_msaa_view
-                .as_ref()
-                .expect("MSAA view missing");
+        if let Some(msaa_view) = ctx.try_get_resource_view(GraphResource::SceneMsaa) {
             (msaa_view, Some(target_view))
         } else {
             (target_view, None)
@@ -124,7 +118,7 @@ impl RenderNode for OpaquePass {
         };
 
         let (color_view, _resolve_target) = Self::get_render_target(ctx);
-        let depth_view = &ctx.frame_resources.depth_view;
+        let depth_view = ctx.get_resource_view(GraphResource::SceneDepth);
 
         // Use scene background color for clearing.
         // When a skybox pass follows, the clear color only shows through

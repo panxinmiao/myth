@@ -56,6 +56,7 @@ use crate::errors::Result;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::context::FrameResources;
+use crate::renderer::graph::transient_pool::TransientTexturePool;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
     BRDFLutComputePass, BloomPass, IBLComputePass, OpaquePass, SceneCullPass, ShadowPass,
@@ -106,6 +107,7 @@ struct RendererState {
     render_lists: RenderLists,
 
     frame_resources: FrameResources,
+    transient_pool: TransientTexturePool,
     global_bind_group_cache: GlobalBindGroupCache,
 
     // ===== Built-in passes =====
@@ -219,6 +221,7 @@ impl Renderer {
             render_lists: RenderLists::new(),
 
             frame_resources,
+            transient_pool: TransientTexturePool::new(),
             global_bind_group_cache,
 
             cull_pass,
@@ -379,6 +382,7 @@ impl Renderer {
             render_state: &state.render_frame.render_state,
 
             frame_resources: &mut state.frame_resources,
+            transient_pool: &mut state.transient_pool,
             global_bind_group_cache: &mut state.global_bind_group_cache,
 
             render_lists: &mut state.render_lists,
@@ -400,6 +404,8 @@ impl Renderer {
     pub fn maybe_prune(&mut self) {
         if let Some(state) = &mut self.context {
             state.render_frame.maybe_prune(&mut state.resource_manager);
+            // Trim transient pool textures idle for > 60 frames (~1 second at 60 fps)
+            state.transient_pool.trim(60);
         }
     }
 
