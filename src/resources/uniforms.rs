@@ -249,7 +249,7 @@ pub trait WgslStruct: Pod + Zeroable {
 // ============================================================================
 // 2. Macro Definition (Single Source of Truth)
 // ============================================================================
-
+#[macro_export]
 macro_rules! define_gpu_data_struct {
     // --------------------------------------------------------
     // Entry pattern
@@ -364,7 +364,7 @@ macro_rules! define_gpu_data_struct {
     // Internal rule 4: Implement UniformBlock (top-level call)
     // --------------------------------------------------------
     (@impl_uniform_block $name:ident { $( $vis:vis $field_name:ident : $field_type:ty ),* }) => {
-        impl crate::resources::uniforms::WgslStruct for $name {
+        impl $crate::resources::uniforms::WgslStruct for $name {
             fn wgsl_struct_def(struct_name: &str) -> String {
                 let mut defs = Vec::new();
                 let mut inserted = std::collections::HashSet::new();

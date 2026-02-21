@@ -511,6 +511,7 @@ impl RenderNode for SkyboxPass {
         };
 
         // 2. Update camera uniforms from current render state
+        // Todo: use render_state uniform buffer directly.
         {
             let rs = ctx.render_state.uniforms().read();
             let mut u = self.camera_uniforms.write();

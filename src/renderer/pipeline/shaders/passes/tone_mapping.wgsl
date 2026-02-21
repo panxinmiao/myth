@@ -2,26 +2,23 @@
 
 {$ include 'tone_mapping_pars' $}
 
-struct Uniforms{
-    exposure: f32,
-    vignette_intensity: f32,
-    vignette_smoothness: f32,
-    lut_contribution: f32,
-    vignette_color: vec4<f32>,
-};
+{{ struct_definitions }}
+
+// Auto-injected binding code for global resources (e.g. frame-level uniforms, scene-level data, etc.)
+{{ binding_code }}
 
 // bindings
-@group(0) @binding(0)
+@group(1) @binding(0)
 var color_tex: texture_2d<f32>;
-@group(0) @binding(1)
+@group(1) @binding(1)
 var tex_sampler: sampler;
-@group(0) @binding(2)
+@group(1) @binding(2)
 var<uniform> u_effect: Uniforms;
 
 $$ if USE_LUT is defined
-@group(0) @binding(3)
+@group(1) @binding(3)
 var lut_texture: texture_3d<f32>;
-@group(0) @binding(4)
+@group(1) @binding(4)
 var lut_sampler: sampler;
 $$ endif
 
@@ -29,12 +26,28 @@ $$ endif
 @fragment
 fn fs_main(varyings: VertexOutput) -> @location(0) vec4<f32> {
     let uv = varyings.uv;
-    var color = textureSample(color_tex, tex_sampler, uv);
+    var color_sample: vec4<f32>;
 
-    // A. Apply tone mapping to RGB channels
-    var rgb = toneMapping(color.rgb * u_effect.exposure);
+    // 1、Chromatic Aberration
+    // Accroding to the distance from the center, apply a UV offset that increases towards the edges, creating more chromatic aberration at the edges and none at the center.
+    if (u_effect.chromatic_aberration > 0.0) {
 
-    // B. Color Grading (3D LUT) - macro-guarded
+        let offset = (uv - 0.5) * u_effect.chromatic_aberration * 0.05; 
+        let r = textureSample(color_tex, tex_sampler, uv + offset).r;
+        let g = textureSample(color_tex, tex_sampler, uv).g; // green channel is sampled without offset for sharper focus
+        let b = textureSample(color_tex, tex_sampler, uv - offset).b;
+        let a = textureSample(color_tex, tex_sampler, uv).a;
+
+        color_sample = vec4<f32>(r, g, b, a);
+    }else {
+        color_sample = textureSample(color_tex, tex_sampler, uv);
+    }
+
+
+    // 2. Apply tone mapping to RGB channels
+    var rgb = toneMapping(color_sample.rgb * u_effect.exposure);
+
+    // 3. Color Grading (3D LUT) - macro-guarded
 $$ if USE_LUT is defined
     {
         // Compute half-texel offset to avoid boundary artifacts
@@ -52,7 +65,22 @@ $$ if USE_LUT is defined
     }
 $$ endif
 
-    // C. Vignette (edge darkening) - controlled via uniform, no macro needed
+    // 4. Contrast & Saturation
+    // Contrast
+    if (u_effect.contrast != 1.0) {
+        rgb = (rgb - 0.5) * u_effect.contrast + 0.5;
+    }
+
+    // Saturation
+    if (u_effect.saturation != 1.0) {
+        let luminance = dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722)); // Rec. 709 luma coefficients
+        rgb = mix(vec3<f32>(luminance), rgb, u_effect.saturation);
+    }
+
+    rgb = max(rgb, vec3<f32>(0.0));
+
+
+    // 5. Vignette (edge darkening) - controlled via uniform, no macro needed
     if (u_effect.vignette_intensity > 0.0) {
         // compute a radial mask that peaks at the center and falls off towards edges
         var v = uv.x * uv.y * (1.0 - uv.x) * (1.0 - uv.y) * 16.0;
@@ -71,5 +99,14 @@ $$ endif
 
     }
 
-    return vec4<f32>(rgb, color.a);
+    // 6. Film Grain
+    if (u_effect.film_grain > 0.0) {
+        // use a simple hash function to generate noise based on UV coordinates and time
+        let noise = fract(sin(dot(uv + u_render_state.time, vec2<f32>(12.9898, 78.233))) * 43758.5453);
+        // map [0, 1] to [-0.5, 0.5] and scale by film grain intensity
+        let grain = (noise - 0.5) * u_effect.film_grain;
+        rgb = rgb + grain;
+    }
+
+    return vec4<f32>(rgb, color_sample.a);
 }
