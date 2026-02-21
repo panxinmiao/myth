@@ -28,7 +28,8 @@ use glam::Vec4;
 use rustc_hash::FxHashMap;
 
 use crate::ShaderDefines;
-use crate::render::{RenderContext, RenderNode};
+use crate::render::RenderNode;
+use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
 use crate::renderer::core::{binding::BindGroupKey, resources::Tracked};
 use crate::renderer::pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator};
 use crate::resources::buffer::{CpuBuffer, GpuData};
@@ -331,7 +332,7 @@ impl ToneMapPass {
 }
 
 impl RenderNode for ToneMapPass {
-    fn prepare(&mut self, ctx: &mut RenderContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         // =====================================================================
         // 1. Sync settings from Scene (data-driven approach)
         // =====================================================================
@@ -464,7 +465,7 @@ impl RenderNode for ToneMapPass {
         }
     }
 
-    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("ToneMap Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {

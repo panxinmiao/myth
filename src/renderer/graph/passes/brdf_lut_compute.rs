@@ -1,4 +1,5 @@
-use crate::renderer::graph::{RenderContext, RenderNode};
+use crate::renderer::graph::RenderNode;
+use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
 use std::borrow::Cow;
 
 pub struct BRDFLutComputePass {
@@ -57,7 +58,7 @@ impl RenderNode for BRDFLutComputePass {
         "BRDF LUT Gen"
     }
 
-    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         if !ctx.resource_manager.needs_brdf_compute {
             return;
         }
@@ -83,6 +84,13 @@ impl RenderNode for BRDFLutComputePass {
             });
 
         let size = crate::renderer::core::resources::BRDF_LUT_SIZE;
+
+        let mut encoder =
+            ctx.wgpu_ctx
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("BRDF LUT Compute Encoder"),
+                });
         {
             let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("BRDF LUT Pass"),
@@ -93,6 +101,11 @@ impl RenderNode for BRDFLutComputePass {
             cpass.dispatch_workgroups(size / 8, size / 8, 1);
         }
 
+        ctx.wgpu_ctx.queue.submit(std::iter::once(encoder.finish()));
         ctx.resource_manager.needs_brdf_compute = false;
+    }
+
+    fn run(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {
+        // Compute work is done in prepare()
     }
 }

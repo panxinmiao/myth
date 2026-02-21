@@ -1,7 +1,26 @@
-//! 渲染上下文
+//! Render Graph Context System
 //!
-//! `RenderContext` 在渲染图的各个 Pass 之间传递共享数据，
-//! 避免参数列表过长，统一数据访问方式。
+//! Provides two phase-separated contexts for the render graph:
+//!
+//! - [`PrepareContext`]: Mutable context for the **prepare** phase. Owns exclusive
+//!   write access to resource managers, pipeline caches and scene state. Passes
+//!   allocate GPU resources, compile shaders and build bind groups here.
+//!
+//! - [`ExecuteContext`]: Immutable context for the **execute** phase. Provides
+//!   read-only access to all rendering data. Passes record GPU commands here.
+//!   Ping-pong state uses [`Cell`] for interior mutability.
+//!
+//! # Design Principles
+//!
+//! 1. **Strict Read/Write Separation**: `PrepareContext` is the only place where
+//!    GPU resources may be created or mutated. `ExecuteContext` is purely read-only
+//!    (except for the ping-pong counter via `Cell`).
+//! 2. **Field-Level Borrow Splitting**: Both contexts store individual references
+//!    to engine subsystems. The Rust borrow checker can split borrows across
+//!    disjoint fields, enabling concurrent immutable access to e.g.
+//!    `resource_manager` and `pipeline_cache` within the same call.
+
+use std::cell::Cell;
 
 use crate::assets::AssetServer;
 use crate::renderer::core::binding::GlobalBindGroupCache;
@@ -13,75 +32,209 @@ use crate::renderer::pipeline::PipelineCache;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
-/// 渲染上下文
+// ─── Prepare Context ──────────────────────────────────────────────────────────
+
+/// Mutable context available during the **prepare** phase.
 ///
-/// 在 `RenderGraph` 执行期间，所有 `RenderNode` 共享此上下文。
-/// 包含 GPU 上下文、资源管理器、场景数据等。
+/// Passes use this to allocate GPU resources, create/update pipelines,
+/// upload uniforms, perform visibility culling, and build bind groups.
 ///
-/// # 性能考虑
-/// - 所有字段都是引用，避免数据复制
-/// - `surface_view` 每帧更新，指向当前交换链纹理
-/// - 通过借用规则确保线程安全
-pub struct RenderContext<'a> {
-    /// WGPU 核心上下文（device, queue, surface）
+/// # Ping-Pong State
+///
+/// The `color_view_flip_flop` counter tracks which scene color buffer is
+/// currently the "input" and which is the "output" for post-processing
+/// passes. Passes that write to the output buffer (e.g. Bloom) must call
+/// [`flip_scene_color`](Self::flip_scene_color) at the end of `prepare`
+/// so that subsequent passes see the correct input.
+pub struct PrepareContext<'a> {
+    /// WGPU core context (device, queue, surface configuration)
     pub wgpu_ctx: &'a WgpuContext,
-    /// GPU 资源管理器
+    /// GPU resource manager (buffers, textures, bind groups)
     pub resource_manager: &'a mut ResourceManager,
-    /// Pipeline 缓存
+    /// Pipeline cache (L1 fast cache + L2 canonical cache)
     pub pipeline_cache: &'a mut PipelineCache,
-    /// 资产服务器
+    /// Asset server (geometries, materials, textures)
     pub assets: &'a AssetServer,
-    /// 当前场景
+    /// Current scene (mutable for light storage updates etc.)
     pub scene: &'a mut Scene,
-    /// 相机
+    /// Active render camera
     pub camera: &'a RenderCamera,
-    /// 当前帧的 Surface View
-    pub surface_view: &'a wgpu::TextureView,
-    /// 渲染状态
+    /// Per-frame render state (uniforms, version ID)
     pub render_state: &'a RenderState,
-    /// 提取的场景数据
+    /// Extracted scene data (render items, lights, defines)
     pub extracted_scene: &'a ExtractedScene,
-    /// 渲染列表（由 `SceneCullPass` 填充，供各个绘制 Pass 消费）
+    /// Render command lists (filled by SceneCullPass, consumed by draw passes)
     pub render_lists: &'a mut RenderLists,
-    /// 帧资源
+    /// Frame-persistent GPU resources (ping-pong buffers, depth, MSAA)
     pub frame_resources: &'a FrameResources,
-    /// 当前时间
+    /// Current time in seconds
     pub time: f32,
-
+    /// Global bind group cache (cross-pass deduplication)
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
-
-    // === Post Process 状态机 ===
-
-    // pub current_color_texture_view: &'a Tracked<wgpu::TextureView>,
-    // 内部计数器，用于决定下一个 Output 是 ping_pong[0] 还是 [1]
+    /// Ping-pong counter for post-processing I/O selection.
     pub(crate) color_view_flip_flop: usize,
 }
 
-impl RenderContext<'_> {
-    // 获取当前的“源”纹理（上一个 Pass 的输出）
+impl PrepareContext<'_> {
+    /// Returns the current "input" scene color texture (previous pass output).
     #[must_use]
     #[inline]
     pub fn get_scene_color_input(&self) -> &Tracked<wgpu::TextureView> {
         &self.frame_resources.scene_color_view[self.color_view_flip_flop]
     }
 
-    // 获取当前的“目标”纹理（当前 Pass 应该写入的地方）
+    /// Returns the current "output" scene color texture (current pass target).
     #[must_use]
     #[inline]
     pub fn get_scene_color_output(&self) -> &Tracked<wgpu::TextureView> {
         &self.frame_resources.scene_color_view[1 - self.color_view_flip_flop]
     }
 
-    // 翻转 Ping-Pong 状态
+    /// Flips the ping-pong state.
+    ///
+    /// Call this at the end of `prepare` in passes that write to
+    /// `get_scene_color_output()` (e.g. Bloom), so that subsequent
+    /// passes see the updated buffer as their input.
     #[inline]
-    pub(crate) fn swap_scene_color_buffer(&mut self) {
+    pub fn flip_scene_color(&mut self) {
         self.color_view_flip_flop = 1 - self.color_view_flip_flop;
     }
 
+    /// Returns the appropriate render target format for scene geometry.
+    #[must_use]
+    #[inline]
+    pub fn get_scene_render_target_format(&self) -> wgpu::TextureFormat {
+        if self.wgpu_ctx.enable_hdr {
+            crate::renderer::HDR_TEXTURE_FORMAT
+        } else {
+            self.wgpu_ctx.surface_view_format
+        }
+    }
+
+    /// Returns the appropriate render target for scene geometry.
+    ///
+    /// In HDR mode returns `scene_color_view[0]`; in LDR mode this is
+    /// unavailable (no surface_view during prepare), so panics.
     #[must_use]
     #[inline]
     pub fn get_scene_render_target_view(&self) -> &wgpu::TextureView {
-        // 逻辑：如果是直连模式 ? Surface : SceneColor[0]
+        debug_assert!(
+            self.wgpu_ctx.enable_hdr,
+            "get_scene_render_target_view() during prepare is only valid in HDR mode"
+        );
+        &self.frame_resources.scene_color_view[0]
+    }
+}
+
+// ─── Execute Context ──────────────────────────────────────────────────────────
+
+/// Read-only context available during the **execute** phase.
+///
+/// Passes use this to record GPU commands into a `CommandEncoder`. All
+/// resource allocation should have been completed during the prepare phase;
+/// this context provides only shared references to engine subsystems.
+///
+/// # Ping-Pong State
+///
+/// The `color_view_flip_flop` field uses [`Cell`] for interior mutability,
+/// allowing passes to call [`flip_scene_color`](Self::flip_scene_color)
+/// through `&self` without requiring `&mut self` on the context.
+pub struct ExecuteContext<'a> {
+    /// WGPU core context (device, queue, surface configuration)
+    pub wgpu_ctx: &'a WgpuContext,
+    /// GPU resource manager (read-only access during execute)
+    pub resource_manager: &'a ResourceManager,
+    /// Pipeline cache (read-only; pipelines were built during prepare)
+    pub pipeline_cache: &'a PipelineCache,
+    /// Asset server (read-only)
+    pub assets: &'a AssetServer,
+    /// Current scene (read-only)
+    pub scene: &'a Scene,
+    /// Active render camera
+    pub camera: &'a RenderCamera,
+    /// Current frame's surface texture view
+    pub surface_view: &'a wgpu::TextureView,
+    /// Per-frame render state
+    pub render_state: &'a RenderState,
+    /// Extracted scene data
+    pub extracted_scene: &'a ExtractedScene,
+    /// Render command lists (read-only; filled during prepare)
+    pub render_lists: &'a RenderLists,
+    /// Frame-persistent GPU resources
+    pub frame_resources: &'a FrameResources,
+    /// Current time in seconds
+    pub time: f32,
+    /// Global bind group cache (read-only during execute)
+    pub global_bind_group_cache: &'a GlobalBindGroupCache,
+    /// Ping-pong counter using `Cell` for interior mutability.
+    color_view_flip_flop: Cell<usize>,
+}
+
+impl<'a> ExecuteContext<'a> {
+    /// Creates a new `ExecuteContext`.
+    pub(crate) fn new(
+        wgpu_ctx: &'a WgpuContext,
+        resource_manager: &'a ResourceManager,
+        pipeline_cache: &'a PipelineCache,
+        assets: &'a AssetServer,
+        scene: &'a Scene,
+        camera: &'a RenderCamera,
+        surface_view: &'a wgpu::TextureView,
+        render_state: &'a RenderState,
+        extracted_scene: &'a ExtractedScene,
+        render_lists: &'a RenderLists,
+        frame_resources: &'a FrameResources,
+        time: f32,
+        global_bind_group_cache: &'a GlobalBindGroupCache,
+    ) -> Self {
+        Self {
+            wgpu_ctx,
+            resource_manager,
+            pipeline_cache,
+            assets,
+            scene,
+            camera,
+            surface_view,
+            render_state,
+            extracted_scene,
+            render_lists,
+            frame_resources,
+            time,
+            global_bind_group_cache,
+            color_view_flip_flop: Cell::new(0),
+        }
+    }
+
+    /// Returns the current "input" scene color texture (previous pass output).
+    #[must_use]
+    #[inline]
+    pub fn get_scene_color_input(&self) -> &Tracked<wgpu::TextureView> {
+        &self.frame_resources.scene_color_view[self.color_view_flip_flop.get()]
+    }
+
+    /// Returns the current "output" scene color texture (current pass target).
+    #[must_use]
+    #[inline]
+    pub fn get_scene_color_output(&self) -> &Tracked<wgpu::TextureView> {
+        &self.frame_resources.scene_color_view[1 - self.color_view_flip_flop.get()]
+    }
+
+    /// Flips the ping-pong state via interior mutability.
+    ///
+    /// Call this at the end of `run` in passes that wrote to
+    /// `get_scene_color_output()`.
+    #[inline]
+    pub fn flip_scene_color(&self) {
+        self.color_view_flip_flop
+            .set(1 - self.color_view_flip_flop.get());
+    }
+
+    /// Returns the appropriate render target for scene geometry.
+    ///
+    /// In HDR mode returns `scene_color_view[0]`; otherwise returns the surface.
+    #[must_use]
+    #[inline]
+    pub fn get_scene_render_target_view(&self) -> &wgpu::TextureView {
         if self.wgpu_ctx.enable_hdr {
             &self.frame_resources.scene_color_view[0]
         } else {
@@ -89,18 +242,19 @@ impl RenderContext<'_> {
         }
     }
 
+    /// Returns the texture format of the scene render target.
     #[must_use]
     #[inline]
     pub fn get_scene_render_target_format(&self) -> wgpu::TextureFormat {
         if self.wgpu_ctx.enable_hdr {
-            // 强制使用 HDR 格式 (推荐 Rgba16Float)
-            // wgpu::TextureFormat::Rgba16Float
             crate::renderer::HDR_TEXTURE_FORMAT
         } else {
             self.wgpu_ctx.surface_view_format
         }
     }
 }
+
+// ─── Frame Resources ──────────────────────────────────────────────────────────
 
 pub struct FrameResources {
     // MSAA 缓冲 (可选)
@@ -424,13 +578,4 @@ impl FrameResources {
 
         &self.screen_bind_group
     }
-}
-
-pub struct PrepareContext<'a> {
-    pub resource_manager: &'a mut ResourceManager,
-    pub pipeline_cache: &'a mut PipelineCache,
-    pub assets: &'a AssetServer,
-    pub extracted_scene: &'a ExtractedScene,
-    pub render_state: &'a RenderState,
-    pub wgpu_ctx: &'a WgpuContext,
 }

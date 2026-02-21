@@ -17,7 +17,8 @@
 //! - This pass does not use a RenderPass, it directly uses `encoder.copy_texture_to_texture`
 //! - Only executed if there are materials using Transmission in the scene
 
-use crate::renderer::graph::{RenderContext, RenderNode};
+use crate::renderer::graph::RenderNode;
+use crate::renderer::graph::context::ExecuteContext;
 
 /// Transmission Copy Pass
 ///
@@ -48,7 +49,7 @@ impl RenderNode for TransmissionCopyPass {
         "Transmission Copy Pass"
     }
 
-    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let render_lists = &ctx.render_lists;
 
         // Check if execution is needed

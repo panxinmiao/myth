@@ -63,54 +63,63 @@ impl MipmapGenerator {
         }
     }
 
-    fn get_pipeline(
-        &mut self,
+    fn create_pipeline(
+        &self,
         device: &wgpu::Device,
         format: wgpu::TextureFormat,
     ) -> wgpu::RenderPipeline {
-        self.pipelines
-            .entry(format)
-            .or_insert_with(|| {
-                device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(&format!("Mipmap Pipeline {format:?}")),
-                    layout: Some(
-                        &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                            label: Some("Mipmap Pipeline Layout"),
-                            bind_group_layouts: &[&self.layout],
-                            immediate_size: 0,
-                        }),
-                    ),
-                    vertex: wgpu::VertexState {
-                        module: &self.shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &self.shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        ..Default::default()
-                    },
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                })
-            })
-            .clone()
+        device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(&format!("Mipmap Pipeline {format:?}")),
+            layout: Some(
+                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("Mipmap Pipeline Layout"),
+                    bind_group_layouts: &[&self.layout],
+                    immediate_size: 0,
+                }),
+            ),
+            vertex: wgpu::VertexState {
+                module: &self.shader,
+                entry_point: Some("vs_main"),
+                buffers: &[],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &self.shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(wgpu::ColorTargetState {
+                    format,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                ..Default::default()
+            },
+            depth_stencil: None,
+            multisample: wgpu::MultisampleState::default(),
+            multiview_mask: None,
+            cache: None,
+        })
     }
 
+    /// Pre-warm the pipeline cache for a given texture format.
+    /// Call this during the prepare phase (when `&mut self` is available).
+    pub fn ensure_pipeline(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) {
+        if !self.pipelines.contains_key(&format) {
+            let pipeline = self.create_pipeline(device, format);
+            self.pipelines.insert(format, pipeline);
+        }
+    }
+
+    /// Generate mipmaps for the given texture.
+    ///
+    /// **Important**: The pipeline for the texture's format must be pre-warmed
+    /// via [`ensure_pipeline`] during the prepare phase. If the pipeline is not
+    /// found, this method will create it on-the-fly (with a warning).
     pub fn generate(
-        &mut self,
+        &self,
         device: &wgpu::Device,
         encoder: &mut wgpu::CommandEncoder,
         texture: &wgpu::Texture,
@@ -121,7 +130,12 @@ impl MipmapGenerator {
         }
 
         let format = texture.format();
-        let pipeline = self.get_pipeline(device, format);
+        let pipeline = if let Some(p) = self.pipelines.get(&format) {
+            p.clone()
+        } else {
+            log::warn!("MipmapGenerator: pipeline not pre-warmed for {format:?}, creating on-the-fly");
+            self.create_pipeline(device, format)
+        };
         let layer_count = texture.depth_or_array_layers();
 
         for layer in 0..layer_count {
