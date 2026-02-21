@@ -134,12 +134,12 @@ impl AppHandler for BloomDemo {
 
         // Exposure: Up = increase, Down = decrease
         if input.get_key_down(Key::ArrowUp) {
-            let new_val = scene.tone_mapping.exposure + 0.1;
+            let new_val = scene.tone_mapping.uniforms.write().exposure + 0.1;
             scene.tone_mapping.set_exposure(new_val);
             println!("Exposure: {:.2}", new_val);
         }
         if input.get_key_down(Key::ArrowDown) {
-            let new_val = (scene.tone_mapping.exposure - 0.1).max(0.1);
+            let new_val = (scene.tone_mapping.uniforms.write().exposure - 0.1).max(0.1);
             scene.tone_mapping.set_exposure(new_val);
             println!("Exposure: {:.2}", new_val);
         }
@@ -156,7 +156,9 @@ impl AppHandler for BloomDemo {
             };
             window.set_title(&format!(
                 "Bloom Demo - FPS: {:.0} | Bloom: {} | Exposure: {:.2}",
-                fps, bloom_status, scene.tone_mapping.exposure
+                fps,
+                bloom_status,
+                scene.tone_mapping.uniforms.read().exposure
             ));
         }
     }

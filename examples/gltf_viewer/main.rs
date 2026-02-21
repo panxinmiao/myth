@@ -1096,22 +1096,6 @@ impl GltfViewer {
                     ui.add_enabled_ui(self.hdr_enabled, |ui| {
                         ui.label("Tone Mapping:");
 
-                        // 曝光度
-                        ui.horizontal(|ui| {
-                            ui.label("Exposure:");
-                            let mut exposure = scene.tone_mapping.exposure;
-                            if ui
-                                .add(
-                                    egui::Slider::new(&mut exposure, 0.1..=5.0)
-                                        .step_by(0.1)
-                                        .logarithmic(true),
-                                )
-                                .changed()
-                            {
-                                scene.tone_mapping.set_exposure(exposure);
-                            }
-                        });
-
                         // 模式选择
                         ui.horizontal(|ui| {
                             ui.label("Mode:");
@@ -1131,43 +1115,82 @@ impl GltfViewer {
                                 });
                         });
 
+                        let mut uniform_mut = scene.tone_mapping.uniforms.write();
+
+                        // 曝光度
+                        ui.horizontal(|ui| {
+                            ui.label("Exposure:");
+                            ui.add(
+                                egui::Slider::new(&mut uniform_mut.exposure, 0.1..=5.0)
+                                    .step_by(0.1)
+                                    .logarithmic(true),
+                            );
+                        });
+
                         // --- Vignette ---
                         ui.separator();
                         ui.label("Vignette:");
 
                         ui.horizontal(|ui| {
                             ui.label("Intensity:");
-                            let mut intensity = scene.tone_mapping.vignette_intensity;
-                            if ui
-                                .add(egui::Slider::new(&mut intensity, 0.0..=2.0).step_by(0.01))
-                                .changed()
-                            {
-                                scene.tone_mapping.set_vignette_intensity(intensity);
-                            }
+
+                            ui.add(
+                                egui::Slider::new(&mut uniform_mut.vignette_intensity, 0.0..=2.0)
+                                    .step_by(0.01),
+                            );
                         });
 
                         ui.horizontal(|ui| {
                             ui.label("Smoothness:");
-                            let mut smoothness = scene.tone_mapping.vignette_smoothness;
-                            if ui
-                                .add(egui::Slider::new(&mut smoothness, 0.1..=1.0).step_by(0.01))
-                                .changed()
-                            {
-                                scene.tone_mapping.set_vignette_smoothness(smoothness);
-                            }
+                            ui.add(
+                                egui::Slider::new(&mut uniform_mut.vignette_smoothness, 0.1..=1.0)
+                                    .step_by(0.01),
+                            );
                         });
 
                         ui.horizontal(|ui| {
                             ui.label("Color:");
-                            let mut color_arr = scene.tone_mapping.vignette_color.to_array();
+                            let mut color_arr = uniform_mut.vignette_color.to_array();
                             if ui
                                 .color_edit_button_rgba_unmultiplied(&mut color_arr)
                                 .changed()
                             {
-                                scene
-                                    .tone_mapping
-                                    .set_vignette_color(Vec4::from_array(color_arr));
+                                uniform_mut.vignette_color = Vec4::from_array(color_arr);
                             }
+                        });
+
+                        // --- Chromatic Aberration、 Contrast & Saturation、 Film Grain ---
+                        ui.separator();
+                        ui.horizontal(|ui| {
+                            ui.label("Chromatic Aberration:");
+                            ui.add(
+                                egui::Slider::new(&mut uniform_mut.chromatic_aberration, 0.0..=5.0)
+                                    .step_by(0.01),
+                            );
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Contrast:");
+                            ui.add(
+                                egui::Slider::new(&mut uniform_mut.contrast, 0.5..=2.0)
+                                    .step_by(0.01),
+                            );
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Saturation:");
+                            ui.add(
+                                egui::Slider::new(&mut uniform_mut.saturation, 0.0..=2.0)
+                                    .step_by(0.01),
+                            );
+                        });
+
+                        ui.horizontal(|ui| {
+                            ui.label("Film Grain:");
+                            ui.add(
+                                egui::Slider::new(&mut uniform_mut.film_grain, 0.0..=1.0)
+                                    .step_by(0.01),
+                            );
                         });
 
                         // --- Color Grading (LUT) ---
@@ -1176,14 +1199,13 @@ impl GltfViewer {
 
                         ui.horizontal(|ui| {
                             ui.label("Contribution:");
-                            let mut contribution = scene.tone_mapping.lut_contribution;
-                            if ui
-                                .add(egui::Slider::new(&mut contribution, 0.0..=1.0).step_by(0.05))
-                                .changed()
-                            {
-                                scene.tone_mapping.set_lut_contribution(contribution);
-                            }
+                            ui.add(
+                                egui::Slider::new(&mut uniform_mut.lut_contribution, 0.0..=1.0)
+                                    .step_by(0.05),
+                            );
                         });
+
+                        drop(uniform_mut);
 
                         if scene.tone_mapping.has_lut() {
                             if ui.button("Remove LUT").clicked() {

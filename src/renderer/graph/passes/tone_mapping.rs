@@ -24,50 +24,17 @@
 
 use std::borrow::Cow;
 
-use glam::Vec4;
 use rustc_hash::FxHashMap;
 
 use crate::ShaderDefines;
 use crate::render::RenderNode;
+// use crate::render::core::ResourceBuilder;
 use crate::renderer::core::{binding::BindGroupKey, resources::Tracked};
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator};
-use crate::resources::buffer::{CpuBuffer, GpuData};
 use crate::resources::texture::TextureSource;
-use crate::resources::tone_mapping::ToneMappingMode;
-
-/// GPU uniform data for tone mapping shader.
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct ToneMapUniforms {
-    pub exposure: f32,
-    pub vignette_intensity: f32,
-    pub vignette_smoothness: f32,
-    pub lut_contribution: f32,
-    pub vignette_color: Vec4,
-}
-
-impl Default for ToneMapUniforms {
-    fn default() -> Self {
-        Self {
-            exposure: 1.0,
-            vignette_intensity: 0.0,
-            vignette_smoothness: 0.5,
-            lut_contribution: 1.0,
-            vignette_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
-        }
-    }
-}
-
-impl GpuData for ToneMapUniforms {
-    fn as_bytes(&self) -> &[u8] {
-        bytemuck::bytes_of(self)
-    }
-
-    fn byte_size(&self) -> usize {
-        std::mem::size_of::<Self>()
-    }
-}
+use crate::resources::tone_mapping::{ToneMappingMode, ToneMappingUniforms};
+use crate::resources::uniforms::WgslStruct;
 
 /// Pipeline cache key: (mode, output_format, has_lut).
 ///
@@ -100,7 +67,7 @@ pub struct ToneMapPass {
     /// Linear sampler dedicated to 3D LUT texture (ClampToEdge on all axes)
     lut_sampler: Tracked<wgpu::Sampler>,
     /// Uniform buffer (exposure, vignette, lut_contribution)
-    uniforms: CpuBuffer<ToneMapUniforms>,
+    // uniforms: CpuBuffer<ToneMapUniforms>,
 
     // === Cache State ===
     /// Currently active tone mapping mode (mirrors `Scene.tone_mapping.mode`)
@@ -115,10 +82,6 @@ pub struct ToneMapPass {
     current_bind_group: Option<wgpu::BindGroup>,
     /// Current frame's pipeline
     current_pipeline: Option<wgpu::RenderPipeline>,
-
-    // === Version Tracking ===
-    /// Last known version from `Scene.tone_mapping`
-    last_settings_version: u64,
 }
 
 impl ToneMapPass {
@@ -209,25 +172,17 @@ impl ToneMapPass {
             ..Default::default()
         });
 
-        let uniforms = CpuBuffer::new(
-            ToneMapUniforms::default(),
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            Some("ToneMap Uniforms"),
-        );
-
         Self {
             layout_base: Tracked::new(layout_base),
             layout_with_lut: Tracked::new(layout_with_lut),
             sampler: Tracked::new(sampler),
             lut_sampler: Tracked::new(lut_sampler),
-            uniforms,
+            // uniforms,
             current_mode: ToneMappingMode::default(),
             current_has_lut: false,
             pipeline_cache: FxHashMap::default(),
             current_pipeline: None,
             current_bind_group: None,
-            // Set to MAX to ensure first frame always triggers update
-            last_settings_version: u64::MAX,
         }
     }
 
@@ -242,12 +197,12 @@ impl ToneMapPass {
     }
 
     /// Gets or creates a pipeline for the current tone mapping configuration.
-    fn get_or_create_pipeline(
-        &mut self,
-        device: &wgpu::Device,
-        view_format: wgpu::TextureFormat,
-    ) -> wgpu::RenderPipeline {
-        let cache_key = (self.current_mode, view_format, self.current_has_lut);
+    fn get_or_create_pipeline(&mut self, ctx: &PrepareContext) -> wgpu::RenderPipeline {
+        let cache_key = (
+            self.current_mode,
+            ctx.wgpu_ctx.surface_view_format,
+            self.current_has_lut,
+        );
 
         // Check cache first
         if let Some(pipeline) = self.pipeline_cache.get(&cache_key) {
@@ -258,7 +213,7 @@ impl ToneMapPass {
         log::debug!(
             "Compiling ToneMap pipeline for mode {:?}, format {:?}, has_lut: {}",
             self.current_mode,
-            view_format,
+            ctx.wgpu_ctx.surface_view_format,
             self.current_has_lut,
         );
 
@@ -269,61 +224,84 @@ impl ToneMapPass {
             defines.set("USE_LUT", "1");
         }
 
+        let gpu_world = ctx
+            .resource_manager
+            .get_global_state(ctx.render_state.id, ctx.scene.id)
+            .expect("Global state must exist");
+
         // 2. Generate shader code
-        let options = ShaderCompilationOptions { defines };
+        let mut options = ShaderCompilationOptions { defines };
+
+        options.add_define(
+            "struct_definitions",
+            ToneMappingUniforms::wgsl_struct_def("Uniforms").as_str(),
+        );
 
         let shader_code = ShaderGenerator::generate_shader(
-            "",                    // vertex snippet (use default)
-            "",                    // binding code (use default)
-            "passes/tone_mapping", // template name
+            "",                      // vertex snippet (use default)
+            &gpu_world.binding_wgsl, // binding code (use default)
+            "passes/tone_mapping",   // template name
             &options,
         );
 
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some(&format!(
-                "ToneMap Shader {:?} lut={}",
-                self.current_mode, self.current_has_lut
-            )),
-            source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_code)),
-        });
+        let shader = ctx
+            .wgpu_ctx
+            .device
+            .create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(&format!(
+                    "ToneMap Shader {:?} lut={}",
+                    self.current_mode, self.current_has_lut
+                )),
+                source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_code)),
+            });
 
         // 3. Create pipeline layout with the appropriate bind group layout
         let layout = self.current_layout();
-        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("ToneMap Pipeline Layout"),
-            bind_group_layouts: &[layout],
-            immediate_size: 0,
-        });
+
+        let pipeline_layout =
+            ctx.wgpu_ctx
+                .device
+                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                    label: Some("ToneMap Pipeline Layout"),
+                    bind_group_layouts: &[
+                        &gpu_world.layout, // Global bind group (frame-level resources)
+                        layout,
+                    ],
+                    immediate_size: 0,
+                });
 
         // 4. Create render pipeline
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some(&format!(
-                "ToneMap Pipeline {:?} lut={}",
-                self.current_mode, self.current_has_lut
-            )),
-            layout: Some(&pipeline_layout),
-            vertex: wgpu::VertexState {
-                module: &shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: view_format,
-                    blend: Some(wgpu::BlendState::REPLACE),
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState::default(),
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
+        let pipeline =
+            ctx.wgpu_ctx
+                .device
+                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                    label: Some(&format!(
+                        "ToneMap Pipeline {:?} lut={}",
+                        self.current_mode, self.current_has_lut
+                    )),
+                    layout: Some(&pipeline_layout),
+                    vertex: wgpu::VertexState {
+                        module: &shader,
+                        entry_point: Some("vs_main"),
+                        buffers: &[],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    },
+                    fragment: Some(wgpu::FragmentState {
+                        module: &shader,
+                        entry_point: Some("fs_main"),
+                        targets: &[Some(wgpu::ColorTargetState {
+                            format: ctx.wgpu_ctx.surface_view_format,
+                            blend: Some(wgpu::BlendState::REPLACE),
+                            write_mask: wgpu::ColorWrites::ALL,
+                        })],
+                        compilation_options: wgpu::PipelineCompilationOptions::default(),
+                    }),
+                    primitive: wgpu::PrimitiveState::default(),
+                    depth_stencil: None,
+                    multisample: wgpu::MultisampleState::default(),
+                    multiview_mask: None,
+                    cache: None,
+                });
 
         // Store in cache
         self.pipeline_cache.insert(cache_key, pipeline.clone());
@@ -337,32 +315,17 @@ impl RenderNode for ToneMapPass {
         // 1. Sync settings from Scene (data-driven approach)
         // =====================================================================
         let settings = &ctx.scene.tone_mapping;
-        let current_version = settings.version();
+
+        let uniforms = &settings.uniforms;
+        // let current_version = settings.version();
         let has_lut = settings.has_lut();
 
-        // Version check: only update when Scene settings have changed
-        if self.last_settings_version != current_version {
-            // A. Sync all uniform data
-            {
-                let mut data = self.uniforms.write();
-                data.exposure = settings.exposure;
-                data.vignette_intensity = settings.vignette_intensity;
-                data.vignette_smoothness = settings.vignette_smoothness;
-                data.lut_contribution = settings.lut_contribution;
-                data.vignette_color = settings.vignette_color;
-            }
-
-            // B. Handle mode or LUT state change (triggers pipeline rebuild)
-            if self.current_mode != settings.mode || self.current_has_lut != has_lut {
-                self.current_mode = settings.mode;
-                self.current_has_lut = has_lut;
-                self.current_pipeline = None;
-            }
-
-            // C. Update local version
-            self.last_settings_version = current_version;
+        // B. Handle mode or LUT state change (triggers pipeline rebuild)
+        if self.current_mode != settings.mode || self.current_has_lut != has_lut {
+            self.current_mode = settings.mode;
+            self.current_has_lut = has_lut;
+            self.current_pipeline = None;
         }
-
         // =====================================================================
         // 2. Prepare GPU resources
         // =====================================================================
@@ -381,8 +344,8 @@ impl RenderNode for ToneMapPass {
         let input_view_id = input_view_tracked.id();
 
         // Ensure buffer is ready
-        let gpu_buffer_id = ctx.resource_manager.ensure_buffer_id(&self.uniforms);
-        let cpu_buffer_id = self.uniforms.id();
+        let gpu_buffer_id = ctx.resource_manager.ensure_buffer_id(uniforms);
+        let cpu_buffer_id = uniforms.id();
 
         // Build BindGroup cache key (includes LUT resources when present)
         let layout = self.current_layout();
@@ -459,13 +422,16 @@ impl RenderNode for ToneMapPass {
         // 3. Ensure pipeline exists
         // =====================================================================
         if self.current_pipeline.is_none() {
-            self.current_pipeline = Some(
-                self.get_or_create_pipeline(&ctx.wgpu_ctx.device, ctx.wgpu_ctx.surface_view_format),
-            );
+            self.current_pipeline = Some(self.get_or_create_pipeline(ctx));
         }
     }
 
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+        let render_lists = ctx.render_lists;
+        let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {
+            return;
+        };
+
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("ToneMap Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -484,8 +450,9 @@ impl RenderNode for ToneMapPass {
 
         if let Some(pipeline) = &self.current_pipeline {
             pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, gpu_global_bind_group, &[]);
             if let Some(bg) = &self.current_bind_group {
-                pass.set_bind_group(0, bg, &[]);
+                pass.set_bind_group(1, bg, &[]);
             }
         }
 

@@ -11,8 +11,10 @@
 
 use glam::Vec4;
 
-use crate::ShaderDefines;
 use crate::assets::TextureHandle;
+use crate::resources::WgslType;
+use crate::resources::buffer::CpuBuffer;
+use crate::{ShaderDefines, define_gpu_data_struct};
 
 /// Tone mapping algorithm selection.
 ///
@@ -85,6 +87,22 @@ impl ToneMappingMode {
     }
 }
 
+define_gpu_data_struct!(
+    struct ToneMappingUniforms {
+        pub exposure: f32 = 1.0,
+        pub contrast: f32 = 1.0,
+        pub saturation: f32 = 1.0,
+        pub chromatic_aberration: f32 = 0.0,
+
+        pub film_grain: f32 = 0.0,
+        pub vignette_intensity: f32 = 0.0,
+        pub vignette_smoothness: f32 = 0.5,
+        pub lut_contribution: f32 = 1.0,
+
+        pub vignette_color: Vec4 = Vec4::new(0.0, 0.0, 0.0, 1.0),
+    }
+);
+
 /// Tone mapping configuration (pure data + version control).
 ///
 /// This struct holds all parameters for the tone mapping post-processing pass.
@@ -104,39 +122,48 @@ impl ToneMappingMode {
 pub struct ToneMappingSettings {
     /// Selected tone mapping algorithm
     pub mode: ToneMappingMode,
-    /// Exposure multiplier (default: 1.0)
-    pub exposure: f32,
 
-    // === Vignette (edge darkening) ===
-    /// Vignette intensity: 0.0 = disabled, higher = stronger darkening (default: 0.0)
-    pub vignette_intensity: f32,
-    /// Vignette smoothness: controls the falloff curve (default: 0.5, range 0.1~1.0)
-    pub vignette_smoothness: f32,
-    /// Vignette color: RGBA values for the vignette effect (default: [0.0, 0.0, 0.0, 1.0])
-    pub vignette_color: Vec4,
+    pub uniforms: CpuBuffer<ToneMappingUniforms>,
+    /// Exposure multiplier (default: 1.0)
+    // pub exposure: f32,
+
+    // /// === Color Adjustments ===
+    // pub contrast: f32,    // Default: 1.0 (no change)
+    // pub saturation: f32,    // Default: 1.0 (no change)
+
+    // /// === Film Effects ===
+    // pub chromatic_aberration: f32, // Default: 0.0 (disabled)
+    // pub film_grain: f32,    // Default: 0.0 (disabled)
+
+    // // === Vignette (edge darkening) ===
+    // /// Vignette intensity: 0.0 = disabled, higher = stronger darkening (default: 0.0)
+    // pub vignette_intensity: f32,
+    // /// Vignette smoothness: controls the falloff curve (default: 0.5, range 0.1~1.0)
+    // pub vignette_smoothness: f32,
+    // /// Vignette color: RGBA values for the vignette effect (default: [0.0, 0.0, 0.0, 1.0])
+    // pub vignette_color: Vec4,
 
     // === Color Grading (3D LUT) ===
     /// Optional 3D LUT texture handle. When `Some`, the `USE_LUT` shader macro is enabled
     /// and the pipeline is recompiled. When `None`, no LUT is applied.
     pub lut_texture: Option<TextureHandle>,
-    /// LUT contribution weight: 0.0 = original color, 1.0 = fully LUT-graded (default: 1.0)
-    pub lut_contribution: f32,
+    // /// LUT contribution weight: 0.0 = original color, 1.0 = fully LUT-graded (default: 1.0)
+    // // pub lut_contribution: f32,
 
-    /// Internal version number (for change tracking)
-    version: u64,
+    // /// Internal version number (for change tracking)
+    // version: u64,
 }
 
 impl Default for ToneMappingSettings {
     fn default() -> Self {
         Self {
             mode: ToneMappingMode::default(),
-            exposure: 1.0,
-            vignette_intensity: 0.0,
-            vignette_smoothness: 0.5,
-            vignette_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
+            uniforms: CpuBuffer::new(
+                ToneMappingUniforms::default(),
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some("ToneMappingUniforms"),
+            ),
             lut_texture: None,
-            lut_contribution: 1.0,
-            version: 0,
         }
     }
 }
@@ -148,25 +175,15 @@ impl ToneMappingSettings {
         Self::default()
     }
 
-    /// Gets the current version number.
-    ///
-    /// The version is incremented whenever any setting changes,
-    /// allowing render passes to detect when updates are needed.
-    #[inline]
-    #[must_use]
-    pub fn version(&self) -> u64 {
-        self.version
-    }
-
-    /// Sets the exposure value.
-    ///
-    /// Only updates the version if the value actually changed.
-    pub fn set_exposure(&mut self, exposure: f32) {
-        if (self.exposure - exposure).abs() > 1e-5 {
-            self.exposure = exposure;
-            self.bump_version();
-        }
-    }
+    // /// Gets the current version number.
+    // ///
+    // /// The version is incremented whenever any setting changes,
+    // /// allowing render passes to detect when updates are needed.
+    // #[inline]
+    // #[must_use]
+    // pub fn version(&self) -> u64 {
+    //     self.version
+    // }
 
     /// Sets the tone mapping mode.
     ///
@@ -174,40 +191,54 @@ impl ToneMappingSettings {
     pub fn set_mode(&mut self, mode: ToneMappingMode) {
         if self.mode != mode {
             self.mode = mode;
-            self.bump_version();
+            // self.bump_version();
         }
+    }
+
+    /// Sets the exposure value.
+    pub fn set_exposure(&mut self, exposure: f32) {
+        self.uniforms.write().exposure = exposure;
+    }
+
+    /// Sets the contrast adjustment.
+    pub fn set_contrast(&mut self, contrast: f32) {
+        self.uniforms.write().contrast = contrast;
+    }
+
+    /// Sets the saturation adjustment.
+    pub fn set_saturation(&mut self, saturation: f32) {
+        self.uniforms.write().saturation = saturation;
+    }
+
+    /// Sets the chromatic aberration intensity.
+    pub fn set_chromatic_aberration(&mut self, intensity: f32) {
+        self.uniforms.write().chromatic_aberration = intensity;
+    }
+
+    /// Sets the film grain intensity.
+    pub fn set_film_grain(&mut self, intensity: f32) {
+        self.uniforms.write().film_grain = intensity;
     }
 
     /// Sets the vignette intensity.
     ///
     /// A value of 0.0 disables the vignette effect.
-    /// Only updates the version if the value actually changed.
     pub fn set_vignette_intensity(&mut self, intensity: f32) {
-        if (self.vignette_intensity - intensity).abs() > 1e-5 {
-            self.vignette_intensity = intensity;
-            self.bump_version();
-        }
+        self.uniforms.write().vignette_intensity = intensity;
     }
 
     /// Sets the vignette smoothness.
     ///
     /// Controls how quickly the darkening falls off from the edges.
-    /// Recommended range: 0.1 ~ 1.0. Only updates the version if the value changed.
+    /// Recommended range: 0.1 ~ 1.0. Default is 0.5 for a balanced look.
     pub fn set_vignette_smoothness(&mut self, smoothness: f32) {
-        if (self.vignette_smoothness - smoothness).abs() > 1e-5 {
-            self.vignette_smoothness = smoothness;
-            self.bump_version();
-        }
+        self.uniforms.write().vignette_smoothness = smoothness;
     }
 
     /// Sets the vignette color.
     /// This is the color used for the vignette effect (default: black with full alpha).
-    /// Only updates the version if the color actually changed.
     pub fn set_vignette_color(&mut self, color: Vec4) {
-        if (self.vignette_color - color).length() > 1e-5 {
-            self.vignette_color = color;
-            self.bump_version();
-        }
+        self.uniforms.write().vignette_color = color;
     }
 
     /// Sets the 3D LUT texture for color grading.
@@ -217,19 +248,14 @@ impl ToneMappingSettings {
     pub fn set_lut_texture(&mut self, lut: Option<TextureHandle>) {
         if self.lut_texture != lut {
             self.lut_texture = lut;
-            self.bump_version();
         }
     }
 
     /// Sets the LUT contribution weight.
     ///
     /// 0.0 = original color, 1.0 = fully LUT-graded.
-    /// Only updates the version if the value actually changed.
     pub fn set_lut_contribution(&mut self, contribution: f32) {
-        if (self.lut_contribution - contribution).abs() > 1e-5 {
-            self.lut_contribution = contribution;
-            self.bump_version();
-        }
+        self.uniforms.write().lut_contribution = contribution;
     }
 
     /// Returns whether a LUT texture is currently set.
@@ -239,11 +265,11 @@ impl ToneMappingSettings {
         self.lut_texture.is_some()
     }
 
-    /// Manually bumps the version number.
-    ///
-    /// Call this to force a GPU update even if parameters haven't changed.
-    #[inline]
-    pub fn bump_version(&mut self) {
-        self.version = self.version.wrapping_add(1);
-    }
+    // /// Manually bumps the version number.
+    // ///
+    // /// Call this to force a GPU update even if parameters haven't changed.
+    // #[inline]
+    // pub fn bump_version(&mut self) {
+    //     self.version = self.version.wrapping_add(1);
+    // }
 }
