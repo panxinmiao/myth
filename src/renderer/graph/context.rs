@@ -20,8 +20,6 @@
 //!    disjoint fields, enabling concurrent immutable access to e.g.
 //!    `resource_manager` and `pipeline_cache` within the same call.
 
-use std::cell::Cell;
-
 use crate::assets::AssetServer;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::Tracked;
@@ -249,32 +247,14 @@ pub struct ExecuteContext<'a> {
     pub wgpu_ctx: &'a WgpuContext,
     /// GPU resource manager (read-only access during execute)
     pub resource_manager: &'a ResourceManager,
-    /// Pipeline cache (read-only; pipelines were built during prepare)
-    pub pipeline_cache: &'a PipelineCache,
-    /// Asset server (read-only)
-    pub assets: &'a AssetServer,
-    /// Current scene (read-only)
-    pub scene: &'a Scene,
-    /// Active render camera
-    pub camera: &'a RenderCamera,
     /// Current frame's surface texture view
     pub surface_view: &'a wgpu::TextureView,
-    /// Per-frame render state
-    pub render_state: &'a RenderState,
-    /// Extracted scene data
-    pub extracted_scene: &'a ExtractedScene,
     /// Render command lists (read-only; filled during prepare)
     pub render_lists: &'a RenderLists,
     /// Frame-persistent GPU resources
     pub frame_resources: &'a FrameResources,
     /// Transient texture pool (read-only during execute)
     pub transient_pool: &'a TransientTexturePool,
-    /// Current time in seconds
-    pub time: f32,
-    /// Global bind group cache (read-only during execute)
-    pub global_bind_group_cache: &'a GlobalBindGroupCache,
-    /// Ping-pong counter using `Cell` for interior mutability.
-    color_view_flip_flop: Cell<usize>,
 }
 
 impl<'a> ExecuteContext<'a> {
@@ -282,62 +262,20 @@ impl<'a> ExecuteContext<'a> {
     pub(crate) fn new(
         wgpu_ctx: &'a WgpuContext,
         resource_manager: &'a ResourceManager,
-        pipeline_cache: &'a PipelineCache,
-        assets: &'a AssetServer,
-        scene: &'a Scene,
-        camera: &'a RenderCamera,
         surface_view: &'a wgpu::TextureView,
-        render_state: &'a RenderState,
-        extracted_scene: &'a ExtractedScene,
         render_lists: &'a RenderLists,
         frame_resources: &'a FrameResources,
         transient_pool: &'a TransientTexturePool,
-        time: f32,
-        global_bind_group_cache: &'a GlobalBindGroupCache,
     ) -> Self {
         Self {
             wgpu_ctx,
             resource_manager,
-            pipeline_cache,
-            assets,
-            scene,
-            camera,
             surface_view,
-            render_state,
-            extracted_scene,
             render_lists,
             frame_resources,
             transient_pool,
-            time,
-            global_bind_group_cache,
-            color_view_flip_flop: Cell::new(0),
         }
     }
-
-    /// Returns the current "input" scene color texture (previous pass output).
-    #[must_use]
-    #[inline]
-    pub fn get_scene_color_input(&self) -> &Tracked<wgpu::TextureView> {
-        &self.frame_resources.scene_color_view[self.color_view_flip_flop.get()]
-    }
-
-    /// Returns the current "output" scene color texture (current pass target).
-    #[must_use]
-    #[inline]
-    pub fn get_scene_color_output(&self) -> &Tracked<wgpu::TextureView> {
-        &self.frame_resources.scene_color_view[1 - self.color_view_flip_flop.get()]
-    }
-
-    /// Flips the ping-pong state via interior mutability.
-    ///
-    /// Call this at the end of `run` in passes that wrote to
-    /// `get_scene_color_output()`.
-    #[inline]
-    pub fn flip_scene_color(&self) {
-        self.color_view_flip_flop
-            .set(1 - self.color_view_flip_flop.get());
-    }
-
     /// Returns the appropriate render target for scene geometry.
     ///
     /// In HDR mode returns `scene_color_view[0]`; otherwise returns the surface.
@@ -374,8 +312,11 @@ impl<'a> ExecuteContext<'a> {
     #[inline]
     pub fn get_resource_view(&self, resource: GraphResource) -> &Tracked<wgpu::TextureView> {
         match resource {
-            GraphResource::SceneColorInput => self.get_scene_color_input(),
-            GraphResource::SceneColorOutput => self.get_scene_color_output(),
+            GraphResource::SceneColorInput | GraphResource::SceneColorOutput => {
+                panic!(
+                    "Ping-pong resources must be resolved and cached during the 'prepare' phase!"
+                );
+            }
             GraphResource::SceneDepth => &self.frame_resources.depth_view,
             GraphResource::SceneMsaa => self
                 .frame_resources

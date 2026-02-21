@@ -188,18 +188,10 @@ impl<'a> FrameComposer<'a> {
         let execute_ctx = ExecuteContext::new(
             &*self.ctx.wgpu_ctx,
             &*self.ctx.resource_manager,
-            &*self.ctx.pipeline_cache,
-            self.ctx.assets,
-            &*self.ctx.scene,
-            self.ctx.camera,
             &surface_view,
-            self.ctx.render_state,
-            self.ctx.extracted_scene,
             &*self.ctx.render_lists,
             self.ctx.frame_resources,
             &*self.ctx.transient_pool,
-            self.ctx.time,
-            &*self.ctx.global_bind_group_cache,
         );
         graph.execute(&execute_ctx);
 

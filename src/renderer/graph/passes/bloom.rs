@@ -42,11 +42,11 @@
 use std::borrow::Cow;
 
 use crate::render::RenderNode;
-use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
-use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTextureId};
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
+use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
+use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTextureId};
 use crate::renderer::pipeline::ShaderCompilationOptions;
 use crate::renderer::pipeline::shader_gen::ShaderGenerator;
 
@@ -629,10 +629,7 @@ impl BloomPass {
         );
     }
 
-    fn get_first_mip_bind_group(
-        &self,
-        ctx: &mut PrepareContext,
-    ) -> wgpu::BindGroup {
+    fn get_first_mip_bind_group(&self, ctx: &mut PrepareContext) -> wgpu::BindGroup {
         // Select the appropriate static Karis buffer for the first downsample
         let karis_buffer = if ctx.scene.bloom.karis_average {
             &self.buffer_karis_on
@@ -689,7 +686,9 @@ impl BloomPass {
 
     fn get_composite_bind_group(&self, ctx: &mut PrepareContext) -> wgpu::BindGroup {
         let input_view = ctx.get_resource_view(GraphResource::SceneColorInput);
-        let bloom_id = self.bloom_texture_id.expect("bloom_texture_id must be set before composite");
+        let bloom_id = self
+            .bloom_texture_id
+            .expect("bloom_texture_id must be set before composite");
         let bloom_view = ctx.transient_pool.get_mip_view(bloom_id, 0);
 
         // 1. 准备 Cache Key 所需的 ID
@@ -778,7 +777,10 @@ impl RenderNode for BloomPass {
 
         self.composite_bind_group = Some(self.get_composite_bind_group(ctx));
 
-        self.output_view = Some(ctx.get_resource_view(GraphResource::SceneColorOutput).clone());
+        self.output_view = Some(
+            ctx.get_resource_view(GraphResource::SceneColorOutput)
+                .clone(),
+        );
 
         let settings = &ctx.scene.bloom;
         // 4. Upload dynamic uniforms if settings changed
@@ -912,8 +914,5 @@ impl RenderNode for BloomPass {
         pass.set_pipeline(composite_pipeline);
         pass.set_bind_group(0, composite_bind_group, &[]);
         pass.draw(0..3, 0..1);
-
-        // Flip ping-pong so downstream passes see our output as their input
-        ctx.flip_scene_color();
     }
 }

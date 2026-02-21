@@ -29,8 +29,8 @@ use rustc_hash::FxHashMap;
 
 use crate::ShaderDefines;
 use crate::render::RenderNode;
-use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::core::{binding::BindGroupKey, resources::Tracked};
+use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator};
 use crate::resources::buffer::{CpuBuffer, GpuData};
 use crate::resources::texture::TextureSource;

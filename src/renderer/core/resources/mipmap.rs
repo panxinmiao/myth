@@ -133,7 +133,9 @@ impl MipmapGenerator {
         let pipeline = if let Some(p) = self.pipelines.get(&format) {
             p.clone()
         } else {
-            log::warn!("MipmapGenerator: pipeline not pre-warmed for {format:?}, creating on-the-fly");
+            log::warn!(
+                "MipmapGenerator: pipeline not pre-warmed for {format:?}, creating on-the-fly"
+            );
             self.create_pipeline(device, format)
         };
         let layer_count = texture.depth_or_array_layers();
