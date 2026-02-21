@@ -15,7 +15,8 @@
 //! This pass runs after `OpaquePass` and an optional `TransmissionCopyPass`.
 
 use crate::renderer::graph::frame::RenderCommand;
-use crate::renderer::graph::{RenderContext, RenderNode, TrackedRenderPass};
+use crate::renderer::graph::{RenderNode, TrackedRenderPass};
+use crate::renderer::graph::context::ExecuteContext;
 
 /// Transparent Render Pass
 ///
@@ -35,7 +36,7 @@ impl TransparentPass {
 
     /// Determine render target views based on MSAA settings.
     fn get_render_target<'a>(
-        ctx: &'a RenderContext,
+        ctx: &'a ExecuteContext,
     ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
         let target_view = ctx.get_scene_render_target_view();
         let is_msaa = ctx.wgpu_ctx.msaa_samples > 1;
@@ -54,7 +55,7 @@ impl TransparentPass {
 
     /// Execute the draw list
     fn draw_list<'pass>(
-        ctx: &'pass RenderContext,
+        ctx: &'pass ExecuteContext,
         pass: &mut TrackedRenderPass<'pass>,
         cmds: &'pass [RenderCommand],
     ) {
@@ -113,7 +114,7 @@ impl RenderNode for TransparentPass {
         "Transparent Pass"
     }
 
-    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let render_lists = &ctx.render_lists;
 
         // Get global BindGroup (needed even if there are no transparent objects, for potential resolve)

@@ -22,7 +22,8 @@ use slotmap::Key;
 use crate::renderer::core::view::{RenderView, ViewTarget};
 use crate::renderer::graph::frame::{RenderCommand, RenderKey, ShadowRenderCommand};
 use crate::renderer::graph::shadow_utils;
-use crate::renderer::graph::{RenderContext, RenderNode};
+use crate::renderer::graph::RenderNode;
+use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::renderer::pipeline::{
     FastPipelineKey, FastShadowPipelineKey, PipelineKey, ShadowPipelineKey,
@@ -65,7 +66,7 @@ impl SceneCullPass {
     /// 4. Classify into opaque/transparent lists
     /// 5. Sort command lists
     #[allow(clippy::too_many_lines)]
-    fn prepare_and_sort_commands(ctx: &mut RenderContext) {
+    fn prepare_and_sort_commands(ctx: &mut PrepareContext) {
         // Pre-fetch config to avoid borrow conflicts
         let color_format = ctx.get_scene_render_target_format();
         let depth_format = ctx.wgpu_ctx.depth_format;
@@ -275,7 +276,7 @@ impl SceneCullPass {
     /// 3. For each view, frustum-cull `render_items` (filtered by `cast_shadows`) → per-view `ShadowRenderCommand`.
     /// 4. Append views to `render_lists.active_views`, commands to `render_lists.shadow_queues`.
     #[allow(clippy::too_many_lines)]
-    fn prepare_shadow_commands(ctx: &mut RenderContext) {
+    fn prepare_shadow_commands(ctx: &mut PrepareContext) {
         let depth_format = wgpu::TextureFormat::Depth32Float;
         let pipeline_settings_version = ctx.wgpu_ctx.pipeline_settings_version;
         let shadow_layout_entries = [wgpu::BindGroupLayoutEntry {
@@ -519,7 +520,7 @@ impl SceneCullPass {
     /// 上传动态 Uniform 数据
     ///
     /// 为每个渲染命令计算并上传模型矩阵、逆矩阵、法线矩阵等。
-    fn upload_dynamic_uniforms(ctx: &mut RenderContext) {
+    fn upload_dynamic_uniforms(ctx: &mut PrepareContext) {
         let render_lists = &mut *ctx.render_lists;
 
         if render_lists.is_empty() {
@@ -575,7 +576,7 @@ impl RenderNode for SceneCullPass {
         "Scene Cull Pass"
     }
 
-    fn prepare(&mut self, ctx: &mut RenderContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         // 1. 准备并排序渲染命令
         Self::prepare_and_sort_commands(ctx);
 
@@ -586,7 +587,7 @@ impl RenderNode for SceneCullPass {
         Self::upload_dynamic_uniforms(ctx);
     }
 
-    fn run(&self, _ctx: &mut RenderContext, _encoder: &mut wgpu::CommandEncoder) {
+    fn run(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {
         // SceneCullPass 不执行实际绘制
         // 所有工作在 prepare 阶段完成
     }

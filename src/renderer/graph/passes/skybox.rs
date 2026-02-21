@@ -31,7 +31,8 @@ use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec3, Vec4};
 use rustc_hash::FxHashMap;
 
-use crate::render::{RenderContext, RenderNode};
+use crate::render::{RenderNode};
+use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
 use crate::renderer::core::{binding::BindGroupKey, resources::Tracked};
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator};
@@ -458,7 +459,7 @@ impl SkyboxPass {
     ///
     /// Returns `None` if the texture is not yet uploaded or unavailable.
     fn resolve_texture_view<'a>(
-        ctx: &'a RenderContext,
+        ctx: &'a PrepareContext,
         source: &TextureSource,
         mapping: BackgroundMapping,
     ) -> Option<&'a wgpu::TextureView> {
@@ -498,7 +499,7 @@ impl RenderNode for SkyboxPass {
         "Skybox Pass"
     }
     #[allow(clippy::similar_names)]
-    fn prepare(&mut self, ctx: &mut RenderContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         let background = &ctx.scene.background;
 
         // 1. Determine variant
@@ -697,7 +698,7 @@ impl RenderNode for SkyboxPass {
         }
     }
 
-    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         // In LDR mode, skybox is drawn inline by SimpleForwardPass
         // (between opaque and transparent draws within a single render pass).
         if !ctx.wgpu_ctx.enable_hdr {

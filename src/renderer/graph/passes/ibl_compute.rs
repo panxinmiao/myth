@@ -1,5 +1,6 @@
 use crate::renderer::core::resources::CubeSourceType;
-use crate::renderer::graph::{RenderContext, RenderNode};
+use crate::renderer::graph::RenderNode;
+use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
 use crate::resources::texture::TextureSource;
 use std::borrow::Cow;
 use wgpu::{PipelineCompilationOptions, TextureViewDimension};
@@ -316,8 +317,11 @@ impl RenderNode for IBLComputePass {
         "IBL Compute Pass"
     }
 
+    /// All IBL compute work is performed during prepare using a dedicated
+    /// command encoder. This avoids the need for mutable resource access
+    /// during the execute phase.
     #[allow(clippy::too_many_lines)]
-    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         let Some(source) = ctx.resource_manager.pending_ibl_source.take() else {
             return;
         };
@@ -337,6 +341,14 @@ impl RenderNode for IBLComputePass {
         };
 
         let source_type = gpu_env.source_type;
+
+        // Create a dedicated encoder for IBL compute work
+        let mut encoder =
+            ctx.wgpu_ctx
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("IBL Compute Encoder"),
+                });
 
         // ================================================================
         // Phase 1: Prepare mipmapped cube source for PMREM
@@ -421,7 +433,7 @@ impl RenderNode for IBLComputePass {
                 // Step 1b: Generate mipmaps for owned cube
                 ctx.resource_manager.mipmap_generator.generate(
                     &ctx.wgpu_ctx.device,
-                    encoder,
+                    &mut encoder,
                     cube_texture,
                 );
             }
@@ -452,7 +464,7 @@ impl RenderNode for IBLComputePass {
 
                     self.blit_cube_faces(
                         &ctx.wgpu_ctx.device,
-                        encoder,
+                        &mut encoder,
                         source_texture,
                         cube_texture,
                     );
@@ -461,7 +473,7 @@ impl RenderNode for IBLComputePass {
                 // Step 1b: Generate mipmaps for owned cube
                 ctx.resource_manager.mipmap_generator.generate(
                     &ctx.wgpu_ctx.device,
-                    encoder,
+                    &mut encoder,
                     cube_texture,
                 );
             }
@@ -593,6 +605,9 @@ impl RenderNode for IBLComputePass {
             }
         }
 
+        // Submit all IBL compute work
+        ctx.wgpu_ctx.queue.submit(std::iter::once(encoder.finish()));
+
         // Mark done and return to cache
         gpu_env.needs_compute = false;
         ctx.resource_manager
@@ -600,5 +615,9 @@ impl RenderNode for IBLComputePass {
             .insert(source, gpu_env);
 
         log::info!("IBL PMREM generated. Source type: {source_type:?}");
+    }
+
+    fn run(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {
+        // All compute work is done in prepare()
     }
 }

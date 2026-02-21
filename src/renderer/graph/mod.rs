@@ -36,7 +36,7 @@ pub mod stage;
 
 pub use builder::FrameBuilder;
 pub use composer::FrameComposer;
-pub use context::RenderContext;
+pub use context::{ExecuteContext, PrepareContext};
 pub use extracted::{ExtractedRenderItem, ExtractedScene, ExtractedSkeleton};
 pub use frame::{RenderCommand, RenderFrame, RenderKey, RenderLists};
 pub use graph::RenderGraph;

@@ -2,7 +2,7 @@ use glam::{Mat4, Vec4};
 
 use crate::renderer::core::view::ViewTarget;
 use crate::renderer::graph::RenderNode;
-use crate::renderer::graph::context::RenderContext;
+use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
 use crate::renderer::graph::shadow_utils::MAX_CASCADES;
 
 pub struct ShadowPass {
@@ -117,7 +117,7 @@ impl RenderNode for ShadowPass {
     /// allocates GPU resources, and uploads VP matrices + light storage data.
     ///
     /// All matrix computation is done upstream by `SceneCullPass` (via `shadow_utils`).
-    fn prepare(&mut self, ctx: &mut RenderContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         let shadow_layout_entries = [wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::VERTEX,
@@ -309,7 +309,7 @@ impl RenderNode for ShadowPass {
             .ensure_buffer(&ctx.scene.light_storage_buffer);
     }
 
-    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if ctx.render_lists.shadow_lights.is_empty() {
             return;
         }

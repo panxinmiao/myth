@@ -19,7 +19,7 @@ use winit::window::Window;
 
 use myth::{
     assets::TextureHandle,
-    renderer::graph::{RenderContext, RenderNode},
+    renderer::graph::{ExecuteContext, RenderNode},
 };
 
 /// UI 渲染 Pass
@@ -224,7 +224,7 @@ impl RenderNode for UiPass {
         "UI Pass (egui)"
     }
 
-    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         // === 1. 处理延迟纹理注册 (使用 Swap & Drain 模式避免死锁) ===
         // 将请求队列移出 RefCell，避免持有锁时调用外部系统
         let pending_requests: Vec<TextureHandle> = {

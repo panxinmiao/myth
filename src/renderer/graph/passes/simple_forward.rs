@@ -15,7 +15,8 @@
 //! - Scenes without Transmission effects
 
 use crate::renderer::graph::frame::RenderCommand;
-use crate::renderer::graph::{RenderContext, RenderNode, TrackedRenderPass};
+use crate::renderer::graph::{RenderNode, TrackedRenderPass};
+use crate::renderer::graph::context::ExecuteContext;
 
 /// Simple Forward Render Pass
 ///
@@ -42,7 +43,7 @@ impl SimpleForwardPass {
     ///
     /// Returns (`color_view`, `resolve_view`)
     fn get_render_target<'a>(
-        ctx: &'a RenderContext,
+        ctx: &'a ExecuteContext,
     ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
         let target_view = ctx.get_scene_render_target_view();
         let is_msaa = ctx.wgpu_ctx.msaa_samples > 1;
@@ -61,7 +62,7 @@ impl SimpleForwardPass {
 
     /// Execute the draw list
     fn draw_list<'pass>(
-        ctx: &'pass RenderContext,
+        ctx: &'pass ExecuteContext,
         pass: &mut TrackedRenderPass<'pass>,
         cmds: &'pass [RenderCommand],
     ) {
@@ -120,7 +121,7 @@ impl RenderNode for SimpleForwardPass {
         "Simple Forward Pass"
     }
 
-    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let render_lists = &ctx.render_lists;
 
         // get global BindGroup

@@ -26,7 +26,7 @@ use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::ExtractedScene;
 use crate::renderer::graph::builder::FrameBuilder;
-use crate::renderer::graph::context::{FrameResources, RenderContext};
+use crate::renderer::graph::context::{ExecuteContext, FrameResources, PrepareContext};
 use crate::renderer::graph::node::RenderNode;
 use crate::renderer::graph::stage::RenderStage;
 use crate::renderer::pipeline::PipelineCache;
@@ -158,33 +158,46 @@ impl<'a> FrameComposer<'a> {
             ..Default::default()
         });
 
-        // 2. 构建 RenderContext
-        let mut render_ctx = RenderContext {
-            wgpu_ctx: self.ctx.wgpu_ctx,
-            resource_manager: self.ctx.resource_manager,
-            pipeline_cache: self.ctx.pipeline_cache,
-            assets: self.ctx.assets,
-            scene: self.ctx.scene,
-            camera: self.ctx.camera,
-            surface_view: &surface_view,
-            render_state: self.ctx.render_state,
-            extracted_scene: self.ctx.extracted_scene,
-            render_lists: self.ctx.render_lists,
-            frame_resources: self.ctx.frame_resources,
-            time: self.ctx.time,
-
-            global_bind_group_cache: self.ctx.global_bind_group_cache,
-            // current_color_texture_view: &self.ctx.frame_resources.scene_color_view[0],
-            color_view_flip_flop: 0,
-        };
-
-        // 3. Builder 转换为排序后的 RenderGraph
+        // 2. Builder 转换为排序后的 RenderGraph
         let mut graph = self.builder.build();
 
-        graph.prepare(&mut render_ctx);
+        // 3. Prepare 阶段 — 可变上下文
+        {
+            let mut prepare_ctx = PrepareContext {
+                wgpu_ctx: &*self.ctx.wgpu_ctx,
+                resource_manager: self.ctx.resource_manager,
+                pipeline_cache: self.ctx.pipeline_cache,
+                assets: self.ctx.assets,
+                scene: self.ctx.scene,
+                camera: self.ctx.camera,
+                render_state: self.ctx.render_state,
+                extracted_scene: self.ctx.extracted_scene,
+                render_lists: self.ctx.render_lists,
+                frame_resources: self.ctx.frame_resources,
+                time: self.ctx.time,
+                global_bind_group_cache: self.ctx.global_bind_group_cache,
+                color_view_flip_flop: 0,
+            };
+            graph.prepare(&mut prepare_ctx);
+        }
 
-        // 4. 执行渲染图
-        graph.execute(&mut render_ctx);
+        // 4. Execute 阶段 — 只读上下文
+        let execute_ctx = ExecuteContext::new(
+            &*self.ctx.wgpu_ctx,
+            &*self.ctx.resource_manager,
+            &*self.ctx.pipeline_cache,
+            self.ctx.assets,
+            &*self.ctx.scene,
+            self.ctx.camera,
+            &surface_view,
+            self.ctx.render_state,
+            self.ctx.extracted_scene,
+            &*self.ctx.render_lists,
+            self.ctx.frame_resources,
+            self.ctx.time,
+            &*self.ctx.global_bind_group_cache,
+        );
+        graph.execute(&execute_ctx);
 
         // 5. Present
         output.present();

@@ -5,7 +5,7 @@
 
 use smallvec::SmallVec;
 
-use super::context::RenderContext;
+use super::context::{ExecuteContext, PrepareContext};
 use super::node::RenderNode;
 
 /// 渲染图（瞬态引用容器）
@@ -58,12 +58,9 @@ impl<'a> RenderGraph<'a> {
         self.nodes.push(node);
     }
 
-    pub fn prepare(&mut self, ctx: &mut RenderContext) {
+    pub fn prepare(&mut self, ctx: &mut PrepareContext) {
         for node in &mut self.nodes {
             node.prepare(ctx);
-            if node.should_flip_ping_pong() {
-                ctx.swap_scene_color_buffer();
-            }
         }
     }
 
@@ -74,7 +71,7 @@ impl<'a> RenderGraph<'a> {
     /// # 性能注意
     /// - 所有节点共享同一个 CommandEncoder，减少提交次数
     /// - Debug Group 用于 GPU 调试
-    pub fn execute(&self, ctx: &mut RenderContext) {
+    pub fn execute(&self, ctx: &ExecuteContext) {
         let mut encoder =
             ctx.wgpu_ctx
                 .device

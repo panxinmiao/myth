@@ -3,16 +3,16 @@
 //! 定义渲染图中节点的抽象接口。
 //! 每个节点代表一个渲染 Pass 或计算任务。
 
-use super::context::RenderContext;
+use super::context::{ExecuteContext, PrepareContext};
 
 /// 渲染节点 Trait
 ///
 /// 所有渲染 Pass 必须实现此接口。
 ///
 /// # 设计原则
-/// - `run` 方法接收 `RenderContext` 和 `CommandEncoder`
-/// - 节点应该是无状态的或仅持有配置数据
-/// - 实际的 GPU 资源通过 `RenderContext` 访问
+/// - `prepare` 接收 `PrepareContext`（可变），用于资源分配和管线创建
+/// - `run` 接收 `ExecuteContext`（只读）+ `CommandEncoder`，用于录制 GPU 命令
+/// - 节点应该在 `prepare` 中完成所有可变操作，`run` 仅做只读渲染
 ///
 /// # 性能考虑
 /// - 避免在 `run` 中进行内存分配
@@ -22,24 +22,15 @@ pub trait RenderNode {
     /// 返回节点名称，用于调试和性能分析
     fn name(&self) -> &str;
 
-    // #[inline]
-    // fn output_to_screen(&self) -> bool{
-    //     false
-    // }
+    /// 准备阶段：分配资源、编译管线、构建 BindGroup
+    ///
+    /// 拥有对引擎子系统的可变访问权限。
+    fn prepare(&mut self, _ctx: &mut PrepareContext) {}
 
-    fn prepare(&mut self, _ctx: &mut RenderContext) {}
-
-    /// 执行渲染逻辑
+    /// 执行阶段：录制 GPU 渲染命令
     ///
     /// # 参数
-    /// - `ctx`: 渲染上下文，包含所有共享资源
+    /// - `ctx`: 只读执行上下文，包含所有共享资源
     /// - `encoder`: GPU 命令编码器
-    fn run(&self, ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder);
-
-    // 标识当前 Node 是否会对 Scene Color 进行 Ping-Pong 写入。
-    // 如果返回 true，Graph 会在 run() 结束后自动翻转 input/output 索引。
-    // 默认返回 false (例如 ShadowPass, Skybox, 或者直接输出到屏幕的 Pass)
-    fn should_flip_ping_pong(&self) -> bool {
-        false
-    }
+    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder);
 }

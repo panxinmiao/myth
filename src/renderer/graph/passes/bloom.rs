@@ -41,7 +41,8 @@
 
 use std::borrow::Cow;
 
-use crate::render::{RenderContext, RenderNode};
+use crate::render::RenderNode;
+use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
@@ -509,7 +510,7 @@ impl BloomPass {
     /// BindGroups when the render target size changes.
     fn ensure_mip_chain(
         &mut self,
-        ctx: &mut RenderContext,
+        ctx: &mut PrepareContext,
         source_width: u32,
         source_height: u32,
         max_mip_levels: u32,
@@ -647,7 +648,7 @@ impl BloomPass {
         );
     }
 
-    fn get_first_mip_bind_group(&self, ctx: &mut RenderContext) -> wgpu::BindGroup {
+    fn get_first_mip_bind_group(&self, ctx: &mut PrepareContext) -> wgpu::BindGroup {
         // Select the appropriate static Karis buffer for the first downsample
         let karis_buffer = if ctx.scene.bloom.karis_average {
             &self.buffer_karis_on
@@ -702,7 +703,7 @@ impl BloomPass {
         }
     }
 
-    fn get_composite_bind_group(&self, ctx: &mut RenderContext) -> wgpu::BindGroup {
+    fn get_composite_bind_group(&self, ctx: &mut PrepareContext) -> wgpu::BindGroup {
         let input_view = ctx.get_scene_color_input();
         let bloom_view = &self.bloom_mip_views[0];
 
@@ -763,12 +764,7 @@ impl RenderNode for BloomPass {
         "Bloom Pass"
     }
 
-    fn should_flip_ping_pong(&self) -> bool {
-        // 如果 Bloom 没启用，就不翻转
-        self.enabled && self.mip_count > 0
-    }
-
-    fn prepare(&mut self, ctx: &mut RenderContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         // Read bloom settings from the scene
         let settings = &ctx.scene.bloom;
 
@@ -826,9 +822,12 @@ impl RenderNode for BloomPass {
                 bytemuck::bytes_of(&composite),
             );
         }
+
+        // Flip ping-pong so downstream passes see our output as their input
+        ctx.flip_scene_color();
     }
 
-    fn run(&self, _ctx: &mut RenderContext, encoder: &mut wgpu::CommandEncoder) {
+    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if !self.enabled || self.mip_count == 0 {
             return;
         }
@@ -925,5 +924,8 @@ impl RenderNode for BloomPass {
         pass.set_pipeline(composite_pipeline);
         pass.set_bind_group(0, composite_bind_group, &[]);
         pass.draw(0..3, 0..1);
+
+        // Flip ping-pong so downstream passes see our output as their input
+        ctx.flip_scene_color();
     }
 }
