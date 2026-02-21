@@ -11,9 +11,11 @@
 //! - `LoadOp`: Clear (clear color and depth)
 //! - `StoreOp`: Store (store results for subsequent passes)
 
+use crate::render::PrepareContext;
+use crate::renderer::core::resources::Tracked;
+use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::{RenderNode, TrackedRenderPass};
-use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 
 /// Opaque Render Pass
 ///
@@ -26,24 +28,19 @@ use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 pub struct OpaquePass {
     /// Clear color
     pub clear_color: wgpu::Color,
+
+    /// Cached render target views during prepare phase.
+    color_target_view: Option<Tracked<wgpu::TextureView>>,
+    depth_view: Option<Tracked<wgpu::TextureView>>,
 }
 
 impl OpaquePass {
     #[must_use]
     pub fn new(clear_color: wgpu::Color) -> Self {
-        Self { clear_color }
-    }
-
-    /// Determine render target views based on MSAA settings.
-    fn get_render_target<'a>(
-        ctx: &'a ExecuteContext,
-    ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
-        let target_view = ctx.get_scene_render_target_view();
-
-        if let Some(msaa_view) = ctx.try_get_resource_view(GraphResource::SceneMsaa) {
-            (msaa_view, Some(target_view))
-        } else {
-            (target_view, None)
+        Self {
+            clear_color,
+            color_target_view: None,
+            depth_view: None,
         }
     }
 
@@ -108,6 +105,32 @@ impl RenderNode for OpaquePass {
         "Opaque Pass"
     }
 
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
+        // 1. 提取当前帧的清屏颜色
+        self.clear_color = ctx.extracted_scene.background.clear_color();
+
+        // 2. 提前解析并缓存 Target Views
+        let target_view = ctx
+            .get_resource_view(GraphResource::SceneRenderTarget)
+            .clone();
+
+        // let target_view = ctx.get_scene_render_target_view();
+
+        // if let Some(msaa_view) = ctx.try_get_resource_view(GraphResource::SceneMsaa) {
+        //     (msaa_view, Some(target_view))
+        // } else {
+        //     (target_view, None)
+        // }
+
+        if let Some(msaa_view) = ctx.try_get_resource_view(GraphResource::SceneMsaa) {
+            self.color_target_view = Some(msaa_view.clone());
+        } else {
+            self.color_target_view = Some(target_view);
+        }
+
+        self.depth_view = Some(ctx.get_resource_view(GraphResource::SceneDepth).clone());
+    }
+
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let render_lists = &ctx.render_lists;
 
@@ -117,13 +140,16 @@ impl RenderNode for OpaquePass {
             return;
         };
 
-        let (color_view, _resolve_target) = Self::get_render_target(ctx);
-        let depth_view = ctx.get_resource_view(GraphResource::SceneDepth);
+        // let (color_view, _resolve_target) = Self::get_render_target(ctx);
+        // let depth_view = ctx.get_resource_view(GraphResource::SceneDepth);
 
         // Use scene background color for clearing.
         // When a skybox pass follows, the clear color only shows through
         // debug visualization; otherwise it is the final background.
-        let clear_color = ctx.scene.background.clear_color();
+        // let clear_color = ctx.extracted_scene.background.clear_color();
+
+        let color_view = self.color_target_view.as_ref().unwrap();
+        let depth_view = self.depth_view.as_ref().unwrap();
 
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("Opaque Pass"),
@@ -131,7 +157,7 @@ impl RenderNode for OpaquePass {
                 view: color_view,
                 resolve_target: None, // Opaque Pass does not resolve, wait for Transparent Pass to complete
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear_color),
+                    load: wgpu::LoadOp::Clear(self.clear_color),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,

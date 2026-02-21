@@ -14,9 +14,11 @@
 //! - Non-PBR scenes
 //! - Scenes without Transmission effects
 
+use crate::render::PrepareContext;
+use crate::renderer::core::resources::Tracked;
+use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::{RenderNode, TrackedRenderPass};
-use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 
 /// Simple Forward Render Pass
 ///
@@ -31,26 +33,19 @@ use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 pub struct SimpleForwardPass {
     /// Clear color
     pub clear_color: wgpu::Color,
+
+    /// Cached render target views during prepare phase.
+    msaa_view: Option<Tracked<wgpu::TextureView>>,
+    depth_view: Option<Tracked<wgpu::TextureView>>,
 }
 
 impl SimpleForwardPass {
     #[must_use]
     pub fn new(clear_color: wgpu::Color) -> Self {
-        Self { clear_color }
-    }
-
-    /// Determine render target views based on MSAA settings.
-    ///
-    /// Returns (`color_view`, `resolve_view`)
-    fn get_render_target<'a>(
-        ctx: &'a ExecuteContext,
-    ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
-        let target_view = ctx.get_scene_render_target_view();
-
-        if let Some(msaa_view) = ctx.try_get_resource_view(GraphResource::SceneMsaa) {
-            (msaa_view, Some(target_view))
-        } else {
-            (target_view, None)
+        Self {
+            clear_color,
+            msaa_view: None,
+            depth_view: None,
         }
     }
 
@@ -115,6 +110,13 @@ impl RenderNode for SimpleForwardPass {
         "Simple Forward Pass"
     }
 
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
+        self.clear_color = ctx.extracted_scene.background.clear_color();
+
+        self.msaa_view = ctx.try_get_resource_view(GraphResource::SceneMsaa).cloned();
+        self.depth_view = Some(ctx.get_resource_view(GraphResource::SceneDepth).clone());
+    }
+
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let render_lists = &ctx.render_lists;
 
@@ -124,15 +126,20 @@ impl RenderNode for SimpleForwardPass {
             return;
         };
 
-        let (color_view, resolve_target) = Self::get_render_target(ctx);
-        let depth_view = ctx.get_resource_view(GraphResource::SceneDepth);
+        let target_view = ctx.surface_view;
 
-        // compute final store/resolve configuration
-        let (store_op, final_resolve_target) = if resolve_target.is_some() {
-            // MSAA: resolve at the end, do not store MSAA buffer
-            (wgpu::StoreOp::Discard, resolve_target)
+        let (color_view, resolve_target) = if let Some(msaa) = self.msaa_view.as_deref() {
+            (msaa, Some(target_view))
         } else {
-            (wgpu::StoreOp::Store, None)
+            (target_view, None)
+        };
+
+        let depth_view = self.depth_view.as_ref().unwrap();
+
+        let store_op = if resolve_target.is_some() {
+            wgpu::StoreOp::Discard
+        } else {
+            wgpu::StoreOp::Store
         };
 
         // Single RenderPass: Clear → Opaque → Transparent → Resolve
@@ -140,9 +147,9 @@ impl RenderNode for SimpleForwardPass {
             label: Some("Simple Forward Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: color_view,
-                resolve_target: final_resolve_target,
+                resolve_target,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(ctx.scene.background.clear_color()),
+                    load: wgpu::LoadOp::Clear(self.clear_color),
                     store: store_op,
                 },
                 depth_slice: None,
