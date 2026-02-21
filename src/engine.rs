@@ -63,8 +63,8 @@ pub struct Engine {
     pub assets: AssetServer,
     pub input: Input,
 
-    pub(crate) time: f32,
-    pub(crate) frame_count: u64,
+    pub time: f32,
+    pub frame_count: u64,
 }
 
 impl Engine {
