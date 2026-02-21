@@ -27,10 +27,57 @@ use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::frame::RenderLists;
+use crate::renderer::graph::transient_pool::TransientTexturePool;
 use crate::renderer::graph::{ExtractedScene, RenderState};
 use crate::renderer::pipeline::PipelineCache;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
+
+// ─── Graph Resource Enum ──────────────────────────────────────────────────────
+
+/// Logical identifier for graph-managed GPU texture resources.
+///
+/// Passes use this enum with [`PrepareContext::get_resource_view`] /
+/// [`ExecuteContext::get_resource_view`] to request texture views by *semantic
+/// role* rather than by hard-coded field paths. This decouples inter-pass data
+/// flow from the physical storage layout in [`FrameResources`].
+///
+/// # Resource Categories
+///
+/// | Variant | Availability | Description |
+/// |---------|-------------|-------------|
+/// | `SceneColorInput` | HDR only | Current ping-pong **read** buffer |
+/// | `SceneColorOutput` | HDR only | Current ping-pong **write** buffer |
+/// | `SceneDepth` | Always | Main depth buffer (reverse-Z) |
+/// | `SceneMsaa` | MSAA > 1 | Multi-sample intermediate color buffer |
+/// | `SceneRenderTarget` | Always¹ | Primary scene color target |
+/// | `Transmission` | On demand | Transmission copy buffer |
+/// | `Surface` | Execute only | Swap-chain output view |
+///
+/// ¹ In HDR mode resolves to `scene_color_view[0]`; in LDR mode resolves to
+///   the surface view (execute only) — calling from `PrepareContext` in LDR
+///   mode will panic.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum GraphResource {
+    /// Current ping-pong input for post-processing reads (HDR only).
+    SceneColorInput,
+    /// Current ping-pong output for post-processing writes (HDR only).
+    SceneColorOutput,
+    /// Scene depth buffer (reverse-Z, always available).
+    SceneDepth,
+    /// MSAA intermediate color buffer (only when MSAA is enabled).
+    SceneMsaa,
+    /// Primary scene render target.
+    ///
+    /// - HDR: `scene_color_view[0]`
+    /// - LDR + Execute: swap-chain surface view
+    /// - LDR + Prepare: **panics** (surface not yet available)
+    SceneRenderTarget,
+    /// Transmission copy texture (only when transmission effects are active).
+    Transmission,
+    /// Swap-chain output surface view (execute phase only).
+    Surface,
+}
 
 // ─── Prepare Context ──────────────────────────────────────────────────────────
 
@@ -67,6 +114,8 @@ pub struct PrepareContext<'a> {
     pub render_lists: &'a mut RenderLists,
     /// Frame-persistent GPU resources (ping-pong buffers, depth, MSAA)
     pub frame_resources: &'a FrameResources,
+    /// Transient texture pool (per-frame temporary allocations)
+    pub transient_pool: &'a mut TransientTexturePool,
     /// Current time in seconds
     pub time: f32,
     /// Global bind group cache (cross-pass deduplication)
@@ -124,6 +173,62 @@ impl PrepareContext<'_> {
         );
         &self.frame_resources.scene_color_view[0]
     }
+
+    // ── GraphResource API ──────────────────────────────────────────────────
+
+    /// Retrieve a texture view by its logical [`GraphResource`] identifier.
+    ///
+    /// # Panics
+    ///
+    /// - `SceneMsaa` when MSAA is disabled.
+    /// - `Transmission` when no transmission resource exists.
+    /// - `Surface` (not available during prepare).
+    /// - `SceneRenderTarget` in LDR mode (no surface yet).
+    #[must_use]
+    #[inline]
+    pub fn get_resource_view(&self, resource: GraphResource) -> &Tracked<wgpu::TextureView> {
+        match resource {
+            GraphResource::SceneColorInput => self.get_scene_color_input(),
+            GraphResource::SceneColorOutput => self.get_scene_color_output(),
+            GraphResource::SceneDepth => &self.frame_resources.depth_view,
+            GraphResource::SceneMsaa => self
+                .frame_resources
+                .scene_msaa_view
+                .as_ref()
+                .expect("SceneMsaa requested but MSAA is disabled"),
+            GraphResource::SceneRenderTarget => {
+                debug_assert!(
+                    self.wgpu_ctx.enable_hdr,
+                    "SceneRenderTarget during prepare is only valid in HDR mode"
+                );
+                &self.frame_resources.scene_color_view[0]
+            }
+            GraphResource::Transmission => self
+                .frame_resources
+                .transmission_view
+                .as_ref()
+                .expect("Transmission resource not available"),
+            GraphResource::Surface => {
+                panic!("GraphResource::Surface is not available during the prepare phase")
+            }
+        }
+    }
+
+    /// Try to retrieve a texture view, returning `None` for unavailable
+    /// optional resources (`SceneMsaa`, `Transmission`).
+    #[must_use]
+    #[inline]
+    pub fn try_get_resource_view(
+        &self,
+        resource: GraphResource,
+    ) -> Option<&Tracked<wgpu::TextureView>> {
+        match resource {
+            GraphResource::SceneMsaa => self.frame_resources.scene_msaa_view.as_ref(),
+            GraphResource::Transmission => self.frame_resources.transmission_view.as_ref(),
+            GraphResource::Surface => None,
+            _ => Some(self.get_resource_view(resource)),
+        }
+    }
 }
 
 // ─── Execute Context ──────────────────────────────────────────────────────────
@@ -162,6 +267,8 @@ pub struct ExecuteContext<'a> {
     pub render_lists: &'a RenderLists,
     /// Frame-persistent GPU resources
     pub frame_resources: &'a FrameResources,
+    /// Transient texture pool (read-only during execute)
+    pub transient_pool: &'a TransientTexturePool,
     /// Current time in seconds
     pub time: f32,
     /// Global bind group cache (read-only during execute)
@@ -184,6 +291,7 @@ impl<'a> ExecuteContext<'a> {
         extracted_scene: &'a ExtractedScene,
         render_lists: &'a RenderLists,
         frame_resources: &'a FrameResources,
+        transient_pool: &'a TransientTexturePool,
         time: f32,
         global_bind_group_cache: &'a GlobalBindGroupCache,
     ) -> Self {
@@ -199,6 +307,7 @@ impl<'a> ExecuteContext<'a> {
             extracted_scene,
             render_lists,
             frame_resources,
+            transient_pool,
             time,
             global_bind_group_cache,
             color_view_flip_flop: Cell::new(0),
@@ -250,6 +359,72 @@ impl<'a> ExecuteContext<'a> {
             crate::renderer::HDR_TEXTURE_FORMAT
         } else {
             self.wgpu_ctx.surface_view_format
+        }
+    }
+
+    // ── GraphResource API ──────────────────────────────────────────────────
+
+    /// Retrieve a texture view by its logical [`GraphResource`] identifier.
+    ///
+    /// # Panics
+    ///
+    /// - `SceneMsaa` when MSAA is disabled.
+    /// - `Transmission` when no transmission resource exists.
+    #[must_use]
+    #[inline]
+    pub fn get_resource_view(&self, resource: GraphResource) -> &Tracked<wgpu::TextureView> {
+        match resource {
+            GraphResource::SceneColorInput => self.get_scene_color_input(),
+            GraphResource::SceneColorOutput => self.get_scene_color_output(),
+            GraphResource::SceneDepth => &self.frame_resources.depth_view,
+            GraphResource::SceneMsaa => self
+                .frame_resources
+                .scene_msaa_view
+                .as_ref()
+                .expect("SceneMsaa requested but MSAA is disabled"),
+            GraphResource::SceneRenderTarget => {
+                if self.wgpu_ctx.enable_hdr {
+                    &self.frame_resources.scene_color_view[0]
+                } else {
+                    // LDR mode: surface_view is not Tracked, use SceneRenderTarget
+                    // via get_scene_render_target_view() instead.
+                    panic!(
+                        "Use get_scene_render_target_view() for LDR SceneRenderTarget \
+                         (surface is not a Tracked resource)"
+                    )
+                }
+            }
+            GraphResource::Transmission => self
+                .frame_resources
+                .transmission_view
+                .as_ref()
+                .expect("Transmission resource not available"),
+            GraphResource::Surface => {
+                // surface_view is not Tracked — use `surface_view` field directly.
+                panic!(
+                    "GraphResource::Surface is not a Tracked resource; \
+                     use ctx.surface_view directly"
+                )
+            }
+        }
+    }
+
+    /// Try to retrieve a texture view, returning `None` for unavailable
+    /// optional resources (`SceneMsaa`, `Transmission`).
+    ///
+    /// Returns `None` for `Surface` and LDR `SceneRenderTarget` (not Tracked).
+    #[must_use]
+    #[inline]
+    pub fn try_get_resource_view(
+        &self,
+        resource: GraphResource,
+    ) -> Option<&Tracked<wgpu::TextureView>> {
+        match resource {
+            GraphResource::SceneMsaa => self.frame_resources.scene_msaa_view.as_ref(),
+            GraphResource::Transmission => self.frame_resources.transmission_view.as_ref(),
+            GraphResource::Surface => None,
+            GraphResource::SceneRenderTarget if !self.wgpu_ctx.enable_hdr => None,
+            _ => Some(self.get_resource_view(resource)),
         }
     }
 }

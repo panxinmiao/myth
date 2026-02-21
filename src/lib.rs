@@ -256,8 +256,8 @@ pub mod math {
 pub mod render {
     pub use crate::renderer::Renderer;
     pub use crate::renderer::graph::{
-        ExecuteContext, FrameBuilder, FrameComposer, PrepareContext, RenderNode, RenderStage,
-        RenderState,
+        ExecuteContext, FrameBuilder, FrameComposer, GraphResource, PrepareContext, RenderNode,
+        RenderStage, RenderState,
         TrackedRenderPass,
     };
     pub use crate::renderer::settings::RenderSettings;

@@ -42,7 +42,8 @@
 use std::borrow::Cow;
 
 use crate::render::RenderNode;
-use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
+use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
+use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTextureId};
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
@@ -112,15 +113,16 @@ pub struct BloomPass {
     /// when `BloomSettings.version` changes.
     composite_uniform_buffer: Tracked<wgpu::Buffer>,
 
-    // === Mip Chain ===
-    /// The bloom mip chain texture (half-res at level 0, quarter at level 1, etc.)
-    bloom_texture: Option<wgpu::Texture>,
-    /// Per-mip views for the bloom chain.
-    bloom_mip_views: Vec<Tracked<wgpu::TextureView>>,
-    /// Current mip chain dimensions (width, height at mip 0).
-    bloom_size: (u32, u32),
-    /// Actual number of mip levels in the current chain.
-    mip_count: u32,
+    // === Mip Chain (allocated from TransientTexturePool each frame) ===
+    /// Handle to the bloom mip chain texture in the transient pool.
+    bloom_texture_id: Option<TransientTextureId>,
+    /// Actual number of mip levels in the current allocation.
+    current_mip_count: u32,
+    /// Tracked ID of the pool's mip-0 view from the previous frame.
+    /// Used to detect when the pool returned a different physical texture
+    /// (e.g. after a resolution change), which requires rebuilding internal
+    /// mip-to-mip BindGroups.
+    last_bloom_view_id: u64,
 
     // === Cached BindGroups (rebuilt when mip chain changes) ===
     /// `downsample_bind_groups[i]` binds `mip_views[i]` → `mip_views[i+1]`
@@ -317,10 +319,9 @@ impl BloomPass {
             upsample_uniform_buffer: Tracked::new(upsample_uniform_buffer),
             composite_uniform_buffer: Tracked::new(composite_uniform_buffer),
 
-            bloom_texture: None,
-            bloom_mip_views: Vec::new(),
-            bloom_size: (0, 0),
-            mip_count: 0,
+            bloom_texture_id: None,
+            current_mip_count: 0,
+            last_bloom_view_id: 0,
 
             downsample_bind_groups: Vec::new(),
             upsample_bind_groups: Vec::new(),
@@ -506,93 +507,74 @@ impl BloomPass {
     // Mip Chain Management
     // =========================================================================
 
-    /// Recreates the bloom mip chain texture and pre-builds all internal
-    /// BindGroups when the render target size changes.
-    fn ensure_mip_chain(
+    /// Allocate the bloom mip chain from the transient texture pool and
+    /// rebuild internal BindGroups when the underlying texture changes.
+    fn allocate_bloom_texture(
         &mut self,
         ctx: &mut PrepareContext,
         source_width: u32,
         source_height: u32,
         max_mip_levels: u32,
     ) {
-        // The first downsample BindGroup is the only one that depends on the ping-pong scene color view,
-        if self.downsample_bind_groups.is_empty() {
-            self.downsample_bind_groups
-                .push(self.get_first_mip_bind_group(ctx));
-        } else {
-            self.downsample_bind_groups[0] = self.get_first_mip_bind_group(ctx);
-        }
-
         // Bloom works at half resolution
         let bloom_w = (source_width / 2).max(1);
         let bloom_h = (source_height / 2).max(1);
 
-        if self.bloom_size == (bloom_w, bloom_h) {
-            return;
-        }
-
-        self.bloom_size = (bloom_w, bloom_h);
-
         // Calculate actual mip count
         let max_possible = ((bloom_w.max(bloom_h) as f32).log2().floor() as u32) + 1;
-        self.mip_count = max_mip_levels.min(max_possible).max(1);
+        let mip_count = max_mip_levels.min(max_possible).max(1);
+        self.current_mip_count = mip_count;
 
-        // Create the mip chain texture
-        let texture = ctx
-            .wgpu_ctx
-            .device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("Bloom Mip Chain"),
-                size: wgpu::Extent3d {
-                    width: bloom_w,
-                    height: bloom_h,
-                    depth_or_array_layers: 1,
-                },
-                mip_level_count: self.mip_count,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
+        // Allocate from transient pool (pool handles recycling transparently)
+        let bloom_id = ctx.transient_pool.allocate(
+            &ctx.wgpu_ctx.device,
+            &TransientTextureDesc {
+                width: bloom_w,
+                height: bloom_h,
                 format: HDR_TEXTURE_FORMAT,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,
-                view_formats: &[],
-            });
+                mip_level_count: mip_count,
+                label: "Bloom Mip Chain",
+            },
+        );
+        self.bloom_texture_id = Some(bloom_id);
 
-        // Create per-mip views
-        self.bloom_mip_views.clear();
-        for mip in 0..self.mip_count {
-            let view = texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some(&format!("Bloom Mip {mip}")),
-                base_mip_level: mip,
-                mip_level_count: Some(1),
-                ..Default::default()
-            });
-            self.bloom_mip_views.push(Tracked::new(view));
+        // ── Always rebuild the first downsample BG (depends on scene color) ──
+        let first_ds_bg = self.get_first_mip_bind_group(ctx);
+        if self.downsample_bind_groups.is_empty() {
+            self.downsample_bind_groups.push(first_ds_bg);
+        } else {
+            self.downsample_bind_groups[0] = first_ds_bg;
         }
 
-        self.bloom_texture = Some(texture);
+        // ── Check if the pool returned a different texture ────────────────
+        let mip0_view_id = ctx.transient_pool.get_mip_view(bloom_id, 0).id();
+        if self.last_bloom_view_id == mip0_view_id
+            && self.downsample_bind_groups.len() == mip_count as usize
+        {
+            // Pool reused the same physical texture → keep cached BGs
+            return;
+        }
+        self.last_bloom_view_id = mip0_view_id;
 
-        // -----------------------------------------------------------------
-        // Pre-build internal BindGroups (deterministic, no ping-pong input)
-        // -----------------------------------------------------------------
-
+        // ── Rebuild internal mip-to-mip BindGroups ────────────────────────
         // Downsample: mip[i] → mip[i+1], always with Karis OFF
-        // The first downsample BindGroup (scene → mip 0) is created per-frame in _get_first_mip_bind_group()
-        // Only keep the first one and rebuild the rest based on the new mip views
-        self.downsample_bind_groups.truncate(1);
+        self.downsample_bind_groups.truncate(1); // keep [0] (first DS, already set)
 
-        for i in 0..(self.mip_count - 1) as usize {
+        for i in 0..(mip_count - 1) as usize {
             let source_mip = i;
             let bg = ctx
                 .wgpu_ctx
                 .device
                 .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("Bloom DS BG {}->{}", source_mip, source_mip + 1)),
+                    label: Some("Bloom DS BG mip→mip"),
                     layout: &self.downsample_layout,
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
                             resource: wgpu::BindingResource::TextureView(
-                                &self.bloom_mip_views[source_mip],
+                                ctx.transient_pool.get_mip_view(bloom_id, source_mip as u32),
                             ),
                         },
                         wgpu::BindGroupEntry {
@@ -610,20 +592,19 @@ impl BloomPass {
 
         // Upsample: mip[i+1] → mip[i] (additive blend into target)
         self.upsample_bind_groups.clear();
-        for i in 0..(self.mip_count - 1) as usize {
-            let target_mip = i;
+        for i in 0..(mip_count - 1) as usize {
             let source_mip = i + 1;
             let bg = ctx
                 .wgpu_ctx
                 .device
                 .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some(&format!("Bloom US BG {source_mip}→{target_mip}")),
+                    label: Some("Bloom US BG mip→mip"),
                     layout: &self.upsample_layout,
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
                             resource: wgpu::BindingResource::TextureView(
-                                &self.bloom_mip_views[source_mip],
+                                ctx.transient_pool.get_mip_view(bloom_id, source_mip as u32),
                             ),
                         },
                         wgpu::BindGroupEntry {
@@ -640,15 +621,18 @@ impl BloomPass {
         }
 
         log::debug!(
-            "Bloom mip chain created: {}×{}, {} levels, {} cached bind groups",
+            "Bloom mip chain allocated: {}×{}, {} levels (pool), {} cached bind groups",
             bloom_w,
             bloom_h,
-            self.mip_count,
+            mip_count,
             self.downsample_bind_groups.len() + self.upsample_bind_groups.len(),
         );
     }
 
-    fn get_first_mip_bind_group(&self, ctx: &mut PrepareContext) -> wgpu::BindGroup {
+    fn get_first_mip_bind_group(
+        &self,
+        ctx: &mut PrepareContext,
+    ) -> wgpu::BindGroup {
         // Select the appropriate static Karis buffer for the first downsample
         let karis_buffer = if ctx.scene.bloom.karis_average {
             &self.buffer_karis_on
@@ -656,7 +640,7 @@ impl BloomPass {
             &self.buffer_karis_off
         };
 
-        let input_view = ctx.get_scene_color_input();
+        let input_view = ctx.get_resource_view(GraphResource::SceneColorInput);
 
         // 1. 准备 Cache Key 所需的 ID
         let layout_id = self.downsample_layout.id();
@@ -704,8 +688,9 @@ impl BloomPass {
     }
 
     fn get_composite_bind_group(&self, ctx: &mut PrepareContext) -> wgpu::BindGroup {
-        let input_view = ctx.get_scene_color_input();
-        let bloom_view = &self.bloom_mip_views[0];
+        let input_view = ctx.get_resource_view(GraphResource::SceneColorInput);
+        let bloom_id = self.bloom_texture_id.expect("bloom_texture_id must be set before composite");
+        let bloom_view = ctx.transient_pool.get_mip_view(bloom_id, 0);
 
         // 1. 准备 Cache Key 所需的 ID
         let layout_id = self.composite_layout.id();
@@ -787,13 +772,13 @@ impl RenderNode for BloomPass {
             self.init_static_buffers(queue);
         }
 
-        // 3. Ensure mip chain exists and matches current resolution
+        // 3. Allocate mip chain from transient pool and rebuild bind groups
         let (source_w, source_h) = ctx.wgpu_ctx.size();
-        self.ensure_mip_chain(ctx, source_w, source_h, settings.max_mip_levels);
+        self.allocate_bloom_texture(ctx, source_w, source_h, settings.max_mip_levels);
 
         self.composite_bind_group = Some(self.get_composite_bind_group(ctx));
 
-        self.output_view = Some(ctx.get_scene_color_output().clone());
+        self.output_view = Some(ctx.get_resource_view(GraphResource::SceneColorOutput).clone());
 
         let settings = &ctx.scene.bloom;
         // 4. Upload dynamic uniforms if settings changed
@@ -828,7 +813,7 @@ impl RenderNode for BloomPass {
     }
 
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        if !self.enabled || self.mip_count == 0 {
+        if !self.enabled || self.current_mip_count == 0 {
             return;
         }
 
@@ -847,17 +832,20 @@ impl RenderNode for BloomPass {
         let Some(output_view) = &self.output_view else {
             return;
         };
+        let Some(bloom_id) = self.bloom_texture_id else {
+            return;
+        };
 
         // =====================================================================
         // Phase 1: Downsample — Scene HDR → Bloom Mip Chain
         // =====================================================================
         for i in 0..self.downsample_bind_groups.len() {
-            let target_mip = i;
+            let target_mip = i as u32;
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Bloom Downsample"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.bloom_mip_views[target_mip],
+                    view: ctx.transient_pool.get_mip_view(bloom_id, target_mip),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -881,12 +869,12 @@ impl RenderNode for BloomPass {
         // finer level. The blend state on the pipeline handles the additive
         // accumulation. All BindGroups are cached.
         for i in (0..self.upsample_bind_groups.len()).rev() {
-            let target_mip = i; // blend into this mip
+            let target_mip = i as u32;
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("Bloom Upsample"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.bloom_mip_views[target_mip],
+                    view: ctx.transient_pool.get_mip_view(bloom_id, target_mip),
                     resolve_target: None,
                     ops: wgpu::Operations {
                         // Load existing content (the downsample result), then additive blend

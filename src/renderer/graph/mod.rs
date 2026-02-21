@@ -33,10 +33,11 @@ pub mod passes;
 pub mod render_state;
 pub mod shadow_utils;
 pub mod stage;
+pub mod transient_pool;
 
 pub use builder::FrameBuilder;
 pub use composer::FrameComposer;
-pub use context::{ExecuteContext, PrepareContext};
+pub use context::{ExecuteContext, GraphResource, PrepareContext};
 pub use extracted::{ExtractedRenderItem, ExtractedScene, ExtractedSkeleton};
 pub use frame::{RenderCommand, RenderFrame, RenderKey, RenderLists};
 pub use graph::RenderGraph;
@@ -44,3 +45,4 @@ pub use node::RenderNode;
 pub use pass::TrackedRenderPass;
 pub use render_state::RenderState;
 pub use stage::RenderStage;
+pub use transient_pool::{TransientTextureDesc, TransientTextureId, TransientTexturePool};

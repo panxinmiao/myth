@@ -32,7 +32,7 @@ use glam::{Mat4, Vec3, Vec4};
 use rustc_hash::FxHashMap;
 
 use crate::render::{RenderNode};
-use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
+use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::core::{binding::BindGroupKey, resources::Tracked};
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator};
@@ -713,19 +713,16 @@ impl RenderNode for SkyboxPass {
 
         // --- Determine render targets ---
         let target_view = ctx.get_scene_render_target_view();
-        let depth_view = &ctx.frame_resources.depth_view;
+        let depth_view = ctx.get_resource_view(GraphResource::SceneDepth);
 
         // MSAA: render into the multisample attachment; do NOT resolve here.
         // In the HDR pipeline, TransparentPass handles the final MSAA resolve.
-        let attachment_view = if ctx.wgpu_ctx.msaa_samples > 1 {
-            ctx.frame_resources
-                .scene_msaa_view
-                .as_ref()
-                .expect("MSAA view must exist when msaa_samples > 1")
-                as &wgpu::TextureView
-        } else {
-            target_view
-        };
+        let attachment_view =
+            if let Some(msaa_view) = ctx.try_get_resource_view(GraphResource::SceneMsaa) {
+                msaa_view as &wgpu::TextureView
+            } else {
+                target_view
+            };
 
         // --- Create RenderPass (all Load — we inherit from OpaquePass) ---
         let pass_desc = wgpu::RenderPassDescriptor {
