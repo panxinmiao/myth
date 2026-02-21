@@ -30,7 +30,7 @@ fn fs_main(varyings: VertexOutput) -> @location(0) vec4<f32> {
 
     // 1、Chromatic Aberration
     // Accroding to the distance from the center, apply a UV offset that increases towards the edges, creating more chromatic aberration at the edges and none at the center.
-    if (u_effect.chromatic_aberration > 0.0) {
+    if (u_effect.chromatic_aberration > 0.001) {
 
         let offset = (uv - 0.5) * u_effect.chromatic_aberration * 0.05; 
         let r = textureSample(color_tex, tex_sampler, uv + offset).r;
@@ -67,21 +67,16 @@ $$ endif
 
     // 4. Contrast & Saturation
     // Contrast
-    if (u_effect.contrast != 1.0) {
-        rgb = (rgb - 0.5) * u_effect.contrast + 0.5;
-    }
-
+    rgb = (rgb - 0.5) * u_effect.contrast + 0.5;
+    
     // Saturation
-    if (u_effect.saturation != 1.0) {
-        let luminance = dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722)); // Rec. 709 luma coefficients
-        rgb = mix(vec3<f32>(luminance), rgb, u_effect.saturation);
-    }
-
+    let luminance = dot(rgb, vec3<f32>(0.2126, 0.7152, 0.0722)); // Rec. 709 luma coefficients
+    rgb = mix(vec3<f32>(luminance), rgb, u_effect.saturation);
+    
     rgb = max(rgb, vec3<f32>(0.0));
 
-
     // 5. Vignette (edge darkening) - controlled via uniform, no macro needed
-    if (u_effect.vignette_intensity > 0.0) {
+    if (u_effect.vignette_intensity > 0.001) {
         // compute a radial mask that peaks at the center and falls off towards edges
         var v = uv.x * uv.y * (1.0 - uv.x) * (1.0 - uv.y) * 16.0;
 
@@ -100,10 +95,9 @@ $$ endif
     }
 
     // 6. Film Grain
-    if (u_effect.film_grain > 0.0) {
-        // use a simple hash function to generate noise based on UV coordinates and time
-        let noise = fract(sin(dot(uv + u_render_state.time, vec2<f32>(12.9898, 78.233))) * 43758.5453);
-        // map [0, 1] to [-0.5, 0.5] and scale by film grain intensity
+    if (u_effect.film_grain > 0.001) {
+        let seed = u_render_state.time * 100.0;
+        let noise = fract(sin(dot(uv, vec2<f32>(12.9898, 78.233)) + seed) * 43758.5453);
         let grain = (noise - 0.5) * u_effect.film_grain;
         rgb = rgb + grain;
     }
