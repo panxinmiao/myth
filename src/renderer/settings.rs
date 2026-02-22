@@ -102,6 +102,56 @@ impl Default for RenderPath {
     }
 }
 
+impl RenderPath {
+    /// Returns `true` when this path enables post-processing (HDR targets,
+    /// bloom, tone mapping, FXAA, etc.).
+    ///
+    /// Currently only [`HighFidelity`](Self::HighFidelity) supports post-processing.
+    #[inline]
+    #[must_use]
+    pub fn supports_post_processing(&self) -> bool {
+        matches!(self, Self::HighFidelity)
+    }
+
+    /// Returns `true` when this path will use a depth-normal prepass.
+    ///
+    /// Reserved for future use — always returns `false` for
+    /// [`BasicForward`](Self::BasicForward) and `true` for
+    /// [`HighFidelity`](Self::HighFidelity) once SSAO / depth-normal
+    /// pre-pass is implemented.
+    #[inline]
+    #[must_use]
+    pub fn requires_z_prepass(&self) -> bool {
+        // TODO: return true for HighFidelity once prepass is implemented.
+        false
+    }
+
+    /// Returns the main color attachment format for scene rendering.
+    ///
+    /// - [`HighFidelity`](Self::HighFidelity): HDR float format (`Rgba16Float`)
+    /// - [`BasicForward`](Self::BasicForward): the supplied surface format (LDR)
+    #[inline]
+    #[must_use]
+    pub fn main_color_format(&self, surface_format: wgpu::TextureFormat) -> wgpu::TextureFormat {
+        match self {
+            Self::HighFidelity => crate::renderer::HDR_TEXTURE_FORMAT,
+            Self::BasicForward { .. } => surface_format,
+        }
+    }
+
+    /// Returns the effective MSAA sample count for this path.
+    ///
+    /// [`HighFidelity`](Self::HighFidelity) always returns **1**.
+    #[inline]
+    #[must_use]
+    pub fn msaa_samples(&self) -> u32 {
+        match self {
+            Self::BasicForward { msaa_samples } => *msaa_samples,
+            Self::HighFidelity => 1,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // RendererSettings
 // ---------------------------------------------------------------------------
@@ -228,19 +278,7 @@ impl RendererSettings {
     #[inline]
     #[must_use]
     pub fn msaa_samples(&self) -> u32 {
-        match &self.path {
-            RenderPath::BasicForward { msaa_samples } => *msaa_samples,
-            RenderPath::HighFidelity => 1,
-        }
-    }
-
-    /// Returns `true` when the current path uses HDR render targets.
-    ///
-    /// Only [`HighFidelity`](RenderPath::HighFidelity) enables HDR.
-    #[inline]
-    #[must_use]
-    pub fn is_hdr(&self) -> bool {
-        matches!(self.path, RenderPath::HighFidelity)
+        self.path.msaa_samples()
     }
 }
 

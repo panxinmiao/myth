@@ -396,7 +396,7 @@ impl Renderer {
                 // === BasicForward Path (LDR) ===
                 // Prepare skybox for potential inline drawing by SimpleForwardPass.
                 // SkyboxPass::prepare() stores pipeline/bind_group in render_lists.
-                // SkyboxPass::run() is a no-op in LDR mode (checked via enable_hdr).
+                // SkyboxPass::run() is a no-op in BasicForward mode (checked via render_path).
                 if scene.background.needs_skybox_pass() {
                     frame_builder.add_node(RenderStage::PreProcess, &mut state.skybox_pass);
                 }
@@ -459,7 +459,7 @@ impl Renderer {
     ///
     /// Internally this:
     /// 1. Updates the stored settings and derived `WgpuContext` state
-    ///    (`enable_hdr`, `msaa_samples`, `render_path`).
+    ///    (`msaa_samples`, `render_path`).
     /// 2. Increments the pipeline settings version (invalidates the L1 cache).
     /// 3. Forces recreation of frame resources (render targets change format/sample count).
     /// 4. Clears the L2 pipeline cache.
@@ -467,7 +467,6 @@ impl Renderer {
         if self.settings.path != path {
             self.settings.path = path.clone();
             if let Some(state) = &mut self.context {
-                state.wgpu_ctx.enable_hdr = self.settings.is_hdr();
                 state.wgpu_ctx.msaa_samples = self.settings.msaa_samples();
                 state.wgpu_ctx.render_path = path;
                 state.wgpu_ctx.pipeline_settings_version += 1;
@@ -476,30 +475,6 @@ impl Renderer {
                 state.pipeline_cache.clear();
             }
         }
-    }
-
-    /// Returns whether HDR rendering is currently enabled.
-    ///
-    /// Equivalent to checking if the render path is [`RenderPath::HighFidelity`].
-    #[inline]
-    pub fn is_hdr_enabled(&self) -> bool {
-        self.settings.is_hdr()
-    }
-
-    /// Convenience method: switches HDR on or off at runtime.
-    ///
-    /// - `true`  → [`RenderPath::HighFidelity`] (MSAA forced to 1)
-    /// - `false` → [`RenderPath::BasicForward`] with `msaa_samples = 1`
-    ///
-    /// For finer control (e.g. enabling `BasicForward` **with** a specific
-    /// MSAA sample count), use [`set_render_path`](Self::set_render_path).
-    pub fn set_hdr_enabled(&mut self, enabled: bool) {
-        let new_path = if enabled {
-            RenderPath::HighFidelity
-        } else {
-            RenderPath::BasicForward { msaa_samples: 1 }
-        };
-        self.set_render_path(new_path);
     }
 
     /// Returns the effective MSAA sample count.

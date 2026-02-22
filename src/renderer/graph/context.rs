@@ -151,23 +151,21 @@ impl PrepareContext<'_> {
     #[must_use]
     #[inline]
     pub fn get_scene_render_target_format(&self) -> wgpu::TextureFormat {
-        if self.wgpu_ctx.enable_hdr {
-            crate::renderer::HDR_TEXTURE_FORMAT
-        } else {
-            self.wgpu_ctx.surface_view_format
-        }
+        self.wgpu_ctx
+            .render_path
+            .main_color_format(self.wgpu_ctx.surface_view_format)
     }
 
     /// Returns the appropriate render target for scene geometry.
     ///
-    /// In HDR mode returns `scene_color_view[0]`; in LDR mode this is
+    /// In HighFidelity path returns `scene_color_view[0]`; in BasicForward path this is
     /// unavailable (no surface_view during prepare), so panics.
     #[must_use]
     #[inline]
     pub fn get_scene_render_target_view(&self) -> &wgpu::TextureView {
         debug_assert!(
-            self.wgpu_ctx.enable_hdr,
-            "get_scene_render_target_view() during prepare is only valid in HDR mode"
+            self.wgpu_ctx.render_path.supports_post_processing(),
+            "get_scene_render_target_view() during prepare is only valid in HighFidelity path"
         );
         &self.frame_resources.scene_color_view[0]
     }
@@ -181,7 +179,7 @@ impl PrepareContext<'_> {
     /// - `SceneMsaa` when MSAA is disabled.
     /// - `Transmission` when no transmission resource exists.
     /// - `Surface` (not available during prepare).
-    /// - `SceneRenderTarget` in LDR mode (no surface yet).
+    /// - `SceneRenderTarget` in BasicForward path (no surface yet).
     #[must_use]
     #[inline]
     pub fn get_resource_view(&self, resource: GraphResource) -> &Tracked<wgpu::TextureView> {
@@ -196,8 +194,8 @@ impl PrepareContext<'_> {
                 .expect("SceneMsaa requested but MSAA is disabled"),
             GraphResource::SceneRenderTarget => {
                 debug_assert!(
-                    self.wgpu_ctx.enable_hdr,
-                    "SceneRenderTarget during prepare is only valid in HDR mode"
+                    self.wgpu_ctx.render_path.supports_post_processing(),
+                    "SceneRenderTarget during prepare is only valid in HighFidelity path"
                 );
                 &self.frame_resources.scene_color_view[0]
             }
@@ -282,7 +280,7 @@ impl<'a> ExecuteContext<'a> {
     #[must_use]
     #[inline]
     pub fn get_scene_render_target_view(&self) -> &wgpu::TextureView {
-        if self.wgpu_ctx.enable_hdr {
+        if self.wgpu_ctx.render_path.supports_post_processing() {
             &self.frame_resources.scene_color_view[0]
         } else {
             self.surface_view
@@ -293,11 +291,9 @@ impl<'a> ExecuteContext<'a> {
     #[must_use]
     #[inline]
     pub fn get_scene_render_target_format(&self) -> wgpu::TextureFormat {
-        if self.wgpu_ctx.enable_hdr {
-            crate::renderer::HDR_TEXTURE_FORMAT
-        } else {
-            self.wgpu_ctx.surface_view_format
-        }
+        self.wgpu_ctx
+            .render_path
+            .main_color_format(self.wgpu_ctx.surface_view_format)
     }
 
     // ── GraphResource API ──────────────────────────────────────────────────
@@ -324,7 +320,7 @@ impl<'a> ExecuteContext<'a> {
                 .as_ref()
                 .expect("SceneMsaa requested but MSAA is disabled"),
             GraphResource::SceneRenderTarget => {
-                if self.wgpu_ctx.enable_hdr {
+                if self.wgpu_ctx.render_path.supports_post_processing() {
                     &self.frame_resources.scene_color_view[0]
                 } else {
                     // LDR mode: surface_view is not Tracked, use SceneRenderTarget
@@ -364,7 +360,11 @@ impl<'a> ExecuteContext<'a> {
             GraphResource::SceneMsaa => self.frame_resources.scene_msaa_view.as_ref(),
             GraphResource::Transmission => self.frame_resources.transmission_view.as_ref(),
             GraphResource::Surface => None,
-            GraphResource::SceneRenderTarget if !self.wgpu_ctx.enable_hdr => None,
+            GraphResource::SceneRenderTarget
+                if !self.wgpu_ctx.render_path.supports_post_processing() =>
+            {
+                None
+            }
             _ => Some(self.get_resource_view(resource)),
         }
     }
@@ -560,7 +560,7 @@ impl FrameResources {
         self.depth_view = Tracked::new(depth_view);
 
         // Scene Color Texture(s) (ping-pong)
-        if wgpu_ctx.enable_hdr {
+        if wgpu_ctx.render_path.supports_post_processing() {
             // 非直接渲染模式，创建两个 ping-pong 纹理
             let ping_pong_texture_0 = Self::create_texture(
                 &wgpu_ctx.device,
@@ -596,11 +596,9 @@ impl FrameResources {
         if wgpu_ctx.msaa_samples > 1 {
             // 创建 MSAA 纹理, 格式与主颜色纹理(Resolve target)相同
 
-            let masaa_target_fromat = if wgpu_ctx.enable_hdr {
-                crate::renderer::HDR_TEXTURE_FORMAT
-            } else {
-                wgpu_ctx.surface_view_format
-            };
+            let masaa_target_fromat = wgpu_ctx
+                .render_path
+                .main_color_format(wgpu_ctx.surface_view_format);
 
             let scene_msaa_view = Self::create_texture(
                 &wgpu_ctx.device,
