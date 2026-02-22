@@ -10,42 +10,31 @@
 //   SKYBOX_EQUIRECT      - Equirectangular (lat-long) 2D texture sampling
 //   SKYBOX_PLANAR        - Screen-space planar 2D texture sampling
 
-// --- Uniforms: Camera data ---
-struct SkyboxCamera {
-    view_projection_inverse: mat4x4<f32>,
-    camera_position: vec3<f32>,
-    _pad0: f32,
-};
-@group(0) @binding(0) var<uniform> u_camera: SkyboxCamera;
+{$ include 'full_screen_vertex.wgsl' $}
 
-// --- Uniforms: Skybox parameters ---
-struct SkyboxParams {
-    color_top: vec4<f32>,
-    color_bottom: vec4<f32>,
-    rotation: f32,
-    intensity: f32,
-    _pad0: f32,
-    _pad1: f32,
-};
-@group(0) @binding(1) var<uniform> u_params: SkyboxParams;
+// Auto-generated struct definition for SkyboxParams
+{{ struct_definitions }}
+
+// Auto-injected global bind group bindings (Group 0: camera, environment, etc.)
+{{ binding_code }}
+
+// --- Skybox-specific bindings (Group 1) ---
+@group(1) @binding(0) var<uniform> u_params: SkyboxParams;
 
 $$ if SKYBOX_CUBE
-@group(0) @binding(2) var t_skybox_cube: texture_cube<f32>;
-@group(0) @binding(3) var s_skybox: sampler;
+@group(1) @binding(1) var t_skybox_cube: texture_cube<f32>;
+@group(1) @binding(2) var s_skybox: sampler;
 $$ endif
 
 $$ if SKYBOX_EQUIRECT
-@group(0) @binding(2) var t_skybox_2d: texture_2d<f32>;
-@group(0) @binding(3) var s_skybox: sampler;
+@group(1) @binding(1) var t_skybox_2d: texture_2d<f32>;
+@group(1) @binding(2) var s_skybox: sampler;
 $$ endif
 
 $$ if SKYBOX_PLANAR
-@group(0) @binding(2) var t_skybox_2d: texture_2d<f32>;
-@group(0) @binding(3) var s_skybox: sampler;
+@group(1) @binding(1) var t_skybox_2d: texture_2d<f32>;
+@group(1) @binding(2) var s_skybox: sampler;
 $$ endif
-
-
-{$ include 'full_screen_vertex.wgsl' $}
 
 // --- Constants ---
 const PI: f32 = 3.14159265359;
@@ -62,12 +51,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Use Near Plane (Z=1.0) to get the direction vector without needing the actual depth value
     let clip_pos = vec4<f32>(ndc.x, -ndc.y, 1.0, 1.0);
     
-    // Transform from clip space to world space
-    let world_pos_h = u_camera.view_projection_inverse * clip_pos;
+    // Transform from clip space to world space (using global RenderState uniforms)
+    let world_pos_h = u_render_state.view_projection_inverse * clip_pos;
     let world_pos = world_pos_h.xyz / world_pos_h.w;
     
     // Compute world-space ray direction
-    let world_dir = normalize(world_pos - u_camera.camera_position);
+    let world_dir = normalize(world_pos - u_render_state.camera_position);
 
 $$ if SKYBOX_GRADIENT
     // Smooth vertical blend based on Y component of view direction

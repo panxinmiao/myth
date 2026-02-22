@@ -13,7 +13,7 @@ use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::tone_mapping::ToneMappingSettings;
 use crate::resources::uniforms::{EnvironmentUniforms, GpuLightStorage};
 use crate::resources::{BoundingBox, Input};
-use crate::scene::background::BackgroundMode;
+use crate::scene::background::{BackgroundMode, BackgroundSettings};
 use crate::scene::camera::Camera;
 use crate::scene::environment::Environment;
 use crate::scene::light::Light;
@@ -141,8 +141,8 @@ pub struct Scene {
     pub tone_mapping: ToneMappingSettings,
     /// Bloom post-processing settings
     pub bloom: BloomSettings,
-    /// Background rendering mode (solid color, gradient, or texture)
-    pub background: BackgroundMode,
+    /// Background rendering settings (mode + skybox uniform buffer)
+    pub background: BackgroundSettings,
     /// Currently active camera for rendering
     pub active_camera: Option<NodeHandle>,
 
@@ -193,7 +193,7 @@ impl Scene {
             environment: Environment::new(),
             tone_mapping: ToneMappingSettings::default(),
             bloom: BloomSettings::default(),
-            background: BackgroundMode::default(),
+            background: BackgroundSettings::default(),
 
             active_camera: None,
 
@@ -988,7 +988,7 @@ impl Scene {
 
     /// Sets the background to a solid color.
     pub fn set_background_color(&mut self, r: f32, g: f32, b: f32) {
-        self.background = BackgroundMode::color(r, g, b);
+        self.background.set_mode(BackgroundMode::color(r, g, b));
     }
 
     // ========================================================================

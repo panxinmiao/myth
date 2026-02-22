@@ -438,7 +438,7 @@ impl AppHandler for GltfViewer {
                 .update(transform, &engine.input, camera.fov, frame.dt);
         }
 
-        if self.vignette_breathing{
+        if self.vignette_breathing {
             let bpm = 30.0;
             let period = 60.0 / bpm;
             let t = engine.time % period;
@@ -446,7 +446,6 @@ impl AppHandler for GltfViewer {
             let pulse = (-t * 3.0).exp();
             let vignette_intensity = 0.0 + 0.5 * pulse;
             scene.tone_mapping.uniforms.write().vignette_intensity = vignette_intensity;
-
         }
 
         // 4. 构建 UI (requires winit window for egui-winit integration)
@@ -1325,7 +1324,7 @@ impl GltfViewer {
                                 // Strength
                                 ui.horizontal(|ui| {
                                     ui.label("Strength:");
-                                    let mut strength = scene.bloom.strength;
+                                    let mut strength = scene.bloom.strength();
                                     if ui
                                         .add(
                                             egui::Slider::new(&mut strength, 0.0..=1.0)
@@ -1341,7 +1340,7 @@ impl GltfViewer {
                                 // Radius
                                 ui.horizontal(|ui| {
                                     ui.label("Radius:");
-                                    let mut radius = scene.bloom.radius;
+                                    let mut radius = scene.bloom.radius();
                                     if ui
                                         .add(
                                             egui::Slider::new(&mut radius, 0.001..=0.05)

@@ -92,9 +92,14 @@ pub struct PreparedSkyboxDraw {
 }
 
 impl PreparedSkyboxDraw {
-    pub fn draw<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
+    pub fn draw<'a>(
+        &'a self,
+        pass: &mut wgpu::RenderPass<'a>,
+        global_bind_group: &'a wgpu::BindGroup,
+    ) {
         pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind_group, &[]);
+        pass.set_bind_group(0, global_bind_group, &[]);
+        pass.set_bind_group(1, &self.bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
 }

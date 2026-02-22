@@ -103,24 +103,24 @@ impl AppHandler for BloomDemo {
 
         // Bloom strength: 1 = decrease, 2 = increase
         if input.get_key_down(Key::Key1) {
-            let new_val = (scene.bloom.strength - 0.01).max(0.0);
+            let new_val = (scene.bloom.strength() - 0.01).max(0.0);
             scene.bloom.set_strength(new_val);
             println!("Bloom strength: {:.3}", new_val);
         }
         if input.get_key_down(Key::Key2) {
-            let new_val = (scene.bloom.strength + 0.01).min(1.0);
+            let new_val = (scene.bloom.strength() + 0.01).min(1.0);
             scene.bloom.set_strength(new_val);
             println!("Bloom strength: {:.3}", new_val);
         }
 
         // Bloom radius: 3 = decrease, 4 = increase
         if input.get_key_down(Key::Key3) {
-            let new_val = (scene.bloom.radius - 0.001).max(0.001);
+            let new_val = (scene.bloom.radius() - 0.001).max(0.001);
             scene.bloom.set_radius(new_val);
             println!("Bloom radius: {:.4}", new_val);
         }
         if input.get_key_down(Key::Key4) {
-            let new_val = (scene.bloom.radius + 0.001).min(0.05);
+            let new_val = (scene.bloom.radius() + 0.001).min(0.05);
             scene.bloom.set_radius(new_val);
             println!("Bloom radius: {:.4}", new_val);
         }
@@ -149,7 +149,8 @@ impl AppHandler for BloomDemo {
             let bloom_status = if scene.bloom.enabled {
                 format!(
                     "ON s={:.3} r={:.4}",
-                    scene.bloom.strength, scene.bloom.radius
+                    scene.bloom.strength(),
+                    scene.bloom.radius()
                 )
             } else {
                 "OFF".to_string()
