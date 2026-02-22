@@ -27,7 +27,7 @@ use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 ///
 /// # Conditional Execution
 /// - Only executed if `render_lists.use_transmission` is true
-/// - Only executed if HDR mode is enabled (Transmission requires HDR buffer)
+/// - Only executed in `HighFidelity` path (Transmission requires HDR buffer)
 /// - Only executed if `transmission_view` exists
 pub struct TransmissionCopyPass;
 
@@ -57,9 +57,9 @@ impl RenderNode for TransmissionCopyPass {
             return;
         }
 
-        // Transmission requires HDR mode
-        if !ctx.wgpu_ctx.enable_hdr {
-            log::warn!("TransmissionCopyPass: Transmission requires HDR mode, skipping");
+        // Transmission requires HighFidelity path
+        if !ctx.wgpu_ctx.render_path.supports_post_processing() {
+            log::warn!("TransmissionCopyPass: Transmission requires HighFidelity path, skipping");
             return;
         }
 

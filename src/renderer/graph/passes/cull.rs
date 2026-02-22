@@ -171,7 +171,7 @@ impl SceneCullPass {
                             options.add_define("ALPHA_TO_COVERAGE", "1");
                         }
 
-                        if ctx.wgpu_ctx.enable_hdr {
+                        if ctx.wgpu_ctx.render_path.supports_post_processing() {
                             options.add_define("HDR", "1");
                         }
 

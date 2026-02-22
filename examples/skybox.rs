@@ -48,8 +48,8 @@ struct SkyboxDemo {
 
     /// Current background mode
     mode: DemoMode,
-    /// Whether HDR path is active
-    hdr_enabled: bool,
+    /// Active render path (cached from renderer)
+    render_path: RenderPath,
     /// HDR environment texture handle (reused for equirectangular skybox)
     env_texture: TextureHandle,
     /// Cube map texture handle (if using CubeMap mode)
@@ -77,17 +77,17 @@ impl SkyboxDemo {
     }
 
     fn print_help() {
-        println!("╔══════════════════════════════════════╗");
-        println!("║          Skybox Demo Controls        ║");
-        println!("╠══════════════════════════════════════╣");
-        println!("║  1 — Solid color (hardware clear)    ║");
-        println!("║  2 — Gradient (procedural sky)       ║");
-        println!("║  3 — Planar Texture                  ║");
-        println!("║  4 — Equirectangular HDR panorama    ║");
-        println!("║  5 — Cubemap Skybox                  ║");
-        println!("║  H — Toggle HDR / LDR path           ║");
-        println!("║  Mouse drag / Scroll — Orbit / Zoom  ║");
-        println!("╚══════════════════════════════════════╝");
+        println!("╔═══════════════════════════════════════╗");
+        println!("║          Skybox Demo Controls         ║");
+        println!("╠═══════════════════════════════════════╣");
+        println!("║  1 — Solid color (hardware clear)     ║");
+        println!("║  2 — Gradient (procedural sky)        ║");
+        println!("║  3 — Planar Texture                   ║");
+        println!("║  4 — Equirectangular HDR panorama     ║");
+        println!("║  5 — Cubemap Skybox                   ║");
+        println!("║  H — Toggle HighFidelity/BasicForward ║");
+        println!("║  Mouse drag / Scroll — Orbit / Zoom   ║");
+        println!("╚═══════════════════════════════════════╝");
     }
 }
 
@@ -142,7 +142,7 @@ impl AppHandler for SkyboxDemo {
             .look_at(Vec3::ZERO);
         scene.active_camera = Some(cam_node);
 
-        let hdr_enabled = engine.renderer.is_hdr_enabled();
+        let render_path = engine.renderer.render_path().clone();
 
         Self::print_help();
 
@@ -151,7 +151,7 @@ impl AppHandler for SkyboxDemo {
             controls: OrbitControls::new(Vec3::new(0.0, 0.0, 3.5), Vec3::ZERO),
             fps_counter: FpsCounter::new(),
             mode,
-            hdr_enabled,
+            render_path,
             env_texture,
             cube_env_texture,
         };
@@ -196,11 +196,19 @@ impl AppHandler for SkyboxDemo {
             println!("[Mode] → {}", self.mode.label());
         }
 
-        // --- HDR / LDR toggle ---
+        // --- HighFidelity / BasicForward toggle ---
         if engine.input.get_key_down(Key::H) {
-            self.hdr_enabled = !self.hdr_enabled;
-            engine.renderer.set_hdr_enabled(self.hdr_enabled);
-            let path = if self.hdr_enabled { "HDR" } else { "LDR" };
+            self.render_path = if self.render_path.supports_post_processing() {
+                RenderPath::BasicForward { msaa_samples: 1 }
+            } else {
+                RenderPath::HighFidelity
+            };
+            engine.renderer.set_render_path(self.render_path.clone());
+            let path = if self.render_path.supports_post_processing() {
+                "HighFidelity"
+            } else {
+                "BasicForward"
+            };
             println!("[Path] → {path}");
         }
 
@@ -212,7 +220,11 @@ impl AppHandler for SkyboxDemo {
 
         // --- Title bar ---
         if let Some(fps) = self.fps_counter.update() {
-            let path = if self.hdr_enabled { "HDR" } else { "LDR" };
+            let path = if self.render_path.supports_post_processing() {
+                "HighFidelity"
+            } else {
+                "BasicForward"
+            };
             window.set_title(&format!(
                 "Skybox Demo — {} | {} | FPS: {fps:.0}",
                 self.mode.label(),

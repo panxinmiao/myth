@@ -575,7 +575,7 @@ impl RenderNode for SkyboxPass {
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         // In LDR mode, skybox is drawn inline by SimpleForwardPass
         // (between opaque and transparent draws within a single render pass).
-        if !ctx.wgpu_ctx.enable_hdr {
+        if !ctx.wgpu_ctx.render_path.supports_post_processing() {
             return;
         }
 

@@ -206,7 +206,7 @@ struct GltfViewer {
 
     light_node: NodeHandle,
     /// HDR rendering toggle (cached from renderer)
-    hdr_enabled: bool,
+    render_path: RenderPath,
     /// MSAA sample count (cached from renderer)
     msaa_samples: u32,
 
@@ -350,8 +350,8 @@ impl AppHandler for GltfViewer {
             // 渲染设置
             ibl_enabled: true,
             light_node: light_node,
-            hdr_enabled: true, // Default: HighFidelity path
-            msaa_samples: 1,   // MSAA disabled in HighFidelity mode
+            render_path: RenderPath::default(), // Default: HighFidelity path
+            msaa_samples: 1,                    // MSAA disabled in HighFidelity mode
 
             vignette_breathing: false,
 
@@ -1077,17 +1077,38 @@ impl GltfViewer {
 
                         // ===== 渲染设置 =====
                         CollapsingHeader::new("⚙ Rendering").show(ui, |ui| {
-                            // --- HDR 渲染 ---
-                            if ui
-                                .checkbox(&mut self.hdr_enabled, "HDR Rendering")
-                                .changed()
-                            {
-                                renderer.set_hdr_enabled(self.hdr_enabled);
-                            }
+                            // --- Render Path 选择 ---
+                            let is_hf = self.render_path.supports_post_processing();
+                            ui.horizontal(|ui| {
+                                ui.label("Render Path:");
+                                egui::ComboBox::from_id_salt("render_path_selector")
+                                    .width(140.0)
+                                    .selected_text(if is_hf {
+                                        "High Fidelity"
+                                    } else {
+                                        "Basic Forward"
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        if ui.selectable_label(is_hf, "High Fidelity").clicked()
+                                            && !is_hf
+                                        {
+                                            self.render_path = RenderPath::HighFidelity;
+                                            renderer.set_render_path(self.render_path.clone());
+                                        }
+                                        if ui.selectable_label(!is_hf, "Basic Forward").clicked()
+                                            && is_hf
+                                        {
+                                            self.render_path = RenderPath::BasicForward {
+                                                msaa_samples: self.msaa_samples,
+                                            };
+                                            renderer.set_render_path(self.render_path.clone());
+                                        }
+                                    });
+                            });
 
                             ui.separator();
 
-                            if !self.hdr_enabled {
+                            if !is_hf {
                                 // --- MSAA 抗锯齿 ---
                                 ui.horizontal(|ui| {
                                     ui.label("MSAA:");
@@ -1122,33 +1143,31 @@ impl GltfViewer {
                             } else {
                                 // ===== FXAA 抗锯齿 =====
                                 ui.horizontal(|ui| {
-                                    ui.add_enabled_ui(self.hdr_enabled, |ui| {
-                                        let mut fxaa_enabled = scene.fxaa.enabled;
-                                        if ui.checkbox(&mut fxaa_enabled, "FXAA").changed() {
-                                            scene.fxaa.set_enabled(fxaa_enabled);
-                                        }
+                                    let mut fxaa_enabled = scene.fxaa.enabled;
+                                    if ui.checkbox(&mut fxaa_enabled, "FXAA").changed() {
+                                        scene.fxaa.set_enabled(fxaa_enabled);
+                                    }
 
-                                        ui.add_enabled_ui(fxaa_enabled, |ui| {
-                                            ui.horizontal(|ui| {
-                                                ui.label("Quality:");
-                                                let current_quality = scene.fxaa.quality();
-                                                egui::ComboBox::from_id_salt("fxaa_quality")
-                                                    .width(100.0)
-                                                    .selected_text(current_quality.name())
-                                                    .show_ui(ui, |ui| {
-                                                        for quality in FxaaQuality::all() {
-                                                            if ui
-                                                                .selectable_label(
-                                                                    current_quality == *quality,
-                                                                    quality.name(),
-                                                                )
-                                                                .clicked()
-                                                            {
-                                                                scene.fxaa.set_quality(*quality);
-                                                            }
+                                    ui.add_enabled_ui(fxaa_enabled, |ui| {
+                                        ui.horizontal(|ui| {
+                                            ui.label("Quality:");
+                                            let current_quality = scene.fxaa.quality();
+                                            egui::ComboBox::from_id_salt("fxaa_quality")
+                                                .width(100.0)
+                                                .selected_text(current_quality.name())
+                                                .show_ui(ui, |ui| {
+                                                    for quality in FxaaQuality::all() {
+                                                        if ui
+                                                            .selectable_label(
+                                                                current_quality == *quality,
+                                                                quality.name(),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            scene.fxaa.set_quality(*quality);
                                                         }
-                                                    });
-                                            });
+                                                    }
+                                                });
                                         });
                                     });
                                 });
@@ -1199,9 +1218,9 @@ impl GltfViewer {
 
                             ui.separator();
 
-                            if self.hdr_enabled {
-                                // --- Tone Mapping 设置 (仅在 HDR 模式下可用) ---
-                                ui.add_enabled_ui(self.hdr_enabled, |ui| {
+                            if is_hf {
+                                // --- Tone Mapping 设置 (仅在 HighFidelity 模式下可用) ---
+                                ui.add_enabled_ui(true, |ui| {
                                     ui.label("Tone Mapping:");
 
                                     // 模式选择
@@ -1352,8 +1371,8 @@ impl GltfViewer {
 
                                 // ===== Bloom 后处理 =====
 
-                                // 开关 (always available when HDR is on)
-                                ui.add_enabled_ui(self.hdr_enabled, |ui| {
+                                // 开关 (always available when HighFidelity is on)
+                                ui.add_enabled_ui(true, |ui| {
                                     let mut bloom_enabled = scene.bloom.enabled;
                                     if ui.checkbox(&mut bloom_enabled, "Enable Bloom").changed() {
                                         scene.bloom.set_enabled(bloom_enabled);
@@ -1362,7 +1381,7 @@ impl GltfViewer {
 
                                 let bloom_enabled = scene.bloom.enabled;
 
-                                ui.add_enabled_ui(self.hdr_enabled && bloom_enabled, |ui| {
+                                ui.add_enabled_ui(bloom_enabled, |ui| {
                                     // Strength
                                     ui.horizontal(|ui| {
                                         ui.label("Strength:");

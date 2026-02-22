@@ -34,8 +34,6 @@ pub struct WgpuContext {
 
     pub msaa_samples: u32,
 
-    pub enable_hdr: bool,
-
     /// The active render path. Stored for runtime branching in the frame graph.
     pub render_path: RenderPath,
 
@@ -137,7 +135,6 @@ impl WgpuContext {
             depth_format: settings.depth_format,
             surface_view_format: view_format,
             msaa_samples: settings.msaa_samples(),
-            enable_hdr: settings.is_hdr(),
             render_path: settings.path.clone(),
             pipeline_settings_version: 0,
         })
