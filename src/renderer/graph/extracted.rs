@@ -329,7 +329,7 @@ impl ExtractedScene {
 
     /// Extract environment data
     fn extract_environment(&mut self, scene: &Scene) {
-        self.background = scene.background.clone();
+        self.background = scene.background.mode.clone();
         self.scene_defines = scene.shader_defines.clone();
         self.scene_id = scene.id;
         self.envvironment = scene.environment.clone();

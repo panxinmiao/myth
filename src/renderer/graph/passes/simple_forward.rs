@@ -192,7 +192,7 @@ impl RenderNode for SimpleForwardPass {
         if let Some(skybox) = &ctx.render_lists.prepared_skybox {
             let raw = tracked_pass.raw_pass();
 
-            skybox.draw(raw);
+            skybox.draw(raw, gpu_global_bind_group);
 
             // Invalidate all tracked state — the skybox used a completely
             // different pipeline and bind group layout at slot 0.

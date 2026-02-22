@@ -41,6 +41,7 @@
 
 use std::borrow::Cow;
 
+use crate::define_gpu_data_struct;
 use crate::render::RenderNode;
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
@@ -49,30 +50,21 @@ use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareCont
 use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTextureId};
 use crate::renderer::pipeline::ShaderCompilationOptions;
 use crate::renderer::pipeline::shader_gen::ShaderGenerator;
+use crate::resources::WgslType;
+use crate::resources::bloom::{CompositeUniforms, UpsampleUniforms};
+use crate::resources::buffer::CpuBuffer;
+use crate::resources::uniforms::{UniformArray, WgslStruct};
 
-/// GPU uniform data for the downsample shader.
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct DownsampleUniforms {
-    use_karis_average: u32,
-    _pad: [u32; 3],
-}
-
-/// GPU uniform data for the upsample shader.
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct UpsampleUniforms {
-    filter_radius: f32,
-    _pad: [u32; 3],
-}
-
-/// GPU uniform data for the composite shader.
-#[repr(C)]
-#[derive(Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
-struct CompositeUniforms {
-    bloom_strength: f32,
-    _pad: [u32; 3],
-}
+define_gpu_data_struct!(
+    /// GPU uniform data for the downsample shader.
+    ///
+    /// This struct stays in the pass because the two static buffers (karis on/off)
+    /// are pass-internal implementation details, not user-facing settings.
+    struct DownsampleUniforms {
+        pub use_karis_average: u32,
+        pub(crate) __pad: UniformArray<u32, 3>,
+    }
+);
 
 /// Physically-based bloom post-processing pass.
 ///
@@ -100,18 +92,12 @@ pub struct BloomPass {
     // === Shared Resources ===
     sampler: Tracked<wgpu::Sampler>,
 
-    /// Static uniform buffer with `use_karis_average = 1`. Created once,
-    /// never written again after initialization.
-    buffer_karis_on: Tracked<wgpu::Buffer>,
-    /// Static uniform buffer with `use_karis_average = 0`. Created once,
-    /// never written again after initialization.
-    buffer_karis_off: Tracked<wgpu::Buffer>,
-    /// Dynamic uniform buffer for upsample `filter_radius`. Written only
-    /// when `BloomSettings.version` changes.
-    upsample_uniform_buffer: Tracked<wgpu::Buffer>,
-    /// Dynamic uniform buffer for composite `bloom_strength`. Written only
-    /// when `BloomSettings.version` changes.
-    composite_uniform_buffer: Tracked<wgpu::Buffer>,
+    /// Static uniform buffer with `use_karis_average = 1`. Written once via
+    /// `CpuBuffer`, synced automatically by `ensure_buffer_id`.
+    buffer_karis_on: CpuBuffer<DownsampleUniforms>,
+    /// Static uniform buffer with `use_karis_average = 0`. Written once via
+    /// `CpuBuffer`, synced automatically by `ensure_buffer_id`.
+    buffer_karis_off: CpuBuffer<DownsampleUniforms>,
 
     // === Mip Chain (allocated from TransientTexturePool each frame) ===
     /// Handle to the bloom mip chain texture in the transient pool.
@@ -135,9 +121,6 @@ pub struct BloomPass {
     composite_bind_group: Option<wgpu::BindGroup>,
 
     output_view: Option<Tracked<wgpu::TextureView>>,
-
-    // === Version Tracking ===
-    last_settings_version: u64,
 
     // === Runtime State (set during prepare, used during run) ===
     enabled: bool,
@@ -274,35 +257,22 @@ impl BloomPass {
             ..Default::default()
         });
 
-        // --- Static Karis uniform buffers (written once at creation) ---
-        let buffer_karis_on = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Bloom Karis On"),
-            size: std::mem::size_of::<DownsampleUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        // --- Uniform Buffers via CpuBuffer<T> (auto-managed version tracking + GPU sync) ---
+        let karis_on_data = DownsampleUniforms {
+            use_karis_average: 1,
+            ..Default::default()
+        };
+        let buffer_karis_on = CpuBuffer::new(
+            karis_on_data,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            Some("Bloom Karis On"),
+        );
 
-        let buffer_karis_off = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Bloom Karis Off"),
-            size: std::mem::size_of::<DownsampleUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        // --- Dynamic Uniform Buffers ---
-        let upsample_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Bloom Upsample Uniforms"),
-            size: std::mem::size_of::<UpsampleUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
-
-        let composite_uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Bloom Composite Uniforms"),
-            size: std::mem::size_of::<CompositeUniforms>() as u64,
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        });
+        let buffer_karis_off = CpuBuffer::new(
+            DownsampleUniforms::default(), // use_karis_average = 0 by default
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            Some("Bloom Karis Off"),
+        );
 
         Self {
             downsample_pipeline: None,
@@ -314,10 +284,8 @@ impl BloomPass {
             composite_layout: Tracked::new(composite_layout),
 
             sampler: Tracked::new(sampler),
-            buffer_karis_on: Tracked::new(buffer_karis_on),
-            buffer_karis_off: Tracked::new(buffer_karis_off),
-            upsample_uniform_buffer: Tracked::new(upsample_uniform_buffer),
-            composite_uniform_buffer: Tracked::new(composite_uniform_buffer),
+            buffer_karis_on,
+            buffer_karis_off,
 
             bloom_texture_id: None,
             current_mip_count: 0,
@@ -329,29 +297,8 @@ impl BloomPass {
 
             output_view: None,
 
-            last_settings_version: u64::MAX,
             enabled: false,
         }
-    }
-
-    // =========================================================================
-    // One-time Initialization (called once in first prepare)
-    // =========================================================================
-
-    /// Writes the two static Karis uniform buffers. Called exactly once during
-    /// the first `prepare` when we have access to the queue.
-    fn init_static_buffers(&self, queue: &wgpu::Queue) {
-        let on = DownsampleUniforms {
-            use_karis_average: 1,
-            _pad: [0; 3],
-        };
-        queue.write_buffer(&self.buffer_karis_on, 0, bytemuck::bytes_of(&on));
-
-        let off = DownsampleUniforms {
-            use_karis_average: 0,
-            _pad: [0; 3],
-        };
-        queue.write_buffer(&self.buffer_karis_off, 0, bytemuck::bytes_of(&off));
     }
 
     // =========================================================================
@@ -363,11 +310,14 @@ impl BloomPass {
             return;
         }
 
-        let options = ShaderCompilationOptions::default();
-
         // --- Downsample pipeline ---
+        let mut ds_options = ShaderCompilationOptions::default();
+        ds_options.add_define(
+            "struct_definitions",
+            DownsampleUniforms::wgsl_struct_def("DownsampleUniforms").as_str(),
+        );
         let downsample_shader_code =
-            ShaderGenerator::generate_shader("", "", "passes/bloom_downsample", &options);
+            ShaderGenerator::generate_shader("", "", "passes/bloom_downsample", &ds_options);
         let downsample_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Bloom Downsample Shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Owned(downsample_shader_code)),
@@ -409,8 +359,13 @@ impl BloomPass {
         ));
 
         // --- Upsample pipeline (additive blend) ---
+        let mut us_options = ShaderCompilationOptions::default();
+        us_options.add_define(
+            "struct_definitions",
+            UpsampleUniforms::wgsl_struct_def("UpsampleUniforms").as_str(),
+        );
         let upsample_shader_code =
-            ShaderGenerator::generate_shader("", "", "passes/bloom_upsample", &options);
+            ShaderGenerator::generate_shader("", "", "passes/bloom_upsample", &us_options);
         let upsample_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Bloom Upsample Shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Owned(upsample_shader_code)),
@@ -460,8 +415,13 @@ impl BloomPass {
         ));
 
         // --- Composite pipeline ---
+        let mut comp_options = ShaderCompilationOptions::default();
+        comp_options.add_define(
+            "struct_definitions",
+            CompositeUniforms::wgsl_struct_def("CompositeUniforms").as_str(),
+        );
         let composite_shader_code =
-            ShaderGenerator::generate_shader("", "", "passes/bloom_composite", &options);
+            ShaderGenerator::generate_shader("", "", "passes/bloom_composite", &comp_options);
         let composite_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Bloom Composite Shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Owned(composite_shader_code)),
@@ -562,6 +522,14 @@ impl BloomPass {
         // Downsample: mip[i] → mip[i+1], always with Karis OFF
         self.downsample_bind_groups.truncate(1); // keep [0] (first DS, already set)
 
+        // Look up GPU buffer for karis_off (ensure_buffer_id already called in prepare)
+        let karis_off_cpu_id = self.buffer_karis_off.id();
+        let karis_off_gpu = ctx
+            .resource_manager
+            .gpu_buffers
+            .get(&karis_off_cpu_id)
+            .expect("Bloom karis_off GPU buffer must exist after ensure");
+
         for i in 0..(mip_count - 1) as usize {
             let source_mip = i;
             let bg = ctx
@@ -583,7 +551,7 @@ impl BloomPass {
                         },
                         wgpu::BindGroupEntry {
                             binding: 2,
-                            resource: self.buffer_karis_off.as_entire_binding(),
+                            resource: karis_off_gpu.buffer.as_entire_binding(),
                         },
                     ],
                 });
@@ -591,6 +559,13 @@ impl BloomPass {
         }
 
         // Upsample: mip[i+1] → mip[i] (additive blend into target)
+        let upsample_cpu_id = ctx.scene.bloom.upsample_uniforms.id();
+        let upsample_gpu = ctx
+            .resource_manager
+            .gpu_buffers
+            .get(&upsample_cpu_id)
+            .expect("Bloom upsample GPU buffer must exist after ensure");
+
         self.upsample_bind_groups.clear();
         for i in 0..(mip_count - 1) as usize {
             let source_mip = i + 1;
@@ -613,7 +588,7 @@ impl BloomPass {
                         },
                         wgpu::BindGroupEntry {
                             binding: 2,
-                            resource: self.upsample_uniform_buffer.as_entire_binding(),
+                            resource: upsample_gpu.buffer.as_entire_binding(),
                         },
                     ],
                 });
@@ -639,24 +614,35 @@ impl BloomPass {
 
         let input_view = ctx.get_resource_view(GraphResource::SceneColorInput);
 
-        // 1. 准备 Cache Key 所需的 ID
+        // 1. Prepare Cache Key IDs (GPU buffer IDs from resource manager)
         let layout_id = self.downsample_layout.id();
-
         let input_view_id = input_view.id();
         let sampler_id = self.sampler.id();
-        let buffer_id = karis_buffer.id();
 
-        // 2. 构建 Key
+        let karis_cpu_id = karis_buffer.id();
+        let karis_gpu_buffer_id = ctx
+            .resource_manager
+            .gpu_buffers
+            .get(&karis_cpu_id)
+            .expect("Bloom karis GPU buffer must exist after ensure")
+            .id;
+
+        // 2. Build Key
         let key = BindGroupKey::new(layout_id)
             .with_resource(input_view_id)
             .with_resource(sampler_id)
-            .with_resource(buffer_id);
+            .with_resource(karis_gpu_buffer_id);
 
-        // 3. 从缓存获取或创建
-
+        // 3. Get from cache or create
         if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
             cached.clone()
         } else {
+            let karis_gpu = ctx
+                .resource_manager
+                .gpu_buffers
+                .get(&karis_cpu_id)
+                .expect("Bloom karis GPU buffer must exist");
+
             let new_bg = ctx
                 .wgpu_ctx
                 .device
@@ -674,7 +660,7 @@ impl BloomPass {
                         },
                         wgpu::BindGroupEntry {
                             binding: 2,
-                            resource: karis_buffer.as_entire_binding(), // 这个来自 self，不冲突
+                            resource: karis_gpu.buffer.as_entire_binding(),
                         },
                     ],
                 });
@@ -691,26 +677,37 @@ impl BloomPass {
             .expect("bloom_texture_id must be set before composite");
         let bloom_view = ctx.transient_pool.get_mip_view(bloom_id, 0);
 
-        // 1. 准备 Cache Key 所需的 ID
+        // 1. Prepare Cache Key IDs
         let layout_id = self.composite_layout.id();
-
         let input_view_id = input_view.id();
         let bloom_view_id = bloom_view.id();
         let sampler_id = self.sampler.id();
-        let buffer_id = self.composite_uniform_buffer.id();
 
-        // 2. 构建 Key
+        let composite_cpu_id = ctx.scene.bloom.composite_uniforms.id();
+        let composite_gpu_buffer_id = ctx
+            .resource_manager
+            .gpu_buffers
+            .get(&composite_cpu_id)
+            .expect("Bloom composite GPU buffer must exist after ensure")
+            .id;
+
+        // 2. Build Key
         let key = BindGroupKey::new(layout_id)
             .with_resource(input_view_id)
             .with_resource(bloom_view_id)
             .with_resource(sampler_id)
-            .with_resource(buffer_id);
+            .with_resource(composite_gpu_buffer_id);
 
-        // 3. 从缓存获取或创建
-
+        // 3. Get from cache or create
         if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
             cached.clone()
         } else {
+            let composite_gpu = ctx
+                .resource_manager
+                .gpu_buffers
+                .get(&composite_cpu_id)
+                .expect("Bloom composite GPU buffer must exist");
+
             let new_bg = ctx
                 .wgpu_ctx
                 .device
@@ -732,7 +729,7 @@ impl BloomPass {
                         },
                         wgpu::BindGroupEntry {
                             binding: 3,
-                            resource: self.composite_uniform_buffer.as_entire_binding(),
+                            resource: composite_gpu.buffer.as_entire_binding(),
                         },
                     ],
                 });
@@ -760,20 +757,27 @@ impl RenderNode for BloomPass {
         self.enabled = true;
 
         let device = &ctx.wgpu_ctx.device;
-        let queue = &ctx.wgpu_ctx.queue;
 
         // 1. Ensure pipelines exist
         self.ensure_pipelines(device);
 
-        // 2. One-time: initialize static Karis buffers (safe to call every
-        //    frame — the guard is the version sentinel at u64::MAX)
-        if self.last_settings_version == u64::MAX {
-            self.init_static_buffers(queue);
-        }
+        // 2. Ensure all GPU buffers are synced
+        //    - Static karis buffers: written once at creation, only synced on first frame
+        //    - Upsample/composite: owned by BloomSettings, version auto-tracked by CpuBuffer.
+        //      User setters (set_radius, set_strength) call write() which bumps the version;
+        //      ensure_buffer_id only uploads to GPU when the version has changed.
+        ctx.resource_manager.ensure_buffer_id(&self.buffer_karis_on);
+        ctx.resource_manager
+            .ensure_buffer_id(&self.buffer_karis_off);
+        ctx.resource_manager
+            .ensure_buffer_id(&ctx.scene.bloom.upsample_uniforms);
+        ctx.resource_manager
+            .ensure_buffer_id(&ctx.scene.bloom.composite_uniforms);
 
-        // 3. Allocate mip chain from transient pool and rebuild bind groups
+        // 4. Allocate mip chain from transient pool and rebuild bind groups
         let (source_w, source_h) = ctx.wgpu_ctx.size();
-        self.allocate_bloom_texture(ctx, source_w, source_h, settings.max_mip_levels);
+        let max_mip_levels = ctx.scene.bloom.max_mip_levels;
+        self.allocate_bloom_texture(ctx, source_w, source_h, max_mip_levels);
 
         self.composite_bind_group = Some(self.get_composite_bind_group(ctx));
 
@@ -781,34 +785,6 @@ impl RenderNode for BloomPass {
             ctx.get_resource_view(GraphResource::SceneColorOutput)
                 .clone(),
         );
-
-        let settings = &ctx.scene.bloom;
-        // 4. Upload dynamic uniforms if settings changed
-        if self.last_settings_version != settings.version() {
-            self.last_settings_version = settings.version();
-
-            // Upsample uniforms
-            let upsample = UpsampleUniforms {
-                filter_radius: settings.radius,
-                _pad: [0; 3],
-            };
-            queue.write_buffer(
-                &self.upsample_uniform_buffer,
-                0,
-                bytemuck::bytes_of(&upsample),
-            );
-
-            // Composite uniforms
-            let composite = CompositeUniforms {
-                bloom_strength: settings.strength,
-                _pad: [0; 3],
-            };
-            queue.write_buffer(
-                &self.composite_uniform_buffer,
-                0,
-                bytemuck::bytes_of(&composite),
-            );
-        }
 
         // Flip ping-pong so downstream passes see our output as their input
         ctx.flip_scene_color();

@@ -57,7 +57,7 @@ pub mod transform_system;
 pub mod wrapper;
 
 // Re-export common types
-pub use background::{BackgroundMapping, BackgroundMode};
+pub use background::{BackgroundMapping, BackgroundMode, BackgroundSettings, SkyboxParamsUniforms};
 pub use camera::{Camera, ProjectionType};
 pub use light::{Light, LightKind};
 pub use node::Node;

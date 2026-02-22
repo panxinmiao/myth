@@ -9,15 +9,63 @@
 //! bloom, this approach naturally preserves energy and produces realistic results
 //! in HDR pipelines.
 //!
+//! # GPU Uniform Structs
+//!
+//! - [`UpsampleUniforms`]: Controls the tent filter radius during upsampling.
+//! - [`CompositeUniforms`]: Controls bloom strength during final composition.
+//!
+//! These structs are defined here (rather than in the render pass) so that
+//! `BloomSettings` can own the `CpuBuffer<T>` instances. User-facing setters
+//! write directly into the buffers via `CpuBuffer::write()`, which automatically
+//! tracks the data version. The render pass only calls `ensure_buffer_id()` and
+//! never writes to the buffers itself; GPU sync happens only when the version
+//! has actually changed.
+//!
 //! # Reference
 //!
 //! - [Physically Based Bloom (LearnOpenGL)](https://learnopengl.com/Guest-Articles/2022/Phys.-Based-Bloom)
 //! - *Next Generation Post Processing in Call of Duty: Advanced Warfare* (SIGGRAPH 2014)
 
-/// Bloom post-processing configuration (pure data + version control).
+use crate::define_gpu_data_struct;
+use crate::resources::WgslType;
+use crate::resources::buffer::CpuBuffer;
+use crate::resources::uniforms::UniformArray;
+
+// ============================================================================
+// GPU Uniform Structs
+// ============================================================================
+
+define_gpu_data_struct!(
+    /// GPU uniform data for the upsample shader.
+    ///
+    /// Controls the tent filter radius used during the upsampling phase.
+    struct UpsampleUniforms {
+        pub filter_radius: f32,
+        pub(crate) __pad: UniformArray<u32, 3>,
+    }
+);
+
+define_gpu_data_struct!(
+    /// GPU uniform data for the composite shader.
+    ///
+    /// Controls how much bloom contributes to the final image.
+    struct CompositeUniforms {
+        pub bloom_strength: f32,
+        pub(crate) __pad: UniformArray<u32, 3>,
+    }
+);
+
+// ============================================================================
+// BloomSettings
+// ============================================================================
+
+/// Bloom post-processing configuration (pure data + automatic version control).
 ///
 /// This struct holds all parameters for the physically-based bloom pass.
-/// Changes are tracked via an internal version number for efficient GPU sync.
+/// Dynamic GPU uniform data lives in `CpuBuffer<T>` fields; the internal
+/// version is automatically bumped when setter methods modify values via
+/// `CpuBuffer::write()`. The render pass calls `ensure_buffer_id()` which
+/// only performs a GPU upload when the version has changed.
 ///
 /// # Usage
 ///
@@ -35,14 +83,6 @@ pub struct BloomSettings {
     /// Whether bloom is enabled.
     pub enabled: bool,
 
-    /// Bloom intensity multiplier applied during final composition.
-    ///
-    /// Controls how much the bloom contributes to the final image.
-    /// A value of 0.0 disables bloom; typical values are 0.01–0.1.
-    ///
-    /// Default: `0.04`
-    pub strength: f32,
-
     /// Maximum number of mip levels in the downsample/upsample chain.
     ///
     /// More mip levels produce wider bloom at the cost of additional passes.
@@ -51,14 +91,6 @@ pub struct BloomSettings {
     ///
     /// Default: `8`
     pub max_mip_levels: u32,
-
-    /// Filter radius for the upsampling tent filter, in UV-space coordinates.
-    ///
-    /// Larger values produce softer, wider bloom. Very small values
-    /// can produce aliasing artifacts.
-    ///
-    /// Default: `0.005`
-    pub radius: f32,
 
     /// Whether to apply Karis average on the first downsample pass.
     ///
@@ -69,19 +101,41 @@ pub struct BloomSettings {
     /// Default: `true`
     pub karis_average: bool,
 
-    /// Internal version number (for change tracking).
-    version: u64,
+    /// Upsample filter uniforms (`filter_radius`).
+    /// Updated via `set_radius()` — version tracking is automatic.
+    pub upsample_uniforms: CpuBuffer<UpsampleUniforms>,
+
+    /// Composite blend uniforms (`bloom_strength`).
+    /// Updated via `set_strength()` — version tracking is automatic.
+    pub composite_uniforms: CpuBuffer<CompositeUniforms>,
 }
 
 impl Default for BloomSettings {
     fn default() -> Self {
+        let upsample = UpsampleUniforms {
+            filter_radius: 0.005,
+            ..Default::default()
+        };
+
+        let composite = CompositeUniforms {
+            bloom_strength: 0.04,
+            ..Default::default()
+        };
+
         Self {
             enabled: false,
-            strength: 0.04,
             max_mip_levels: 6,
-            radius: 0.005,
             karis_average: true,
-            version: 0,
+            upsample_uniforms: CpuBuffer::new(
+                upsample,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some("Bloom Upsample Uniforms"),
+            ),
+            composite_uniforms: CpuBuffer::new(
+                composite,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some("Bloom Composite Uniforms"),
+            ),
         }
     }
 }
@@ -93,62 +147,48 @@ impl BloomSettings {
         Self::default()
     }
 
-    /// Gets the current version number.
-    ///
-    /// The version is incremented whenever any setting changes,
-    /// allowing render passes to detect when updates are needed.
+    /// Returns the current bloom strength.
     #[inline]
     #[must_use]
-    pub fn version(&self) -> u64 {
-        self.version
+    pub fn strength(&self) -> f32 {
+        self.composite_uniforms.read().bloom_strength
+    }
+
+    /// Returns the current upsample filter radius.
+    #[inline]
+    #[must_use]
+    pub fn radius(&self) -> f32 {
+        self.upsample_uniforms.read().filter_radius
     }
 
     /// Sets whether bloom is enabled.
     pub fn set_enabled(&mut self, enabled: bool) {
-        if self.enabled != enabled {
-            self.enabled = enabled;
-            self.bump_version();
-        }
+        self.enabled = enabled;
     }
 
     /// Sets the bloom strength.
+    ///
+    /// Controls how much the bloom contributes to the final image.
+    /// A value of 0.0 effectively disables bloom; typical values are 0.01–0.1.
     pub fn set_strength(&mut self, strength: f32) {
-        let strength = strength.max(0.0);
-        if (self.strength - strength).abs() > 1e-6 {
-            self.strength = strength;
-            self.bump_version();
-        }
+        self.composite_uniforms.write().bloom_strength = strength.max(0.0);
     }
 
     /// Sets the maximum number of mip levels.
     pub fn set_max_mip_levels(&mut self, levels: u32) {
-        let levels = levels.clamp(1, 16);
-        if self.max_mip_levels != levels {
-            self.max_mip_levels = levels;
-            self.bump_version();
-        }
+        self.max_mip_levels = levels.clamp(1, 16);
     }
 
     /// Sets the upsampling filter radius.
+    ///
+    /// Larger values produce softer, wider bloom. Very small values
+    /// can produce aliasing artifacts.
     pub fn set_radius(&mut self, radius: f32) {
-        let radius = radius.max(0.0);
-        if (self.radius - radius).abs() > 1e-6 {
-            self.radius = radius;
-            self.bump_version();
-        }
+        self.upsample_uniforms.write().filter_radius = radius.max(0.0);
     }
 
     /// Sets whether Karis average is used on the first downsample.
     pub fn set_karis_average(&mut self, enabled: bool) {
-        if self.karis_average != enabled {
-            self.karis_average = enabled;
-            self.bump_version();
-        }
-    }
-
-    /// Manually bumps the version number.
-    #[inline]
-    pub fn bump_version(&mut self) {
-        self.version = self.version.wrapping_add(1);
+        self.karis_average = enabled;
     }
 }

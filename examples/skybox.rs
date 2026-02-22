@@ -59,7 +59,7 @@ struct SkyboxDemo {
 impl SkyboxDemo {
     /// Applies the current `DemoMode` to the scene background.
     fn apply_mode(&self, scene: &mut Scene) {
-        scene.background = match self.mode {
+        scene.background.set_mode(match self.mode {
             DemoMode::SolidColor => BackgroundMode::color(0.1, 0.1, 0.15),
             DemoMode::Gradient => BackgroundMode::gradient(
                 Vec4::new(0.05, 0.05, 0.25, 1.0), // deep blue top
@@ -68,7 +68,7 @@ impl SkyboxDemo {
             DemoMode::Planar => BackgroundMode::planar(self.env_texture, 1.0),
             DemoMode::CubeMap => BackgroundMode::cubemap(self.cube_env_texture, 1.0),
             DemoMode::Equirectangular => BackgroundMode::equirectangular(self.env_texture, 1.0),
-        };
+        });
 
         scene.environment.set_env_map(match self.mode {
             DemoMode::CubeMap => Some(self.cube_env_texture),
