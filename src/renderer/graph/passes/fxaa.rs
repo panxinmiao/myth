@@ -147,10 +147,8 @@ impl FxaaPass {
         let mut options = ShaderCompilationOptions::default();
 
         // Only Low and High need explicit defines; Medium is the default in the shader
-        match self.current_quality {
-            FxaaQuality::Low => options.add_define("FXAA_QUALITY_LOW", "1"),
-            FxaaQuality::High => options.add_define("FXAA_QUALITY_HIGH", "1"),
-            FxaaQuality::Medium => {} // Shader default
+        if self.current_quality != FxaaQuality::Medium {
+            options.add_define(self.current_quality.define_key(), "1");
         }
 
         let shader_code = ShaderGenerator::generate_shader("", "", "passes/fxaa", &options);

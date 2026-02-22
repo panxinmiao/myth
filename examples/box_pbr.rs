@@ -88,7 +88,7 @@ impl AppHandler for PbrBox {
 fn main() -> myth::Result<()> {
     env_logger::init();
     App::new()
-        .with_settings(RenderSettings {
+        .with_settings(RendererSettings {
             vsync: false,
             ..Default::default()
         })

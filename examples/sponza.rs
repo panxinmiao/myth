@@ -95,7 +95,7 @@ fn main() -> myth::Result<()> {
     println!("=== Sponza Lighting Example ===");
 
     App::new()
-        .with_settings(RenderSettings {
+        .with_settings(RendererSettings {
             vsync: false,
             ..Default::default()
         })

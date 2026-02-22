@@ -61,7 +61,7 @@ use winit::window::{Window, WindowId};
 use crate::app::AppHandler;
 use crate::app::window::Window as WindowTrait;
 use crate::engine::{Engine, FrameState};
-use crate::renderer::settings::RenderSettings;
+use crate::renderer::settings::RendererSettings;
 
 pub mod input_adapter;
 
@@ -110,7 +110,7 @@ impl WindowTrait for Window {
 /// ```rust,ignore
 /// App::new()
 ///     .with_title("My 3D Application")
-///     .with_settings(RenderSettings {
+///     .with_settings(RendererSettings {
 ///         vsync: true,
 ///         ..Default::default()
 ///     })
@@ -118,7 +118,7 @@ impl WindowTrait for Window {
 /// ```
 pub struct App {
     title: String,
-    render_settings: RenderSettings,
+    render_settings: RendererSettings,
     #[cfg(target_arch = "wasm32")]
     canvas_id: Option<String>,
 }
@@ -129,7 +129,7 @@ impl App {
     pub fn new() -> Self {
         Self {
             title: "Myth Engine".into(),
-            render_settings: RenderSettings::default(),
+            render_settings: RendererSettings::default(),
             #[cfg(target_arch = "wasm32")]
             canvas_id: None,
         }
@@ -144,7 +144,7 @@ impl App {
 
     /// Sets the render settings.
     #[must_use]
-    pub fn with_settings(mut self, settings: RenderSettings) -> Self {
+    pub fn with_settings(mut self, settings: RendererSettings) -> Self {
         self.render_settings = settings;
         self
     }
@@ -214,7 +214,7 @@ impl Default for App {
 /// event handling, and frame rendering.
 struct AppRunner<H: AppHandler> {
     title: String,
-    render_settings: RenderSettings,
+    render_settings: RendererSettings,
 
     #[cfg(target_arch = "wasm32")]
     canvas_id: Option<String>,
@@ -258,7 +258,7 @@ impl<H: AppHandler> WasmInitState<H> {
 impl<H: AppHandler> AppRunner<H> {
     fn new(
         title: String,
-        render_settings: RenderSettings,
+        render_settings: RendererSettings,
         #[cfg(target_arch = "wasm32")] canvas_id: Option<String>,
     ) -> Self {
         let now = Instant::now();

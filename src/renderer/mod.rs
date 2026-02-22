@@ -69,7 +69,7 @@ use crate::{FrameBuilder, RenderStage};
 use self::core::{ResourceManager, WgpuContext};
 use self::graph::{FrameComposer, RenderFrame};
 use self::pipeline::PipelineCache;
-use self::settings::RenderSettings;
+use self::settings::{RenderPath, RendererSettings};
 
 /// HDR 纹理格式
 ///
@@ -91,7 +91,7 @@ pub const HDR_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16F
 /// 3. Render frames with [`Renderer::begin_frame`]
 /// 4. Clean up with [`Renderer::maybe_prune`]
 pub struct Renderer {
-    settings: RenderSettings,
+    settings: RendererSettings,
     context: Option<RendererState>,
     size: (u32, u32),
 }
@@ -143,7 +143,7 @@ impl Renderer {
     /// This only stores the render settings. GPU resources are
     /// allocated when [`init`](Self::init) is called.
     #[must_use]
-    pub fn new(settings: RenderSettings) -> Self {
+    pub fn new(settings: RendererSettings) -> Self {
         Self {
             settings,
             context: None,
@@ -325,81 +325,83 @@ impl Renderer {
         frame_builder.add_node(RenderStage::ShadowMap, &mut state.shadow_pass);
 
         // ========================================
-        // 3. 路径选择：HDR (PBR Path) vs LDR (Simple Path)
+        // 3. 路径选择：HighFidelity (PBR/HDR Path) vs BasicForward (LDR Path)
         // ========================================
         //
-        // PBR Path: OpaquePass → [TransmissionCopyPass] → TransparentPass → ToneMapPass
-        // Simple Path: SimpleForwardPass (直接输出到 Surface)
+        // HighFidelity: OpaquePass → [TransmissionCopyPass] → TransparentPass → ToneMapPass
+        // BasicForward: SimpleForwardPass (直接输出到 Surface)
         //
-        let use_hdr_path = self.settings.enable_hdr;
+        match &self.settings.path {
+            RenderPath::HighFidelity => {
+                state
+                    .frame_resources
+                    .ensure_transmission_resource(&state.wgpu_ctx.device);
+                // === PBR Path (HDR) ===
 
-        if use_hdr_path {
-            state
-                .frame_resources
-                .ensure_transmission_resource(&state.wgpu_ctx.device);
-            // === PBR Path (HDR) ===
+                // Opaque rendering
+                frame_builder.add_node(RenderStage::Opaque, &mut state.opaque_pass);
 
-            // Opaque rendering
-            frame_builder.add_node(RenderStage::Opaque, &mut state.opaque_pass);
+                // Skybox / Background (after opaque, before transparent)
+                if scene.background.needs_skybox_pass() {
+                    frame_builder.add_node(RenderStage::Skybox, &mut state.skybox_pass);
+                }
 
-            // Skybox / Background (after opaque, before transparent)
-            if scene.background.needs_skybox_pass() {
-                frame_builder.add_node(RenderStage::Skybox, &mut state.skybox_pass);
+                // Transmission copy (conditional)
+                // 注意：TransmissionCopyPass 内部会检查 use_transmission 标志
+                // 如果场景中没有使用 Transmission 的材质，此 Pass 会提前返回
+                frame_builder.add_node(RenderStage::Opaque, &mut state.transmission_copy_pass);
+
+                // Transparent rendering
+                frame_builder.add_node(RenderStage::Transparent, &mut state.transparent_pass);
+
+                // Bloom (conditional — only when enabled in Scene.bloom)
+                if scene.bloom.enabled {
+                    frame_builder.add_node(RenderStage::PostProcess, &mut state.bloom_pass);
+                }
+
+                // FXAA routing: when enabled, ToneMap outputs to a transient LDR texture
+                // which FXAA then reads and writes to the surface.
+                // When disabled, ToneMap writes directly to the surface.
+                if scene.fxaa.enabled {
+                    let ldr_tex_id = state.transient_pool.allocate(
+                        &state.wgpu_ctx.device,
+                        &TransientTextureDesc {
+                            width: state.wgpu_ctx.size().0,
+                            height: state.wgpu_ctx.size().1,
+                            format: state.wgpu_ctx.surface_view_format,
+                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                                | wgpu::TextureUsages::TEXTURE_BINDING,
+                            mip_level_count: 1,
+                            label: "FXAA LDR Intermediate",
+                        },
+                    );
+
+                    state.tone_mapping_pass.output_texture_id = Some(ldr_tex_id);
+                    state.fxaa_pass.input_texture_id = Some(ldr_tex_id);
+                } else {
+                    state.tone_mapping_pass.output_texture_id = None;
+                    state.fxaa_pass.input_texture_id = None;
+                }
+
+                // Tone mapping (HDR → LDR)
+                frame_builder.add_node(RenderStage::PostProcess, &mut state.tone_mapping_pass);
+
+                // FXAA (conditional — only when enabled in Scene.fxaa)
+                if scene.fxaa.enabled {
+                    frame_builder.add_node(RenderStage::PostProcess, &mut state.fxaa_pass);
+                }
             }
 
-            // Transmission copy (conditional)
-            // 注意：TransmissionCopyPass 内部会检查 use_transmission 标志
-            // 如果场景中没有使用 Transmission 的材质，此 Pass 会提前返回
-            frame_builder.add_node(RenderStage::Opaque, &mut state.transmission_copy_pass);
-
-            // Transparent rendering
-            frame_builder.add_node(RenderStage::Transparent, &mut state.transparent_pass);
-
-            // Bloom (conditional — only when enabled in Scene.bloom)
-            if scene.bloom.enabled {
-                frame_builder.add_node(RenderStage::PostProcess, &mut state.bloom_pass);
+            RenderPath::BasicForward { .. } => {
+                // === BasicForward Path (LDR) ===
+                // Prepare skybox for potential inline drawing by SimpleForwardPass.
+                // SkyboxPass::prepare() stores pipeline/bind_group in render_lists.
+                // SkyboxPass::run() is a no-op in LDR mode (checked via enable_hdr).
+                if scene.background.needs_skybox_pass() {
+                    frame_builder.add_node(RenderStage::PreProcess, &mut state.skybox_pass);
+                }
+                frame_builder.add_node(RenderStage::Opaque, &mut state.simple_forward_pass);
             }
-
-            // FXAA routing: when enabled, ToneMap outputs to a transient LDR texture
-            // which FXAA then reads and writes to the surface.
-            // When disabled, ToneMap writes directly to the surface.
-            if scene.fxaa.enabled {
-                let ldr_tex_id = state.transient_pool.allocate(
-                    &state.wgpu_ctx.device,
-                    &TransientTextureDesc {
-                        width: state.wgpu_ctx.size().0,
-                        height: state.wgpu_ctx.size().1,
-                        format: state.wgpu_ctx.surface_view_format,
-                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                            | wgpu::TextureUsages::TEXTURE_BINDING,
-                        mip_level_count: 1,
-                        label: "FXAA LDR Intermediate",
-                    },
-                );
-
-                state.tone_mapping_pass.output_texture_id = Some(ldr_tex_id);
-                state.fxaa_pass.input_texture_id = Some(ldr_tex_id);
-            } else {
-                state.tone_mapping_pass.output_texture_id = None;
-                state.fxaa_pass.input_texture_id = None;
-            }
-
-            // Tone mapping (HDR → LDR)
-            frame_builder.add_node(RenderStage::PostProcess, &mut state.tone_mapping_pass);
-
-            // FXAA (conditional — only when enabled in Scene.fxaa)
-            if scene.fxaa.enabled {
-                frame_builder.add_node(RenderStage::PostProcess, &mut state.fxaa_pass);
-            }
-        } else {
-            // === Simple Path (LDR) ===
-            // Prepare skybox for potential inline drawing by SimpleForwardPass.
-            // SkyboxPass::prepare() stores pipeline/bind_group in render_lists.
-            // SkyboxPass::run() is a no-op in LDR mode (checked via enable_hdr).
-            if scene.background.needs_skybox_pass() {
-                frame_builder.add_node(RenderStage::PreProcess, &mut state.skybox_pass);
-            }
-            frame_builder.add_node(RenderStage::Opaque, &mut state.simple_forward_pass);
         }
 
         // ========================================
@@ -443,81 +445,110 @@ impl Renderer {
 
     // === Runtime Settings API ===
 
-    /// Returns whether HDR rendering is currently enabled.
-    ///
-    /// HDR rendering uses floating-point render targets and tone mapping
-    /// for high dynamic range lighting.
+    /// Returns the current [`RenderPath`].
     #[inline]
-    pub fn is_hdr_enabled(&self) -> bool {
-        self.settings.enable_hdr
+    pub fn render_path(&self) -> &RenderPath {
+        &self.settings.path
     }
 
-    /// Enables or disables HDR rendering at runtime.
+    /// Switches the active render path at runtime.
     ///
-    /// When HDR is enabled:
-    /// - Scene is rendered to a floating-point HDR buffer
-    /// - Tone mapping pass converts HDR to LDR for display
-    /// - `ToneMappingSettings` in Scene become effective
+    /// This is the canonical way to transition between [`RenderPath::BasicForward`]
+    /// and [`RenderPath::HighFidelity`] after initialization. The change takes
+    /// effect on the **next frame**.
     ///
-    /// When HDR is disabled:
-    /// - Scene is rendered directly to the screen
-    /// - No tone mapping is applied
-    ///
-    /// Note: This change takes effect on the next frame.
-    pub fn set_hdr_enabled(&mut self, enabled: bool) {
-        if self.settings.enable_hdr != enabled {
-            self.settings.enable_hdr = enabled;
+    /// Internally this:
+    /// 1. Updates the stored settings and derived `WgpuContext` state
+    ///    (`enable_hdr`, `msaa_samples`, `render_path`).
+    /// 2. Increments the pipeline settings version (invalidates the L1 cache).
+    /// 3. Forces recreation of frame resources (render targets change format/sample count).
+    /// 4. Clears the L2 pipeline cache.
+    pub fn set_render_path(&mut self, path: RenderPath) {
+        if self.settings.path != path {
+            self.settings.path = path.clone();
             if let Some(state) = &mut self.context {
-                state.wgpu_ctx.enable_hdr = enabled;
-                // Increment pipeline settings version to invalidate L1 cache
+                state.wgpu_ctx.enable_hdr = self.settings.is_hdr();
+                state.wgpu_ctx.msaa_samples = self.settings.msaa_samples();
+                state.wgpu_ctx.render_path = path;
                 state.wgpu_ctx.pipeline_settings_version += 1;
-                // Force recreation of frame resources (HDR textures)
                 let size = state.wgpu_ctx.size();
                 state.frame_resources.force_recreate(&state.wgpu_ctx, size);
-                // Clear L2 cache since settings have changed
                 state.pipeline_cache.clear();
             }
         }
     }
 
-    /// Returns the current MSAA sample count.
+    /// Returns whether HDR rendering is currently enabled.
     ///
-    /// Common values: 1 (disabled), 4, 8.
+    /// Equivalent to checking if the render path is [`RenderPath::HighFidelity`].
+    #[inline]
+    pub fn is_hdr_enabled(&self) -> bool {
+        self.settings.is_hdr()
+    }
+
+    /// Convenience method: switches HDR on or off at runtime.
+    ///
+    /// - `true`  → [`RenderPath::HighFidelity`] (MSAA forced to 1)
+    /// - `false` → [`RenderPath::BasicForward`] with `msaa_samples = 1`
+    ///
+    /// For finer control (e.g. enabling `BasicForward` **with** a specific
+    /// MSAA sample count), use [`set_render_path`](Self::set_render_path).
+    pub fn set_hdr_enabled(&mut self, enabled: bool) {
+        let new_path = if enabled {
+            RenderPath::HighFidelity
+        } else {
+            RenderPath::BasicForward { msaa_samples: 1 }
+        };
+        self.set_render_path(new_path);
+    }
+
+    /// Returns the effective MSAA sample count.
+    ///
+    /// Always returns **1** in [`RenderPath::HighFidelity`] mode.
     #[inline]
     pub fn msaa_samples(&self) -> u32 {
-        self.settings.msaa_samples
+        self.settings.msaa_samples()
     }
 
     /// Sets the MSAA sample count at runtime.
     ///
-    /// Higher values provide better anti-aliasing quality but use more GPU memory
-    /// and bandwidth. Common values are:
-    /// - 1: MSAA disabled
-    /// - 4: Good balance of quality and performance
-    /// - 8: High quality (may impact performance)
+    /// This is only meaningful in [`RenderPath::BasicForward`] mode. In
+    /// [`RenderPath::HighFidelity`] mode the call is ignored and a warning
+    /// is logged — use FXAA (or future TAA) for anti-aliasing instead.
     ///
-    /// Note: This requires recreation of render targets and takes effect on resize
-    /// or the next frame.
+    /// Common values: 1 (disabled), 4, 8.
     pub fn set_msaa_samples(&mut self, samples: u32) {
-        if self.settings.msaa_samples != samples {
-            let samples = samples.clamp(1, 8);
-            self.settings.msaa_samples = samples;
-            if let Some(state) = &mut self.context {
-                state.wgpu_ctx.msaa_samples = samples;
-                // Increment pipeline settings version to invalidate L1 cache
-                state.wgpu_ctx.pipeline_settings_version += 1;
-                // Force recreation of frame resources
-                let size = state.wgpu_ctx.size();
-                state.frame_resources.force_recreate(&state.wgpu_ctx, size);
-                // Clear L2 cache since settings have changed
-                state.pipeline_cache.clear();
+        match &self.settings.path {
+            RenderPath::BasicForward { msaa_samples } => {
+                if *msaa_samples != samples {
+                    let samples = samples.clamp(1, 8);
+                    self.settings.path = RenderPath::BasicForward {
+                        msaa_samples: samples,
+                    };
+                    if let Some(state) = &mut self.context {
+                        state.wgpu_ctx.msaa_samples = samples;
+                        state.wgpu_ctx.render_path = self.settings.path.clone();
+                        state.wgpu_ctx.pipeline_settings_version += 1;
+                        let size = state.wgpu_ctx.size();
+                        state.frame_resources.force_recreate(&state.wgpu_ctx, size);
+                        state.pipeline_cache.clear();
+                    }
+                }
+            }
+            RenderPath::HighFidelity => {
+                if samples != 1 {
+                    log::warn!(
+                        "set_msaa_samples({samples}) ignored: hardware MSAA is disabled in \
+                         HighFidelity mode. Use FXAA for anti-aliasing."
+                    );
+                }
             }
         }
     }
 
-    /// Returns a reference to the current render settings.
+    /// Returns a reference to the current renderer settings.
     #[inline]
-    pub fn settings(&self) -> &RenderSettings {
+    pub fn settings(&self) -> &RendererSettings {
         &self.settings
     }
 

@@ -171,7 +171,12 @@ pub mod prelude {
 
     // Renderer (limited exposure)
     pub use crate::renderer::graph::{FrameComposer, RenderStage};
-    pub use crate::renderer::settings::RenderSettings;
+    pub use crate::renderer::settings::{RenderPath, RendererSettings};
+
+    // Backward compatibility
+    #[doc(hidden)]
+    #[deprecated(since = "0.2.0", note = "Renamed to `RendererSettings`")]
+    pub type RenderSettings = RendererSettings;
 }
 
 // ============================================================================
@@ -218,18 +223,17 @@ pub mod math {
 
 /// Rendering system configuration and advanced APIs.
 ///
-/// Most users only need [`RenderSettings`](renderer::settings::RenderSettings)
+/// Most users only need [`RendererSettings`](renderer::settings::RendererSettings)
 /// to configure basic options. Advanced users can access the render graph
 /// system for custom passes.
 ///
 /// # Basic Usage
 ///
 /// ```rust,ignore
-/// use myth::render::RenderSettings;
+/// use myth::render::{RendererSettings, RenderPath};
 ///
-/// let settings = RenderSettings {
+/// let settings = RendererSettings {
 ///     vsync: true,
-///     clear_color: wgpu::Color::BLACK,
 ///     ..Default::default()
 /// };
 ///
@@ -260,7 +264,12 @@ pub mod render {
         ExecuteContext, FrameBuilder, FrameComposer, GraphResource, PrepareContext, RenderNode,
         RenderStage, RenderState, TrackedRenderPass,
     };
-    pub use crate::renderer::settings::RenderSettings;
+    pub use crate::renderer::settings::{RenderPath, RendererSettings};
+
+    // Backward compatibility
+    #[doc(hidden)]
+    #[deprecated(since = "0.2.0", note = "Renamed to `RendererSettings`")]
+    pub type RenderSettings = RendererSettings;
 
     /// Low-level GPU context access.
     ///
@@ -336,7 +345,12 @@ pub use animation::{
 // Renderer
 pub use renderer::Renderer;
 pub use renderer::graph::{FrameBuilder, FrameComposer, RenderStage};
-pub use renderer::settings::RenderSettings;
+pub use renderer::settings::{RenderPath, RendererSettings};
+
+// Backward compatibility
+#[doc(hidden)]
+#[deprecated(since = "0.2.0", note = "Renamed to `RendererSettings`")]
+pub type RenderSettings = RendererSettings;
 
 // Errors
 pub use errors::{AssetError, Error, PlatformError, RenderError, Result};

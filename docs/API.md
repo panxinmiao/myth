@@ -93,7 +93,7 @@ pub struct Engine {
 let engine = Engine::default();
 
 // Create with custom settings
-let engine = Engine::new(RenderSettings {
+let engine = Engine::new(RendererSettings {
     vsync: false,
     ..Default::default()
 });
@@ -435,12 +435,12 @@ fn update(&mut self, engine: &mut Engine, _: &Arc<Window>, _: &FrameState) {
 
 ## Render Configuration
 
-### RenderSettings
+### RendererSettings
 
 ```rust
-use myth::render::RenderSettings;
+use myth::render::{RendererSettings, RenderPath};
 
-let settings = RenderSettings {
+let settings = RendererSettings {
     power_preference: wgpu::PowerPreference::HighPerformance,
     vsync: true,
     clear_color: wgpu::Color { r: 0.1, g: 0.1, b: 0.1, a: 1.0 },
