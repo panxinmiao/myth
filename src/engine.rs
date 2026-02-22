@@ -16,10 +16,10 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use myth::{Engine, RenderSettings};
+//! use myth::{Engine, RendererSettings};
 //!
 //! // Create engine with custom settings
-//! let mut engine = Engine::new(RenderSettings::default());
+//! let mut engine = Engine::new(RendererSettings::default());
 //!
 //! // Initialize GPU context with a window
 //! engine.init(window, 1280, 720).await?;
@@ -35,7 +35,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::assets::AssetServer;
 use crate::renderer::Renderer;
-use crate::renderer::settings::RenderSettings;
+use crate::renderer::settings::RendererSettings;
 use crate::resources::input::Input;
 use crate::scene::manager::SceneManager;
 
@@ -77,7 +77,7 @@ impl Engine {
     ///
     /// * `settings` - Render configuration including power preference, features, etc.
     #[must_use]
-    pub fn new(settings: RenderSettings) -> Self {
+    pub fn new(settings: RendererSettings) -> Self {
         let assets = AssetServer::new();
         Self {
             renderer: Renderer::new(settings),
@@ -182,7 +182,7 @@ impl Engine {
 
 impl Default for Engine {
     fn default() -> Self {
-        Self::new(RenderSettings::default())
+        Self::new(RendererSettings::default())
     }
 }
 

@@ -92,9 +92,9 @@ impl AppHandler for MorphTargetDemo {
 fn main() -> myth::Result<()> {
     env_logger::init();
     App::new()
-        .with_settings(RenderSettings {
+        .with_settings(RendererSettings {
+            path: RenderPath::BasicForward { msaa_samples: 1 },
             vsync: false,
-            enable_hdr: false,
             ..Default::default()
         })
         .run::<MorphTargetDemo>()

@@ -350,8 +350,8 @@ impl AppHandler for GltfViewer {
             // 渲染设置
             ibl_enabled: true,
             light_node: light_node,
-            hdr_enabled: true, // Match RenderSettings in main()
-            msaa_samples: 4,   // Match RenderSettings in main()
+            hdr_enabled: true, // Default: HighFidelity path
+            msaa_samples: 1,   // MSAA disabled in HighFidelity mode
 
             vignette_breathing: false,
 
@@ -1085,37 +1085,74 @@ impl GltfViewer {
                                 renderer.set_hdr_enabled(self.hdr_enabled);
                             }
 
-                            // --- MSAA 抗锯齿 ---
-                            ui.horizontal(|ui| {
-                                ui.label("MSAA:");
-                                let msaa_options = [1u32, 4];
-                                egui::ComboBox::from_id_salt("msaa_selector")
-                                    .width(60.0)
-                                    .selected_text(if self.msaa_samples == 1 {
-                                        "Off".to_string()
-                                    } else {
-                                        format!("{}x", self.msaa_samples)
-                                    })
-                                    .show_ui(ui, |ui| {
-                                        for &samples in &msaa_options {
-                                            let label = if samples == 1 {
-                                                "Off".to_string()
-                                            } else {
-                                                format!("{}x", samples)
-                                            };
-                                            if ui
-                                                .selectable_value(
-                                                    &mut self.msaa_samples,
-                                                    samples,
-                                                    label,
-                                                )
-                                                .changed()
-                                            {
-                                                renderer.set_msaa_samples(self.msaa_samples);
+                            ui.separator();
+
+                            if !self.hdr_enabled {
+                                // --- MSAA 抗锯齿 ---
+                                ui.horizontal(|ui| {
+                                    ui.label("MSAA:");
+                                    let msaa_options = [1u32, 4];
+                                    egui::ComboBox::from_id_salt("msaa_selector")
+                                        .width(60.0)
+                                        .selected_text(if self.msaa_samples == 1 {
+                                            "Off".to_string()
+                                        } else {
+                                            format!("{}x", self.msaa_samples)
+                                        })
+                                        .show_ui(ui, |ui| {
+                                            for &samples in &msaa_options {
+                                                let label = if samples == 1 {
+                                                    "Off".to_string()
+                                                } else {
+                                                    format!("{}x", samples)
+                                                };
+                                                if ui
+                                                    .selectable_value(
+                                                        &mut self.msaa_samples,
+                                                        samples,
+                                                        label,
+                                                    )
+                                                    .changed()
+                                                {
+                                                    renderer.set_msaa_samples(self.msaa_samples);
+                                                }
                                             }
+                                        });
+                                });
+                            } else {
+                                // ===== FXAA 抗锯齿 =====
+                                ui.horizontal(|ui| {
+                                    ui.add_enabled_ui(self.hdr_enabled, |ui| {
+                                        let mut fxaa_enabled = scene.fxaa.enabled;
+                                        if ui.checkbox(&mut fxaa_enabled, "FXAA").changed() {
+                                            scene.fxaa.set_enabled(fxaa_enabled);
                                         }
+
+                                        ui.add_enabled_ui(fxaa_enabled, |ui| {
+                                            ui.horizontal(|ui| {
+                                                ui.label("Quality:");
+                                                let current_quality = scene.fxaa.quality();
+                                                egui::ComboBox::from_id_salt("fxaa_quality")
+                                                    .width(100.0)
+                                                    .selected_text(current_quality.name())
+                                                    .show_ui(ui, |ui| {
+                                                        for quality in FxaaQuality::all() {
+                                                            if ui
+                                                                .selectable_label(
+                                                                    current_quality == *quality,
+                                                                    quality.name(),
+                                                                )
+                                                                .clicked()
+                                                            {
+                                                                scene.fxaa.set_quality(*quality);
+                                                            }
+                                                        }
+                                                    });
+                                            });
+                                        });
                                     });
-                            });
+                                });
+                            }
 
                             ui.separator();
 
@@ -1141,6 +1178,7 @@ impl GltfViewer {
                                 }
                             });
 
+                            // --- Light 光源 ---
                             ui.horizontal(|ui| {
                                 if let Some(light_bundle) = scene.get_light_bundle(self.light_node)
                                 {
@@ -1161,257 +1199,225 @@ impl GltfViewer {
 
                             ui.separator();
 
-                            // --- Tone Mapping 设置 (仅在 HDR 模式下可用) ---
-                            ui.add_enabled_ui(self.hdr_enabled, |ui| {
-                                ui.label("Tone Mapping:");
+                            if self.hdr_enabled {
+                                // --- Tone Mapping 设置 (仅在 HDR 模式下可用) ---
+                                ui.add_enabled_ui(self.hdr_enabled, |ui| {
+                                    ui.label("Tone Mapping:");
 
-                                // 模式选择
-                                ui.horizontal(|ui| {
-                                    ui.label("Mode:");
-                                    let current_mode = scene.tone_mapping.mode;
-                                    egui::ComboBox::from_id_salt("tone_mapping_mode")
-                                        .width(120.0)
-                                        .selected_text(current_mode.name())
-                                        .show_ui(ui, |ui| {
-                                            for mode in myth::ToneMappingMode::all() {
-                                                if ui
-                                                    .selectable_label(
-                                                        current_mode == *mode,
-                                                        mode.name(),
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    scene.tone_mapping.set_mode(*mode);
-                                                }
-                                            }
-                                        });
-                                });
-
-                                let mut uniform_mut = scene.tone_mapping.uniforms.write();
-
-                                // 曝光度
-                                ui.horizontal(|ui| {
-                                    ui.label("Exposure:");
-                                    ui.add(
-                                        egui::Slider::new(&mut uniform_mut.exposure, 0.1..=5.0)
-                                            .step_by(0.1)
-                                            .logarithmic(true),
-                                    );
-                                });
-
-                                // --- Vignette ---
-                                ui.separator();
-                                ui.label("Vignette:");
-
-                                ui.checkbox(&mut self.vignette_breathing, "Breathing");
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Intensity:");
-
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut uniform_mut.vignette_intensity,
-                                            0.0..=2.0,
-                                        )
-                                        .step_by(0.01),
-                                    );
-                                });
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Smoothness:");
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut uniform_mut.vignette_smoothness,
-                                            0.1..=1.0,
-                                        )
-                                        .step_by(0.01),
-                                    );
-                                });
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Color:");
-                                    let mut color_arr = uniform_mut.vignette_color.to_array();
-                                    if ui
-                                        .color_edit_button_rgba_unmultiplied(&mut color_arr)
-                                        .changed()
-                                    {
-                                        uniform_mut.vignette_color = Vec4::from_array(color_arr);
-                                    }
-                                });
-
-                                // --- Chromatic Aberration、 Contrast & Saturation、 Film Grain ---
-                                ui.separator();
-                                ui.horizontal(|ui| {
-                                    ui.label("Chromatic Aberration:");
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut uniform_mut.chromatic_aberration,
-                                            0.0..=5.0,
-                                        )
-                                        .step_by(0.01),
-                                    );
-                                });
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Contrast:");
-                                    ui.add(
-                                        egui::Slider::new(&mut uniform_mut.contrast, 0.5..=2.0)
-                                            .step_by(0.01),
-                                    );
-                                });
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Saturation:");
-                                    ui.add(
-                                        egui::Slider::new(&mut uniform_mut.saturation, 0.0..=2.0)
-                                            .step_by(0.01),
-                                    );
-                                });
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Film Grain:");
-                                    ui.add(
-                                        egui::Slider::new(&mut uniform_mut.film_grain, 0.0..=1.0)
-                                            .step_by(0.01),
-                                    );
-                                });
-
-                                // --- Color Grading (LUT) ---
-                                ui.separator();
-                                ui.label("Color Grading (LUT):");
-
-                                ui.horizontal(|ui| {
-                                    ui.label("Contribution:");
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut uniform_mut.lut_contribution,
-                                            0.0..=1.0,
-                                        )
-                                        .step_by(0.05),
-                                    );
-                                });
-
-                                drop(uniform_mut);
-
-                                if scene.tone_mapping.has_lut() {
-                                    if ui.button("Remove LUT").clicked() {
-                                        scene.tone_mapping.set_lut_texture(None);
-                                    }
-                                } else {
-                                    ui.label("No LUT loaded");
-                                }
-                            });
-
-                            if !self.hdr_enabled {
-                                ui.label("ℹ Enable HDR to configure tone mapping");
-                            }
-
-                            ui.separator();
-
-                            // ===== Bloom 后处理 =====
-
-                            // 开关 (always available when HDR is on)
-                            ui.add_enabled_ui(self.hdr_enabled, |ui| {
-                                let mut bloom_enabled = scene.bloom.enabled;
-                                if ui.checkbox(&mut bloom_enabled, "Enable Bloom").changed() {
-                                    scene.bloom.set_enabled(bloom_enabled);
-                                }
-                            });
-
-                            let bloom_enabled = scene.bloom.enabled;
-
-                            ui.add_enabled_ui(self.hdr_enabled && bloom_enabled, |ui| {
-                                // Strength
-                                ui.horizontal(|ui| {
-                                    ui.label("Strength:");
-                                    let mut strength = scene.bloom.strength();
-                                    if ui
-                                        .add(
-                                            egui::Slider::new(&mut strength, 0.0..=1.0)
-                                                .step_by(0.005)
-                                                .fixed_decimals(3),
-                                        )
-                                        .changed()
-                                    {
-                                        scene.bloom.set_strength(strength);
-                                    }
-                                });
-
-                                // Radius
-                                ui.horizontal(|ui| {
-                                    ui.label("Radius:");
-                                    let mut radius = scene.bloom.radius();
-                                    if ui
-                                        .add(
-                                            egui::Slider::new(&mut radius, 0.001..=0.05)
-                                                .step_by(0.001)
-                                                .fixed_decimals(3),
-                                        )
-                                        .changed()
-                                    {
-                                        scene.bloom.set_radius(radius);
-                                    }
-                                });
-
-                                // Mip Levels
-                                ui.horizontal(|ui| {
-                                    ui.label("Mip Levels:");
-                                    let mut mip_levels = scene.bloom.max_mip_levels;
-                                    if ui.add(egui::Slider::new(&mut mip_levels, 1..=10)).changed()
-                                    {
-                                        scene.bloom.set_max_mip_levels(mip_levels);
-                                    }
-                                });
-
-                                // Karis Average
-                                let mut karis = scene.bloom.karis_average;
-                                if ui
-                                    .checkbox(&mut karis, "Karis Average (anti-firefly)")
-                                    .changed()
-                                {
-                                    scene.bloom.set_karis_average(karis);
-                                }
-                            });
-
-                            if !self.hdr_enabled {
-                                ui.label("ℹ Enable HDR to configure bloom");
-                            }
-
-                            ui.separator();
-
-                            // ===== FXAA 抗锯齿 =====
-                            ui.add_enabled_ui(self.hdr_enabled, |ui| {
-                                let mut fxaa_enabled = scene.fxaa.enabled;
-                                if ui.checkbox(&mut fxaa_enabled, "Enable FXAA").changed() {
-                                    scene.fxaa.set_enabled(fxaa_enabled);
-                                }
-
-                                ui.add_enabled_ui(fxaa_enabled, |ui| {
+                                    // 模式选择
                                     ui.horizontal(|ui| {
-                                        ui.label("Quality:");
-                                        let current_quality = scene.fxaa.quality();
-                                        egui::ComboBox::from_id_salt("fxaa_quality")
-                                            .width(100.0)
-                                            .selected_text(current_quality.name())
+                                        ui.label("Mode:");
+                                        let current_mode = scene.tone_mapping.mode;
+                                        egui::ComboBox::from_id_salt("tone_mapping_mode")
+                                            .width(120.0)
+                                            .selected_text(current_mode.name())
                                             .show_ui(ui, |ui| {
-                                                for quality in FxaaQuality::all() {
+                                                for mode in myth::ToneMappingMode::all() {
                                                     if ui
                                                         .selectable_label(
-                                                            current_quality == *quality,
-                                                            quality.name(),
+                                                            current_mode == *mode,
+                                                            mode.name(),
                                                         )
                                                         .clicked()
                                                     {
-                                                        scene.fxaa.set_quality(*quality);
+                                                        scene.tone_mapping.set_mode(*mode);
                                                     }
                                                 }
                                             });
                                     });
-                                });
-                            });
 
-                            if !self.hdr_enabled {
-                                ui.label("ℹ Enable HDR to configure FXAA");
+                                    let mut uniform_mut = scene.tone_mapping.uniforms.write();
+
+                                    // 曝光度
+                                    ui.horizontal(|ui| {
+                                        ui.label("Exposure:");
+                                        ui.add(
+                                            egui::Slider::new(&mut uniform_mut.exposure, 0.1..=5.0)
+                                                .step_by(0.1)
+                                                .logarithmic(true),
+                                        );
+                                    });
+
+                                    // --- Vignette ---
+                                    ui.separator();
+                                    ui.label("Vignette:");
+
+                                    ui.checkbox(&mut self.vignette_breathing, "Breathing");
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Intensity:");
+
+                                        ui.add(
+                                            egui::Slider::new(
+                                                &mut uniform_mut.vignette_intensity,
+                                                0.0..=2.0,
+                                            )
+                                            .step_by(0.01),
+                                        );
+                                    });
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Smoothness:");
+                                        ui.add(
+                                            egui::Slider::new(
+                                                &mut uniform_mut.vignette_smoothness,
+                                                0.1..=1.0,
+                                            )
+                                            .step_by(0.01),
+                                        );
+                                    });
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Color:");
+                                        let mut color_arr = uniform_mut.vignette_color.to_array();
+                                        if ui
+                                            .color_edit_button_rgba_unmultiplied(&mut color_arr)
+                                            .changed()
+                                        {
+                                            uniform_mut.vignette_color =
+                                                Vec4::from_array(color_arr);
+                                        }
+                                    });
+
+                                    // --- Chromatic Aberration、 Contrast & Saturation、 Film Grain ---
+                                    ui.separator();
+                                    ui.horizontal(|ui| {
+                                        ui.label("Chromatic Aberration:");
+                                        ui.add(
+                                            egui::Slider::new(
+                                                &mut uniform_mut.chromatic_aberration,
+                                                0.0..=5.0,
+                                            )
+                                            .step_by(0.01),
+                                        );
+                                    });
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Contrast:");
+                                        ui.add(
+                                            egui::Slider::new(&mut uniform_mut.contrast, 0.5..=2.0)
+                                                .step_by(0.01),
+                                        );
+                                    });
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Saturation:");
+                                        ui.add(
+                                            egui::Slider::new(
+                                                &mut uniform_mut.saturation,
+                                                0.0..=2.0,
+                                            )
+                                            .step_by(0.01),
+                                        );
+                                    });
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Film Grain:");
+                                        ui.add(
+                                            egui::Slider::new(
+                                                &mut uniform_mut.film_grain,
+                                                0.0..=1.0,
+                                            )
+                                            .step_by(0.01),
+                                        );
+                                    });
+
+                                    // --- Color Grading (LUT) ---
+                                    ui.separator();
+                                    ui.label("Color Grading (LUT):");
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Contribution:");
+                                        ui.add(
+                                            egui::Slider::new(
+                                                &mut uniform_mut.lut_contribution,
+                                                0.0..=1.0,
+                                            )
+                                            .step_by(0.05),
+                                        );
+                                    });
+
+                                    drop(uniform_mut);
+
+                                    if scene.tone_mapping.has_lut() {
+                                        if ui.button("Remove LUT").clicked() {
+                                            scene.tone_mapping.set_lut_texture(None);
+                                        }
+                                    } else {
+                                        ui.label("No LUT loaded");
+                                    }
+                                });
+
+                                ui.separator();
+
+                                // ===== Bloom 后处理 =====
+
+                                // 开关 (always available when HDR is on)
+                                ui.add_enabled_ui(self.hdr_enabled, |ui| {
+                                    let mut bloom_enabled = scene.bloom.enabled;
+                                    if ui.checkbox(&mut bloom_enabled, "Enable Bloom").changed() {
+                                        scene.bloom.set_enabled(bloom_enabled);
+                                    }
+                                });
+
+                                let bloom_enabled = scene.bloom.enabled;
+
+                                ui.add_enabled_ui(self.hdr_enabled && bloom_enabled, |ui| {
+                                    // Strength
+                                    ui.horizontal(|ui| {
+                                        ui.label("Strength:");
+                                        let mut strength = scene.bloom.strength();
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut strength, 0.0..=1.0)
+                                                    .step_by(0.005)
+                                                    .fixed_decimals(3),
+                                            )
+                                            .changed()
+                                        {
+                                            scene.bloom.set_strength(strength);
+                                        }
+                                    });
+
+                                    // Radius
+                                    ui.horizontal(|ui| {
+                                        ui.label("Radius:");
+                                        let mut radius = scene.bloom.radius();
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut radius, 0.001..=0.05)
+                                                    .step_by(0.001)
+                                                    .fixed_decimals(3),
+                                            )
+                                            .changed()
+                                        {
+                                            scene.bloom.set_radius(radius);
+                                        }
+                                    });
+
+                                    // Mip Levels
+                                    ui.horizontal(|ui| {
+                                        ui.label("Mip Levels:");
+                                        let mut mip_levels = scene.bloom.max_mip_levels;
+                                        if ui
+                                            .add(egui::Slider::new(&mut mip_levels, 1..=10))
+                                            .changed()
+                                        {
+                                            scene.bloom.set_max_mip_levels(mip_levels);
+                                        }
+                                    });
+
+                                    // Karis Average
+                                    let mut karis = scene.bloom.karis_average;
+                                    if ui
+                                        .checkbox(&mut karis, "Karis Average (anti-firefly)")
+                                        .changed()
+                                    {
+                                        scene.bloom.set_karis_average(karis);
+                                    }
+                                });
+
+                                ui.separator();
                             }
                         });
 
@@ -2070,7 +2076,7 @@ fn main() -> myth::Result<()> {
 
     App::new()
         .with_title("glTF Viewer")
-        .with_settings(RenderSettings {
+        .with_settings(RendererSettings {
             vsync: false,
             clear_color: wgpu::Color {
                 r: 0.03,
@@ -2078,8 +2084,6 @@ fn main() -> myth::Result<()> {
                 b: 0.03,
                 a: 1.0,
             },
-            enable_hdr: true, // 启用 HDR 渲染
-            msaa_samples: 4,  // 4x MSAA 抗锯齿
             ..Default::default()
         })
         .run::<GltfViewer>()
@@ -2103,7 +2107,7 @@ pub fn wasm_main() {
     // Run the application
     if let Err(e) = App::new()
         .with_title("glTF Viewer")
-        .with_settings(RenderSettings {
+        .with_settings(RendererSettings {
             vsync: true,
             ..Default::default()
         })

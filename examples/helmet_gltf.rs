@@ -62,9 +62,9 @@ impl AppHandler for HelmetGltf {
 fn main() -> myth::Result<()> {
     env_logger::init();
     App::new()
-        .with_settings(RenderSettings {
+        .with_settings(RendererSettings {
+            path: RenderPath::BasicForward { msaa_samples: 1 },
             vsync: false,
-            enable_hdr: false,
             clear_color: wgpu::Color {
                 r: 0.03,
                 g: 0.03,

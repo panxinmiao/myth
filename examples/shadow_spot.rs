@@ -77,7 +77,7 @@ impl AppHandler for ShadowSpotDemo {
 fn main() -> myth::Result<()> {
     env_logger::init();
     App::new()
-        .with_settings(RenderSettings {
+        .with_settings(RendererSettings {
             vsync: false,
             ..Default::default()
         })

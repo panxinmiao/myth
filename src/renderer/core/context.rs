@@ -6,7 +6,7 @@
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::errors::{Error, PlatformError, Result};
-use crate::renderer::settings::RenderSettings;
+use crate::renderer::settings::{RenderPath, RendererSettings};
 
 /// Core wgpu context holding GPU handles.
 ///
@@ -36,7 +36,10 @@ pub struct WgpuContext {
 
     pub enable_hdr: bool,
 
-    /// Version counter for pipeline-affecting settings (HDR, MSAA).
+    /// The active render path. Stored for runtime branching in the frame graph.
+    pub render_path: RenderPath,
+
+    /// Version counter for pipeline-affecting settings (HDR, MSAA, RenderPath).
     /// Incremented when these settings change, used to invalidate L1 pipeline cache.
     pub pipeline_settings_version: u64,
 }
@@ -44,14 +47,21 @@ pub struct WgpuContext {
 impl WgpuContext {
     pub async fn new<W>(
         window: W,
-        settings: &RenderSettings,
+        settings: &RendererSettings,
         width: u32,
         height: u32,
     ) -> Result<Self>
     where
         W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static,
     {
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor::from_env_or_default());
+        let instance_desc = match settings.backends {
+            Some(backends) => wgpu::InstanceDescriptor {
+                backends,
+                ..wgpu::InstanceDescriptor::from_env_or_default()
+            },
+            None => wgpu::InstanceDescriptor::from_env_or_default(),
+        };
+        let instance = wgpu::Instance::new(&instance_desc);
         let surface = instance
             .create_surface(window)
             .map_err(|e| Error::Platform(PlatformError::SurfaceConfigFailed(e.to_string())))?;
@@ -126,8 +136,9 @@ impl WgpuContext {
             config,
             depth_format: settings.depth_format,
             surface_view_format: view_format,
-            msaa_samples: settings.msaa_samples,
-            enable_hdr: settings.enable_hdr,
+            msaa_samples: settings.msaa_samples(),
+            enable_hdr: settings.is_hdr(),
+            render_path: settings.path.clone(),
             pipeline_settings_version: 0,
         })
     }

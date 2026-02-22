@@ -1,16 +1,23 @@
-//! Render Settings Configuration
+//! Renderer Settings & Render Path Configuration
 //!
-//! This module defines the configuration options for the rendering system.
+//! This module defines the rendering pipeline configuration for the engine.
 //!
-//! # Example
+//! The core abstraction is [`RenderPath`], which determines whether the engine
+//! operates in a lightweight forward-only mode or a full high-fidelity pipeline
+//! with HDR, post-processing, and (future) depth-normal prepass / SSAO support.
+//!
+//! # Quick Start
 //!
 //! ```rust,ignore
-//! use myth::render::RenderSettings;
+//! use myth::render::{RendererSettings, RenderPath};
 //!
-//! let settings = RenderSettings {
+//! // Default: High-fidelity modern pipeline (HDR + post-processing)
+//! let settings = RendererSettings::default();
+//!
+//! // Lightweight forward pipeline with 4× MSAA for simple scenes
+//! let settings = RendererSettings {
+//!     path: RenderPath::BasicForward { msaa_samples: 4 },
 //!     vsync: false,
-//!     clear_color: wgpu::Color { r: 0.1, g: 0.2, b: 0.3, a: 1.0 },
-//!     power_preference: wgpu::PowerPreference::HighPerformance,
 //!     ..Default::default()
 //! };
 //!
@@ -19,118 +26,225 @@
 //!     .run::<MyApp>()?;
 //! ```
 
-/// Configuration options for the rendering system.
+// ---------------------------------------------------------------------------
+// RenderPath
+// ---------------------------------------------------------------------------
+
+/// Defines the core rendering path and pipeline topology.
 ///
-/// This struct controls fundamental rendering parameters including GPU selection,
-/// required features, and common render state settings.
+/// The engine supports two fundamentally different rendering paths that control
+/// which passes are assembled into the frame graph, how anti-aliasing is handled,
+/// and which post-processing effects are available.
+///
+/// # Path Comparison
+///
+/// | Capability              | `BasicForward`    | `HighFidelity`          |
+/// |-------------------------|-------------------|-------------------------|
+/// | Hardware MSAA           | ✅ (configurable) | ❌ (forced to 1)        |
+/// | HDR render targets      | ❌                | ✅                      |
+/// | Bloom                   | ❌                | ✅                      |
+/// | Tone Mapping            | ❌                | ✅                      |
+/// | FXAA (post-process AA)  | ❌                | ✅                      |
+/// | Depth-Normal Prepass¹   | ❌                | ✅ (planned)            |
+/// | SSAO¹                   | ❌                | ✅ (planned)            |
+///
+/// ¹ Planned features — the `HighFidelity` path is designed to accommodate
+///   these without further API changes.
+///
+/// # Design Rationale
+///
+/// Hardware MSAA and HDR post-processing are fundamentally at odds in a modern
+/// rendering pipeline: MSAA requires multi-sampled render targets that are
+/// expensive to resolve and incompatible with most screen-space effects. By
+/// making the choice explicit at the path level, the engine can allocate
+/// resources optimally and avoid hidden performance cliffs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RenderPath {
+    /// Lightweight forward rendering pipeline.
+    ///
+    /// Renders the scene directly to the surface (or an LDR intermediate when
+    /// MSAA is active). No HDR render targets, no bloom, no tone mapping.
+    ///
+    /// Supports hardware multi-sample anti-aliasing (MSAA) with configurable
+    /// sample count.
+    ///
+    /// Best suited for:
+    /// - Low-end / mobile devices
+    /// - Simple 3D or 2D/UI scenes that do not need advanced lighting
+    /// - Scenarios where hardware MSAA is preferred over post-process AA
+    BasicForward {
+        /// MSAA sample count. Common values: 1 (off), 2, 4, 8.
+        msaa_samples: u32,
+    },
+
+    /// High-fidelity hybrid rendering pipeline.
+    ///
+    /// Uses HDR floating-point render targets and a full post-processing chain
+    /// (Bloom → Tone Mapping → FXAA). Hardware MSAA is **forced to 1** in this
+    /// mode; anti-aliasing should be achieved through screen-space techniques
+    /// such as FXAA (or TAA in the future).
+    ///
+    /// This path is designed to host a Depth-Normal Prepass and SSAO in future
+    /// releases without requiring API-level changes.
+    ///
+    /// Best suited for:
+    /// - Desktop / high-end mobile with modern GPUs
+    /// - PBR scenes requiring physically-correct lighting and effects
+    /// - Any application that benefits from bloom, tone mapping, or SSAO
+    HighFidelity,
+}
+
+impl Default for RenderPath {
+    #[inline]
+    fn default() -> Self {
+        // Modern engines default to the high-fidelity pipeline.
+        Self::HighFidelity
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RendererSettings
+// ---------------------------------------------------------------------------
+
+/// Global configuration for renderer initialization.
+///
+/// This struct is consumed once during [`Renderer::init`] to set up the GPU
+/// context and allocate pipeline-level resources. Runtime changes to the
+/// render path are possible via [`Renderer::set_render_path`].
 ///
 /// # Fields
 ///
-/// | Field | Description | Default |
-/// |-------|-------------|---------|
-/// | `enable_hdr` | Enable HDR rendering mode | `true` |
-/// | `msaa_samples` | Number of MSAA samples | `1` |
-/// | `vsync` | Vertical sync enabled | `true` |
-/// | `clear_color` | Background clear color | Black |
-/// | `power_preference` | GPU selection preference | `HighPerformance` |
-/// | `required_features` | Required wgpu features | Empty |
-/// | `required_limits` | Required wgpu limits | Default |
-/// | `depth_format` | Depth buffer format | `Depth32Float` |
-///
-/// # GPU Selection
-///
-/// The `power_preference` field controls which GPU adapter is selected:
-///
-/// - `HighPerformance`: Prefer discrete GPU (better for games/visualization)
-/// - `LowPower`: Prefer integrated GPU (better for battery life)
+/// | Field              | Description                              | Default            |
+/// |--------------------|------------------------------------------|--------------------|
+/// | `path`             | Render pipeline path                     | `HighFidelity`     |
+/// | `vsync`            | Vertical sync enabled                    | `true`             |
+/// | `backends`         | Forced wgpu backend (or auto)            | `None`             |
+/// | `power_preference` | GPU adapter selection strategy            | `HighPerformance`  |
+/// | `clear_color`      | Default framebuffer clear color          | Black (0,0,0,1)    |
+/// | `required_features`| Required wgpu features                   | Empty              |
+/// | `required_limits`  | Required wgpu limits                     | Default            |
+/// | `depth_format`     | Depth buffer texture format              | `Depth32Float`     |
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use myth::render::RenderSettings;
+/// use myth::render::{RendererSettings, RenderPath};
 ///
-/// // High-performance settings for games
-/// let game_settings = RenderSettings {
-///     power_preference: wgpu::PowerPreference::HighPerformance,
-///     vsync: false, // Uncapped framerate
+/// // High-performance gaming setup
+/// let game = RendererSettings {
+///     path: RenderPath::HighFidelity,
+///     vsync: false,
 ///     ..Default::default()
 /// };
 ///
-/// // Battery-friendly settings for tools
-/// let tool_settings = RenderSettings {
+/// // Battery-friendly mobile setup with 4× MSAA
+/// let mobile = RendererSettings {
+///     path: RenderPath::BasicForward { msaa_samples: 4 },
 ///     power_preference: wgpu::PowerPreference::LowPower,
 ///     vsync: true,
 ///     ..Default::default()
 /// };
 /// ```
 #[derive(Debug, Clone)]
-pub struct RenderSettings {
-    /// Whether to use straightforward rendering mode.
+pub struct RendererSettings {
+    // === Core Pipeline Configuration ===
+    /// The rendering pipeline path.
     ///
-    /// if false, the main scene will be rendered directly to the screen surface,
-    /// bypassing intermediate render targets and post-processing.
-    /// This can improve performance for simple scenes without effects.
-    pub enable_hdr: bool,
+    /// Determines the overall pipeline topology, available post-processing
+    /// effects, and MSAA allocation strategy. See [`RenderPath`] for details.
+    pub path: RenderPath,
 
-    /// Background clear color for the main render target.
+    /// Enable vertical synchronization (VSync).
     ///
-    /// This color is used to clear the framebuffer at the start of each frame.
-    pub clear_color: wgpu::Color,
-
-    /// Enable vertical synchronization (`VSync`).
-    ///
-    /// When `true`, the framerate is capped to the display refresh rate,
+    /// When `true`, the frame rate is capped to the display refresh rate,
     /// reducing screen tearing and power consumption.
-    /// When `false`, the framerate is uncapped, which may cause tearing
+    /// When `false`, the frame rate is uncapped, which may cause tearing
     /// but reduces input latency.
     pub vsync: bool,
 
-    /// Number of samples for multi-sample anti-aliasing (MSAA).
+    // === GPU / Backend Configuration ===
+    /// Force a specific wgpu backend (Vulkan, Metal, DX12, …).
     ///
-    /// Set to 1 to disable MSAA. Common values are 2, 4, or 8.
-    /// Higher values improve quality but increase GPU load.
-    pub msaa_samples: u32,
+    /// `None` lets wgpu choose the best available backend for the platform.
+    /// Override this only when debugging backend-specific issues.
+    pub backends: Option<wgpu::Backends>,
 
     /// GPU adapter selection preference.
     ///
-    /// - `HighPerformance`: Prefer discrete/dedicated GPU
-    /// - `LowPower`: Prefer integrated GPU
+    /// - `HighPerformance`: Prefer discrete / dedicated GPU
+    /// - `LowPower`: Prefer integrated GPU (better battery life)
     pub power_preference: wgpu::PowerPreference,
+
+    // === Rendering Defaults ===
+    /// Background clear color for the main render target.
+    ///
+    /// Used to clear the framebuffer at the start of each frame.
+    /// May be overridden at runtime by the active scene's background settings.
+    pub clear_color: wgpu::Color,
 
     /// Required wgpu features that must be supported by the adapter.
     ///
-    /// The engine will fail to initialize if these features are not available.
+    /// The engine will fail to initialize if these features are unavailable.
     /// Use with caution on WebGPU targets where feature support varies.
     pub required_features: wgpu::Features,
 
-    /// Required wgpu limits that must be supported by the adapter.
-    ///
-    /// Limits define maximum resource sizes, binding counts, etc.
+    /// Required wgpu limits (max buffer sizes, binding counts, etc.).
     pub required_limits: wgpu::Limits,
 
     /// Depth buffer texture format.
     ///
-    /// `Depth32Float` is recommended for reverse-Z rendering (better precision).
-    /// `Depth24PlusStencil8` can be used if stencil buffer is needed.
+    /// [`Depth32Float`](wgpu::TextureFormat::Depth32Float) is recommended for
+    /// reverse-Z rendering (better precision). Use `Depth24PlusStencil8` when
+    /// a stencil buffer is needed.
     pub depth_format: wgpu::TextureFormat,
 }
 
-impl Default for RenderSettings {
+impl Default for RendererSettings {
     fn default() -> Self {
         Self {
+            path: RenderPath::default(),
+            vsync: true,
+            backends: None,
             power_preference: wgpu::PowerPreference::HighPerformance,
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
             clear_color: wgpu::Color {
                 r: 0.0,
                 g: 0.0,
                 b: 0.0,
                 a: 1.0,
             },
-            vsync: true,
-            msaa_samples: 1,
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
             depth_format: wgpu::TextureFormat::Depth32Float,
-            enable_hdr: true,
         }
     }
 }
+
+impl RendererSettings {
+    /// Returns the effective MSAA sample count for the current render path.
+    ///
+    /// - [`BasicForward`](RenderPath::BasicForward): returns the configured `msaa_samples`.
+    /// - [`HighFidelity`](RenderPath::HighFidelity): always returns **1** (hardware MSAA
+    ///   is disabled; use post-process AA such as FXAA instead).
+    #[inline]
+    #[must_use]
+    pub fn msaa_samples(&self) -> u32 {
+        match &self.path {
+            RenderPath::BasicForward { msaa_samples } => *msaa_samples,
+            RenderPath::HighFidelity => 1,
+        }
+    }
+
+    /// Returns `true` when the current path uses HDR render targets.
+    ///
+    /// Only [`HighFidelity`](RenderPath::HighFidelity) enables HDR.
+    #[inline]
+    #[must_use]
+    pub fn is_hdr(&self) -> bool {
+        matches!(self.path, RenderPath::HighFidelity)
+    }
+}
+
+// Backward-compatible type alias — prefer `RendererSettings` in new code.
+#[doc(hidden)]
+#[deprecated(since = "0.2.0", note = "Renamed to `RendererSettings`")]
+pub type RenderSettings = RendererSettings;

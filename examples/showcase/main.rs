@@ -248,9 +248,7 @@ fn main() -> myth::Result<()> {
 
     App::new()
         .with_title("Myth Showcase Viewer")
-        .with_settings(RenderSettings {
-            enable_hdr: true,
-            msaa_samples: 4,
+        .with_settings(RendererSettings {
             ..Default::default()
         })
         .run::<ShowcaseApp>()
@@ -263,9 +261,7 @@ pub fn wasm_main() {
     console_log::init_with_level(log::Level::Info).expect("Failed to init logger");
 
     App::new()
-        .with_settings(RenderSettings {
-            enable_hdr: true,
-            msaa_samples: 4,
+        .with_settings(RendererSettings {
             ..Default::default()
         })
         .run::<ShowcaseApp>()
