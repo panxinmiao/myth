@@ -58,10 +58,10 @@ use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
-    BRDFLutComputePass, BloomPass, IBLComputePass, OpaquePass, SceneCullPass, ShadowPass,
+    BRDFLutComputePass, BloomPass, FxaaPass, IBLComputePass, OpaquePass, SceneCullPass, ShadowPass,
     SimpleForwardPass, SkyboxPass, ToneMapPass, TransmissionCopyPass, TransparentPass,
 };
-use crate::renderer::graph::transient_pool::TransientTexturePool;
+use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTexturePool};
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 use crate::{FrameBuilder, RenderStage};
@@ -134,6 +134,7 @@ struct RendererState {
     // Post Processing
     pub(crate) bloom_pass: BloomPass,
     pub(crate) tone_mapping_pass: ToneMapPass,
+    pub(crate) fxaa_pass: FxaaPass,
 }
 
 impl Renderer {
@@ -207,6 +208,7 @@ impl Renderer {
         // Post Processing
         let bloom_pass = BloomPass::new(&wgpu_ctx.device);
         let tone_mapping_pass = ToneMapPass::new(&wgpu_ctx.device);
+        let fxaa_pass = FxaaPass::new(&wgpu_ctx.device);
 
         // Skybox / Background
         let skybox_pass = SkyboxPass::new(&wgpu_ctx.device);
@@ -234,6 +236,7 @@ impl Renderer {
             ibl_pass,
             bloom_pass,
             tone_mapping_pass,
+            fxaa_pass,
             skybox_pass,
         });
 
@@ -357,8 +360,37 @@ impl Renderer {
                 frame_builder.add_node(RenderStage::PostProcess, &mut state.bloom_pass);
             }
 
+            // FXAA routing: when enabled, ToneMap outputs to a transient LDR texture
+            // which FXAA then reads and writes to the surface.
+            // When disabled, ToneMap writes directly to the surface.
+            if scene.fxaa.enabled {
+                let ldr_tex_id = state.transient_pool.allocate(
+                    &state.wgpu_ctx.device,
+                    &TransientTextureDesc {
+                        width: state.wgpu_ctx.size().0,
+                        height: state.wgpu_ctx.size().1,
+                        format: state.wgpu_ctx.surface_view_format,
+                        usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
+                        mip_level_count: 1,
+                        label: "FXAA LDR Intermediate",
+                    },
+                );
+
+                state.tone_mapping_pass.output_texture_id = Some(ldr_tex_id);
+                state.fxaa_pass.input_texture_id = Some(ldr_tex_id);
+            } else {
+                state.tone_mapping_pass.output_texture_id = None;
+                state.fxaa_pass.input_texture_id = None;
+            }
+
             // Tone mapping (HDR → LDR)
             frame_builder.add_node(RenderStage::PostProcess, &mut state.tone_mapping_pass);
+
+            // FXAA (conditional — only when enabled in Scene.fxaa)
+            if scene.fxaa.enabled {
+                frame_builder.add_node(RenderStage::PostProcess, &mut state.fxaa_pass);
+            }
         } else {
             // === Simple Path (LDR) ===
             // Prepare skybox for potential inline drawing by SimpleForwardPass.
