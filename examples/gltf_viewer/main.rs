@@ -1376,6 +1376,43 @@ impl GltfViewer {
                             if !self.hdr_enabled {
                                 ui.label("ℹ Enable HDR to configure bloom");
                             }
+
+                            ui.separator();
+
+                            // ===== FXAA 抗锯齿 =====
+                            ui.add_enabled_ui(self.hdr_enabled, |ui| {
+                                let mut fxaa_enabled = scene.fxaa.enabled;
+                                if ui.checkbox(&mut fxaa_enabled, "Enable FXAA").changed() {
+                                    scene.fxaa.set_enabled(fxaa_enabled);
+                                }
+
+                                ui.add_enabled_ui(fxaa_enabled, |ui| {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Quality:");
+                                        let current_quality = scene.fxaa.quality();
+                                        egui::ComboBox::from_id_salt("fxaa_quality")
+                                            .width(100.0)
+                                            .selected_text(current_quality.name())
+                                            .show_ui(ui, |ui| {
+                                                for quality in FxaaQuality::all() {
+                                                    if ui
+                                                        .selectable_label(
+                                                            current_quality == *quality,
+                                                            quality.name(),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        scene.fxaa.set_quality(*quality);
+                                                    }
+                                                }
+                                            });
+                                    });
+                                });
+                            });
+
+                            if !self.hdr_enabled {
+                                ui.label("ℹ Enable HDR to configure FXAA");
+                            }
                         });
 
                         ui.separator();

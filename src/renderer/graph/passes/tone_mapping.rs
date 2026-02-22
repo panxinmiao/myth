@@ -31,6 +31,7 @@ use crate::render::RenderNode;
 // use crate::render::core::ResourceBuilder;
 use crate::renderer::core::{binding::BindGroupKey, resources::Tracked};
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
+use crate::renderer::graph::transient_pool::TransientTextureId;
 use crate::renderer::pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator};
 use crate::resources::texture::TextureSource;
 use crate::resources::tone_mapping::{ToneMappingMode, ToneMappingUniforms};
@@ -82,6 +83,11 @@ pub struct ToneMapPass {
     current_bind_group: Option<wgpu::BindGroup>,
     /// Current frame's pipeline
     current_pipeline: Option<wgpu::RenderPipeline>,
+
+    // === Output Routing ===
+    /// If `Some`, output to a transient texture (for downstream FXAA).
+    /// If `None`, output directly to the surface.
+    pub output_texture_id: Option<TransientTextureId>,
 }
 
 impl ToneMapPass {
@@ -183,6 +189,7 @@ impl ToneMapPass {
             pipeline_cache: FxHashMap::default(),
             current_pipeline: None,
             current_bind_group: None,
+            output_texture_id: None,
         }
     }
 
@@ -432,10 +439,17 @@ impl RenderNode for ToneMapPass {
             return;
         };
 
+        // Output to transient texture (for downstream FXAA) or directly to surface
+        let target_view: &wgpu::TextureView = if let Some(id) = self.output_texture_id {
+            ctx.transient_pool.get_view(id)
+        } else {
+            ctx.surface_view
+        };
+
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("ToneMap Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: ctx.surface_view,
+                view: target_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),

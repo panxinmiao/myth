@@ -40,14 +40,18 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
     * **Transmission** (glass, water).
 * **Full glTF 2.0 Support**: Complete support for glTF 2.0 specification, including PBR materials, animations, and scene hierarchy.
 * **HDR Rendering Pipeline**: Full support for HDR Rendering, various tone mapping mode.
-* **Color Grading**: Built-in support for 3D LUT-based color grading.
-* **Vignette Effect**: Adjustable vignette effect with intensity, smoothness, and color controls.
+* **Post-Processing Effects**: Built-in support for physically-based bloom.
+    * **Bloom** Physically-based bloom.
+    * **Color Grading**: Built-in support for 3D LUT-based color grading.
+    * **Contrast & Saturation**: Adjustable contrast and saturation controls.
+    * **Film Grain**: Realistic film grain effect with adjustable intensity and size.
+    * **Chromatic Aberration**: Simulate lens distortion with adjustable intensity and direction.
+    * **Vignette Effect**: Adjustable vignette effect with intensity, smoothness, and color controls.
 * **Skybox & Background**: Color, gradient, image, cubemap, and equirectangular sky rendering modes.
-* **MSAA**: Built-in Multi-Sample Anti-Aliasing.
+* **Anti-Aliasing**: Built-in MSAA and FXAA support.
 * **Shadows**: Cascaded shadow maps.
 * **Transient Render Graph**: A highly optimized, frame-graph based rendering architecture that minimizes overhead and maximizes flexibility.
 * **Asset System**: Asynchronous asset loading with `AssetServer`, built-in **glTF 2.0** support (geometry, materials, animations).
-* **Post-Processing Effects**: Built-in support for physically-based bloom, tone mapping, and more.
 * **Tooling Ready**: Includes a powerful `gltf_viewer` example with an embedded **Inspector UI** (based on egui), capable of inspecting scene nodes, materials, and textures at runtime.
 * **Web First**: First-class support for **WASM** and **WebGPU**. Write once, run everywhere.
 

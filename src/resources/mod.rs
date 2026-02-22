@@ -25,6 +25,7 @@
 
 pub mod bloom;
 pub mod buffer;
+pub mod fxaa;
 pub mod geometry;
 pub mod image;
 pub mod input;
@@ -46,6 +47,7 @@ pub use mesh::Mesh;
 
 pub use bloom::BloomSettings;
 pub use buffer::BufferRef;
+pub use fxaa::{FxaaQuality, FxaaSettings};
 pub use geometry::{Attribute, BoundingBox, BoundingSphere, Geometry};
 pub use image::{Image, ImageDescriptor};
 pub use input::{ButtonState, Input, Key, MouseButton};

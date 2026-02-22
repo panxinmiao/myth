@@ -7,6 +7,7 @@ use crate::animation::{AnimationAction, AnimationMixer, AnimationSystem, Binder}
 use crate::assets::prefab::Prefab;
 use crate::resources::bloom::BloomSettings;
 use crate::resources::buffer::CpuBuffer;
+use crate::resources::fxaa::FxaaSettings;
 use crate::resources::geometry::Geometry;
 use crate::resources::mesh::Mesh;
 use crate::resources::shader_defines::ShaderDefines;
@@ -141,6 +142,8 @@ pub struct Scene {
     pub tone_mapping: ToneMappingSettings,
     /// Bloom post-processing settings
     pub bloom: BloomSettings,
+    /// FXAA (Fast Approximate Anti-Aliasing) settings
+    pub fxaa: FxaaSettings,
     /// Background rendering settings (mode + skybox uniform buffer)
     pub background: BackgroundSettings,
     /// Currently active camera for rendering
@@ -193,6 +196,7 @@ impl Scene {
             environment: Environment::new(),
             tone_mapping: ToneMappingSettings::default(),
             bloom: BloomSettings::default(),
+            fxaa: FxaaSettings::default(),
             background: BackgroundSettings::default(),
 
             active_camera: None,
