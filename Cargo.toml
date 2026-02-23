@@ -32,6 +32,7 @@ crate-type = ["cdylib", "rlib"]
 wgpu = { version = "28.0", features = ["wgsl"] } #
 glam = { version = "0.32", features = ["bytemuck", "scalar-math"] }
 bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
+rand = "0.10.0"
 
 # Windowing and Input
 winit = { version = "0.30", optional = true }

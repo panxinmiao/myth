@@ -421,6 +421,10 @@ define_gpu_data_struct!(
     struct RenderStateUniforms {
         pub view_projection: Mat4 = Mat4::IDENTITY,
         pub view_projection_inverse: Mat4 = Mat4::IDENTITY,
+
+        pub projection_matrix: Mat4 = Mat4::IDENTITY,
+        pub projection_inverse: Mat4 = Mat4::IDENTITY,
+
         pub view_matrix: Mat4 = Mat4::IDENTITY,
         pub camera_position: Vec3 = Vec3::ZERO,
         pub time: f32 = 0.0,

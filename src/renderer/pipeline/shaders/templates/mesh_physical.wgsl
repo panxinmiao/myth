@@ -14,6 +14,10 @@ $$ if USE_TRANSMISSION is defined
     {$ include 'transmission' $}
 $$ endif
 
+// SSAO texture (Group 3, Binding 2) — always bound.
+// When SSAO is disabled, this is a 1×1 white texture (AO = 1.0).
+@group(3) @binding(2) var t_ssao: texture_2d<f32>;
+
 @vertex
 fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var out: VertexOutput;
@@ -201,24 +205,30 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     $$ endif
 
     // Ambient occlusion
+    // Sample screen-space AO (always available; 1.0 when disabled)
+    let ssao_value = textureLoad(t_ssao, vec2<i32>(varyings.position.xy), 0).r;
+
     $$ if HAS_AO_MAP is defined
         let ao_map_intensity = u_material.ao_map_intensity;
-        let ambient_occlusion = ( textureSample( t_ao_map, s_ao_map, varyings.ao_map_uv ).r - 1.0 ) * ao_map_intensity + 1.0;
+        let material_ao = ( textureSample( t_ao_map, s_ao_map, varyings.ao_map_uv ).r - 1.0 ) * ao_map_intensity + 1.0;
+        let ambient_occlusion = material_ao * ssao_value;
+    $$ else
+        let ambient_occlusion = ssao_value;
+    $$ endif
 
-        reflected_light.indirect_diffuse *= ambient_occlusion;
+    reflected_light.indirect_diffuse *= ambient_occlusion;
 
-        $$ if USE_CLEARCOAT is defined
-            clearcoat_specular_indirect *= ambient_occlusion;
-        $$ endif
+    $$ if USE_CLEARCOAT is defined
+        clearcoat_specular_indirect *= ambient_occlusion;
+    $$ endif
 
-        $$ if USE_SHEEN is defined
-            sheen_specular_indirect *= ambient_occlusion;
-        $$ endif
+    $$ if USE_SHEEN is defined
+        sheen_specular_indirect *= ambient_occlusion;
+    $$ endif
 
-        $$ if USE_IBL is defined
-            let dot_nv = saturate( dot( geometry.normal, geometry.view_dir ) );
-            reflected_light.indirect_specular *= computeSpecularOcclusion( dot_nv, ambient_occlusion, material.roughness );
-        $$ endif
+    $$ if USE_IBL is defined
+        let dot_nv = saturate( dot( geometry.normal, geometry.view_dir ) );
+        reflected_light.indirect_specular *= computeSpecularOcclusion( dot_nv, ambient_occlusion, material.roughness );
     $$ endif
 
 
