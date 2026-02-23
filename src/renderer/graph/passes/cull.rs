@@ -177,6 +177,12 @@ impl SceneCullPass {
 
                         let shader_hash = options.compute_hash();
 
+                        // Determine if this is an opaque item (not transparent
+                        // and not using transmission) so that Z-prepass depth
+                        // compare overrides are only applied to opaque pipelines.
+                        let is_opaque_item = material.alpha_mode() != AlphaMode::Blend
+                            && !material.use_transmission();
+
                         let canonical_key = PipelineKey {
                             shader_hash,
                             vertex_layout_id: gpu_geometry.layout_id,
@@ -192,8 +198,25 @@ impl SceneCullPass {
                                 Side::Back => Some(wgpu::Face::Front),
                                 Side::Double => None,
                             },
-                            depth_write: material.depth_write(),
-                            depth_compare: if material.depth_test() {
+                            // When the Z-Normal prepass has written depth for
+                            // opaque objects, the main pass can use Equal compare
+                            // with depth writes disabled — every fragment that
+                            // survives is guaranteed visible, eliminating
+                            // overdraw.  Transparent objects still need the
+                            // normal depth path.
+                            depth_write: if is_opaque_item
+                                && ctx.wgpu_ctx.render_path.requires_z_prepass()
+                            {
+                                false
+                            } else {
+                                material.depth_write()
+                            },
+                            depth_compare: if is_opaque_item
+                                && ctx.wgpu_ctx.render_path.requires_z_prepass()
+                                && material.depth_test()
+                            {
+                                wgpu::CompareFunction::Equal
+                            } else if material.depth_test() {
                                 wgpu::CompareFunction::Greater
                             } else {
                                 wgpu::CompareFunction::Always

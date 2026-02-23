@@ -58,8 +58,9 @@ use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
-    BRDFLutComputePass, BloomPass, FxaaPass, IBLComputePass, OpaquePass, SceneCullPass, ShadowPass,
-    SimpleForwardPass, SkyboxPass, ToneMapPass, TransmissionCopyPass, TransparentPass,
+    BRDFLutComputePass, BloomPass, DepthNormalPrepass, FxaaPass, IBLComputePass, OpaquePass,
+    SceneCullPass, ShadowPass, SimpleForwardPass, SkyboxPass, ToneMapPass, TransmissionCopyPass,
+    TransparentPass,
 };
 use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTexturePool};
 use crate::scene::Scene;
@@ -115,6 +116,9 @@ struct RendererState {
     // Data Preparation
     pub(crate) cull_pass: SceneCullPass,
     pub(crate) shadow_pass: ShadowPass,
+
+    // Pre Pass (Z-Normal)
+    pub(crate) prepass: DepthNormalPrepass,
 
     // Simple Path (LDR)
     pub(crate) simple_forward_pass: SimpleForwardPass,
@@ -193,6 +197,9 @@ impl Renderer {
         let cull_pass = SceneCullPass::new();
         let shadow_pass = ShadowPass::new(&wgpu_ctx.device);
 
+        // Pre Pass (Z-Normal)
+        let prepass = DepthNormalPrepass::new();
+
         // Simple Path (LDR)
         let simple_forward_pass = SimpleForwardPass::new(self.settings.clear_color);
 
@@ -228,6 +235,7 @@ impl Renderer {
 
             cull_pass,
             shadow_pass,
+            prepass,
             simple_forward_pass,
             opaque_pass,
             transparent_pass,
@@ -337,6 +345,11 @@ impl Renderer {
                     .frame_resources
                     .ensure_transmission_resource(&state.wgpu_ctx.device);
                 // === PBR Path (HDR) ===
+
+                // Z-Normal pre-pass (conditional)
+                if state.wgpu_ctx.render_path.requires_z_prepass() {
+                    frame_builder.add_node(RenderStage::Opaque, &mut state.prepass);
+                }
 
                 // Opaque rendering
                 frame_builder.add_node(RenderStage::Opaque, &mut state.opaque_pass);

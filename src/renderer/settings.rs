@@ -122,8 +122,7 @@ impl RenderPath {
     #[inline]
     #[must_use]
     pub fn requires_z_prepass(&self) -> bool {
-        // TODO: return true for HighFidelity once prepass is implemented.
-        false
+        matches!(self, Self::HighFidelity)
     }
 
     /// Returns the main color attachment format for scene rendering.

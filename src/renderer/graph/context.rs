@@ -63,6 +63,12 @@ pub enum GraphResource {
     SceneColorOutput,
     /// Scene depth buffer (reverse-Z, always available).
     SceneDepth,
+    /// View-space normal buffer for Mini G-Buffer (HighFidelity only).
+    ///
+    /// Format: `Rgba8Unorm` — normals are encoded from [-1, 1] to [0, 1].
+    /// Alpha channel: 1.0 = valid geometry, 0.0 = background (no normal).
+    /// Created when [`RenderPath::requires_z_prepass()`] returns `true`.
+    SceneNormal,
     /// MSAA intermediate color buffer (only when MSAA is enabled).
     SceneMsaa,
     /// Primary scene render target.
@@ -187,6 +193,11 @@ impl PrepareContext<'_> {
             GraphResource::SceneColorInput => self.get_scene_color_input(),
             GraphResource::SceneColorOutput => self.get_scene_color_output(),
             GraphResource::SceneDepth => &self.frame_resources.depth_view,
+            GraphResource::SceneNormal => self
+                .frame_resources
+                .scene_normal_view
+                .as_ref()
+                .expect("SceneNormal requested but depth-normal prepass is not enabled"),
             GraphResource::SceneMsaa => self
                 .frame_resources
                 .scene_msaa_view
@@ -211,7 +222,7 @@ impl PrepareContext<'_> {
     }
 
     /// Try to retrieve a texture view, returning `None` for unavailable
-    /// optional resources (`SceneMsaa`, `Transmission`).
+    /// optional resources (`SceneMsaa`, `SceneNormal`, `Transmission`).
     #[must_use]
     #[inline]
     pub fn try_get_resource_view(
@@ -219,6 +230,7 @@ impl PrepareContext<'_> {
         resource: GraphResource,
     ) -> Option<&Tracked<wgpu::TextureView>> {
         match resource {
+            GraphResource::SceneNormal => self.frame_resources.scene_normal_view.as_ref(),
             GraphResource::SceneMsaa => self.frame_resources.scene_msaa_view.as_ref(),
             GraphResource::Transmission => self.frame_resources.transmission_view.as_ref(),
             GraphResource::Surface => None,
@@ -314,6 +326,11 @@ impl<'a> ExecuteContext<'a> {
                 );
             }
             GraphResource::SceneDepth => &self.frame_resources.depth_view,
+            GraphResource::SceneNormal => self
+                .frame_resources
+                .scene_normal_view
+                .as_ref()
+                .expect("SceneNormal requested but depth-normal prepass is not enabled"),
             GraphResource::SceneMsaa => self
                 .frame_resources
                 .scene_msaa_view
@@ -347,7 +364,7 @@ impl<'a> ExecuteContext<'a> {
     }
 
     /// Try to retrieve a texture view, returning `None` for unavailable
-    /// optional resources (`SceneMsaa`, `Transmission`).
+    /// optional resources (`SceneMsaa`, `SceneNormal`, `Transmission`).
     ///
     /// Returns `None` for `Surface` and LDR `SceneRenderTarget` (not Tracked).
     #[must_use]
@@ -357,6 +374,7 @@ impl<'a> ExecuteContext<'a> {
         resource: GraphResource,
     ) -> Option<&Tracked<wgpu::TextureView>> {
         match resource {
+            GraphResource::SceneNormal => self.frame_resources.scene_normal_view.as_ref(),
             GraphResource::SceneMsaa => self.frame_resources.scene_msaa_view.as_ref(),
             GraphResource::Transmission => self.frame_resources.transmission_view.as_ref(),
             GraphResource::Surface => None,
@@ -382,6 +400,10 @@ pub struct FrameResources {
 
     // 深度缓冲
     pub depth_view: Tracked<wgpu::TextureView>,
+
+    // 法线缓冲 (HighFidelity path, for depth-normal prepass / SSAO)
+    // Format: Rgba8Unorm — normals encoded from [-1,1] to [0,1], alpha = geometry mask
+    pub scene_normal_view: Option<Tracked<wgpu::TextureView>>,
 
     pub transmission_view: Option<Tracked<wgpu::TextureView>>,
 
@@ -448,6 +470,7 @@ impl FrameResources {
             size: (0, 0),
 
             depth_view: Tracked::new(placeholder_view.clone()),
+            scene_normal_view: None,
             scene_msaa_view: None,
             scene_color_view: [
                 Tracked::new(placeholder_view.clone()),
@@ -552,12 +575,28 @@ impl FrameResources {
             &wgpu_ctx.device,
             size,
             wgpu_ctx.depth_format,
-            wgpu::TextureUsages::RENDER_ATTACHMENT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             render_sample_count,
             1,
             "Depth Texture",
         );
         self.depth_view = Tracked::new(depth_view);
+
+        // Normal Texture (HighFidelity only — used by depth-normal prepass)
+        if wgpu_ctx.render_path.requires_z_prepass() {
+            let normal_view = Self::create_texture(
+                &wgpu_ctx.device,
+                size,
+                wgpu::TextureFormat::Rgba8Unorm,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                1, // always 1× — prepass runs before MSAA resolve
+                1,
+                "Scene Normal Texture",
+            );
+            self.scene_normal_view = Some(Tracked::new(normal_view));
+        } else {
+            self.scene_normal_view = None;
+        }
 
         // Scene Color Texture(s) (ping-pong)
         if wgpu_ctx.render_path.supports_post_processing() {
