@@ -344,9 +344,6 @@ impl Renderer {
         //
         match &self.settings.path {
             RenderPath::HighFidelity => {
-                state
-                    .frame_resources
-                    .ensure_transmission_resource(&state.wgpu_ctx.device);
                 // === PBR Path (HDR) ===
 
                 // Z-Normal pre-pass (conditional)

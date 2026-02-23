@@ -1,7 +1,7 @@
 $$ if USE_TRANSMISSION is defined
 
 @group(3) @binding(0) var t_transmission: texture_2d<f32>;
-@group(3) @binding(1) var s_transmission: sampler;
+// @group(3) @binding(1) var s_transmission: sampler;
 
 // Mipped Bicubic Texture Filtering by N8
 // https://www.shadertoy.com/view/Dl2SDW
@@ -97,7 +97,7 @@ fn get_transmission_sample( frag_coord: vec2f, roughness: f32, ior: f32 ) -> vec
     // transmission_sampler_map
     let size = textureDimensions( t_transmission, 0 );
     let lod = log2( f32(size.x) ) * apply_ior_to_roughness( roughness, ior );
-    return texture_bicubic( t_transmission, s_transmission, frag_coord.xy, lod );
+    return texture_bicubic( t_transmission, s_screen_sampler, frag_coord.xy, lod );
 }
 
 fn volume_attenuation( transmission_distance: f32, attenuation_color: vec3f, attenuation_distance: f32 ) -> vec3f {

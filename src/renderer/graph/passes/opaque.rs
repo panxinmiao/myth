@@ -32,6 +32,10 @@ pub struct OpaquePass {
     /// Cached render target views during prepare phase.
     color_target_view: Option<Tracked<wgpu::TextureView>>,
     depth_view: Option<Tracked<wgpu::TextureView>>,
+
+    /// Dynamic screen (group 3) bind group built each frame.
+    screen_bind_group: Option<wgpu::BindGroup>,
+    screen_bind_group_id: u64,
 }
 
 impl OpaquePass {
@@ -41,6 +45,8 @@ impl OpaquePass {
             clear_color,
             color_target_view: None,
             depth_view: None,
+            screen_bind_group: None,
+            screen_bind_group_id: 0,
         }
     }
 
@@ -49,6 +55,8 @@ impl OpaquePass {
         ctx: &'pass ExecuteContext,
         pass: &mut TrackedRenderPass<'pass>,
         cmds: &'pass [RenderCommand],
+        screen_bind_group: &'pass wgpu::BindGroup,
+        screen_bind_group_id: u64,
     ) {
         if cmds.is_empty() {
             return;
@@ -68,8 +76,7 @@ impl OpaquePass {
                 &[cmd.dynamic_offset],
             );
 
-            let screen_bind_group = &ctx.frame_resources.screen_bind_group;
-            pass.set_bind_group(3, screen_bind_group.id(), screen_bind_group, &[]);
+            pass.set_bind_group(3, screen_bind_group_id, screen_bind_group, &[]);
 
             if let Some(gpu_geometry) = ctx.resource_manager.get_geometry(cmd.geometry_handle) {
                 for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
@@ -114,14 +121,6 @@ impl RenderNode for OpaquePass {
             .get_resource_view(GraphResource::SceneRenderTarget)
             .clone();
 
-        // let target_view = ctx.get_scene_render_target_view();
-
-        // if let Some(msaa_view) = ctx.try_get_resource_view(GraphResource::SceneMsaa) {
-        //     (msaa_view, Some(target_view))
-        // } else {
-        //     (target_view, None)
-        // }
-
         if let Some(msaa_view) = ctx.try_get_resource_view(GraphResource::SceneMsaa) {
             self.color_target_view = Some(msaa_view.clone());
         } else {
@@ -129,6 +128,26 @@ impl RenderNode for OpaquePass {
         }
 
         self.depth_view = Some(ctx.get_resource_view(GraphResource::SceneDepth).clone());
+
+        // 3. Build dynamic group 3 bind group.
+        //    OpaquePass runs BEFORE TransmissionCopyPass, so use dummy transmission.
+        //    SSAO view comes from the transient pool if SsaoPass ran this frame.
+        let ssao_view = ctx
+            .render_lists
+            .ssao_texture_id
+            .map(|id| ctx.transient_pool.get_view(id).clone())
+            .unwrap_or_else(|| ctx.frame_resources.ssao_dummy_view.clone());
+
+        let transmission_view = &ctx.frame_resources.dummy_transmission_view;
+
+        let (bg, bg_id) = ctx.frame_resources.build_screen_bind_group(
+            &ctx.wgpu_ctx.device,
+            ctx.global_bind_group_cache,
+            transmission_view,
+            &ssao_view,
+        );
+        self.screen_bind_group = Some(bg);
+        self.screen_bind_group_id = bg_id;
     }
 
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -192,6 +211,13 @@ impl RenderNode for OpaquePass {
             &[],
         );
 
-        Self::draw_list(ctx, &mut tracked_pass, &render_lists.opaque);
+        let screen_bg = self.screen_bind_group.as_ref().unwrap();
+        Self::draw_list(
+            ctx,
+            &mut tracked_pass,
+            &render_lists.opaque,
+            screen_bg,
+            self.screen_bind_group_id,
+        );
     }
 }

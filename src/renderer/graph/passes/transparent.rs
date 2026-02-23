@@ -14,6 +14,8 @@
 //! # Note
 //! This pass runs after `OpaquePass` and an optional `TransmissionCopyPass`.
 
+use crate::render::PrepareContext;
+use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::{RenderNode, TrackedRenderPass};
@@ -26,24 +28,26 @@ use crate::renderer::graph::{RenderNode, TrackedRenderPass};
 /// # Performance Considerations
 /// - Command lists are sorted by Depth (Back-to-Front) to ensure correct Alpha blending
 /// - If there are Transmission effects, this Pass runs after `TransmissionCopyPass`
-pub struct TransparentPass;
+pub struct TransparentPass {
+    /// Cached render target views during prepare phase.
+    color_target_view: Option<Tracked<wgpu::TextureView>>,
+    resolve_target_view: Option<Tracked<wgpu::TextureView>>,
+    depth_view: Option<Tracked<wgpu::TextureView>>,
+
+    /// Dynamic screen (group 3) bind group built each frame.
+    screen_bind_group: Option<wgpu::BindGroup>,
+    screen_bind_group_id: u64,
+}
 
 impl TransparentPass {
     #[must_use]
     pub fn new() -> Self {
-        Self
-    }
-
-    /// Determine render target views based on MSAA settings.
-    fn get_render_target<'a>(
-        ctx: &'a ExecuteContext,
-    ) -> (&'a wgpu::TextureView, Option<&'a wgpu::TextureView>) {
-        let target_view = ctx.get_scene_render_target_view();
-
-        if let Some(msaa_view) = ctx.try_get_resource_view(GraphResource::SceneMsaa) {
-            (msaa_view, Some(target_view))
-        } else {
-            (target_view, None)
+        Self {
+            color_target_view: None,
+            resolve_target_view: None,
+            depth_view: None,
+            screen_bind_group: None,
+            screen_bind_group_id: 0,
         }
     }
 
@@ -52,6 +56,8 @@ impl TransparentPass {
         ctx: &'pass ExecuteContext,
         pass: &mut TrackedRenderPass<'pass>,
         cmds: &'pass [RenderCommand],
+        screen_bind_group: &'pass wgpu::BindGroup,
+        screen_bind_group_id: u64,
     ) {
         if cmds.is_empty() {
             return;
@@ -71,8 +77,7 @@ impl TransparentPass {
                 &[cmd.dynamic_offset],
             );
 
-            let screen_bind_group = &ctx.frame_resources.screen_bind_group;
-            pass.set_bind_group(3, screen_bind_group.id(), screen_bind_group, &[]);
+            pass.set_bind_group(3, screen_bind_group_id, screen_bind_group, &[]);
 
             if let Some(gpu_geometry) = ctx.resource_manager.get_geometry(cmd.geometry_handle) {
                 for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
@@ -108,6 +113,46 @@ impl RenderNode for TransparentPass {
         "Transparent Pass"
     }
 
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
+        // Cache render target views
+        let target_view = ctx
+            .get_resource_view(GraphResource::SceneRenderTarget)
+            .clone();
+
+        if let Some(msaa_view) = ctx.try_get_resource_view(GraphResource::SceneMsaa) {
+            self.color_target_view = Some(msaa_view.clone());
+            self.resolve_target_view = Some(target_view);
+        } else {
+            self.color_target_view = Some(target_view);
+            self.resolve_target_view = None;
+        }
+
+        self.depth_view = Some(ctx.get_resource_view(GraphResource::SceneDepth).clone());
+
+        // Build dynamic group 3 bind group.
+        // TransparentPass runs AFTER TransmissionCopyPass, so use real transmission if available.
+        let ssao_view = ctx
+            .render_lists
+            .ssao_texture_id
+            .map(|id| ctx.transient_pool.get_view(id).clone())
+            .unwrap_or_else(|| ctx.frame_resources.ssao_dummy_view.clone());
+
+        let transmission_view = ctx
+            .render_lists
+            .transmission_texture_id
+            .map(|id| ctx.transient_pool.get_view(id).clone())
+            .unwrap_or_else(|| ctx.frame_resources.dummy_transmission_view.clone());
+
+        let (bg, bg_id) = ctx.frame_resources.build_screen_bind_group(
+            &ctx.wgpu_ctx.device,
+            ctx.global_bind_group_cache,
+            &transmission_view,
+            &ssao_view,
+        );
+        self.screen_bind_group = Some(bg);
+        self.screen_bind_group_id = bg_id;
+    }
+
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let render_lists = &ctx.render_lists;
 
@@ -117,8 +162,9 @@ impl RenderNode for TransparentPass {
             return;
         };
 
-        let (color_view, resolve_target) = Self::get_render_target(ctx);
-        let depth_view = ctx.get_resource_view(GraphResource::SceneDepth);
+        let color_view = self.color_target_view.as_ref().unwrap();
+        let resolve_target = self.resolve_target_view.as_deref();
+        let depth_view = self.depth_view.as_ref().unwrap();
 
         // Determine final store/resolve configuration
         let (store_op, final_resolve_target) = if resolve_target.is_some() {
@@ -164,7 +210,14 @@ impl RenderNode for TransparentPass {
 
         // Only draw when there are transparent objects
         if !render_lists.transparent.is_empty() {
-            Self::draw_list(ctx, &mut tracked_pass, &render_lists.transparent);
+            let screen_bg = self.screen_bind_group.as_ref().unwrap();
+            Self::draw_list(
+                ctx,
+                &mut tracked_pass,
+                &render_lists.transparent,
+                screen_bg,
+                self.screen_bind_group_id,
+            );
         }
         // Even if there are no transparent objects, this pass is needed to complete MSAA resolve
     }

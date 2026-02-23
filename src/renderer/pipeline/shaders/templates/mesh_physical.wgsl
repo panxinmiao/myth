@@ -16,6 +16,7 @@ $$ endif
 
 // SSAO texture (Group 3, Binding 2) — always bound.
 // When SSAO is disabled, this is a 1×1 white texture (AO = 1.0).
+@group(3) @binding(1) var s_screen_sampler: sampler;
 @group(3) @binding(2) var t_ssao: texture_2d<f32>;
 
 @vertex
@@ -40,7 +41,10 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 
     let world_pos = u_model.world_matrix * local_pos;
 
-    out.position = u_render_state.view_projection * world_pos;
+    let clip_pos = u_render_state.view_projection * world_pos;
+
+    out.position = clip_pos;
+    out.clip_position = clip_pos;
     out.world_position = world_pos.xyz / world_pos.w;
 
     $$ if HAS_COLOR
@@ -205,15 +209,27 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     $$ endif
 
     // Ambient occlusion
-    // Sample screen-space AO (always available; 1.0 when disabled)
-    let ssao_value = textureLoad(t_ssao, vec2<i32>(varyings.position.xy), 0).r;
+
+    var ambient_occlusion = 1.0;
+    $$ if USE_SSAO
+    // Sample screen-space AO
+    let screen_ndc = varyings.clip_position.xy / varyings.clip_position.w;
+
+    // let screen_clip = u_render_state.view_projection * vec4<f32>(varyings.world_position, 1.0);
+    // let screen_ndc = screen_clip.xyz / screen_clip.w;
+    let screen_uv = vec2<f32>(
+        screen_ndc.x * 0.5 + 0.5,
+        screen_ndc.y * -0.5 + 0.5
+    );
+
+
+    ambient_occlusion = textureSampleLevel(t_ssao, s_screen_sampler, screen_uv, 0.0).r;
+    $$ endif
 
     $$ if HAS_AO_MAP is defined
         let ao_map_intensity = u_material.ao_map_intensity;
         let material_ao = ( textureSample( t_ao_map, s_ao_map, varyings.ao_map_uv ).r - 1.0 ) * ao_map_intensity + 1.0;
-        let ambient_occlusion = material_ao * ssao_value;
-    $$ else
-        let ambient_occlusion = ssao_value;
+        ambient_occlusion *= material_ao;
     $$ endif
 
     reflected_light.indirect_diffuse *= ambient_occlusion;

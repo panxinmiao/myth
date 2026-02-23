@@ -125,6 +125,7 @@ impl SsaoSettings {
 
     /// Sets whether SSAO is enabled.
     pub fn set_enabled(&mut self, enabled: bool) {
+        println!("SSAO enabled: {}", enabled);
         self.enabled = enabled;
     }
 

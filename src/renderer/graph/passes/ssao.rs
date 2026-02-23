@@ -356,16 +356,15 @@ impl SsaoPass {
                 source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_code)),
             });
 
-            let pipeline_layout =
-                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("SSAO Raw Pipeline Layout"),
-                    bind_group_layouts: &[
-                        &gpu_world.layout,
-                        &self.raw_layout,
-                        &self.raw_uniforms_layout,
-                    ],
-                    immediate_size: 0,
-                });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("SSAO Raw Pipeline Layout"),
+                bind_group_layouts: &[
+                    &gpu_world.layout,
+                    &self.raw_layout,
+                    &self.raw_uniforms_layout,
+                ],
+                immediate_size: 0,
+            });
 
             self.raw_pipeline = Some(device.create_render_pipeline(
                 &wgpu::RenderPipelineDescriptor {
@@ -398,24 +397,19 @@ impl SsaoPass {
 
         // --- Bilateral Blur Pipeline ---
         {
-            let shader_code = ShaderGenerator::generate_shader(
-                "",
-                "",
-                "passes/ssao_blur",
-                &Default::default(),
-            );
+            let shader_code =
+                ShaderGenerator::generate_shader("", "", "passes/ssao_blur", &Default::default());
 
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("SSAO Blur Shader"),
                 source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_code)),
             });
 
-            let pipeline_layout =
-                device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("SSAO Blur Pipeline Layout"),
-                    bind_group_layouts: &[&self.blur_layout],
-                    immediate_size: 0,
-                });
+            let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("SSAO Blur Pipeline Layout"),
+                bind_group_layouts: &[&self.blur_layout],
+                immediate_size: 0,
+            });
 
             self.blur_pipeline = Some(device.create_render_pipeline(
                 &wgpu::RenderPipelineDescriptor {
@@ -552,8 +546,7 @@ impl SsaoPass {
             let gpu_buffer_id = ctx.resource_manager.ensure_buffer_id(uniforms);
             let cpu_buffer_id = uniforms.id();
 
-            let key =
-                BindGroupKey::new(self.raw_uniforms_layout.id()).with_resource(gpu_buffer_id);
+            let key = BindGroupKey::new(self.raw_uniforms_layout.id()).with_resource(gpu_buffer_id);
 
             let bind_group = if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
                 cached.clone()
@@ -657,7 +650,12 @@ impl RenderNode for SsaoPass {
         self.allocate_textures(ctx);
 
         // =====================================================================
-        // 5. Build bind groups
+        // 5. Publish SSAO output ID for downstream draw passes (group 3 binding)
+        // =====================================================================
+        ctx.render_lists.ssao_texture_id = self.blur_texture_id;
+
+        // =====================================================================
+        // 6. Build bind groups
         // =====================================================================
         self.build_bind_groups(ctx);
     }

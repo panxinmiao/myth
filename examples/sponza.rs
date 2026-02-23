@@ -22,6 +22,7 @@ impl AppHandler for HttpGltfExample {
         let scene = engine.scene_manager.active_scene_mut().unwrap();
 
         scene.environment.set_env_map(Some(env_texture_handle));
+        // scene.ssao.set_enabled(false);
 
         let mut dir_light = Light::new_directional(Vec3::ONE, 5.0);
         dir_light.cast_shadows = true;

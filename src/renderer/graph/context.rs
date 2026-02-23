@@ -21,7 +21,7 @@
 //!    `resource_manager` and `pipeline_cache` within the same call.
 
 use crate::assets::AssetServer;
-use crate::renderer::core::binding::GlobalBindGroupCache;
+use crate::renderer::core::binding::{BindGroupKey, GlobalBindGroupCache};
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::frame::RenderLists;
@@ -210,11 +210,12 @@ impl PrepareContext<'_> {
                 );
                 &self.frame_resources.scene_color_view[0]
             }
-            GraphResource::Transmission => self
-                .frame_resources
-                .transmission_view
-                .as_ref()
-                .expect("Transmission resource not available"),
+            GraphResource::Transmission => {
+                panic!(
+                    "GraphResource::Transmission is now a transient resource; \
+                     use render_lists.transmission_texture_id with transient_pool"
+                )
+            }
             GraphResource::Surface => {
                 panic!("GraphResource::Surface is not available during the prepare phase")
             }
@@ -232,7 +233,7 @@ impl PrepareContext<'_> {
         match resource {
             GraphResource::SceneNormal => self.frame_resources.scene_normal_view.as_ref(),
             GraphResource::SceneMsaa => self.frame_resources.scene_msaa_view.as_ref(),
-            GraphResource::Transmission => self.frame_resources.transmission_view.as_ref(),
+            GraphResource::Transmission => None, // Now transient; use render_lists.transmission_texture_id
             GraphResource::Surface => None,
             _ => Some(self.get_resource_view(resource)),
         }
@@ -348,11 +349,12 @@ impl<'a> ExecuteContext<'a> {
                     )
                 }
             }
-            GraphResource::Transmission => self
-                .frame_resources
-                .transmission_view
-                .as_ref()
-                .expect("Transmission resource not available"),
+            GraphResource::Transmission => {
+                panic!(
+                    "GraphResource::Transmission is now a transient resource; \
+                     use render_lists.transmission_texture_id with transient_pool"
+                )
+            }
             GraphResource::Surface => {
                 // surface_view is not Tracked — use `surface_view` field directly.
                 panic!(
@@ -376,7 +378,7 @@ impl<'a> ExecuteContext<'a> {
         match resource {
             GraphResource::SceneNormal => self.frame_resources.scene_normal_view.as_ref(),
             GraphResource::SceneMsaa => self.frame_resources.scene_msaa_view.as_ref(),
-            GraphResource::Transmission => self.frame_resources.transmission_view.as_ref(),
+            GraphResource::Transmission => None, // Now transient; use render_lists.transmission_texture_id
             GraphResource::Surface => None,
             GraphResource::SceneRenderTarget
                 if !self.wgpu_ctx.render_path.supports_post_processing() =>
@@ -396,24 +398,27 @@ pub struct FrameResources {
 
     // 场景主颜色缓冲 (HDR)
     // ping-pong 机制, 当非 straightforward 模式时，使用两个交替的缓冲，作为后处理输入输出
-    pub scene_color_view: [Tracked<wgpu::TextureView>; 2],    // 深度缓冲
+    pub scene_color_view: [Tracked<wgpu::TextureView>; 2],
+    // 深度缓冲
     pub depth_view: Tracked<wgpu::TextureView>,
 
     // 法线缓冲 (HighFidelity path, for depth-normal prepass / SSAO)
     // Format: Rgba8Unorm — normals encoded from [-1,1] to [0,1], alpha = geometry mask
     pub scene_normal_view: Option<Tracked<wgpu::TextureView>>,
 
-    pub transmission_view: Option<Tracked<wgpu::TextureView>>,
-
-    /// SSAO result texture view (blurred AO).
-    /// When SSAO is disabled, this holds a 1×1 white dummy texture (AO = 1.0).
-    pub ssao_view: Tracked<wgpu::TextureView>,
-
-    pub screen_bind_group: Tracked<wgpu::BindGroup>,
+    /// BindGroupLayout for group 3 (transmission + sampler + SSAO).
+    /// Persistent — created once, reused across frames.
     pub screen_bind_group_layout: Tracked<wgpu::BindGroupLayout>,
-    screen_sampler: Tracked<wgpu::Sampler>,
-    /// 1×1 white (R8Unorm = 255) dummy texture for SSAO-disabled fallback
-    ssao_dummy_view: wgpu::TextureView,
+
+    /// Shared linear-clamp sampler for transmission / SSAO sampling.
+    pub screen_sampler: Tracked<wgpu::Sampler>,
+
+    /// 1×1 white (R8Unorm = 255) dummy texture for SSAO-disabled fallback.
+    pub ssao_dummy_view: Tracked<wgpu::TextureView>,
+
+    /// 1×1 placeholder texture (Rgba16Float) for transmission-disabled fallback.
+    pub dummy_transmission_view: Tracked<wgpu::TextureView>,
+
     size: (u32, u32),
 }
 
@@ -421,7 +426,7 @@ impl FrameResources {
     pub fn new(wgpu_ctx: &WgpuContext, size: (u32, u32)) -> Self {
         let device = &wgpu_ctx.device;
 
-        // 1. 创建 Layout
+        // 1. 创建 Layout (group 3: transmission + sampler + SSAO)
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Screen/Transmission Layout"),
             entries: &[
@@ -478,16 +483,18 @@ impl FrameResources {
         );
 
         // SSAO dummy: 1×1 white R8Unorm texture (AO = 1.0 = fully lit)
-        let ssao_dummy_view = Self::create_initialized_r8_white(device);
+        let ssao_dummy_view = Tracked::new(Self::create_initialized_r8_white(device));
 
-        // 2. 创建初始 BindGroup (指向 Dummy)
-        let initial_bind_group = Self::create_bind_group(
-            &wgpu_ctx.device,
-            &layout,
-            &placeholder_view,
-            &sampler,
-            &ssao_dummy_view,
-        );
+        // Transmission dummy: 1×1 HDR placeholder (black)
+        let dummy_transmission_view = Tracked::new(Self::create_texture(
+            device,
+            (1, 1),
+            crate::renderer::HDR_TEXTURE_FORMAT,
+            wgpu::TextureUsages::TEXTURE_BINDING,
+            1,
+            1,
+            "Transmission Dummy Texture",
+        ));
 
         let mut resources = Self {
             size: (0, 0),
@@ -500,12 +507,10 @@ impl FrameResources {
                 Tracked::new(placeholder_view.clone()),
             ],
 
-            transmission_view: None,
-            ssao_view: Tracked::new(ssao_dummy_view.clone()),
-            screen_bind_group: Tracked::new(initial_bind_group),
             screen_bind_group_layout: Tracked::new(layout),
             screen_sampler: Tracked::new(sampler),
             ssao_dummy_view,
+            dummy_transmission_view,
         };
 
         resources.resize(wgpu_ctx, size);
@@ -539,33 +544,6 @@ impl FrameResources {
         texture.create_view(&wgpu::TextureViewDescriptor::default())
     }
 
-    fn create_bind_group(
-        device: &wgpu::Device,
-        layout: &wgpu::BindGroupLayout,
-        texture_view: &wgpu::TextureView,
-        sampler: &wgpu::Sampler,
-        ssao_view: &wgpu::TextureView,
-    ) -> wgpu::BindGroup {
-        device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Screen/Transmission BindGroup"),
-            layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(texture_view),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(ssao_view),
-                },
-            ],
-        })
-    }
-
     /// Creates a 1×1 R8Unorm texture initialized to 255 (white = no occlusion).
     fn create_initialized_r8_white(device: &wgpu::Device) -> wgpu::TextureView {
         let texture = device.create_texture(&wgpu::TextureDescriptor {
@@ -582,11 +560,67 @@ impl FrameResources {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        // Note: actual data write (0xFF) happens via queue.write_texture in the
-        // renderer init; for now the texture content is undefined but we only
-        // use it when SSAO is disabled and the bind group will be recreated with
-        // the real SSAO output when enabled.
         texture.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    /// Build (or retrieve from cache) the screen bind group (group 3) for the
+    /// given transmission and SSAO texture views.
+    ///
+    /// Returns `(bind_group, bind_group_id)` suitable for `TrackedRenderPass`.
+    /// The `bind_group_id` is a composite of the resource IDs, ensuring that
+    /// `TrackedRenderPass` skips redundant `set_bind_group` calls when the
+    /// same views are reused across draw commands.
+    pub fn build_screen_bind_group(
+        &self,
+        device: &wgpu::Device,
+        cache: &mut GlobalBindGroupCache,
+        transmission_view: &Tracked<wgpu::TextureView>,
+        ssao_view: &Tracked<wgpu::TextureView>,
+    ) -> (wgpu::BindGroup, u64) {
+        let layout_id = self.screen_bind_group_layout.id();
+        let sampler_id = self.screen_sampler.id();
+
+        let key = BindGroupKey::new(layout_id)
+            .with_resource(transmission_view.id())
+            .with_resource(sampler_id)
+            .with_resource(ssao_view.id());
+
+        // Composite ID for TrackedRenderPass state tracking
+        let bind_group_id = transmission_view
+            .id()
+            .wrapping_mul(6_364_136_223_846_793_005)
+            ^ ssao_view.id().wrapping_mul(1_442_695_040_888_963_407)
+            ^ sampler_id;
+
+        let layout = &*self.screen_bind_group_layout;
+        let sampler = &*self.screen_sampler;
+        let tv = &**transmission_view;
+        let sv = &**ssao_view;
+
+        let bg = cache
+            .get_or_create(key, || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Screen BindGroup (Dynamic)"),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(tv),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(sv),
+                        },
+                    ],
+                })
+            })
+            .clone();
+
+        (bg, bind_group_id)
     }
 
     /// Forces recreation of all frame resources regardless of size.
@@ -614,9 +648,6 @@ impl FrameResources {
         self.size = size;
 
         // 确定实际渲染时的采样数
-        // - MSAA 开启时：渲染到 MSAA 纹理（sample_count = msaa_samples），resolve 到颜色纹理
-        // - MSAA 关闭时：直接渲染到颜色纹理（sample_count = 1）
-        // 深度纹理的采样数必须与颜色渲染目标一致
         let render_sample_count = if wgpu_ctx.msaa_samples > 1 {
             wgpu_ctx.msaa_samples
         } else {
@@ -642,7 +673,7 @@ impl FrameResources {
                 size,
                 wgpu::TextureFormat::Rgba8Unorm,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-                1, // always 1× — prepass runs before MSAA resolve
+                1,
                 1,
                 "Scene Normal Texture",
             );
@@ -653,7 +684,6 @@ impl FrameResources {
 
         // Scene Color Texture(s) (ping-pong)
         if wgpu_ctx.render_path.supports_post_processing() {
-            // 非直接渲染模式，创建两个 ping-pong 纹理
             let ping_pong_texture_0 = Self::create_texture(
                 &wgpu_ctx.device,
                 size,
@@ -684,10 +714,7 @@ impl FrameResources {
         }
 
         // MSAA Texture
-        // 当 MSAA 关闭时，必须清除 scene_msaa_view
         if wgpu_ctx.msaa_samples > 1 {
-            // 创建 MSAA 纹理, 格式与主颜色纹理(Resolve target)相同
-
             let masaa_target_fromat = wgpu_ctx
                 .render_path
                 .main_color_format(wgpu_ctx.surface_view_format);
@@ -703,161 +730,10 @@ impl FrameResources {
             );
             self.scene_msaa_view = Some(Tracked::new(scene_msaa_view));
         } else {
-            // MSAA 关闭时，清除 MSAA 纹理
             self.scene_msaa_view = None;
         }
 
-        if self.transmission_view.is_some() {
-            let mip_level_count = ((size.0.max(size.1) as f32).log2().floor() as u32) + 1;
-            // 1. 创建纹理 (Tracked::new 会生成新 ID)
-            let texture_view = Self::create_texture(
-                &wgpu_ctx.device,
-                size,
-                crate::renderer::HDR_TEXTURE_FORMAT,
-                wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_DST
-                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                1,
-                mip_level_count,
-                "Transmission Texture",
-            );
-            let tracked_view = Tracked::new(texture_view);
-
-            // 2. 立即创建 BindGroup (显式管理)
-            // 这里我们不做 Cache 查找，直接 New 一个，反正 Texture 变了 BindGroup 必须变
-            let bind_group = wgpu_ctx
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Screen BindGroup"),
-                    layout: &self.screen_bind_group_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&tracked_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&self.screen_sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::TextureView(&self.ssao_view),
-                        },
-                    ],
-                });
-
-            self.transmission_view = Some(tracked_view);
-            self.screen_bind_group = Tracked::new(bind_group);
-        }
-    }
-
-    pub fn ensure_transmission_resource(&mut self, device: &wgpu::Device) -> &wgpu::BindGroup {
-        if self.transmission_view.is_none() {
-            let mip_level_count = ((self.size.0.max(self.size.1) as f32).log2().floor() as u32) + 1;
-            let texture_view = Self::create_texture(
-                device,
-                self.size,
-                crate::renderer::HDR_TEXTURE_FORMAT,
-                wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_DST
-                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
-                1,
-                mip_level_count,
-                "Transmission Texture",
-            );
-            let tracked_view = Tracked::new(texture_view);
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Screen BindGroup"),
-                layout: &self.screen_bind_group_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&tracked_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.screen_sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(&self.ssao_view),
-                    },
-                ],
-            });
-
-            self.transmission_view = Some(tracked_view);
-            self.screen_bind_group = Tracked::new(bind_group);
-        }
-
-        &self.screen_bind_group
-    }
-
-    /// Updates the SSAO texture view used in the screen bind group.
-    ///
-    /// Called by the renderer after the SSAO pass produces its output texture,
-    /// or with the dummy view when SSAO is disabled.
-    pub fn update_ssao_view(&mut self, device: &wgpu::Device, ssao_view: wgpu::TextureView) {
-        let tracked_ssao = Tracked::new(ssao_view);
-
-        // Determine which transmission view to use (real or placeholder)
-        let transmission_view_ref: &wgpu::TextureView = match &self.transmission_view {
-            Some(tv) => tv,
-            None => &self.ssao_dummy_view, // Reuse dummy as placeholder
-        };
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Screen BindGroup (SSAO updated)"),
-            layout: &self.screen_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(transmission_view_ref),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.screen_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(&tracked_ssao),
-                },
-            ],
-        });
-
-        self.ssao_view = tracked_ssao;
-        self.screen_bind_group = Tracked::new(bind_group);
-    }
-
-    /// Resets the SSAO view to the dummy white texture (SSAO disabled).
-    pub fn reset_ssao_view(&mut self, device: &wgpu::Device) {
-        let dummy_clone = &self.ssao_dummy_view;
-
-        let transmission_view_ref: &wgpu::TextureView = match &self.transmission_view {
-            Some(tv) => tv,
-            None => dummy_clone,
-        };
-
-        let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("Screen BindGroup (SSAO reset)"),
-            layout: &self.screen_bind_group_layout,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: wgpu::BindingResource::TextureView(transmission_view_ref),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 1,
-                    resource: wgpu::BindingResource::Sampler(&self.screen_sampler),
-                },
-                wgpu::BindGroupEntry {
-                    binding: 2,
-                    resource: wgpu::BindingResource::TextureView(dummy_clone),
-                },
-            ],
-        });
-
-        self.ssao_view = Tracked::new(self.ssao_dummy_view.clone());
-        self.screen_bind_group = Tracked::new(bind_group);
+        // Transmission and SSAO textures are now transient —
+        // no per-resize allocation needed here.
     }
 }
