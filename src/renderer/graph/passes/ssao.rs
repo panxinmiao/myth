@@ -398,7 +398,7 @@ impl SsaoPass {
         // --- Bilateral Blur Pipeline ---
         {
             let shader_code =
-                ShaderGenerator::generate_shader("", "", "passes/ssao_blur", &Default::default());
+                ShaderGenerator::generate_shader("", "", "passes/ssao_blur", &ShaderCompilationOptions::default());
 
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("SSAO Blur Shader"),
@@ -452,8 +452,8 @@ impl SsaoPass {
         self.raw_texture_id = Some(ctx.transient_pool.allocate(
             &ctx.wgpu_ctx.device,
             &TransientTextureDesc {
-                width: size.0,
-                height: size.1,
+                width: size.0 / 2,
+                height: size.1 / 2,
                 format: SSAO_TEXTURE_FORMAT,
                 usage: wgpu::TextureUsages::RENDER_ATTACHMENT
                     | wgpu::TextureUsages::TEXTURE_BINDING,

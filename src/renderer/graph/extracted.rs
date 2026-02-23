@@ -84,8 +84,9 @@ pub struct ExtractedScene {
     /// Each `RenderView` in the Cull phase filters and culls from this list.
     pub render_items: Vec<ExtractedRenderItem>,
     /// Scene's shader macro definitions
-    pub scene_defines: ShaderDefines,
     pub scene_id: u32,
+    pub scene_variants: u32,
+    pub scene_defines: ShaderDefines,
     pub background: BackgroundMode,
     pub envvironment: Environment,
     pub has_transmission: bool,
@@ -112,8 +113,9 @@ impl ExtractedScene {
     pub fn new() -> Self {
         Self {
             render_items: Vec::new(),
-            scene_defines: ShaderDefines::new(),
             scene_id: 0,
+            scene_variants: 0,
+            scene_defines: ShaderDefines::new(),
             background: BackgroundMode::default(),
             envvironment: Environment::default(),
             has_transmission: false,
@@ -128,8 +130,9 @@ impl ExtractedScene {
     pub fn with_capacity(item_capacity: usize) -> Self {
         Self {
             render_items: Vec::with_capacity(item_capacity),
-            scene_defines: ShaderDefines::new(),
             scene_id: 0,
+            scene_variants: 0,
+            scene_defines: ShaderDefines::new(),
             background: BackgroundMode::default(),
             envvironment: Environment::default(),
             has_transmission: false,
@@ -167,13 +170,18 @@ impl ExtractedScene {
         self.extract_render_items(scene, camera, assets, resource_manager);
         self.extract_environment(scene);
 
+        let mut variants = 0;
         if self.lights.iter().any(|light| light.cast_shadows) {
             self.scene_defines.set("HAS_SHADOWS", "1");
+            variants |= 1 << 0;
         }
 
         if scene.ssao.enabled {
             self.scene_defines.set("USE_SSAO", "1");
+            variants |= 1 << 1;
         }
+
+        self.scene_variants = variants;
     }
 
     fn extract_lights(&mut self, scene: &Scene) {

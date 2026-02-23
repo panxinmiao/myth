@@ -197,7 +197,7 @@ impl DepthNormalPrepass {
                             module: &shader_module,
                             entry_point: Some("vs_main"),
                             buffers: &vertex_buffers_layout,
-                            compilation_options: Default::default(),
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
                         },
                         fragment: Some(wgpu::FragmentState {
                             module: &shader_module,
@@ -207,7 +207,7 @@ impl DepthNormalPrepass {
                                 blend: None,
                                 write_mask: wgpu::ColorWrites::ALL,
                             })],
-                            compilation_options: Default::default(),
+                            compilation_options: wgpu::PipelineCompilationOptions::default(),
                         }),
                         primitive: wgpu::PrimitiveState {
                             topology: geometry.topology,
@@ -220,8 +220,8 @@ impl DepthNormalPrepass {
                             depth_write_enabled: true,
                             // Reverse-Z: Greater
                             depth_compare: wgpu::CompareFunction::Greater,
-                            stencil: Default::default(),
-                            bias: Default::default(),
+                            stencil: wgpu::StencilState::default(),
+                            bias: wgpu::DepthBiasState::default(),
                         }),
                         multisample: wgpu::MultisampleState {
                             count: 1, // Prepass is always 1× (no MSAA)

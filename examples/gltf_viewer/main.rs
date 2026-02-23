@@ -1437,6 +1437,65 @@ impl GltfViewer {
                                 });
 
                                 ui.separator();
+                                // ===== SSAO 设置 =====
+                                ui.add_enabled_ui(true, |ui| {
+                                    let mut ssao_enabled = scene.ssao.enabled;
+                                    if ui.checkbox(&mut ssao_enabled, "Enable SSAO").changed() {
+                                        scene.ssao.set_enabled(ssao_enabled);
+                                    }
+                                });
+
+                                let ssao_enabled = scene.ssao.enabled;
+
+                                ui.add_enabled_ui(ssao_enabled, |ui| {
+                                    // Radius
+                                    ui.horizontal(|ui| {
+                                        ui.label("Radius:");
+                                        let mut radius = scene.ssao.uniforms.write().radius;
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut radius, 0.1..=5.0)
+                                                    .step_by(0.1)
+                                                    .fixed_decimals(2),
+                                            )
+                                            .changed()
+                                        {
+                                            scene.ssao.set_radius(radius);
+                                        }
+                                    });
+
+                                    // Intensity
+                                    ui.horizontal(|ui| {
+                                        ui.label("Intensity:");
+                                        let mut intensity = scene.ssao.uniforms.write().intensity;
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut intensity, 0.1..=5.0)
+                                                    .step_by(0.1)
+                                                    .fixed_decimals(2),
+                                            )
+                                            .changed()
+                                        {
+                                            scene.ssao.set_intensity(intensity);
+                                        }
+                                    });
+
+                                    // Sample Count
+                                    ui.horizontal(|ui| {
+                                        ui.label("Sample Count:");
+                                        let mut sample_count =
+                                            scene.ssao.uniforms.write().sample_count;
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut sample_count, 1..=64)
+                                                    .step_by(1.0),
+                                            )
+                                            .changed()
+                                        {
+                                            scene.ssao.set_sample_count(sample_count);
+                                        }
+                                    });
+                                });
                             }
                         });
 

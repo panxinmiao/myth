@@ -233,8 +233,7 @@ impl PrepareContext<'_> {
         match resource {
             GraphResource::SceneNormal => self.frame_resources.scene_normal_view.as_ref(),
             GraphResource::SceneMsaa => self.frame_resources.scene_msaa_view.as_ref(),
-            GraphResource::Transmission => None, // Now transient; use render_lists.transmission_texture_id
-            GraphResource::Surface => None,
+            GraphResource::Transmission | GraphResource::Surface => None, // Now transient; use render_lists.transmission_texture_id
             _ => Some(self.get_resource_view(resource)),
         }
     }
@@ -378,8 +377,7 @@ impl<'a> ExecuteContext<'a> {
         match resource {
             GraphResource::SceneNormal => self.frame_resources.scene_normal_view.as_ref(),
             GraphResource::SceneMsaa => self.frame_resources.scene_msaa_view.as_ref(),
-            GraphResource::Transmission => None, // Now transient; use render_lists.transmission_texture_id
-            GraphResource::Surface => None,
+            GraphResource::Transmission | GraphResource::Surface => None, // Now transient; use render_lists.transmission_texture_id
             GraphResource::SceneRenderTarget
                 if !self.wgpu_ctx.render_path.supports_post_processing() =>
             {
