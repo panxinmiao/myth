@@ -142,6 +142,7 @@ impl SceneCullPass {
                     geometry_version: geometry.layout_version(),
                     instance_variants: item.item_variant_flags,
                     global_state_id: gpu_world.id,
+                    scene_variants: ctx.extracted_scene.scene_variants,
                     pipeline_settings_version,
                 };
 

@@ -62,6 +62,9 @@ pub struct FastPipelineKey {
     /// GPU World state ID
     pub global_state_id: u32,
 
+    /// 轻量级场景变体标志（如是否启用 SSAO）
+    pub scene_variants: u32,
+
     /// Pipeline settings version (HDR, MSAA changes)
     /// This ensures cache invalidation when these settings change
     pub pipeline_settings_version: u64,

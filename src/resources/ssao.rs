@@ -45,7 +45,7 @@ define_gpu_data_struct!(
         pub bias: f32,
         pub intensity: f32,
         pub sample_count: u32,
-        pub noise_scale: glam::Vec2,
+        pub(crate) noise_scale: glam::Vec2,
         pub(crate) __pad: UniformArray<u32, 2>,
     }
 );
@@ -99,14 +99,14 @@ impl Default for SsaoSettings {
             samples,
             radius: 0.5,
             bias: 0.025,
-            intensity: 1.5,
+            intensity: 1.0,
             sample_count: 32,
             noise_scale: glam::Vec2::new(1.0, 1.0), // Will be updated at runtime from screen size
             ..Default::default()
         };
 
         Self {
-            enabled: true,
+            enabled: false,
             uniforms: CpuBuffer::new(
                 uniforms,
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
@@ -125,7 +125,6 @@ impl SsaoSettings {
 
     /// Sets whether SSAO is enabled.
     pub fn set_enabled(&mut self, enabled: bool) {
-        println!("SSAO enabled: {}", enabled);
         self.enabled = enabled;
     }
 
@@ -222,6 +221,7 @@ use rand::{RngExt, SeedableRng};
 /// Uses a fixed seed for deterministic results across frames and sessions.
 /// Samples are concentrated near the origin via a quadratic fall-off curve,
 /// producing better occlusion sampling efficiency.
+#[must_use] 
 pub fn generate_ssao_kernel(samples: u32) -> Vec<Vec4> {
     let mut rng = StdRng::seed_from_u64(42);
     let mut kernel = Vec::with_capacity(samples as usize);
@@ -256,6 +256,7 @@ pub fn generate_ssao_kernel(samples: u32) -> Vec<Vec4> {
 /// banding patterns while keeping the sample count low.
 ///
 /// The noise texture should use `Repeat` addressing and `Nearest` filtering.
+#[must_use] 
 pub fn generate_ssao_noise() -> Vec<[u8; 4]> {
     let mut rng = StdRng::seed_from_u64(12345);
     let mut noise = Vec::with_capacity(16);

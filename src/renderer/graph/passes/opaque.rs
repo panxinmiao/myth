@@ -134,9 +134,7 @@ impl RenderNode for OpaquePass {
         //    SSAO view comes from the transient pool if SsaoPass ran this frame.
         let ssao_view = ctx
             .render_lists
-            .ssao_texture_id
-            .map(|id| ctx.transient_pool.get_view(id).clone())
-            .unwrap_or_else(|| ctx.frame_resources.ssao_dummy_view.clone());
+            .ssao_texture_id.map_or_else(|| ctx.frame_resources.ssao_dummy_view.clone(), |id| ctx.transient_pool.get_view(id).clone());
 
         let transmission_view = &ctx.frame_resources.dummy_transmission_view;
 
