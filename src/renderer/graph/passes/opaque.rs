@@ -165,8 +165,14 @@ impl RenderNode for OpaquePass {
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
                 depth_ops: Some(wgpu::Operations {
-                    // Reverse Z: Clear to 0.0 (far clipping plane)
-                    load: wgpu::LoadOp::Clear(0.0),
+                    // When the Z-Normal prepass has already written depth, load
+                    // instead of clearing so that the Equal comparison works.
+                    // Without prepass: Reverse Z clears to 0.0 (far clipping plane).
+                    load: if ctx.wgpu_ctx.render_path.requires_z_prepass() {
+                        wgpu::LoadOp::Load
+                    } else {
+                        wgpu::LoadOp::Clear(0.0)
+                    },
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: None,
