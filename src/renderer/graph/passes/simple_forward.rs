@@ -37,6 +37,10 @@ pub struct SimpleForwardPass {
     /// Cached render target views during prepare phase.
     msaa_view: Option<Tracked<wgpu::TextureView>>,
     depth_view: Option<Tracked<wgpu::TextureView>>,
+
+    /// Dynamic screen (group 3) bind group built each frame.
+    screen_bind_group: Option<wgpu::BindGroup>,
+    screen_bind_group_id: u64,
 }
 
 impl SimpleForwardPass {
@@ -46,6 +50,8 @@ impl SimpleForwardPass {
             clear_color,
             msaa_view: None,
             depth_view: None,
+            screen_bind_group: None,
+            screen_bind_group_id: 0,
         }
     }
 
@@ -54,6 +60,8 @@ impl SimpleForwardPass {
         ctx: &'pass ExecuteContext,
         pass: &mut TrackedRenderPass<'pass>,
         cmds: &'pass [RenderCommand],
+        screen_bind_group: &'pass wgpu::BindGroup,
+        screen_bind_group_id: u64,
     ) {
         if cmds.is_empty() {
             return;
@@ -73,8 +81,7 @@ impl SimpleForwardPass {
                 &[cmd.dynamic_offset],
             );
 
-            let screen_bind_group = &ctx.frame_resources.screen_bind_group;
-            pass.set_bind_group(3, screen_bind_group.id(), screen_bind_group, &[]);
+            pass.set_bind_group(3, screen_bind_group_id, screen_bind_group, &[]);
 
             if let Some(gpu_geometry) = ctx.resource_manager.get_geometry(cmd.geometry_handle) {
                 for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
@@ -115,6 +122,16 @@ impl RenderNode for SimpleForwardPass {
 
         self.msaa_view = ctx.try_get_resource_view(GraphResource::SceneMsaa).cloned();
         self.depth_view = Some(ctx.get_resource_view(GraphResource::SceneDepth).clone());
+
+        // LDR path: no SSAO or Transmission, use both dummies.
+        let (bg, bg_id) = ctx.frame_resources.build_screen_bind_group(
+            &ctx.wgpu_ctx.device,
+            ctx.global_bind_group_cache,
+            &ctx.frame_resources.dummy_transmission_view,
+            &ctx.frame_resources.ssao_dummy_view,
+        );
+        self.screen_bind_group = Some(bg);
+        self.screen_bind_group_id = bg_id;
     }
 
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -180,7 +197,15 @@ impl RenderNode for SimpleForwardPass {
         );
 
         // draw opaque objects first (Front-to-Back)
-        Self::draw_list(ctx, &mut tracked_pass, &render_lists.opaque);
+        let screen_bg = self.screen_bind_group.as_ref().unwrap();
+        let screen_bg_id = self.screen_bind_group_id;
+        Self::draw_list(
+            ctx,
+            &mut tracked_pass,
+            &render_lists.opaque,
+            screen_bg,
+            screen_bg_id,
+        );
 
         // ── Skybox: draw between opaque and transparent ──────────────
         //
@@ -208,7 +233,13 @@ impl RenderNode for SimpleForwardPass {
         }
 
         // Then draw transparent objects (Back-to-Front)
-        Self::draw_list(ctx, &mut tracked_pass, &render_lists.transparent);
+        Self::draw_list(
+            ctx,
+            &mut tracked_pass,
+            &render_lists.transparent,
+            screen_bg,
+            screen_bg_id,
+        );
 
         // RenderPass will automatically resolve MSAA if resolve_target is Some, and end when dropped
     }

@@ -170,6 +170,10 @@ impl ExtractedScene {
         if self.lights.iter().any(|light| light.cast_shadows) {
             self.scene_defines.set("HAS_SHADOWS", "1");
         }
+
+        if scene.ssao.enabled {
+            self.scene_defines.set("USE_SSAO", "1");
+        }
     }
 
     fn extract_lights(&mut self, scene: &Scene) {

@@ -27,6 +27,7 @@ use rustc_hash::FxHashMap;
 
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::renderer::core::{BindGroupContext, RenderView, ResourceManager};
+use crate::renderer::graph::transient_pool::TransientTextureId;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
@@ -138,6 +139,14 @@ pub struct RenderLists {
     /// 是否需要 Transmission 拷贝
     pub use_transmission: bool,
 
+    /// Transient texture ID of the SSAO blurred output.
+    /// Set by `SsaoPass::prepare()`, consumed by draw passes to build group 3.
+    pub ssao_texture_id: Option<TransientTextureId>,
+
+    /// Transient texture ID of the Transmission copy.
+    /// Set by `TransmissionCopyPass::prepare()`, consumed by `TransparentPass` for group 3.
+    pub transmission_texture_id: Option<TransientTextureId>,
+
     /// Prepared skybox draw state for inline rendering in the LDR path.
     ///
     /// Set by `SkyboxPass::prepare()`, consumed by `SimpleForwardPass::run()`.
@@ -157,6 +166,8 @@ impl RenderLists {
             gpu_global_bind_group_id: 0,
             gpu_global_bind_group: None,
             use_transmission: false,
+            ssao_texture_id: None,
+            transmission_texture_id: None,
             prepared_skybox: None,
         }
     }
@@ -171,6 +182,8 @@ impl RenderLists {
         self.active_views.clear();
         self.gpu_global_bind_group = None;
         self.use_transmission = false;
+        self.ssao_texture_id = None;
+        self.transmission_texture_id = None;
         self.prepared_skybox = None;
     }
 

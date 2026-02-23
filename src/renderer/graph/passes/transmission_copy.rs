@@ -19,6 +19,7 @@
 
 use crate::renderer::graph::RenderNode;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource};
+use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTextureId};
 
 /// Transmission Copy Pass
 ///
@@ -28,13 +29,23 @@ use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 /// # Conditional Execution
 /// - Only executed if `render_lists.use_transmission` is true
 /// - Only executed in `HighFidelity` path (Transmission requires HDR buffer)
-/// - Only executed if `transmission_view` exists
-pub struct TransmissionCopyPass;
+///
+/// # Transient Resource
+/// The transmission texture is allocated from the `TransientTexturePool`
+/// during [`prepare`](RenderNode::prepare). The pool recycles textures
+/// across frames, ensuring stable `TextureView` IDs for
+/// `GlobalBindGroupCache` hits.
+pub struct TransmissionCopyPass {
+    /// Transient texture ID for the current frame's transmission buffer.
+    pub(crate) transmission_texture_id: Option<TransientTextureId>,
+}
 
 impl TransmissionCopyPass {
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self {
+            transmission_texture_id: None,
+        }
     }
 }
 
@@ -49,6 +60,37 @@ impl RenderNode for TransmissionCopyPass {
         "Transmission Copy Pass"
     }
 
+    fn prepare(&mut self, ctx: &mut crate::renderer::graph::context::PrepareContext) {
+        // Always allocate a transient transmission texture in HighFidelity mode.
+        // If no material uses transmission this frame, the texture goes unused
+        // and is cheaply recycled by the pool.
+        if !ctx.wgpu_ctx.render_path.supports_post_processing() {
+            self.transmission_texture_id = None;
+            return;
+        }
+
+        let size = ctx.wgpu_ctx.size();
+        let mip_level_count = ((size.0.max(size.1) as f32).log2().floor() as u32) + 1;
+
+        let tex_id = ctx.transient_pool.allocate(
+            &ctx.wgpu_ctx.device,
+            &TransientTextureDesc {
+                width: size.0,
+                height: size.1,
+                format: crate::renderer::HDR_TEXTURE_FORMAT,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::RENDER_ATTACHMENT,
+                mip_level_count,
+                label: "Transmission",
+            },
+        );
+
+        self.transmission_texture_id = Some(tex_id);
+        // Publish the ID so TransparentPass can build group 3 with the real transmission view.
+        ctx.render_lists.transmission_texture_id = Some(tex_id);
+    }
+
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let render_lists = &ctx.render_lists;
 
@@ -59,15 +101,15 @@ impl RenderNode for TransmissionCopyPass {
 
         // Transmission requires HighFidelity path
         if !ctx.wgpu_ctx.render_path.supports_post_processing() {
-            log::warn!("TransmissionCopyPass: Transmission requires HighFidelity path, skipping");
             return;
         }
 
-        // Check if transmission texture exists
-        let Some(transmission_view) = ctx.try_get_resource_view(GraphResource::Transmission) else {
-            log::warn!("TransmissionCopyPass: transmission_view missing, skipping");
+        // Get transient transmission texture
+        let Some(tex_id) = self.transmission_texture_id else {
+            log::warn!("TransmissionCopyPass: transmission_texture_id missing, skipping");
             return;
         };
+        let transmission_texture = ctx.transient_pool.get_texture(tex_id);
 
         // Get source texture (scene color buffer)
         let color_view = ctx.get_scene_render_target_view();
@@ -101,22 +143,25 @@ impl RenderNode for TransmissionCopyPass {
         }
 
         // Execute texture copy
+        let src_texture = color_view.texture();
+        let src_size = src_texture.size();
+
         encoder.copy_texture_to_texture(
             wgpu::TexelCopyTextureInfo {
-                texture: color_view.texture(),
+                texture: src_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::TexelCopyTextureInfo {
-                texture: transmission_view.texture(),
+                texture: transmission_texture,
                 mip_level: 0,
                 origin: wgpu::Origin3d::ZERO,
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::Extent3d {
-                width: color_view.texture().size().width,
-                height: color_view.texture().size().height,
+                width: src_size.width,
+                height: src_size.height,
                 depth_or_array_layers: 1,
             },
         );
@@ -124,7 +169,7 @@ impl RenderNode for TransmissionCopyPass {
         ctx.resource_manager.mipmap_generator.generate(
             &ctx.wgpu_ctx.device,
             encoder,
-            transmission_view.texture(),
+            transmission_texture,
         );
     }
 }
