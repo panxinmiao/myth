@@ -26,6 +26,7 @@
 pub mod bloom;
 pub mod buffer;
 pub mod fxaa;
+pub mod ssao;
 pub mod geometry;
 pub mod image;
 pub mod input;
@@ -49,6 +50,7 @@ pub use bloom::BloomSettings;
 pub use buffer::BufferRef;
 pub use fxaa::{FxaaQuality, FxaaSettings};
 pub use geometry::{Attribute, BoundingBox, BoundingSphere, Geometry};
+pub use ssao::SsaoSettings;
 pub use image::{Image, ImageDescriptor};
 pub use input::{ButtonState, Input, Key, MouseButton};
 pub use shader_defines::ShaderDefines;

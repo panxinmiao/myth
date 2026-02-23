@@ -8,6 +8,7 @@ use crate::assets::prefab::Prefab;
 use crate::resources::bloom::BloomSettings;
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::fxaa::FxaaSettings;
+use crate::resources::ssao::SsaoSettings;
 use crate::resources::geometry::Geometry;
 use crate::resources::mesh::Mesh;
 use crate::resources::shader_defines::ShaderDefines;
@@ -144,6 +145,8 @@ pub struct Scene {
     pub bloom: BloomSettings,
     /// FXAA (Fast Approximate Anti-Aliasing) settings
     pub fxaa: FxaaSettings,
+    /// SSAO (Screen Space Ambient Occlusion) settings
+    pub ssao: SsaoSettings,
     /// Background rendering settings (mode + skybox uniform buffer)
     pub background: BackgroundSettings,
     /// Currently active camera for rendering
@@ -197,6 +200,7 @@ impl Scene {
             tone_mapping: ToneMappingSettings::default(),
             bloom: BloomSettings::default(),
             fxaa: FxaaSettings::default(),
+            ssao: SsaoSettings::default(),
             background: BackgroundSettings::default(),
 
             active_camera: None,

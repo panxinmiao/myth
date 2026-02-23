@@ -59,8 +59,8 @@ use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
     BRDFLutComputePass, BloomPass, DepthNormalPrepass, FxaaPass, IBLComputePass, OpaquePass,
-    SceneCullPass, ShadowPass, SimpleForwardPass, SkyboxPass, ToneMapPass, TransmissionCopyPass,
-    TransparentPass,
+    SceneCullPass, ShadowPass, SimpleForwardPass, SkyboxPass, SsaoPass, ToneMapPass,
+    TransmissionCopyPass, TransparentPass,
 };
 use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTexturePool};
 use crate::scene::Scene;
@@ -139,6 +139,7 @@ struct RendererState {
     pub(crate) bloom_pass: BloomPass,
     pub(crate) tone_mapping_pass: ToneMapPass,
     pub(crate) fxaa_pass: FxaaPass,
+    pub(crate) ssao_pass: SsaoPass,
 }
 
 impl Renderer {
@@ -216,6 +217,7 @@ impl Renderer {
         let bloom_pass = BloomPass::new(&wgpu_ctx.device);
         let tone_mapping_pass = ToneMapPass::new(&wgpu_ctx.device);
         let fxaa_pass = FxaaPass::new(&wgpu_ctx.device);
+        let ssao_pass = SsaoPass::new(&wgpu_ctx.device);
 
         // Skybox / Background
         let skybox_pass = SkyboxPass::new(&wgpu_ctx.device);
@@ -245,6 +247,7 @@ impl Renderer {
             bloom_pass,
             tone_mapping_pass,
             fxaa_pass,
+            ssao_pass,
             skybox_pass,
         });
 
@@ -349,6 +352,13 @@ impl Renderer {
                 // Z-Normal pre-pass (conditional)
                 if state.wgpu_ctx.render_path.requires_z_prepass() {
                     frame_builder.add_node(RenderStage::Opaque, &mut state.prepass);
+                }
+
+                // SSAO (after depth-normal prepass, before opaque rendering)
+                // When enabled, SsaoPass reads depth+normal, writes AO texture,
+                // then we update the screen bind group so PBR shaders can sample it.
+                if scene.ssao.enabled && state.wgpu_ctx.render_path.requires_z_prepass() {
+                    frame_builder.add_node(RenderStage::Opaque, &mut state.ssao_pass);
                 }
 
                 // Opaque rendering

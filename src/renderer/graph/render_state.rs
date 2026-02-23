@@ -44,15 +44,13 @@ impl RenderState {
     }
 
     pub fn update(&mut self, camera: &RenderCamera, time: f32) {
-        let view_matrix = camera.view_matrix;
-        let vp_matrix = camera.view_projection_matrix;
-        let camera_position = camera.position;
-
         let mut u = self.uniforms_mut();
-        u.view_projection = vp_matrix;
-        u.view_projection_inverse = vp_matrix.inverse();
-        u.view_matrix = view_matrix;
-        u.camera_position = camera_position.into();
+        u.view_projection = camera.view_projection_matrix;
+        u.view_projection_inverse = camera.view_projection_matrix.inverse();
+        u.projection_matrix = camera.projection_matrix;
+        u.projection_inverse = camera.projection_matrix.inverse();
+        u.view_matrix = camera.view_matrix;
+        u.camera_position = camera.position.into();
         u.time = time;
     }
 }
