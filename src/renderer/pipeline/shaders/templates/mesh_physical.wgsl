@@ -5,6 +5,7 @@
 {$ include 'morph_pars' $}
 {$ include 'light_common_pars' $}
 {$ include 'light_punctual_pars' $}
+{$ include 'shadow_pars' $}
 {$ include 'bsdf/physical' $}
 
 {$ include 'iridescence' $}

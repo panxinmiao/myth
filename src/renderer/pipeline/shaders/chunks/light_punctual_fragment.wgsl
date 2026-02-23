@@ -2,7 +2,7 @@ for (var i = 0u; i < u_environment.num_lights; i ++ ) {
     let light = st_lights[i];
     var punctual_light = get_light_info( light, geometry );
 
-    $$ if USE_SHADOWS is defined and RECEIVE_SHADOWS is defined
+    $$ if HAS_SHADOWS and RECEIVE_SHADOWS
     if (punctual_light.visible && light.shadow_layer_index >= 0) {
         // Apply Normal Bias: offset world position along the surface normal
         let shadow_pos = geometry.position + geometry.normal * light.shadow_normal_bias;
