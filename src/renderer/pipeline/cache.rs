@@ -314,7 +314,7 @@ impl PipelineCache {
         let shader_source = ShaderGenerator::generate_shader(
             &vertex_layout.vertex_input_code,
             &binding_code,
-            "templates/shadow_depth",
+            "passes/depth",
             options,
         );
 

@@ -168,7 +168,7 @@ impl ExtractedScene {
         self.extract_environment(scene);
 
         if self.lights.iter().any(|light| light.cast_shadows) {
-            self.scene_defines.set("USE_SHADOWS", "1");
+            self.scene_defines.set("HAS_SHADOWS", "1");
         }
     }
 
