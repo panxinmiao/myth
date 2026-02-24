@@ -35,6 +35,54 @@ use super::extracted::ExtractedScene;
 use super::render_state::RenderState;
 
 // ============================================================================
+// FrameBlackboard
+// ============================================================================
+
+/// 帧黑板：用于在 Render Graph 的不同 Pass 之间传递松散的瞬态数据。
+///
+/// `FrameBlackboard` 承担 Pass 间临时通信桥梁的职责，存放跨 Pass 的
+/// 瞬态资源 ID（如 SSAO 输出、Transmission 拷贝等）。这些数据的生命周期
+/// 严格限制在单帧之内——每帧开始前必须调用 [`clear`](Self::clear)。
+///
+/// # 设计原则
+///
+/// - **单一职责**：将松散的跨 Pass 瞬态 ID 从 [`RenderLists`] 中剥离，
+///   让 `RenderLists` 回归"仅管理 Draw Calls"的核心职责。
+/// - **声明式就绪**：为未来向声明式 Render Graph 演进打下解耦基础。
+/// - **零成本抽象**：结构体仅包含 `Option<TransientTextureId>`（`Copy` 类型），
+///   清理操作为零开销的赋值。
+#[derive(Default)]
+pub struct FrameBlackboard {
+    /// 当前帧 SSAO 模糊输出的瞬态纹理 ID。
+    ///
+    /// 由 [`SsaoPass::prepare()`] 写入，供 `OpaquePass` / `TransparentPass`
+    /// 在构建 group 3 BindGroup 时读取。`None` 表示本帧 SSAO 未启用。
+    pub ssao_texture_id: Option<TransientTextureId>,
+
+    /// 当前帧 Transmission 拷贝的瞬态纹理 ID。
+    ///
+    /// 由 [`TransmissionCopyPass::prepare()`] 写入，供 `TransparentPass`
+    /// 在构建 group 3 BindGroup 时读取。`None` 表示本帧无 Transmission 效果。
+    pub transmission_texture_id: Option<TransientTextureId>,
+}
+
+impl FrameBlackboard {
+    /// 创建空的帧黑板。
+    #[must_use]
+    #[inline]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 每帧开始时调用，确保不会残留上一帧的悬垂数据。
+    #[inline]
+    pub fn clear(&mut self) {
+        self.ssao_texture_id = None;
+        self.transmission_texture_id = None;
+    }
+}
+
+// ============================================================================
 // RenderCommand & RenderLists
 // ============================================================================
 
@@ -139,14 +187,6 @@ pub struct RenderLists {
     /// 是否需要 Transmission 拷贝
     pub use_transmission: bool,
 
-    /// Transient texture ID of the SSAO blurred output.
-    /// Set by `SsaoPass::prepare()`, consumed by draw passes to build group 3.
-    pub ssao_texture_id: Option<TransientTextureId>,
-
-    /// Transient texture ID of the Transmission copy.
-    /// Set by `TransmissionCopyPass::prepare()`, consumed by `TransparentPass` for group 3.
-    pub transmission_texture_id: Option<TransientTextureId>,
-
     /// Prepared skybox draw state for inline rendering in the LDR path.
     ///
     /// Set by `SkyboxPass::prepare()`, consumed by `SimpleForwardPass::run()`.
@@ -166,8 +206,6 @@ impl RenderLists {
             gpu_global_bind_group_id: 0,
             gpu_global_bind_group: None,
             use_transmission: false,
-            ssao_texture_id: None,
-            transmission_texture_id: None,
             prepared_skybox: None,
         }
     }
@@ -182,8 +220,6 @@ impl RenderLists {
         self.active_views.clear();
         self.gpu_global_bind_group = None;
         self.use_transmission = false;
-        self.ssao_texture_id = None;
-        self.transmission_texture_id = None;
         self.prepared_skybox = None;
     }
 

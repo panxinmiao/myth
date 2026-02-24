@@ -132,7 +132,7 @@ impl RenderNode for OpaquePass {
         // 3. Build dynamic group 3 bind group.
         //    OpaquePass runs BEFORE TransmissionCopyPass, so use dummy transmission.
         //    SSAO view comes from the transient pool if SsaoPass ran this frame.
-        let ssao_view = ctx.render_lists.ssao_texture_id.map_or_else(
+        let ssao_view = ctx.blackboard.ssao_texture_id.map_or_else(
             || ctx.frame_resources.ssao_dummy_view.clone(),
             |id| ctx.transient_pool.get_view(id).clone(),
         );

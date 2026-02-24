@@ -656,7 +656,7 @@ impl RenderNode for SsaoPass {
         // =====================================================================
         // 5. Publish SSAO output ID for downstream draw passes (group 3 binding)
         // =====================================================================
-        ctx.render_lists.ssao_texture_id = self.blur_texture_id;
+        ctx.blackboard.ssao_texture_id = self.blur_texture_id;
 
         // =====================================================================
         // 6. Build bind groups

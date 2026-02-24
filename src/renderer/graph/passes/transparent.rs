@@ -131,12 +131,12 @@ impl RenderNode for TransparentPass {
 
         // Build dynamic group 3 bind group.
         // TransparentPass runs AFTER TransmissionCopyPass, so use real transmission if available.
-        let ssao_view = ctx.render_lists.ssao_texture_id.map_or_else(
+        let ssao_view = ctx.blackboard.ssao_texture_id.map_or_else(
             || ctx.frame_resources.ssao_dummy_view.clone(),
             |id| ctx.transient_pool.get_view(id).clone(),
         );
 
-        let transmission_view = ctx.render_lists.transmission_texture_id.map_or_else(
+        let transmission_view = ctx.blackboard.transmission_texture_id.map_or_else(
             || ctx.frame_resources.dummy_transmission_view.clone(),
             |id| ctx.transient_pool.get_view(id).clone(),
         );

@@ -27,6 +27,7 @@ use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::ExtractedScene;
 use crate::renderer::graph::builder::FrameBuilder;
 use crate::renderer::graph::context::{ExecuteContext, FrameResources, PrepareContext};
+use crate::renderer::graph::frame::FrameBlackboard;
 use crate::renderer::graph::node::RenderNode;
 use crate::renderer::graph::stage::RenderStage;
 use crate::renderer::graph::transient_pool::TransientTexturePool;
@@ -48,6 +49,9 @@ pub struct ComposerContext<'a> {
 
     /// 渲染列表（由 `SceneCullPass` 填充）
     pub render_lists: &'a mut RenderLists,
+
+    /// 帧黑板（跨 Pass 瞬态数据通信）
+    pub blackboard: &'a mut FrameBlackboard,
 
     // 外部场景数据 todo: refactor
     pub scene: &'a mut Scene,
@@ -175,6 +179,7 @@ impl<'a> FrameComposer<'a> {
                 render_state: self.ctx.render_state,
                 extracted_scene: self.ctx.extracted_scene,
                 render_lists: self.ctx.render_lists,
+                blackboard: self.ctx.blackboard,
                 frame_resources: self.ctx.frame_resources,
                 transient_pool: self.ctx.transient_pool,
                 time: self.ctx.time,
@@ -190,6 +195,7 @@ impl<'a> FrameComposer<'a> {
             &*self.ctx.resource_manager,
             &surface_view,
             &*self.ctx.render_lists,
+            &*self.ctx.blackboard,
             self.ctx.frame_resources,
             &*self.ctx.transient_pool,
         );
