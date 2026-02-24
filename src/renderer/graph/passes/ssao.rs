@@ -397,8 +397,12 @@ impl SsaoPass {
 
         // --- Bilateral Blur Pipeline ---
         {
-            let shader_code =
-                ShaderGenerator::generate_shader("", "", "passes/ssao_blur", &ShaderCompilationOptions::default());
+            let shader_code = ShaderGenerator::generate_shader(
+                "",
+                "",
+                "passes/ssao_blur",
+                &ShaderCompilationOptions::default(),
+            );
 
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("SSAO Blur Shader"),
