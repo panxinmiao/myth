@@ -221,7 +221,7 @@ use rand::{RngExt, SeedableRng};
 /// Uses a fixed seed for deterministic results across frames and sessions.
 /// Samples are concentrated near the origin via a quadratic fall-off curve,
 /// producing better occlusion sampling efficiency.
-#[must_use] 
+#[must_use]
 pub fn generate_ssao_kernel(samples: u32) -> Vec<Vec4> {
     let mut rng = StdRng::seed_from_u64(42);
     let mut kernel = Vec::with_capacity(samples as usize);
@@ -256,7 +256,7 @@ pub fn generate_ssao_kernel(samples: u32) -> Vec<Vec4> {
 /// banding patterns while keeping the sample count low.
 ///
 /// The noise texture should use `Repeat` addressing and `Nearest` filtering.
-#[must_use] 
+#[must_use]
 pub fn generate_ssao_noise() -> Vec<[u8; 4]> {
     let mut rng = StdRng::seed_from_u64(12345);
     let mut noise = Vec::with_capacity(16);

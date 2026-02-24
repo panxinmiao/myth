@@ -33,6 +33,8 @@ use crate::resources::material::{AlphaMode, Side};
 const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 pub struct DepthNormalPrepass {
+    pub(crate) needs_normal: bool, // Whether to output normals (for SSAO) or just do a Z-prepass
+
     depth_view: Option<Tracked<wgpu::TextureView>>,
     normal_view: Option<Tracked<wgpu::TextureView>>,
 
@@ -40,13 +42,14 @@ pub struct DepthNormalPrepass {
     ///
     /// Two objects sharing a main pipeline will share a prepass pipeline
     /// (identical vertex layout, topology, cull mode and material macros).
-    pipeline_cache: FxHashMap<u16, wgpu::RenderPipeline>,
+    pipeline_cache: FxHashMap<(u16, bool), wgpu::RenderPipeline>,
 }
 
 impl DepthNormalPrepass {
     #[must_use]
     pub fn new() -> Self {
         Self {
+            needs_normal: false,
             depth_view: None,
             normal_view: None,
             pipeline_cache: FxHashMap::default(),
@@ -76,7 +79,10 @@ impl DepthNormalPrepass {
 
         for cmd in &ctx.render_lists.opaque {
             // Skip if already cached
-            if self.pipeline_cache.contains_key(&cmd.pipeline_id) {
+            if self
+                .pipeline_cache
+                .contains_key(&(cmd.pipeline_id, self.needs_normal))
+            {
                 continue;
             }
 
@@ -128,7 +134,10 @@ impl DepthNormalPrepass {
 
             // Inject prepass-specific macros
             options.add_define("IS_PREPASS", "1");
-            options.add_define("OUTPUT_NORMAL", "1");
+
+            if self.needs_normal {
+                options.add_define("OUTPUT_NORMAL", "1");
+            }
 
             // ── Shader generation ──────────────────────────────────────
             let binding_code = format!(
@@ -202,11 +211,15 @@ impl DepthNormalPrepass {
                         fragment: Some(wgpu::FragmentState {
                             module: &shader_module,
                             entry_point: Some("fs_main"),
-                            targets: &[Some(wgpu::ColorTargetState {
-                                format: NORMAL_FORMAT,
-                                blend: None,
-                                write_mask: wgpu::ColorWrites::ALL,
-                            })],
+                            targets: if self.needs_normal {
+                                &[Some(wgpu::ColorTargetState {
+                                    format: NORMAL_FORMAT,
+                                    blend: None,
+                                    write_mask: wgpu::ColorWrites::ALL,
+                                })]
+                            } else {
+                                &[]
+                            },
                             compilation_options: wgpu::PipelineCompilationOptions::default(),
                         }),
                         primitive: wgpu::PrimitiveState {
@@ -231,7 +244,8 @@ impl DepthNormalPrepass {
                         cache: None,
                     });
 
-            self.pipeline_cache.insert(cmd.pipeline_id, pipeline);
+            self.pipeline_cache
+                .insert((cmd.pipeline_id, self.needs_normal), pipeline);
         }
     }
 }
@@ -278,9 +292,8 @@ impl RenderNode for DepthNormalPrepass {
             .as_ref()
             .expect("Prepass: missing normal view");
 
-        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Depth Normal Prepass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+        let color_attachments = if self.needs_normal {
+            vec![Some(wgpu::RenderPassColorAttachment {
                 view: normal_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
@@ -294,7 +307,14 @@ impl RenderNode for DepthNormalPrepass {
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
-            })],
+            })]
+        } else {
+            vec![]
+        };
+
+        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Depth Normal Prepass"),
+            color_attachments: &color_attachments,
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
                 depth_ops: Some(wgpu::Operations {
@@ -319,7 +339,10 @@ impl RenderNode for DepthNormalPrepass {
         );
 
         for cmd in &render_lists.opaque {
-            let Some(pipeline) = self.pipeline_cache.get(&cmd.pipeline_id) else {
+            let Some(pipeline) = self
+                .pipeline_cache
+                .get(&(cmd.pipeline_id, self.needs_normal))
+            else {
                 continue;
             };
 

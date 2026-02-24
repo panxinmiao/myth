@@ -38,10 +38,11 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
     * **Sheen** (cloth-like materials).
     * **Anisotropy** (brushed metals).
     * **Transmission** (glass, water).
+* **SSAO**: Screen Space Ambient Occlusion for enhanced depth perception.
 * **Full glTF 2.0 Support**: Complete support for glTF 2.0 specification, including PBR materials, animations, and scene hierarchy.
 * **HDR Rendering Pipeline**: Full support for HDR Rendering, various tone mapping mode.
 * **Post-Processing Effects**: Built-in support for physically-based bloom.
-    * **Bloom** Physically-based bloom.
+    * **HDR Bloom** Physically-based bloom.
     * **Color Grading**: Built-in support for 3D LUT-based color grading.
     * **Contrast & Saturation**: Adjustable contrast and saturation controls.
     * **Film Grain**: Realistic film grain effect with adjustable intensity and size.

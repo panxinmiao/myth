@@ -346,15 +346,20 @@ impl Renderer {
             RenderPath::HighFidelity => {
                 // === PBR Path (HDR) ===
 
+                let is_ssao_enabled = scene.ssao.enabled;
+
+                let needs_normal = is_ssao_enabled;
+
                 // Z-Normal pre-pass (conditional)
                 if state.wgpu_ctx.render_path.requires_z_prepass() {
+                    state.prepass.needs_normal = needs_normal;
                     frame_builder.add_node(RenderStage::Opaque, &mut state.prepass);
                 }
 
                 // SSAO (after depth-normal prepass, before opaque rendering)
                 // When enabled, SsaoPass reads depth+normal, writes AO texture,
                 // then we update the screen bind group so PBR shaders can sample it.
-                if scene.ssao.enabled && state.wgpu_ctx.render_path.requires_z_prepass() {
+                if is_ssao_enabled && state.wgpu_ctx.render_path.requires_z_prepass() {
                     frame_builder.add_node(RenderStage::Opaque, &mut state.ssao_pass);
                 }
 
