@@ -88,7 +88,7 @@ impl RenderNode for TransmissionCopyPass {
 
         self.transmission_texture_id = Some(tex_id);
         // Publish the ID so TransparentPass can build group 3 with the real transmission view.
-        ctx.render_lists.transmission_texture_id = Some(tex_id);
+        ctx.blackboard.transmission_texture_id = Some(tex_id);
     }
 
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

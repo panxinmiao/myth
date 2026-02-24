@@ -56,7 +56,7 @@ use crate::errors::Result;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::context::FrameResources;
-use crate::renderer::graph::frame::RenderLists;
+use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
 use crate::renderer::graph::passes::{
     BRDFLutComputePass, BloomPass, DepthNormalPrepass, FxaaPass, IBLComputePass, OpaquePass,
     SceneCullPass, ShadowPass, SimpleForwardPass, SkyboxPass, SsaoPass, ToneMapPass,
@@ -106,6 +106,8 @@ struct RendererState {
     render_frame: RenderFrame,
     /// 渲染列表（与 `render_frame` 分离以避免借用冲突）
     render_lists: RenderLists,
+    /// 帧黑板（跨 Pass 瞬态数据通信，每帧清空）
+    blackboard: FrameBlackboard,
 
     frame_resources: FrameResources,
     transient_pool: TransientTexturePool,
@@ -230,6 +232,7 @@ impl Renderer {
 
             render_frame,
             render_lists: RenderLists::new(),
+            blackboard: FrameBlackboard::new(),
 
             frame_resources,
             transient_pool: TransientTexturePool::new(),
@@ -445,6 +448,8 @@ impl Renderer {
             global_bind_group_cache: &mut state.global_bind_group_cache,
 
             render_lists: &mut state.render_lists,
+
+            blackboard: &mut state.blackboard,
 
             scene,
             camera,

@@ -24,7 +24,7 @@ use crate::assets::AssetServer;
 use crate::renderer::core::binding::{BindGroupKey, GlobalBindGroupCache};
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::core::{ResourceManager, WgpuContext};
-use crate::renderer::graph::frame::RenderLists;
+use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
 use crate::renderer::graph::transient_pool::TransientTexturePool;
 use crate::renderer::graph::{ExtractedScene, RenderState};
 use crate::renderer::pipeline::PipelineCache;
@@ -116,6 +116,8 @@ pub struct PrepareContext<'a> {
     pub extracted_scene: &'a ExtractedScene,
     /// Render command lists (filled by SceneCullPass, consumed by draw passes)
     pub render_lists: &'a mut RenderLists,
+    /// Frame blackboard for cross-pass transient data (SSAO / Transmission IDs)
+    pub blackboard: &'a mut FrameBlackboard,
     /// Frame-persistent GPU resources (ping-pong buffers, depth, MSAA)
     pub frame_resources: &'a FrameResources,
     /// Transient texture pool (per-frame temporary allocations)
@@ -213,7 +215,7 @@ impl PrepareContext<'_> {
             GraphResource::Transmission => {
                 panic!(
                     "GraphResource::Transmission is now a transient resource; \
-                     use render_lists.transmission_texture_id with transient_pool"
+                     use blackboard.transmission_texture_id with transient_pool"
                 )
             }
             GraphResource::Surface => {
@@ -233,7 +235,7 @@ impl PrepareContext<'_> {
         match resource {
             GraphResource::SceneNormal => self.frame_resources.scene_normal_view.as_ref(),
             GraphResource::SceneMsaa => self.frame_resources.scene_msaa_view.as_ref(),
-            GraphResource::Transmission | GraphResource::Surface => None, // Now transient; use render_lists.transmission_texture_id
+            GraphResource::Transmission | GraphResource::Surface => None, // Transient; use blackboard.transmission_texture_id
             _ => Some(self.get_resource_view(resource)),
         }
     }
@@ -261,6 +263,8 @@ pub struct ExecuteContext<'a> {
     pub surface_view: &'a wgpu::TextureView,
     /// Render command lists (read-only; filled during prepare)
     pub render_lists: &'a RenderLists,
+    /// Frame blackboard (read-only during execute)
+    pub blackboard: &'a FrameBlackboard,
     /// Frame-persistent GPU resources
     pub frame_resources: &'a FrameResources,
     /// Transient texture pool (read-only during execute)
@@ -274,6 +278,7 @@ impl<'a> ExecuteContext<'a> {
         resource_manager: &'a ResourceManager,
         surface_view: &'a wgpu::TextureView,
         render_lists: &'a RenderLists,
+        blackboard: &'a FrameBlackboard,
         frame_resources: &'a FrameResources,
         transient_pool: &'a TransientTexturePool,
     ) -> Self {
@@ -282,6 +287,7 @@ impl<'a> ExecuteContext<'a> {
             resource_manager,
             surface_view,
             render_lists,
+            blackboard,
             frame_resources,
             transient_pool,
         }
@@ -351,7 +357,7 @@ impl<'a> ExecuteContext<'a> {
             GraphResource::Transmission => {
                 panic!(
                     "GraphResource::Transmission is now a transient resource; \
-                     use render_lists.transmission_texture_id with transient_pool"
+                     use blackboard.transmission_texture_id with transient_pool"
                 )
             }
             GraphResource::Surface => {
@@ -377,7 +383,7 @@ impl<'a> ExecuteContext<'a> {
         match resource {
             GraphResource::SceneNormal => self.frame_resources.scene_normal_view.as_ref(),
             GraphResource::SceneMsaa => self.frame_resources.scene_msaa_view.as_ref(),
-            GraphResource::Transmission | GraphResource::Surface => None, // Now transient; use render_lists.transmission_texture_id
+            GraphResource::Transmission | GraphResource::Surface => None, // Transient; use blackboard.transmission_texture_id
             GraphResource::SceneRenderTarget
                 if !self.wgpu_ctx.render_path.supports_post_processing() =>
             {

@@ -79,6 +79,7 @@ impl SceneCullPass {
 
         let render_lists = &mut *ctx.render_lists;
         render_lists.clear();
+        ctx.blackboard.clear();
 
         let Some(gpu_world) = ctx
             .resource_manager
