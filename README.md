@@ -30,31 +30,37 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
 
 ## Features
 
-* **Modern Architecture**: Built on **wgpu**, fully supporting **Vulkan**, **Metal**, **DX12**, and **WebGPU**.
-* **Advanced PBR Materials**: Physically Based Rendering with a rich set of material features:
-    * **IBL** (support cubeMap & equirectangular env maps, with auto PMREM generation).
-    * **Clearcoat** (car paint, varnished wood).
-    * **Iridescence** (soap bubbles, oil films).
-    * **Sheen** (cloth-like materials).
-    * **Anisotropy** (brushed metals).
-    * **Transmission** (glass, water).
-* **SSAO**: Screen Space Ambient Occlusion for enhanced depth perception.
-* **Full glTF 2.0 Support**: Complete support for glTF 2.0 specification, including PBR materials, animations, and scene hierarchy.
-* **HDR Rendering Pipeline**: Full support for HDR Rendering, various tone mapping mode.
-* **Post-Processing Effects**: Built-in support for physically-based bloom.
-    * **HDR Bloom** Physically-based bloom.
-    * **Color Grading**: Built-in support for 3D LUT-based color grading.
-    * **Contrast & Saturation**: Adjustable contrast and saturation controls.
-    * **Film Grain**: Realistic film grain effect with adjustable intensity and size.
-    * **Chromatic Aberration**: Simulate lens distortion with adjustable intensity and direction.
-    * **Vignette Effect**: Adjustable vignette effect with intensity, smoothness, and color controls.
-* **Skybox & Background**: Color, gradient, image, cubemap, and equirectangular sky rendering modes.
-* **Anti-Aliasing**: Built-in MSAA and FXAA support.
-* **Shadows**: Cascaded shadow maps.
-* **Transient Render Graph**: A highly optimized, frame-graph based rendering architecture that minimizes overhead and maximizes flexibility.
-* **Asset System**: Asynchronous asset loading with `AssetServer`, built-in **glTF 2.0** support (geometry, materials, animations).
-* **Tooling Ready**: Includes a powerful `gltf_viewer` example with an embedded **Inspector UI** (based on egui), capable of inspecting scene nodes, materials, and textures at runtime.
-* **Web First**: First-class support for **WASM** and **WebGPU**. Write once, run everywhere.
+## Features
+
+* **Core Architecture & Platform**
+    * **Modern Backend**: Built on **wgpu**, fully supporting Vulkan, Metal, DX12, and WebGPU.
+    * **Transient Render Graph**: A highly optimized, frame-graph based rendering architecture that minimizes CPU overhead and maximizes pass reordering flexibility.
+    * **Web First**: First-class support for **WASM** and WebGPU. Write once, run seamlessly in modern browsers.
+
+* **Advanced Rendering & Lighting**
+    * **Physically Based Materials**: Robust PBR pipeline with advanced extensions:
+        * **Clearcoat** (car paint, varnished wood)
+        * **Iridescence** (soap bubbles, oil films)
+        * **Transmission** (glass, water)
+        * **Sheen** (cloth-like materials)
+        * **Anisotropy** (brushed metals)
+    * **Image-Based Lighting (IBL)**: Supports cubemap and equirectangular environment maps with automatic PMREM generation.
+    * **Dynamic Shadows**: Cascaded Shadow Maps (CSM) for large-scale outdoor scenes.
+    * **SSAO**: Screen Space Ambient Occlusion for enhanced depth perception and contact shadows.
+    * **Skybox & Background**: Color, gradient, image, cubemap, and equirectangular sky rendering modes.
+
+* **Post-Processing & FX**
+    * **HDR Pipeline**: Full support for HDR rendering with various tone mapping operators.
+    * **Cinematic Effects**: A rich set of physically-based post-processing nodes:
+        * **HDR Bloom**: Physically-based bloom.
+        * **Color Grading**: 3D LUT-based color grading.
+        * **Stylization**: Adjustable contrast/saturation, film grain, chromatic aberration, and vignette effects.
+    * **Anti-Aliasing**: Built-in MSAA (hardware multi-sampling) and FXAA (post-process) support.
+
+* **Assets & Tooling**
+    * **Full glTF 2.0 Support**: Comprehensive support for the glTF 2.0 specification, including PBR materials, skeletal animations, morph targets, and scene hierarchy.
+    * **Asynchronous Asset System**: Non-blocking `AssetServer` for efficient loading of textures, models, and materials.
+    * **Embedded Inspector UI**: Includes an integration with `egui`, allowing you to inspect scene nodes and tweak material parameters dynamically at runtime (try the `gltf_viewer` example).
 
 ## Online Demo
 
@@ -97,7 +103,10 @@ impl AppHandler for MyApp {
         // 1. Create a cube mesh with a checkerboard texture using builder-style chaining
         let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
         let tex_handle = engine.assets.textures.add(texture);
-        let mesh_handle = scene.spawn_box(1.0,1.0,1.0,MeshPhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0)).with_map(tex_handle));
+        let mesh_handle = scene.spawn_box(
+            1.0, 1.0, 1.0, 
+            MeshPhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0)).with_map(tex_handle)
+        );
         
         // 2. Setup Camera
         let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
