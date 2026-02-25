@@ -211,7 +211,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     // Ambient occlusion
 
     var ambient_occlusion = 1.0;
-    $$ if USE_SSAO
+    $$ if HDR and USE_SSAO
     // Sample screen-space AO
     let screen_ndc = varyings.clip_position.xy / varyings.clip_position.w;
 
