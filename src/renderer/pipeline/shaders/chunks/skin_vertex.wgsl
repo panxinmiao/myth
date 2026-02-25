@@ -11,7 +11,7 @@ $$ if HAS_SKINNING and SUPPORT_SKINNING
 
     local_pos = bone_mat * local_pos;
 
-    $$ if HAS_NORMAL and not SHADOW_PASS
+    $$ if HAS_NORMAL and not SHADOW_PASS and (OUTPUT_NORMAL or not IS_PREPASS)
     let skin_normal_mat = mat3x3<f32>(
         bone_mat[0].xyz,
         bone_mat[1].xyz,
@@ -21,7 +21,7 @@ $$ if HAS_SKINNING and SUPPORT_SKINNING
     local_normal = normalize(skin_normal_mat * local_normal);
     $$ endif
 
-    $$ if HAS_TANGENT and not SHADOW_PASS
+    $$ if HAS_TANGENT and not SHADOW_PASS and not IS_PREPASS
         object_tangent = (skin_normal_mat * object_tangent).xyz;
     $$ endif
 
