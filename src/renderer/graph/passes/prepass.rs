@@ -25,7 +25,7 @@ use rustc_hash::FxHashMap;
 
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
-use crate::renderer::graph::{RenderNode, TrackedRenderPass};
+use crate::renderer::graph::{RenderNode, TrackedRenderPass, TransientTextureDesc};
 use crate::renderer::pipeline::shader_gen::{ShaderCompilationOptions, ShaderGenerator};
 use crate::resources::material::{AlphaMode, Side};
 
@@ -36,7 +36,6 @@ pub struct DepthNormalPrepass {
     pub(crate) needs_normal: bool, // Whether to output normals (for SSAO) or just do a Z-prepass
 
     depth_view: Option<Tracked<wgpu::TextureView>>,
-    normal_view: Option<Tracked<wgpu::TextureView>>,
 
     /// Pipeline cache keyed by the main-pass `pipeline_id`.
     ///
@@ -51,7 +50,6 @@ impl DepthNormalPrepass {
         Self {
             needs_normal: false,
             depth_view: None,
-            normal_view: None,
             pipeline_cache: FxHashMap::default(),
         }
     }
@@ -267,7 +265,23 @@ impl RenderNode for DepthNormalPrepass {
         }
 
         self.depth_view = Some(ctx.get_resource_view(GraphResource::SceneDepth).clone());
-        self.normal_view = Some(ctx.get_resource_view(GraphResource::SceneNormal).clone());
+
+        if self.needs_normal {
+            let size = ctx.wgpu_ctx.size();
+            let normal_tex = ctx.transient_pool.allocate(
+                &ctx.wgpu_ctx.device,
+                &TransientTextureDesc {
+                    width: size.0,
+                    height: size.1,
+                    format: NORMAL_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    mip_level_count: 1,
+                    label: "Transient Scene Normal",
+                },
+            );
+            ctx.blackboard.scene_normal_texture = Some(normal_tex);
+        }
 
         // Pre-build pipelines for all unique pipeline IDs in the opaque list
         self.prepare_pipelines(ctx);
@@ -287,12 +301,14 @@ impl RenderNode for DepthNormalPrepass {
             .depth_view
             .as_ref()
             .expect("Prepass: missing depth view");
-        let normal_view = self
-            .normal_view
-            .as_ref()
-            .expect("Prepass: missing normal view");
 
         let color_attachments = if self.needs_normal {
+            let normal_view = ctx.transient_pool.get_view(
+                ctx.blackboard
+                    .scene_normal_texture
+                    .expect("Normal texture allocated"),
+            );
+
             vec![Some(wgpu::RenderPassColorAttachment {
                 view: normal_view,
                 resolve_target: None,

@@ -64,6 +64,9 @@ pub struct FrameBlackboard {
     /// 由 [`TransmissionCopyPass::prepare()`] 写入，供 `TransparentPass`
     /// 在构建 group 3 BindGroup 时读取。`None` 表示本帧无 Transmission 效果。
     pub transmission_texture_id: Option<TransientTextureId>,
+
+    // ▼ 新增法线瞬态句柄 ▼
+    pub scene_normal_texture: Option<TransientTextureId>,
 }
 
 impl FrameBlackboard {
