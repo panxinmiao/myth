@@ -490,11 +490,13 @@ impl SsaoPass {
 
         // Access frame_resources fields directly to avoid borrowing the whole ctx
         let depth_view = &ctx.frame_resources.depth_view;
-        let normal_view = ctx
-            .frame_resources
-            .scene_normal_view
-            .as_ref()
-            .expect("SceneNormal must exist for SSAO");
+
+        let normal_view = ctx.transient_pool.get_view(
+            ctx.blackboard
+                .scene_normal_texture
+                .expect("SceneNormal must exist for SSAO"),
+        );
+
         let noise_view = self
             .noise_texture_view
             .as_ref()
