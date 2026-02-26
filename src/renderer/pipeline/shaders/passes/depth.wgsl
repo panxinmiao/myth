@@ -58,13 +58,24 @@ fn fs_main(varyings: VertexOutput) -> @location(0) vec4<f32> {
 
     {$ include 'alpha_test' $}
 
+    // Encode screen-space profile ID into Normal.a (Thin G-Buffer channel).
+    // Encoding:
+    //   alpha == 0.0          → background (cleared, never written by geometry)
+    //   alpha == 1.0 (255/255) → valid geometry, no SS effects
+    //   alpha ∈ (0, 1)         → SS geometry; round(alpha * 255) = profile ID (1–254)
+    $$ if USE_SCREEN_SPACE_FEATURES
+    let ss_alpha = select(f32(u_material.screen_space_id) / 255.0, 1.0, u_material.screen_space_id == 0u);
+    $$ else
+    let ss_alpha = 1.0;
+    $$ endif
+
     $$ if HAS_NORMAL
     // Transform world-space normal to view-space, then encode [-1,1] → [0,1]
     let view_normal = normalize((u_render_state.view_matrix * vec4<f32>(varyings.world_normal, 0.0)).xyz);
-    return vec4<f32>(view_normal * 0.5 + 0.5, 1.0);
+    return vec4<f32>(view_normal * 0.5 + 0.5, ss_alpha);
     $$ else
     // Fallback: camera-facing default (view-space Z-forward)
-    return vec4<f32>(0.5, 0.5, 1.0, 1.0);
+    return vec4<f32>(0.5, 0.5, 1.0, ss_alpha);
     $$ endif
 }
 $$ else

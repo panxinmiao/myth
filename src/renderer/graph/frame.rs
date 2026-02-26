@@ -64,6 +64,12 @@ pub struct FrameBlackboard {
     /// 由 [`TransmissionCopyPass::prepare()`] 写入，供 `TransparentPass`
     /// 在构建 group 3 BindGroup 时读取。`None` 表示本帧无 Transmission 效果。
     pub transmission_texture_id: Option<TransientTextureId>,
+
+    /// 当前帧 SSSSS（屏幕空间次表面散射）模糊输出的瞬态纹理 ID。
+    ///
+    /// 由 [`SssssPass::prepare()`] 写入。`None` 表示本帧 SSS 未启用或无 SSS 材质。
+    /// 目前仅作为保留字段；将来可供后处理 Pass 合并使用。
+    pub sss_texture_id: Option<TransientTextureId>,
 }
 
 impl FrameBlackboard {
@@ -79,6 +85,7 @@ impl FrameBlackboard {
     pub fn clear(&mut self) {
         self.ssao_texture_id = None;
         self.transmission_texture_id = None;
+        self.sss_texture_id = None;
     }
 }
 

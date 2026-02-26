@@ -9,6 +9,7 @@ use crate::assets::storage::AssetStorage;
 use crate::errors::{AssetError, Error, Result};
 use crate::resources::geometry::Geometry;
 use crate::resources::material::Material;
+use crate::resources::screen_space::ScreenSpaceProfile;
 use crate::resources::texture::{Sampler, Texture};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -28,6 +29,11 @@ new_key_type! {
     pub struct MaterialHandle;
     pub struct TextureHandle;
     pub struct SamplerHandle;
+    /// Handle to a `ScreenSpaceProfile` asset.
+    ///
+    /// Returned by `assets.screen_space_profiles.add(…)` and stored in
+    /// `MeshPhysicalMaterial::screen_space_profile`.
+    pub struct ScreenSpaceProfileHandle;
 }
 
 const DUMMY_ENV_MAP_ID: u64 = 0xFFFF_FFFF_FFFF_FFFF;
@@ -59,6 +65,12 @@ pub struct AssetServer {
     pub materials: Arc<AssetStorage<MaterialHandle, Material>>,
     pub textures: Arc<AssetStorage<TextureHandle, Texture>>,
     pub samplers: Arc<AssetStorage<SamplerHandle, Sampler>>,
+    /// Storage for `ScreenSpaceProfile` assets.
+    ///
+    /// Used by the Thin G-Buffer Hybrid Pipeline.  The Extract system iterates
+    /// over active physical materials and maps their profile handles to per-frame
+    /// 8-bit GPU IDs that the Prepass/SSSSS shaders can use.
+    pub screen_space_profiles: Arc<AssetStorage<ScreenSpaceProfileHandle, ScreenSpaceProfile>>,
 }
 
 impl Default for AssetServer {
@@ -75,6 +87,7 @@ impl AssetServer {
             materials: Arc::new(AssetStorage::new()),
             textures: Arc::new(AssetStorage::new()),
             samplers: Arc::new(AssetStorage::new()),
+            screen_space_profiles: Arc::new(AssetStorage::new()),
         }
     }
 

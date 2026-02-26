@@ -45,7 +45,10 @@ pub mod server;
 pub mod skeleton_asset;
 pub mod storage;
 
-pub use server::{AssetServer, GeometryHandle, MaterialHandle, SamplerHandle, TextureHandle};
+pub use server::{
+    AssetServer, GeometryHandle, MaterialHandle, SamplerHandle, ScreenSpaceProfileHandle,
+    TextureHandle,
+};
 
 pub use handle::{AssetTracker, StrongHandle, TrackedAsset, WeakHandle};
 pub use io::{AssetReader, AssetReaderVariant};

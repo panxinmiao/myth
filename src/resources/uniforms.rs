@@ -550,9 +550,12 @@ define_gpu_data_struct!(
         pub attenuation_distance: f32 = -1.0,     // 4    -1 (infinite)
 
         pub dispersion: f32 = 0.0,                 // 4
-        pub(crate) __padding1: f32,          // 4
-        pub(crate) __padding2: f32,          // 4
-        pub(crate) __padding3: f32,          // 4
+        // Per-frame GPU ID (1-254) of the active ScreenSpaceProfile. 0 = no profile.
+        // Written by the Extract phase; consumed by the Prepass shader (Normal.a encoding).
+        pub screen_space_id: u32 = 0,              // 4
+        // Bitmask of active screen-space feature flags (FEATURE_SSS | FEATURE_SSR).
+        pub screen_space_flags: u32 = 0,           // 4
+        pub(crate) __padding3: f32,                // 4 — keeps 16-byte alignment
 
 
 

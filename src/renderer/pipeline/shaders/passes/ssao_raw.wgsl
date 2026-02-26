@@ -41,7 +41,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // 3. Unpack normal from [0,1] → [-1,1]
     let packed_normal = textureSampleLevel(t_normal, s_linear, uv, 0.0);
-    if (packed_normal.a < 0.5) { // alpha = geometry mask; 0 = no geometry
+    // Alpha encoding (Thin G-Buffer):
+    //   0.0       = background (cleared); no geometry drawn here
+    //   1.0       = valid geometry, no SS effects
+    //   (0, 1)    = SS geometry (profile ID encoded as round(a * 255))
+    // Any non-zero alpha means geometry was drawn — include it in SSAO.
+    if (packed_normal.a <= 0.0) {
         return vec4<f32>(1.0);
     }
     let view_normal = normalize(packed_normal.xyz * 2.0 - 1.0);

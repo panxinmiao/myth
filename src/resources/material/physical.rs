@@ -4,7 +4,7 @@ use bitflags::bitflags;
 use glam::{Vec2, Vec3, Vec4};
 use parking_lot::RwLock;
 
-use crate::assets::TextureHandle;
+use crate::assets::{ScreenSpaceProfileHandle, TextureHandle};
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::material::{AlphaMode, MaterialSettings, Side, TextureSlot};
 use crate::resources::texture::SamplerSource;
@@ -87,6 +87,16 @@ pub struct MeshPhysicalMaterial {
 
     pub(crate) version: AtomicU64,
     pub auto_sync_texture_to_uniforms: bool,
+
+    /// Optional screen-space effect profile.
+    ///
+    /// When set, the Extract system maps this handle to a per-frame GPU ID (1–254)
+    /// and writes it into `screen_space_id` + `screen_space_flags` in the material's
+    /// Uniform buffer. The Prepass shader then encodes the ID into `Normal.a`, and the
+    /// `SssssPass` uses it for the lookup into the global Storage Buffer.
+    ///
+    /// Set via [`with_screen_space_profile`](Self::with_screen_space_profile).
+    pub screen_space_profile: Option<ScreenSpaceProfileHandle>,
 }
 
 impl MeshPhysicalMaterial {
@@ -109,7 +119,34 @@ impl MeshPhysicalMaterial {
 
             version: AtomicU64::new(0),
             auto_sync_texture_to_uniforms: false,
+            screen_space_profile: None,
         }
+    }
+
+    /// Attaches a `ScreenSpaceProfile` to this material (builder).
+    ///
+    /// Subsequent frames will pick up the profile during the Extract phase and encode
+    /// the per-frame GPU ID into the material's Uniform buffer.  Setting this to `None`
+    /// effectively disables all screen-space effects for this material.
+    ///
+    /// # Example
+    /// ```rust,ignore
+    /// let handle = assets.screen_space_profiles.add(ScreenSpaceProfile::new_sss(…));
+    /// let mat = MeshPhysicalMaterial::new(Vec4::ONE)
+    ///     .with_screen_space_profile(handle);
+    /// ```
+    #[must_use]
+    pub fn with_screen_space_profile(mut self, handle: ScreenSpaceProfileHandle) -> Self {
+        self.screen_space_profile = Some(handle);
+        // Bump version so the pipeline cache notices the change on next frame.
+        self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self
+    }
+
+    /// Sets or clears the screen-space profile at runtime.
+    pub fn set_screen_space_profile(&mut self, handle: Option<ScreenSpaceProfileHandle>) {
+        self.screen_space_profile = handle;
+        self.version.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     }
 
     // -- Core builder methods (chainable at construction time) --
@@ -419,7 +456,8 @@ impl_material_api!(
         (thickness_map,          "The thickness map."),
     ],
     manual_clone_fields: {
-        features: |s: &Self| parking_lot::RwLock::new(*s.features.read())
+        features: |s: &Self| parking_lot::RwLock::new(*s.features.read()),
+        screen_space_profile: |s: &Self| s.screen_space_profile,
     }
 );
 

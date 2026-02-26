@@ -22,8 +22,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let center_depth = textureSampleLevel(t_depth, s_linear, uv, 0u);
     let center_normal_packed = textureSampleLevel(t_normal, s_linear, uv, 0.0);
 
-    // If no geometry (skybox), return full-lit
-    if (center_normal_packed.a < 0.5 || center_depth <= 0.0) {
+    // Skip background pixels (alpha == 0.0 means no geometry drawn here).
+    // See Thin G-Buffer alpha encoding in depth.wgsl for the full scheme.
+    if (center_normal_packed.a <= 0.0 || center_depth <= 0.0) {
         return vec4<f32>(1.0);
     }
 
@@ -42,8 +43,8 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let sample_depth = textureSampleLevel(t_depth, s_linear, sample_uv, 0u);
             let sample_normal_packed = textureSampleLevel(t_normal, s_linear, sample_uv, 0.0);
 
-            // Skip background pixels
-            if (sample_normal_packed.a < 0.5 || sample_depth <= 0.0) {
+            // Skip background pixels (see Thin G-Buffer alpha encoding).
+            if (sample_normal_packed.a <= 0.0 || sample_depth <= 0.0) {
                 continue;
             }
 

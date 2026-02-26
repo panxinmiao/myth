@@ -151,13 +151,14 @@ pub mod prelude {
     pub use crate::resources::{
         AlphaMode, BloomSettings, FxaaQuality, FxaaSettings, Geometry, Image, Material,
         MaterialType, Mesh, MeshBasicMaterial, MeshPhongMaterial, MeshPhysicalMaterial, Side,
-        SsaoSettings, Texture, TextureSlot,
+        ScreenSpaceProfile, ScreenSpaceSettings, SsaoSettings, Texture, TextureSlot,
     };
 
     // Assets
     pub use crate::assets::GltfLoader;
     pub use crate::assets::{
-        AssetServer, ColorSpace, GeometryHandle, MaterialHandle, TextureHandle,
+        AssetServer, ColorSpace, GeometryHandle, MaterialHandle, ScreenSpaceProfileHandle,
+        TextureHandle,
     };
 
     // Animation

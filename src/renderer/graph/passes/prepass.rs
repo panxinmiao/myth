@@ -32,17 +32,35 @@ use crate::resources::material::{AlphaMode, Side};
 /// Normal texture format — Rgba8Unorm ([-1,1] → [0,1] mapping).
 const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
+/// Returns `true` when the given depth format also contains a stencil aspect.
+/// Used to gate the optional stencil-write optimisation for the SSSSS pass.
+#[inline]
+fn depth_format_has_stencil(fmt: wgpu::TextureFormat) -> bool {
+    matches!(
+        fmt,
+        wgpu::TextureFormat::Depth24PlusStencil8 | wgpu::TextureFormat::Depth32FloatStencil8
+    )
+}
+
 pub struct DepthNormalPrepass {
     pub(crate) needs_normal: bool, // Whether to output normals (for SSAO) or just do a Z-prepass
+
+    /// Whether to encode `screen_space_id` into Normal.a and write the geometry
+    /// stencil mask for the SSSSS pass.
+    ///
+    /// Set to `true` by `prepare()` when `extracted_scene.has_screen_space_features` is set.
+    /// Invalidates the pipeline cache dimension so that new pipelines are compiled
+    /// with the `USE_SCREEN_SPACE_FEATURES` define.
+    pub(crate) use_screen_space: bool,
 
     depth_view: Option<Tracked<wgpu::TextureView>>,
     normal_view: Option<Tracked<wgpu::TextureView>>,
 
-    /// Pipeline cache keyed by the main-pass `pipeline_id`.
+    /// Pipeline cache keyed by `(pipeline_id, needs_normal, use_screen_space)`.
     ///
-    /// Two objects sharing a main pipeline will share a prepass pipeline
-    /// (identical vertex layout, topology, cull mode and material macros).
-    pipeline_cache: FxHashMap<(u16, bool), wgpu::RenderPipeline>,
+    /// The third dimension ensures pipelines are re-compiled when SSS features
+    /// are toggled — the shader variant differs between the two states.
+    pipeline_cache: FxHashMap<(u16, bool, bool), wgpu::RenderPipeline>,
 }
 
 impl DepthNormalPrepass {
@@ -50,6 +68,7 @@ impl DepthNormalPrepass {
     pub fn new() -> Self {
         Self {
             needs_normal: false,
+            use_screen_space: false,
             depth_view: None,
             normal_view: None,
             pipeline_cache: FxHashMap::default(),
@@ -71,6 +90,7 @@ impl DepthNormalPrepass {
         };
 
         let depth_format = ctx.wgpu_ctx.depth_format;
+        let has_stencil = depth_format_has_stencil(depth_format);
         let gpu_world_binding_wgsl = gpu_world.binding_wgsl.clone();
         let gpu_world_layout_clone = gpu_world.layout.clone();
 
@@ -78,10 +98,10 @@ impl DepthNormalPrepass {
         let mat_guard = ctx.assets.materials.read_lock();
 
         for cmd in &ctx.render_lists.opaque {
-            // Skip if already cached
+            // Skip if already cached (all three key dimensions must match)
             if self
                 .pipeline_cache
-                .contains_key(&(cmd.pipeline_id, self.needs_normal))
+                .contains_key(&(cmd.pipeline_id, self.needs_normal, self.use_screen_space))
             {
                 continue;
             }
@@ -137,6 +157,11 @@ impl DepthNormalPrepass {
 
             if self.needs_normal {
                 options.add_define("OUTPUT_NORMAL", "1");
+            }
+
+            if self.use_screen_space {
+                // Activates the `screen_space_id → Normal.a` encoding branch in depth.wgsl.
+                options.add_define("USE_SCREEN_SPACE_FEATURES", "1");
             }
 
             // ── Shader generation ──────────────────────────────────────
@@ -233,7 +258,29 @@ impl DepthNormalPrepass {
                             depth_write_enabled: true,
                             // Reverse-Z: Greater
                             depth_compare: wgpu::CompareFunction::Greater,
-                            stencil: wgpu::StencilState::default(),
+                            stencil: if self.use_screen_space && has_stencil {
+                                // Write a 1 into the stencil for every drawn geometry fragment.
+                                // The SSSSS pass reads stencil != 0 to skip background pixels,
+                                // then uses Normal.a to identify SSS vs non-SSS geometry.
+                                wgpu::StencilState {
+                                    front: wgpu::StencilFaceState {
+                                        compare: wgpu::CompareFunction::Always,
+                                        depth_fail_op: wgpu::StencilOperation::Keep,
+                                        fail_op: wgpu::StencilOperation::Keep,
+                                        pass_op: wgpu::StencilOperation::Replace,
+                                    },
+                                    back: wgpu::StencilFaceState {
+                                        compare: wgpu::CompareFunction::Always,
+                                        depth_fail_op: wgpu::StencilOperation::Keep,
+                                        fail_op: wgpu::StencilOperation::Keep,
+                                        pass_op: wgpu::StencilOperation::Replace,
+                                    },
+                                    read_mask: 0xFF,
+                                    write_mask: 0xFF,
+                                }
+                            } else {
+                                wgpu::StencilState::default()
+                            },
                             bias: wgpu::DepthBiasState::default(),
                         }),
                         multisample: wgpu::MultisampleState {
@@ -245,7 +292,7 @@ impl DepthNormalPrepass {
                     });
 
             self.pipeline_cache
-                .insert((cmd.pipeline_id, self.needs_normal), pipeline);
+                .insert((cmd.pipeline_id, self.needs_normal, self.use_screen_space), pipeline);
         }
     }
 }
@@ -268,6 +315,10 @@ impl RenderNode for DepthNormalPrepass {
 
         self.depth_view = Some(ctx.get_resource_view(GraphResource::SceneDepth).clone());
         self.normal_view = Some(ctx.get_resource_view(GraphResource::SceneNormal).clone());
+
+        // Mirror the screen-space feature state from the extracted scene.
+        // A change here invalidates the pipeline cache key, triggering re-compilation.
+        self.use_screen_space = ctx.extracted_scene.has_screen_space_features;
 
         // Pre-build pipelines for all unique pipeline IDs in the opaque list
         self.prepare_pipelines(ctx);
@@ -322,7 +373,17 @@ impl RenderNode for DepthNormalPrepass {
                     load: wgpu::LoadOp::Clear(0.0),
                     store: wgpu::StoreOp::Store,
                 }),
-                stencil_ops: None,
+                stencil_ops: if self.use_screen_space
+                    && depth_format_has_stencil(ctx.wgpu_ctx.depth_format)
+                {
+                    // Clear stencil to 0 (background).  Drawn fragments will write 1.
+                    Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: wgpu::StoreOp::Store,
+                    })
+                } else {
+                    None
+                },
             }),
             timestamp_writes: None,
             occlusion_query_set: None,
@@ -330,6 +391,11 @@ impl RenderNode for DepthNormalPrepass {
         });
 
         let mut tracked_pass = TrackedRenderPass::new(pass);
+
+        // When writing stencil, set a uniform reference of 1 for all geometry.
+        if self.use_screen_space && depth_format_has_stencil(ctx.wgpu_ctx.depth_format) {
+            tracked_pass.raw_pass().set_stencil_reference(1);
+        }
 
         tracked_pass.set_bind_group(
             0,
@@ -341,7 +407,7 @@ impl RenderNode for DepthNormalPrepass {
         for cmd in &render_lists.opaque {
             let Some(pipeline) = self
                 .pipeline_cache
-                .get(&(cmd.pipeline_id, self.needs_normal))
+                .get(&(cmd.pipeline_id, self.needs_normal, self.use_screen_space))
             else {
                 continue;
             };

@@ -13,10 +13,12 @@
 use std::collections::HashSet;
 
 use glam::{Mat4, Vec3};
+use rustc_hash::FxHashMap;
 
-use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
+use crate::assets::{AssetServer, GeometryHandle, MaterialHandle, ScreenSpaceProfileHandle};
 use crate::renderer::core::{BindGroupContext, ResourceManager};
 use crate::resources::BoundingBox;
+use crate::resources::screen_space::{ScreenSpaceMaterialData, FEATURE_NONE};
 use crate::resources::shader_defines::ShaderDefines;
 use crate::scene::background::BackgroundMode;
 use crate::scene::camera::RenderCamera;
@@ -92,6 +94,24 @@ pub struct ExtractedScene {
     pub has_transmission: bool,
     pub lights: Vec<ExtractedLight>,
 
+    // --- Screen-Space Feature Extraction (Thin G-Buffer Hybrid Pipeline) ---
+
+    /// Whether any screen-space features are active this frame.
+    /// Cached here so the Prepass and SssssPass can branch without re-reading the Scene.
+    pub has_screen_space_features: bool,
+
+    /// Per-frame flat array of `ScreenSpaceMaterialData` for upload to the GPU Storage Buffer.
+    ///
+    /// - Index 0: default sentinel (no effects) — occupies the ID-0 slot.
+    /// - Indices 1–254: profile data for SSS (and future) materials.
+    ///
+    /// Populated by `extract_screen_space_data()`; uploaded by `SssssPass::prepare()`.
+    pub current_screen_space_profiles: Vec<ScreenSpaceMaterialData>,
+
+    /// Dirty flag: set when `current_screen_space_profiles` changed vs. last frame.
+    /// `SssssPass::prepare()` only calls `queue.write_buffer` when this is `true`.
+    pub screen_space_profiles_changed: bool,
+
     collected_meshes: Vec<CollectedMesh>,
     collected_skeleton_keys: HashSet<SkeletonKey>,
 }
@@ -120,6 +140,9 @@ impl ExtractedScene {
             envvironment: Environment::default(),
             has_transmission: false,
             lights: Vec::new(),
+            has_screen_space_features: false,
+            current_screen_space_profiles: vec![ScreenSpaceMaterialData::default()],
+            screen_space_profiles_changed: true,
             collected_meshes: Vec::new(),
             collected_skeleton_keys: HashSet::default(),
         }
@@ -137,6 +160,9 @@ impl ExtractedScene {
             envvironment: Environment::default(),
             has_transmission: false,
             lights: Vec::with_capacity(16),
+            has_screen_space_features: false,
+            current_screen_space_profiles: vec![ScreenSpaceMaterialData::default()],
+            screen_space_profiles_changed: true,
             collected_meshes: Vec::with_capacity(item_capacity),
             collected_skeleton_keys: HashSet::default(),
         }
@@ -148,6 +174,16 @@ impl ExtractedScene {
         self.scene_defines.clear();
         self.scene_id = 0;
         self.lights.clear();
+
+        // Reset screen-space extraction state.
+        self.has_screen_space_features = false;
+        let prev_profile_count = self.current_screen_space_profiles.len();
+        self.current_screen_space_profiles.clear();
+        // Always keep the sentinel at index 0.
+        self.current_screen_space_profiles.push(ScreenSpaceMaterialData::default());
+        // Mark unchanged if only the sentinel remains (same as after previous clear).
+        // A real change will be detected by comparing count and data below.
+        self.screen_space_profiles_changed = prev_profile_count != 1;
 
         self.collected_meshes.clear();
         self.collected_skeleton_keys.clear();
@@ -179,6 +215,15 @@ impl ExtractedScene {
         if scene.ssao.enabled {
             self.scene_defines.set("USE_SSAO", "1");
             variants |= 1 << 1;
+        }
+
+        if scene.screen_space.enable_sss {
+            self.extract_screen_space_data(scene, assets);
+        }
+
+        if self.has_screen_space_features {
+            self.scene_defines.set("USE_SCREEN_SPACE_FEATURES", "1");
+            variants |= 1 << 2;
         }
 
         self.scene_variants = variants;
@@ -337,6 +382,105 @@ impl ExtractedScene {
                 world_aabb: item.world_aabb,
             });
         }
+    }
+
+    /// Extract screen-space profile data and write per-frame GPU IDs back to material uniforms.
+    ///
+    /// Builds the `current_screen_space_profiles` array (uploaded to the StorageBuffer by
+    /// `SssssPass::prepare()`) and writes a compact **per-frame u8 GPU ID** into each active
+    /// material's `screen_space_id` uniform field.
+    ///
+    /// # Diff-sync optimisation
+    /// Both the profile list and the per-material ID are written **only when they change**,
+    /// so steady-state frames with unchanged SSS materials incur no `CpuBuffer` version bump
+    /// and no GPU upload cost beyond the StorageBuffer copy.
+    ///
+    /// # ID encoding
+    /// - `0`  → no screen-space effects (sentinel / non-SSS geometry)
+    /// - `1–254` → index into `current_screen_space_profiles`
+    /// - `255` → reserved (non-SSS geometry writes alpha=1.0 in the prepass)
+    fn extract_screen_space_data(&mut self, _scene: &Scene, assets: &AssetServer) {
+        let mat_guard = assets.materials.read_lock();
+        let profile_guard = assets.screen_space_profiles.read_lock();
+
+        // Per-frame handle → compact u8 ID mapping.  Rebuilt from scratch every frame.
+        let mut handle_to_id: FxHashMap<ScreenSpaceProfileHandle, u8> = FxHashMap::default();
+
+        for item in &self.render_items {
+            let Some(mat_arc) = mat_guard.map.get(item.material) else {
+                continue;
+            };
+            let Some(phys) = mat_arc.as_physical() else {
+                // Non-physical material: no SSS possible, skip silently.
+                continue;
+            };
+
+            if let Some(profile_handle) = phys.screen_space_profile {
+                // --- Assign / look up per-frame GPU ID for this profile ---
+                let gpu_id: u8 = match handle_to_id.get(&profile_handle).copied() {
+                    Some(existing) => existing,
+                    None => {
+                        let next_idx = self.current_screen_space_profiles.len();
+                        if next_idx >= 255 {
+                            log::warn!(
+                                "[SSS] Per-frame ScreenSpaceProfile limit (254) exceeded. \
+                                 Extra materials fall back to ID 0 (no SSS)."
+                            );
+                            0
+                        } else {
+                            let id = next_idx as u8; // 1 ≤ id ≤ 254
+                            let gpu_data = profile_guard
+                                .map
+                                .get(profile_handle)
+                                .map_or_else(ScreenSpaceMaterialData::default, |arc| {
+                                    arc.to_gpu_data()
+                                });
+                            self.current_screen_space_profiles.push(gpu_data);
+                            handle_to_id.insert(profile_handle, id);
+                            id
+                        }
+                    }
+                };
+
+                let feature_flags = if gpu_id > 0 {
+                    profile_guard
+                        .map
+                        .get(profile_handle)
+                        .map_or(FEATURE_NONE, |arc| arc.feature_flags)
+                } else {
+                    FEATURE_NONE
+                };
+
+                // Diff-sync: only write if value changed to avoid spurious GPU upload.
+                let new_id = u32::from(gpu_id);
+                let new_flags = feature_flags;
+                let needs_update = {
+                    let u = phys.uniforms.read();
+                    u.screen_space_id != new_id || u.screen_space_flags != new_flags
+                };
+                if needs_update {
+                    let mut w = phys.uniforms.write();
+                    w.screen_space_id = new_id;
+                    w.screen_space_flags = new_flags;
+                }
+            } else {
+                // No profile assigned: reset any stale GPU ID from a prior frame.
+                let needs_reset = {
+                    let u = phys.uniforms.read();
+                    u.screen_space_id != 0 || u.screen_space_flags != 0
+                };
+                if needs_reset {
+                    let mut w = phys.uniforms.write();
+                    w.screen_space_id = 0;
+                    w.screen_space_flags = 0;
+                }
+            }
+        }
+
+        // `len() > 1` means at least one real profile was assigned (not just the sentinel).
+        self.has_screen_space_features = self.current_screen_space_profiles.len() > 1;
+        // Downstream SssssPass::prepare() uploads the StorageBuffer only when this is true.
+        self.screen_space_profiles_changed = self.has_screen_space_features;
     }
 
     /// Extract environment data

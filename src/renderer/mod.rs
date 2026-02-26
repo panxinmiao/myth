@@ -59,7 +59,7 @@ use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
 use crate::renderer::graph::passes::{
     BRDFLutComputePass, BloomPass, DepthNormalPrepass, FxaaPass, IBLComputePass, OpaquePass,
-    SceneCullPass, ShadowPass, SimpleForwardPass, SkyboxPass, SsaoPass, ToneMapPass,
+    SceneCullPass, ShadowPass, SimpleForwardPass, SkyboxPass, SsaoPass, SssssPass, ToneMapPass,
     TransmissionCopyPass, TransparentPass,
 };
 use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTexturePool};
@@ -142,6 +142,7 @@ struct RendererState {
     pub(crate) tone_mapping_pass: ToneMapPass,
     pub(crate) fxaa_pass: FxaaPass,
     pub(crate) ssao_pass: SsaoPass,
+    pub(crate) ssss_pass: SssssPass,
 }
 
 impl Renderer {
@@ -220,6 +221,7 @@ impl Renderer {
         let tone_mapping_pass = ToneMapPass::new(&wgpu_ctx.device);
         let fxaa_pass = FxaaPass::new(&wgpu_ctx.device);
         let ssao_pass = SsaoPass::new(&wgpu_ctx.device);
+        let ssss_pass = SssssPass::new(&wgpu_ctx.device);
 
         // Skybox / Background
         let skybox_pass = SkyboxPass::new(&wgpu_ctx.device);
@@ -251,6 +253,7 @@ impl Renderer {
             tone_mapping_pass,
             fxaa_pass,
             ssao_pass,
+            ssss_pass,
             skybox_pass,
         });
 
@@ -350,8 +353,10 @@ impl Renderer {
                 // === PBR Path (HDR) ===
 
                 let is_ssao_enabled = scene.ssao.enabled;
+                let is_sss_enabled = scene.screen_space.enable_sss;
 
-                let needs_normal = is_ssao_enabled;
+                // Normal buffer required for SSAO and SSSSS
+                let needs_normal = is_ssao_enabled || is_sss_enabled;
 
                 // Z-Normal pre-pass (conditional)
                 if state.wgpu_ctx.render_path.requires_z_prepass() {
@@ -381,6 +386,16 @@ impl Renderer {
 
                 // Transparent rendering
                 frame_builder.add_node(RenderStage::Transparent, &mut state.transparent_pass);
+
+                // SSSSS (Screen-Space Sub-Surface Scattering)
+                // Runs after transparent (SSS applied to opaque + transparent under it)
+                // and before bloom (so SSS-scattered light receives bloom too).
+                // Zero cost when no SSS materials are active.
+                if scene.screen_space.enable_sss
+                    && state.wgpu_ctx.render_path.requires_z_prepass()
+                {
+                    frame_builder.add_node(RenderStage::PostProcess, &mut state.ssss_pass);
+                }
 
                 // Bloom (conditional — only when enabled in Scene.bloom)
                 if scene.bloom.enabled {

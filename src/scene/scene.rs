@@ -10,6 +10,7 @@ use crate::resources::buffer::CpuBuffer;
 use crate::resources::fxaa::FxaaSettings;
 use crate::resources::geometry::Geometry;
 use crate::resources::mesh::Mesh;
+use crate::resources::screen_space::ScreenSpaceSettings;
 use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::ssao::SsaoSettings;
 use crate::resources::tone_mapping::ToneMappingSettings;
@@ -147,6 +148,13 @@ pub struct Scene {
     pub fxaa: FxaaSettings,
     /// SSAO (Screen Space Ambient Occlusion) settings
     pub ssao: SsaoSettings,
+    /// Screen-space effect settings (SSS, SSR, …).
+    ///
+    /// Set `screen_space.enable_sss = true` to opt into the
+    /// Thin G-Buffer Hybrid Pipeline and the SSSSS post-processing pass.
+    /// All screen-space features are disabled by default and have **zero
+    /// impact** on the render frame when disabled.
+    pub screen_space: ScreenSpaceSettings,
     /// Background rendering settings (mode + skybox uniform buffer)
     pub background: BackgroundSettings,
     /// Currently active camera for rendering
@@ -201,6 +209,7 @@ impl Scene {
             bloom: BloomSettings::default(),
             fxaa: FxaaSettings::default(),
             ssao: SsaoSettings::default(),
+            screen_space: ScreenSpaceSettings::default(),
             background: BackgroundSettings::default(),
 
             active_camera: None,
