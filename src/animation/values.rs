@@ -21,27 +21,22 @@ pub struct MorphWeightData {
     pub weights: SmallVec<[f32; MAX_MORPH_TARGETS]>,
 }
 
+impl MorphWeightData {
+    pub fn allocate(n: usize) -> Self {
+        Self {
+            weights: smallvec![0.0; n],
+        }
+    }
+}
+
 impl Interpolatable for MorphWeightData {
     fn interpolate_linear(start: &Self, end: &Self, t: f32) -> Self {
-        let len = start.weights.len().max(end.weights.len());
-
-        let mut result_weights = smallvec![0.0; len];
-
+        let len: usize = start.weights.len().max(end.weights.len());
+        let mut result = MorphWeightData::allocate(len);
         for i in 0..len {
-            let a = start.weights.get(i).copied().unwrap_or(0.0);
-            let b = end.weights.get(i).copied().unwrap_or(0.0);
-            result_weights[i] = a + (b - a) * t;
+            result.weights[i] = start.weights[i] + (end.weights[i] - start.weights[i]) * t;
         }
-
-        MorphWeightData {
-            weights: result_weights,
-        }
-
-        // let mut result = MorphWeightData::default();
-        // for i in 0..MAX_MORPH_TARGETS {
-        //     result.weights[i] = start.weights[i] + (end.weights[i] - start.weights[i]) * t;
-        // }
-        // result
+        result
     }
 
     fn interpolate_cubic(
@@ -59,8 +54,11 @@ impl Interpolatable for MorphWeightData {
         let s0 = 1.0 - s2;
         let s1 = s3 - t2 + t;
 
-        let mut result = MorphWeightData::default();
-        for i in 0..MAX_MORPH_TARGETS {
+        let len = v0.weights.len().max(v1.weights.len());
+
+        let mut result = MorphWeightData::allocate(len);
+
+        for i in 0..len {
             let m0 = out_tangent0.weights[i] * dt;
             let m1 = in_tangent1.weights[i] * dt;
             result.weights[i] = s0 * v0.weights[i] + s1 * m0 + s2 * v1.weights[i] + s3 * m1;
