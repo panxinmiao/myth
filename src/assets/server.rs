@@ -1,3 +1,4 @@
+use parking_lot::RwLock;
 use slotmap::{KeyData, new_key_type};
 use std::sync::Arc;
 use wgpu::TextureFormat;
@@ -9,6 +10,7 @@ use crate::assets::storage::AssetStorage;
 use crate::errors::{AssetError, Error, Result};
 use crate::resources::geometry::Geometry;
 use crate::resources::material::Material;
+use crate::resources::screen_space::SssRegistry;
 use crate::resources::texture::{Sampler, Texture};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -59,6 +61,8 @@ pub struct AssetServer {
     pub materials: Arc<AssetStorage<MaterialHandle, Material>>,
     pub textures: Arc<AssetStorage<TextureHandle, Texture>>,
     pub samplers: Arc<AssetStorage<SamplerHandle, Sampler>>,
+
+    pub sss_registry: Arc<RwLock<SssRegistry>>,
 }
 
 impl Default for AssetServer {
@@ -75,6 +79,8 @@ impl AssetServer {
             materials: Arc::new(AssetStorage::new()),
             textures: Arc::new(AssetStorage::new()),
             samplers: Arc::new(AssetStorage::new()),
+
+            sss_registry: Arc::new(RwLock::new(SssRegistry::new())),
         }
     }
 

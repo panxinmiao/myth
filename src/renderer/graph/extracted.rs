@@ -120,6 +120,7 @@ impl ExtractedScene {
             envvironment: Environment::default(),
             has_transmission: false,
             lights: Vec::new(),
+
             collected_meshes: Vec::new(),
             collected_skeleton_keys: HashSet::default(),
         }
@@ -137,6 +138,7 @@ impl ExtractedScene {
             envvironment: Environment::default(),
             has_transmission: false,
             lights: Vec::with_capacity(16),
+
             collected_meshes: Vec::with_capacity(item_capacity),
             collected_skeleton_keys: HashSet::default(),
         }
@@ -179,6 +181,11 @@ impl ExtractedScene {
         if scene.ssao.enabled {
             self.scene_defines.set("USE_SSAO", "1");
             variants |= 1 << 1;
+        }
+
+        if scene.screen_space.enable_sss || scene.screen_space.enable_ssr {
+            self.scene_defines.set("USE_SCREEN_SPACE_FEATURES", "1");
+            variants |= 1 << 2;
         }
 
         self.scene_variants = variants;

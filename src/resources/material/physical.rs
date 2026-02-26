@@ -7,6 +7,7 @@ use parking_lot::RwLock;
 use crate::assets::TextureHandle;
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::material::{AlphaMode, MaterialSettings, Side, TextureSlot};
+use crate::resources::screen_space::FeatureId;
 use crate::resources::texture::SamplerSource;
 use crate::resources::uniforms::MeshPhysicalUniforms;
 use crate::{ShaderDefines, impl_material_api, impl_material_trait};
@@ -85,6 +86,9 @@ pub struct MeshPhysicalMaterial {
 
     pub(crate) features: RwLock<PhysicalFeatures>,
 
+    pub sss_id: Option<FeatureId>,
+    pub ssr_id: Option<FeatureId>,
+
     pub(crate) version: AtomicU64,
     pub auto_sync_texture_to_uniforms: bool,
 }
@@ -106,6 +110,9 @@ impl MeshPhysicalMaterial {
             settings: RwLock::new(MaterialSettings::default()),
             textures: RwLock::new(MeshPhysicalTextureSet::default()),
             features: RwLock::new(PhysicalFeatures::default()),
+
+            ssr_id: None,
+            sss_id: None,
 
             version: AtomicU64::new(0),
             auto_sync_texture_to_uniforms: false,
@@ -361,6 +368,18 @@ impl MeshPhysicalMaterial {
         self.toggle_feature(PhysicalFeatures::DISPERSION, true);
         self
     }
+
+    #[must_use]
+    pub fn with_sss_id(self, id: FeatureId) -> Self {
+        self.set_sss_id(id.0.get() as u32);
+        self
+    }
+
+    #[must_use]
+    pub fn with_ssr_id(self, id: FeatureId) -> Self {
+        self.set_ssr_id(id.0.get() as u32);
+        self
+    }
 }
 
 impl_material_api!(
@@ -397,6 +416,9 @@ impl_material_api!(
         (attenuation_distance,    f32,  "The distance that light travels through the material before it is absorbed."),
         (dispersion,              f32,  "The amount of chromatic dispersion in the transmitted light."),
 
+        (sss_id,                  u32,  "Internal SSS Profile ID for this material."),
+        (ssr_id,                  u32,  "Internal SSR Profile ID for this material."),
+
     ],
     textures: [
         (map,                    "The color map."),
@@ -419,7 +441,9 @@ impl_material_api!(
         (thickness_map,          "The thickness map."),
     ],
     manual_clone_fields: {
-        features: |s: &Self| parking_lot::RwLock::new(*s.features.read())
+        features: |s: &Self| parking_lot::RwLock::new(*s.features.read()),
+        ssr_id: |s: &Self| s.ssr_id,
+        sss_id: |s: &Self| s.sss_id,
     }
 );
 

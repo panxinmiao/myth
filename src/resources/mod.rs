@@ -32,6 +32,7 @@ pub mod input;
 pub mod material;
 pub mod mesh;
 pub mod primitives;
+pub mod screen_space;
 pub mod shader_defines;
 pub mod ssao;
 pub mod texture;
