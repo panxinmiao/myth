@@ -550,8 +550,9 @@ define_gpu_data_struct!(
         pub attenuation_distance: f32 = -1.0,     // 4    -1 (infinite)
 
         pub dispersion: f32 = 0.0,                 // 4
-        pub(crate) __padding1: f32,          // 4
-        pub(crate) __padding2: f32,          // 4
+
+        pub sss_id: u32 = 0,                       // 4 Bytes 
+        pub ssr_id: u32 = 0,                       // 4 Bytes
         pub(crate) __padding3: f32,          // 4
 
 
