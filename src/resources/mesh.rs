@@ -4,8 +4,8 @@ use crate::assets::{GeometryHandle, MaterialHandle};
 use crate::resources::buffer::{BufferReadGuard, CpuBuffer};
 use crate::resources::uniforms::MorphUniforms;
 
-pub const MAX_MORPH_TARGETS: usize = 32;
-pub const MORPH_WEIGHT_THRESHOLD: f32 = 0.001;
+pub const MAX_MORPH_TARGETS: usize = 128;
+pub const MORPH_WEIGHT_THRESHOLD: f32 = 0.0000;
 
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone)]

@@ -619,10 +619,10 @@ define_gpu_data_struct!(
         pub flags: u32,
         pub(crate) __padding: u32,
 
-        // 32 morph target weights and indices, packed into Vec4 to satisfy Uniform buffer 16-byte alignment requirement
+        // 128 morph target weights and indices, packed into Vec4 to satisfy Uniform buffer 16-byte alignment requirement
         // weights[0] = Vec4(w0, w1, w2, w3), weights[1] = Vec4(w4, w5, w6, w7), ...
-        pub weights: UniformArray<Vec4, 8>,
-        pub indices: UniformArray<UVec4, 8>,
+        pub weights: UniformArray<Vec4, 32>,
+        pub indices: UniformArray<UVec4, 32>,
     }
 );
 
