@@ -132,7 +132,7 @@ impl DepthNormalPrepass {
             let mut options = ShaderCompilationOptions::from_merged(
                 &mat_defines,
                 geo_defines,
-                &empty_defines,
+                &ctx.extracted_scene.scene_defines,
                 item_def,
             );
 

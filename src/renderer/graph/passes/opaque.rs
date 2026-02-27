@@ -11,11 +11,14 @@
 //! - `LoadOp`: Clear (clear color and depth)
 //! - `StoreOp`: Store (store results for subsequent passes)
 
+use smallvec::smallvec;
+
 use crate::render::PrepareContext;
+use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 use crate::renderer::graph::frame::RenderCommand;
-use crate::renderer::graph::{RenderNode, TrackedRenderPass};
+use crate::renderer::graph::{RenderNode, TrackedRenderPass, TransientTextureDesc};
 
 /// Opaque Render Pass
 ///
@@ -26,13 +29,14 @@ use crate::renderer::graph::{RenderNode, TrackedRenderPass};
 /// - Command lists are sorted by Pipeline > Material > Depth to minimize state changes
 /// - Front-to-Back sorting leverages Early-Z culling
 pub struct OpaquePass {
+    pub(crate) needs_specular: bool,
+
     /// Clear color
     pub clear_color: wgpu::Color,
 
     /// Cached render target views during prepare phase.
     color_target_view: Option<Tracked<wgpu::TextureView>>,
-    depth_view: Option<Tracked<wgpu::TextureView>>,
-
+    // depth_view: Option<Tracked<wgpu::TextureView>>,
     /// Dynamic screen (group 3) bind group built each frame.
     screen_bind_group: Option<wgpu::BindGroup>,
     screen_bind_group_id: u64,
@@ -42,9 +46,9 @@ impl OpaquePass {
     #[must_use]
     pub fn new(clear_color: wgpu::Color) -> Self {
         Self {
+            needs_specular: false,
             clear_color,
             color_target_view: None,
-            depth_view: None,
             screen_bind_group: None,
             screen_bind_group_id: 0,
         }
@@ -127,7 +131,7 @@ impl RenderNode for OpaquePass {
             self.color_target_view = Some(target_view);
         }
 
-        self.depth_view = Some(ctx.get_resource_view(GraphResource::DepthStencil).clone());
+        // self.depth_view = Some(ctx.get_resource_view(GraphResource::DepthStencil).clone());
 
         // 3. Build dynamic group 3 bind group.
         //    OpaquePass runs BEFORE TransmissionCopyPass, so use dummy transmission.
@@ -147,6 +151,23 @@ impl RenderNode for OpaquePass {
         );
         self.screen_bind_group = Some(bg);
         self.screen_bind_group_id = bg_id;
+
+        if self.needs_specular {
+            let size = ctx.wgpu_ctx.size();
+            let specular_tex = ctx.transient_pool.allocate(
+                &ctx.wgpu_ctx.device,
+                &TransientTextureDesc {
+                    width: size.0,
+                    height: size.1,
+                    format: HDR_TEXTURE_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    mip_level_count: 1,
+                    label: "Transient Specular Texture",
+                },
+            );
+            ctx.blackboard.specular_texture_id = Some(specular_tex);
+        }
     }
 
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -158,28 +179,44 @@ impl RenderNode for OpaquePass {
             return;
         };
 
-        // let (color_view, _resolve_target) = Self::get_render_target(ctx);
-        // let depth_view = ctx.get_resource_view(GraphResource::SceneDepth);
-
-        // Use scene background color for clearing.
-        // When a skybox pass follows, the clear color only shows through
-        // debug visualization; otherwise it is the final background.
-        // let clear_color = ctx.extracted_scene.background.clear_color();
-
         let color_view = self.color_target_view.as_ref().unwrap();
-        let depth_view = self.depth_view.as_ref().unwrap();
+        // let depth_view = self.depth_view.as_ref().unwrap();
+        let depth_view = ctx.get_resource_view(GraphResource::DepthStencil);
 
-        let pass_desc = wgpu::RenderPassDescriptor {
-            label: Some("Opaque Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: color_view,
-                resolve_target: None, // Opaque Pass does not resolve, wait for Transparent Pass to complete
+        let color_attachment = wgpu::RenderPassColorAttachment {
+            view: color_view,
+            resolve_target: None, // Opaque Pass does not resolve, wait for Transparent Pass to complete
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(self.clear_color),
+                store: wgpu::StoreOp::Store,
+            },
+            depth_slice: None,
+        };
+
+        let mut color_attachments: smallvec::SmallVec<
+            [Option<wgpu::RenderPassColorAttachment>; 2],
+        > = smallvec![Some(color_attachment)];
+
+        if self.needs_specular {
+            let specular_view = ctx.transient_pool.get_view(
+                ctx.blackboard
+                    .specular_texture_id
+                    .expect("Specular texture allocated"),
+            );
+            color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+                view: specular_view,
+                resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(self.clear_color),
+                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
-            })],
+            }));
+        }
+
+        let pass_desc = wgpu::RenderPassDescriptor {
+            label: Some("Opaque Pass"),
+            color_attachments: &color_attachments,
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
                 depth_ops: Some(wgpu::Operations {

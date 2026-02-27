@@ -71,8 +71,16 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     return out;
 }
 
+
+struct FragmentOutput {
+    @location(0) color: vec4<f32>,
+    $$ if USE_SSS
+    @location(1) specular: vec4<f32>,
+    $$ endif
+};
+
 @fragment
-fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
 
     let face_direction = f32(is_front) * 2.0 - 1.0;
 
@@ -271,25 +279,49 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
 
 
     // Combine direct and indirect light
-    var out_color = total_diffuse + total_specular;
+    // var out_color = total_diffuse + total_specular;
 
+    // 1. 初始状态：分离漫反射与基础高光
+    var out_diffuse = total_diffuse;
+    var out_specular = total_specular;
+
+    // 2. 自发光 (Emissive)：通常视作从物体内部或表面发出的光，归入 Diffuse 以参与 SSS 模糊
     var emissive_color = u_material.emissive.rgb * u_material.emissive_intensity;
     $$ if HAS_EMISSIVE_MAP is defined
         emissive_color *= textureSample(t_emissive_map, s_emissive_map, varyings.emissive_map_uv).rgb;
     $$ endif
-    out_color += emissive_color;
+    out_diffuse += emissive_color;
 
+    // 3. 绒毛层 (Sheen)：纯高光附加，同时吸收底层能量
     $$ if USE_SHEEN is defined
         // Sheen energy compensation approximation calculation can be found at the end of
         // https://drive.google.com/file/d/1T0D1VSyR4AllqIJTQAraEIzjlb5h4FKH/view?usp=sharing
         let sheen_energy_comp = 1.0 - 0.157 * max(material.sheen_color.r, max(material.sheen_color.g, material.sheen_color.b));
-        out_color = out_color * sheen_energy_comp + (sheen_specular_direct + sheen_specular_indirect);
+
+        out_diffuse *= sheen_energy_comp;
+        out_specular *= sheen_energy_comp;
+
+        // 增加高光：绒毛反光只加到 specular 通道
+        out_specular += (sheen_specular_direct + sheen_specular_indirect);
+
+        // out_color = out_color * sheen_energy_comp + (sheen_specular_direct + sheen_specular_indirect);
     $$ endif
 
+    // 4. 清漆层 (Clearcoat)：最高层的高光，吸收所有底层的能量
     $$ if USE_CLEARCOAT is defined
         let dot_nv_cc = saturate(dot(clearcoat_normal, view));
         let fcc = F_Schlick( material.clearcoat_f0, material.clearcoat_f90, dot_nv_cc );
-        out_color = out_color * (1.0 - material.clearcoat * fcc) + (clearcoat_specular_direct + clearcoat_specular_indirect) * material.clearcoat;
+
+        let clearcoat_attenuation = 1.0 - material.clearcoat * fcc;
+
+        // 能量衰减：同时作用于底层的所有 diffuse 和 specular
+        out_diffuse *= clearcoat_attenuation;
+        out_specular *= clearcoat_attenuation;
+
+        // 增加高光：清漆反光只加到 specular 通道
+        out_specular += (clearcoat_specular_direct + clearcoat_specular_indirect) * material.clearcoat;
+
+       // out_color = out_color * (1.0 - material.clearcoat * fcc) + (clearcoat_specular_direct + clearcoat_specular_indirect) * material.clearcoat;
     $$ endif
 
     $$ if OPAQUE is defined
@@ -305,5 +337,24 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
         {$ include 'pbr_tone_mapping' $}
     $$ endif
 
-    return vec4<f32>(out_color, opacity);
+    var out: FragmentOutput;
+
+    $$ if USE_SCREEN_SPACE_FEATUREs is defined
+        out.specular = vec4<f32>(total_specular, material.roughness);
+        if (u_material.sss_id != 0u) {
+            // SSSSS 材质：分离漫反射与高光
+            out.color = vec4<f32>(out_diffuse, opacity);
+            out.specular = vec4<f32>(out_specular, 1.0); 
+        } else {
+            // 普通材质：保持合并，高光纯黑
+            out.color = vec4<f32>(out_diffuse + out_specular, opacity);
+            out.specular = vec4<f32>(0.0, 0.0, 0.0, 0.0);
+        }
+    $$ else
+        out.color = vec4<f32>(out_diffuse + out_specular, opacity);
+    $$ endif
+
+    return out;
+
+    // return vec4<f32>(out_color, opacity);
 }

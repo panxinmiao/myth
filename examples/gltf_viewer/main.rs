@@ -217,7 +217,11 @@ struct GltfViewer {
     show_ui: bool,
 
     // === SSS Profiles ===
-    sss_profiles: Vec<(myth::resources::screen_space::FeatureId, String, myth::resources::screen_space::SssProfile)>,
+    sss_profiles: Vec<(
+        myth::resources::screen_space::FeatureId,
+        String,
+        myth::resources::screen_space::SssProfile,
+    )>,
 }
 
 /// Async Prefab load result
@@ -1499,15 +1503,16 @@ impl GltfViewer {
                                             scene.ssao.set_sample_count(sample_count);
                                         }
                                     });
-
-
                                 });
 
                                 ui.separator();
                                 ui.label("ScreenSpace Profle");
                                 // ScreenSpace Subsurface Scattering (SSSS)
                                 ui.horizontal(|ui| {
-                                    ui.checkbox(&mut scene.screen_space.enable_sss, "Screen-Space Subsurface Scattering (SSSS)")
+                                    ui.checkbox(
+                                        &mut scene.screen_space.enable_sss,
+                                        "Screen-Space Subsurface Scattering (SSSS)",
+                                    )
                                 });
                             }
                         });
@@ -1858,83 +1863,6 @@ impl GltfViewer {
                         }
                         ui.end_row();
 
-                        // --- SSS Profile ---
-                        ui.label("SSS Profile:");
-                        ui.horizontal(|ui| {
-                            let mut current_sss_id = *m.sss_id.read();
-                            
-                            let selected_text = if let Some(id) = current_sss_id {
-                                self.sss_profiles.iter().find(|(pid, _, _)| *pid == id).map(|(_, name, _)| name.clone()).unwrap_or_else(|| format!("Profile {}", id.0.get()))
-                            } else {
-                                "None".to_string()
-                            };
-
-                            egui::ComboBox::from_id_salt("sss_profile_combo")
-                                .selected_text(selected_text)
-                                .show_ui(ui, |ui| {
-                                    if ui.selectable_value(&mut current_sss_id, None, "None").changed() {
-                                        *m.sss_id.write() = None;
-                                    }
-                                    for (id, name, _) in &self.sss_profiles {
-                                        if ui.selectable_value(&mut current_sss_id, Some(*id), name).changed() {
-                                            *m.sss_id.write() = Some(*id);
-                                        }
-                                    }
-                                });
-                        });
-                        ui.end_row();
-
-                        if let Some(current_id) = *m.sss_id.read() {
-                            ui.label("SSS Settings:");
-                            ui.vertical(|ui| {
-                                let mut profile_to_update = None;
-                                let mut profile_to_remove = None;
-
-                                if let Some((id, name, profile)) = self.sss_profiles.iter_mut().find(|(pid, _, _)| *pid == current_id) {
-                                    ui.horizontal(|ui| {
-                                        ui.label("Name:");
-                                        ui.text_edit_singleline(name);
-                                    });
-
-                                    let mut color_arr = profile.scatter_color.to_array();
-                                    if ui.color_edit_button_rgb(&mut color_arr).changed() {
-                                        profile.scatter_color = glam::Vec3::from_array(color_arr);
-                                        profile_to_update = Some((*id, profile.clone()));
-                                    }
-
-                                    if ui.add(egui::DragValue::new(&mut profile.scatter_radius).speed(0.01).prefix("Radius: ")).changed() {
-                                        profile_to_update = Some((*id, profile.clone()));
-                                    }
-
-                                    if ui.button("Delete Profile").clicked() {
-                                        profile_to_remove = Some(*id);
-                                    }
-                                }
-
-                                if let Some((id, profile)) = profile_to_update {
-                                    assets.sss_registry.write().update(id, &profile);
-                                }
-
-                                if let Some(id) = profile_to_remove {
-                                    assets.sss_registry.write().remove(id);
-                                    self.sss_profiles.retain(|(pid, _, _)| *pid != id);
-                                    *m.sss_id.write() = None;
-                                }
-                            });
-                            ui.end_row();
-                        }
-
-                        ui.label("");
-                        if ui.button("Create New SSS Profile").clicked() {
-                            let new_profile = myth::resources::screen_space::SssProfile::new(glam::Vec3::new(1.0, 0.2, 0.1), 0.05);
-                            if let Some(new_id) = assets.sss_registry.write().add(&new_profile) {
-                                self.sss_profiles.push((new_id, format!("Profile {}", new_id.0.get()), new_profile));
-                                *m.sss_id.write() = Some(new_id);
-                            }
-                        }
-                        ui.end_row();
-
-
                         ui.label("Clearcoat:");
                         ui.add(egui::DragValue::new(&mut uniform_mut.clearcoat).speed(0.01));
                         ui.end_row();
@@ -1953,6 +1881,113 @@ impl GltfViewer {
                     ui.separator();
                     ui.end_row();
 
+                    // --- SSS Profile ---
+                    ui.label("SSS Profile:");
+                    ui.horizontal(|ui| {
+                        let mut current_sss_id_opt = m.sss_id();
+
+                        let selected_text = if let Some(id) = current_sss_id_opt {
+                            self.sss_profiles
+                                .iter()
+                                .find(|(pid, _, _)| *pid == id)
+                                .map(|(_, name, _)| name.clone())
+                                .unwrap_or_else(|| format!("Profile {}", id.0.get()))
+                        } else {
+                            "None".to_string()
+                        };
+
+                        egui::ComboBox::from_id_salt("sss_profile_combo")
+                            .selected_text(selected_text)
+                            .show_ui(ui, |ui| {
+                                if ui
+                                    .selectable_value(&mut current_sss_id_opt, None, "None")
+                                    .changed()
+                                {
+                                    m.set_sss_id(None);
+                                }
+                                for (id, name, _) in &self.sss_profiles {
+                                    if ui
+                                        .selectable_value(&mut current_sss_id_opt, Some(*id), name)
+                                        .changed()
+                                    {
+                                        m.set_sss_id(Some(*id));
+                                    }
+                                }
+                            });
+
+                        if ui.button("New Profile").clicked() {
+                            let new_profile = myth::resources::screen_space::SssProfile::new(
+                                Vec3::new(0.85, 0.25, 0.15),
+                                0.15,
+                            );
+                            if let Some(new_id) = assets.sss_registry.write().add(&new_profile) {
+                                self.sss_profiles.push((
+                                    new_id,
+                                    format!("Profile {}", new_id.0.get()),
+                                    new_profile,
+                                ));
+                                m.set_sss_id(Some(new_id));
+                            }
+                        }
+                    });
+                    ui.separator();
+                    ui.end_row();
+
+                    let current_sss_id_opt = m.sss_id();
+
+                    if let Some(current_id) = current_sss_id_opt {
+                        ui.label("SSS Settings:");
+                        ui.vertical(|ui| {
+                            let mut profile_to_update = None;
+                            let mut profile_to_remove = None;
+
+                            if let Some((id, name, profile)) = self
+                                .sss_profiles
+                                .iter_mut()
+                                .find(|(pid, _, _)| *pid == current_id)
+                            {
+                                ui.horizontal(|ui| {
+                                    ui.label("Name:");
+                                    ui.text_edit_singleline(name);
+                                });
+
+                                let mut color_arr = profile.scatter_color.to_array();
+                                if ui.color_edit_button_rgb(&mut color_arr).changed() {
+                                    profile.scatter_color = glam::Vec3::from_array(color_arr);
+                                    profile_to_update = Some((*id, profile.clone()));
+                                }
+
+                                if ui
+                                    .add(
+                                        egui::DragValue::new(&mut profile.scatter_radius)
+                                            .speed(0.01)
+                                            .prefix("Radius: "),
+                                    )
+                                    .changed()
+                                {
+                                    profile_to_update = Some((*id, profile.clone()));
+                                }
+
+                                if ui.button("Delete Profile").clicked() {
+                                    profile_to_remove = Some(*id);
+                                }
+                            }
+
+                            if let Some((id, profile)) = profile_to_update {
+                                assets.sss_registry.write().update(id, &profile);
+                            }
+
+                            if let Some(id) = profile_to_remove {
+                                assets.sss_registry.write().remove(id);
+                                self.sss_profiles.retain(|(pid, _, _)| *pid != id);
+                                m.set_sss_id(None);
+                            }
+                        });
+                        ui.end_row();
+                    }
+
+                    ui.separator();
+                    ui.end_row();
                     {
                         // settings
                         let mut settings = m.settings_mut();

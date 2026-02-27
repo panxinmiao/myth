@@ -22,6 +22,7 @@ use slotmap::Key;
 use crate::renderer::core::view::{RenderView, ViewTarget};
 use crate::renderer::graph::RenderNode;
 use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
+use crate::renderer::graph::extracted::SceneFeatures;
 use crate::renderer::graph::frame::{RenderCommand, RenderKey, ShadowRenderCommand};
 use crate::renderer::graph::shadow_utils;
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
@@ -185,6 +186,12 @@ impl SceneCullPass {
                         let is_opaque_item = material.alpha_mode() != AlphaMode::Blend
                             && !material.use_transmission();
 
+                        let is_specular_split = is_opaque_item
+                            && ctx
+                                .extracted_scene
+                                .scene_variants
+                                .contains(SceneFeatures::USE_SSS);
+
                         let canonical_key = PipelineKey {
                             shader_hash,
                             vertex_layout_id: gpu_geometry.layout_id,
@@ -237,6 +244,8 @@ impl SceneCullPass {
                             } else {
                                 wgpu::FrontFace::Ccw
                             },
+
+                            is_specular_split,
                         };
 
                         let (pipeline, pipeline_id) = ctx.pipeline_cache.get_pipeline(

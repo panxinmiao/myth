@@ -77,6 +77,9 @@ pub struct FrameBlackboard {
 
     /// SSSSS PingPong 纹理 ID
     pub sssss_pingpong_texture_id: Option<TransientTextureId>,
+
+    /// Specular 纹理 ID (供 OpaquePass 和 SSSSS Pass 使用)
+    pub specular_texture_id: Option<TransientTextureId>,
 }
 
 impl FrameBlackboard {
@@ -95,6 +98,7 @@ impl FrameBlackboard {
         self.scene_normal_texture_id = None;
         self.feature_id_texture_id = None;
         self.sssss_pingpong_texture_id = None;
+        self.specular_texture_id = None;
     }
 }
 

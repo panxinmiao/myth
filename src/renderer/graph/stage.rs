@@ -52,20 +52,25 @@ pub enum RenderStage {
     /// 适用于：Cubemap 天空盒、程序化天空、大气散射
     Skybox = 3,
 
+    /// 半透明物体前阶段（在 Transparent 前执行）
+    ///
+    /// 适用于：需要在半透明物体前执行的效果，也是Opaque的最终阶段，如 SSSSS、Transmission Copy
+    BeforeTransparent = 4,
+
     /// 半透明物体渲染阶段
     ///
     /// 适用于：Alpha 混合物体、粒子系统、玻璃/水面
-    Transparent = 4,
+    Transparent = 5,
 
     /// 后处理阶段
     ///
     /// 适用于：色调映射、泛光、景深、FXAA/TAA
-    PostProcess = 5,
+    PostProcess = 6,
 
     /// 用户界面阶段（最后执行）
     ///
     /// 适用于：egui、ImGui、调试覆盖层
-    UI = 6,
+    UI = 7,
 }
 
 impl RenderStage {
@@ -85,6 +90,7 @@ impl RenderStage {
             Self::ShadowMap => "ShadowMap",
             Self::Opaque => "Opaque",
             Self::Skybox => "Skybox",
+            Self::BeforeTransparent => "BeforeTransparent",
             Self::Transparent => "Transparent",
             Self::PostProcess => "PostProcess",
             Self::UI => "UI",
