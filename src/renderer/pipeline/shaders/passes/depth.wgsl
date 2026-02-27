@@ -47,8 +47,17 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 }
 
 $$ if OUTPUT_NORMAL
+
+struct FragmentOutput {
+    @location(0) normal: vec4<f32>,
+    
+    $$ if USE_SCREEN_SPACE_FEATURES
+    @location(1) feature_id: vec2<u32>,
+    $$ endif
+};
+
 @fragment
-fn fs_main(varyings: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(varyings: VertexOutput) -> FragmentOutput{
     var opacity = u_material.opacity;
 
     $$ if HAS_MAP
@@ -58,14 +67,22 @@ fn fs_main(varyings: VertexOutput) -> @location(0) vec4<f32> {
 
     {$ include 'alpha_test' $}
 
+    var out: FragmentOutput;
+
     $$ if HAS_NORMAL
     // Transform world-space normal to view-space, then encode [-1,1] → [0,1]
     let view_normal = normalize((u_render_state.view_matrix * vec4<f32>(varyings.world_normal, 0.0)).xyz);
-    return vec4<f32>(view_normal * 0.5 + 0.5, 1.0);
+    out.normal = vec4<f32>(view_normal * 0.5 + 0.5, 1.0);
     $$ else
     // Fallback: camera-facing default (view-space Z-forward)
-    return vec4<f32>(0.5, 0.5, 1.0, 1.0);
+    out.normal = vec4<f32>(0.5, 0.5, 1.0, 1.0);
     $$ endif
+
+    $$ if USE_SCREEN_SPACE_FEATURES
+    out.feature_id = vec2<u32>(u_material.sss_id, u_material.ssr_id);
+    $$ endif
+
+    return out;
 }
 $$ else
 @fragment

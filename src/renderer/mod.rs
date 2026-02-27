@@ -351,13 +351,17 @@ impl Renderer {
 
                 let is_ssao_enabled = scene.ssao.enabled;
 
-                let needs_normal = is_ssao_enabled;
+                let needs_feature_id =
+                    scene.screen_space.enable_sss || scene.screen_space.enable_ssr;
+
+                let needs_normal = is_ssao_enabled || needs_feature_id;
 
                 // Z-Normal pre-pass (conditional)
-                if state.wgpu_ctx.render_path.requires_z_prepass() {
-                    state.prepass.needs_normal = needs_normal;
-                    frame_builder.add_node(RenderStage::Opaque, &mut state.prepass);
-                }
+                // if state.wgpu_ctx.render_path.requires_z_prepass() {
+                state.prepass.needs_normal = needs_normal;
+                state.prepass.needs_feature_id = needs_feature_id;
+                frame_builder.add_node(RenderStage::Opaque, &mut state.prepass);
+                // }
 
                 // SSAO (after depth-normal prepass, before opaque rendering)
                 // When enabled, SsaoPass reads depth+normal, writes AO texture,
@@ -468,8 +472,8 @@ impl Renderer {
     pub fn maybe_prune(&mut self) {
         if let Some(state) = &mut self.context {
             state.render_frame.maybe_prune(&mut state.resource_manager);
-            // Trim transient pool textures idle for > 60 frames (~1 second at 60 fps)
-            state.transient_pool.trim(60);
+            // Trim transient pool textures idle for > 600 frames (~10 seconds at 60 fps)
+            state.transient_pool.trim(600);
         }
     }
 

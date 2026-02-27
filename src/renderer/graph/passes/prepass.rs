@@ -32,16 +32,19 @@ use crate::resources::material::{AlphaMode, Side};
 /// Normal texture format — Rgba8Unorm ([-1,1] → [0,1] mapping).
 const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
+const FEATURE_ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Uint;
+
 pub struct DepthNormalPrepass {
-    pub(crate) needs_normal: bool, // Whether to output normals (for SSAO) or just do a Z-prepass
+    pub(crate) needs_normal: bool, // Whether to output normals (for SSAO)
+    pub(crate) needs_feature_id: bool, // Whether to output feature ID (SSS, SSR)
 
     depth_view: Option<Tracked<wgpu::TextureView>>,
 
-    /// Pipeline cache keyed by the main-pass `pipeline_id`.
+    /// Pipeline cache keyed by the main-pass `pipeline_id`, `needs_normal` and `needs_feature_id`.
     ///
     /// Two objects sharing a main pipeline will share a prepass pipeline
     /// (identical vertex layout, topology, cull mode and material macros).
-    pipeline_cache: FxHashMap<(u16, bool), wgpu::RenderPipeline>,
+    pipeline_cache: FxHashMap<(u16, bool, bool), wgpu::RenderPipeline>,
 }
 
 impl DepthNormalPrepass {
@@ -49,6 +52,7 @@ impl DepthNormalPrepass {
     pub fn new() -> Self {
         Self {
             needs_normal: false,
+            needs_feature_id: false,
             depth_view: None,
             pipeline_cache: FxHashMap::default(),
         }
@@ -77,10 +81,11 @@ impl DepthNormalPrepass {
 
         for cmd in &ctx.render_lists.opaque {
             // Skip if already cached
-            if self
-                .pipeline_cache
-                .contains_key(&(cmd.pipeline_id, self.needs_normal))
-            {
+            if self.pipeline_cache.contains_key(&(
+                cmd.pipeline_id,
+                self.needs_normal,
+                self.needs_feature_id,
+            )) {
                 continue;
             }
 
@@ -209,7 +214,20 @@ impl DepthNormalPrepass {
                         fragment: Some(wgpu::FragmentState {
                             module: &shader_module,
                             entry_point: Some("fs_main"),
-                            targets: if self.needs_normal {
+                            targets: if self.needs_feature_id {
+                                &[
+                                    Some(wgpu::ColorTargetState {
+                                        format: NORMAL_FORMAT,
+                                        blend: None,
+                                        write_mask: wgpu::ColorWrites::ALL,
+                                    }),
+                                    Some(wgpu::ColorTargetState {
+                                        format: FEATURE_ID_FORMAT,
+                                        blend: None,
+                                        write_mask: wgpu::ColorWrites::ALL,
+                                    }),
+                                ]
+                            } else if self.needs_normal {
                                 &[Some(wgpu::ColorTargetState {
                                     format: NORMAL_FORMAT,
                                     blend: None,
@@ -242,8 +260,10 @@ impl DepthNormalPrepass {
                         cache: None,
                     });
 
-            self.pipeline_cache
-                .insert((cmd.pipeline_id, self.needs_normal), pipeline);
+            self.pipeline_cache.insert(
+                (cmd.pipeline_id, self.needs_normal, self.needs_feature_id),
+                pipeline,
+            );
         }
     }
 }
@@ -280,7 +300,24 @@ impl RenderNode for DepthNormalPrepass {
                     label: "Transient Scene Normal",
                 },
             );
-            ctx.blackboard.scene_normal_texture = Some(normal_tex);
+            ctx.blackboard.scene_normal_texture_id = Some(normal_tex);
+        }
+
+        if self.needs_feature_id {
+            let size = ctx.wgpu_ctx.size();
+            let feature_id_tex = ctx.transient_pool.allocate(
+                &ctx.wgpu_ctx.device,
+                &TransientTextureDesc {
+                    width: size.0,
+                    height: size.1,
+                    format: FEATURE_ID_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    mip_level_count: 1,
+                    label: "Transient Feature ID",
+                },
+            );
+            ctx.blackboard.feature_id_texture_id = Some(feature_id_tex);
         }
 
         // Pre-build pipelines for all unique pipeline IDs in the opaque list
@@ -302,10 +339,10 @@ impl RenderNode for DepthNormalPrepass {
             .as_ref()
             .expect("Prepass: missing depth view");
 
-        let color_attachments = if self.needs_normal {
+        let mut color_attachments = if self.needs_normal {
             let normal_view = ctx.transient_pool.get_view(
                 ctx.blackboard
-                    .scene_normal_texture
+                    .scene_normal_texture_id
                     .expect("Normal texture allocated"),
             );
 
@@ -327,6 +364,25 @@ impl RenderNode for DepthNormalPrepass {
         } else {
             vec![]
         };
+
+        if self.needs_feature_id {
+            let feature_view = ctx.transient_pool.get_view(
+                ctx.blackboard
+                    .feature_id_texture_id
+                    .expect("Feature ID texture allocated"),
+            );
+
+            color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+                view: feature_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    // Clear to 0 (ID = 0 means no effect)
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            }));
+        }
 
         let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Depth Normal Prepass"),
@@ -355,10 +411,11 @@ impl RenderNode for DepthNormalPrepass {
         );
 
         for cmd in &render_lists.opaque {
-            let Some(pipeline) = self
-                .pipeline_cache
-                .get(&(cmd.pipeline_id, self.needs_normal))
-            else {
+            let Some(pipeline) = self.pipeline_cache.get(&(
+                cmd.pipeline_id,
+                self.needs_normal,
+                self.needs_feature_id,
+            )) else {
                 continue;
             };
 

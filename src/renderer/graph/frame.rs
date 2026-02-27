@@ -65,8 +65,15 @@ pub struct FrameBlackboard {
     /// 在构建 group 3 BindGroup 时读取。`None` 表示本帧无 Transmission 效果。
     pub transmission_texture_id: Option<TransientTextureId>,
 
-    // ▼ 新增法线瞬态句柄 ▼
-    pub scene_normal_texture: Option<TransientTextureId>,
+    /// 当前帧法线瞬态纹理 ID（HighFidelity 路径，供 SSAO 使用）
+    ///
+    /// 由 `DepthNormalPrepass` 写入，供 `SsaoPass` 读取。
+    pub scene_normal_texture_id: Option<TransientTextureId>,
+
+    /// Screen Space Feature ID 纹理的瞬态纹理 ID（供 Screen Space Effects Pass 使用）
+    ///
+    /// 由 Prepass 写入, rguint8 格式, 当前r通道存储sss_id, g通道存储ssr_id。
+    pub feature_id_texture_id: Option<TransientTextureId>,
 }
 
 impl FrameBlackboard {
@@ -82,6 +89,7 @@ impl FrameBlackboard {
     pub fn clear(&mut self) {
         self.ssao_texture_id = None;
         self.transmission_texture_id = None;
+        self.scene_normal_texture_id = None;
     }
 }
 
