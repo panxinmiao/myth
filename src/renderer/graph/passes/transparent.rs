@@ -127,7 +127,7 @@ impl RenderNode for TransparentPass {
             self.resolve_target_view = None;
         }
 
-        self.depth_view = Some(ctx.get_resource_view(GraphResource::SceneDepth).clone());
+        self.depth_view = Some(ctx.get_resource_view(GraphResource::DepthStencil).clone());
 
         // Build dynamic group 3 bind group.
         // TransparentPass runs AFTER TransmissionCopyPass, so use real transmission if available.

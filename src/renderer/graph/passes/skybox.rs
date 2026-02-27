@@ -592,7 +592,7 @@ impl RenderNode for SkyboxPass {
 
         // --- Determine render targets ---
         let target_view = ctx.get_scene_render_target_view();
-        let depth_view = ctx.get_resource_view(GraphResource::SceneDepth);
+        let depth_view = ctx.get_resource_view(GraphResource::DepthStencil);
 
         // MSAA: render into the multisample attachment; do NOT resolve here.
         // In the HDR pipeline, TransparentPass handles the final MSAA resolve.

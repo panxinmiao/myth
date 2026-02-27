@@ -62,7 +62,11 @@ pub enum GraphResource {
     /// Current ping-pong output for post-processing writes (HDR only).
     SceneColorOutput,
     /// Scene depth buffer (reverse-Z, always available).
-    SceneDepth,
+    // SceneDepth,
+
+    DepthOnly,
+
+    DepthStencil,
     /// MSAA intermediate color buffer (only when MSAA is enabled).
     SceneMsaa,
     /// Primary scene render target.
@@ -188,7 +192,9 @@ impl PrepareContext<'_> {
         match resource {
             GraphResource::SceneColorInput => self.get_scene_color_input(),
             GraphResource::SceneColorOutput => self.get_scene_color_output(),
-            GraphResource::SceneDepth => &self.frame_resources.depth_view,
+            // GraphResource::SceneDepth => &self.frame_resources.depth_view,
+            GraphResource::DepthOnly => &self.frame_resources.depth_only_view,
+            GraphResource::DepthStencil => &self.frame_resources.depth_view,
             GraphResource::SceneMsaa => self
                 .frame_resources
                 .scene_msaa_view
@@ -313,7 +319,8 @@ impl<'a> ExecuteContext<'a> {
                     "Ping-pong resources must be resolved and cached during the 'prepare' phase!"
                 );
             }
-            GraphResource::SceneDepth => &self.frame_resources.depth_view,
+            GraphResource::DepthStencil => &self.frame_resources.depth_view,
+            GraphResource::DepthOnly => &self.frame_resources.depth_only_view,
             GraphResource::SceneMsaa => self
                 .frame_resources
                 .scene_msaa_view
@@ -375,6 +382,8 @@ pub struct FrameResources {
     pub scene_color_view: [Tracked<wgpu::TextureView>; 2],
     // 深度缓冲
     pub depth_view: Tracked<wgpu::TextureView>,
+
+    pub depth_only_view: Tracked<wgpu::TextureView>,
     /// BindGroupLayout for group 3 (transmission + sampler + SSAO).
     /// Persistent — created once, reused across frames.
     pub screen_bind_group_layout: Tracked<wgpu::BindGroupLayout>,
@@ -441,7 +450,7 @@ impl FrameResources {
             ..Default::default()
         });
 
-        let placeholder_view = Self::create_texture(
+        let placeholder_view = Self::create_texture_view(
             device,
             (1, 1),
             wgpu::TextureFormat::Rgba8Unorm,
@@ -455,7 +464,7 @@ impl FrameResources {
         let ssao_dummy_view = Tracked::new(Self::create_initialized_r8_white(device));
 
         // Transmission dummy: 1×1 HDR placeholder (black)
-        let dummy_transmission_view = Tracked::new(Self::create_texture(
+        let dummy_transmission_view = Tracked::new(Self::create_texture_view(
             device,
             (1, 1),
             crate::renderer::HDR_TEXTURE_FORMAT,
@@ -469,6 +478,7 @@ impl FrameResources {
             size: (0, 0),
 
             depth_view: Tracked::new(placeholder_view.clone()),
+            depth_only_view: Tracked::new(placeholder_view.clone()),
             scene_msaa_view: None,
             scene_color_view: [
                 Tracked::new(placeholder_view.clone()),
@@ -485,7 +495,7 @@ impl FrameResources {
         resources
     }
 
-    fn create_texture(
+    fn create_texture_view(
         device: &wgpu::Device,
         size: (u32, u32),
         format: wgpu::TextureFormat,
@@ -494,7 +504,29 @@ impl FrameResources {
         mip_level_count: u32,
         label: &str,
     ) -> wgpu::TextureView {
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
+        let texture = Self::create_texture(
+            device,
+            size,
+            format,
+            usage,
+            sample_count,
+            mip_level_count,
+            label,
+        );
+
+        texture.create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
+    fn create_texture(
+        device: &wgpu::Device,
+        size: (u32, u32),
+        format: wgpu::TextureFormat,
+        usage: wgpu::TextureUsages,
+        sample_count: u32,
+        mip_level_count: u32,
+        label: &str,
+    ) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
                 width: size.0,
@@ -507,9 +539,7 @@ impl FrameResources {
             format,
             usage,
             view_formats: &[],
-        });
-
-        texture.create_view(&wgpu::TextureViewDescriptor::default())
+        })
     }
 
     /// Creates a 1×1 R8Unorm texture initialized to 255 (white = no occlusion).
@@ -623,7 +653,7 @@ impl FrameResources {
         };
 
         // Depth Texture - 采样数必须与渲染目标一致
-        let depth_view = Self::create_texture(
+        let depth_view = Self::create_texture_view(
             &wgpu_ctx.device,
             size,
             wgpu_ctx.depth_format,
@@ -632,11 +662,18 @@ impl FrameResources {
             1,
             "Depth Texture",
         );
+
+        self.depth_only_view = Tracked::new(depth_view.texture().create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Depth-Only View"),
+            aspect: wgpu::TextureAspect::DepthOnly,
+            ..Default::default()
+        }));
+
         self.depth_view = Tracked::new(depth_view);
 
         // Scene Color Texture(s) (ping-pong)
         if wgpu_ctx.render_path.supports_post_processing() {
-            let ping_pong_texture_0 = Self::create_texture(
+            let ping_pong_texture_0 = Self::create_texture_view(
                 &wgpu_ctx.device,
                 size,
                 crate::renderer::HDR_TEXTURE_FORMAT,
@@ -648,7 +685,7 @@ impl FrameResources {
                 "Ping-Pong Texture 0",
             );
 
-            let ping_pong_texture_1 = Self::create_texture(
+            let ping_pong_texture_1 = Self::create_texture_view(
                 &wgpu_ctx.device,
                 size,
                 crate::renderer::HDR_TEXTURE_FORMAT,
@@ -671,7 +708,7 @@ impl FrameResources {
                 .render_path
                 .main_color_format(wgpu_ctx.surface_view_format);
 
-            let scene_msaa_view = Self::create_texture(
+            let scene_msaa_view = Self::create_texture_view(
                 &wgpu_ctx.device,
                 size,
                 masaa_target_fromat,

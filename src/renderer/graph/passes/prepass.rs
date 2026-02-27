@@ -301,7 +301,7 @@ impl RenderNode for DepthNormalPrepass {
             return;
         }
 
-        self.depth_view = Some(ctx.get_resource_view(GraphResource::SceneDepth).clone());
+        self.depth_view = Some(ctx.get_resource_view(GraphResource::DepthStencil).clone());
 
         if self.needs_normal {
             let size = ctx.wgpu_ctx.size();
@@ -411,7 +411,14 @@ impl RenderNode for DepthNormalPrepass {
                     load: wgpu::LoadOp::Clear(0.0),
                     store: wgpu::StoreOp::Store,
                 }),
-                stencil_ops: None,
+                stencil_ops: if self.needs_feature_id {
+                    Some(wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(0),
+                        store: wgpu::StoreOp::Store,
+                    })
+                } else {
+                    None
+                },
             }),
             timestamp_writes: None,
             occlusion_query_set: None,

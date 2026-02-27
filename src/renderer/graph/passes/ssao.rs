@@ -489,7 +489,7 @@ impl SsaoPass {
         let device = &ctx.wgpu_ctx.device;
 
         // Access frame_resources fields directly to avoid borrowing the whole ctx
-        let depth_view = &ctx.frame_resources.depth_view;
+        let depth_view = &ctx.frame_resources.depth_only_view;
 
         let normal_view = ctx.transient_pool.get_view(
             ctx.blackboard

@@ -74,6 +74,9 @@ pub struct FrameBlackboard {
     ///
     /// 由 Prepass 写入, rguint8 格式, 当前r通道存储sss_id, g通道存储ssr_id。
     pub feature_id_texture_id: Option<TransientTextureId>,
+
+    /// SSSSS PingPong 纹理 ID
+    pub sssss_pingpong_texture_id: Option<TransientTextureId>,
 }
 
 impl FrameBlackboard {
@@ -90,6 +93,8 @@ impl FrameBlackboard {
         self.ssao_texture_id = None;
         self.transmission_texture_id = None;
         self.scene_normal_texture_id = None;
+        self.feature_id_texture_id = None;
+        self.sssss_pingpong_texture_id = None;
     }
 }
 

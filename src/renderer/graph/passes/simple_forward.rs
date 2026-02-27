@@ -121,7 +121,7 @@ impl RenderNode for SimpleForwardPass {
         self.clear_color = ctx.extracted_scene.background.clear_color();
 
         self.msaa_view = ctx.try_get_resource_view(GraphResource::SceneMsaa).cloned();
-        self.depth_view = Some(ctx.get_resource_view(GraphResource::SceneDepth).clone());
+        self.depth_view = Some(ctx.get_resource_view(GraphResource::DepthStencil).clone());
 
         // LDR path: no SSAO or Transmission, use both dummies.
         let (bg, bg_id) = ctx.frame_resources.build_screen_bind_group(

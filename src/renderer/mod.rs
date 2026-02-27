@@ -59,7 +59,7 @@ use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
 use crate::renderer::graph::passes::{
     BRDFLutComputePass, BloomPass, DepthNormalPrepass, FxaaPass, IBLComputePass, OpaquePass,
-    SceneCullPass, ShadowPass, SimpleForwardPass, SkyboxPass, SsaoPass, ToneMapPass,
+    SceneCullPass, ShadowPass, SimpleForwardPass, SkyboxPass, SsaoPass, SssssPass, ToneMapPass,
     TransmissionCopyPass, TransparentPass,
 };
 use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTexturePool};
@@ -138,6 +138,7 @@ struct RendererState {
     pub(crate) ibl_pass: IBLComputePass,
 
     // Post Processing
+    pub(crate) sssss_pass: SssssPass,
     pub(crate) bloom_pass: BloomPass,
     pub(crate) tone_mapping_pass: ToneMapPass,
     pub(crate) fxaa_pass: FxaaPass,
@@ -216,6 +217,7 @@ impl Renderer {
         let ibl_pass = IBLComputePass::new(&wgpu_ctx.device);
 
         // Post Processing
+        let sssss_pass = SssssPass::new(&wgpu_ctx.device);
         let bloom_pass = BloomPass::new(&wgpu_ctx.device);
         let tone_mapping_pass = ToneMapPass::new(&wgpu_ctx.device);
         let fxaa_pass = FxaaPass::new(&wgpu_ctx.device);
@@ -247,6 +249,7 @@ impl Renderer {
             transmission_copy_pass,
             brdf_pass,
             ibl_pass,
+            sssss_pass,
             bloom_pass,
             tone_mapping_pass,
             fxaa_pass,
@@ -385,6 +388,11 @@ impl Renderer {
 
                 // Transparent rendering
                 frame_builder.add_node(RenderStage::Transparent, &mut state.transparent_pass);
+
+                // SSSSS (after transparent, before bloom)
+                if scene.screen_space.enable_sss {
+                    frame_builder.add_node(RenderStage::PostProcess, &mut state.sssss_pass);
+                }
 
                 // Bloom (conditional — only when enabled in Scene.bloom)
                 if scene.bloom.enabled {

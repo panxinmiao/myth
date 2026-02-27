@@ -263,7 +263,7 @@ impl Default for RendererSettings {
             },
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
-            depth_format: wgpu::TextureFormat::Depth32Float,
+            depth_format: wgpu::TextureFormat::Depth24PlusStencil8,
         }
     }
 }
