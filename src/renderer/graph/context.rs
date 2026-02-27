@@ -63,7 +63,6 @@ pub enum GraphResource {
     SceneColorOutput,
     /// Scene depth buffer (reverse-Z, always available).
     // SceneDepth,
-
     DepthOnly,
 
     DepthStencil,
@@ -663,11 +662,13 @@ impl FrameResources {
             "Depth Texture",
         );
 
-        self.depth_only_view = Tracked::new(depth_view.texture().create_view(&wgpu::TextureViewDescriptor {
-            label: Some("Depth-Only View"),
-            aspect: wgpu::TextureAspect::DepthOnly,
-            ..Default::default()
-        }));
+        self.depth_only_view = Tracked::new(depth_view.texture().create_view(
+            &wgpu::TextureViewDescriptor {
+                label: Some("Depth-Only View"),
+                aspect: wgpu::TextureAspect::DepthOnly,
+                ..Default::default()
+            },
+        ));
 
         self.depth_view = Tracked::new(depth_view);
 

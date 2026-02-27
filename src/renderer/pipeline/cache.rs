@@ -16,6 +16,7 @@ use crate::renderer::core::BindGroupContext;
 
 use crate::renderer::core::resources::{GpuGlobalState, GpuMaterial};
 use crate::renderer::graph::context::FrameResources;
+use crate::renderer::graph::extracted::SceneFeatures;
 use crate::renderer::pipeline::shader_gen::{ShaderCompilationOptions, ShaderGenerator};
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 
@@ -39,6 +40,8 @@ pub struct PipelineKey {
     pub sample_count: u32,
     pub alpha_to_coverage: bool,
     pub front_face: wgpu::FrontFace,
+
+    pub is_specular_split: bool,
 }
 
 /// L1 缓存 Key: 基于资源 Handle 和物理 Layout ID (极快)
@@ -63,7 +66,7 @@ pub struct FastPipelineKey {
     pub global_state_id: u32,
 
     /// 轻量级场景变体标志（如是否启用 SSAO）
-    pub scene_variants: u32,
+    pub scene_variants: SceneFeatures,
 
     /// Pipeline settings version (HDR, MSAA changes)
     /// This ensures cache invalidation when these settings change
@@ -243,6 +246,27 @@ impl PipelineCache {
         let vertex_buffers_layout: Vec<_> =
             vertex_layout.buffers.iter().map(|l| l.as_wgpu()).collect();
 
+        let color_targets = if canonical_key.is_specular_split {
+            vec![
+                Some(wgpu::ColorTargetState {
+                    format: canonical_key.color_format,
+                    blend: canonical_key.blend_state,
+                    write_mask: wgpu::ColorWrites::ALL,
+                }),
+                Some(wgpu::ColorTargetState {
+                    format: canonical_key.color_format,
+                    blend: canonical_key.blend_state,
+                    write_mask: wgpu::ColorWrites::ALL,
+                }),
+            ]
+        } else {
+            vec![Some(wgpu::ColorTargetState {
+                format: canonical_key.color_format,
+                blend: canonical_key.blend_state,
+                write_mask: wgpu::ColorWrites::ALL,
+            })]
+        };
+
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Auto-Generated Pipeline"),
             layout: Some(&layout),
@@ -255,11 +279,7 @@ impl PipelineCache {
             fragment: Some(wgpu::FragmentState {
                 module: shader_module,
                 entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: canonical_key.color_format,
-                    blend: canonical_key.blend_state,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
+                targets: &color_targets,
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {

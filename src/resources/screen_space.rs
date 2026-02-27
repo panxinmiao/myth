@@ -13,6 +13,20 @@ pub const STENCIL_WRITE_MASK: u32 = 0x0F;
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FeatureId(pub NonZeroU8);
 
+impl FeatureId {
+    /// 将强类型的 ID 转换为底层着色器所需的 u32
+    #[inline]
+    pub fn to_u32(self) -> u32 {
+        self.0.get() as u32
+    }
+
+    /// 尝试从着色器的 u32 数据还原为强类型的 ID (0 会自动变为 None)
+    #[inline]
+    pub fn from_u32(val: u32) -> Option<Self> {
+        std::num::NonZeroU8::new(val as u8).map(FeatureId)
+    }
+}
+
 // ============================================================================
 // 2. SSS (次表面散射) 专用结构与注册表
 // ============================================================================

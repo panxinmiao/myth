@@ -353,6 +353,7 @@ impl Renderer {
                 // === PBR Path (HDR) ===
 
                 let is_ssao_enabled = scene.ssao.enabled;
+                // let is_ssao_enabled = state.render_frame.extracted_scene.scene_variants.contains(SceneFeatures::USE_SSAO)
 
                 let needs_feature_id =
                     scene.screen_space.enable_sss || scene.screen_space.enable_ssr;
@@ -363,7 +364,7 @@ impl Renderer {
                 // if state.wgpu_ctx.render_path.requires_z_prepass() {
                 state.prepass.needs_normal = needs_normal;
                 state.prepass.needs_feature_id = needs_feature_id;
-                frame_builder.add_node(RenderStage::Opaque, &mut state.prepass);
+                frame_builder.add_node(RenderStage::PreProcess, &mut state.prepass);
                 // }
 
                 // SSAO (after depth-normal prepass, before opaque rendering)
@@ -373,6 +374,8 @@ impl Renderer {
                     frame_builder.add_node(RenderStage::Opaque, &mut state.ssao_pass);
                 }
 
+                let needs_specular = scene.screen_space.enable_sss;
+                state.opaque_pass.needs_specular = needs_specular;
                 // Opaque rendering
                 frame_builder.add_node(RenderStage::Opaque, &mut state.opaque_pass);
 
@@ -381,18 +384,21 @@ impl Renderer {
                     frame_builder.add_node(RenderStage::Skybox, &mut state.skybox_pass);
                 }
 
+                // SSSSS (after opaque, before transparent)
+                if scene.screen_space.enable_sss {
+                    frame_builder.add_node(RenderStage::BeforeTransparent, &mut state.sssss_pass);
+                }
+
                 // Transmission copy (conditional)
                 // 注意：TransmissionCopyPass 内部会检查 use_transmission 标志
                 // 如果场景中没有使用 Transmission 的材质，此 Pass 会提前返回
-                frame_builder.add_node(RenderStage::Opaque, &mut state.transmission_copy_pass);
+                frame_builder.add_node(
+                    RenderStage::BeforeTransparent,
+                    &mut state.transmission_copy_pass,
+                );
 
                 // Transparent rendering
                 frame_builder.add_node(RenderStage::Transparent, &mut state.transparent_pass);
-
-                // SSSSS (after transparent, before bloom)
-                if scene.screen_space.enable_sss {
-                    frame_builder.add_node(RenderStage::PostProcess, &mut state.sssss_pass);
-                }
 
                 // Bloom (conditional — only when enabled in Scene.bloom)
                 if scene.bloom.enabled {

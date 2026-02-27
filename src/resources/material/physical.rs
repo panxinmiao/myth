@@ -89,9 +89,6 @@ pub struct MeshPhysicalMaterial {
 
     pub(crate) features: RwLock<PhysicalFeatures>,
 
-    pub sss_id: RwLock<Option<FeatureId>>,
-    pub ssr_id: RwLock<Option<FeatureId>>,
-
     pub(crate) version: AtomicU64,
     pub auto_sync_texture_to_uniforms: bool,
 }
@@ -113,9 +110,6 @@ impl MeshPhysicalMaterial {
             settings: RwLock::new(MaterialSettings::default()),
             textures: RwLock::new(MeshPhysicalTextureSet::default()),
             features: RwLock::new(PhysicalFeatures::default()),
-
-            ssr_id: RwLock::new(None),
-            sss_id: RwLock::new(None),
 
             version: AtomicU64::new(0),
             auto_sync_texture_to_uniforms: false,
@@ -372,17 +366,41 @@ impl MeshPhysicalMaterial {
         self
     }
 
+    pub fn set_sss_id(&self, id: Option<FeatureId>) {
+        let mut u = self.uniforms.write();
+        u.sss_id = id.map_or(0, |f| f.to_u32());
+        self.version
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.toggle_feature(PhysicalFeatures::SSS, id.is_some());
+    }
+
+    pub fn sss_id(&self) -> Option<FeatureId> {
+        let u = self.uniforms.read();
+        FeatureId::from_u32(u.sss_id)
+    }
+
+    pub fn set_ssr_id(&self, id: Option<FeatureId>) {
+        let mut u = self.uniforms.write();
+        u.ssr_id = id.map_or(0, |f| f.to_u32());
+        self.version
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        self.toggle_feature(PhysicalFeatures::SSR, id.is_some());
+    }
+
+    pub fn ssr_id(&self) -> Option<FeatureId> {
+        let u = self.uniforms.read();
+        FeatureId::from_u32(u.ssr_id)
+    }
+
     #[must_use]
-    pub fn with_sss_id(self, id: u32) -> Self {
-        self.set_sss_id(id);
-        self.toggle_feature(PhysicalFeatures::SSS, id != 0);
+    pub fn with_sss_id(self, id: FeatureId) -> Self {
+        self.set_sss_id(Some(id));
         self
     }
 
     #[must_use]
-    pub fn with_ssr_id(self, id: u32) -> Self {
-        self.set_ssr_id(id);
-        self.toggle_feature(PhysicalFeatures::SSR, id != 0);
+    pub fn with_ssr_id(self, id: FeatureId) -> Self {
+        self.set_ssr_id(Some(id));
         self
     }
 }
@@ -421,9 +439,6 @@ impl_material_api!(
         (attenuation_distance,    f32,  "The distance that light travels through the material before it is absorbed."),
         (dispersion,              f32,  "The amount of chromatic dispersion in the transmitted light."),
 
-        (sss_id,                  u32,  "Internal SSS Profile ID for this material."),
-        (ssr_id,                  u32,  "Internal SSR Profile ID for this material."),
-
     ],
     textures: [
         (map,                    "The color map."),
@@ -447,8 +462,6 @@ impl_material_api!(
     ],
     manual_clone_fields: {
         features: |s: &Self| parking_lot::RwLock::new(*s.features.read()),
-        ssr_id: |s: &Self| parking_lot::RwLock::new(*s.ssr_id.read()),
-        sss_id: |s: &Self| parking_lot::RwLock::new(*s.sss_id.read()),
     }
 );
 

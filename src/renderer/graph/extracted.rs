@@ -14,6 +14,8 @@ use std::collections::HashSet;
 
 use glam::{Mat4, Vec3};
 
+use bitflags::{Flags, bitflags};
+
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::renderer::core::{BindGroupContext, ResourceManager};
 use crate::resources::BoundingBox;
@@ -68,6 +70,19 @@ pub struct ExtractedSkeleton {
     pub skeleton_key: SkeletonKey,
 }
 
+bitflags! {
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct SceneFeatures: u32 {
+        const HAS_SHADOWS = 1 << 0;
+        const USE_SSAO = 1 << 1;
+        const USE_SSS = 1 << 2;
+        const USE_SSR = 1 << 3;
+
+
+        const USE_SCREEN_SPACE_FEATURES = Self::USE_SSS.bits() | Self::USE_SSR.bits();
+    }
+}
+
 /// Extracted scene data
 ///
 /// This is a lightweight structure containing only the minimal dataset needed for current frame rendering.
@@ -85,7 +100,7 @@ pub struct ExtractedScene {
     pub render_items: Vec<ExtractedRenderItem>,
     /// Scene's shader macro definitions
     pub scene_id: u32,
-    pub scene_variants: u32,
+    pub scene_variants: SceneFeatures,
     pub scene_defines: ShaderDefines,
     pub background: BackgroundMode,
     pub envvironment: Environment,
@@ -114,7 +129,7 @@ impl ExtractedScene {
         Self {
             render_items: Vec::new(),
             scene_id: 0,
-            scene_variants: 0,
+            scene_variants: SceneFeatures::empty(),
             scene_defines: ShaderDefines::new(),
             background: BackgroundMode::default(),
             envvironment: Environment::default(),
@@ -132,7 +147,7 @@ impl ExtractedScene {
         Self {
             render_items: Vec::with_capacity(item_capacity),
             scene_id: 0,
-            scene_variants: 0,
+            scene_variants: SceneFeatures::empty(),
             scene_defines: ShaderDefines::new(),
             background: BackgroundMode::default(),
             envvironment: Environment::default(),
@@ -172,23 +187,29 @@ impl ExtractedScene {
         self.extract_render_items(scene, camera, assets, resource_manager);
         self.extract_environment(scene);
 
-        let mut variants = 0;
+        self.scene_variants.clear();
+
         if self.lights.iter().any(|light| light.cast_shadows) {
             self.scene_defines.set("HAS_SHADOWS", "1");
-            variants |= 1 << 0;
+            self.scene_variants.insert(SceneFeatures::HAS_SHADOWS);
         }
 
         if scene.ssao.enabled {
             self.scene_defines.set("USE_SSAO", "1");
-            variants |= 1 << 1;
+            self.scene_variants.insert(SceneFeatures::USE_SSAO);
         }
 
-        if scene.screen_space.enable_sss || scene.screen_space.enable_ssr {
+        if scene.screen_space.enable_sss {
             self.scene_defines.set("USE_SCREEN_SPACE_FEATURES", "1");
-            variants |= 1 << 2;
+            self.scene_defines.set("USE_SSS", "1");
+            self.scene_variants.insert(SceneFeatures::USE_SSS);
         }
 
-        self.scene_variants = variants;
+        if scene.screen_space.enable_ssr {
+            self.scene_defines.set("USE_SCREEN_SPACE_FEATURES", "1");
+            self.scene_defines.set("USE_SSR", "1");
+            self.scene_variants.insert(SceneFeatures::USE_SSR);
+        }
     }
 
     fn extract_lights(&mut self, scene: &Scene) {
