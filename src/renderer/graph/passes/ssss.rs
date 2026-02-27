@@ -211,18 +211,20 @@ impl RenderNode for SssssPass {
                 source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(shader_code)),
             });
 
+            let stencil_face = wgpu::StencilFaceState {
+                compare: wgpu::CompareFunction::Equal,
+                fail_op: wgpu::StencilOperation::Keep,
+                depth_fail_op: wgpu::StencilOperation::Keep,
+                pass_op: wgpu::StencilOperation::Keep,
+            };
+
             let depth_stencil = Some(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth24PlusStencil8,
                 depth_write_enabled: false,
                 depth_compare: wgpu::CompareFunction::Always,
                 stencil: wgpu::StencilState {
-                    front: wgpu::StencilFaceState {
-                        compare: wgpu::CompareFunction::Equal, // 仅在像素 Stencil == Reference 时执行 Fragment
-                        fail_op: wgpu::StencilOperation::Keep,
-                        depth_fail_op: wgpu::StencilOperation::Keep,
-                        pass_op: wgpu::StencilOperation::Keep,
-                    },
-                    back: wgpu::StencilFaceState::default(),
+                    front: stencil_face,
+                    back: stencil_face,
                     read_mask: STENCIL_FEATURE_SSS,
                     write_mask: 0x00,
                 },
@@ -363,12 +365,11 @@ impl RenderNode for SssssPass {
         // Store pingpong_tex in blackboard so we can use it in run
         ctx.blackboard.sssss_pingpong_texture_id = Some(pingpong_tex);
 
+        // 5. 输出绑定到 SceneColorInput (PingPong 作为中间目标，最终结果写回 SceneColorInput)
         self.output_view = Some(
-            ctx.get_resource_view(GraphResource::SceneColorOutput)
+            ctx.get_resource_view(GraphResource::SceneColorInput)
                 .clone(),
         );
-
-        ctx.flip_scene_color();
     }
 
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -414,7 +415,7 @@ impl RenderNode for SssssPass {
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SSSSS Vertical"),
-                // 渲染回 SceneColor
+                // 渲染回 SceneColorInput
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: scene_color_output_view,
                     resolve_target: None,
