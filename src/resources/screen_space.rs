@@ -1,6 +1,9 @@
 use glam::Vec3;
 use std::num::NonZeroU8;
 
+pub const STENCIL_FEATURE_SSS: u32 = 0 << 1;
+pub const STENCIL_FEATURE_SSR: u32 = 1 << 1;
+pub const STENCIL_WRITE_MASK: u32 = 0x0F;
 // ============================================================================
 // 1. 基础类型：全局稳定的 8-bit ID
 // ============================================================================

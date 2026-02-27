@@ -28,6 +28,7 @@ use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareCont
 use crate::renderer::graph::{RenderNode, TrackedRenderPass, TransientTextureDesc};
 use crate::renderer::pipeline::shader_gen::{ShaderCompilationOptions, ShaderGenerator};
 use crate::resources::material::{AlphaMode, Side};
+use crate::resources::screen_space::STENCIL_WRITE_MASK;
 
 /// Normal texture format — Rgba8Unorm ([-1,1] → [0,1] mapping).
 const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -198,6 +199,17 @@ impl DepthNormalPrepass {
                 wgpu::FrontFace::Ccw
             };
 
+            let stencil_state = if self.needs_feature_id {
+                Some(wgpu::StencilFaceState {
+                    compare: wgpu::CompareFunction::Always,
+                    fail_op: wgpu::StencilOperation::Keep,
+                    depth_fail_op: wgpu::StencilOperation::Keep,
+                    pass_op: wgpu::StencilOperation::Replace,
+                })
+            } else {
+                None
+            };
+
             // ── Pipeline ───────────────────────────────────────────────
             let pipeline =
                 ctx.wgpu_ctx
@@ -249,7 +261,12 @@ impl DepthNormalPrepass {
                             depth_write_enabled: true,
                             // Reverse-Z: Greater
                             depth_compare: wgpu::CompareFunction::Greater,
-                            stencil: wgpu::StencilState::default(),
+                            stencil: wgpu::StencilState {
+                                front: stencil_state.unwrap_or_default(),
+                                back: stencil_state.unwrap_or_default(),
+                                read_mask: 0xFF,
+                                write_mask: STENCIL_WRITE_MASK,
+                            },
                             bias: wgpu::DepthBiasState::default(),
                         }),
                         multisample: wgpu::MultisampleState {
@@ -429,6 +446,12 @@ impl RenderNode for DepthNormalPrepass {
                     &gpu_material.bind_group,
                     &[],
                 );
+            }
+
+            if self.needs_feature_id {
+                tracked_pass
+                    .raw_pass()
+                    .set_stencil_reference(cmd.ss_feature_mask);
             }
 
             // Set 2: Object (model matrix, skinning, morph targets)
