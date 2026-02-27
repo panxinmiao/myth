@@ -14,6 +14,12 @@ struct SssProfileData {
 @group(0) @binding(5) var t_feature_id: texture_2d<u32>; // 纯无符号整数纹理
 @group(0) @binding(6) var t_specular: texture_2d<f32>;
 
+// 著名的 IGN 噪声生成器
+fn ign(v: vec2<f32>) -> f32 {
+    let magic = vec3<f32>(0.06711056, 0.00583715, 52.9829189);
+    return fract(magic.z * fract(dot(v, magic.xy)));
+}
+
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let center_coord = vec2<i32>(in.position.xy);
@@ -37,8 +43,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // 1. 物理透视与像素半径计算
     // ==========================================
     // 假设使用 Reverse-Z 且无投影矩阵参数时的经验公式
-    // 如果发现远处的脸太糊，近处的脸太清晰，调整 3000.0 这个视口缩放常数
-    let pixel_radius = max_radius * center_depth * 3000.0; 
+    let raw_pixel_radius = max_radius * center_depth * 3000.0;
+    // 限制在最大 40 像素左右，保证每个 step_size 不会夸张到离谱
+    let pixel_radius = min(raw_pixel_radius, 40.0);
     
     var final_color = vec3<f32>(0.0);
     var total_weight = vec3<f32>(0.0); 
@@ -57,8 +64,10 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         let blur_dir = vec2<f32>(1.0, 0.0);
     $$ endif
     
+    let jitter = ign(vec2<f32>(in.position.xy)) - 0.5;
+
     for (var i = -steps; i <= steps; i++) {
-        let offset = vec2<i32>(blur_dir * (f32(i) * step_size));
+        let offset = vec2<i32>(blur_dir * ((f32(i) + jitter) * step_size));
         let sample_coord = center_coord + offset;
 
         // 【材质保护】防止皮肤糊到金属上
@@ -76,12 +85,17 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         
         // 深度惩罚：使用平方差，使断崖边缘切断更干脆
         let depth_diff = abs(center_depth - sample_depth);
-        let depth_weight = exp(-(depth_diff * depth_diff) * 50000.0); 
+        let depth_weight = exp(-(depth_diff * depth_diff) * 15000.0); 
         
         // 法线惩罚：平滑表面融合，直角边缘切断
-        let normal_dot = max(dot(center_normal, sample_normal), 0.0);
-        // acos(dot) 能更真实地反映角度差，但运算偏贵。这里用高次幂近似
-        let normal_weight = pow(normal_dot, 8.0); 
+        let normal_dot = clamp(dot(center_normal, sample_normal), -1.0, 1.0);
+        // 获取真实的物理夹角（范围 0 到 PI）
+        let normal_angle = acos(normal_dot);
+        // 3. 基于真实角度的高斯衰减
+        // 这里的 3.0 是控制柔和度的敏感因子：
+        // 值越小 (如 1.0)，法线容忍度越高，过渡越平滑（但可能糊掉真正的硬边缘）
+        // 值越大 (如 5.0)，法线切断越严格，立体感越强
+        let normal_weight = exp(-(normal_angle * normal_angle) * 3.0);
         
         // ==========================================
         // 3. 核心：空间高斯与 RGB 颜色分离 (Color Shift)
@@ -114,7 +128,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         // 水平 Pass：仅输出模糊后的漫反射
         return vec4<f32>(final_diffuse, center_color.a);
     $$ endif
-    
-    // 合成最终颜色：漫反射 + 保留高光（不模糊）
-    // return vec4<f32>(final_diffuse + crisp_specular, center_color.a);
+
 }

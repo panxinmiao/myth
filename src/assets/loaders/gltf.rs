@@ -889,7 +889,7 @@ impl GltfLoader {
                         AlphaMode::Mask(cut_off, false)
                     }
                     gltf::material::AlphaMode::Blend => {
-                        // settings.depth_write = false;
+                        settings.depth_write = false;
                         AlphaMode::Blend
                     }
                 };
