@@ -14,9 +14,6 @@ struct SssProfileData {
 @group(0) @binding(5) var t_feature_id: texture_2d<u32>; // 纯无符号整数纹理
 @group(0) @binding(6) var t_specular: texture_2d<f32>;
 
-// 模糊方向：水平为 vec2(1.0, 0.0), 垂直为 vec2(0.0, 1.0)
-@group(1) @binding(0) var<uniform> blur_dir: vec2<f32>; 
-
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let center_coord = vec2<i32>(in.position.xy);
@@ -53,6 +50,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     
     // 高斯分布的 Sigma 标准差系数 (控制模糊的"胖瘦")
     let sigma = f32(steps) / 2.0; 
+
+    $$ if SSSSS_VERTICAL_PASS is defined
+        let blur_dir = vec2<f32>(0.0, 1.0);
+    $$ else
+        let blur_dir = vec2<f32>(1.0, 0.0);
+    $$ endif
     
     for (var i = -steps; i <= steps; i++) {
         let offset = vec2<i32>(blur_dir * (f32(i) * step_size));
@@ -102,9 +105,16 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // 将积累的颜色除以积累的 rgb 权重
     let final_diffuse = final_color / total_weight;
 
-    // 高光部分
-    let crisp_specular = textureLoad(t_specular, center_coord, 0).rgb;
+    $$ if SSSSS_VERTICAL_PASS is defined
+        // 高光部分
+        let crisp_specular = textureLoad(t_specular, center_coord, 0).rgb;
+        // 合成最终颜色：漫反射 + 保留高光（不模糊）
+        return vec4<f32>(final_diffuse + crisp_specular, center_color.a);
+    $$ else
+        // 水平 Pass：仅输出模糊后的漫反射
+        return vec4<f32>(final_diffuse, center_color.a);
+    $$ endif
     
     // 合成最终颜色：漫反射 + 保留高光（不模糊）
-    return vec4<f32>(final_diffuse + crisp_specular, center_color.a);
+    // return vec4<f32>(final_diffuse + crisp_specular, center_color.a);
 }

@@ -3,22 +3,19 @@ use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::{RenderNode, TransientTextureDesc};
+use crate::renderer::pipeline::ShaderCompilationOptions;
 use crate::resources::screen_space::{STENCIL_FEATURE_SSS, SssProfileData};
 use std::mem::size_of;
-use wgpu::util::DeviceExt;
 
 pub struct SssssPass {
     enabled: bool,
-    pipeline: Option<wgpu::RenderPipeline>,
+    horizontal_pipeline: Option<wgpu::RenderPipeline>,
+    vertical_pipeline: Option<wgpu::RenderPipeline>,
     bind_group_layout: Option<Tracked<wgpu::BindGroupLayout>>,
 
     // 全局配置缓冲
     profiles_buffer: Tracked<wgpu::Buffer>,
     last_registry_version: u64,
-
-    // 模糊方向 Uniform (0: 水平, 1: 垂直)
-    dir_buffers: [wgpu::Buffer; 2],
-    dir_bind_groups: [Option<wgpu::BindGroup>; 2],
 
     // 动态 BindGroups
     horizontal_bind_group: Option<wgpu::BindGroup>,
@@ -39,28 +36,13 @@ impl SssssPass {
             mapped_at_creation: false,
         });
 
-        // 创建模糊方向 Buffer
-        let dir_buffers = [
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("SSS Horizontal Dir"),
-                contents: bytemuck::cast_slice(&[1.0f32, 0.0f32]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            }),
-            device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
-                label: Some("SSS Vertical Dir"),
-                contents: bytemuck::cast_slice(&[0.0f32, 1.0f32]),
-                usage: wgpu::BufferUsages::UNIFORM,
-            }),
-        ];
-
         Self {
             enabled: false,
-            pipeline: None,
+            horizontal_pipeline: None,
+            vertical_pipeline: None,
             bind_group_layout: None,
             profiles_buffer: Tracked::new(profiles_buffer),
             last_registry_version: 0,
-            dir_buffers,
-            dir_bind_groups: [None, None],
             horizontal_bind_group: None,
             vertical_bind_group: None,
             output_view: None,
@@ -92,7 +74,7 @@ impl RenderNode for SssssPass {
         }
 
         // 2. 初始化 Pipeline 与 Layout (延迟初始化)
-        if self.pipeline.is_none() {
+        if self.horizontal_pipeline.is_none() {
             let device = &ctx.wgpu_ctx.device;
 
             let bind_group_layout =
@@ -175,56 +157,38 @@ impl RenderNode for SssssPass {
                     ],
                 });
 
-            let dir_bind_group_layout =
-                device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("SSSSS Dir Bind Group Layout"),
-                    entries: &[wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Buffer {
-                            ty: wgpu::BufferBindingType::Uniform,
-                            has_dynamic_offset: false,
-                            min_binding_size: None,
-                        },
-                        count: None,
-                    }],
-                });
-
-            self.dir_bind_groups[0] = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("SSSSS Horizontal Dir Bind Group"),
-                layout: &dir_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.dir_buffers[0].as_entire_binding(),
-                }],
-            }));
-
-            self.dir_bind_groups[1] = Some(device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("SSSSS Vertical Dir Bind Group"),
-                layout: &dir_bind_group_layout,
-                entries: &[wgpu::BindGroupEntry {
-                    binding: 0,
-                    resource: self.dir_buffers[1].as_entire_binding(),
-                }],
-            }));
-
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("SSSSS Pipeline Layout"),
-                bind_group_layouts: &[&bind_group_layout, &dir_bind_group_layout],
+                bind_group_layouts: &[&bind_group_layout],
                 immediate_size: 0,
             });
 
-            let shader_code =
+            let mut shader_defines = ShaderCompilationOptions::default();
+
+            let hor_shader_code =
                 crate::renderer::pipeline::shader_gen::ShaderGenerator::generate_shader(
                     "",
                     "",
                     "passes/ssss",
-                    &crate::renderer::pipeline::ShaderCompilationOptions::default(),
+                    &shader_defines,
                 );
 
-            let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            let hor_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some("SSSSS Shader"),
-                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(shader_code)),
+                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(hor_shader_code)),
+            });
+
+            shader_defines.add_define("SSSSS_VERTICAL_PASS", "1");
+            let vert_shader_code =
+                crate::renderer::pipeline::shader_gen::ShaderGenerator::generate_shader(
+                    "",
+                    "",
+                    "passes/ssss",
+                    &shader_defines,
+                );
+            let vert_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("SSSSS Vertical Shader"),
+                source: wgpu::ShaderSource::Wgsl(vert_shader_code.into()),
             });
 
             let stencil_face = wgpu::StencilFaceState {
@@ -247,17 +211,46 @@ impl RenderNode for SssssPass {
                 bias: wgpu::DepthBiasState::default(),
             });
 
-            let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("SSSSS Pipeline"),
+            let hor_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("SSSSS Horizontal Pipeline"),
                 layout: Some(&pipeline_layout),
                 vertex: wgpu::VertexState {
-                    module: &shader,
+                    module: &hor_shader,
                     entry_point: Some("vs_main"),
                     buffers: &[],
                     compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
-                    module: &shader,
+                    module: &hor_shader,
+                    entry_point: Some("fs_main"),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format: HDR_TEXTURE_FORMAT,
+                        blend: Some(wgpu::BlendState::REPLACE),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                }),
+                primitive: wgpu::PrimitiveState {
+                    topology: wgpu::PrimitiveTopology::TriangleList,
+                    ..Default::default()
+                },
+                depth_stencil: depth_stencil.clone(),
+                multisample: wgpu::MultisampleState::default(),
+                multiview_mask: None,
+                cache: None,
+            });
+
+            let vert_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("SSSSS Vertical Pipeline"),
+                layout: Some(&pipeline_layout),
+                vertex: wgpu::VertexState {
+                    module: &vert_shader,
+                    entry_point: Some("vs_main"),
+                    buffers: &[],
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &vert_shader,
                     entry_point: Some("fs_main"),
                     targets: &[Some(wgpu::ColorTargetState {
                         format: HDR_TEXTURE_FORMAT,
@@ -276,7 +269,8 @@ impl RenderNode for SssssPass {
                 cache: None,
             });
 
-            self.pipeline = Some(pipeline);
+            self.horizontal_pipeline = Some(hor_pipeline);
+            self.vertical_pipeline = Some(vert_pipeline);
             self.bind_group_layout = Some(Tracked::new(bind_group_layout));
         }
 
@@ -483,10 +477,9 @@ impl RenderNode for SssssPass {
                 ..Default::default()
             });
 
-            rpass.set_pipeline(self.pipeline.as_ref().unwrap());
+            rpass.set_pipeline(self.horizontal_pipeline.as_ref().unwrap());
             rpass.set_stencil_reference(STENCIL_FEATURE_SSS); // 触发硬件剔除！
             rpass.set_bind_group(0, self.horizontal_bind_group.as_ref().unwrap(), &[]);
-            rpass.set_bind_group(1, self.dir_bind_groups[0].as_ref().unwrap(), &[]);
             rpass.draw(0..3, 0..1);
         }
 
@@ -512,10 +505,9 @@ impl RenderNode for SssssPass {
                 ..Default::default()
             });
 
-            rpass.set_pipeline(self.pipeline.as_ref().unwrap());
+            rpass.set_pipeline(self.vertical_pipeline.as_ref().unwrap());
             rpass.set_stencil_reference(STENCIL_FEATURE_SSS); // 触发硬件剔除！
             rpass.set_bind_group(0, self.vertical_bind_group.as_ref().unwrap(), &[]);
-            rpass.set_bind_group(1, self.dir_bind_groups[1].as_ref().unwrap(), &[]);
             rpass.draw(0..3, 0..1);
         }
     }
