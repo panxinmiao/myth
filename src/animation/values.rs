@@ -22,6 +22,7 @@ pub struct MorphWeightData {
 }
 
 impl MorphWeightData {
+    #[must_use]
     pub fn allocate(n: usize) -> Self {
         Self {
             weights: smallvec![0.0; n],

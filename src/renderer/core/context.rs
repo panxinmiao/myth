@@ -135,7 +135,7 @@ impl WgpuContext {
             depth_format: settings.depth_format,
             surface_view_format: view_format,
             msaa_samples: settings.msaa_samples(),
-            render_path: settings.path.clone(),
+            render_path: settings.path,
             pipeline_settings_version: 0,
         })
     }

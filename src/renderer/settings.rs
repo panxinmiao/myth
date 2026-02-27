@@ -45,8 +45,9 @@
 /// | Bloom                   | ❌                | ✅                      |
 /// | Tone Mapping            | ❌                | ✅                      |
 /// | FXAA (post-process AA)  | ❌                | ✅                      |
-/// | Depth-Normal Prepass¹   | ❌                | ✅ (planned)            |
-/// | SSAO¹                   | ❌                | ✅ (planned)            |
+/// | Depth-Normal Prepass¹   | ❌                | ✅                      |
+/// | SSAO¹                   | ❌                | ✅                      |
+/// | SSSSS¹                  | ❌                | ✅                      |
 ///
 /// ¹ Planned features — the `HighFidelity` path is designed to accommodate
 ///   these without further API changes.
@@ -58,7 +59,7 @@
 /// expensive to resolve and incompatible with most screen-space effects. By
 /// making the choice explicit at the path level, the engine can allocate
 /// resources optimally and avoid hidden performance cliffs.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Copy, Eq)]
 pub enum RenderPath {
     /// Lightweight forward rendering pipeline.
     ///

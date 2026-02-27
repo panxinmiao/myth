@@ -19,6 +19,7 @@
 use log::{error, warn};
 use slotmap::Key;
 
+use crate::RenderPath;
 use crate::renderer::core::view::{RenderView, ViewTarget};
 use crate::renderer::graph::RenderNode;
 use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
@@ -186,11 +187,16 @@ impl SceneCullPass {
                         let is_opaque_item = material.alpha_mode() != AlphaMode::Blend
                             && !material.use_transmission();
 
-                        let is_specular_split = is_opaque_item
-                            && ctx
-                                .extracted_scene
-                                .scene_variants
-                                .contains(SceneFeatures::USE_SSS);
+                        let is_specular_split = match ctx.wgpu_ctx.render_path {
+                            RenderPath::HighFidelity => {
+                                is_opaque_item
+                                    && ctx
+                                        .extracted_scene
+                                        .scene_variants
+                                        .contains(SceneFeatures::USE_SSS)
+                            }
+                            RenderPath::BasicForward { .. } => false,
+                        };
 
                         let canonical_key = PipelineKey {
                             shader_hash,
