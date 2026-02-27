@@ -1,4 +1,5 @@
 use crate::renderer::HDR_TEXTURE_FORMAT;
+use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::{RenderNode, TransientTextureDesc};
@@ -9,10 +10,10 @@ use wgpu::util::DeviceExt;
 pub struct SssssPass {
     enabled: bool,
     pipeline: Option<wgpu::RenderPipeline>,
-    bind_group_layout: Option<wgpu::BindGroupLayout>,
+    bind_group_layout: Option<Tracked<wgpu::BindGroupLayout>>,
 
     // 全局配置缓冲
-    profiles_buffer: Option<wgpu::Buffer>,
+    profiles_buffer: Tracked<wgpu::Buffer>,
     last_registry_version: u64,
 
     // 模糊方向 Uniform (0: 水平, 1: 垂直)
@@ -24,6 +25,7 @@ pub struct SssssPass {
     vertical_bind_group: Option<wgpu::BindGroup>,
 
     output_view: Option<Tracked<wgpu::TextureView>>,
+    sampler: Option<Tracked<wgpu::Sampler>>,
 }
 
 impl SssssPass {
@@ -54,13 +56,14 @@ impl SssssPass {
             enabled: false,
             pipeline: None,
             bind_group_layout: None,
-            profiles_buffer: Some(profiles_buffer),
+            profiles_buffer: Tracked::new(profiles_buffer),
             last_registry_version: 0,
             dir_buffers,
             dir_bind_groups: [None, None],
             horizontal_bind_group: None,
             vertical_bind_group: None,
             output_view: None,
+            sampler: None,
         }
     }
 }
@@ -80,7 +83,7 @@ impl RenderNode for SssssPass {
         let registry = ctx.assets.sss_registry.read();
         if self.last_registry_version != registry.version {
             ctx.wgpu_ctx.queue.write_buffer(
-                self.profiles_buffer.as_ref().unwrap(),
+                &self.profiles_buffer,
                 0,
                 bytemuck::cast_slice(&registry.buffer_data),
             );
@@ -273,7 +276,20 @@ impl RenderNode for SssssPass {
             });
 
             self.pipeline = Some(pipeline);
-            self.bind_group_layout = Some(bind_group_layout);
+            self.bind_group_layout = Some(Tracked::new(bind_group_layout));
+        }
+
+        if self.sampler.is_none() {
+            let sampler = ctx
+                .wgpu_ctx
+                .device
+                .create_sampler(&wgpu::SamplerDescriptor {
+                    label: Some("SSSSS Sampler"),
+                    mag_filter: wgpu::FilterMode::Linear,
+                    min_filter: wgpu::FilterMode::Linear,
+                    ..Default::default()
+                });
+            self.sampler = Some(Tracked::new(sampler));
         }
 
         // 3. 申请 PingPong 中间渲染目标 (复用 Transient Pool)
@@ -292,27 +308,18 @@ impl RenderNode for SssssPass {
             },
         );
 
-        let scene_color_view = ctx.get_resource_view(GraphResource::SceneColorInput);
+        let scene_color_view = &ctx.frame_resources.scene_color_view[ctx.color_view_flip_flop];
         let scene_normal_view = ctx.transient_pool.get_view(
             ctx.blackboard
                 .scene_normal_texture_id
                 .expect("SceneNormal must exist for SSSSS"),
         );
-        let scene_depth_view = ctx.get_resource_view(GraphResource::DepthOnly);
+        let scene_depth_view = &ctx.frame_resources.depth_only_view;
         let feature_id_view = ctx.transient_pool.get_view(
             ctx.blackboard
                 .feature_id_texture_id
                 .expect("FeatureId must exist for SSSSS"),
         );
-        let sampler = ctx
-            .wgpu_ctx
-            .device
-            .create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("SSSSS Sampler"),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            });
 
         let pingpong_view = ctx.transient_pool.get_view(pingpong_tex);
         let specular_view = ctx.transient_pool.get_view(
@@ -322,82 +329,110 @@ impl RenderNode for SssssPass {
         );
 
         // 4. 构建 Horizontal 和 Vertical 两次 Draw 的 BindGroup
-        // Horizontal: 从 SceneColor 读取，渲染到 pingpong_tex
+        let layout = self.bind_group_layout.as_ref().unwrap();
+        let sampler = self.sampler.as_ref().unwrap();
 
-        self.horizontal_bind_group = Some(ctx.wgpu_ctx.device.create_bind_group(
-            &wgpu::BindGroupDescriptor {
-                label: Some("SSSSS Horizontal Bind Group"),
-                layout: self.bind_group_layout.as_ref().unwrap(),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(scene_color_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(scene_normal_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(scene_depth_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: self.profiles_buffer.as_ref().unwrap().as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: wgpu::BindingResource::TextureView(feature_id_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: wgpu::BindingResource::TextureView(specular_view),
-                    },
-                ],
-            },
-        ));
+        // Horizontal: 从 SceneColor 读取，渲染到 pingpong_tex
+        let horizontal_key = BindGroupKey::new(layout.id())
+            .with_resource(scene_color_view.id())
+            .with_resource(scene_normal_view.id())
+            .with_resource(scene_depth_view.id())
+            .with_resource(self.profiles_buffer.id())
+            .with_resource(sampler.id())
+            .with_resource(feature_id_view.id())
+            .with_resource(specular_view.id());
+
+        self.horizontal_bind_group = Some(
+            ctx.global_bind_group_cache
+                .get_or_create(horizontal_key, || {
+                    ctx.wgpu_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("SSSSS Horizontal Bind Group"),
+                        layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(scene_color_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(scene_normal_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(scene_depth_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: self.profiles_buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: wgpu::BindingResource::TextureView(feature_id_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 6,
+                                resource: wgpu::BindingResource::TextureView(specular_view),
+                            },
+                        ],
+                    })
+                })
+                .clone(),
+        );
 
         // Vertical: 从 pingpong_tex 读取，渲染到 SceneColor
-        self.vertical_bind_group = Some(ctx.wgpu_ctx.device.create_bind_group(
-            &wgpu::BindGroupDescriptor {
-                label: Some("SSSSS Vertical Bind Group"),
-                layout: self.bind_group_layout.as_ref().unwrap(),
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(pingpong_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(scene_normal_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(scene_depth_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: self.profiles_buffer.as_ref().unwrap().as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 4,
-                        resource: wgpu::BindingResource::Sampler(&sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 5,
-                        resource: wgpu::BindingResource::TextureView(feature_id_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 6,
-                        resource: wgpu::BindingResource::TextureView(specular_view),
-                    },
-                ],
-            },
-        ));
+        let vertical_key = BindGroupKey::new(layout.id())
+            .with_resource(pingpong_view.id())
+            .with_resource(scene_normal_view.id())
+            .with_resource(scene_depth_view.id())
+            .with_resource(self.profiles_buffer.id())
+            .with_resource(sampler.id())
+            .with_resource(feature_id_view.id())
+            .with_resource(specular_view.id());
+
+        self.vertical_bind_group = Some(
+            ctx.global_bind_group_cache
+                .get_or_create(vertical_key, || {
+                    ctx.wgpu_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("SSSSS Vertical Bind Group"),
+                        layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(pingpong_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(scene_normal_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(scene_depth_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: self.profiles_buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::Sampler(sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: wgpu::BindingResource::TextureView(feature_id_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 6,
+                                resource: wgpu::BindingResource::TextureView(specular_view),
+                            },
+                        ],
+                    })
+                })
+                .clone(),
+        );
 
         // Store pingpong_tex in blackboard so we can use it in run
         ctx.blackboard.sssss_pingpong_texture_id = Some(pingpong_tex);
