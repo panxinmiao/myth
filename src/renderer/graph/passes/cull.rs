@@ -270,6 +270,8 @@ impl SceneCullPass {
                 let distance_sq = camera_pos.distance_squared(item_pos);
                 let sort_key = RenderKey::new(pipeline_id, mat_id, distance_sq, is_transparent);
 
+                let ss_feature_mask = material.ss_feature_mask();
+
                 let cmd = RenderCommand {
                     object_bind_group: object_bind_group.clone(),
                     geometry_handle: item.geometry,
@@ -279,6 +281,7 @@ impl SceneCullPass {
                     model_matrix: item.world_matrix,
                     sort_key,
                     dynamic_offset: 0,
+                    ss_feature_mask,
                 };
 
                 if is_transparent {

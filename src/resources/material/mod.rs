@@ -15,12 +15,15 @@ use std::{
     sync::atomic::{AtomicU64, Ordering},
 };
 
-use crate::assets::TextureHandle;
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::resources::buffer::BufferRef;
 use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::texture::TextureSource;
 use crate::resources::uniforms::Mat3Uniform;
+use crate::{
+    assets::TextureHandle,
+    resources::screen_space::{STENCIL_FEATURE_SSR, STENCIL_FEATURE_SSS},
+};
 use glam::{Vec2, Vec4};
 use uuid::Uuid;
 
@@ -742,6 +745,27 @@ impl Material {
             MaterialType::Physical(m) => m.features.read().contains(PhysicalFeatures::TRANSMISSION),
             _ => false,
         }
+    }
+
+    #[inline]
+    pub(crate) fn features(&self) -> PhysicalFeatures {
+        match &self.data {
+            MaterialType::Physical(m) => *m.features.read(),
+            _ => PhysicalFeatures::empty(),
+        }
+    }
+
+    #[inline]
+    pub(crate) fn ss_feature_mask(&self) -> u32 {
+        let mut mask = 0;
+        let features = self.features();
+        if features.contains(PhysicalFeatures::SSS) {
+            mask |= STENCIL_FEATURE_SSS;
+        }
+        if features.contains(PhysicalFeatures::SSR) {
+            mask |= STENCIL_FEATURE_SSR;
+        }
+        mask
     }
 }
 

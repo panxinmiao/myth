@@ -25,6 +25,9 @@ bitflags! {
         const TRANSMISSION = 1 << 7;
         const DISPERSION = 1 << 8;
 
+        const SSS = 1 << 9;
+        const SSR = 1 << 10;
+
         //
         const STANDARD_PBR = Self::IBL.bits() | Self::SPECULAR.bits() | Self::IOR.bits();
     }
@@ -370,14 +373,16 @@ impl MeshPhysicalMaterial {
     }
 
     #[must_use]
-    pub fn with_sss_id(self, id: FeatureId) -> Self {
-        self.set_sss_id(id.0.get() as u32);
+    pub fn with_sss_id(self, id: u32) -> Self {
+        self.set_sss_id(id);
+        self.toggle_feature(PhysicalFeatures::SSS, id != 0);
         self
     }
 
     #[must_use]
-    pub fn with_ssr_id(self, id: FeatureId) -> Self {
-        self.set_ssr_id(id.0.get() as u32);
+    pub fn with_ssr_id(self, id: u32) -> Self {
+        self.set_ssr_id(id);
+        self.toggle_feature(PhysicalFeatures::SSR, id != 0);
         self
     }
 }
