@@ -127,7 +127,7 @@ impl RenderNode for OpaquePass {
             self.color_target_view = Some(target_view);
         }
 
-        self.depth_view = Some(ctx.get_resource_view(GraphResource::SceneDepth).clone());
+        self.depth_view = Some(ctx.get_resource_view(GraphResource::DepthStencil).clone());
 
         // 3. Build dynamic group 3 bind group.
         //    OpaquePass runs BEFORE TransmissionCopyPass, so use dummy transmission.

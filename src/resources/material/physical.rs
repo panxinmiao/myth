@@ -89,8 +89,8 @@ pub struct MeshPhysicalMaterial {
 
     pub(crate) features: RwLock<PhysicalFeatures>,
 
-    pub sss_id: Option<FeatureId>,
-    pub ssr_id: Option<FeatureId>,
+    pub sss_id: RwLock<Option<FeatureId>>,
+    pub ssr_id: RwLock<Option<FeatureId>>,
 
     pub(crate) version: AtomicU64,
     pub auto_sync_texture_to_uniforms: bool,
@@ -114,8 +114,8 @@ impl MeshPhysicalMaterial {
             textures: RwLock::new(MeshPhysicalTextureSet::default()),
             features: RwLock::new(PhysicalFeatures::default()),
 
-            ssr_id: None,
-            sss_id: None,
+            ssr_id: RwLock::new(None),
+            sss_id: RwLock::new(None),
 
             version: AtomicU64::new(0),
             auto_sync_texture_to_uniforms: false,
@@ -447,8 +447,8 @@ impl_material_api!(
     ],
     manual_clone_fields: {
         features: |s: &Self| parking_lot::RwLock::new(*s.features.read()),
-        ssr_id: |s: &Self| s.ssr_id,
-        sss_id: |s: &Self| s.sss_id,
+        ssr_id: |s: &Self| parking_lot::RwLock::new(*s.ssr_id.read()),
+        sss_id: |s: &Self| parking_lot::RwLock::new(*s.sss_id.read()),
     }
 );
 
