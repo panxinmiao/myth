@@ -16,8 +16,9 @@ pub struct FeatureId(pub NonZeroU8);
 impl FeatureId {
     /// 将强类型的 ID 转换为底层着色器所需的 u32
     #[inline]
+    #[must_use]
     pub fn to_u32(self) -> u32 {
-        self.0.get() as u32
+        u32::from(self.0.get())
     }
 
     /// 尝试从着色器的 u32 数据还原为强类型的 ID (0 会自动变为 None)
@@ -56,6 +57,7 @@ pub struct SssProfile {
 }
 
 impl SssProfile {
+    #[must_use]
     pub fn new(scatter_color: Vec3, scatter_radius: f32) -> Self {
         Self {
             scatter_color,
@@ -63,6 +65,7 @@ impl SssProfile {
         }
     }
 
+    #[must_use]
     pub fn to_gpu_data(&self) -> SssProfileData {
         SssProfileData {
             scatter_color: self.scatter_color.into(),
@@ -81,7 +84,14 @@ pub struct SssRegistry {
     pub version: u64,
 }
 
+impl Default for SssRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SssRegistry {
+    #[must_use]
     pub fn new() -> Self {
         // 从 255 到 1，保证 pop() 时优先分配小号 ID
         let free_list = (1..=255).rev().collect();

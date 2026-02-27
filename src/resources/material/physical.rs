@@ -368,7 +368,7 @@ impl MeshPhysicalMaterial {
 
     pub fn set_sss_id(&self, id: Option<FeatureId>) {
         let mut u = self.uniforms.write();
-        u.sss_id = id.map_or(0, |f| f.to_u32());
+        u.sss_id = id.map_or(0, super::super::screen_space::FeatureId::to_u32);
         self.version
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.toggle_feature(PhysicalFeatures::SSS, id.is_some());
@@ -381,7 +381,7 @@ impl MeshPhysicalMaterial {
 
     pub fn set_ssr_id(&self, id: Option<FeatureId>) {
         let mut u = self.uniforms.write();
-        u.ssr_id = id.map_or(0, |f| f.to_u32());
+        u.ssr_id = id.map_or(0, super::super::screen_space::FeatureId::to_u32);
         self.version
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         self.toggle_feature(PhysicalFeatures::SSR, id.is_some());

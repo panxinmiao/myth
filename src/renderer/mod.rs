@@ -370,7 +370,7 @@ impl Renderer {
                 // SSAO (after depth-normal prepass, before opaque rendering)
                 // When enabled, SsaoPass reads depth+normal, writes AO texture,
                 // then we update the screen bind group so PBR shaders can sample it.
-                if is_ssao_enabled && state.wgpu_ctx.render_path.requires_z_prepass() {
+                if is_ssao_enabled {
                     frame_builder.add_node(RenderStage::Opaque, &mut state.ssao_pass);
                 }
 
@@ -513,7 +513,7 @@ impl Renderer {
     /// 4. Clears the L2 pipeline cache.
     pub fn set_render_path(&mut self, path: RenderPath) {
         if self.settings.path != path {
-            self.settings.path = path.clone();
+            self.settings.path = path;
             if let Some(state) = &mut self.context {
                 state.wgpu_ctx.msaa_samples = self.settings.msaa_samples();
                 state.wgpu_ctx.render_path = path;
@@ -550,7 +550,7 @@ impl Renderer {
                     };
                     if let Some(state) = &mut self.context {
                         state.wgpu_ctx.msaa_samples = samples;
-                        state.wgpu_ctx.render_path = self.settings.path.clone();
+                        state.wgpu_ctx.render_path = self.settings.path;
                         state.wgpu_ctx.pipeline_settings_version += 1;
                         let size = state.wgpu_ctx.size();
                         state.frame_resources.force_recreate(&state.wgpu_ctx, size);

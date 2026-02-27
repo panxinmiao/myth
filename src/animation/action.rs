@@ -112,7 +112,7 @@ impl AnimationAction {
             }
             TrackData::Scalar(t) => TrackValue::Scalar(t.sample_with_cursor(self.time, cursor)),
             TrackData::MorphWeights(t) => {
-                TrackValue::MorphWeight(t.sample_with_cursor(self.time, cursor))
+                TrackValue::MorphWeight(Box::new(t.sample_with_cursor(self.time, cursor)))
             }
         })
     }
@@ -122,5 +122,5 @@ pub enum TrackValue {
     Vector3(glam::Vec3),
     Quaternion(glam::Quat),
     Scalar(f32),
-    MorphWeight(MorphWeightData),
+    MorphWeight(Box<MorphWeightData>),
 }

@@ -332,14 +332,9 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         opacity *= material.transmission_alpha;
     $$ endif
 
-    $$ if not HDR
-        // builtin tone mapping for simple SDR output
-        {$ include 'pbr_tone_mapping' $}
-    $$ endif
-
     var out: FragmentOutput;
 
-    $$ if USE_SCREEN_SPACE_FEATUREs is defined
+    $$ if USE_SCREEN_SPACE_FEATUREs
         out.specular = vec4<f32>(total_specular, material.roughness);
         if (u_material.sss_id != 0u) {
             // SSSSS 材质：分离漫反射与高光
@@ -351,7 +346,12 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
             out.specular = vec4<f32>(0.0, 0.0, 0.0, 0.0);
         }
     $$ else
-        out.color = vec4<f32>(out_diffuse + out_specular, opacity);
+        var out_color = out_diffuse + out_specular;
+        $$ if not HDR
+            // builtin tone mapping for simple SDR output
+            {$ include 'pbr_tone_mapping' $}
+        $$ endif
+        out.color = vec4<f32>(out_color, opacity);
     $$ endif
 
     return out;

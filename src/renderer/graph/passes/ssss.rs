@@ -29,6 +29,7 @@ pub struct SssssPass {
 }
 
 impl SssssPass {
+    #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
         // 创建 256 个元素的 Storage Buffer
         let profiles_buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -243,7 +244,7 @@ impl RenderNode for SssssPass {
                     read_mask: STENCIL_FEATURE_SSS,
                     write_mask: 0x00,
                 },
-                bias: Default::default(),
+                bias: wgpu::DepthBiasState::default(),
             });
 
             let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
@@ -253,7 +254,7 @@ impl RenderNode for SssssPass {
                     module: &shader,
                     entry_point: Some("vs_main"),
                     buffers: &[],
-                    compilation_options: Default::default(),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 },
                 fragment: Some(wgpu::FragmentState {
                     module: &shader,
@@ -263,7 +264,7 @@ impl RenderNode for SssssPass {
                         blend: Some(wgpu::BlendState::REPLACE),
                         write_mask: wgpu::ColorWrites::ALL,
                     })],
-                    compilation_options: Default::default(),
+                    compilation_options: wgpu::PipelineCompilationOptions::default(),
                 }),
                 primitive: wgpu::PrimitiveState {
                     topology: wgpu::PrimitiveTopology::TriangleList,
@@ -345,40 +346,42 @@ impl RenderNode for SssssPass {
         self.horizontal_bind_group = Some(
             ctx.global_bind_group_cache
                 .get_or_create(horizontal_key, || {
-                    ctx.wgpu_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("SSSSS Horizontal Bind Group"),
-                        layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(scene_color_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(scene_normal_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::TextureView(scene_depth_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: self.profiles_buffer.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 4,
-                                resource: wgpu::BindingResource::Sampler(sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 5,
-                                resource: wgpu::BindingResource::TextureView(feature_id_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 6,
-                                resource: wgpu::BindingResource::TextureView(specular_view),
-                            },
-                        ],
-                    })
+                    ctx.wgpu_ctx
+                        .device
+                        .create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("SSSSS Horizontal Bind Group"),
+                            layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(scene_color_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::TextureView(scene_normal_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: wgpu::BindingResource::TextureView(scene_depth_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 3,
+                                    resource: self.profiles_buffer.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 4,
+                                    resource: wgpu::BindingResource::Sampler(sampler),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 5,
+                                    resource: wgpu::BindingResource::TextureView(feature_id_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 6,
+                                    resource: wgpu::BindingResource::TextureView(specular_view),
+                                },
+                            ],
+                        })
                 })
                 .clone(),
         );
@@ -396,40 +399,42 @@ impl RenderNode for SssssPass {
         self.vertical_bind_group = Some(
             ctx.global_bind_group_cache
                 .get_or_create(vertical_key, || {
-                    ctx.wgpu_ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("SSSSS Vertical Bind Group"),
-                        layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(pingpong_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(scene_normal_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::TextureView(scene_depth_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: self.profiles_buffer.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 4,
-                                resource: wgpu::BindingResource::Sampler(sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 5,
-                                resource: wgpu::BindingResource::TextureView(feature_id_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 6,
-                                resource: wgpu::BindingResource::TextureView(specular_view),
-                            },
-                        ],
-                    })
+                    ctx.wgpu_ctx
+                        .device
+                        .create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("SSSSS Vertical Bind Group"),
+                            layout,
+                            entries: &[
+                                wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: wgpu::BindingResource::TextureView(pingpong_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 1,
+                                    resource: wgpu::BindingResource::TextureView(scene_normal_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 2,
+                                    resource: wgpu::BindingResource::TextureView(scene_depth_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 3,
+                                    resource: self.profiles_buffer.as_entire_binding(),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 4,
+                                    resource: wgpu::BindingResource::Sampler(sampler),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 5,
+                                    resource: wgpu::BindingResource::TextureView(feature_id_view),
+                                },
+                                wgpu::BindGroupEntry {
+                                    binding: 6,
+                                    resource: wgpu::BindingResource::TextureView(specular_view),
+                                },
+                            ],
+                        })
                 })
                 .clone(),
         );
