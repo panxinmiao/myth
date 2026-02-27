@@ -493,7 +493,7 @@ impl SsaoPass {
 
         let normal_view = ctx.transient_pool.get_view(
             ctx.blackboard
-                .scene_normal_texture
+                .scene_normal_texture_id
                 .expect("SceneNormal must exist for SSAO"),
         );
 
