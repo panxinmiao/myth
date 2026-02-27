@@ -183,7 +183,9 @@ impl RenderNode for OpaquePass {
         // let depth_view = self.depth_view.as_ref().unwrap();
         let depth_view = ctx.get_resource_view(GraphResource::DepthStencil);
 
-        let color_attachment = wgpu::RenderPassColorAttachment {
+        let mut color_attachments: smallvec::SmallVec<
+            [Option<wgpu::RenderPassColorAttachment>; 2],
+        > = smallvec![Some(wgpu::RenderPassColorAttachment {
             view: color_view,
             resolve_target: None, // Opaque Pass does not resolve, wait for Transparent Pass to complete
             ops: wgpu::Operations {
@@ -191,11 +193,7 @@ impl RenderNode for OpaquePass {
                 store: wgpu::StoreOp::Store,
             },
             depth_slice: None,
-        };
-
-        let mut color_attachments: smallvec::SmallVec<
-            [Option<wgpu::RenderPassColorAttachment>; 2],
-        > = smallvec![Some(color_attachment)];
+        })];
 
         if self.needs_specular {
             let specular_view = ctx.transient_pool.get_view(
@@ -207,7 +205,7 @@ impl RenderNode for OpaquePass {
                 view: specular_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
