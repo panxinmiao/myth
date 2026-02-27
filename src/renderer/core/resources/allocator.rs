@@ -1,33 +1,33 @@
 //! Model Buffer Allocator
 //!
-//! 纯逻辑结构，不持有 wgpu 资源，只管理字节和索引
-//! 每帧动态分配 Model Uniform 的 Offset
+//! A pure logical structure that does not hold wgpu resources; it only manages bytes and indices.
+//! Dynamically allocates Model Uniform offsets each frame.
 
 use std::num::NonZero;
 
 use crate::resources::buffer::{BufferRef, CpuBuffer};
 use crate::resources::uniforms::DynamicModelUniforms;
 
-/// Model Buffer 分配器
+/// Model Buffer allocator
 ///
-/// 负责管理 `DynamicModelUniforms` 的 CPU 端缓存和分配
+/// Manages the CPU-side cache and allocation of `DynamicModelUniforms`
 pub struct ModelBufferAllocator {
-    /// CPU 端数据缓存
+    /// CPU-side data cache
     host_data: Vec<DynamicModelUniforms>,
-    /// 当前帧写到的位置
+    /// Current write position for this frame
     cursor: usize,
-    /// Buffer 容量
+    /// Buffer capacity
     capacity: usize,
-    /// CPU Buffer 句柄
+    /// CPU Buffer handle
     buffer: CpuBuffer<Vec<DynamicModelUniforms>>,
-    /// 标记是否需要重建 GPU Buffer
+    /// Flag indicating whether the GPU Buffer needs recreation
     needs_recreate: bool,
 
     pub(crate) last_ensure_frame: u64,
 }
 
 impl ModelBufferAllocator {
-    /// 创建新的分配器
+    /// Create a new allocator
     #[must_use]
     pub fn new() -> Self {
         let initial_capacity = 4096;
@@ -48,49 +48,48 @@ impl ModelBufferAllocator {
         }
     }
 
-    /// 每帧开始时重置
+    /// Reset at the beginning of each frame
     pub fn reset(&mut self) {
         self.cursor = 0;
         self.host_data.clear();
         self.needs_recreate = false;
     }
 
-    /// 分配一个 Model Uniform，返回字节偏移量
+    /// Allocate a Model Uniform slot, returning the byte offset
     pub fn allocate(&mut self, data: DynamicModelUniforms) -> u32 {
         let index = self.cursor;
         self.cursor += 1;
 
-        // 检查是否需要扩容
+        // Check if expansion is needed
         if self.cursor > self.capacity {
             self.expand_capacity();
         }
 
-        // self.host_data.push(data);
-        // self.buffer.write()[index] = data;
         self.host_data.push(data);
 
-        // 返回字节偏移量
+        // Return byte offset
         (index * std::mem::size_of::<DynamicModelUniforms>()) as u32
     }
 
-    /// 将 `host_data` 同步到 `CpuBuffer`
+    /// Flush `host_data` to the `CpuBuffer`
     pub fn flush_to_buffer(&mut self) {
         if self.host_data.is_empty() {
             return;
         }
 
-        // 这一帧只获取一次锁/借用，进行批量拷贝
+        // Only acquire the lock/borrow once this frame for batch copy
         let mut buffer_write = self.buffer.write();
         let len = self.host_data.len();
-        // 确保 buffer 足够大 (expand_capacity 应该已经处理了，但为了安全)
+        // Ensure buffer is large enough (expand_capacity should have handled this, but for safety)
         if buffer_write.len() < len {
-            // 理论上不应发生，因为 allocate 会扩容，但 CpuBuffer 内部可能需要 resize
-            // 这里因为我们重建了 CpuBuffer，所以它是同步的
+            // Theoretically should not happen since allocate expands capacity,
+            // but CpuBuffer internals may need resizing.
+            // Since we've rebuilt CpuBuffer, this is synchronized.
         }
         buffer_write[..len].copy_from_slice(&self.host_data);
     }
 
-    /// 扩容
+    /// Expand capacity
     fn expand_capacity(&mut self) {
         let new_cap = (self.capacity * 2).max(128);
         log::info!(
@@ -102,7 +101,7 @@ impl ModelBufferAllocator {
         self.capacity = new_cap;
         self.needs_recreate = true;
 
-        // 重建 CpuBuffer
+        // Rebuild CpuBuffer
         let new_data = vec![DynamicModelUniforms::default(); new_cap];
         self.buffer = CpuBuffer::new(
             new_data,
@@ -115,7 +114,7 @@ impl ModelBufferAllocator {
         self.needs_recreate
     }
 
-    // 预先确保容量
+    // Pre-ensure capacity
     pub fn ensure_capacity(&mut self, required_count: usize) {
         if required_count > self.capacity {
             let mut new_cap = self.capacity;
@@ -134,7 +133,7 @@ impl ModelBufferAllocator {
             self.capacity = new_cap;
             self.needs_recreate = true;
 
-            // 重建 CpuBuffer
+            // Rebuild CpuBuffer
             let new_data = vec![DynamicModelUniforms::default(); new_cap];
             self.buffer = CpuBuffer::new(
                 new_data,
@@ -144,32 +143,32 @@ impl ModelBufferAllocator {
         }
     }
 
-    /// 获取 Buffer 句柄
+    /// Get the Buffer handle
     pub fn buffer_handle(&self) -> BufferRef {
         self.buffer.handle()
     }
 
-    /// 获取 Buffer ID
+    /// Get the Buffer ID
     pub fn buffer_id(&self) -> u64 {
         self.buffer.handle().id
     }
 
-    /// 获取当前帧的数据量
+    /// Get the data count for the current frame
     pub fn len(&self) -> usize {
         self.cursor
     }
 
-    /// 是否为空
+    /// Check if empty
     pub fn is_empty(&self) -> bool {
         self.cursor == 0
     }
 
-    /// 获取 `CpuBuffer` 引用（用于构建 `BindGroup`）
+    /// Get a reference to the `CpuBuffer` (used for building `BindGroup`)
     pub fn cpu_buffer(&self) -> &CpuBuffer<Vec<DynamicModelUniforms>> {
         &self.buffer
     }
 
-    /// 获取动态 uniform 的字节大小
+    /// Get the byte size of a dynamic uniform
     pub fn uniform_stride() -> NonZero<u64> {
         std::mem::size_of::<DynamicModelUniforms>()
             .try_into()

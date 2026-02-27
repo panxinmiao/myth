@@ -18,7 +18,7 @@ pub enum TrackData {
     MorphWeights(KeyframeTrack<MorphWeightData>),
 }
 
-/// 完整的轨道定义：包含元数据和关键帧数据
+/// Complete track definition: contains metadata and keyframe data.
 #[derive(Debug, Clone)]
 pub struct Track {
     pub meta: TrackMeta,

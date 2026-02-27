@@ -1,26 +1,27 @@
-//! 渲染图执行器
+//! Render Graph Executor
 //!
-//! `RenderGraph` 管理渲染节点的执行顺序。
-//! 采用瞬态图设计，每帧创建新的图实例，只存储节点引用。
+//! `RenderGraph` manages the execution order of render nodes.
+//! Uses a transient-graph design: a new graph instance is created each frame, storing only node references.
 
 use smallvec::SmallVec;
 
 use super::context::{ExecuteContext, PrepareContext};
 use super::node::RenderNode;
 
-/// 渲染图（瞬态引用容器）
+/// Render graph (transient reference container).
 ///
-/// 管理和执行渲染节点列表。采用瞬态设计，每帧创建新实例。
+/// Manages and executes a list of render nodes. Uses a transient design —
+/// a new instance is created each frame.
 ///
-/// # 设计说明
-/// - 使用生命周期参数 `'a` 存储节点引用，避免所有权转移
-/// - 每帧创建新的 Graph 实例，开销极低（仅 Vec 指针操作）
-/// - 节点本身持久化存储在 `RenderFrame` 中，复用内存
+/// # Design Notes
+/// - Lifetime parameter `'a` stores node references without ownership transfer
+/// - Creating a new Graph each frame has minimal cost (only Vec pointer pushes)
+/// - Nodes themselves are persistently stored in `RenderFrame`, reusing memory
 ///
-/// # 性能考虑
-/// - 瞬态图避免了复杂的缓存失效逻辑
-/// - 每帧重建图的开销约等于几次指针 push，可忽略不计
-/// - 后续可扩展为 DAG 结构以支持并行编码
+/// # Performance Considerations
+/// - The transient graph avoids complex cache invalidation logic
+/// - The per-frame rebuild cost is roughly a few pointer pushes — negligible
+/// - May be extended to a DAG structure in the future to support parallel encoding
 pub struct RenderGraph<'a> {
     nodes: SmallVec<[&'a mut dyn RenderNode; 8]>,
 }
@@ -32,7 +33,7 @@ impl Default for RenderGraph<'_> {
 }
 
 impl<'a> RenderGraph<'a> {
-    /// 创建空的渲染图
+    /// Creates an empty render graph.
     #[inline]
     #[must_use]
     pub fn new() -> Self {
@@ -41,7 +42,7 @@ impl<'a> RenderGraph<'a> {
         }
     }
 
-    /// 预分配节点容量
+    /// Pre-allocates node capacity.
     #[inline]
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
@@ -50,9 +51,9 @@ impl<'a> RenderGraph<'a> {
         }
     }
 
-    /// 添加渲染节点引用
+    /// Adds a render node reference.
     ///
-    /// 节点按添加顺序执行。
+    /// Nodes execute in the order they are added.
     #[inline]
     pub fn add_node(&mut self, node: &'a mut dyn RenderNode) {
         self.nodes.push(node);
@@ -64,13 +65,13 @@ impl<'a> RenderGraph<'a> {
         }
     }
 
-    /// 执行渲染图
+    /// Executes the render graph.
     ///
-    /// 创建 CommandEncoder，按顺序执行所有节点，最后提交命令。
+    /// Creates a CommandEncoder, executes all nodes in order, and submits the commands.
     ///
-    /// # 性能注意
-    /// - 所有节点共享同一个 CommandEncoder，减少提交次数
-    /// - Debug Group 用于 GPU 调试
+    /// # Performance Notes
+    /// - All nodes share a single CommandEncoder, reducing submission count
+    /// - Debug groups are used for GPU profiling
     pub fn execute(&self, ctx: &ExecuteContext) {
         let mut encoder =
             ctx.wgpu_ctx
@@ -90,7 +91,7 @@ impl<'a> RenderGraph<'a> {
         ctx.wgpu_ctx.queue.submit(Some(encoder.finish()));
     }
 
-    /// 获取节点数量
+    /// Returns the number of nodes.
     #[inline]
     #[must_use]
     pub fn node_count(&self) -> usize {

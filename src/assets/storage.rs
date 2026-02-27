@@ -4,7 +4,7 @@ use slotmap::{Key, SlotMap};
 use std::sync::Arc;
 use uuid::Uuid;
 
-// 内部数据结构，被锁保护
+// Internal data structure, protected by a lock.
 pub struct StorageInner<H: Key, T> {
     pub map: SlotMap<H, Arc<T>>,
     pub lookup: FxHashMap<Uuid, H>,
@@ -19,7 +19,7 @@ impl<H: Key, T> Default for StorageInner<H, T> {
     }
 }
 
-// 对外暴露的线程安全容器
+// Thread-safe container exposed to external consumers.
 pub struct AssetStorage<H: Key, T> {
     inner: RwLock<StorageInner<H, T>>,
 }
@@ -38,14 +38,14 @@ impl<H: Key, T> AssetStorage<H, T> {
         }
     }
 
-    /// [写操作] 添加资源，返回 Handle
-    /// 注意：不再需要 &mut self
+    /// [Write] Adds a resource and returns a Handle.
+    /// Note: `&mut self` is no longer required.
     pub fn add(&self, asset: impl Into<T>) -> H {
         let mut guard = self.inner.write();
         guard.map.insert(Arc::new(asset.into()))
     }
 
-    /// [写操作] 带 UUID 的添加 (用于文件加载去重)
+    /// [Write] Adds a resource with a UUID (used for file-load deduplication).
     pub fn add_with_uuid(&self, uuid: Uuid, asset: impl Into<T>) -> H {
         let mut guard = self.inner.write();
         if let Some(&handle) = guard.lookup.get(&uuid) {
@@ -56,8 +56,8 @@ impl<H: Key, T> AssetStorage<H, T> {
         handle
     }
 
-    /// [读操作] 获取单个资源
-    /// 返回 Arc<T>，开销极小
+    /// [Read] Gets a single resource.
+    /// Returns `Arc<T>` with minimal overhead.
     pub fn get(&self, handle: H) -> Option<Arc<T>> {
         let guard = self.inner.read();
         guard.map.get(handle).cloned()
@@ -69,14 +69,14 @@ impl<H: Key, T> AssetStorage<H, T> {
         guard.map.get(*handle).cloned()
     }
 
-    // 获取 Handle (如果只知道 UUID)
+    // Gets a Handle by UUID (when only the UUID is known).
     pub fn get_handle_by_uuid(&self, uuid: &Uuid) -> Option<H> {
         let guard = self.inner.read();
         guard.lookup.get(uuid).copied()
     }
 
-    /// [读操作 - 高级] 获取读锁 Guard
-    /// 用于渲染循环中的批量访问，避免多次获取锁
+    /// [Read - Advanced] Acquires a read-lock guard.
+    /// Used for batch access in the render loop to avoid acquiring the lock multiple times.
     pub fn read_lock(&self) -> RwLockReadGuard<'_, StorageInner<H, T>> {
         self.inner.read()
     }

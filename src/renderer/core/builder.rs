@@ -1,6 +1,6 @@
-//! 资源构建器
+//! Resource builder
 //!
-//! 用于构建 `BindGroup` Layout 和收集绑定资源
+//! Used for building `BindGroup` Layouts and collecting binding resources
 
 use crate::renderer::core::binding::BindingResource;
 use crate::resources::buffer::BufferRef;

@@ -279,7 +279,7 @@ pub trait MaterialTrait: Any + Send + Sync + std::fmt::Debug {
 /// 3. Define your uniform struct with `#[repr(C)]` and `bytemuck`
 /// 4. Create a corresponding shader template
 ///
-/// See `MeshStandardMaterial` for a reference implementation.
+/// See `MeshPhysicalMaterial` for a reference implementation.
 pub trait RenderableMaterialTrait: MaterialTrait {
     /// Returns the shader template name.
     fn shader_name(&self) -> &'static str;
@@ -363,11 +363,9 @@ impl MaterialSettings {
         match self.alpha_mode {
             AlphaMode::Opaque => {
                 defines.set("ALPHA_MODE", "OPAQUE");
-                // defines.set("OPAQUE", "1");
             }
             AlphaMode::Mask(_cutoff, _alpha_to_coverage) => {
                 defines.set("ALPHA_MODE", "MASK");
-                // defines.set("OPAQUE", "1");
             }
             AlphaMode::Blend => {
                 defines.set("ALPHA_MODE", "BLEND");
@@ -425,15 +423,14 @@ impl Drop for SettingsGuard<'_> {
 /// Material data enum with hybrid dispatch strategy.
 ///
 /// Uses "static dispatch + dynamic escape hatch" approach:
-/// - Built-in materials (Basic/Phong/Standard/Physical) use static dispatch for performance
+/// - Built-in materials (Basic/Phong/Physical) use static dispatch for performance
 /// - Custom variant allows user-defined materials via dynamic dispatch
 ///
 /// # Built-in Materials
 ///
 /// - [`MeshBasicMaterial`]: Unlit, flat-shaded material
 /// - [`MeshPhongMaterial`]: Classic Blinn-Phong shading
-/// - [`MeshStandardMaterial`]: PBR metallic-roughness workflow
-/// - [`MeshPhysicalMaterial`]: Advanced PBR with clearcoat, transmission, etc.
+/// - [`MeshPhysicalMaterial`]: PBR material with metallic-roughness workflow, clearcoat, transmission, etc.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum MaterialType {

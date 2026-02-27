@@ -42,7 +42,7 @@ impl AnimationAction {
             loop_mode: LoopMode::Loop,
             paused: false,
             enabled: true,
-            // 初始化对应数量的游标
+            // Initialize corresponding number of cursors
             bindings: Vec::new(),
             track_cursors: vec![KeyframeCursor::default(); track_count],
         }
@@ -53,7 +53,7 @@ impl AnimationAction {
         &self.clip
     }
 
-    /// 核心逻辑：推进时间
+    /// Core logic: advance time.
     pub fn update(&mut self, dt: f32) {
         if self.paused || !self.enabled {
             return;
@@ -64,35 +64,35 @@ impl AnimationAction {
             return;
         }
 
-        // 1. 累加时间
+        // 1. Accumulate time
         self.time += dt * self.time_scale;
 
-        // 2. 处理循环模式
+        // 2. Handle loop mode
         match self.loop_mode {
             LoopMode::Once => {
-                // 播放一次，停在终点或起点
+                // Play once, stop at end or start
                 if self.time >= duration {
                     self.time = duration;
-                    self.paused = true; // 自动暂停
+                    self.paused = true; // Auto-pause
                 } else if self.time < 0.0 {
                     self.time = 0.0;
                     self.paused = true;
                 }
             }
             LoopMode::Loop => {
-                // 标准循环：取模
+                // Standard loop: modulo
                 if self.time >= duration {
                     self.time %= duration;
                 } else if self.time < 0.0 {
-                    // 处理倒放循环
+                    // Handle reverse playback loop
                     self.time = duration + (self.time % duration);
                 }
             }
             LoopMode::PingPong => {
-                // 往复模式逻辑相对复杂，暂略，需要记录方向
-                // 简单实现：使用 PingPong 数学公式
+                // PingPong mode logic is more complex; deferred, requires tracking direction
+                // Simple implementation: use PingPong math formula
                 // time = ping_pong(time, duration)
-                // 这里先简化为 Loop
+                // Simplified to Loop for now
                 if self.time >= duration {
                     self.time %= duration;
                 }
@@ -100,7 +100,7 @@ impl AnimationAction {
         }
     }
 
-    /// 获取指定轨道在当前时间的值
+    /// Gets the value of the specified track at the current time.
     pub fn sample_track(&mut self, track_index: usize) -> Option<TrackValue> {
         let track = self.clip.tracks.get(track_index)?;
         let cursor = self.track_cursors.get_mut(track_index)?;

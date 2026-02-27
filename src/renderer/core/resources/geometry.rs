@@ -1,4 +1,4 @@
-//! Geometry 相关操作
+//! Geometry operations
 
 use std::ops::Range;
 
@@ -9,9 +9,9 @@ use crate::resources::geometry::Geometry;
 
 use super::ResourceManager;
 
-/// GPU 端几何体资源
+/// GPU-side geometry resource
 ///
-/// Vertex Buffer IDs 用于 Pipeline 缓存验证，不影响 `BindGroup`
+/// Vertex Buffer IDs are used for Pipeline cache validation and do not affect `BindGroup`
 pub struct GpuGeometry {
     pub layout_info: GeneratedVertexLayout,
     pub layout_id: u64,
@@ -25,9 +25,9 @@ pub struct GpuGeometry {
     pub last_used_frame: u64,
 }
 
-/// Geometry 准备结果
+/// Geometry preparation result
 ///
-/// Vertex Buffer IDs 用于 Pipeline 缓存验证，不影响 Object `BindGroup`
+/// Vertex Buffer IDs are used for Pipeline cache validation and do not affect Object `BindGroup`
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct GeometryPrepareResult {
@@ -37,9 +37,9 @@ pub struct GeometryPrepareResult {
 }
 
 impl ResourceManager {
-    /// 准备 Geometry 的 GPU 资源
+    /// Prepare Geometry GPU resources
     ///
-    /// 返回 GeometryPrepareResult，包含所有物理资源 ID
+    /// Returns GeometryPrepareResult containing all physical resource IDs
     pub(crate) fn prepare_geometry(
         &mut self,
         assets: &AssetServer,
@@ -47,7 +47,7 @@ impl ResourceManager {
     ) -> Option<GeometryPrepareResult> {
         let geometry = assets.geometries.get(handle)?;
 
-        // 快速路径：检查是否需要任何更新
+        // Fast path: check if any update is needed
         if let Some(gpu_geo) = self.gpu_geometries.get_mut(handle)
             && geometry.structure_version() == gpu_geo.version
             && geometry.data_version() == gpu_geo.last_data_version
@@ -60,7 +60,7 @@ impl ResourceManager {
             });
         }
 
-        // 确保所有属性缓冲区
+        // Ensure all attribute buffers
         let mut any_buffer_recreated = false;
         let mut new_vertex_ids = Vec::new();
 
@@ -81,7 +81,7 @@ impl ResourceManager {
             }
         }
 
-        // 检查是否需要重建 GpuGeometry
+        // Check if GpuGeometry needs to be rebuilt
         let needs_rebuild = if let Some(gpu_geo) = self.gpu_geometries.get(handle) {
             geometry.structure_version() > gpu_geo.version
                 || any_buffer_recreated
@@ -93,7 +93,7 @@ impl ResourceManager {
         if needs_rebuild {
             self.create_gpu_geometry(&geometry, handle);
         } else {
-            // 仅更新数据版本
+            // Only update the data version
             if let Some(gpu_geo) = self.gpu_geometries.get_mut(handle) {
                 gpu_geo.last_data_version = geometry.data_version();
             }

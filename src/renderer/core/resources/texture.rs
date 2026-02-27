@@ -1,10 +1,10 @@
-//! Texture 和 Image 相关操作
+//! Texture and Image operations
 //!
-//! 核心概念：
-//! - `GpuImage`: 物理纹理资源，包含 `wgpu::Texture` 和默认视图
-//! - `GpuSampler`: 采样器状态，全局缓存复用
-//! - `TextureBinding`: 将 `TextureHandle` 映射到 (`ImageId`, `ViewId`, `SamplerId`)
-//! - `TextureViewKey`: 视图缓存键，支持"一份数据，多种视图"
+//! Core concepts:
+//! - `GpuImage`: Physical texture resource, containing `wgpu::Texture` and default view
+//! - `GpuSampler`: Sampler state, globally cached for reuse
+//! - `TextureBinding`: Maps `TextureHandle` to (`ImageId`, `ViewId`, `SamplerId`)
+//! - `TextureViewKey`: View cache key, supports "one set of data, multiple views"
 
 use std::sync::atomic::Ordering;
 
@@ -16,24 +16,24 @@ use crate::resources::texture::{SamplerSource, TextureSampler};
 
 use super::ResourceManager;
 
-/// 纹理资源映射
+/// Texture resource mapping
 ///
-/// 将 `TextureHandle` 映射到对应的 `GpuImage` ID、View ID 和 `GpuSampler` ID
+/// Maps `TextureHandle` to the corresponding `GpuImage` ID, View ID, and `GpuSampler` ID
 #[derive(Debug, Clone, Copy)]
 pub struct TextureBinding {
-    /// GPU 端图像视图 ID
+    /// GPU-side image view ID
     pub view_id: u64,
-    /// CPU 端图像 ID
+    /// CPU-side image ID
     pub cpu_image_id: u64,
     pub sampler_id: u64,
-    /// CPU 端 Texture 版本（用于检测采样参数变化）
+    /// CPU-side Texture version (used to detect sampler parameter changes)
     pub texture_version: u64,
 }
 
-/// 纹理视图缓存键
+/// Texture view cache key
 ///
-/// 用于按需创建和缓存不同配置的 `TextureView`。
-/// Key 包含 `view_id，确保底层` Image 重建时自动失效。
+/// Used for on-demand creation and caching of `TextureView` with different configurations.
+/// The key contains `view_id`, ensuring automatic invalidation when the underlying Image is rebuilt.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureViewKey {
     pub view_id: u64,
@@ -61,26 +61,11 @@ impl TextureViewKey {
             aspect: desc.aspect,
         }
     }
-
-    // #[inline]
-    // #[must_use]
-    // pub fn default_for_view(view_id: u64) -> Self {
-    //     Self {
-    //         view_id,
-    //         format: None,
-    //         dimension: None,
-    //         base_mip_level: 0,
-    //         mip_level_count: None,
-    //         base_array_layer: 0,
-    //         array_layer_count: None,
-    //         aspect: wgpu::TextureAspect::All,
-    //     }
-    // }
 }
 
-/// GPU 端图像资源
+/// GPU-side image resource
 ///
-/// 包含物理纹理和默认视图，不包含采样器
+/// Contains the physical texture and default view, excluding sampler
 pub struct GpuImage {
     pub id: u64,
     pub texture: wgpu::Texture,
@@ -96,9 +81,9 @@ pub struct GpuImage {
     pub last_used_frame: u64,
 }
 
-/// GPU 端采样器资源
+/// GPU-side sampler resource
 ///
-/// 与 `GpuImage` 分离，实现全局缓存和复用
+/// Separated from `GpuImage` to enable global caching and reuse
 pub struct GpuSampler {
     pub id: u64,
     pub sampler: wgpu::Sampler,
@@ -357,36 +342,36 @@ impl ResourceManager {
         self.texture_bindings.insert(handle, binding);
     }
 
-    /// 准备 Sampler 资源
+    /// Prepare Sampler resources
     ///
-    /// 逻辑：
-    /// 1. 从 `AssetServer` 获取 Sampler 数据
-    /// 2. 构建 Descriptor Key
-    /// 3. 查 `sampler_cache` (去重)
-    ///    - 命中：直接复用 ID
-    ///    - 未命中：创建新 `wgpu::Sampler，存入` cache 和 lookup
-    /// 4. 更新 `sampler_bindings` 映射
+    /// Logic:
+    /// 1. Retrieve Sampler data from `AssetServer`
+    /// 2. Build Descriptor Key
+    /// 3. Check `sampler_cache` (deduplication)
+    ///    - Hit: reuse existing ID
+    ///    - Miss: create new `wgpu::Sampler`, store in cache and lookup
+    /// 4. Update `sampler_bindings` mapping
     pub fn prepare_sampler(&mut self, assets: &AssetServer, handle: SamplerHandle) -> u64 {
-        // 1. 如果已经绑定且 Asset 版本没变，直接返回 (优化)
+        // 1. If already bound and Asset version unchanged, return immediately (optimization)
         if let Some(&id) = self.sampler_bindings.get(handle) {
-            // 这里可以加版本检查逻辑，类似 prepare_texture
+            // Version check logic can be added here, similar to prepare_texture
             return id;
         }
 
-        // 2. 获取 Asset 数据
+        // 2. Retrieve Asset data
         let sampler_asset = assets
             .samplers
             .get(handle)
             .expect("Sampler asset not found");
 
-        // 3. 构建 Key
+        // 3. Build Key
         let key = sampler_asset.descriptor;
 
-        // 4. 查找或创建 GPU 资源 (Flyweight 模式)
+        // 4. Look up or create GPU resource (Flyweight pattern)
         let id = if let Some(gpu_sampler) = self.sampler_cache.get(&key) {
             gpu_sampler.id
         } else {
-            // 创建新的 wgpu::Sampler
+            // Create new wgpu::Sampler
             let desc = wgpu::SamplerDescriptor {
                 label: Some("Cached Sampler"),
                 address_mode_u: key.address_mode_u,
@@ -395,7 +380,7 @@ impl ResourceManager {
                 mag_filter: key.mag_filter,
                 min_filter: key.min_filter,
                 mipmap_filter: key.mipmap_filter,
-                lod_min_clamp: 0.0, // 这些参数如果在 Key 里没有，就用默认值
+                lod_min_clamp: 0.0, // Use defaults for parameters not in the Key
                 lod_max_clamp: 32.0,
                 compare: key.compare,
                 anisotropy_clamp: key.anisotropy_clamp,
@@ -414,7 +399,7 @@ impl ResourceManager {
             new_id
         };
 
-        // 5. 记录绑定关系
+        // 5. Record binding relationship
         self.sampler_bindings.insert(handle, id);
 
         id
@@ -428,7 +413,7 @@ impl ResourceManager {
                 }
 
                 if let Some(texture) = assets.textures.get(tex_handle) {
-                    // [修改] 不需要转换 Key，直接传 sampler
+                    // [Modified] No need to convert Key, pass sampler directly
                     self.get_or_create_sampler(texture.sampler, texture.name())
                 } else {
                     self.dummy_sampler.id
@@ -441,10 +426,10 @@ impl ResourceManager {
         }
     }
 
-    /// 获取指定配置的 `TextureView`
+    /// Get a `TextureView` with the specified configuration
     ///
-    /// 极速路径：如果 desc 为 None，直接返回默认视图
-    /// 缓存路径：根据 `TextureViewKey` 查找/创建视图
+    /// Fast path: if desc is None, return the default view directly
+    /// Cache path: look up/create view based on `TextureViewKey`
     #[inline]
     pub fn get_texture_view_desc(
         &mut self,
@@ -472,7 +457,7 @@ impl ResourceManager {
         Some((view, *id))
     }
 
-    /// 获取指定配置的 TextureView（不可变版本，仅查缓存）
+    /// Get a `TextureView` with the specified configuration (immutable version, cache-only lookup)
     #[inline]
     pub fn get_texture_view_cached(
         &self,
@@ -497,7 +482,7 @@ impl ResourceManager {
         descriptor: TextureSampler,
         label: Option<&str>,
     ) -> u64 {
-        // 1. 直接用 descriptor 查表
+        // 1. Look up directly using descriptor
         if let Some(gpu_sampler) = self.sampler_cache.get(&descriptor) {
             return gpu_sampler.id;
         }

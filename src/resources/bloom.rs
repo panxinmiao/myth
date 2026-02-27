@@ -89,7 +89,7 @@ pub struct BloomSettings {
     /// The actual count is clamped to the maximum possible for the render
     /// target size.
     ///
-    /// Default: `8`
+    /// Default: `6`
     pub max_mip_levels: u32,
 
     /// Whether to apply Karis average on the first downsample pass.

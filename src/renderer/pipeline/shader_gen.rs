@@ -1,6 +1,6 @@
-//! 着色器代码生成器
+//! Shader Code Generator
 //!
-//! 使用模板引擎生成最终的 WGSL 代码
+//! Uses a template engine to generate final WGSL code
 
 use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
@@ -10,17 +10,17 @@ use crate::resources::shader_defines::ShaderDefines;
 use minijinja::value::Value;
 use serde::Serialize;
 
-/// Shader 编译选项
+/// Shader compilation options.
 ///
-/// 包含生成 Shader 所需的所有宏定义。
-/// 使用 `ShaderDefines` 存储所有来自材质、几何体和场景的宏定义。
+/// Contains all macro definitions needed to generate a shader.
+/// Uses `ShaderDefines` to store all defines from materials, geometries, and scenes.
 #[derive(Debug, Clone, Default)]
 pub struct ShaderCompilationOptions {
     pub(crate) defines: ShaderDefines,
 }
 
 impl ShaderCompilationOptions {
-    /// 创建新的编译选项
+    /// Creates new compilation options.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -28,7 +28,7 @@ impl ShaderCompilationOptions {
         }
     }
 
-    /// 从材质、几何体和场景的宏定义合并创建
+    /// Creates from merged material, geometry, and scene defines.
     #[must_use]
     pub fn from_merged(
         mat_defines: &ShaderDefines,
@@ -43,14 +43,14 @@ impl ShaderCompilationOptions {
         Self { defines }
     }
 
-    /// 获取宏定义的引用
+    /// Returns a reference to the shader defines.
     #[inline]
     #[must_use]
     pub fn defines(&self) -> &ShaderDefines {
         &self.defines
     }
 
-    /// 获取可变的宏定义引用
+    /// Returns a mutable reference to the shader defines.
     #[inline]
     pub fn defines_mut(&mut self) -> &mut ShaderDefines {
         &mut self.defines
@@ -60,13 +60,13 @@ impl ShaderCompilationOptions {
         self.defines.set(key, value);
     }
 
-    /// 计算编译选项的哈希值（用于缓存）
+    /// Computes the hash of the compilation options (used for caching).
     #[must_use]
     pub fn compute_hash(&self) -> u64 {
         self.defines.compute_hash()
     }
 
-    /// 转换为模板渲染所需的 Map
+    /// Converts to the Map required for template rendering.
     fn to_template_map(&self) -> BTreeMap<String, String> {
         self.defines
             .iter_strings()

@@ -1,6 +1,6 @@
-//! 着色器模板管理
+//! Shader Template Manager
 //!
-//! 使用 minijinja 模板引擎管理 WGSL 着色器
+//! Manages WGSL shaders using the minijinja template engine
 
 use minijinja::value::{Object, Value};
 use minijinja::{Environment, Error, ErrorKind, syntax::SyntaxConfig};

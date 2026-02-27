@@ -30,7 +30,7 @@
 //! ```rust,ignore
 //! use myth::scene::{Scene, Node, Camera, Light};
 //!
-//! let mut scene = Scene::new();
+//! let mut scene = Scene::new(AssetServer::new());
 //!
 //! // Create a camera
 //! let camera_node = scene.create_node_with_name("MainCamera");

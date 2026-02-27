@@ -933,7 +933,7 @@ impl Scene {
                 mesh.update_morph_uniforms();
             } else if let Some(node) = self.nodes.get(handle) {
                 for &child_handle in &node.children {
-                    // 广播给拥有 SplitPrimitiveTag 的节点
+                    // Broadcast to child nodes that have SplitPrimitiveTag
                     if self.split_primitive_tags.contains_key(child_handle)
                         && let Some(child_mesh) = self.meshes.get_mut(child_handle)
                     {

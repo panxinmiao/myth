@@ -103,10 +103,10 @@ define_gpu_data_struct!(
     }
 );
 
-/// Tone mapping configuration (pure data + version control).
+/// Tone mapping configuration.
 ///
 /// This struct holds all parameters for the tone mapping post-processing pass.
-/// Changes are tracked via an internal version number for efficient GPU sync.
+/// Changes to uniforms are tracked via `CpuBuffer`'s internal version for efficient GPU sync.
 ///
 /// # Usage
 ///
@@ -175,23 +175,12 @@ impl ToneMappingSettings {
         Self::default()
     }
 
-    // /// Gets the current version number.
-    // ///
-    // /// The version is incremented whenever any setting changes,
-    // /// allowing render passes to detect when updates are needed.
-    // #[inline]
-    // #[must_use]
-    // pub fn version(&self) -> u64 {
-    //     self.version
-    // }
-
     /// Sets the tone mapping mode.
     ///
-    /// Only updates the version if the mode actually changed.
+    /// Only updates the mode if the value actually changed.
     pub fn set_mode(&mut self, mode: ToneMappingMode) {
         if self.mode != mode {
             self.mode = mode;
-            // self.bump_version();
         }
     }
 
@@ -264,12 +253,4 @@ impl ToneMappingSettings {
     pub fn has_lut(&self) -> bool {
         self.lut_texture.is_some()
     }
-
-    // /// Manually bumps the version number.
-    // ///
-    // /// Call this to force a GPU update even if parameters haven't changed.
-    // #[inline]
-    // pub fn bump_version(&mut self) {
-    //     self.version = self.version.wrapping_add(1);
-    // }
 }

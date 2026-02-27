@@ -79,14 +79,14 @@ impl WgpuContext {
         log::debug!("Device: {}", info.name);
         log::debug!("Vendor: {:x}", info.vendor);
 
-        // ===  查询 Surface 支持的格式 ===
+        // === Query Surface-supported formats ===
         let caps = surface.get_capabilities(&adapter);
 
-        // 打印调试信息，查看当前平台支持哪些格式
+        // Print debug info showing formats supported on the current platform
         log::debug!("Surface Supported Formats: {:?}", caps.formats);
 
-        // 优先选择 sRGB 格式 (Native)，如果没有 (Web)，则选择第一个可用格式 (通常是 Linear)
-        // 注意：在 Web 上，这里肯定找不到 Srgb 格式，会回退到 caps.formats[0]
+        // Prefer sRGB format (Native); if unavailable (Web), select the first available format (usually Linear)
+        // Note: On the Web, an sRGB format will definitely not be found here, falling back to caps.formats[0]
         let surface_format = caps
             .formats
             .iter()

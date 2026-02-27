@@ -1,13 +1,13 @@
-//! 带状态追踪的渲染通道
+//! State-tracked Render Pass
 //!
-//! 避免冗余的状态切换调用
+//! Avoids redundant state-switching calls.
 //!
 
-// 用于替代 Vec<u32> 的结构体，避免堆内存分配
+// Replaces `Vec<u32>` to avoid heap memory allocation.
 #[derive(Clone, Copy, PartialEq)]
 struct BindGroupState {
     id: u64,
-    // wgpu 的动态偏移量通常很少（限制一般是 8 或 4），用固定数组足够
+    // wgpu dynamic offsets are typically few (limit is usually 8 or 4); a fixed array is sufficient.
     offsets: [u32; 8],
     offset_count: u8,
 }

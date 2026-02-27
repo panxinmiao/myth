@@ -7,8 +7,8 @@ pub fn create_box(width: f32, height: f32, depth: f32) -> Geometry {
     let h = height / 2.0;
     let d = depth / 2.0;
 
-    // 24 个顶点 (每个面 4 个)
-    // 格式: [x, y, z]
+    // 24 vertices (4 per face)
+    // Format: [x, y, z]
     let positions = [
         // Front face (+Z)
         [-w, -h, d],
@@ -42,7 +42,7 @@ pub fn create_box(width: f32, height: f32, depth: f32) -> Geometry {
         [-w, h, -d],
     ];
 
-    // 法线 (每个面的 4 个顶点法线相同)
+    // Normals (all 4 vertices of each face share the same normal)
     let normals: [[f32; 3]; 24] = [
         // Front
         [0.0, 0.0, 1.0],
@@ -76,7 +76,7 @@ pub fn create_box(width: f32, height: f32, depth: f32) -> Geometry {
         [-1.0, 0.0, 0.0],
     ];
 
-    // UV 坐标 (标准 0~1)
+    // UV coordinates (standard 0–1 range)
     let uvs: [[f32; 2]; 24] = [
         // Front
         [0.0, 1.0],
@@ -110,7 +110,7 @@ pub fn create_box(width: f32, height: f32, depth: f32) -> Geometry {
         [0.0, 0.0],
     ];
 
-    // 索引 (每面 2 个三角形，逆时针绕序 CCW)
+    // Indices (2 triangles per face, counter-clockwise winding order CCW)
     // 0, 1, 2,  0, 2, 3
     let indices: Vec<u16> = (0..6)
         .flat_map(|face| {

@@ -1,13 +1,13 @@
-//! Winit 输入事件适配器
+//! Winit input event adapter.
 //!
-//! 将 Winit 的输入事件翻译为引擎的平台无关输入类型。
+//! Translates Winit input events into the engine's platform-agnostic input types.
 
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
 use crate::resources::input::{ButtonState, Input, Key, MouseButton};
 
-/// 将 Winit 的 `PhysicalKey` 转换为引擎的 Key
+/// Translates Winit's `PhysicalKey` to the engine's `Key`.
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn translate_key(physical_key: PhysicalKey) -> Option<Key> {
@@ -16,7 +16,7 @@ pub fn translate_key(physical_key: PhysicalKey) -> Option<Key> {
     };
 
     let key = match code {
-        // 字母键
+        // Letter keys
         KeyCode::KeyA => Key::A,
         KeyCode::KeyB => Key::B,
         KeyCode::KeyC => Key::C,
@@ -44,7 +44,7 @@ pub fn translate_key(physical_key: PhysicalKey) -> Option<Key> {
         KeyCode::KeyY => Key::Y,
         KeyCode::KeyZ => Key::Z,
 
-        // 数字键
+        // Number keys
         KeyCode::Digit0 => Key::Key0,
         KeyCode::Digit1 => Key::Key1,
         KeyCode::Digit2 => Key::Key2,
@@ -56,7 +56,7 @@ pub fn translate_key(physical_key: PhysicalKey) -> Option<Key> {
         KeyCode::Digit8 => Key::Key8,
         KeyCode::Digit9 => Key::Key9,
 
-        // 功能键
+        // Function keys
         KeyCode::F1 => Key::F1,
         KeyCode::F2 => Key::F2,
         KeyCode::F3 => Key::F3,
@@ -70,7 +70,7 @@ pub fn translate_key(physical_key: PhysicalKey) -> Option<Key> {
         KeyCode::F11 => Key::F11,
         KeyCode::F12 => Key::F12,
 
-        // 控制键
+        // Control keys
         KeyCode::Space => Key::Space,
         KeyCode::Enter => Key::Enter,
         KeyCode::Escape => Key::Escape,
@@ -83,7 +83,7 @@ pub fn translate_key(physical_key: PhysicalKey) -> Option<Key> {
         KeyCode::PageUp => Key::PageUp,
         KeyCode::PageDown => Key::PageDown,
 
-        // 修饰键
+        // Modifier keys
         KeyCode::ShiftLeft => Key::ShiftLeft,
         KeyCode::ShiftRight => Key::ShiftRight,
         KeyCode::ControlLeft => Key::ControlLeft,
@@ -93,13 +93,13 @@ pub fn translate_key(physical_key: PhysicalKey) -> Option<Key> {
         KeyCode::SuperLeft => Key::SuperLeft,
         KeyCode::SuperRight => Key::SuperRight,
 
-        // 方向键
+        // Arrow keys
         KeyCode::ArrowUp => Key::ArrowUp,
         KeyCode::ArrowDown => Key::ArrowDown,
         KeyCode::ArrowLeft => Key::ArrowLeft,
         KeyCode::ArrowRight => Key::ArrowRight,
 
-        // 标点符号
+        // Punctuation keys
         KeyCode::Comma => Key::Comma,
         KeyCode::Period => Key::Period,
         KeyCode::Slash => Key::Slash,
@@ -112,7 +112,7 @@ pub fn translate_key(physical_key: PhysicalKey) -> Option<Key> {
         KeyCode::Equal => Key::Equal,
         KeyCode::Backquote => Key::Grave,
 
-        // 小键盘
+        // Numpad keys
         KeyCode::Numpad0 => Key::Numpad0,
         KeyCode::Numpad1 => Key::Numpad1,
         KeyCode::Numpad2 => Key::Numpad2,
@@ -136,7 +136,7 @@ pub fn translate_key(physical_key: PhysicalKey) -> Option<Key> {
     Some(key)
 }
 
-/// 将 Winit 的 `MouseButton` 转换为引擎的 `MouseButton`
+/// Translates Winit's `MouseButton` to the engine's `MouseButton`.
 #[must_use]
 pub fn translate_mouse_button(button: winit::event::MouseButton) -> MouseButton {
     match button {
@@ -149,7 +149,7 @@ pub fn translate_mouse_button(button: winit::event::MouseButton) -> MouseButton 
     }
 }
 
-/// 将 Winit 的 `ElementState` 转换为引擎的 `ButtonState`
+/// Translates Winit's `ElementState` to the engine's `ButtonState`.
 #[must_use]
 pub fn translate_element_state(state: ElementState) -> ButtonState {
     match state {
@@ -158,7 +158,7 @@ pub fn translate_element_state(state: ElementState) -> ButtonState {
     }
 }
 
-/// 处理 Winit 窗口事件并注入到 Input
+/// Processes a Winit window event and injects it into `Input`.
 pub fn process_window_event(input: &mut Input, event: &WindowEvent) {
     match event {
         WindowEvent::KeyboardInput { event, .. } => {

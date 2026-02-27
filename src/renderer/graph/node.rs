@@ -1,36 +1,36 @@
-//! 渲染节点 Trait
+//! Render Node Trait
 //!
-//! 定义渲染图中节点的抽象接口。
-//! 每个节点代表一个渲染 Pass 或计算任务。
+//! Defines the abstract interface for nodes in the render graph.
+//! Each node represents a render pass or a compute task.
 
 use super::context::{ExecuteContext, PrepareContext};
 
-/// 渲染节点 Trait
+/// Render Node Trait
 ///
-/// 所有渲染 Pass 必须实现此接口。
+/// All render passes must implement this interface.
 ///
-/// # 设计原则
-/// - `prepare` 接收 `PrepareContext`（可变），用于资源分配和管线创建
-/// - `run` 接收 `ExecuteContext`（只读）+ `CommandEncoder`，用于录制 GPU 命令
-/// - 节点应该在 `prepare` 中完成所有可变操作，`run` 仅做只读渲染
+/// # Design Principles
+/// - `prepare` receives a `PrepareContext` (mutable) for resource allocation and pipeline creation
+/// - `run` receives an `ExecuteContext` (read-only) + `CommandEncoder` for recording GPU commands
+/// - Nodes should complete all mutable operations in `prepare`; `run` should be read-only
 ///
-/// # 性能考虑
-/// - 避免在 `run` 中进行内存分配
-/// - 利用 `encoder.push_debug_group` 进行 GPU 调试
+/// # Performance Considerations
+/// - Avoid memory allocations in `run`
+/// - Use `encoder.push_debug_group` for GPU profiling
 ///
 pub trait RenderNode {
-    /// 返回节点名称，用于调试和性能分析
+    /// Returns the node name, used for debugging and profiling.
     fn name(&self) -> &str;
 
-    /// 准备阶段：分配资源、编译管线、构建 BindGroup
+    /// Prepare phase: allocate resources, compile pipelines, and build BindGroups.
     ///
-    /// 拥有对引擎子系统的可变访问权限。
+    /// Has mutable access to engine subsystems.
     fn prepare(&mut self, _ctx: &mut PrepareContext) {}
 
-    /// 执行阶段：录制 GPU 渲染命令
+    /// Execute phase: record GPU rendering commands.
     ///
-    /// # 参数
-    /// - `ctx`: 只读执行上下文，包含所有共享资源
-    /// - `encoder`: GPU 命令编码器
+    /// # Arguments
+    /// - `ctx`: Read-only execution context containing all shared resources
+    /// - `encoder`: GPU command encoder
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder);
 }

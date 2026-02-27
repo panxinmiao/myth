@@ -751,8 +751,6 @@ impl Geometry {
 
         let mut min = Vec3::splat(f32::INFINITY);
         let mut max = Vec3::splat(f32::NEG_INFINITY);
-        // Removed sum_pos, no longer need to calculate average
-        // let mut sum_pos = Vec3::ZERO;
         let mut valid_points_count = 0;
 
         // Pass 1: Compute AABB (Min/Max)
@@ -767,7 +765,6 @@ impl Geometry {
 
                     min = min.min(vec);
                     max = max.max(vec);
-                    // sum_pos += vec;
                     valid_points_count += 1;
                 }
             } else {

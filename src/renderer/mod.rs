@@ -72,9 +72,9 @@ use self::graph::{FrameComposer, RenderFrame};
 use self::pipeline::PipelineCache;
 use self::settings::{RenderPath, RendererSettings};
 
-/// HDR 纹理格式
+/// HDR texture format.
 ///
-/// 用于高动态范围渲染目标, 中间缓冲区的格式
+/// Format used for high dynamic range render targets and intermediate buffers.
 pub const HDR_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 
 /// The main renderer responsible for GPU rendering operations.
@@ -104,9 +104,9 @@ struct RendererState {
     pipeline_cache: PipelineCache,
 
     render_frame: RenderFrame,
-    /// 渲染列表（与 `render_frame` 分离以避免借用冲突）
+    /// Render lists (separated from `render_frame` to avoid borrow conflicts)
     render_lists: RenderLists,
-    /// 帧黑板（跨 Pass 瞬态数据通信，每帧清空）
+    /// Frame blackboard (cross-pass transient data communication, cleared each frame)
     blackboard: FrameBlackboard,
 
     frame_resources: FrameResources,
@@ -337,23 +337,22 @@ impl Renderer {
         frame_builder.add_node(RenderStage::PreProcess, &mut state.cull_pass);
 
         // ========================================
-        // 2. 阴影
+        // 2. Shadows
         // ========================================
         frame_builder.add_node(RenderStage::ShadowMap, &mut state.shadow_pass);
 
         // ========================================
-        // 3. 路径选择：HighFidelity (PBR/HDR Path) vs BasicForward (LDR Path)
+        // 3. Path selection: HighFidelity (PBR/HDR Path) vs BasicForward (LDR Path)
         // ========================================
         //
         // HighFidelity: OpaquePass → [TransmissionCopyPass] → TransparentPass → ToneMapPass
-        // BasicForward: SimpleForwardPass (直接输出到 Surface)
+        // BasicForward: SimpleForwardPass (outputs directly to Surface)
         //
         match &self.settings.path {
             RenderPath::HighFidelity => {
                 // === PBR Path (HDR) ===
 
                 let is_ssao_enabled = scene.ssao.enabled;
-                // let is_ssao_enabled = state.render_frame.extracted_scene.scene_variants.contains(SceneFeatures::USE_SSAO)
 
                 let needs_feature_id =
                     scene.screen_space.enable_sss || scene.screen_space.enable_ssr;
@@ -361,11 +360,9 @@ impl Renderer {
                 let needs_normal = is_ssao_enabled || needs_feature_id;
 
                 // Z-Normal pre-pass (conditional)
-                // if state.wgpu_ctx.render_path.requires_z_prepass() {
                 state.prepass.needs_normal = needs_normal;
                 state.prepass.needs_feature_id = needs_feature_id;
                 frame_builder.add_node(RenderStage::PreProcess, &mut state.prepass);
-                // }
 
                 // SSAO (after depth-normal prepass, before opaque rendering)
                 // When enabled, SsaoPass reads depth+normal, writes AO texture,
@@ -390,8 +387,8 @@ impl Renderer {
                 }
 
                 // Transmission copy (conditional)
-                // 注意：TransmissionCopyPass 内部会检查 use_transmission 标志
-                // 如果场景中没有使用 Transmission 的材质，此 Pass 会提前返回
+                // Note: TransmissionCopyPass internally checks the use_transmission flag.
+                // If no materials in the scene use Transmission, this pass returns early.
                 frame_builder.add_node(
                     RenderStage::BeforeTransparent,
                     &mut state.transmission_copy_pass,
@@ -451,7 +448,7 @@ impl Renderer {
         }
 
         // ========================================
-        // 3. 构建 ComposerContext
+        // 3. Build ComposerContext
         // ========================================
         let ctx = ComposerContext {
             wgpu_ctx: &mut state.wgpu_ctx,

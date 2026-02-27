@@ -5,8 +5,8 @@ use crate::scene::{NodeHandle, Scene};
 pub struct Binder;
 
 impl Binder {
-    /// 解析动画片段，将轨道绑定到场景中的实际 `NodeHandle`
-    /// 搜索整个场景中的节点
+    /// Resolves an animation clip, binding tracks to actual `NodeHandle`s in the scene.
+    /// Searches all nodes across the entire scene.
     pub fn bind(
         scene: &Scene,
         _root_node: NodeHandle,

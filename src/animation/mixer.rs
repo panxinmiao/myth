@@ -48,26 +48,26 @@ impl AnimationMixer {
         let name = action.clip().name.clone();
 
         let handle = self.actions.insert(action);
-        // 建立索引
+        // Build name-to-handle index
         self.name_map.insert(name, handle);
 
         handle
     }
 
-    /// 只读访问
+    /// Read-only access
     #[must_use]
     pub fn get_action(&self, name: &str) -> Option<&AnimationAction> {
         let handle = *self.name_map.get(name)?;
         self.actions.get(handle)
     }
 
-    /// 只读访问
+    /// Read-only access
     #[must_use]
     pub fn get_action_by_handle(&self, handle: ActionHandle) -> Option<&AnimationAction> {
         self.actions.get(handle)
     }
 
-    // 获取动画控制器
+    // Get animation controller
     pub fn action(&mut self, name: &str) -> Option<ActionControl<'_>> {
         let handle = *self.name_map.get(name)?;
         Some(ActionControl {
@@ -87,7 +87,7 @@ impl AnimationMixer {
         }
     }
 
-    /// 如果用户已经有了 Handle
+    /// Returns a control wrapper if the user already has a Handle.
     pub fn get_control(&mut self, handle: ActionHandle) -> Option<ActionControl<'_>> {
         if self.actions.contains_key(handle) {
             Some(ActionControl {
@@ -99,42 +99,40 @@ impl AnimationMixer {
         }
     }
 
-    /// 播放指定动画
+    /// Plays the specified animation.
     pub fn play(&mut self, name: &str) {
         if let Some(&handle) = self.name_map.get(name) {
-            // 1. 如果不在激活列表中，加入
+            // 1. Add to active list if not already present
             if !self.active_handles.contains(&handle) {
                 self.active_handles.push(handle);
             }
 
-            // 2. 重置并启用该动画
+            // 2. Reset and enable the animation
             if let Some(action) = self.actions.get_mut(handle) {
                 action.enabled = true;
                 action.weight = 1.0;
-                // action.time = 0.0;
                 action.paused = false;
             }
 
-            // 3. (可选) 可以在这里把 active_handles 里的其他动画停掉
-            // self.stop_others(handle);
+            // 3. (Optional) Could stop other animations in active_handles here
         } else {
             log::warn!("Animation not found: {name}");
         }
     }
 
-    /// 停止指定动画
+    /// Stops the specified animation.
     pub fn stop(&mut self, name: &str) {
         if let Some(&handle) = self.name_map.get(name) {
             if let Some(action) = self.actions.get_mut(handle) {
                 action.enabled = false;
                 action.weight = 0.0;
             }
-            // 从激活列表中移除
+            // Remove from active list
             self.active_handles.retain(|&h| h != handle);
         }
     }
 
-    /// 停止所有动画
+    /// Stops all animations.
     pub fn stop_all(&mut self) {
         for handle in &self.active_handles {
             if let Some(action) = self.actions.get_mut(*handle) {
@@ -212,20 +210,20 @@ pub struct ActionControl<'a> {
 }
 
 impl ActionControl<'_> {
-    /// 核心逻辑：播放
+    /// Core logic: play.
     #[must_use]
     pub fn play(self) -> Self {
-        // 1. 确保加入激活列表
+        // 1. Ensure added to active list
         if !self.mixer.active_handles.contains(&self.handle) {
             self.mixer.active_handles.push(self.handle);
         }
 
-        // 2. 修改 Action 自身状态
+        // 2. Modify the Action's own state
         if let Some(action) = self.mixer.actions.get_mut(self.handle) {
             action.enabled = true;
             action.paused = false;
             action.weight = 1.0;
-            action.time = 0.0; // 从头开始播放
+            action.time = 0.0; // Start playback from the beginning
         }
         self
     }
@@ -278,28 +276,28 @@ impl ActionControl<'_> {
         self
     }
 
-    /// 核心逻辑：停止
+    /// Core logic: stop.
     pub fn stop(self) {
         if let Some(action) = self.mixer.actions.get_mut(self.handle) {
             action.enabled = false;
             action.weight = 0.0;
         }
-        // 从激活列表移除（或者留给 update 清理，这里立刻移除比较干净）
+        // Remove from active list (could leave for update to clean, but immediate removal is cleaner)
         self.mixer.active_handles.retain(|&h| h != self.handle);
     }
 
-    /// 核心逻辑：淡入
+    /// Core logic: fade in.
     #[must_use]
     pub fn fade_in(self, _duration: f32) -> Self {
-        // 实现淡入逻辑...
-        self.play() // 链式调用
+        // Implement fade-in logic...
+        self.play() // Chain call
     }
 }
 
 impl std::ops::Deref for ActionControl<'_> {
     type Target = AnimationAction;
     fn deref(&self) -> &Self::Target {
-        //由于 handle 必定有效（内部逻辑保证），这里可以用 unwrap 或者安全处理
+        // Since handle is guaranteed valid (ensured by internal logic), unwrap is safe here
         self.mixer.actions.get(self.handle).unwrap()
     }
 }

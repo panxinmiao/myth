@@ -373,13 +373,13 @@ impl<'a> ExecuteContext<'a> {
 // ─── Frame Resources ──────────────────────────────────────────────────────────
 
 pub struct FrameResources {
-    // MSAA 缓冲 (可选)
+    // MSAA buffer (optional)
     pub scene_msaa_view: Option<Tracked<wgpu::TextureView>>,
 
-    // 场景主颜色缓冲 (HDR)
-    // ping-pong 机制, 当非 straightforward 模式时，使用两个交替的缓冲，作为后处理输入输出
+    // Main scene color buffer (HDR)
+    // Ping-pong mechanism: when not in straightforward mode, two alternating buffers serve as post-processing input/output
     pub scene_color_view: [Tracked<wgpu::TextureView>; 2],
-    // 深度缓冲
+    // Depth buffer
     pub depth_view: Tracked<wgpu::TextureView>,
 
     pub depth_only_view: Tracked<wgpu::TextureView>,
@@ -403,7 +403,7 @@ impl FrameResources {
     pub fn new(wgpu_ctx: &WgpuContext, size: (u32, u32)) -> Self {
         let device = &wgpu_ctx.device;
 
-        // 1. 创建 Layout (group 3: transmission + sampler + SSAO)
+        // 1. Create layout (group 3: transmission + sampler + SSAO)
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Screen/Transmission Layout"),
             entries: &[
@@ -439,7 +439,7 @@ impl FrameResources {
             ],
         });
 
-        // 2. 创建通用采样器
+        // 2. Create shared sampler
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("Transmission Sampler"),
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -644,14 +644,14 @@ impl FrameResources {
 
         self.size = size;
 
-        // 确定实际渲染时的采样数
+        // Determine the actual sample count for rendering
         let render_sample_count = if wgpu_ctx.msaa_samples > 1 {
             wgpu_ctx.msaa_samples
         } else {
             1
         };
 
-        // Depth Texture - 采样数必须与渲染目标一致
+        // Depth Texture - sample count must match the render target
         let depth_view = Self::create_texture_view(
             &wgpu_ctx.device,
             size,

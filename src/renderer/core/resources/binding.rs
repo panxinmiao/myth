@@ -1,6 +1,6 @@
-//! `BindGroup` 相关操作
+//! `BindGroup` operations
 //!
-//! 包括 Object `BindGroup` (Group 2)、骨骼管理和全局绑定 (Group 0)
+//! Includes Object `BindGroup` (Group 2), skeleton management, and global bindings (Group 0)
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -28,12 +28,12 @@ static NEXT_GLOBAL_STATE_ID: AtomicU32 = AtomicU32::new(0);
 
 impl ResourceManager {
     // ========================================================================
-    // 骨骼管理
+    // Skeleton management
     // ========================================================================
 
-    /// 更新骨骼数据到 GPU
+    /// Upload skeleton data to GPU
     pub fn prepare_skeleton(&mut self, skeleton: &Skeleton) {
-        // 每帧强制上传 joint matrices 到 GPU
+        // Force upload joint matrices to GPU every frame
         let buffer_ref = skeleton.joint_matrices.handle();
 
         let buffer_guard = skeleton.joint_matrices.read();
@@ -48,31 +48,32 @@ impl ResourceManager {
         );
     }
 
-    /// 注册一个内部生成的纹理（如 Render Target）
+    /// Register an internally generated texture (e.g. Render Target)
     ///
-    /// 这种纹理不需要从 CPU 上传，没有版本控制，由调用者保证其生命周期。
-    /// 通常在 `RenderPass` 执行前调用。
+    /// These textures do not need CPU upload, have no version control,
+    /// and their lifetime is managed by the caller.
+    /// Typically called before a `RenderPass` executes.
     ///
-    /// 适用于：Pass 内部私有的资源，Pass 自己持有并维护 id 的稳定性。
-    /// 性能最高，无哈希查找。
+    /// Suitable for: Pass-private resources where the Pass itself holds and maintains ID stability.
+    /// Highest performance, no hash lookup.
     pub fn register_internal_texture_direct(&mut self, id: u64, view: wgpu::TextureView) {
         self.internal_resources.insert(id, view);
     }
 
-    /// 适用于：跨 Pass 共享的资源（如 "`SceneColor`"）。
-    /// 内部维护 Name -> ID 的映射。
+    /// Suitable for: Cross-pass shared resources (e.g. "`SceneColor`").
+    /// Internally maintains a Name -> ID mapping.
     pub fn register_internal_texture_by_name(
         &mut self,
         name: &str,
         view: wgpu::TextureView,
     ) -> u64 {
-        // 1. 查找或创建 ID (只在第一次遇到该名字时会有 String 分配)
+        // 1. Look up or create ID (String allocation only on first encounter of the name)
         let id = *self
             .internal_name_lookup
             .entry(name.to_string())
             .or_insert_with(generate_gpu_resource_id);
 
-        // 2. 注册
+        // 2. Register
         self.register_internal_texture_direct(id, view);
 
         id
@@ -90,18 +91,18 @@ impl ResourceManager {
         log::debug!("Released internal texture: {id}");
     }
 
-    /// 统一获取 `TextureView` 的辅助方法
+    /// Unified helper method for retrieving `TextureView`
     ///
-    /// 优先查找 Asset 转换的纹理，其次查找注册的内部纹理，最后返回 Dummy
+    /// Prioritizes Asset-converted textures, then registered internal textures, finally returns Dummy
     pub fn get_texture_view<'a>(&'a self, source: &TextureSource) -> &'a wgpu::TextureView {
         match source {
             TextureSource::Asset(handle) => {
-                // 特殊处理 Dummy Env Map
+                // Special handling for Dummy Env Map
                 if *handle == TextureHandle::dummy_env_map() {
                     return &self.dummy_env_image.default_view;
                 }
 
-                // 查找 Asset 对应的 GPU 资源
+                // Look up GPU resource corresponding to the Asset
                 if let Some(binding) = self.texture_bindings.get(*handle)
                     && let Some(img) = self.gpu_images.get(&binding.cpu_image_id)
                 {
@@ -112,7 +113,7 @@ impl ResourceManager {
                 &self.dummy_image.default_view
             }
             TextureSource::Attachment(id, _) => {
-                // 直接查找内部资源表
+                // Directly look up the internal resource table
                 self.internal_resources
                     .get(id)
                     .unwrap_or(&self.dummy_image.default_view)
@@ -121,23 +122,22 @@ impl ResourceManager {
     }
 
     // ========================================================================
-    // 统一的 prepare_mesh 入口
+    // Unified prepare_mesh entry point
     // ========================================================================
 
-    /// 准备 Mesh 的基础资源
+    /// Prepare basic resources for a Mesh
     ///
-    /// 采用 "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" 模式
+    /// Uses an "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" pattern
     pub fn prepare_mesh(
         &mut self,
         assets: &AssetServer,
         mesh: &mut Mesh,
         skeleton: Option<&Skeleton>,
     ) -> Option<BindGroupContext> {
-        // === Ensure 阶段: 确保所有资源已上传 ===
-        // 如果 Allocator 本帧发生了扩容，ID 会改变，必须在此处注册新 ID
+        // === Ensure phase: ensure all resources are uploaded ===
+        // If the Allocator expanded this frame, IDs will change and must be registered here
 
         if self.model_allocator.last_ensure_frame != self.frame_index {
-            // self.ensure_buffer(self.model_allocator.cpu_buffer());
             let buffer_ref = self.model_allocator.buffer_handle();
 
             {
@@ -164,7 +164,7 @@ impl ResourceManager {
 
         let geometry = assets.geometries.get(mesh.geometry)?;
 
-        // === Collect 阶段: 收集所有资源 ID ===
+        // === Collect phase: gather all resource IDs ===
         let mut current_ids = super::ResourceIdSet::with_capacity(4);
         current_ids.push(self.model_allocator.buffer_id());
         current_ids.push(morph_result.resource_id);
@@ -172,12 +172,12 @@ impl ResourceManager {
 
         let cache_key = current_ids.hash_value();
 
-        // 检查全局缓存
+        // Check global cache
         if let Some(binding_data) = self.object_bind_group_cache.get(&cache_key) {
             return Some(binding_data.clone());
         }
 
-        // 创建新 GpuObject
+        // Create new GpuObject
         let binding_data =
             self.create_object_bind_group_internal(assets, &geometry, mesh, skeleton, cache_key);
         Some(binding_data)
@@ -238,7 +238,7 @@ impl ResourceManager {
     }
 
     // ========================================================================
-    // BindGroup 通用操作
+    // BindGroup common operations
     // ========================================================================
 
     pub(crate) fn prepare_binding_resources(
@@ -297,11 +297,11 @@ impl ResourceManager {
                 }
                 BindingResource::Texture(Some(source)) => {
                     match source {
-                        // 只有 Asset 类型的纹理需要 Prepare (上传/更新)
+                        // Only Asset-type textures need Prepare (upload/update)
                         TextureSource::Asset(handle) => {
                             self.prepare_texture(assets, *handle);
                         }
-                        // Attachment 类型是 GPU 内部生成的，无需 CPU->GPU 上传
+                        // Attachment type is GPU-internally generated, no CPU->GPU upload needed
                         TextureSource::Attachment(_, _) => {
                             // Do nothing
                         }
@@ -311,7 +311,7 @@ impl ResourceManager {
                 BindingResource::Sampler(Some(source)) => {
                     match source {
                         SamplerSource::FromTexture(_handle) => {
-                            // 应该在 prepare_texture 阶段已经准备好了
+                            // Should already be prepared during prepare_texture phase
                         }
                         SamplerSource::Asset(handle) => {
                             self.prepare_sampler(assets, *handle);
@@ -399,22 +399,21 @@ impl ResourceManager {
                                     wgpu::TextureViewDimension::Cube => {
                                         &self.dummy_env_image.default_view
                                     }
-                                    // Todo: 支持更多维度
+                                    // Todo: support more dimensions
                                     _ => &self.dummy_image.default_view,
                                 }
                             }
 
-                            // wgpu::BindingType::StorageTexture { .. } => &self.dummy_storage_image.default_view,
                             _ => unreachable!("Unexpected binding type for Texture without source"),
                         }
                     };
                     wgpu::BindingResource::TextureView(view)
                 }
                 BindingResource::Sampler(source_opt) => {
-                    // 从 TextureBinding 获取 sampler_id，然后从 sampler_id_lookup 快速查找
+                    // From TextureBinding, get sampler_id, then quickly look up from sampler_id_lookup
                     let sampler = if let Some(source) = source_opt {
                         match source {
-                            // 情况 1: 跟随 Texture Asset (默认)
+                            // Case 1: Follow Texture Asset (default)
                             SamplerSource::FromTexture(handle) => {
                                 if let Some(binding) = self.texture_bindings.get(*handle) {
                                     self.sampler_id_lookup
@@ -424,20 +423,21 @@ impl ResourceManager {
                                     &self.dummy_sampler.sampler
                                 }
                             }
-                            // 情况 2: 显式 Sampler Asset
+                            // Case 2: Explicit Sampler Asset
                             SamplerSource::Asset(handle) => {
-                                // 这里需要从 sampler_bindings 查找 GPU ID
+                                // Look up GPU ID from sampler_bindings
                                 if let Some(id) = self.sampler_bindings.get(*handle) {
                                     self.sampler_id_lookup
                                         .get(id)
                                         .unwrap_or(&self.dummy_sampler.sampler)
                                 } else {
-                                    // 如果尚未 prepare，理论上这不应该发生（前提是 prepare 阶段做好了），
-                                    // 但为了安全回退到 dummy
+                                    // If not yet prepared, this should not happen in theory
+                                    // (assuming the prepare phase is done correctly),
+                                    // but fall back to dummy for safety
                                     &self.dummy_sampler.sampler
                                 }
                             }
-                            // 情况 3: 默认采样器 (用于 Render Target)
+                            // Case 3: Default sampler (for Render Target)
                             SamplerSource::Default => {
                                 if matches!(
                                     layout_entries[i].ty,
@@ -480,12 +480,12 @@ impl ResourceManager {
     }
 
     // ========================================================================
-    // 全局绑定 (Group 0)
+    // Global bindings (Group 0)
     // ========================================================================
 
-    /// 准备全局绑定资源
+    /// Prepare global binding resources
     ///
-    /// 采用 "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" 模式
+    /// Uses an "Ensure -> Collect IDs -> Check Fingerprint -> Rebind" pattern
     pub fn prepare_global(
         &mut self,
         assets: &AssetServer,
