@@ -1,6 +1,6 @@
-//! GPU 绑定资源
+//! GPU binding resources
 //!
-//! 定义 `BindGroup` 的资源类型和绑定 Trait
+//! Defines `BindGroup` resource types and the binding Trait
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -14,7 +14,7 @@ use crate::resources::texture::{SamplerSource, TextureSource};
 use crate::resources::uniforms::{MorphUniforms, RenderStateUniforms};
 use crate::{Mesh, Scene};
 
-/// 实际的绑定资源数据 (用于生成 `BindGroup`)
+/// Actual binding resource data (used for generating `BindGroup`)
 #[derive(Debug, Clone)]
 pub enum BindingResource<'a> {
     Buffer {
@@ -28,7 +28,7 @@ pub enum BindingResource<'a> {
     _Phantom(std::marker::PhantomData<&'a ()>),
 }
 
-/// 绑定资源 Trait
+/// Binding resource Trait
 pub trait Bindings {
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>);
 }
@@ -96,7 +96,7 @@ impl Bindings for Geometry {
 
 impl Bindings for Mesh {
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
-        // todo: 是否需要检查 geometry features 包含 USE_MORPHING？
+        // todo: should we check if geometry features contain USE_MORPHING?
         builder.add_uniform::<MorphUniforms>(
             "morph_targets",
             &self.morph_uniforms,
@@ -160,14 +160,14 @@ impl GlobalBindGroupCache {
         self.cache.entry(key).or_insert_with(factory)
     }
 
-    /// 在 Resize 时调用，彻底清空
+    /// Called on resize to completely clear the cache
     pub fn clear(&mut self) {
         self.cache.clear();
     }
 }
 
-/// 全局 `BindGroup` 缓存键
-/// 包含 Layout 的唯一标识 + 所有绑定资源的唯一标识
+/// Global `BindGroup` cache key
+/// Contains the unique identifier of the Layout + unique identifiers of all binding resources
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BindGroupKey {
     layout_id: u64,
@@ -179,7 +179,7 @@ impl BindGroupKey {
     pub fn new(layout_id: u64) -> Self {
         Self {
             layout_id,
-            resources: SmallVec::with_capacity(8), // 预估常见大小
+            resources: SmallVec::with_capacity(8), // Estimated common size
         }
     }
 

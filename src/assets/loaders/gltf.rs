@@ -29,7 +29,7 @@ use tokio::runtime::Runtime;
 use std::sync::OnceLock;
 
 #[cfg(not(target_arch = "wasm32"))]
-// 仅用于同步加载的全局 Runtime
+// Global runtime used only for synchronous loading.
 fn get_global_runtime() -> &'static Runtime {
     static RUNTIME: OnceLock<Runtime> = OnceLock::new();
     RUNTIME.get_or_init(|| Runtime::new().expect("Failed to create global asset loader runtime"))
@@ -224,7 +224,7 @@ struct TextureCacheKey {
     is_srgb: bool,
 }
 
-// 辅助结构体，方便传递解码结果
+// Helper struct for passing decoded results.
 struct DecodedImage {
     width: u32,
     height: u32,
@@ -499,11 +499,8 @@ impl GltfLoader {
         // 2. Create a dummy reader.
         // For load_from_bytes, we generally expect resources to be embedded (GLB) or Data URIs.
         // (unless we are in a context where "." makes sense).
-        // #[cfg(not(target_arch = "wasm32"))]
         let s = ".".to_string();
         let reader = AssetReaderVariant::new(&s)?;
-        // #[cfg(target_arch = "wasm32")]
-        // let reader = AssetReaderVariant::new(".")?;
 
         // 3. Load Buffers (Using common async logic)
         let buffers = Self::load_buffers_async(&gltf, &reader).await?;
@@ -594,9 +591,9 @@ impl GltfLoader {
                 gltf::image::Source::Uri { .. } => None,
             };
 
-            // 创建加载和解码任务
+            // Create loading and decoding task
             let future = async move {
-                // 1. 获取字节流 (IO)
+                // 1. Fetch byte stream (IO)
                 let img_bytes = if let Some(uri) = uri_opt {
                     if uri.starts_with("data:") {
                         decode_data_uri(&uri)?
@@ -607,8 +604,8 @@ impl GltfLoader {
                     buffer_view_data.unwrap()
                 };
 
-                // 2. 解码图片 (CPU 密集型)
-                // Native: 放入 blocking 线程池
+                // 2. Decode image (CPU intensive)
+                // Native: Offload to blocking thread pool
                 #[cfg(not(target_arch = "wasm32"))]
                 let img_data = tokio::task::spawn_blocking(move || {
                     Self::decode_image_cpu_work(&img_bytes, index)
@@ -640,7 +637,7 @@ impl GltfLoader {
         Ok(())
     }
 
-    // 纯 CPU 解码逻辑，剥离出来方便在不同上下文调用
+    // Pure CPU decoding logic, extracted for reuse across different contexts.
     fn decode_image_cpu_work(img_bytes: &[u8], index: usize) -> Result<DecodedImage> {
         let img = image::load_from_memory(img_bytes).map_err(|e| {
             Error::Asset(AssetError::Format(format!(
@@ -1505,9 +1502,6 @@ impl GltfLoader {
                             let mut pod = MorphWeightData::default();
                             let start = i * weights_per_frame;
                             let end = start + weights_per_frame;
-                            // pod.weights[..count].copy_from_slice(&outputs[start..start + count]);
-                            // pod_outputs.push(pod);
-
                             pod.weights = SmallVec::from_slice(&outputs[start..end]);
 
                             pod_outputs.push(pod);

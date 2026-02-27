@@ -1,11 +1,11 @@
-//! 管线缓存
+//! Pipeline Cache
 //!
-//! L1 快速缓存 + L2 规范缓存
+//! L1 fast cache + L2 canonical cache
 //!
-//! # 缓存策略
+//! # Caching Strategy
 //!
-//! - **L1 快速缓存**: 基于资源 Handle 和 Layout ID 的极快路径
-//! - **L2 规范缓存**: 基于完整 Pipeline 特征的规范化缓存
+//! - **L1 Fast Cache**: Ultra-fast path based on resource Handle and Layout ID
+//! - **L2 Canonical Cache**: Normalized cache based on the full Pipeline descriptor
 
 use rustc_hash::FxHashMap;
 use std::hash::Hash;
@@ -20,10 +20,10 @@ use crate::renderer::graph::extracted::SceneFeatures;
 use crate::renderer::pipeline::shader_gen::{ShaderCompilationOptions, ShaderGenerator};
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 
-/// L2 缓存 Key: 完整描述 Pipeline 的所有特征
+/// L2 Cache Key: Fully describes all Pipeline characteristics.
 ///
-/// 使用 `shader_hash` 替代原来的三个 Features 枚举，
-/// 实现更灵活的宏定义组合。
+/// Uses `shader_hash` instead of the original three Features enums,
+/// enabling more flexible macro definition combinations.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct PipelineKey {
     pub shader_hash: u64,
@@ -44,28 +44,28 @@ pub struct PipelineKey {
     pub is_specular_split: bool,
 }
 
-/// L1 缓存 Key: 基于资源 Handle 和物理 Layout ID (极快)
+/// L1 Cache Key: Based on resource Handle and physical Layout ID (ultra-fast).
 ///
-/// 使用 GPU 端的 `layout_id` 而非 CPU 端的 version，更精确地反映 Pipeline 兼容性
+/// Uses GPU-side `layout_id` rather than CPU-side version for more precise Pipeline compatibility.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Copy)]
 pub struct FastPipelineKey {
-    /// Material 句柄
+    /// Material handle
     pub material_handle: MaterialHandle,
-    /// Material 的 version
+    /// Material version
     pub material_version: u64,
 
-    /// 几何体句柄
+    /// Geometry handle
     pub geometry_handle: GeometryHandle,
-    /// Geometry 的 version
+    /// Geometry version
     pub geometry_version: u64,
 
-    /// 实例变体标志（如是否有骨骼）
+    /// Instance variant flags (e.g., whether skinning is enabled)
     pub instance_variants: u32,
 
     /// GPU World state ID
     pub global_state_id: u32,
 
-    /// 轻量级场景变体标志（如是否启用 SSAO）
+    /// Lightweight scene variant flags (e.g., whether SSAO is enabled)
     pub scene_variants: SceneFeatures,
 
     /// Pipeline settings version (HDR, MSAA changes)
@@ -194,7 +194,7 @@ impl PipelineCache {
             options,
         );
 
-        // 调试输出生成的 Shader 代码
+        // Debug: print generated shader code
         if cfg!(debug_assertions) {
             fn normalize_newlines(s: &str) -> String {
                 let mut result = String::with_capacity(s.len());

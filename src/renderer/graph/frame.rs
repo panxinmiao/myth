@@ -1,22 +1,20 @@
-//! 渲染帧管理
+//! Render frame management.
 //!
-//! `RenderFrame` 负责：
-//! - 持有内置渲染 Pass（BRDF LUT、IBL、Forward）
-//! - 持有提取的场景数据（`ExtractedScene`）和渲染状态（`RenderState`）
-//! - 提供 Extract 和 Prepare 阶段的执行
+//! `RenderFrame` is responsible for:
+//! - Holding extracted scene data ([`ExtractedScene`]) and render state ([`RenderState`])
+//! - Running the Extract and Prepare phases of the frame pipeline
 //!
-//! # 三阶段渲染架构
+//! # Three-Phase Rendering Architecture
 //!
-//! 渲染流程分为三个明确的阶段：
+//! The rendering pipeline is divided into three distinct phases:
 //!
-//! 1. **Prepare (准备)**：`extract_and_prepare()` - 提取场景数据，准备 GPU 资源
-//! 2. **Compose (组装)**：通过 `FrameComposer` 链式添加渲染节点
-//! 3. **Execute (执行)**：`FrameComposer::render()` - 获取 Surface 并提交 GPU 命令
+//! 1. **Prepare**: `extract_and_prepare()` — extract scene data and prepare GPU resources
+//! 2. **Compose**: Chain render nodes via [`FrameComposer`]
+//! 3. **Execute**: `FrameComposer::render()` — acquire the surface and submit GPU commands
 //!
-//! # 示例
+//! # Example
 //!
 //! ```ignore
-//! // 优雅的链式调用
 //! renderer.begin_frame(scene, &camera, assets, time)?
 //!     .add_node(RenderStage::UI, &ui_pass)
 //!     .render();
@@ -38,59 +36,62 @@ use super::render_state::RenderState;
 // FrameBlackboard
 // ============================================================================
 
-/// 帧黑板：用于在 Render Graph 的不同 Pass 之间传递松散的瞬态数据。
+/// Frame blackboard for passing loose transient data between render passes.
 ///
-/// `FrameBlackboard` 承担 Pass 间临时通信桥梁的职责，存放跨 Pass 的
-/// 瞬态资源 ID（如 SSAO 输出、Transmission 拷贝等）。这些数据的生命周期
-/// 严格限制在单帧之内——每帧开始前必须调用 [`clear`](Self::clear)。
+/// `FrameBlackboard` serves as a per-frame communication bridge, storing
+/// transient resource IDs (e.g. SSAO output, transmission copy) that are
+/// shared across passes. Its lifetime is strictly limited to a single
+/// frame — [`clear`](Self::clear) must be called at the start of each frame.
 ///
-/// # 设计原则
+/// # Design Principles
 ///
-/// - **单一职责**：将松散的跨 Pass 瞬态 ID 从 [`RenderLists`] 中剥离，
-///   让 `RenderLists` 回归"仅管理 Draw Calls"的核心职责。
-/// - **声明式就绪**：为未来向声明式 Render Graph 演进打下解耦基础。
-/// - **零成本抽象**：结构体仅包含 `Option<TransientTextureId>`（`Copy` 类型），
-///   清理操作为零开销的赋值。
+/// - **Single Responsibility**: Decouples loose cross-pass transient IDs
+///   from [`RenderLists`], keeping `RenderLists` focused on draw call management.
+/// - **Declarative-Ready**: Lays the groundwork for future migration to a
+///   declarative render graph.
+/// - **Zero-Cost Abstraction**: Contains only `Option<TransientTextureId>` (`Copy`)
+///   fields; clearing is a zero-overhead assignment.
 #[derive(Default)]
 pub struct FrameBlackboard {
-    /// 当前帧 SSAO 模糊输出的瞬态纹理 ID。
+    /// Transient texture ID of the current frame's SSAO blur output.
     ///
-    /// 由 [`SsaoPass::prepare()`] 写入，供 `OpaquePass` / `TransparentPass`
-    /// 在构建 group 3 BindGroup 时读取。`None` 表示本帧 SSAO 未启用。
+    /// Written by [`SsaoPass::prepare()`], read by `OpaquePass` / `TransparentPass`
+    /// when building their group 3 bind groups. `None` means SSAO is disabled this frame.
     pub ssao_texture_id: Option<TransientTextureId>,
 
-    /// 当前帧 Transmission 拷贝的瞬态纹理 ID。
+    /// Transient texture ID of the current frame's transmission copy.
     ///
-    /// 由 [`TransmissionCopyPass::prepare()`] 写入，供 `TransparentPass`
-    /// 在构建 group 3 BindGroup 时读取。`None` 表示本帧无 Transmission 效果。
+    /// Written by [`TransmissionCopyPass::prepare()`], read by `TransparentPass`
+    /// when building its group 3 bind group. `None` means no transmission effect this frame.
     pub transmission_texture_id: Option<TransientTextureId>,
 
-    /// 当前帧法线瞬态纹理 ID（HighFidelity 路径，供 SSAO 使用）
+    /// Transient texture ID for scene normals (HighFidelity path, consumed by SSAO).
     ///
-    /// 由 `DepthNormalPrepass` 写入，供 `SsaoPass` 读取。
+    /// Written by `DepthNormalPrepass`, read by `SsaoPass`.
     pub scene_normal_texture_id: Option<TransientTextureId>,
 
-    /// Screen Space Feature ID 纹理的瞬态纹理 ID（供 Screen Space Effects Pass 使用）
+    /// Transient texture ID for the screen-space feature ID texture.
     ///
-    /// 由 Prepass 写入, rguint8 格式, 当前r通道存储sss_id, g通道存储ssr_id。
+    /// Written by `Prepass` in `rguint8` format; the R channel stores `sss_id`,
+    /// the G channel stores `ssr_id`. Consumed by screen-space effect passes.
     pub feature_id_texture_id: Option<TransientTextureId>,
 
-    /// SSSSS PingPong 纹理 ID
+    /// SSSSS ping-pong texture ID.
     pub sssss_pingpong_texture_id: Option<TransientTextureId>,
 
-    /// Specular 纹理 ID (供 OpaquePass 和 SSSSS Pass 使用)
+    /// Specular texture ID (consumed by `OpaquePass` and `SssssPass`).
     pub specular_texture_id: Option<TransientTextureId>,
 }
 
 impl FrameBlackboard {
-    /// 创建空的帧黑板。
+    /// Creates an empty frame blackboard.
     #[must_use]
     #[inline]
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// 每帧开始时调用，确保不会残留上一帧的悬垂数据。
+    /// Clears all fields at the start of each frame to prevent stale data.
     #[inline]
     pub fn clear(&mut self) {
         self.ssao_texture_id = None;
@@ -106,30 +107,31 @@ impl FrameBlackboard {
 // RenderCommand & RenderLists
 // ============================================================================
 
-/// 单个渲染命令
+/// A single render command.
 ///
-/// 包含绘制一个物体所需的全部信息，由 `CullPass` 生成，供 OpaquePass/TransparentPass 消费。
+/// Contains all information needed to draw one object. Produced by `CullPass`,
+/// consumed by `OpaquePass` / `TransparentPass`.
 ///
-/// # 性能考虑
-/// - Pipeline 通过 clone `获得（wgpu::RenderPipeline` 内部是 Arc）
-/// - `dynamic_offset` 支持动态 Uniform 缓冲
-/// - `sort_key` 用于高效排序（Front-to-Back / Back-to-Front）
+/// # Performance Notes
+/// - Pipeline is obtained via `clone` (`wgpu::RenderPipeline` is internally `Arc`)
+/// - `dynamic_offset` supports dynamic uniform buffering
+/// - `sort_key` enables efficient sorting (front-to-back / back-to-front)
 pub struct RenderCommand {
-    /// 物体级别的 BindGroup（模型矩阵、骨骼等）
+    /// Per-object bind group (model matrix, skeleton, etc.)
     pub object_bind_group: BindGroupContext,
-    /// 几何体句柄
+    /// Geometry handle
     pub geometry_handle: GeometryHandle,
-    /// 材质句柄
+    /// Material handle
     pub material_handle: MaterialHandle,
-    /// Pipeline ID（用于状态追踪，避免冗余切换）
+    /// Pipeline ID (used for state tracking to avoid redundant switches)
     pub pipeline_id: u16,
-    /// `渲染管线（wgpu::RenderPipeline` 内部已经是 Arc）
+    /// Render pipeline (`wgpu::RenderPipeline` is internally `Arc`)
     pub pipeline: wgpu::RenderPipeline,
-    /// 模型世界矩阵
+    /// Model-to-world matrix
     pub model_matrix: Mat4,
-    /// 排序键
+    /// Sort key
     pub sort_key: RenderKey,
-    /// 动态 Uniform 偏移
+    /// Dynamic uniform offset
     pub dynamic_offset: u32,
     /// Screen Space Feature Mask (for stencil writing in Prepass)
     pub ss_feature_mask: u32,
@@ -175,19 +177,19 @@ impl PreparedSkyboxDraw {
     }
 }
 
-/// 渲染列表
+/// Render lists.
 ///
-/// 存储经过剔除和排序的渲染命令，由 `SceneCullPass` 填充，
-/// 供 `OpaquePass`、`TransparentPass` 和 `SimpleForwardPass` 消费。
+/// Stores culled and sorted render commands. Populated by `SceneCullPass`,
+/// consumed by `OpaquePass`, `TransparentPass`, and `SimpleForwardPass`.
 ///
-/// # 设计原则
-/// - **数据与逻辑分离**：仅存储数据，不包含渲染逻辑
-/// - **帧间复用**：预分配内存，每帧 `clear()` 后重用
-/// - **可扩展**：未来可添加 `alpha_test`、`shadow_casters` 等列表
+/// # Design Principles
+/// - **Data-logic separation**: stores data only, contains no rendering logic
+/// - **Inter-frame reuse**: pre-allocated memory, cleared via `clear()` each frame
+/// - **Extensible**: can add `alpha_test`, `shadow_casters`, etc. in the future
 pub struct RenderLists {
-    /// 不透明物体命令列表（Front-to-Back 排序）
+    /// Opaque command list (front-to-back sorted)
     pub opaque: Vec<RenderCommand>,
-    /// 透明物体命令列表（Back-to-Front 排序）
+    /// Transparent command list (back-to-front sorted)
     pub transparent: Vec<RenderCommand>,
     /// Shadow command queues, keyed by `(light_id, layer_index)` for per-view culling.
     ///
@@ -201,12 +203,12 @@ pub struct RenderLists {
     /// Contains main camera view + all shadow views.
     pub active_views: Vec<RenderView>,
 
-    /// 全局 `BindGroup` ID（用于状态追踪）
+    /// Global bind group ID (used for state tracking)
     pub gpu_global_bind_group_id: u64,
-    /// 全局 BindGroup（相机、光照、环境等）
+    /// Global bind group (camera, lighting, environment, etc.)
     pub gpu_global_bind_group: Option<wgpu::BindGroup>,
 
-    /// 是否需要 Transmission 拷贝
+    /// Whether a transmission copy is needed this frame
     pub use_transmission: bool,
 
     /// Prepared skybox draw state for inline rendering in the LDR path.
@@ -216,7 +218,7 @@ pub struct RenderLists {
 }
 
 impl RenderLists {
-    /// 创建空的渲染列表，预分配默认容量
+    /// Creates empty render lists with pre-allocated default capacity.
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -232,7 +234,7 @@ impl RenderLists {
         }
     }
 
-    /// 清空列表（保留容量以复用内存）
+    /// Clears all lists (retains capacity for memory reuse).
     #[inline]
     pub fn clear(&mut self) {
         self.opaque.clear();
@@ -245,22 +247,22 @@ impl RenderLists {
         self.prepared_skybox = None;
     }
 
-    /// 插入不透明命令
+    /// Inserts an opaque render command.
     #[inline]
     pub fn insert_opaque(&mut self, cmd: RenderCommand) {
         self.opaque.push(cmd);
     }
 
-    /// 插入透明命令
+    /// Inserts a transparent render command.
     #[inline]
     pub fn insert_transparent(&mut self, cmd: RenderCommand) {
         self.transparent.push(cmd);
     }
 
-    /// 对命令列表进行排序
+    /// Sorts command lists.
     ///
-    /// - 不透明：按 Pipeline > Material > Depth (Front-to-Back)
-    /// - 透明：按 Depth (Back-to-Front) > Pipeline > Material
+    /// - Opaque: by Pipeline > Material > Depth (front-to-back)
+    /// - Transparent: by Depth (back-to-front) > Pipeline > Material
     pub fn sort(&mut self) {
         self.opaque
             .sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
@@ -268,7 +270,7 @@ impl RenderLists {
             .sort_unstable_by(|a, b| a.sort_key.cmp(&b.sort_key));
     }
 
-    /// 检查列表是否为空
+    /// Returns `true` if both lists are empty.
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -283,34 +285,34 @@ impl Default for RenderLists {
 }
 
 // ============================================================================
-// RenderKey - 排序键
+// RenderKey — Sort Key
 // ============================================================================
 
-/// 渲染排序键 (Pipeline ID + Material ID + Depth)
+/// Render sort key (Pipeline ID + Material ID + Depth).
 ///
-/// 使用 64 位整数编码排序信息，支持高效的基数排序。
+/// Encodes sorting information in a 64-bit integer for efficient radix sorting.
 ///
-/// # 排序策略
-/// - **不透明物体**：Pipeline > Material > Depth (Front-to-Back)
-///   - 最小化 Pipeline 切换开销
-///   - Front-to-Back 利用 Early-Z 提升性能
-/// - **透明物体**：Depth (Back-to-Front) > Pipeline > Material
-///   - 确保正确的 Alpha 混合顺序
+/// # Sorting Strategy
+/// - **Opaque objects**: Pipeline > Material > Depth (front-to-back)
+///   - Minimizes pipeline state switches
+///   - Front-to-back leverages Early-Z for performance
+/// - **Transparent objects**: Depth (back-to-front) > Pipeline > Material
+///   - Ensures correct alpha blending order
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct RenderKey(u64);
 
 impl RenderKey {
-    /// 构造排序键
+    /// Constructs a sort key.
     ///
-    /// # 参数
-    /// - `pipeline_id`: Pipeline 索引（14 bits）
-    /// - `material_index`: 材质索引（20 bits）
-    /// - `depth`: 到相机的平方距离
-    /// - `transparent`: 是否为透明物体
+    /// # Parameters
+    /// - `pipeline_id`: Pipeline index (14 bits)
+    /// - `material_index`: Material index (20 bits)
+    /// - `depth`: Squared distance to the camera
+    /// - `transparent`: Whether the object is transparent
     #[must_use]
     pub fn new(pipeline_id: u16, material_index: u32, depth: f32, transparent: bool) -> Self {
-        // 1. 统一处理深度压缩 (30 bits)
-        // 注意：这里假设 depth >= 0.0。如果 depth 可能为负，clamp 到 0 是安全的。
+        // 1. Compress depth into 30 bits.
+        // Note: assumes depth >= 0.0. Clamping negative values to 0 is safe.
         let d_u32 = if depth.is_sign_negative() {
             0
         } else {
@@ -318,29 +320,25 @@ impl RenderKey {
         };
         let raw_d_bits = u64::from(d_u32) & 0x3FFF_FFFF;
 
-        // 2. 准备其他数据
+        // 2. Prepare other fields
         let p_bits = u64::from(pipeline_id & 0x3FFF); // 14 bits
         let m_bits = u64::from(material_index & 0xFFFFF); // 20 bits
 
         if transparent {
-            // 【透明物体】：
-            // 排序优先级：Depth (远->近) > Pipeline > Material
+            // [Transparent]: Sort by Depth (far→near) > Pipeline > Material
 
-            // 1. 反转深度，让远处的物体(大深度)变成小数值，从而排在前面
+            // 1. Invert depth so farther objects (larger depth) get smaller values, sorting first.
             let d_bits = raw_d_bits ^ 0x3FFF_FFFF;
 
-            // 2. 重新排列位布局
-            // Depth (30 bits) << 34 | Pipeline (14 bits) << 20 | Material (20 bits)
-            // 总共 64 bits
+            // 2. Bit layout: Depth (30) << 34 | Pipeline (14) << 20 | Material (20)
             Self((d_bits << 34) | (p_bits << 20) | m_bits)
         } else {
-            // 【不透明物体】：
-            // 排序优先级：Pipeline > Material > Depth (近->远)
+            // [Opaque]: Sort by Pipeline > Material > Depth (near→far)
 
-            // Depth 保持正序 (小深度排前面，Front-to-Back)
+            // Depth in ascending order (smaller depth first = front-to-back)
             let d_bits = raw_d_bits;
 
-            // Pipeline (14 bits) << 50 | Material (20 bits) << 30 | Depth (30 bits)
+            // Pipeline (14) << 50 | Material (20) << 30 | Depth (30)
             Self((p_bits << 50) | (m_bits << 30) | d_bits)
         }
     }
@@ -350,20 +348,20 @@ impl RenderKey {
 // RenderFrame
 // ============================================================================
 
-/// 渲染帧管理器
+/// Render frame manager.
 ///
-/// 采用 Render Graph 架构：
-/// 1. Extract 阶段：从 Scene 提取渲染数据
-/// 2. Prepare 阶段：准备 GPU 资源
-/// 3. Execute 阶段：通过 `FrameComposer` 执行渲染 Pass
+/// Uses a render graph architecture:
+/// 1. **Extract**: Pull rendering data from the scene
+/// 2. **Prepare**: Prepare GPU resources
+/// 3. **Execute**: Run render passes via [`FrameComposer`]
 ///
-/// # 性能考虑
-/// - `ExtractedScene` 持久化以复用内存
-/// - `FrameComposer` 每帧创建，但开销极低（仅 Vec 指针操作）
+/// # Performance Notes
+/// - `ExtractedScene` is persistent to reuse memory across frames
+/// - `FrameComposer` is created per-frame but extremely cheap (just pointer ops)
 ///
-/// # 注意
-/// `RenderLists` 存储在 `RendererState` 中而非此处，
-/// 以避免借用检查器的限制。
+/// # Note
+/// `RenderLists` is stored in `RendererState` rather than here
+/// to avoid borrow-checker limitations.
 pub struct RenderFrame {
     pub(crate) render_state: RenderState,
     pub(crate) extracted_scene: ExtractedScene,
@@ -384,31 +382,31 @@ impl RenderFrame {
         }
     }
 
-    /// 获取渲染状态引用
+    /// Returns a reference to the render state.
     #[inline]
     pub fn render_state(&self) -> &RenderState {
         &self.render_state
     }
 
-    /// 获取提取的场景数据引用
+    /// Returns a reference to the extracted scene data.
     #[inline]
     pub fn extracted_scene(&self) -> &ExtractedScene {
         &self.extracted_scene
     }
 
-    /// 阶段 1: 提取场景数据并准备全局资源
+    /// Phase 1: Extract scene data and prepare global resources.
     ///
-    /// 执行 Extract 和 Prepare 阶段，为后续的 Compose 和 Execute 做准备。
+    /// Runs the Extract and Prepare phases to set up for Compose and Execute.
     ///
-    /// # 阶段说明
+    /// # Phases
     ///
-    /// 1. **Extract**：从 Scene 提取渲染数据到 `ExtractedScene`
-    /// 2. **Prepare**：准备全局 GPU 资源（相机 Uniform、光照数据等）
+    /// 1. **Extract**: Pull rendering data from the [`Scene`] into [`ExtractedScene`]
+    /// 2. **Prepare**: Prepare global GPU resources (camera uniforms, lighting data, etc.)
     ///
-    /// # 注意
+    /// # Note
     ///
-    /// 此方法不获取 Surface，Surface 获取延迟到 `FrameComposer::render()` 中，
-    /// 以减少 `SwapChain` Buffer 的持有时间。
+    /// This method does **not** acquire the surface texture. Surface acquisition is
+    /// deferred to `FrameComposer::render()` to minimize swap-chain buffer hold time.
     pub fn extract_and_prepare(
         &mut self,
         resource_manager: &mut ResourceManager,
@@ -441,9 +439,9 @@ impl RenderFrame {
         resource_manager.prepare_global(assets, scene, &self.render_state);
     }
 
-    /// 定期清理资源
+    /// Periodically prune stale resources.
     pub fn maybe_prune(&self, resource_manager: &mut ResourceManager) {
-        // 定期清理资源(Todo: LRU 策略)
+        // Periodic cleanup (TODO: LRU eviction strategy)
         if resource_manager.frame_index().is_multiple_of(600) {
             resource_manager.prune(6000);
         }

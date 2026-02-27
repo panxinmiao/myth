@@ -1,60 +1,60 @@
-//! 帧构建器
+//! Frame Builder
 //!
-//! `FrameBuilder` 提供流畅的 API 来构建每帧的渲染管线。
-//! 允许用户在指定阶段插入、替换或移除渲染节点。
+//! `FrameBuilder` provides a fluent API for building each frame's render pipeline.
+//! Allows users to insert, replace, or remove render nodes at specified stages.
 
 use super::graph::RenderGraph;
 use super::node::RenderNode;
 use super::stage::RenderStage;
 
-/// 渲染节点条目
+/// Render node entry.
 ///
-/// 存储节点引用及其所属阶段，用于排序和执行。
+/// Stores a node reference together with its owning stage, used for sorting and execution.
 struct NodeEntry<'a> {
-    /// 渲染阶段
+    /// Render stage
     stage: RenderStage,
-    /// 阶段内的插入顺序（用于稳定排序）
+    /// Insertion order within the stage (for stable sorting)
     order: u16,
-    /// 节点引用
+    /// Node reference
     node: &'a mut dyn RenderNode,
 }
 
-/// 帧构建器
+/// Frame Builder
 ///
-/// 提供构建器模式来组织每帧的渲染管线。
+/// Provides a builder pattern to organize each frame's render pipeline.
 ///
-/// # 设计原则
+/// # Design Principles
 ///
-/// - **阶段化渲染**：通过 `RenderStage` 定义渲染顺序
-/// - **灵活插入**：可在任意阶段插入自定义节点
-/// - **零开销抽象**：编译时确定的阶段排序，无运行时查找开销
-/// - **不持有节点**：仅存储节点引用，节点由调用者管理生命周期
+/// - **Staged rendering**: Rendering order defined via `RenderStage`
+/// - **Flexible insertion**: Custom nodes can be inserted at any stage
+/// - **Zero-overhead abstraction**: Stage ordering determined at compile time, no runtime lookup cost
+/// - **Non-owning**: Only stores node references; the caller manages node lifetimes
 ///
-/// # 用法
+/// # Usage
 ///
 /// ```ignore
 /// let mut builder = FrameBuilder::new();
 ///
-/// // 添加内置 Pass
+/// // Add built-in passes
 /// builder.add_node(RenderStage::PreProcess, &brdf_pass);
 /// builder.add_node(RenderStage::Opaque, &forward_pass);
 ///
-/// // 添加自定义 Pass
+/// // Add custom passes
 /// builder.add_node(RenderStage::UI, &ui_pass);
 ///
-/// // 执行渲染
+/// // Execute rendering
 /// builder.execute(&mut render_context);
 /// ```
 ///
-/// # 性能考虑
+/// # Performance Considerations
 ///
-/// - 内部 smallvec 预分配 16 个条目，覆盖大部分场景
-/// - 排序使用标准库的 `sort_unstable_by_key`，高效且无额外内存开销
-/// - 节点存储为引用，无堆分配开销
+/// - Internal smallvec pre-allocates 16 entries, covering most scenarios
+/// - Sorting uses the standard library's `sort_unstable_by_key` — efficient with no extra memory overhead
+/// - Nodes are stored as references — no heap allocation overhead
 pub struct FrameBuilder<'a> {
-    /// 节点列表（未排序）
+    /// Node list (unsorted)
     nodes: smallvec::SmallVec<[NodeEntry<'a>; 16]>,
-    /// 下一个插入顺序号
+    /// Next insertion order number
     next_order: u16,
 }
 
@@ -65,9 +65,9 @@ impl Default for FrameBuilder<'_> {
 }
 
 impl<'a> FrameBuilder<'a> {
-    /// 创建新的帧构建器
+    /// Creates a new frame builder.
     ///
-    /// 预分配 16 个节点的空间，覆盖典型渲染管线。
+    /// Pre-allocates space for 16 nodes, covering a typical render pipeline.
     #[inline]
     #[must_use]
     pub fn new() -> Self {
@@ -77,7 +77,7 @@ impl<'a> FrameBuilder<'a> {
         }
     }
 
-    /// 创建指定容量的帧构建器
+    /// Creates a frame builder with the specified capacity.
     #[inline]
     #[must_use]
     pub fn with_capacity(capacity: usize) -> Self {
@@ -87,18 +87,18 @@ impl<'a> FrameBuilder<'a> {
         }
     }
 
-    /// 在指定阶段添加渲染节点
+    /// Adds a render node at the specified stage.
     ///
-    /// 同阶段内的节点按添加顺序执行。
+    /// Nodes within the same stage execute in insertion order.
     ///
-    /// # 参数
+    /// # Arguments
     ///
-    /// - `stage`: 渲染阶段
-    /// - `node`: 渲染节点引用
+    /// - `stage`: Render stage
+    /// - `node`: Render node reference
     ///
-    /// # 返回
+    /// # Returns
     ///
-    /// 返回 `&mut Self` 以支持链式调用。
+    /// Returns `&mut Self` for method chaining.
     #[inline]
     pub fn add_node(&mut self, stage: RenderStage, node: &'a mut dyn RenderNode) -> &mut Self {
         self.nodes.push(NodeEntry {
@@ -110,47 +110,47 @@ impl<'a> FrameBuilder<'a> {
         self
     }
 
-    /// 批量添加多个节点到同一阶段
+    /// Adds multiple nodes to the same stage in batch.
     ///
-    /// 适用于添加多个后处理效果或多个 UI 层。
+    /// Suitable for adding several post-processing effects or multiple UI layers.
     #[inline]
     pub fn add_nodes<I>(&mut self, stage: RenderStage, nodes: I) -> &mut Self
     where
         I: IntoIterator<Item = &'a mut dyn RenderNode>,
     {
         for node in nodes {
-            // 这里 node 已经是 &'a mut dyn RenderNode 了，直接移动进去
+            // `node` is already `&'a mut dyn RenderNode`, move it directly
             self.add_node(stage, node);
         }
         self
     }
 
-    /// 获取当前节点数量
+    /// Returns the current number of nodes.
     #[inline]
     #[must_use]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
     }
 
-    /// 检查指定阶段是否有节点
+    /// Checks whether the specified stage has any nodes.
     #[inline]
     #[must_use]
     pub fn has_stage(&self, stage: RenderStage) -> bool {
         self.nodes.iter().any(|e| e.stage == stage)
     }
 
-    /// 清空所有节点（保留容量）
+    /// Removes all nodes (retains allocated capacity).
     #[inline]
     pub fn clear(&mut self) {
         self.nodes.clear();
         self.next_order = 0;
     }
 
-    /// 构建 `RenderGraph` 但不执行（用于调试或延迟执行）
+    /// Builds a `RenderGraph` without executing it (useful for debugging or deferred execution).
     ///
-    /// # 注意
+    /// # Note
     ///
-    /// 返回的 `RenderGraph` 的生命周期与 `FrameBuilder` 相同。
+    /// The returned `RenderGraph` shares the same lifetime as the `FrameBuilder`.
     #[must_use]
     pub fn build(mut self) -> RenderGraph<'a> {
         self.nodes
@@ -159,8 +159,8 @@ impl<'a> FrameBuilder<'a> {
         let mut graph = RenderGraph::with_capacity(self.nodes.len());
 
         for entry in self.nodes {
-            // 现在我们可以把 entry.node (即 &'a mut dyn RenderNode)
-            // 移动(Move) 进 graph 中了
+            // Now we can move entry.node (i.e. &'a mut dyn RenderNode)
+            // into the graph
             graph.add_node(entry.node);
         }
 

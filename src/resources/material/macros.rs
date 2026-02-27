@@ -89,8 +89,7 @@ macro_rules! impl_material_api {
                     #[doc = $u_doc]
                     #[allow(clippy::float_cmp)]
                     pub fn [<set_ $u_field>](&self, value: $u_type) {
-                        // self.uniforms.write().$u_field = value;
-                        // 1. Fast path: acquire read lock (Shared Lock), minimal overhead
+                        // Fast path: acquire read lock (Shared Lock), minimal overhead
                         if self.uniforms.read().$u_field == value {
                             return;
                         }
@@ -220,20 +219,20 @@ macro_rules! impl_material_api {
                     // 1. Uniforms: CpuBuffer
                     uniforms: self.uniforms.clone(),
 
-                    // 2. Settings: 读锁 -> 拷贝数据 -> 新锁
+                    // 2. Settings: read lock -> copy data -> new lock
                     settings: parking_lot::RwLock::new(self.settings.read().clone()),
 
-                    // 3. Textures: 读锁 -> 拷贝数据 -> 新锁
+                    // 3. Textures: read lock -> copy data -> new lock
                     textures: parking_lot::RwLock::new(self.textures.read().clone()),
 
-                    // 4. Version: 原子读取 -> 新原子变量
+                    // 4. Version: atomic read -> new atomic variable
                     version: std::sync::atomic::AtomicU64::new(
                         self.version.load(Ordering::Relaxed)
                     ),
 
                     auto_sync_texture_to_uniforms: self.auto_sync_texture_to_uniforms,
 
-                    // 插入自定义字段的克隆逻辑
+                    // Insert custom field clone logic
                     $(
                         $m_field: ($m_expr)(self),
                     )*
@@ -283,7 +282,6 @@ macro_rules! impl_material_trait {
             fn version(&self) -> u64 { self.version.load(std::sync::atomic::Ordering::Relaxed) }
             fn settings(&self) -> $crate::resources::material::MaterialSettings { *self.settings.read() }
             fn uniform_buffer(&self) -> $crate::resources::buffer::BufferRef { self.uniforms.handle() }
-            // fn uniform_bytes(&self) -> &[u8] { self.uniforms.as_bytes() }
 
             fn with_uniform_bytes(&self, visitor: &mut dyn FnMut(&[u8])) {
                 use $crate::resources::buffer::GpuData;

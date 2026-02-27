@@ -28,7 +28,6 @@ use rustc_hash::FxHashMap;
 
 use crate::ShaderDefines;
 use crate::render::RenderNode;
-// use crate::render::core::ResourceBuilder;
 use crate::renderer::core::{binding::BindGroupKey, resources::Tracked};
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::transient_pool::TransientTextureId;
@@ -48,7 +47,7 @@ type PipelineCacheKey = (ToneMappingMode, wgpu::TextureFormat, bool);
 /// This pass is a pure "executor" that pulls configuration from `Scene.tone_mapping`.
 /// It uses version tracking to minimize GPU updates:
 ///
-/// - Uniform buffer is only updated when `ToneMappingSettings.version` changes
+/// - Uniform buffer is only updated when `CpuBuffer` version changes
 /// - Pipeline is only rebuilt when the tone mapping mode or LUT state changes
 ///
 /// # Performance
@@ -67,9 +66,6 @@ pub struct ToneMapPass {
     sampler: Tracked<wgpu::Sampler>,
     /// Linear sampler dedicated to 3D LUT texture (ClampToEdge on all axes)
     lut_sampler: Tracked<wgpu::Sampler>,
-    /// Uniform buffer (exposure, vignette, lut_contribution)
-    // uniforms: CpuBuffer<ToneMapUniforms>,
-
     // === Cache State ===
     /// Currently active tone mapping mode (mirrors `Scene.tone_mapping.mode`)
     current_mode: ToneMappingMode,
@@ -183,7 +179,6 @@ impl ToneMapPass {
             layout_with_lut: Tracked::new(layout_with_lut),
             sampler: Tracked::new(sampler),
             lut_sampler: Tracked::new(lut_sampler),
-            // uniforms,
             current_mode: ToneMappingMode::default(),
             current_has_lut: false,
             pipeline_cache: FxHashMap::default(),
@@ -324,7 +319,6 @@ impl RenderNode for ToneMapPass {
         let settings = &ctx.scene.tone_mapping;
 
         let uniforms = &settings.uniforms;
-        // let current_version = settings.version();
         let has_lut = settings.has_lut();
 
         // B. Handle mode or LUT state change (triggers pipeline rebuild)

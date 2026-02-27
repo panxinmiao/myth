@@ -4,7 +4,7 @@
 //!
 //! The core abstraction is [`RenderPath`], which determines whether the engine
 //! operates in a lightweight forward-only mode or a full high-fidelity pipeline
-//! with HDR, post-processing, and (future) depth-normal prepass / SSAO support.
+//! with HDR, post-processing, depth-normal prepass, and SSAO support.
 //!
 //! # Quick Start
 //!
@@ -45,12 +45,9 @@
 /// | Bloom                   | ❌                | ✅                      |
 /// | Tone Mapping            | ❌                | ✅                      |
 /// | FXAA (post-process AA)  | ❌                | ✅                      |
-/// | Depth-Normal Prepass¹   | ❌                | ✅                      |
-/// | SSAO¹                   | ❌                | ✅                      |
-/// | SSSSS¹                  | ❌                | ✅                      |
-///
-/// ¹ Planned features — the `HighFidelity` path is designed to accommodate
-///   these without further API changes.
+/// | Depth-Normal Prepass    | ❌                | ✅                      |
+/// | SSAO                    | ❌                | ✅                      |
+/// | SSSSS                   | ❌                | ✅                      |
 ///
 /// # Design Rationale
 ///
@@ -85,8 +82,7 @@ pub enum RenderPath {
     /// mode; anti-aliasing should be achieved through screen-space techniques
     /// such as FXAA (or TAA in the future).
     ///
-    /// This path is designed to host a Depth-Normal Prepass and SSAO in future
-    /// releases without requiring API-level changes.
+    /// This path includes a Depth-Normal Prepass, SSAO, and SSSSS support.
     ///
     /// Best suited for:
     /// - Desktop / high-end mobile with modern GPUs
@@ -116,10 +112,8 @@ impl RenderPath {
 
     /// Returns `true` when this path will use a depth-normal prepass.
     ///
-    /// Reserved for future use — always returns `false` for
-    /// [`BasicForward`](Self::BasicForward) and `true` for
-    /// [`HighFidelity`](Self::HighFidelity) once SSAO / depth-normal
-    /// pre-pass is implemented.
+    /// Returns `false` for [`BasicForward`](Self::BasicForward) and `true` for
+    /// [`HighFidelity`](Self::HighFidelity).
     #[inline]
     #[must_use]
     pub fn requires_z_prepass(&self) -> bool {
@@ -173,7 +167,7 @@ impl RenderPath {
 /// | `clear_color`      | Default framebuffer clear color          | Black (0,0,0,1)    |
 /// | `required_features`| Required wgpu features                   | Empty              |
 /// | `required_limits`  | Required wgpu limits                     | Default            |
-/// | `depth_format`     | Depth buffer texture format              | `Depth32Float`     |
+/// | `depth_format`     | Depth buffer texture format              | `Depth24PlusStencil8` |
 ///
 /// # Example
 ///
@@ -243,9 +237,10 @@ pub struct RendererSettings {
 
     /// Depth buffer texture format.
     ///
-    /// [`Depth32Float`](wgpu::TextureFormat::Depth32Float) is recommended for
-    /// reverse-Z rendering (better precision). Use `Depth24PlusStencil8` when
-    /// a stencil buffer is needed.
+    /// Defaults to `Depth24PlusStencil8` which provides both depth precision
+    /// and a stencil buffer (needed for SSS feature IDs, etc.).
+    /// Use [`Depth32Float`](wgpu::TextureFormat::Depth32Float) if you only
+    /// need depth and want maximum precision.
     pub depth_format: wgpu::TextureFormat,
 }
 

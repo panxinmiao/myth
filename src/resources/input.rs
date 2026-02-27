@@ -1,15 +1,16 @@
-//! 平台无关的输入系统
+//! Platform-agnostic input system
 //!
-//! 定义了不依赖任何 GUI 库的输入类型和状态容器。
-//! 具体的平台适配器（如 Winit Adapter）负责将平台事件翻译为这些类型。
+//! Defines input types and state containers that do not depend on any GUI library.
+//! Concrete platform adapters (e.g., Winit Adapter) are responsible for translating
+//! platform events into these types.
 
 use glam::Vec2;
 use std::collections::HashSet;
 
-/// 键盘按键枚举（平台无关）
+/// Keyboard key enumeration (platform-agnostic)
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum Key {
-    // 字母键
+    // Letter keys
     A,
     B,
     C,
@@ -37,7 +38,7 @@ pub enum Key {
     Y,
     Z,
 
-    // 数字键
+    // Number keys
     Key0,
     Key1,
     Key2,
@@ -49,7 +50,7 @@ pub enum Key {
     Key8,
     Key9,
 
-    // 功能键
+    // Function keys
     F1,
     F2,
     F3,
@@ -63,7 +64,7 @@ pub enum Key {
     F11,
     F12,
 
-    // 控制键
+    // Control keys
     Space,
     Enter,
     Escape,
@@ -76,7 +77,7 @@ pub enum Key {
     PageUp,
     PageDown,
 
-    // 修饰键
+    // Modifier keys
     ShiftLeft,
     ShiftRight,
     ControlLeft,
@@ -86,13 +87,13 @@ pub enum Key {
     SuperLeft,
     SuperRight,
 
-    // 方向键
+    // Arrow keys
     ArrowUp,
     ArrowDown,
     ArrowLeft,
     ArrowRight,
 
-    // 标点符号
+    // Punctuation
     Comma,
     Period,
     Slash,
@@ -105,7 +106,7 @@ pub enum Key {
     Equal,
     Grave,
 
-    // 小键盘
+    // Numpad
     Numpad0,
     Numpad1,
     Numpad2,
@@ -124,7 +125,7 @@ pub enum Key {
     NumpadEnter,
 }
 
-/// 鼠标按键枚举
+/// Mouse button enumeration
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
 pub enum MouseButton {
     Left,
@@ -135,32 +136,32 @@ pub enum MouseButton {
     Other(u16),
 }
 
-/// 按键状态
+/// Button state
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum ButtonState {
     Pressed,
     Released,
 }
 
-/// 平台无关的输入状态容器
+/// Platform-agnostic input state container
 #[derive(Debug, Clone)]
 pub struct Input {
-    // 键盘状态
+    // Keyboard state
     pressed_keys: HashSet<Key>,
     just_pressed_keys: HashSet<Key>,
     just_released_keys: HashSet<Key>,
 
-    // 鼠标按键状态
+    // Mouse button state
     pressed_mouse: HashSet<MouseButton>,
     just_pressed_mouse: HashSet<MouseButton>,
     just_released_mouse: HashSet<MouseButton>,
 
-    // 鼠标位置和移动
+    // Mouse position and movement
     mouse_position: Vec2,
     mouse_delta: Vec2,
     scroll_delta: Vec2,
 
-    // 窗口状态
+    // Window state
     screen_size: Vec2,
 }
 
@@ -181,9 +182,9 @@ impl Input {
         }
     }
 
-    // ========== System API (供 Engine/Adapter 调用) ==========
+    // ========== System API (called by Engine/Adapter) ==========
 
-    /// 帧开始时清理瞬时状态（JustPressed/JustReleased/Delta）
+    /// Clears transient state at the start of each frame (JustPressed/JustReleased/Delta)
     pub fn start_frame(&mut self) {
         self.just_pressed_keys.clear();
         self.just_released_keys.clear();
@@ -193,7 +194,7 @@ impl Input {
         self.scroll_delta = Vec2::ZERO;
     }
 
-    /// 注入键盘事件
+    /// Injects a keyboard event
     pub fn inject_key(&mut self, key: Key, state: ButtonState) {
         match state {
             ButtonState::Pressed => {
@@ -209,7 +210,7 @@ impl Input {
         }
     }
 
-    /// 注入鼠标按键事件
+    /// Injects a mouse button event
     pub fn inject_mouse_button(&mut self, button: MouseButton, state: ButtonState) {
         match state {
             ButtonState::Pressed => {
@@ -225,7 +226,7 @@ impl Input {
         }
     }
 
-    /// 注入鼠标位置
+    /// Injects a mouse position update
     pub fn inject_mouse_position(&mut self, x: f32, y: f32) {
         let new_pos = Vec2::new(x, y);
         if self.mouse_position != Vec2::ZERO {
@@ -234,73 +235,73 @@ impl Input {
         self.mouse_position = new_pos;
     }
 
-    /// 注入滚轮滚动
+    /// Injects a scroll wheel event
     pub fn inject_scroll(&mut self, delta_x: f32, delta_y: f32) {
         self.scroll_delta += Vec2::new(delta_x, delta_y);
     }
 
-    /// 注入窗口尺寸变化
+    /// Injects a window resize event
     pub fn inject_resize(&mut self, width: u32, height: u32) {
         self.screen_size = Vec2::new(width as f32, height as f32);
     }
 
-    // ========== User API (供游戏/场景逻辑查询) ==========
+    // ========== User API (for game/scene logic queries) ==========
 
-    /// 检查按键是否正在按下
+    /// Checks whether a key is currently held down
     #[must_use]
     pub fn get_key(&self, key: Key) -> bool {
         self.pressed_keys.contains(&key)
     }
 
-    /// 检查按键是否在这一帧刚按下
+    /// Checks whether a key was just pressed this frame
     #[must_use]
     pub fn get_key_down(&self, key: Key) -> bool {
         self.just_pressed_keys.contains(&key)
     }
 
-    /// 检查按键是否在这一帧刚释放
+    /// Checks whether a key was just released this frame
     #[must_use]
     pub fn get_key_up(&self, key: Key) -> bool {
         self.just_released_keys.contains(&key)
     }
 
-    /// 检查鼠标按键是否正在按下
+    /// Checks whether a mouse button is currently held down
     #[must_use]
     pub fn get_mouse_button(&self, button: MouseButton) -> bool {
         self.pressed_mouse.contains(&button)
     }
 
-    /// 检查鼠标按键是否在这一帧刚按下
+    /// Checks whether a mouse button was just pressed this frame
     #[must_use]
     pub fn get_mouse_button_down(&self, button: MouseButton) -> bool {
         self.just_pressed_mouse.contains(&button)
     }
 
-    /// 检查鼠标按键是否在这一帧刚释放
+    /// Checks whether a mouse button was just released this frame
     #[must_use]
     pub fn get_mouse_button_up(&self, button: MouseButton) -> bool {
         self.just_released_mouse.contains(&button)
     }
 
-    /// 获取当前鼠标位置
+    /// Returns the current mouse position
     #[must_use]
     pub fn mouse_position(&self) -> Vec2 {
         self.mouse_position
     }
 
-    /// 获取这一帧的鼠标移动量
+    /// Returns the mouse movement delta for this frame
     #[must_use]
     pub fn mouse_delta(&self) -> Vec2 {
         self.mouse_delta
     }
 
-    /// 获取这一帧的滚轮滚动量
+    /// Returns the scroll wheel delta for this frame
     #[must_use]
     pub fn scroll_delta(&self) -> Vec2 {
         self.scroll_delta
     }
 
-    /// 获取窗口尺寸
+    /// Returns the window dimensions
     #[must_use]
     pub fn screen_size(&self) -> Vec2 {
         self.screen_size

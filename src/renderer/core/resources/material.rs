@@ -1,20 +1,20 @@
-//! Material 相关操作
+//! Material operations
 //!
-//! 采用 "Ensure -> Check -> Rebuild" 模式：
-//! 1. 确保所有 GPU 资源存在且数据最新
-//! 2. 比较物理资源 ID 是否变化（决定 `BindGroup` 重建）
-//! 3. 更新材质版本号（用于 Pipeline 缓存）
+//! Uses an "Ensure -> Check -> Rebuild" pattern:
+//! 1. Ensure all GPU resources exist with up-to-date data
+//! 2. Compare physical resource IDs for changes (decide `BindGroup` rebuild)
+//! 3. Update material version number (for Pipeline cache)
 //!
-//! # 版本追踪三维分离
+//! # Three-dimensional version tracking separation
 //!
-//! 1. **资源拓扑 (`BindGroup`)**: 由 `ResourceIdSet` 追踪
-//!    - 纹理/采样器/Buffer ID 变化 -> 重建 `BindGroup`
+//! 1. **Resource topology (`BindGroup`)**: Tracked by `ResourceIdSet`
+//!    - Texture/sampler/Buffer ID changes -> rebuild `BindGroup`
 //!
-//! 2. **资源内容 (Buffer Data)**: 由 `BufferRef` 追踪
-//!    - Atomic 版本号变化 -> 上传 Buffer
+//! 2. **Resource content (Buffer Data)**: Tracked by `BufferRef`
+//!    - Atomic version number changes -> upload Buffer
 //!
-//! 3. **管线状态 (`RenderPipeline`)**: 由 `Material.version()` 追踪
-//!    - 深度写入/透明度/双面渲染等变化 -> 切换 Pipeline
+//! 3. **Pipeline state (`RenderPipeline`)**: Tracked by `Material.version()`
+//!    - Depth write/transparency/double-sided rendering changes -> switch Pipeline
 
 use crate::assets::{AssetServer, MaterialHandle};
 use crate::renderer::core::resources::EnsureResult;
@@ -25,61 +25,61 @@ use crate::resources::texture::TextureSource;
 
 use super::{ResourceIdSet, ResourceManager, hash_layout_entries};
 
-/// GPU 端材质资源
+/// GPU-side material resource
 ///
-/// 使用资源 ID 追踪机制自动检测变化
+/// Uses resource ID tracking for automatic change detection
 ///
-/// # 版本追踪三维分离
+/// # Three-dimensional version tracking separation
 ///
-/// 1. **资源拓扑 (`BindGroup`)**: 由 `resource_ids` 追踪
-///    - 纹理/采样器/Buffer ID 变化 -> 重建 `BindGroup`
+/// 1. **Resource topology (`BindGroup`)**: Tracked by `resource_ids`
+///    - Texture/sampler/Buffer ID changes -> rebuild `BindGroup`
 ///
-/// 2. **资源内容 (Buffer Data)**: 由 `BufferRef` 追踪（外部）
-///    - Atomic 版本号变化 -> 上传 Buffer
+/// 2. **Resource content (Buffer Data)**: Tracked by `BufferRef` (external)
+///    - Atomic version number changes -> upload Buffer
 ///
-/// 3. **管线状态 (`RenderPipeline`)**: 由 `version` 追踪
-///    - 深度写入/透明度/双面渲染等变化 -> 切换 Pipeline
+/// 3. **Pipeline state (`RenderPipeline`)**: Tracked by `version`
+///    - Depth write/transparency/double-sided rendering changes -> switch Pipeline
 pub struct GpuMaterial {
     pub bind_group: wgpu::BindGroup,
     pub bind_group_id: u64,
     pub layout: wgpu::BindGroupLayout,
     pub layout_id: u64,
-    /// Layout entries 的哈希值（用于快速比较是否需要重建 Layout）
+    /// Hash of layout entries (for fast comparison to determine if Layout rebuild is needed)
     pub layout_hash: u64,
     pub binding_wgsl: String,
-    /// 所有依赖资源的物理 ID 集合（守卫 `BindGroup` 的有效性）
+    /// Set of physical IDs of all dependent resources (guards `BindGroup` validity)
     pub resource_ids: ResourceIdSet,
-    /// 记录生成此 `GpuMaterial` 时的 Material 版本（用于 Pipeline 缓存）
+    /// Records the Material version when this `GpuMaterial` was generated (for Pipeline cache)
     pub version: u64,
     pub last_used_frame: u64,
     pub last_verified_frame: u64,
 }
 
 impl ResourceManager {
-    /// 准备 Material 的 GPU 资源
+    /// Prepare Material GPU resources
     ///
-    /// 三维分离的变更检测：
-    /// - 资源拓扑变化 -> 重建 BindGroup（由 `ResourceIdSet` 检测）
-    /// - 资源内容变化 -> 上传 Buffer（由 `BufferRef` 自动处理）
-    /// - 管线状态变化 -> 切换 Pipeline（由 version 记录，供外部使用）
+    /// Three-dimensional change detection:
+    /// - Resource topology change -> rebuild BindGroup (detected by `ResourceIdSet`)
+    /// - Resource content change -> upload Buffer (handled automatically by `BufferRef`)
+    /// - Pipeline state change -> switch Pipeline (recorded by version, used externally)
     pub(crate) fn prepare_material(&mut self, assets: &AssetServer, handle: MaterialHandle) {
         let Some(material) = assets.materials.get(handle) else {
             return;
         };
 
-        // [Fast Path] 帧内缓存检查
+        // [Fast Path] Per-frame cache check
         if let Some(gpu_mat) = self.gpu_materials.get(handle)
             && gpu_mat.last_verified_frame == self.frame_index
         {
             return;
         }
 
-        // 1. Ensure 阶段：确保所有资源存在且数据最新，收集物理资源 ID
+        // 1. Ensure phase: ensure all resources exist with up-to-date data, collect physical resource IDs
         let mut current_resource_ids = self.ensure_material_resources(assets, &material);
 
-        // 2. Check 阶段：检查是否需要重建 BindGroup
-        // 注意：这里只看 ID，不看 version！
-        // 即使 material.version() 变了（比如改了混合模式），只要 ID 没变，就不重建 BindGroup
+        // 2. Check phase: determine if BindGroup needs to be rebuilt
+        // Note: only IDs are checked here, not version!
+        // Even if material.version() changed (e.g. blend mode), BindGroup is not rebuilt as long as IDs are unchanged
         let needs_rebuild_bindgroup = if let Some(gpu_mat) = self.gpu_materials.get(handle) {
             let mut cached_ids = gpu_mat.resource_ids.clone();
             !current_resource_ids.matches(&mut cached_ids)
@@ -88,13 +88,13 @@ impl ResourceManager {
         };
 
         if needs_rebuild_bindgroup {
-            // 3. Rebuild 阶段：重建 BindGroup（耗时操作）
+            // 3. Rebuild phase: rebuild BindGroup (expensive operation)
             self.rebuild_material_bindgroup(assets, handle, &material, current_resource_ids);
         }
 
-        // 4. 更新版本号和帧计数（极速操作）
-        // 无论是否重建了 BindGroup，都需要确保 gpu_mat 里的 version 是最新的
-        // 这样 PipelineCache 在渲染时可以用这个 version 做快速 check
+        // 4. Update version number and frame counter (very fast operation)
+        // Regardless of whether BindGroup was rebuilt, gpu_mat's version must be up-to-date
+        // so PipelineCache can use this version for fast checks during rendering
         if let Some(gpu_mat) = self.gpu_materials.get_mut(handle) {
             gpu_mat.version = material.data.version();
             gpu_mat.last_used_frame = self.frame_index;
@@ -102,32 +102,26 @@ impl ResourceManager {
         }
     }
 
-    /// 确保 Material 资源并返回资源 ID 集合
+    /// Ensure Material resources and return the resource ID set
     ///
-    /// 使用 `visit_textures` 遍历所有纹理资源
+    /// Uses `visit_textures` to iterate over all texture resources
     fn ensure_material_resources(
         &mut self,
         assets: &AssetServer,
         material: &Material,
     ) -> ResourceIdSet {
-        // 确保 Uniform Buffer
-        // let uniform_result = self.ensure_buffer_ref(
-        //     material.data.uniform_buffer(),
-        //     material.data.uniform_bytes()
-        // );
-
         let mut uniform_result = EnsureResult::existing(0);
 
-        // 2. 调用 with_uniform_bytes，传入闭包
+        // 2. Call with_uniform_bytes, passing a closure
         material.data.with_uniform_bytes(&mut |bytes| {
             uniform_result = self.ensure_buffer_ref(&material.data.uniform_buffer(), bytes);
         });
 
-        // 收集资源 ID
+        // Collect resource IDs
         let mut resource_ids = ResourceIdSet::with_capacity(16);
         resource_ids.push(uniform_result.resource_id);
 
-        // 使用 visit_textures 遍历所有纹理资源
+        // Use visit_textures to iterate over all texture resources
         material
             .data
             .visit_textures(&mut |tex_source| match tex_source {
@@ -150,7 +144,7 @@ impl ResourceManager {
         resource_ids
     }
 
-    /// 重建 Material 的 BindGroup（可能包括 Layout）
+    /// Rebuild Material's BindGroup (may include Layout)
     fn rebuild_material_bindgroup(
         &mut self,
         assets: &AssetServer,
@@ -163,16 +157,16 @@ impl ResourceManager {
 
         self.prepare_binding_resources(assets, &builder.resources);
 
-        // 计算 layout entries 的哈希值
+        // Compute hash of layout entries
         let layout_hash = hash_layout_entries(&builder.layout_entries);
 
-        // 检查是否需要新的 Layout
+        // Check if a new Layout is needed
         let (layout, layout_id) = if let Some(gpu_mat) = self.gpu_materials.get(handle) {
             if gpu_mat.layout_hash == layout_hash {
-                // Layout 未变化，复用
+                // Layout unchanged, reuse
                 (gpu_mat.layout.clone(), gpu_mat.layout_id)
             } else {
-                // Layout 变化，重建
+                // Layout changed, rebuild
                 self.get_or_create_layout(&builder.layout_entries)
             }
         } else {

@@ -43,13 +43,13 @@ pub fn create_plane(options: &PlaneOptions) -> Geometry {
         for ix in 0..grid_cols {
             let x = ix as f32 * segment_width - width_half;
 
-            positions.push([x, -y, 0.0]); // 注意 -y 是为了对应 UV 方向
+            positions.push([x, -y, 0.0]); // Note: -y to match UV direction
             normals.push([0.0, 0.0, 1.0]);
             uvs.push([ix as f32 / grid_x as f32, 1.0 - (iy as f32 / grid_y as f32)]);
         }
     }
 
-    // 索引
+    // Indices
     for iy in 0..grid_y {
         for ix in 0..grid_x {
             let a = ix + grid_cols * iy;

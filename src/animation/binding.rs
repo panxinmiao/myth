@@ -1,15 +1,16 @@
 use crate::scene::NodeHandle;
 
-/// 定义动画数据的目标属性
+/// Defines the target property for animation data.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum TargetPath {
-    Translation, // 对应 transform.position
-    Rotation,    // 对应 transform.rotation
-    Scale,       // 对应 transform.scale
-    Weights,     // 对应 Morph Target Weights
+    Translation, // Maps to transform.position
+    Rotation,    // Maps to transform.rotation
+    Scale,       // Maps to transform.scale
+    Weights,     // Maps to Morph Target weights
 }
 
-/// 绑定关系：将 Clip 中的第 `track_index` 条轨道，映射到 scene 中的 `node_handle` 的 target 属性
+/// Binding relationship: maps track `track_index` from a Clip to the target property
+/// of `node_handle` in the scene.
 #[derive(Debug, Clone)]
 pub struct PropertyBinding {
     pub track_index: usize,

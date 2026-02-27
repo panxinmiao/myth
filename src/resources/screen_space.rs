@@ -5,23 +5,23 @@ pub const STENCIL_FEATURE_SSS: u32 = 1 << 0;
 pub const STENCIL_FEATURE_SSR: u32 = 1 << 1;
 pub const STENCIL_WRITE_MASK: u32 = 0x0F;
 // ============================================================================
-// 1. 基础类型：全局稳定的 8-bit ID
+// 1. Basic Types: Globally Stable 8-bit ID
 // ============================================================================
 
-/// 强类型的特性 ID，内部封装 NonZeroU8 使得 Option<FeatureId> 仅占 1 字节。
-/// 有效范围: 1 ~ 255。 0 代表无特性。
+/// Strongly-typed feature ID wrapping `NonZeroU8`, so `Option<FeatureId>` is only 1 byte.
+/// Valid range: 1–255. 0 represents no feature.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash)]
 pub struct FeatureId(pub NonZeroU8);
 
 impl FeatureId {
-    /// 将强类型的 ID 转换为底层着色器所需的 u32
+    /// Converts the strongly-typed ID to the underlying `u32` required by shaders
     #[inline]
     #[must_use]
     pub fn to_u32(self) -> u32 {
         u32::from(self.0.get())
     }
 
-    /// 尝试从着色器的 u32 数据还原为强类型的 ID (0 会自动变为 None)
+    /// Attempts to reconstruct the strongly-typed ID from a shader's `u32` value (0 becomes `None`)
     #[inline]
     pub fn from_u32(val: u32) -> Option<Self> {
         std::num::NonZeroU8::new(val as u8).map(FeatureId)
@@ -29,15 +29,15 @@ impl FeatureId {
 }
 
 // ============================================================================
-// 2. SSS (次表面散射) 专用结构与注册表
+// 2. SSS (Subsurface Scattering) Dedicated Structures and Registry
 // ============================================================================
 
-/// GPU 端 SSS 数据结构 (16 字节)
+/// GPU-side SSS data structure (16 bytes)
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable, PartialEq)]
 pub struct SssProfileData {
-    pub scatter_color: [f32; 3], // 散射颜色
-    pub scatter_radius: f32,     // 散射半径 (屏幕空间百分比或世界空间单位)
+    pub scatter_color: [f32; 3], // Scatter color
+    pub scatter_radius: f32,     // Scatter radius (screen-space percentage or world-space units)
 }
 
 impl Default for SssProfileData {
@@ -49,7 +49,7 @@ impl Default for SssProfileData {
     }
 }
 
-/// 用户侧的 SSS 配置文件资产
+/// User-facing SSS profile asset
 #[derive(Clone, Debug)]
 pub struct SssProfile {
     pub scatter_color: Vec3,
@@ -74,13 +74,13 @@ impl SssProfile {
     }
 }
 
-/// SSS 专用全局定长分配器
+/// SSS-dedicated global fixed-length allocator
 pub struct SssRegistry {
-    /// 严格对齐 GPU 布局的数组，ID 0 永远是 default
+    /// GPU-layout-aligned array; ID 0 is always the default
     pub buffer_data: [SssProfileData; 256],
-    /// 空闲 ID 列表
+    /// Free ID list
     free_list: Vec<u8>,
-    /// 版本号，用于触发 GPU 显存上传 (Diff-Sync)
+    /// Version number used to trigger GPU buffer uploads (diff-sync)
     pub version: u64,
 }
 
@@ -93,7 +93,7 @@ impl Default for SssRegistry {
 impl SssRegistry {
     #[must_use]
     pub fn new() -> Self {
-        // 从 255 到 1，保证 pop() 时优先分配小号 ID
+        // From 255 down to 1, so pop() allocates lower IDs first
         let free_list = (1..=255).rev().collect();
         Self {
             buffer_data: [SssProfileData::default(); 256],
@@ -102,7 +102,7 @@ impl SssRegistry {
         }
     }
 
-    /// 注册一个新的 SSS Profile，返回全局稳定的 ID
+    /// Registers a new SSS profile and returns a globally stable ID
     pub fn add(&mut self, profile: &SssProfile) -> Option<FeatureId> {
         if let Some(id) = self.free_list.pop() {
             self.buffer_data[id as usize] = profile.to_gpu_data();
@@ -114,13 +114,13 @@ impl SssRegistry {
         }
     }
 
-    /// 更新已存在的 Profile (如 UI 动态调整)
+    /// Updates an existing profile (e.g., for dynamic UI adjustments)
     pub fn update(&mut self, id: FeatureId, profile: &SssProfile) {
         self.buffer_data[id.0.get() as usize] = profile.to_gpu_data();
         self.version += 1;
     }
 
-    /// 移除 Profile，回收 ID 供后续使用
+    /// Removes a profile and recycles its ID for future reuse
     pub fn remove(&mut self, id: FeatureId) {
         let index = id.0.get();
         self.buffer_data[index as usize] = SssProfileData::default();
@@ -130,10 +130,10 @@ impl SssRegistry {
 }
 
 // ============================================================================
-// 3. 场景级全局开关
+// 3. Scene-Level Global Toggles
 // ============================================================================
 #[derive(Default, Clone, Debug)]
 pub struct ScreenSpaceSettings {
     pub enable_sss: bool,
-    pub enable_ssr: bool, // 预留给未来
+    pub enable_ssr: bool, // Reserved for future use
 }

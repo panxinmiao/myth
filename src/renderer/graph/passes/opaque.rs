@@ -117,10 +117,10 @@ impl RenderNode for OpaquePass {
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {
-        // 1. 提取当前帧的清屏颜色
+        // 1. Extract the clear color for the current frame
         self.clear_color = ctx.extracted_scene.background.clear_color();
 
-        // 2. 提前解析并缓存 Target Views
+        // 2. Resolve and cache target views ahead of time
         let target_view = ctx
             .get_resource_view(GraphResource::SceneRenderTarget)
             .clone();
@@ -130,8 +130,6 @@ impl RenderNode for OpaquePass {
         } else {
             self.color_target_view = Some(target_view);
         }
-
-        // self.depth_view = Some(ctx.get_resource_view(GraphResource::DepthStencil).clone());
 
         // 3. Build dynamic group 3 bind group.
         //    OpaquePass runs BEFORE TransmissionCopyPass, so use dummy transmission.
@@ -180,7 +178,6 @@ impl RenderNode for OpaquePass {
         };
 
         let color_view = self.color_target_view.as_ref().unwrap();
-        // let depth_view = self.depth_view.as_ref().unwrap();
         let depth_view = ctx.get_resource_view(GraphResource::DepthStencil);
 
         let mut color_attachments: smallvec::SmallVec<

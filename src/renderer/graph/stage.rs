@@ -1,87 +1,87 @@
-//! 渲染阶段定义
+//! Render Stage Definitions
 //!
-//! `RenderStage` 定义渲染管线的标准阶段顺序，
-//! 允许用户在指定阶段插入自定义渲染节点。
+//! `RenderStage` defines the standard stage ordering of the render pipeline,
+//! allowing users to insert custom render nodes at specified stages.
 
-/// 渲染阶段枚举
+/// Render stage enumeration.
 ///
-/// 定义渲染管线的执行顺序。每个阶段可以包含多个渲染节点，
-/// 同阶段内的节点按添加顺序执行。
+/// Defines the execution order of the render pipeline. Each stage may contain
+/// multiple render nodes; nodes within the same stage execute in insertion order.
 ///
-/// # 阶段说明
+/// # Stage Overview
 ///
-/// | 阶段 | 用途 | 典型内容 |
-/// |------|------|----------|
-/// | `PreProcess` | 资源上传、计算预处理 | BRDF LUT 计算、IBL 预滤波 |
-/// | `ShadowMap` | 阴影贴图渲染 | 级联阴影、点光源阴影 |
-/// | `Opaque` | 不透明物体渲染 | Forward/Deferred 渲染 |
-/// | `Skybox` | 天空盒渲染 | 环境贴图、程序化天空 |
-/// | `Transparent` | 半透明物体渲染 | Alpha 混合物体 |
-/// | `PostProcess` | 后处理效果 | ToneMapping、Bloom、FXAA |
-/// | `UI` | 用户界面 | egui、调试信息 |
+/// | Stage | Purpose | Typical Content |
+/// |-------|---------|------------------|
+/// | `PreProcess` | Resource upload, compute pre-processing | BRDF LUT generation, IBL pre-filtering |
+/// | `ShadowMap` | Shadow map rendering | Cascaded shadows, point-light shadows |
+/// | `Opaque` | Opaque object rendering | Forward / Deferred rendering |
+/// | `Skybox` | Skybox rendering | Environment maps, procedural sky |
+/// | `Transparent` | Translucent object rendering | Alpha-blended objects |
+/// | `PostProcess` | Post-processing effects | ToneMapping, Bloom, FXAA |
+/// | `UI` | User interface | egui, debug overlays |
 ///
-/// # 示例
+/// # Example
 ///
 /// ```ignore
-/// // 在 PostProcess 阶段前插入描边效果
+/// // Insert an outline effect at the PostProcess stage
 /// frame_builder.add_node(RenderStage::PostProcess, &outline_pass);
 ///
-/// // 在 UI 阶段插入 egui 渲染
+/// // Insert egui rendering at the UI stage
 /// frame_builder.add_node(RenderStage::UI, &ui_pass);
 /// ```
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 #[repr(u8)]
 pub enum RenderStage {
-    /// 预处理阶段：资源上传、计算着色器预处理
+    /// Pre-processing stage: resource upload, compute shader pre-processing.
     ///
-    /// 适用于：BRDF LUT 生成、IBL 预滤波、GPU 粒子计算
+    /// Suitable for: BRDF LUT generation, IBL pre-filtering, GPU particle computation.
     PreProcess = 0,
 
-    /// 阴影贴图渲染阶段
+    /// Shadow map rendering stage.
     ///
-    /// 适用于：定向光阴影、点光源阴影、级联阴影贴图
+    /// Suitable for: directional-light shadows, point-light shadows, cascaded shadow maps.
     ShadowMap = 1,
 
-    /// 不透明物体渲染阶段（G-Buffer 或 Forward）
+    /// Opaque object rendering stage (G-Buffer or Forward).
     ///
-    /// 适用于：标准 PBR 渲染、Deferred G-Buffer 填充
+    /// Suitable for: standard PBR rendering, Deferred G-Buffer fill.
     Opaque = 2,
 
-    /// 天空盒渲染阶段
+    /// Skybox rendering stage.
     ///
-    /// 适用于：Cubemap 天空盒、程序化天空、大气散射
+    /// Suitable for: cubemap skybox, procedural sky, atmospheric scattering.
     Skybox = 3,
 
-    /// 半透明物体前阶段（在 Transparent 前执行）
+    /// Pre-transparent stage (executes before Transparent).
     ///
-    /// 适用于：需要在半透明物体前执行的效果，也是Opaque的最终阶段，如 SSSSS、Transmission Copy
+    /// Suitable for: effects that must run before translucent objects — also the final opaque sub-stage, e.g. SSSSS, Transmission Copy.
     BeforeTransparent = 4,
 
-    /// 半透明物体渲染阶段
+    /// Translucent object rendering stage.
     ///
-    /// 适用于：Alpha 混合物体、粒子系统、玻璃/水面
+    /// Suitable for: alpha-blended objects, particle systems, glass / water surfaces.
     Transparent = 5,
 
-    /// 后处理阶段
+    /// Post-processing stage.
     ///
-    /// 适用于：色调映射、泛光、景深、FXAA/TAA
+    /// Suitable for: tone mapping, bloom, depth of field, FXAA / TAA.
     PostProcess = 6,
 
-    /// 用户界面阶段（最后执行）
+    /// User interface stage (executed last).
     ///
-    /// 适用于：egui、ImGui、调试覆盖层
+    /// Suitable for: egui, ImGui, debug overlays.
     UI = 7,
 }
 
 impl RenderStage {
-    /// 获取阶段的数值索引（用于排序）
+    /// Returns the numeric index of the stage (used for sorting).
     #[inline]
     #[must_use]
     pub const fn order(self) -> u8 {
         self as u8
     }
 
-    /// 阶段名称（用于调试）
+    /// Stage name (for debugging).
     #[inline]
     #[must_use]
     pub const fn name(self) -> &'static str {

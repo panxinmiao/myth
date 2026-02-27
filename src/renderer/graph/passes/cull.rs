@@ -560,9 +560,9 @@ impl SceneCullPass {
         ctx.render_lists.active_views.extend(shadow_views);
     }
 
-    /// 上传动态 Uniform 数据
+    /// Upload dynamic Uniform data.
     ///
-    /// 为每个渲染命令计算并上传模型矩阵、逆矩阵、法线矩阵等。
+    /// Computes and uploads model matrix, inverse matrix, normal matrix, etc. for each render command.
     fn upload_dynamic_uniforms(ctx: &mut PrepareContext) {
         let render_lists = &mut *ctx.render_lists;
 
@@ -570,7 +570,7 @@ impl SceneCullPass {
             return;
         }
 
-        // 处理不透明物体
+        // Process opaque objects
         for cmd in &mut render_lists.opaque {
             let world_matrix_inverse = cmd.model_matrix.inverse();
             let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
@@ -587,7 +587,7 @@ impl SceneCullPass {
             cmd.dynamic_offset = offset;
         }
 
-        // 处理透明物体
+        // Process transparent objects
         for cmd in &mut render_lists.transparent {
             let world_matrix_inverse = cmd.model_matrix.inverse();
             let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
@@ -620,18 +620,18 @@ impl RenderNode for SceneCullPass {
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {
-        // 1. 准备并排序渲染命令
+        // 1. Prepare and sort render commands
         Self::prepare_and_sort_commands(ctx);
 
-        // 2. 生成阴影渲染命令
+        // 2. Generate shadow render commands
         Self::prepare_shadow_commands(ctx);
 
-        // 3. 上传动态 Uniform
+        // 3. Upload dynamic Uniforms
         Self::upload_dynamic_uniforms(ctx);
     }
 
     fn run(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {
-        // SceneCullPass 不执行实际绘制
-        // 所有工作在 prepare 阶段完成
+        // SceneCullPass performs no actual drawing.
+        // All work is completed during the prepare phase.
     }
 }

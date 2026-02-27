@@ -394,7 +394,7 @@ impl SkyboxPass {
         mapping: BackgroundMapping,
     ) -> Option<&'a wgpu::TextureView> {
         match source {
-            // 1. 处理 Asset (普通纹理资源)
+            // 1. Handle Asset (regular texture resource)
             TextureSource::Asset(handle) => {
                 if let Some(binding) = ctx.resource_manager.texture_bindings.get(*handle)
                     && let Some(img) = ctx.resource_manager.gpu_images.get(&binding.cpu_image_id)
@@ -418,7 +418,7 @@ impl SkyboxPass {
                 }
                 None
             }
-            // 2. 处理 Attachment (动态生成的 RenderTarget 等)
+            // 2. Handle Attachment (dynamically generated RenderTarget, etc.)
             TextureSource::Attachment(id, _) => ctx.resource_manager.internal_resources.get(id),
         }
     }

@@ -117,7 +117,7 @@ impl Default for SsaoSettings {
 }
 
 impl SsaoSettings {
-    /// Creates new SSAO settings with default values (enabled).
+    /// Creates new SSAO settings with default values (disabled).
     #[must_use]
     pub fn new() -> Self {
         Self::default()

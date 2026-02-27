@@ -1,6 +1,6 @@
-//! 渲染状态
+//! Render State
 //!
-//! 管理每帧的渲染状态（相机、时间等全局 Uniform）
+//! Manages per-frame render state (camera, time, and other global uniforms).
 
 use std::sync::atomic::{AtomicU32, Ordering};
 

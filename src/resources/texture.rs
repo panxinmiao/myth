@@ -124,7 +124,6 @@ impl Sampler {
     pub fn new(descriptor: TextureSampler) -> Self {
         Self {
             uuid: Uuid::new_v4(),
-            // #[cfg(debug_assertions)]
             name: None,
             descriptor,
         }
@@ -151,7 +150,6 @@ impl Default for Sampler {
 pub struct Texture {
     pub uuid: Uuid,
 
-    // #[cfg(debug_assertions)]
     pub name: Option<Cow<'static, str>>,
 
     pub image: Image,
@@ -171,12 +169,10 @@ impl Texture {
     pub fn new(name: Option<&str>, image: Image, view_dimension: TextureViewDimension) -> Self {
         Self {
             uuid: Uuid::new_v4(),
-            // #[cfg(debug_assertions)]
             name: name.map(|s| Cow::Owned(s.to_string())),
             image,
             view_dimension,
             sampler: TextureSampler::default(),
-            // transform: TextureTransform::default(),
             generate_mipmaps: false,
             version: AtomicU64::new(0),
         }

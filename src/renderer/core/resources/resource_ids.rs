@@ -1,30 +1,30 @@
-//! 资源 ID 追踪模块
+//! Resource ID tracking module
 //!
-//! 提供轻量级的资源 ID 追踪机制，用于检测 GPU 资源变化。
+//! Provides a lightweight resource ID tracking mechanism for detecting GPU resource changes.
 //!
-//! # 设计思路
+//! # Design
 //!
-//! 1. **`EnsureResult`**: ensure 操作的返回值，包含物理资源 ID
-//! 2. **`ResourceIdSet`**: 一组资源 ID 的集合，支持高效比较
-//! 3. **`BindGroupFingerprint`**: `BindGroup` 的完整指纹，包含所有依赖资源的 ID
+//! 1. **`EnsureResult`**: Return value of ensure operations, containing the physical resource ID
+//! 2. **`ResourceIdSet`**: A set of resource IDs, supporting efficient comparison
+//! 3. **`BindGroupFingerprint`**: Complete fingerprint of a `BindGroup`, containing all dependent resource IDs
 
 use rustc_hash::FxHasher;
 use smallvec::SmallVec;
 use std::hash::{Hash, Hasher};
 
-/// GPU 资源的唯一标识符
+/// Unique identifier for a GPU resource
 ///
-/// 当 GPU 资源被重建（如 Buffer 扩容、Texture 重新创建）时，ID 会变化
+/// When a GPU resource is rebuilt (e.g. Buffer expansion, Texture recreation), the ID changes
 pub type ResourceId = u64;
 const INVALID_RESOURCE_ID: u64 = u64::MAX;
-/// Ensure 操作的结果
+/// Result of an ensure operation
 ///
-/// 包含资源的物理 ID，调用者可以用来判断资源是否发生变化
+/// Contains the physical ID of the resource; callers can use it to detect resource changes
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct EnsureResult {
-    /// GPU 资源的物理 ID
+    /// Physical ID of the GPU resource
     pub resource_id: ResourceId,
-    /// 资源是否刚刚被创建或重建
+    /// Whether the resource was just created or rebuilt
     pub was_recreated: bool,
 }
 
@@ -57,16 +57,16 @@ impl EnsureResult {
     }
 }
 
-/// 资源 ID 集合
+/// Resource ID set
 ///
-/// 用于追踪一组资源的物理 ID，支持快速比较是否发生变化
+/// Used to track a set of resource physical IDs, supporting fast change comparison
 #[derive(Debug, Clone, Default)]
 pub struct ResourceIdSet {
-    /// 按添加顺序存储的资源 ID
+    /// Resource IDs stored in insertion order
     ids: SmallVec<[ResourceId; 16]>,
-    /// 预计算的哈希值（用于快速比较）
+    /// Pre-computed hash value (for fast comparison)
     cached_hash: u64,
-    /// 标记哈希是否需要重新计算
+    /// Flag indicating whether the hash needs recomputation
     hash_dirty: bool,
 }
 
@@ -89,43 +89,43 @@ impl ResourceIdSet {
         }
     }
 
-    /// 添加一个资源 ID
+    /// Add a resource ID
     #[inline]
     pub fn push(&mut self, id: ResourceId) {
         self.ids.push(id);
         self.hash_dirty = true;
     }
 
-    /// 添加一个可选的资源 ID
+    /// Add an optional resource ID
     #[inline]
     pub fn push_optional(&mut self, id: Option<ResourceId>) {
-        // 使用特殊值表示 None
+        // Use a special value to represent None
         self.ids.push(id.unwrap_or(INVALID_RESOURCE_ID));
         self.hash_dirty = true;
     }
 
-    /// 清空集合
+    /// Clear the set
     #[inline]
     pub fn clear(&mut self) {
         self.ids.clear();
         self.hash_dirty = true;
     }
 
-    /// 获取资源 ID 数量
+    /// Get the number of resource IDs
     #[inline]
     #[must_use]
     pub fn len(&self) -> usize {
         self.ids.len()
     }
 
-    /// 是否为空
+    /// Check if the set is empty
     #[inline]
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.ids.is_empty()
     }
 
-    /// 获取所有 ID 的切片
+    /// Get a slice of all IDs
     #[inline]
     #[must_use]
     pub fn as_slice(&self) -> &[ResourceId] {
@@ -138,7 +138,7 @@ impl ResourceIdSet {
         self.ids.as_slice() == other_ids
     }
 
-    /// 计算并缓存哈希值
+    /// Compute and cache the hash value
     fn compute_hash(&mut self) {
         if !self.hash_dirty {
             return;
@@ -153,25 +153,25 @@ impl ResourceIdSet {
         self.hash_dirty = false;
     }
 
-    /// 获取哈希值（用于快速比较）
+    /// Get the hash value (for fast comparison)
     #[inline]
     pub fn hash_value(&mut self) -> u64 {
         self.compute_hash();
         self.cached_hash
     }
 
-    /// 比较两个集合是否相同
+    /// Compare whether two sets are identical
     pub fn matches(&mut self, other: &mut ResourceIdSet) -> bool {
         if self.ids.len() != other.ids.len() {
             return false;
         }
 
-        // 先比较哈希（快速路径）
+        // Compare hashes first (fast path)
         if self.hash_value() != other.hash_value() {
             return false;
         }
 
-        // 哈希相同时再逐个比较（处理碰撞）
+        // If hashes match, compare element by element (handle collisions)
         self.ids == other.ids
     }
 }
@@ -190,14 +190,14 @@ impl Hash for ResourceIdSet {
     }
 }
 
-/// `BindGroup` 的完整指纹
+/// Complete fingerprint of a `BindGroup`
 ///
-/// 包含 `BindGroup` 依赖的所有物理资源 ID，用于判断是否需要重建
+/// Contains all physical resource IDs the `BindGroup` depends on, used to determine if a rebuild is needed
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct BindGroupFingerprint {
-    /// 所有依赖资源的 ID（按绑定顺序）
+    /// IDs of all dependent resources (in binding order)
     pub resource_ids: Vec<ResourceId>,
-    /// Layout entries 的哈希值
+    /// Hash of layout entries
     pub layout_hash: u64,
 }
 
@@ -210,22 +210,22 @@ impl BindGroupFingerprint {
         }
     }
 
-    /// 检查资源 ID 是否发生变化
+    /// Check whether resource IDs have changed
     #[must_use]
     pub fn resources_changed(&self, new_ids: &[ResourceId]) -> bool {
         self.resource_ids != new_ids
     }
 
-    /// 检查 Layout 是否发生变化
+    /// Check whether the Layout has changed
     #[must_use]
     pub fn layout_changed(&self, new_layout_hash: u64) -> bool {
         self.layout_hash != new_layout_hash
     }
 }
 
-/// 计算 `BindGroupLayoutEntry` 列表的哈希值
+/// Compute the hash of a `BindGroupLayoutEntry` list
 ///
-/// 利用 `wgpu::BindGroupLayoutEntry` 实现的 Hash trait
+/// Leverages the Hash trait implemented by `wgpu::BindGroupLayoutEntry`
 #[must_use]
 pub fn hash_layout_entries(entries: &[wgpu::BindGroupLayoutEntry]) -> u64 {
     let mut hasher = FxHasher::default();
@@ -263,7 +263,7 @@ mod tests {
 
         let mut set2 = ResourceIdSet::new();
         set2.push(1);
-        set2.push(3); // 不同
+        set2.push(3); // different
 
         assert!(!set1.matches(&mut set2));
     }

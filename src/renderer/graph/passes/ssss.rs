@@ -1,3 +1,33 @@
+//! Screen-Space Sub-Surface Scattering (SSSSS) Post-Processing Pass
+//!
+//! Implements a separable Gaussian blur for SSS materials identified via the
+//! **Thin G-Buffer** Normal.a channel.  Two sequential render passes are
+//! executed (H then V) to reconstruct a 2-D scatter.
+//!
+//! # Data Flow
+//!
+//! ```text
+//!  DepthNormalPrepass          SssssPass
+//!       │              ┌────────────────────────────┐
+//! SceneColor ─────────►│  H Sub-Pass: Horizontal blur │──► "ssss_ping" (transient)
+//! SceneNormal ────┬───►│                              │         │
+//! SceneDepth  ────┤    │  V Sub-Pass: Vertical blur   │◄────────┘
+//!                 └───►│   (overwrites SceneColor)    │──► SceneColor (in-place)
+//!                      └────────────────────────────┘
+//! ```
+//!
+//! # Integration
+//!
+//! Must come **after** `TransparentPass` and **before** `BloomPass` in the
+//! `HighFidelity` render path.  Zero cost when disabled.
+//!
+//! # GPU Resources
+//!
+//! - **Profiles StorageBuffer**: 256 × `ScreenSpaceMaterialData` (12 KB).
+//!   Uploaded from `ExtractedScene.current_screen_space_profiles`.
+//! - **H/V Uniforms UniformBuffer**: 2 × `SsssUniforms` (64 bytes total).
+//! - **Ping TransientTexture**: `Rgba16Float`, same size as scene colour.
+
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
@@ -13,11 +43,11 @@ pub struct SssssPass {
     vertical_pipeline: Option<wgpu::RenderPipeline>,
     bind_group_layout: Option<Tracked<wgpu::BindGroupLayout>>,
 
-    // 全局配置缓冲
+    // Global configuration buffer
     profiles_buffer: Tracked<wgpu::Buffer>,
     last_registry_version: u64,
 
-    // 动态 BindGroups
+    // Dynamic BindGroups
     horizontal_bind_group: Option<wgpu::BindGroup>,
     vertical_bind_group: Option<wgpu::BindGroup>,
 
@@ -28,7 +58,7 @@ pub struct SssssPass {
 impl SssssPass {
     #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
-        // 创建 256 个元素的 Storage Buffer
+        // Create a Storage Buffer for 256 elements
         let profiles_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("SSS Profiles Buffer"),
             size: (256 * size_of::<SssProfileData>()) as wgpu::BufferAddress,
@@ -62,7 +92,7 @@ impl RenderNode for SssssPass {
             return;
         }
 
-        // 1. 极致 Diff-Sync 同步
+        // 1. Minimal diff-sync synchronization
         let registry = ctx.assets.sss_registry.read();
         if self.last_registry_version != registry.version {
             ctx.wgpu_ctx.queue.write_buffer(
@@ -73,7 +103,7 @@ impl RenderNode for SssssPass {
             self.last_registry_version = registry.version;
         }
 
-        // 2. 初始化 Pipeline 与 Layout (延迟初始化)
+        // 2. Initialize Pipeline and Layout (lazy initialization)
         if self.horizontal_pipeline.is_none() {
             let device = &ctx.wgpu_ctx.device;
 
@@ -287,7 +317,7 @@ impl RenderNode for SssssPass {
             self.sampler = Some(Tracked::new(sampler));
         }
 
-        // 3. 申请 PingPong 中间渲染目标 (复用 Transient Pool)
+        // 3. Allocate PingPong intermediate render target (reusing Transient Pool)
         let color_format = HDR_TEXTURE_FORMAT;
         let (w, h) = ctx.wgpu_ctx.size();
         let pingpong_tex = ctx.transient_pool.allocate(
@@ -323,11 +353,11 @@ impl RenderNode for SssssPass {
                 .expect("Specular texture must exist for SSSSS"),
         );
 
-        // 4. 构建 Horizontal 和 Vertical 两次 Draw 的 BindGroup
+        // 4. Build BindGroups for Horizontal and Vertical draw passes
         let layout = self.bind_group_layout.as_ref().unwrap();
         let sampler = self.sampler.as_ref().unwrap();
 
-        // Horizontal: 从 SceneColor 读取，渲染到 pingpong_tex
+        // Horizontal: read from SceneColor, render to pingpong_tex
         let horizontal_key = BindGroupKey::new(layout.id())
             .with_resource(scene_color_view.id())
             .with_resource(scene_normal_view.id())
@@ -380,7 +410,7 @@ impl RenderNode for SssssPass {
                 .clone(),
         );
 
-        // Vertical: 从 pingpong_tex 读取，渲染到 SceneColor
+        // Vertical: read from pingpong_tex, render to SceneColor
         let vertical_key = BindGroupKey::new(layout.id())
             .with_resource(pingpong_view.id())
             .with_resource(scene_normal_view.id())
@@ -436,7 +466,7 @@ impl RenderNode for SssssPass {
         // Store pingpong_tex in blackboard so we can use it in run
         ctx.blackboard.sssss_pingpong_texture_id = Some(pingpong_tex);
 
-        // 5. 输出绑定到 SceneColorInput (PingPong 作为中间目标，最终结果写回 SceneColorInput)
+        // 5. Bind output to SceneColorInput (PingPong as intermediate target, final result written back to SceneColorInput)
         self.output_view = Some(
             ctx.get_resource_view(GraphResource::SceneColorInput)
                 .clone(),
@@ -454,11 +484,11 @@ impl RenderNode for SssssPass {
         let pingpong_tex = ctx.blackboard.sssss_pingpong_texture_id.unwrap();
         let pingpong_view = ctx.transient_pool.get_view(pingpong_tex);
 
-        // 第一次绘制：水平模糊 (Horizontal)
+        // First draw: Horizontal blur
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SSSSS Horizontal"),
-                // 渲染到 PingPong 纹理
+                // Render to PingPong texture
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: pingpong_view,
                     resolve_target: None,
@@ -468,7 +498,7 @@ impl RenderNode for SssssPass {
                     },
                     depth_slice: None,
                 })],
-                // 必须挂载带 Stencil 的 DepthBuffer！
+                // Must attach a DepthBuffer with Stencil!
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth_stencil_view,
                     depth_ops: None,
@@ -478,16 +508,16 @@ impl RenderNode for SssssPass {
             });
 
             rpass.set_pipeline(self.horizontal_pipeline.as_ref().unwrap());
-            rpass.set_stencil_reference(STENCIL_FEATURE_SSS); // 触发硬件剔除！
+            rpass.set_stencil_reference(STENCIL_FEATURE_SSS); // Trigger hardware stencil culling!
             rpass.set_bind_group(0, self.horizontal_bind_group.as_ref().unwrap(), &[]);
             rpass.draw(0..3, 0..1);
         }
 
-        // 第二次绘制：垂直模糊 (Vertical)
+        // Second draw: Vertical blur
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SSSSS Vertical"),
-                // 渲染回 SceneColorInput
+                // Render back to SceneColorInput
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: scene_color_output_view,
                     resolve_target: None,
@@ -506,7 +536,7 @@ impl RenderNode for SssssPass {
             });
 
             rpass.set_pipeline(self.vertical_pipeline.as_ref().unwrap());
-            rpass.set_stencil_reference(STENCIL_FEATURE_SSS); // 触发硬件剔除！
+            rpass.set_stencil_reference(STENCIL_FEATURE_SSS); // Trigger hardware stencil culling!
             rpass.set_bind_group(0, self.vertical_bind_group.as_ref().unwrap(), &[]);
             rpass.draw(0..3, 0..1);
         }

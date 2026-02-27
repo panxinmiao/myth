@@ -33,7 +33,6 @@ new_key_type! {
 }
 
 const DUMMY_ENV_MAP_ID: u64 = 0xFFFF_FFFF_FFFF_FFFF;
-// const DUMMY_SAMPLER_ID: u64 = 0xFFFF_FFFF_FFFF_FFFE;
 
 impl TextureHandle {
     /// Creates a reserved handle for internal system use
@@ -87,7 +86,7 @@ impl AssetServer {
     // ========================================================================
     // Legacy / Synchronous Methods (Native Only)
     // ========================================================================
-    // Todo: 保留这些方法以兼容旧代码，但在 Native 上也可以考虑重构为调用 block_on(async_load)
+    // Todo: Keep these methods for backward compatibility, but on Native we could also consider refactoring them to call block_on(async_load)
 
     pub fn load_texture(
         &mut self,
@@ -110,8 +109,6 @@ impl AssetServer {
             texture.generate_mipmaps = generate_mipmaps;
             let handle = self.textures.add(texture);
             Ok(handle)
-
-            // panic!("Synchronous loading not supported on WASM");
         }
     }
 
@@ -138,7 +135,6 @@ impl AssetServer {
             texture.generate_mipmaps = generate_mipmaps;
             let handle = self.textures.add(texture);
             Ok(handle)
-            // panic!("Synchronous loading not supported on WASM");
         }
     }
 
@@ -153,7 +149,6 @@ impl AssetServer {
             let texture = crate::assets::load_hdr_texture_from_file(source.uri().to_string())?;
             let handle = self.textures.add(texture);
             Ok(handle)
-            // panic!("Synchronous loading not supported on WASM");
         }
     }
 
@@ -161,7 +156,7 @@ impl AssetServer {
     // Async Methods (Cross-Platform)
     // ========================================================================
 
-    /// 异步加载 2D 纹理 (支持本地路径或 HTTP URL)
+    /// Asynchronously loads a 2D texture (supports local paths or HTTP URLs).
     pub async fn load_texture_async(
         &self,
         source: impl AssetSource,
@@ -175,32 +170,30 @@ impl AssetServer {
             .filename()
             .unwrap_or(std::borrow::Cow::Borrowed("unknown"));
 
-        // 1. IO: 读取字节
+        // 1. IO: Read bytes
         let bytes = reader.read_bytes(&filename).await?;
 
         let image = Self::decode_image_async(bytes, color_space, filename.to_string()).await?;
 
-        // 3. 构建 Texture 资源
+        // 3. Build Texture resource
         let mut texture = Texture::new(Some(&uri), image, wgpu::TextureViewDimension::D2);
 
         texture.generate_mipmaps = generate_mipmaps;
 
-        // 4. 存入 AssetStorage
+        // 4. Store in AssetStorage
         let handle = self.textures.add(texture);
         Ok(handle)
     }
 
-    /// 异步加载 Cube Map (需要 6 张图)
+    /// Asynchronously loads a Cube Map (requires 6 images).
     pub async fn load_cube_texture_async(
         &self,
         sources: [impl AssetSource; 6],
         color_space: ColorSpace,
         generate_mipmaps: bool,
     ) -> Result<TextureHandle> {
-        // 并发加载 6 张图
+        // Concurrently load 6 images
         let mut futures = Vec::with_capacity(6);
-
-        // let uris: Vec<String> = sources.into_iter().map(|s| s.to_uri()).collect();
 
         for source in sources {
             futures.push(async move {
@@ -218,7 +211,7 @@ impl AssetServer {
 
         let images = futures::future::try_join_all(futures).await?;
 
-        // 检查尺寸一致性
+        // Check dimension consistency
         let width: u32 = images[0].width();
         let height = images[0].height();
         if images
@@ -262,7 +255,7 @@ impl AssetServer {
         Ok(handle)
     }
 
-    /// 异步加载 HDR 环境贴图
+    /// Asynchronously loads an HDR environment map.
     pub async fn load_hdr_texture_async(&self, source: impl AssetSource) -> Result<TextureHandle> {
         let reader = AssetReaderVariant::new(&source)?;
         let filename = source
@@ -271,11 +264,11 @@ impl AssetServer {
 
         let bytes = reader.read_bytes(&filename).await?;
 
-        // HDR 解码逻辑 (参考你之前的示例)
+        // HDR decoding logic
         let image = Self::decode_hdr_async(bytes).await?;
 
         let mut texture = Texture::new(Some(&filename), image, wgpu::TextureViewDimension::D2);
-        // HDR 通常不需要 mipmap，或者需要特殊处理
+        // HDR typically does not need mipmaps, or requires special handling
         texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
         texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
         texture.sampler.mag_filter = wgpu::FilterMode::Linear;
@@ -289,7 +282,7 @@ impl AssetServer {
     // Internal Helpers
     // ========================================================================
 
-    /// 统一的图片解码帮助函数 (自动处理 Native 线程池卸载)
+    /// Unified image decoding helper (automatically offloads to native thread pool).
     async fn decode_image_async(
         bytes: Vec<u8>,
         color_space: ColorSpace,
@@ -297,18 +290,18 @@ impl AssetServer {
     ) -> Result<crate::resources::image::Image> {
         #[cfg(not(target_arch = "wasm32"))]
         {
-            // Native: 放到 blocking thread 执行
+            // Native: Offload to blocking thread
             tokio::task::spawn_blocking(move || Self::decode_image_cpu(&bytes, color_space, &label))
                 .await?
         }
         #[cfg(target_arch = "wasm32")]
         {
-            // WASM: 目前只能在主线程执行 (除非引入 WebWorker 架构)
+            // WASM: Currently can only run on the main thread (unless WebWorker architecture is introduced)
             Self::decode_image_cpu(&bytes, color_space, &label)
         }
     }
 
-    /// CPU 图片解码逻辑
+    /// CPU image decoding logic.
     fn decode_image_cpu(
         bytes: &[u8],
         color_space: ColorSpace,
@@ -339,7 +332,7 @@ impl AssetServer {
         ))
     }
 
-    /// 统一的 HDR 解码帮助函数
+    /// Unified HDR decoding helper.
     async fn decode_hdr_async(bytes: Vec<u8>) -> Result<crate::resources::image::Image> {
         #[cfg(not(target_arch = "wasm32"))]
         {
@@ -351,7 +344,7 @@ impl AssetServer {
         }
     }
 
-    /// CPU HDR 解码逻辑 (转换为 `RGBA16Float`)
+    /// CPU HDR decoding logic (converts to `RGBA16Float`).
     fn decode_hdr_cpu(bytes: &[u8]) -> Result<crate::resources::image::Image> {
         let img = image::load_from_memory(bytes)
             .map_err(|e| Error::Asset(AssetError::Format(format!("Failed to decode HDR: {e}"))))?;

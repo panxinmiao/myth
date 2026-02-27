@@ -4,10 +4,10 @@ use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use uuid::Uuid;
 
-// 全局 Image ID 生成器 (为了高性能 Map 查找，使用 u64)
+// Global Image ID generator (uses u64 for high-performance map lookups)
 static NEXT_IMAGE_ID: AtomicU64 = AtomicU64::new(1);
 
-// 把所有可能触发 Re-creation 的元数据打包
+// Bundle all metadata that may trigger re-creation
 #[derive(Debug, Clone, Copy)]
 pub struct ImageDescriptor {
     pub dimension: wgpu::TextureDimension,
@@ -24,17 +24,17 @@ pub struct ImageInner {
     pub width: AtomicU32,
     pub height: AtomicU32,
     pub depth: AtomicU32,
-    pub mip_level_count: AtomicU32, // 源数据的 mip 层级
+    pub mip_level_count: AtomicU32, // Source data mip level count
 
-    // 格式信息 (Complex types, RwLock)
+    // Format info (complex types, RwLock)
     pub description: RwLock<ImageDescriptor>,
 
-    // 数据内容 (像素)
+    // Data content (pixels)
     pub data: RwLock<Option<Vec<u8>>>,
 
-    // 版本控制
-    pub version: AtomicU64,       // 数据版本 (Data 内容变更时改变)
-    pub generation_id: AtomicU64, // 结构版本 (尺寸/格式变更时改变)
+    // Version control
+    pub version: AtomicU64, // Data version (changes when pixel data is modified)
+    pub generation_id: AtomicU64, // Structural version (changes when size/format is modified)
 }
 
 impl ImageInner {
@@ -145,7 +145,7 @@ impl Image {
             .dimension
     }
 
-    /// 更新数据
+    /// Updates the pixel data
     pub fn update_data(&self, data: Vec<u8>) {
         let mut lock = self.0.data.write().expect("Image data lock poisoned");
         *lock = Some(data);
@@ -176,7 +176,7 @@ impl Image {
     }
 }
 
-// Deref 方便直接访问内部数据 (只读)
+// Deref for convenient read-only access to inner data
 impl std::ops::Deref for Image {
     type Target = ImageInner;
     fn deref(&self) -> &Self::Target {

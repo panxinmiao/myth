@@ -141,8 +141,8 @@ impl Transform {
         self.mark_dirty();
     }
 
-    /// 直接设置局部矩阵（例如来自 glTF 或物理引擎）
-    /// 会分解为 TRS 并同步状态
+    /// Directly sets the local matrix (e.g. from glTF or a physics engine).
+    /// Decomposes it into TRS and synchronizes state.
     pub fn apply_local_matrix(&mut self, mat: Affine3A) {
         self.local_matrix = mat;
         let (scale, rotation, translation) = mat.to_scale_rotation_translation();
@@ -160,7 +160,7 @@ impl Transform {
         self.apply_local_matrix(affine);
     }
 
-    /// 将变换面向目标点（在父坐标系中）
+    /// Orients the transform to face a target point (in parent space).
     pub fn look_at(&mut self, target: Vec3, up: Vec3) {
         let forward = (target - self.position).normalize();
         if forward.cross(up).length_squared() < 1e-4 {

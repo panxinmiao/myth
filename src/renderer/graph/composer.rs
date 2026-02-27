@@ -1,18 +1,18 @@
-//! 帧合成器
+//! Frame Composer
 //!
-//! `FrameComposer` 用于链式构建渲染管线并最终执行。
-//! 它是连接 Prepare 阶段和 Execute 阶段的"胶水"对象。
+//! `FrameComposer` provides a fluent API to build and execute the render pipeline.
+//! It acts as the "glue" connecting the Prepare phase and the Execute phase.
 //!
-//! # 三阶段渲染架构
+//! # Three-Phase Rendering Architecture
 //!
-//! 1. **Prepare (准备)**：提取数据 (Extract) 和准备资源 (Prepare)
-//! 2. **Compose (组装)**：通过链式 API 添加 `RenderNode`
-//! 3. **Execute (执行)**：获取 Surface，构建 `RenderGraph` 并提交 GPU 命令
+//! 1. **Prepare**: Extract data and prepare GPU resources
+//! 2. **Compose**: Add `RenderNode`s via the fluent API
+//! 3. **Execute**: Acquire the Surface, build the `RenderGraph`, and submit GPU commands
 //!
-//! # 示例
+//! # Example
 //!
 //! ```ignore
-//! // 优雅的链式调用
+//! // Fluent chained invocation
 //! renderer.begin_frame(scene, &camera, assets, time)?
 //!     .add_node(RenderStage::UI, &ui_pass)
 //!     .add_node(RenderStage::PostProcess, &bloom_pass)
@@ -47,60 +47,61 @@ pub struct ComposerContext<'a> {
     pub transient_pool: &'a mut TransientTexturePool,
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
 
-    /// 渲染列表（由 `SceneCullPass` 填充）
+    /// Render lists (populated by `SceneCullPass`)
     pub render_lists: &'a mut RenderLists,
 
-    /// 帧黑板（跨 Pass 瞬态数据通信）
+    /// Frame blackboard (cross-pass transient data communication)
     pub blackboard: &'a mut FrameBlackboard,
 
-    // 外部场景数据 todo: refactor
+    // External scene data
     pub scene: &'a mut Scene,
     pub camera: &'a RenderCamera,
     pub assets: &'a AssetServer,
     pub time: f32,
 }
 
-/// 帧合成器
+/// Frame Composer
 ///
-/// 持有一帧渲染所需的所有上下文引用，提供链式 API 来添加渲染节点。
+/// Holds all context references needed to render a single frame and provides
+/// a fluent API for adding render nodes.
 ///
-/// # 设计说明
+/// # Design Notes
 ///
-/// - **权责分明**：`FrameComposer` 只负责上下文和流程控制
-/// - **生命周期安全**：生命周期 `'a` 锁定 `Renderer` 的可变借用
-/// - **Surface 延迟获取**：在 `.render()` 时才获取 Surface，减少持有时间
+/// - **Clear responsibilities**: `FrameComposer` only handles context and flow control
+/// - **Lifetime safety**: Lifetime `'a` locks the mutable borrow on `Renderer`
+/// - **Deferred Surface acquisition**: The Surface is acquired only in `.render()` to minimize hold time
 ///
-/// # 性能考虑
+/// # Performance Considerations
 ///
-/// - 内部 `FrameBuilder` 预分配 16 个节点容量
-/// - 排序使用 `FrameBuilder` 的高效排序机制
-/// - 所有字段都是引用，无堆分配开销
+/// - Internal `FrameBuilder` pre-allocates capacity for 16 nodes
+/// - Sorting uses `FrameBuilder`'s efficient sorting mechanism
+/// - All fields are references — no heap allocation overhead
 pub struct FrameComposer<'a> {
-    // GPU 上下文
+    // GPU context
     ctx: ComposerContext<'a>,
 
-    // 构建器（收集渲染节点）
+    // Builder (collects render nodes)
     builder: FrameBuilder<'a>,
 }
 
 impl<'a> FrameComposer<'a> {
-    /// 创建新的帧合成器
+    /// Creates a new frame composer.
     ///
-    /// 内部会自动注入内置 Pass（BRDF LUT、IBL、Forward）。
+    /// Built-in passes (BRDF LUT, IBL, Forward) are injected automatically.
     pub(crate) fn new(builder: FrameBuilder<'a>, ctx: ComposerContext<'a>) -> Self {
         Self { ctx, builder }
     }
 
-    /// 在指定阶段添加自定义渲染节点
+    /// Adds a custom render node at the specified stage.
     ///
-    /// 支持链式调用。
+    /// Supports method chaining.
     ///
-    /// # 参数
+    /// # Arguments
     ///
-    /// - `stage`: 渲染阶段（决定执行顺序）
-    /// - `node`: 渲染节点引用
+    /// - `stage`: Render stage (determines execution order)
+    /// - `node`: Render node reference
     ///
-    /// # 示例
+    /// # Example
     ///
     /// ```ignore
     /// composer
@@ -115,9 +116,9 @@ impl<'a> FrameComposer<'a> {
         self
     }
 
-    /// 批量添加多个节点到同一阶段
+    /// Adds multiple nodes to the same stage in batch.
     ///
-    /// # 示例
+    /// # Example
     ///
     /// ```ignore
     /// composer
@@ -134,20 +135,20 @@ impl<'a> FrameComposer<'a> {
         self
     }
 
-    /// 执行渲染并呈现到屏幕
+    /// Executes the render pipeline and presents to the screen.
     ///
-    /// 这是渲染流程的最后一步：
-    /// 1. 获取 Surface 纹理
-    /// 2. 构建 `RenderContext`
-    /// 3. 将 Builder 转换为 `RenderGraph`（包含排序）
-    /// 4. 执行渲染图
+    /// This is the final step of the rendering workflow:
+    /// 1. Acquire the Surface texture
+    /// 2. Build the `RenderContext`
+    /// 3. Convert the Builder into a sorted `RenderGraph`
+    /// 4. Execute the render graph
     /// 5. Present
     ///
-    /// # 注意
+    /// # Note
     ///
-    /// 此方法消费 `self`，调用后 `FrameComposer` 不可再使用。
+    /// This method consumes `self`; the `FrameComposer` cannot be reused after calling it.
     pub fn render(self) {
-        // 1. 获取 Surface Texture（延迟到最后一刻，减少持有时间）
+        // 1. Acquire the Surface Texture (deferred to the last moment to minimize hold time)
         let output = match self.ctx.wgpu_ctx.surface.get_current_texture() {
             Ok(output) => output,
             Err(wgpu::SurfaceError::Lost) => return,
@@ -164,10 +165,10 @@ impl<'a> FrameComposer<'a> {
             ..Default::default()
         });
 
-        // 2. Builder 转换为排序后的 RenderGraph
+        // 2. Convert the Builder into a sorted RenderGraph
         let mut graph = self.builder.build();
 
-        // 3. Prepare 阶段 — 可变上下文
+        // 3. Prepare phase — mutable context
         {
             let mut prepare_ctx = PrepareContext {
                 wgpu_ctx: &*self.ctx.wgpu_ctx,
@@ -189,7 +190,7 @@ impl<'a> FrameComposer<'a> {
             graph.prepare(&mut prepare_ctx);
         }
 
-        // 4. Execute 阶段 — 只读上下文
+        // 4. Execute phase — read-only context
         let execute_ctx = ExecuteContext::new(
             &*self.ctx.wgpu_ctx,
             &*self.ctx.resource_manager,

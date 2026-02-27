@@ -1,6 +1,6 @@
-//! 顶点布局生成器
+//! Vertex Layout Generator
 //!
-//! 根据 Geometry 属性生成 WGPU 顶点布局和 WGSL 代码
+//! Generates WGPU vertex layouts and WGSL code from Geometry attributes
 
 use crate::resources::buffer::BufferRef;
 use crate::resources::geometry::{Attribute, Geometry};
@@ -77,24 +77,17 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
 
     let mut sorted_groups: Vec<_> = buffer_groups.into_iter().collect();
 
-    // 先对每个组内部的属性进行排序，确保 a.1[0] 是确定的（例如按 offset 或名字）
+    // Sort attributes within each group first to ensure a.1[0] is deterministic (e.g., by offset or name)
     for (_, attrs) in &mut sorted_groups {
         attrs.sort_by(|a, b| a.1.offset.cmp(&b.1.offset).then(a.0.cmp(b.0)));
     }
 
-    // 然后再对组进行排序
+    // Then sort the groups themselves
     sorted_groups.sort_by(|a, b| {
-        // 这里沿用原本的逻辑，但现在它是稳定的了
         let name_a = a.1[0].0;
         let name_b = b.1[0].0;
         name_a.cmp(name_b)
     });
-
-    // sorted_groups.sort_by(|a, b| {
-    //     let name_a = a.1[0].0;
-    //     let name_b = b.1[0].0;
-    //     name_a.cmp(name_b)
-    // });
 
     let mut owned_layouts = Vec::new();
     let mut wgsl_struct_fields = Vec::new();
@@ -102,8 +95,6 @@ pub fn generate_vertex_layout(geometry: &Geometry) -> GeneratedVertexLayout {
     let mut current_location = 0;
 
     for (buffer_id, attrs) in sorted_groups {
-        // attrs.sort_by(|a, b| a.1.offset.cmp(&b.1.offset).then(a.0.cmp(b.0)));
-
         let first_attr = attrs[0].1;
         let stride = first_attr.stride;
         let step_mode = first_attr.step_mode;

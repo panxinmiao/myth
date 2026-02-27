@@ -4,19 +4,19 @@ use std::{borrow::Cow, sync::Arc};
 
 use crate::errors::{AssetError, Error, Result};
 
-/// 资产读取器 Trait
-/// 支持本地文件和网络资源的异步读取
+/// Asset reader trait.
+/// Supports asynchronous reading of local files and network resources.
 pub trait AssetReader: Send + Sync {
-    /// 异步读取资源字节流
+    /// Asynchronously read resource bytes.
     #[cfg(not(target_arch = "wasm32"))]
     fn read_bytes(&self, uri: &str) -> impl std::future::Future<Output = Result<Vec<u8>>> + Send;
 
-    /// WASM 下 Future 不需要 Send
+    /// On WASM, Futures do not need to be `Send`.
     #[cfg(target_arch = "wasm32")]
     fn read_bytes(&self, uri: &str) -> impl std::future::Future<Output = Result<Vec<u8>>>;
 }
 
-/// 本地文件读取器 (仅在非 WASM 平台可用)
+/// Local file reader (only available on non-WASM platforms).
 #[cfg(not(target_arch = "wasm32"))]
 pub struct FileAssetReader {
     root_path: PathBuf,
@@ -50,8 +50,8 @@ impl AssetReader for FileAssetReader {
     }
 }
 
-/// HTTP 网络读取器
-/// reqwest 跨平台特性 (Native 使用 tokio, WASM 使用 fetch)
+/// HTTP network reader.
+/// Uses reqwest's cross-platform capability (tokio on native, fetch on WASM).
 #[cfg(feature = "http")]
 pub struct HttpAssetReader {
     root_url: reqwest::Url,
@@ -75,7 +75,7 @@ impl HttpAssetReader {
 
         let client = reqwest::Client::builder();
 
-        // Native 平台特定的超时设置等
+        // Native-specific timeout settings, etc.
         #[cfg(not(target_arch = "wasm32"))]
         let client = client.timeout(std::time::Duration::from_secs(30));
 
@@ -107,7 +107,7 @@ impl AssetReader for HttpAssetReader {
     }
 }
 
-/// 资产读取器变体枚举
+/// Asset reader variant enum.
 #[derive(Clone)]
 pub enum AssetReaderVariant {
     #[cfg(not(target_arch = "wasm32"))]
@@ -117,7 +117,7 @@ pub enum AssetReaderVariant {
 }
 
 impl AssetReaderVariant {
-    /// 从路径或 URL 自动创建合适的读取器
+    /// Automatically creates the appropriate reader from a path or URL.
     pub fn new(source: &impl AssetSource) -> Result<Self> {
         let uri = source.uri();
 
@@ -135,14 +135,14 @@ impl AssetReaderVariant {
                     ))
                 }
             } else {
-                // 如果不是 HTTP，默认走文件系统
+                // If not HTTP, default to filesystem reader
                 Ok(Self::File(Arc::new(FileAssetReader::new(uri.as_ref()))))
             }
         }
 
         #[cfg(target_arch = "wasm32")]
         {
-            // WASM 统一走 HTTP 读取
+            // WASM always uses HTTP reader
             #[cfg(not(feature = "http"))]
             {
                 return Err(Error::Platform(
@@ -176,7 +176,7 @@ impl AssetReaderVariant {
         }
     }
 
-    /// 异步读取字节数据
+    /// Asynchronously reads byte data.
     pub async fn read_bytes(&self, uri: &str) -> Result<Vec<u8>> {
         match self {
             #[cfg(not(target_arch = "wasm32"))]
@@ -201,11 +201,11 @@ impl AssetSource for str {
     }
 
     fn filename(&self) -> Option<Cow<'_, str>> {
-        // 简单的 URL/路径 分割逻辑
-        // 如果是 URL "http://example.com/foo/bar.png" -> "bar.png"
-        // 如果是 路径 "assets/bar.png" -> "bar.png"
+        // Simple URL/path splitting logic
+        // For URL "http://example.com/foo/bar.png" -> "bar.png"
+        // For path "assets/bar.png" -> "bar.png"
         let name = self.rsplit('/').next().unwrap_or(self);
-        // 处理可能存在的 URL query 参数 "bar.png?v=1" -> "bar.png"
+        // Handle possible URL query parameters "bar.png?v=1" -> "bar.png"
         let name = name.split('?').next().unwrap_or(name);
         if name.is_empty() {
             None
@@ -248,7 +248,7 @@ impl AssetSource for &str {
 #[cfg(not(target_arch = "wasm32"))]
 impl AssetSource for Path {
     fn uri(&self) -> Cow<'_, str> {
-        // 将系统路径转换为通用 URI 格式 (正斜杠)
+        // Convert system path to generic URI format (forward slashes)
         Cow::Owned(self.to_string_lossy().replace('\\', "/"))
     }
 
@@ -264,7 +264,7 @@ impl AssetSource for Path {
 #[cfg(not(target_arch = "wasm32"))]
 impl AssetSource for &Path {
     fn uri(&self) -> Cow<'_, str> {
-        // 将系统路径转换为通用 URI 格式 (正斜杠)
+        // Convert system path to generic URI format (forward slashes)
         Cow::Owned(self.to_string_lossy().replace('\\', "/"))
     }
 

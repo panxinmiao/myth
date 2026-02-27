@@ -1,4 +1,4 @@
-//! Buffer 相关操作
+//! Buffer operations
 
 use rustc_hash::FxHashMap;
 
@@ -108,10 +108,10 @@ impl GpuBuffer {
 }
 
 impl ResourceManager {
-    /// 静态辅助方法：只借用必要的字段，解决 borrow checker 冲突
-    /// 可以在持有 `ResourceManager` 其他字段引用的同时调用此方法
+    /// Static helper method: borrows only necessary fields to resolve borrow checker conflicts.
+    /// Can be called while holding references to other `ResourceManager` fields.
     ///
-    /// 返回 EnsureResult，包含物理资源 ID 和是否重建的标志
+    /// Returns EnsureResult containing the physical resource ID and a rebuild flag
     pub fn write_buffer_internal(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
@@ -127,12 +127,12 @@ impl ResourceManager {
             std::collections::hash_map::Entry::Occupied(mut entry) => {
                 let gpu_buf = entry.get_mut();
 
-                // 检查版本并上传
+                // Check version and upload
                 if buffer_ref.version > gpu_buf.last_uploaded_version {
                     if (data.len() as u64) > gpu_buf.size {
                         log::debug!("Resizing buffer {:?}...", buffer_ref.label());
                         let old_id = gpu_buf.id;
-                        // 原地替换
+                        // In-place replacement
                         *gpu_buf =
                             GpuBuffer::new(device, data, buffer_ref.usage, buffer_ref.label());
                         was_recreated = gpu_buf.id != old_id;
@@ -155,9 +155,9 @@ impl ResourceManager {
         }
     }
 
-    /// 确保 `CpuBuffer` 对应的 `GpuBuffer` 已经创建并上传最新数据
+    /// Ensure the `GpuBuffer` corresponding to a `CpuBuffer` is created and uploaded with the latest data
     ///
-    /// 返回 EnsureResult，包含物理资源 ID 和是否重建的标志
+    /// Returns EnsureResult containing the physical resource ID and a rebuild flag
     pub fn ensure_buffer<T: super::GpuData>(
         &mut self,
         cpu_buffer: &super::CpuBuffer<T>,
@@ -177,9 +177,9 @@ impl ResourceManager {
         )
     }
 
-    /// 通过 `BufferRef` 和原始字节数据确保 `GpuBuffer` 存在且数据最新
+    /// Ensure a `GpuBuffer` exists and has up-to-date data via `BufferRef` and raw byte data
     ///
-    /// 用于支持 `MaterialTrait` 等通用接口
+    /// Used to support generic interfaces like `MaterialTrait`
     pub fn ensure_buffer_ref(&mut self, buffer_ref: &BufferRef, data: &[u8]) -> EnsureResult {
         Self::write_buffer_internal(
             &self.device,
@@ -191,9 +191,9 @@ impl ResourceManager {
         )
     }
 
-    /// 确保 `CpuBuffer` 对应的 `GpuBuffer` 已经创建并上传最新数据
+    /// Ensure the `GpuBuffer` corresponding to a `CpuBuffer` is created and uploaded with the latest data
     ///
-    /// 仅返回物理资源 ID（兼容旧代码）
+    /// Returns only the physical resource ID (backward compatible)
     #[inline]
     pub fn ensure_buffer_id<T: super::GpuData>(&mut self, cpu_buffer: &super::CpuBuffer<T>) -> u64 {
         self.ensure_buffer(cpu_buffer).resource_id
@@ -212,7 +212,7 @@ impl ResourceManager {
             {
                 let bytes: &[u8] = data.as_ref();
 
-                // 检查是否需要扩容
+                // Check if expansion is needed
                 if (bytes.len() as u64) > gpu_buf.size {
                     let old_id = gpu_buf.id;
                     *gpu_buf = GpuBuffer::new(
