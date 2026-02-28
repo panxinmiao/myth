@@ -185,7 +185,6 @@ impl FxaaPass {
             &pipeline_layout,
             &key,
             &format!("FXAA Pipeline {:?}", self.current_quality),
-            &[],
         );
 
         self.local_cache.insert(cache_key, id);

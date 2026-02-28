@@ -41,7 +41,7 @@ pub use cache::{FastPipelineKey, FastShadowPipelineKey, PipelineCache};
 pub use pipeline_id::{ComputePipelineId, RenderPipelineId};
 pub use pipeline_key::{
     BlendStateKey, ColorTargetKey, ComputePipelineKey, DepthStencilKey, FullscreenPipelineKey,
-    GraphicsPipelineKey, MultisampleKey, ShadowPipelineKey,
+    GraphicsPipelineKey, MultisampleKey, PrepassPipelineKey, ShadowPipelineKey,
 };
 pub use shader_gen::ShaderCompilationOptions;
 pub use shader_manager::ShaderManager;

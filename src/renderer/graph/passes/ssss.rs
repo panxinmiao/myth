@@ -247,7 +247,6 @@ impl RenderNode for SssssPass {
                 &pipeline_layout,
                 &hor_key,
                 "SSSSS Horizontal Pipeline",
-                &[],
             ));
 
             // ── Vertical pipeline via PipelineCache ────────────────────
@@ -273,7 +272,6 @@ impl RenderNode for SssssPass {
                 &pipeline_layout,
                 &vert_key,
                 "SSSSS Vertical Pipeline",
-                &[],
             ));
 
             self.bind_group_layout = Some(Tracked::new(bind_group_layout));

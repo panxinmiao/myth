@@ -284,7 +284,6 @@ impl ToneMapPass {
                 "ToneMap Pipeline {:?} lut={}",
                 self.current_mode, self.current_has_lut
             ),
-            &[],
         );
 
         // Store in local cache

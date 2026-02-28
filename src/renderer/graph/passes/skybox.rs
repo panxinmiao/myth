@@ -344,9 +344,6 @@ impl SkyboxPass {
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             }),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None,
-            front_face: wgpu::FrontFace::Ccw,
         };
 
         let pipeline_id = ctx.pipeline_cache.get_or_create_fullscreen(
@@ -355,7 +352,6 @@ impl SkyboxPass {
             &pipeline_layout,
             &fullscreen_key,
             "Skybox Pipeline",
-            &[],
         );
 
         self.local_cache.insert(key, pipeline_id);

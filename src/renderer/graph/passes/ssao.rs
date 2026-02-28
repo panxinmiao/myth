@@ -379,7 +379,6 @@ impl SsaoPass {
                 &pipeline_layout,
                 &key,
                 "SSAO Raw Pipeline",
-                &[],
             ));
         }
 
@@ -411,7 +410,6 @@ impl SsaoPass {
                 &pipeline_layout,
                 &key,
                 "SSAO Blur Pipeline",
-                &[],
             ));
         }
     }

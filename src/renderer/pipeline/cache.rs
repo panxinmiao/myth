@@ -33,7 +33,8 @@ use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::extracted::SceneFeatures;
 use crate::renderer::pipeline::pipeline_id::{ComputePipelineId, RenderPipelineId};
 use crate::renderer::pipeline::pipeline_key::{
-    ComputePipelineKey, FullscreenPipelineKey, GraphicsPipelineKey, ShadowPipelineKey, fx_hash_key,
+    ComputePipelineKey, FullscreenPipelineKey, GraphicsPipelineKey, PrepassPipelineKey,
+    ShadowPipelineKey, fx_hash_key,
 };
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::renderer::pipeline::shader_manager::ShaderManager;
@@ -77,6 +78,7 @@ pub struct PipelineCache {
     graphics_lookup: FxHashMap<u64, RenderPipelineId>,
     fullscreen_lookup: FxHashMap<u64, RenderPipelineId>,
     shadow_lookup: FxHashMap<u64, RenderPipelineId>,
+    prepass_lookup: FxHashMap<u64, RenderPipelineId>,
     compute_lookup: FxHashMap<u64, ComputePipelineId>,
 
     // ---- L1 fast lookups (handle+version → Id) ----
@@ -99,6 +101,7 @@ impl PipelineCache {
             graphics_lookup: FxHashMap::default(),
             fullscreen_lookup: FxHashMap::default(),
             shadow_lookup: FxHashMap::default(),
+            prepass_lookup: FxHashMap::default(),
             compute_lookup: FxHashMap::default(),
             fast_cache: FxHashMap::default(),
             fast_shadow_cache: FxHashMap::default(),
@@ -133,6 +136,7 @@ impl PipelineCache {
         self.graphics_lookup.clear();
         self.fullscreen_lookup.clear();
         self.shadow_lookup.clear();
+        self.prepass_lookup.clear();
         self.compute_lookup.clear();
         self.fast_cache.clear();
         self.fast_shadow_cache.clear();
@@ -388,6 +392,9 @@ impl PipelineCache {
     ///
     /// The caller must supply the pre-created `pipeline_layout` because
     /// bind-group layouts vary widely across post-processing passes.
+    ///
+    /// Primitive state is hardcoded to standard fullscreen-triangle values:
+    /// `TriangleList`, no culling, CCW, no vertex buffers.
     pub fn get_or_create_fullscreen(
         &mut self,
         device: &wgpu::Device,
@@ -395,7 +402,6 @@ impl PipelineCache {
         pipeline_layout: &wgpu::PipelineLayout,
         canonical_key: &FullscreenPipelineKey,
         label: &str,
-        vertex_buffers: &[wgpu::VertexBufferLayout<'_>],
     ) -> RenderPipelineId {
         let hash = fx_hash_key(canonical_key);
         if let Some(&id) = self.fullscreen_lookup.get(&hash) {
@@ -459,7 +465,7 @@ impl PipelineCache {
             vertex: wgpu::VertexState {
                 module: shader_module,
                 entry_point: Some("vs_main"),
-                buffers: vertex_buffers,
+                buffers: &[],
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             },
             fragment: Some(wgpu::FragmentState {
@@ -469,9 +475,9 @@ impl PipelineCache {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: canonical_key.primitive_topology,
-                front_face: canonical_key.front_face,
-                cull_mode: canonical_key.cull_mode,
+                topology: wgpu::PrimitiveTopology::TriangleList,
+                front_face: wgpu::FrontFace::Ccw,
+                cull_mode: None,
                 ..Default::default()
             },
             depth_stencil,
@@ -486,6 +492,113 @@ impl PipelineCache {
 
         let id = self.push_render_pipeline(pipeline);
         self.fullscreen_lookup.insert(hash, id);
+        id
+    }
+
+    // ── L2 Canonical: Prepass Geometry Pipeline ──────────────────────────────
+
+    /// Look up or create a depth-normal prepass geometry pipeline.
+    ///
+    /// Unlike `get_or_create_fullscreen`, this accepts vertex buffer layouts
+    /// and per-object primitive state because the prepass renders actual meshes.
+    pub fn get_or_create_prepass(
+        &mut self,
+        device: &wgpu::Device,
+        shader_module: &wgpu::ShaderModule,
+        pipeline_layout: &wgpu::PipelineLayout,
+        canonical_key: &PrepassPipelineKey,
+        label: &str,
+        vertex_buffers: &[wgpu::VertexBufferLayout<'_>],
+    ) -> RenderPipelineId {
+        let hash = fx_hash_key(canonical_key);
+        if let Some(&id) = self.prepass_lookup.get(&hash) {
+            return id;
+        }
+
+        // Rebuild wgpu types from key mirrors
+        let color_targets: Vec<Option<wgpu::ColorTargetState>> = canonical_key
+            .color_targets
+            .iter()
+            .map(|ct| {
+                Some(wgpu::ColorTargetState {
+                    format: ct.format,
+                    blend: ct.blend.map(|bk| wgpu::BlendState {
+                        color: wgpu::BlendComponent {
+                            src_factor: bk.color.src_factor,
+                            dst_factor: bk.color.dst_factor,
+                            operation: bk.color.operation,
+                        },
+                        alpha: wgpu::BlendComponent {
+                            src_factor: bk.alpha.src_factor,
+                            dst_factor: bk.alpha.dst_factor,
+                            operation: bk.alpha.operation,
+                        },
+                    }),
+                    write_mask: wgpu::ColorWrites::from_bits_truncate(ct.write_mask),
+                })
+            })
+            .collect();
+
+        let dk = &canonical_key.depth_stencil;
+        let depth_stencil = Some(wgpu::DepthStencilState {
+            format: dk.format,
+            depth_write_enabled: dk.depth_write_enabled,
+            depth_compare: dk.depth_compare,
+            stencil: wgpu::StencilState {
+                front: wgpu::StencilFaceState {
+                    compare: dk.stencil.front.compare,
+                    fail_op: dk.stencil.front.fail_op,
+                    depth_fail_op: dk.stencil.front.depth_fail_op,
+                    pass_op: dk.stencil.front.pass_op,
+                },
+                back: wgpu::StencilFaceState {
+                    compare: dk.stencil.back.compare,
+                    fail_op: dk.stencil.back.fail_op,
+                    depth_fail_op: dk.stencil.back.depth_fail_op,
+                    pass_op: dk.stencil.back.pass_op,
+                },
+                read_mask: dk.stencil.read_mask,
+                write_mask: dk.stencil.write_mask,
+            },
+            bias: wgpu::DepthBiasState {
+                constant: dk.bias.constant,
+                slope_scale: f32::from_bits(dk.bias.slope_scale_bits),
+                clamp: f32::from_bits(dk.bias.clamp_bits),
+            },
+        });
+
+        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some(label),
+            layout: Some(pipeline_layout),
+            vertex: wgpu::VertexState {
+                module: shader_module,
+                entry_point: Some("vs_main"),
+                buffers: vertex_buffers,
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: shader_module,
+                entry_point: Some("fs_main"),
+                targets: &color_targets,
+                compilation_options: wgpu::PipelineCompilationOptions::default(),
+            }),
+            primitive: wgpu::PrimitiveState {
+                topology: canonical_key.topology,
+                front_face: canonical_key.front_face,
+                cull_mode: canonical_key.cull_mode,
+                ..Default::default()
+            },
+            depth_stencil,
+            multisample: wgpu::MultisampleState {
+                count: 1, // Prepass is always 1× (no MSAA)
+                ..Default::default()
+            },
+            multiview_mask: None,
+            cache: None,
+        });
+
+        let id = self.push_render_pipeline(pipeline);
+        self.prepass_lookup.insert(hash, id);
         id
     }
 
