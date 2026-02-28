@@ -52,7 +52,7 @@ $$ if USE_LUT is defined
     {
         // Compute half-texel offset to avoid boundary artifacts
         // let lut_size = 32.0;
-        let lut_size = textureDimensions(lut_texture);
+        let lut_size = vec3<f32>(textureDimensions(lut_texture));
         let half_texel = vec3<f32>(0.5) / lut_size;
 
         // Clamp to [0, 1] and remap to 3D texture coordinates with half-texel inset

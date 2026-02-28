@@ -485,21 +485,26 @@ impl AssetServer {
 
     /// CPU .cube file decoding logic (parses text, converts to `Rgba16Float` 3D texture).
     pub(crate) fn decode_cube_cpu(bytes: &[u8]) -> Result<crate::resources::image::Image> {
-        let text = std::str::from_utf8(bytes).map_err(|e| {
+        let raw_text = std::str::from_utf8(bytes).map_err(|e| {
             Error::Asset(AssetError::Format(format!(
                 "Failed to parse .cube file as UTF-8: {e}"
             )))
         })?;
 
-        let mut size = 0u32;
+        // 移除可能存在的 UTF-8 BOM 字符 (Windows 下常见)
+        let text = raw_text.strip_prefix('\u{FEFF}').unwrap_or(raw_text);
+
+        let mut size = 0;
         let mut data = Vec::new();
 
         for line in text.lines() {
             let line = line.trim();
-            if line.is_empty() || line.starts_with('#') || line.starts_with("TITLE") {
+            // 跳过空行和注释
+            if line.is_empty() || line.starts_with('#') {
                 continue;
             }
 
+            // 解析 LUT 尺寸
             if line.starts_with("LUT_3D_SIZE") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() == 2 {
@@ -510,45 +515,57 @@ impl AssetServer {
                 continue;
             }
 
-            // Skip other metadata keywords
-            if line.starts_with("DOMAIN_MIN") || line.starts_with("DOMAIN_MAX") || line.starts_with("LUT_1D_SIZE") {
+            // 跳过常见的 .cube 元数据配置行，防止误判
+            if line.starts_with("TITLE")
+                || line.starts_with("DOMAIN_")
+                || line.starts_with("LUT_1D_")
+                || line.starts_with("LUT_3D_INPUT_RANGE")
+            {
                 continue;
             }
 
-            // Try to parse RGB float triplet
+            // 尝试将行解析为 3 个浮点数 (RGB)
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() == 3 {
-                let r = parts[0].parse::<f32>().map_err(|_| {
-                    Error::Asset(AssetError::Format("Invalid float in LUT".to_string()))
-                })?;
-                let g = parts[1].parse::<f32>().map_err(|_| {
-                    Error::Asset(AssetError::Format("Invalid float in LUT".to_string()))
-                })?;
-                let b = parts[2].parse::<f32>().map_err(|_| {
-                    Error::Asset(AssetError::Format("Invalid float in LUT".to_string()))
-                })?;
-                data.push(r);
-                data.push(g);
-                data.push(b);
+                // 安全解析：只有当这 3 个部分全都能成功转为 f32 时，才存入数据
+                if let (Ok(r), Ok(g), Ok(b)) = (
+                    parts[0].parse::<f32>(),
+                    parts[1].parse::<f32>(),
+                    parts[2].parse::<f32>(),
+                ) {
+                    data.push(r);
+                    data.push(g);
+                    data.push(b);
+                }
             }
         }
 
-        if size == 0 || data.len() != (size * size * size * 3) as usize {
+        if size == 0 {
+            return Err(Error::Asset(AssetError::Format(
+                "Missing LUT_3D_SIZE in .cube file. (Did you accidentally download an HTML file?)"
+                    .to_string(),
+            )));
+        }
+
+        let expected_len = (size * size * size * 3) as usize;
+        if data.len() < expected_len {
             return Err(Error::Asset(AssetError::Format(format!(
-                "Invalid .cube file: expected {} RGB values for size {}, got {}",
-                size * size * size,
-                size,
-                data.len() / 3
+                "LUT data too short! Expected {} float values, but found {}.",
+                expected_len,
+                data.len()
             ))));
         }
 
+        let start_index = data.len() - expected_len;
+        let lut_3d_data = &data[start_index..];
+
         // Convert RGB32F to RGBA16F (half float) for GPU usage
         let mut rgba_f16_data = Vec::with_capacity((size * size * size * 4) as usize * 2);
-        for chunk in data.chunks_exact(3) {
+        for chunk in lut_3d_data.chunks_exact(3) {
             let r = half::f16::from_f32(chunk[0]);
             let g = half::f16::from_f32(chunk[1]);
             let b = half::f16::from_f32(chunk[2]);
-            let a = half::f16::from_f32(1.0);
+            let a = half::f16::from_f32(1.0); // Alpha is fully opaque
 
             rgba_f16_data.extend_from_slice(&r.to_le_bytes());
             rgba_f16_data.extend_from_slice(&g.to_le_bytes());
@@ -560,7 +577,7 @@ impl AssetServer {
             Some("LUT_3D"),
             size,
             size,
-            size,
+            size, // Depth 为 size
             wgpu::TextureDimension::D3,
             wgpu::TextureFormat::Rgba16Float,
             Some(rgba_f16_data),
