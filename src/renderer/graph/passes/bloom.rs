@@ -362,7 +362,6 @@ impl BloomPass {
             &downsample_pipeline_layout,
             &ds_key,
             "Bloom Downsample Pipeline",
-            &[],
         ));
 
         // --- Upsample pipeline (additive blend) ---
@@ -399,7 +398,6 @@ impl BloomPass {
             &upsample_pipeline_layout,
             &us_key,
             "Bloom Upsample Pipeline",
-            &[],
         ));
 
         // --- Composite pipeline ---
@@ -436,7 +434,6 @@ impl BloomPass {
             &composite_pipeline_layout,
             &comp_key,
             "Bloom Composite Pipeline",
-            &[],
         ));
     }
 

@@ -236,7 +236,6 @@ impl IBLComputePass {
                 &layout,
                 &key,
                 "IBL Blit Pipeline",
-                &[],
             ));
         }
     }

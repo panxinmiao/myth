@@ -9,7 +9,8 @@
 //! - [`GraphicsPipelineKey`] — material-driven scene geometry pipelines
 //!   (opaque, transparent, shadow).
 //! - [`FullscreenPipelineKey`] — post-processing / fullscreen passes
-//!   (bloom, SSAO, FXAA, tone map, SSSSS, skybox, prepass…).
+//!   (bloom, SSAO, FXAA, tone map, SSSSS, skybox…).
+//! - [`PrepassPipelineKey`] — depth-normal prepass geometry pipelines.
 //! - [`ComputePipelineKey`] — compute shader pipelines (BRDF LUT, IBL).
 
 use std::hash::{Hash, Hasher};
@@ -194,12 +195,8 @@ pub struct GraphicsPipelineKey {
 
 /// L2 cache key for non-material render pipelines.
 ///
-/// Covers fullscreen / post-processing passes **and** other custom pipelines
-/// that do not go through the material-driven `GraphicsPipelineKey` path
-/// (e.g. skybox, depth-normal prepass).  The optional `multisample`,
-/// `primitive_topology`, `cull_mode`, and `front_face` fields default to
-/// standard fullscreen-triangle values when constructed via
-/// [`FullscreenPipelineKey::fullscreen()`].
+/// Covers fullscreen / post-processing passes **and** Skybox.
+/// Primitive state is hardcoded to standard fullscreen-triangle values.
 ///
 /// The `shader_hash` is an xxh3-128 of the final WGSL source code.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -210,20 +207,15 @@ pub struct FullscreenPipelineKey {
     pub color_targets: smallvec::SmallVec<[ColorTargetKey; 2]>,
     /// Depth/stencil configuration (optional).
     pub depth_stencil: Option<DepthStencilKey>,
-    /// Multisample configuration (default: 1× no-MSAA).
+    /// Multisample configuration.
+    /// Skybox needs MSAA-aware pipelines; pure post-process passes pass 1×.
     pub multisample: MultisampleKey,
-    /// Primitive topology (default: `TriangleList`).
-    pub primitive_topology: wgpu::PrimitiveTopology,
-    /// Face culling mode (default: `None` — no culling).
-    pub cull_mode: Option<wgpu::Face>,
-    /// Front face winding (default: `Ccw`).
-    pub front_face: wgpu::FrontFace,
 }
 
 impl FullscreenPipelineKey {
     /// Convenience constructor for a standard fullscreen-triangle pipeline.
     ///
-    /// Sets `multisample` to 1×, topology to `TriangleList`, no culling, CCW.
+    /// Sets `multisample` to 1× (default).
     #[must_use]
     pub fn fullscreen(
         shader_hash: u128,
@@ -235,9 +227,6 @@ impl FullscreenPipelineKey {
             color_targets,
             depth_stencil,
             multisample: MultisampleKey::from(wgpu::MultisampleState::default()),
-            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
-            cull_mode: None,
-            front_face: wgpu::FrontFace::Ccw,
         }
     }
 }
@@ -258,6 +247,26 @@ pub struct ShadowPipelineKey {
     pub topology: wgpu::PrimitiveTopology,
     pub cull_mode: Option<wgpu::Face>,
     pub depth_format: wgpu::TextureFormat,
+    pub front_face: wgpu::FrontFace,
+}
+
+// ─── Prepass Pipeline Key ─────────────────────────────────────────────────────
+
+/// L2 cache key for Depth-Normal Prepass pipelines.
+///
+/// This is a **geometry** pass (not fullscreen!) — it renders actual meshes, so
+/// the `vertex_layout_id` is critical for correct deduplication. Two meshes with
+/// different vertex buffer layouts (e.g. static vs skinned) must produce
+/// distinct pipeline entries even if their shader defines are identical.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PrepassPipelineKey {
+    pub shader_hash: u128,
+    /// Distinguishes different vertex buffer layouts (static, skinned, morphed…).
+    pub vertex_layout_id: u64,
+    pub color_targets: smallvec::SmallVec<[ColorTargetKey; 2]>,
+    pub depth_stencil: DepthStencilKey,
+    pub topology: wgpu::PrimitiveTopology,
+    pub cull_mode: Option<wgpu::Face>,
     pub front_face: wgpu::FrontFace,
 }
 

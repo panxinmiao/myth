@@ -27,7 +27,7 @@ use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::{RenderNode, TrackedRenderPass, TransientTextureDesc};
 use crate::renderer::pipeline::{
-    ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
+    ColorTargetKey, DepthStencilKey, PrepassPipelineKey, RenderPipelineId,
     ShaderCompilationOptions,
 };
 use crate::resources::material::{AlphaMode, Side};
@@ -232,10 +232,11 @@ impl DepthNormalPrepass {
                 };
 
             // ── Pipeline key ───────────────────────────────────────────
-            let fullscreen_key = FullscreenPipelineKey {
+            let prepass_key = PrepassPipelineKey {
                 shader_hash,
+                vertex_layout_id: gpu_geometry.layout_id,
                 color_targets,
-                depth_stencil: Some(DepthStencilKey::from(wgpu::DepthStencilState {
+                depth_stencil: DepthStencilKey::from(wgpu::DepthStencilState {
                     format: depth_format,
                     depth_write_enabled: true,
                     depth_compare: wgpu::CompareFunction::Greater,
@@ -246,21 +247,17 @@ impl DepthNormalPrepass {
                         write_mask: STENCIL_WRITE_MASK,
                     },
                     bias: wgpu::DepthBiasState::default(),
-                })),
-                multisample: MultisampleKey::from(wgpu::MultisampleState {
-                    count: 1,
-                    ..Default::default()
                 }),
-                primitive_topology: geometry.topology,
+                topology: geometry.topology,
                 cull_mode,
                 front_face,
             };
 
-            let pipeline_id = ctx.pipeline_cache.get_or_create_fullscreen(
+            let pipeline_id = ctx.pipeline_cache.get_or_create_prepass(
                 &ctx.wgpu_ctx.device,
                 shader_module,
                 &layout,
-                &fullscreen_key,
+                &prepass_key,
                 "Prepass Pipeline",
                 &vertex_buffers_layout,
             );
