@@ -89,13 +89,17 @@ impl AnimationAction {
                 }
             }
             LoopMode::PingPong => {
-                // PingPong mode logic is more complex; deferred, requires tracking direction
-                // Simple implementation: use PingPong math formula
-                // time = ping_pong(time, duration)
-                // Simplified to Loop for now
-                if self.time >= duration {
-                    self.time %= duration;
+                let double_duration = duration * 2.0;
+                // Normalize time into [0, 2*duration) cycle
+                let mut t = self.time % double_duration;
+                if t < 0.0 {
+                    t += double_duration;
                 }
+                // In the second half of the cycle, reverse direction
+                if t > duration {
+                    t = double_duration - t;
+                }
+                self.time = t;
             }
         }
     }
