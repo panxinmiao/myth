@@ -32,6 +32,7 @@ use crate::renderer::graph::node::RenderNode;
 use crate::renderer::graph::stage::RenderStage;
 use crate::renderer::graph::transient_pool::TransientTexturePool;
 use crate::renderer::pipeline::PipelineCache;
+use crate::renderer::pipeline::ShaderManager;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
@@ -39,6 +40,7 @@ pub struct ComposerContext<'a> {
     pub wgpu_ctx: &'a mut WgpuContext,
     pub resource_manager: &'a mut ResourceManager,
     pub pipeline_cache: &'a mut PipelineCache,
+    pub shader_manager: &'a mut ShaderManager,
 
     pub extracted_scene: &'a ExtractedScene,
     pub render_state: &'a RenderState,
@@ -174,6 +176,7 @@ impl<'a> FrameComposer<'a> {
                 wgpu_ctx: &*self.ctx.wgpu_ctx,
                 resource_manager: self.ctx.resource_manager,
                 pipeline_cache: self.ctx.pipeline_cache,
+                shader_manager: self.ctx.shader_manager,
                 assets: self.ctx.assets,
                 scene: self.ctx.scene,
                 camera: self.ctx.camera,
@@ -199,6 +202,7 @@ impl<'a> FrameComposer<'a> {
             &*self.ctx.blackboard,
             self.ctx.frame_resources,
             &*self.ctx.transient_pool,
+            &*self.ctx.pipeline_cache,
         );
         graph.execute(&execute_ctx);
 

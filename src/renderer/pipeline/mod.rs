@@ -31,11 +31,17 @@
 //! are passed to the shader compiler.
 
 pub mod cache;
+pub mod pipeline_id;
+pub mod pipeline_key;
 pub mod shader_gen;
 pub mod shader_manager;
 pub mod vertex;
 
-pub use cache::{
-    FastPipelineKey, FastShadowPipelineKey, PipelineCache, PipelineKey, ShadowPipelineKey,
+pub use cache::{FastPipelineKey, FastShadowPipelineKey, PipelineCache};
+pub use pipeline_id::{ComputePipelineId, RenderPipelineId};
+pub use pipeline_key::{
+    BlendStateKey, ColorTargetKey, ComputePipelineKey, DepthStencilKey, FullscreenPipelineKey,
+    GraphicsPipelineKey, MultisampleKey, ShadowPipelineKey,
 };
 pub use shader_gen::ShaderCompilationOptions;
+pub use shader_manager::ShaderManager;

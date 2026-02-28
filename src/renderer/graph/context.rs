@@ -28,6 +28,7 @@ use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
 use crate::renderer::graph::transient_pool::TransientTexturePool;
 use crate::renderer::graph::{ExtractedScene, RenderState};
 use crate::renderer::pipeline::PipelineCache;
+use crate::renderer::pipeline::ShaderManager;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
@@ -101,6 +102,8 @@ pub struct PrepareContext<'a> {
     pub resource_manager: &'a mut ResourceManager,
     /// Pipeline cache (L1 fast cache + L2 canonical cache)
     pub pipeline_cache: &'a mut PipelineCache,
+    /// Shader module cache (template + raw WGSL compilation with deduplication)
+    pub shader_manager: &'a mut ShaderManager,
     /// Asset server (geometries, materials, textures)
     pub assets: &'a AssetServer,
     /// Current scene (mutable for light storage updates etc.)
@@ -256,10 +259,13 @@ pub struct ExecuteContext<'a> {
     pub frame_resources: &'a FrameResources,
     /// Transient texture pool (read-only during execute)
     pub transient_pool: &'a TransientTexturePool,
+    /// Pipeline cache (read-only O(1) pipeline lookup during execute)
+    pub pipeline_cache: &'a PipelineCache,
 }
 
 impl<'a> ExecuteContext<'a> {
     /// Creates a new `ExecuteContext`.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         wgpu_ctx: &'a WgpuContext,
         resource_manager: &'a ResourceManager,
@@ -268,6 +274,7 @@ impl<'a> ExecuteContext<'a> {
         blackboard: &'a FrameBlackboard,
         frame_resources: &'a FrameResources,
         transient_pool: &'a TransientTexturePool,
+        pipeline_cache: &'a PipelineCache,
     ) -> Self {
         Self {
             wgpu_ctx,
@@ -277,6 +284,7 @@ impl<'a> ExecuteContext<'a> {
             blackboard,
             frame_resources,
             transient_pool,
+            pipeline_cache,
         }
     }
     /// Returns the appropriate render target for scene geometry.

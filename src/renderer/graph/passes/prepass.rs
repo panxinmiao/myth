@@ -26,6 +26,7 @@ use rustc_hash::FxHashMap;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::{RenderNode, TrackedRenderPass, TransientTextureDesc};
+use crate::renderer::pipeline::RenderPipelineId;
 use crate::renderer::pipeline::shader_gen::{ShaderCompilationOptions, ShaderGenerator};
 use crate::resources::material::{AlphaMode, Side};
 use crate::resources::screen_space::STENCIL_WRITE_MASK;
@@ -45,7 +46,7 @@ pub struct DepthNormalPrepass {
     ///
     /// Two objects sharing a main pipeline will share a prepass pipeline
     /// (identical vertex layout, topology, cull mode and material macros).
-    pipeline_cache: FxHashMap<(u16, bool, bool), wgpu::RenderPipeline>,
+    pipeline_cache: FxHashMap<(RenderPipelineId, bool, bool), wgpu::RenderPipeline>,
 }
 
 impl DepthNormalPrepass {
@@ -443,7 +444,7 @@ impl RenderNode for DepthNormalPrepass {
                 continue;
             };
 
-            tracked_pass.set_pipeline(cmd.pipeline_id, pipeline);
+            tracked_pass.set_pipeline(cmd.pipeline_id.0, pipeline);
 
             // Set 1: Material (for alpha-tested materials to read the base map)
             if let Some(gpu_material) = ctx.resource_manager.get_material(cmd.material_handle) {

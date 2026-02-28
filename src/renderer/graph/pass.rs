@@ -14,7 +14,7 @@ struct BindGroupState {
 
 pub struct TrackedRenderPass<'a> {
     pass: wgpu::RenderPass<'a>,
-    current_pipeline_id: Option<u16>,
+    current_pipeline_id: Option<u32>,
     current_bind_groups: [Option<BindGroupState>; 4],
     current_vertex_buffers: [Option<u64>; 8],
     current_index_buffer: Option<u64>,
@@ -32,7 +32,7 @@ impl<'a> TrackedRenderPass<'a> {
         }
     }
 
-    pub fn set_pipeline(&mut self, pipeline_resource_id: u16, pipeline: &'a wgpu::RenderPipeline) {
+    pub fn set_pipeline(&mut self, pipeline_resource_id: u32, pipeline: &'a wgpu::RenderPipeline) {
         if self.current_pipeline_id != Some(pipeline_resource_id) {
             self.pass.set_pipeline(pipeline);
             self.current_pipeline_id = Some(pipeline_resource_id);
