@@ -289,7 +289,7 @@ impl SkyboxPass {
 
         let gpu_world = ctx
             .resource_manager
-            .get_global_state(ctx.render_state.id, ctx.scene.id)
+            .get_global_state(ctx.render_state.id, ctx.scene.id())
             .expect("Global state must exist");
 
         // 1. Shader defines

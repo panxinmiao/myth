@@ -63,7 +63,7 @@ impl AppHandler for ShadowSpotDemo {
 
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
             self.controls
-                .update(transform, &engine.input, camera.fov, frame.dt);
+                .update(transform, &engine.input, camera.fov(), frame.dt);
         }
 
         if let Some(fps) = self.fps_counter.update() {

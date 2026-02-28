@@ -63,8 +63,8 @@ pub struct Engine {
     pub assets: AssetServer,
     pub input: Input,
 
-    pub time: f32,
-    pub frame_count: u64,
+    time: f32,
+    frame_count: u64,
 }
 
 impl Engine {
@@ -114,6 +114,20 @@ impl Engine {
         self.renderer.init(window, width, height).await?;
 
         Ok(())
+    }
+
+    /// Returns the total elapsed time in seconds since the engine started.
+    #[inline]
+    #[must_use]
+    pub fn time(&self) -> f32 {
+        self.time
+    }
+
+    /// Returns the total number of frames rendered since startup.
+    #[inline]
+    #[must_use]
+    pub fn frame_count(&self) -> u64 {
+        self.frame_count
     }
 
     /// Handles window resize events.
@@ -174,8 +188,7 @@ impl Engine {
             return;
         };
         if let Some(cam) = scene.cameras.get_mut(cam_handle) {
-            cam.aspect = aspect;
-            cam.update_projection_matrix();
+            cam.set_aspect(aspect);
         }
     }
 }

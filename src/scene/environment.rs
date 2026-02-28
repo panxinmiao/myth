@@ -10,7 +10,7 @@ use crate::resources::texture::TextureSource;
 #[derive(Clone, Debug)]
 pub struct Environment {
     /// User-set original environment map (may be 2D HDR or Cube)
-    pub source_env_map: Option<TextureSource>,
+    pub(crate) source_env_map: Option<TextureSource>,
     /// Environment light intensity
     pub intensity: f32,
     /// Environment map rotation angle (radians)
@@ -86,5 +86,12 @@ impl Environment {
     #[must_use]
     pub fn has_env_map(&self) -> bool {
         self.source_env_map.is_some()
+    }
+
+    /// Returns a reference to the source environment map, if set.
+    #[inline]
+    #[must_use]
+    pub fn source_env_map(&self) -> Option<&TextureSource> {
+        self.source_env_map.as_ref()
     }
 }

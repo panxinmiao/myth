@@ -293,7 +293,7 @@ impl<H: AppHandler> AppRunner<H> {
         let frame_state = FrameState {
             time: total_time,
             dt,
-            frame_count: engine.frame_count,
+            frame_count: engine.frame_count(),
         };
 
         // Pass &dyn WindowTrait (winit::Window implements our Window trait)
@@ -309,6 +309,7 @@ impl<H: AppHandler> AppRunner<H> {
         let Some(scene_handle) = engine.scene_manager.active_handle() else {
             return;
         };
+        let time = engine.time();
         let Some(scene) = engine.scene_manager.get_scene_mut(scene_handle) else {
             return;
         };
@@ -324,7 +325,7 @@ impl<H: AppHandler> AppRunner<H> {
         if let Some(composer) =
             engine
                 .renderer
-                .begin_frame(scene, &render_camera, &engine.assets, engine.time)
+                .begin_frame(scene, &render_camera, &engine.assets, time)
         {
             user_state.compose_frame(composer);
         }

@@ -10,7 +10,7 @@ pub const MORPH_WEIGHT_THRESHOLD: f32 = 0.0000;
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Debug, Clone)]
 pub struct Mesh {
-    pub uuid: Uuid,
+    uuid: Uuid,
     pub name: String,
 
     // === Rescources ===
@@ -26,8 +26,8 @@ pub struct Mesh {
     // Render Order
     pub render_order: i32,
 
-    /// Morph Target original influences
-    pub morph_target_influences: Vec<f32>,
+    /// Morph Target original influences (use setter methods to modify)
+    morph_target_influences: Vec<f32>,
 
     /// Morph Uniform Buffer (used by GPU, updated every frame)
     pub(crate) morph_uniforms: CpuBuffer<MorphUniforms>,
@@ -36,6 +36,13 @@ pub struct Mesh {
 }
 
 impl Mesh {
+    /// Returns the unique identifier for this mesh.
+    #[inline]
+    #[must_use]
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
     #[must_use]
     pub fn new(geometry: GeometryHandle, material: MaterialHandle) -> Self {
         let uuid = Uuid::new_v4();
@@ -52,6 +59,12 @@ impl Mesh {
             morph_uniforms: CpuBuffer::new_uniform(None),
             morph_dirty: false,
         }
+    }
+
+    /// Returns the morph target influences as a slice
+    #[inline]
+    pub fn morph_target_influences(&self) -> &[f32] {
+        &self.morph_target_influences
     }
 
     pub fn morph_uniforms(&self) -> BufferReadGuard<'_, MorphUniforms> {

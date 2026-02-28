@@ -201,8 +201,7 @@ impl ShowcaseApp {
                 .set_position(center + Vec3::new(0.0, radius, radius * 2.5));
 
             if let Some((_, camera)) = scene.query_main_camera_bundle() {
-                camera.near = radius * 0.01;
-                camera.update_projection_matrix();
+                camera.set_near(radius * 0.01);
             }
         }
     }

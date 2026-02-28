@@ -53,7 +53,9 @@ impl AppHandler for MorphTargetDemo {
             {
                 println!(
                     "Node {:?} has mesh with {} morph targets, {} vertices per target",
-                    node_handle, geometry.morph_target_count, geometry.morph_vertex_count
+                    node_handle,
+                    geometry.morph_target_count(),
+                    geometry.morph_vertex_count()
                 );
             }
         }

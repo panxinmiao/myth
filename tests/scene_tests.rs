@@ -47,17 +47,17 @@ fn scene_set_name() {
 fn scene_add_node_to_root() {
     let mut scene = new_scene();
     let handle = scene.add_node(Node::new());
-    assert!(scene.root_nodes.contains(&handle));
+    assert!(scene.root_nodes().contains(&handle));
 }
 
 #[test]
 fn scene_remove_node_removes_from_root() {
     let mut scene = new_scene();
     let handle = scene.add_node(Node::new());
-    assert!(scene.root_nodes.contains(&handle));
+    assert!(scene.root_nodes().contains(&handle));
 
     scene.remove_node(handle);
-    assert!(!scene.root_nodes.contains(&handle));
+    assert!(!scene.root_nodes().contains(&handle));
     assert!(scene.get_node(handle).is_none());
 }
 
@@ -90,8 +90,8 @@ fn scene_attach_sets_parent_child() {
 
     scene.attach(child, parent);
 
-    assert_eq!(scene.get_node(child).unwrap().parent, Some(parent));
-    assert!(scene.get_node(parent).unwrap().children.contains(&child));
+    assert_eq!(scene.get_node(child).unwrap().parent(), Some(parent));
+    assert!(scene.get_node(parent).unwrap().children().contains(&child));
 }
 
 #[test]
@@ -102,16 +102,16 @@ fn scene_attach_removes_from_old_parent() {
     let child = scene.create_node();
 
     scene.attach(child, parent1);
-    assert!(scene.get_node(parent1).unwrap().children.contains(&child));
+    assert!(scene.get_node(parent1).unwrap().children().contains(&child));
 
     // Re-attach to parent2
     scene.attach(child, parent2);
     assert!(
-        !scene.get_node(parent1).unwrap().children.contains(&child),
+        !scene.get_node(parent1).unwrap().children().contains(&child),
         "Child should be removed from old parent"
     );
     assert!(
-        scene.get_node(parent2).unwrap().children.contains(&child),
+        scene.get_node(parent2).unwrap().children().contains(&child),
         "Child should be in new parent"
     );
 }
@@ -124,7 +124,7 @@ fn scene_attach_to_self_is_noop() {
     // attach to self should not crash
     scene.attach(node, node);
 
-    assert_eq!(scene.get_node(node).unwrap().parent, None);
+    assert_eq!(scene.get_node(node).unwrap().parent(), None);
 }
 
 #[test]
@@ -133,8 +133,8 @@ fn scene_add_to_parent() {
     let parent = scene.add_node(Node::new());
     let child = scene.add_to_parent(Node::new(), parent);
 
-    assert_eq!(scene.get_node(child).unwrap().parent, Some(parent));
-    assert!(scene.get_node(parent).unwrap().children.contains(&child));
+    assert_eq!(scene.get_node(child).unwrap().parent(), Some(parent));
+    assert!(scene.get_node(parent).unwrap().children().contains(&child));
 }
 
 // ============================================================================
@@ -238,5 +238,5 @@ fn scene_iterate_active_lights() {
 fn scene_unique_ids() {
     let s1 = new_scene();
     let s2 = new_scene();
-    assert_ne!(s1.id, s2.id, "Each scene should have a unique ID");
+    assert_ne!(s1.id(), s2.id(), "Each scene should have a unique ID");
 }

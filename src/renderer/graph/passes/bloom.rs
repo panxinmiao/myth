@@ -750,7 +750,7 @@ impl RenderNode for BloomPass {
 
         // 4. Allocate mip chain from transient pool and rebuild bind groups
         let (source_w, source_h) = ctx.wgpu_ctx.size();
-        let max_mip_levels = ctx.scene.bloom.max_mip_levels;
+        let max_mip_levels = ctx.scene.bloom.max_mip_levels();
         self.allocate_bloom_texture(ctx, source_w, source_h, max_mip_levels);
 
         self.composite_bind_group = Some(self.get_composite_bind_group(ctx));

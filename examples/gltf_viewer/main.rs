@@ -499,6 +499,7 @@ impl AppHandler for GltfViewer {
     }
 
     fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
+        let time = engine.time();
         let Some(scene) = engine.scene_manager.active_scene_mut() else {
             return;
         };
@@ -528,17 +529,19 @@ impl AppHandler for GltfViewer {
         // 3. 相机控制
         if let Some((transform, camera)) = scene.query_main_camera_bundle() {
             self.controls
-                .update(transform, &engine.input, camera.fov, frame.dt);
+                .update(transform, &engine.input, camera.fov(), frame.dt);
         }
 
         if self.vignette_breathing {
             let bpm = 30.0;
             let period = 60.0 / bpm;
-            let t = engine.time % period;
+            let t = time % period;
 
             let pulse = (-t * 3.0).exp();
             let vignette_intensity = 0.0 + 0.5 * pulse;
-            scene.tone_mapping.uniforms.write().vignette_intensity = vignette_intensity;
+            scene
+                .tone_mapping
+                .set_vignette_intensity(vignette_intensity);
         }
 
         // 4. 构建 UI (requires winit window for egui-winit integration)
@@ -757,8 +760,7 @@ impl GltfViewer {
             let center = bbox.center();
             let radius = bbox.size().length() * 0.5;
             if let Some((_transform, camera)) = scene.query_main_camera_bundle() {
-                camera.near = radius / 100.0;
-                camera.update_projection_matrix();
+                camera.set_near(radius / 100.0);
                 self.controls.set_target(center);
                 // let distance = radius / (camera.fov / 2.0).tan();
                 // self.controls.set_position(center + Vec3::new(0.0, radius, distance * 1.25));
@@ -940,7 +942,7 @@ impl GltfViewer {
         while let Some(node_handle) = stack.pop() {
             // 收集子节点
             if let Some(node) = scene.get_node(node_handle) {
-                stack.extend(node.children.iter().cloned());
+                stack.extend(node.children().iter().cloned());
             }
 
             // 收集 Mesh 的材质
@@ -1663,16 +1665,20 @@ impl GltfViewer {
                                             });
                                     });
 
-                                    let mut uniform_mut = scene.tone_mapping.uniforms.write();
-
                                     // 曝光度
                                     ui.horizontal(|ui| {
                                         ui.label("Exposure:");
-                                        ui.add(
-                                            egui::Slider::new(&mut uniform_mut.exposure, 0.1..=5.0)
-                                                .step_by(0.1)
-                                                .logarithmic(true),
-                                        );
+                                        let mut exposure = scene.tone_mapping.exposure();
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut exposure, 0.1..=5.0)
+                                                    .step_by(0.1)
+                                                    .logarithmic(true),
+                                            )
+                                            .changed()
+                                        {
+                                            scene.tone_mapping.set_exposure(exposure);
+                                        }
                                     });
 
                                     // --- Vignette ---
@@ -1683,36 +1689,44 @@ impl GltfViewer {
 
                                     ui.horizontal(|ui| {
                                         ui.label("Intensity:");
-
-                                        ui.add(
-                                            egui::Slider::new(
-                                                &mut uniform_mut.vignette_intensity,
-                                                0.0..=2.0,
+                                        let mut intensity = scene.tone_mapping.vignette_intensity();
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut intensity, 0.0..=2.0)
+                                                    .step_by(0.01),
                                             )
-                                            .step_by(0.01),
-                                        );
+                                            .changed()
+                                        {
+                                            scene.tone_mapping.set_vignette_intensity(intensity);
+                                        }
                                     });
 
                                     ui.horizontal(|ui| {
                                         ui.label("Smoothness:");
-                                        ui.add(
-                                            egui::Slider::new(
-                                                &mut uniform_mut.vignette_smoothness,
-                                                0.1..=1.0,
+                                        let mut smoothness =
+                                            scene.tone_mapping.vignette_smoothness();
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut smoothness, 0.1..=1.0)
+                                                    .step_by(0.01),
                                             )
-                                            .step_by(0.01),
-                                        );
+                                            .changed()
+                                        {
+                                            scene.tone_mapping.set_vignette_smoothness(smoothness);
+                                        }
                                     });
 
                                     ui.horizontal(|ui| {
                                         ui.label("Color:");
-                                        let mut color_arr = uniform_mut.vignette_color.to_array();
+                                        let mut color_arr =
+                                            scene.tone_mapping.vignette_color().to_array();
                                         if ui
                                             .color_edit_button_rgba_unmultiplied(&mut color_arr)
                                             .changed()
                                         {
-                                            uniform_mut.vignette_color =
-                                                Vec4::from_array(color_arr);
+                                            scene
+                                                .tone_mapping
+                                                .set_vignette_color(Vec4::from_array(color_arr));
                                         }
                                     });
 
@@ -1720,43 +1734,57 @@ impl GltfViewer {
                                     ui.separator();
                                     ui.horizontal(|ui| {
                                         ui.label("Chromatic Aberration:");
-                                        ui.add(
-                                            egui::Slider::new(
-                                                &mut uniform_mut.chromatic_aberration,
-                                                0.0..=5.0,
+                                        let mut ca = scene.tone_mapping.chromatic_aberration();
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut ca, 0.0..=5.0).step_by(0.01),
                                             )
-                                            .step_by(0.01),
-                                        );
+                                            .changed()
+                                        {
+                                            scene.tone_mapping.set_chromatic_aberration(ca);
+                                        }
                                     });
 
                                     ui.horizontal(|ui| {
                                         ui.label("Contrast:");
-                                        ui.add(
-                                            egui::Slider::new(&mut uniform_mut.contrast, 0.5..=2.0)
-                                                .step_by(0.01),
-                                        );
+                                        let mut contrast = scene.tone_mapping.contrast();
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut contrast, 0.5..=2.0)
+                                                    .step_by(0.01),
+                                            )
+                                            .changed()
+                                        {
+                                            scene.tone_mapping.set_contrast(contrast);
+                                        }
                                     });
 
                                     ui.horizontal(|ui| {
                                         ui.label("Saturation:");
-                                        ui.add(
-                                            egui::Slider::new(
-                                                &mut uniform_mut.saturation,
-                                                0.0..=2.0,
+                                        let mut saturation = scene.tone_mapping.saturation();
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut saturation, 0.0..=2.0)
+                                                    .step_by(0.01),
                                             )
-                                            .step_by(0.01),
-                                        );
+                                            .changed()
+                                        {
+                                            scene.tone_mapping.set_saturation(saturation);
+                                        }
                                     });
 
                                     ui.horizontal(|ui| {
                                         ui.label("Film Grain:");
-                                        ui.add(
-                                            egui::Slider::new(
-                                                &mut uniform_mut.film_grain,
-                                                0.0..=1.0,
+                                        let mut film_grain = scene.tone_mapping.film_grain();
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut film_grain, 0.0..=1.0)
+                                                    .step_by(0.01),
                                             )
-                                            .step_by(0.01),
-                                        );
+                                            .changed()
+                                        {
+                                            scene.tone_mapping.set_film_grain(film_grain);
+                                        }
                                     });
 
                                     // --- Color Grading (LUT) ---
@@ -1765,16 +1793,18 @@ impl GltfViewer {
 
                                     ui.horizontal(|ui| {
                                         ui.label("Contribution:");
-                                        ui.add(
-                                            egui::Slider::new(
-                                                &mut uniform_mut.lut_contribution,
-                                                0.0..=1.0,
+                                        let mut contribution =
+                                            scene.tone_mapping.lut_contribution();
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut contribution, 0.0..=1.0)
+                                                    .step_by(0.05),
                                             )
-                                            .step_by(0.05),
-                                        );
+                                            .changed()
+                                        {
+                                            scene.tone_mapping.set_lut_contribution(contribution);
+                                        }
                                     });
-
-                                    drop(uniform_mut);
 
                                     if scene.tone_mapping.has_lut() {
                                         if ui.button("Remove LUT").clicked() {
@@ -1898,7 +1928,7 @@ impl GltfViewer {
                                     // Mip Levels
                                     ui.horizontal(|ui| {
                                         ui.label("Mip Levels:");
-                                        let mut mip_levels = scene.bloom.max_mip_levels;
+                                        let mut mip_levels = scene.bloom.max_mip_levels();
                                         if ui
                                             .add(egui::Slider::new(&mut mip_levels, 1..=10))
                                             .changed()
@@ -1932,7 +1962,7 @@ impl GltfViewer {
                                     // Radius
                                     ui.horizontal(|ui| {
                                         ui.label("Radius:");
-                                        let mut radius = scene.ssao.uniforms.write().radius;
+                                        let mut radius = scene.ssao.radius();
                                         if ui
                                             .add(
                                                 egui::Slider::new(&mut radius, 0.1..=5.0)
@@ -1948,7 +1978,7 @@ impl GltfViewer {
                                     // Intensity
                                     ui.horizontal(|ui| {
                                         ui.label("Intensity:");
-                                        let mut intensity = scene.ssao.uniforms.write().intensity;
+                                        let mut intensity = scene.ssao.intensity();
                                         if ui
                                             .add(
                                                 egui::Slider::new(&mut intensity, 0.1..=5.0)
@@ -1964,8 +1994,7 @@ impl GltfViewer {
                                     // Sample Count
                                     ui.horizontal(|ui| {
                                         ui.label("Sample Count:");
-                                        let mut sample_count =
-                                            scene.ssao.uniforms.write().sample_count;
+                                        let mut sample_count = scene.ssao.sample_count();
                                         if ui
                                             .add(
                                                 egui::Slider::new(&mut sample_count, 1..=64)
@@ -2142,7 +2171,7 @@ impl GltfViewer {
         let label = format!("{} {}", icon, name);
         let is_selected = self.inspector_target == Some(InspectorTarget::Node(node));
 
-        if node_data.children.is_empty() {
+        if node_data.children().is_empty() {
             // 叶子节点
             if ui.selectable_label(is_selected, &label).clicked() {
                 self.inspector_target = Some(InspectorTarget::Node(node));
@@ -2152,7 +2181,7 @@ impl GltfViewer {
             let header = egui::CollapsingHeader::new(&label)
                 .default_open(depth < 2)
                 .show(ui, |ui| {
-                    for child in &node_data.children.clone() {
+                    for child in &node_data.children().to_vec() {
                         self.render_node_tree(ui, scene, *child, depth + 1);
                     }
                 });

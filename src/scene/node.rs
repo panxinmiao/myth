@@ -26,9 +26,9 @@ use glam::Affine3A;
 pub struct Node {
     // === Core Hierarchy ===
     /// Parent node handle (None for root nodes)
-    pub parent: Option<NodeHandle>,
+    pub(crate) parent: Option<NodeHandle>,
     /// Child node handles
-    pub children: Vec<NodeHandle>,
+    pub(crate) children: Vec<NodeHandle>,
 
     // === Core Spatial Data ===
     /// Transform component (hot data accessed every frame)
@@ -49,6 +49,36 @@ impl Node {
             transform: Transform::new(),
             visible: true,
         }
+    }
+
+    /// Returns the parent node handle, if any.
+    #[inline]
+    #[must_use]
+    pub fn parent(&self) -> Option<NodeHandle> {
+        self.parent
+    }
+
+    /// Returns a read-only slice of child node handles.
+    #[inline]
+    #[must_use]
+    pub fn children(&self) -> &[NodeHandle] {
+        &self.children
+    }
+
+    /// Sets the parent of this node. Prefer using [`Scene::attach`] which
+    /// keeps both parent and child in sync. This is exposed for low-level
+    /// construction (e.g., building hierarchies outside of a `Scene`).
+    #[inline]
+    pub fn set_parent(&mut self, parent: Option<NodeHandle>) {
+        self.parent = parent;
+    }
+
+    /// Appends a child handle. Prefer using [`Scene::attach`] which keeps
+    /// both parent and child in sync. This is exposed for low-level
+    /// construction (e.g., building hierarchies outside of a `Scene`).
+    #[inline]
+    pub fn push_child(&mut self, child: NodeHandle) {
+        self.children.push(child);
     }
 
     /// Returns a reference to the world transformation matrix.

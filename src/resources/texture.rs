@@ -148,7 +148,7 @@ impl Default for Sampler {
 
 #[derive(Debug)]
 pub struct Texture {
-    pub uuid: Uuid,
+    uuid: Uuid,
 
     pub name: Option<Cow<'static, str>>,
 
@@ -164,6 +164,13 @@ pub struct Texture {
 }
 
 impl Texture {
+    /// Returns the unique identifier for this texture.
+    #[inline]
+    #[must_use]
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
     /// Creates a Texture from an existing Image.
     #[must_use]
     pub fn new(name: Option<&str>, image: Image, view_dimension: TextureViewDimension) -> Self {

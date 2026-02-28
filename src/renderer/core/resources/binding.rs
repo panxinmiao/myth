@@ -527,7 +527,7 @@ impl ResourceManager {
         current_ids.push(brdf_lut_id);
         current_ids.push(shadow_2d_id);
 
-        let state_id = Self::compute_global_state_key(render_state.id, scene.id);
+        let state_id = Self::compute_global_state_key(render_state.id, scene.id());
 
         // === Check: fast fingerprint comparison ===
         if let Some(gpu_state) = self.global_states.get_mut(&state_id)

@@ -562,12 +562,19 @@ impl MaterialType {
 
 #[derive(Debug)]
 pub struct Material {
-    pub uuid: Uuid,
+    uuid: Uuid,
     pub name: Option<Cow<'static, str>>,
     pub data: MaterialType,
 }
 
 impl Material {
+    /// Returns the unique identifier for this material.
+    #[inline]
+    #[must_use]
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
     pub fn new(data: MaterialType) -> Self {
         Self {
             uuid: Uuid::new_v4(),

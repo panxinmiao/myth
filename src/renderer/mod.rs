@@ -93,7 +93,7 @@ pub const HDR_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16F
 /// 3. Render frames with [`Renderer::begin_frame`]
 /// 4. Clean up with [`Renderer::maybe_prune`]
 pub struct Renderer {
-    pub size: (u32, u32),
+    size: (u32, u32),
     settings: RendererSettings,
     context: Option<RendererState>,
 }
@@ -159,6 +159,13 @@ impl Renderer {
             context: None,
             size: (0, 0),
         }
+    }
+
+    /// Returns the current surface size in pixels as `(width, height)`.
+    #[inline]
+    #[must_use]
+    pub fn size(&self) -> (u32, u32) {
+        self.size
     }
 
     /// Phase 2: Initialize GPU context with window handle.
