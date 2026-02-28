@@ -65,10 +65,12 @@ pub struct SsaoPass {
     blur_layout: Tracked<wgpu::BindGroupLayout>,
 
     // === Shared Resources ===
-    /// Linear, clamp-to-edge sampler for depth/normal/AO textures.
+    /// Linear, clamp-to-edge sampler for normal/AO textures.
     linear_sampler: Tracked<wgpu::Sampler>,
     /// Nearest-neighbor, repeat sampler for the 4×4 noise texture.
     noise_sampler: Tracked<wgpu::Sampler>,
+    /// Sampler for the depth texture (WASM need).
+    point_sampler: Tracked<wgpu::Sampler>,
     /// Persistent 4×4 tiled rotation noise texture.
     noise_texture_view: Option<Tracked<wgpu::TextureView>>,
 
@@ -143,6 +145,13 @@ impl SsaoPass {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                     count: None,
                 },
+                // Binding 5: Depth sampler (nearest, clamp) - needed for WASM where linear sampling of depth textures is not supported
+                wgpu::BindGroupLayoutEntry {
+                    binding: 5,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
             ],
         });
 
@@ -210,6 +219,13 @@ impl SsaoPass {
                     ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                     count: None,
                 },
+                // Binding 4: Depth sampler
+                wgpu::BindGroupLayoutEntry {
+                    binding: 4,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                    count: None,
+                },
             ],
         });
 
@@ -232,6 +248,15 @@ impl SsaoPass {
             ..Default::default()
         });
 
+        let point_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("SSAO Point Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Nearest,
+            min_filter: wgpu::FilterMode::Nearest,
+            ..Default::default()
+        });
+
         Self {
             raw_pipeline: None,
             blur_pipeline: None,
@@ -242,6 +267,7 @@ impl SsaoPass {
 
             linear_sampler: Tracked::new(linear_sampler),
             noise_sampler: Tracked::new(noise_sampler),
+            point_sampler: Tracked::new(point_sampler),
             noise_texture_view: None,
 
             raw_texture_id: None,
@@ -478,7 +504,8 @@ impl SsaoPass {
                 .with_resource(normal_view.id())
                 .with_resource(noise_view.id())
                 .with_resource(self.linear_sampler.id())
-                .with_resource(self.noise_sampler.id());
+                .with_resource(self.noise_sampler.id())
+                .with_resource(self.point_sampler.id());
 
             let bind_group = if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
                 cached.clone()
@@ -506,6 +533,10 @@ impl SsaoPass {
                         wgpu::BindGroupEntry {
                             binding: 4,
                             resource: wgpu::BindingResource::Sampler(&self.noise_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: wgpu::BindingResource::Sampler(&self.point_sampler),
                         },
                     ],
                 });
@@ -556,7 +587,8 @@ impl SsaoPass {
                 .with_resource(raw_view.id())
                 .with_resource(depth_view.id())
                 .with_resource(normal_view.id())
-                .with_resource(self.linear_sampler.id());
+                .with_resource(self.linear_sampler.id())
+                .with_resource(self.point_sampler.id());
 
             let bind_group = if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
                 cached.clone()
@@ -580,6 +612,10 @@ impl SsaoPass {
                         wgpu::BindGroupEntry {
                             binding: 3,
                             resource: wgpu::BindingResource::Sampler(&self.linear_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::Sampler(&self.point_sampler),
                         },
                     ],
                 });

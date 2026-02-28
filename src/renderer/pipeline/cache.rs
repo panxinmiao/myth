@@ -124,10 +124,11 @@ impl PipelineCache {
 
     // ── Cache Invalidation ───────────────────────────────────────────────────
 
-    /// Clears **all** cached pipelines (called when MSAA / HDR settings change).
+    /// Clears **all** cached pipelines.
     ///
     /// The `ShaderManager` module cache is *not* affected — shader source code
     /// is independent of these settings.
+    #[deprecated(note = "Prefer targeted invalidation via version increments")]
     pub fn clear(&mut self) {
         self.render_pipelines.clear();
         self.compute_pipelines.clear();
