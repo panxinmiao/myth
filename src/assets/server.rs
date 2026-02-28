@@ -310,6 +310,63 @@ impl AssetServer {
     }
 
     // ========================================================================
+    // LUT (3D Lookup Table) Loading
+    // ========================================================================
+
+    /// Loads a 3D LUT texture from a .cube file.
+    pub fn load_lut_texture(&mut self, source: impl AssetSource) -> Result<TextureHandle> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            get_asset_runtime().block_on(self.load_lut_texture_async(source))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let texture = crate::assets::load_lut_texture_from_file(source.uri().to_string())?;
+            let handle = self.textures.add(texture);
+            Ok(handle)
+        }
+    }
+
+    /// Asynchronously loads a 3D LUT from a .cube file.
+    pub async fn load_lut_texture_async(&self, source: impl AssetSource) -> Result<TextureHandle> {
+        let reader = AssetReaderVariant::new(&source)?;
+        let filename = source
+            .filename()
+            .unwrap_or(std::borrow::Cow::Borrowed("unknown"));
+
+        let bytes = reader.read_bytes(&filename).await?;
+
+        let image = Self::decode_cube_async(bytes).await?;
+
+        let mut texture = Texture::new(Some(&filename), image, wgpu::TextureViewDimension::D3);
+        texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
+        texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
+        texture.sampler.address_mode_w = wgpu::AddressMode::ClampToEdge;
+        texture.sampler.mag_filter = wgpu::FilterMode::Linear;
+        texture.sampler.min_filter = wgpu::FilterMode::Linear;
+
+        let handle = self.textures.add(texture);
+        Ok(handle)
+    }
+
+    /// Loads a 3D LUT texture from raw bytes (e.g. from a file dialog on WASM).
+    pub async fn load_lut_texture_from_bytes_async(
+        &self,
+        name: &str,
+        bytes: Vec<u8>,
+    ) -> Result<TextureHandle> {
+        let image = Self::decode_cube_async(bytes).await?;
+        let mut texture = Texture::new(Some(name), image, wgpu::TextureViewDimension::D3);
+        texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
+        texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
+        texture.sampler.address_mode_w = wgpu::AddressMode::ClampToEdge;
+        texture.sampler.mag_filter = wgpu::FilterMode::Linear;
+        texture.sampler.min_filter = wgpu::FilterMode::Linear;
+        let handle = self.textures.add(texture);
+        Ok(handle)
+    }
+
+    // ========================================================================
     // Internal Helpers
     // ========================================================================
 
@@ -405,6 +462,106 @@ impl AssetServer {
             height,
             1,
             wgpu::TextureDimension::D2,
+            wgpu::TextureFormat::Rgba16Float,
+            Some(rgba_f16_data),
+        ))
+    }
+
+    // ========================================================================
+    // .cube LUT Decoding
+    // ========================================================================
+
+    /// Unified .cube decoding helper (automatically offloads to native thread pool).
+    async fn decode_cube_async(bytes: Vec<u8>) -> Result<crate::resources::image::Image> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            tokio::task::spawn_blocking(move || Self::decode_cube_cpu(&bytes)).await?
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            Self::decode_cube_cpu(&bytes)
+        }
+    }
+
+    /// CPU .cube file decoding logic (parses text, converts to `Rgba16Float` 3D texture).
+    pub(crate) fn decode_cube_cpu(bytes: &[u8]) -> Result<crate::resources::image::Image> {
+        let text = std::str::from_utf8(bytes).map_err(|e| {
+            Error::Asset(AssetError::Format(format!(
+                "Failed to parse .cube file as UTF-8: {e}"
+            )))
+        })?;
+
+        let mut size = 0u32;
+        let mut data = Vec::new();
+
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with("TITLE") {
+                continue;
+            }
+
+            if line.starts_with("LUT_3D_SIZE") {
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.len() == 2 {
+                    size = parts[1].parse::<u32>().map_err(|_| {
+                        Error::Asset(AssetError::Format("Invalid LUT_3D_SIZE".to_string()))
+                    })?;
+                }
+                continue;
+            }
+
+            // Skip other metadata keywords
+            if line.starts_with("DOMAIN_MIN") || line.starts_with("DOMAIN_MAX") || line.starts_with("LUT_1D_SIZE") {
+                continue;
+            }
+
+            // Try to parse RGB float triplet
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() == 3 {
+                let r = parts[0].parse::<f32>().map_err(|_| {
+                    Error::Asset(AssetError::Format("Invalid float in LUT".to_string()))
+                })?;
+                let g = parts[1].parse::<f32>().map_err(|_| {
+                    Error::Asset(AssetError::Format("Invalid float in LUT".to_string()))
+                })?;
+                let b = parts[2].parse::<f32>().map_err(|_| {
+                    Error::Asset(AssetError::Format("Invalid float in LUT".to_string()))
+                })?;
+                data.push(r);
+                data.push(g);
+                data.push(b);
+            }
+        }
+
+        if size == 0 || data.len() != (size * size * size * 3) as usize {
+            return Err(Error::Asset(AssetError::Format(format!(
+                "Invalid .cube file: expected {} RGB values for size {}, got {}",
+                size * size * size,
+                size,
+                data.len() / 3
+            ))));
+        }
+
+        // Convert RGB32F to RGBA16F (half float) for GPU usage
+        let mut rgba_f16_data = Vec::with_capacity((size * size * size * 4) as usize * 2);
+        for chunk in data.chunks_exact(3) {
+            let r = half::f16::from_f32(chunk[0]);
+            let g = half::f16::from_f32(chunk[1]);
+            let b = half::f16::from_f32(chunk[2]);
+            let a = half::f16::from_f32(1.0);
+
+            rgba_f16_data.extend_from_slice(&r.to_le_bytes());
+            rgba_f16_data.extend_from_slice(&g.to_le_bytes());
+            rgba_f16_data.extend_from_slice(&b.to_le_bytes());
+            rgba_f16_data.extend_from_slice(&a.to_le_bytes());
+        }
+
+        Ok(crate::resources::image::Image::new(
+            Some("LUT_3D"),
+            size,
+            size,
+            size,
+            wgpu::TextureDimension::D3,
             wgpu::TextureFormat::Rgba16Float,
             Some(rgba_f16_data),
         ))

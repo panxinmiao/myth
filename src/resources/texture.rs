@@ -191,6 +191,33 @@ impl Texture {
         Self::new(name, image, TextureViewDimension::D2)
     }
 
+    /// Creates a 3D texture (useful for LUTs).
+    #[must_use]
+    pub fn new_3d(
+        name: Option<&str>,
+        width: u32,
+        height: u32,
+        depth: u32,
+        data: Option<Vec<u8>>,
+        format: TextureFormat,
+    ) -> Self {
+        let image = Image::new(
+            name,
+            width,
+            height,
+            depth,
+            TextureDimension::D3,
+            format,
+            data,
+        );
+        let mut tex = Self::new(name, image, TextureViewDimension::D3);
+        // LUTs typically require ClampToEdge addressing
+        tex.sampler.address_mode_u = AddressMode::ClampToEdge;
+        tex.sampler.address_mode_v = AddressMode::ClampToEdge;
+        tex.sampler.address_mode_w = AddressMode::ClampToEdge;
+        tex
+    }
+
     /// Creates a Cube Map texture.
     #[must_use]
     pub fn new_cube(
