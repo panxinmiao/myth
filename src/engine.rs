@@ -130,6 +130,13 @@ impl Engine {
         self.frame_count
     }
 
+    /// Returns the current surface/window size in pixels as `(width, height)`.
+    #[inline]
+    #[must_use]
+    pub fn size(&self) -> (u32, u32) {
+        self.renderer.size()
+    }
+
     /// Handles window resize events.
     ///
     /// This method should be called whenever the window size changes.
@@ -189,6 +196,40 @@ impl Engine {
         };
         if let Some(cam) = scene.cameras.get_mut(cam_handle) {
             cam.set_aspect(aspect);
+        }
+    }
+
+    /// Renders the active scene using the active camera.
+    ///
+    /// This is a convenience method that combines scene lookup, camera extraction,
+    /// and frame rendering into a single call. It avoids the split-borrow issues
+    /// that arise when accessing the renderer and scene manager separately.
+    ///
+    /// Returns `true` if a frame was successfully rendered, `false` if rendering
+    /// was skipped (no active scene, no active camera, etc.).
+    pub fn render_active_scene(&mut self) -> bool {
+        let Some(scene_handle) = self.scene_manager.active_handle() else {
+            return false;
+        };
+        let time = self.time;
+        let Some(scene) = self.scene_manager.get_scene_mut(scene_handle) else {
+            return false;
+        };
+        let Some(camera_node) = scene.active_camera else {
+            return false;
+        };
+        let Some(cam) = scene.cameras.get(camera_node) else {
+            return false;
+        };
+        let render_camera = cam.extract_render_camera();
+        if let Some(composer) = self
+            .renderer
+            .begin_frame(scene, &render_camera, &self.assets, time)
+        {
+            composer.render();
+            true
+        } else {
+            false
         }
     }
 }
