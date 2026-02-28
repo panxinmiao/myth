@@ -2301,7 +2301,7 @@ impl GltfViewer {
                         let mut uniform_mut = m.uniforms_mut();
 
                         ui.label("Type:");
-                        ui.label("MeshPhysicalMaterial");
+                        ui.label("PhysicalMaterial");
                         ui.end_row();
 
                         ui.label("Color:");

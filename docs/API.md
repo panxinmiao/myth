@@ -56,7 +56,7 @@ impl AppHandler for MyApp {
         // Spawn a cube with PBR material (convenience API)
         let cube = scene.spawn_box(
             1.0, 1.0, 1.0,
-            MeshPhysicalMaterial::new(Vec4::new(1.0, 0.5, 0.2, 1.0))
+            PhysicalMaterial::new(Vec4::new(1.0, 0.5, 0.2, 1.0))
                 .with_roughness(0.5)
                 .with_metalness(0.0),
         );
@@ -129,7 +129,7 @@ The most commonly used types are available directly from `myth::`:
 
 ```rust
 use myth::{Engine, App, AppHandler, Scene, Mesh, Camera, Light, OrbitControls};
-use myth::{Geometry, Material, MeshPhysicalMaterial, MeshPhongMaterial, Texture};
+use myth::{Geometry, Material, PhysicalMaterial, PhongMaterial, Texture};
 use myth::{NodeHandle, GeometryHandle, MaterialHandle, TextureHandle};
 use myth::{create_box, create_sphere, create_plane, SphereOptions, PlaneOptions};
 use myth::{FrameComposer, RenderStage, RendererSettings, RenderPath};
@@ -312,7 +312,7 @@ let sphere = scene.spawn_sphere(1.0, material);
 let plane = scene.spawn_plane(10.0, 10.0, material);
 ```
 
-The `material` parameter accepts any type implementing `ResolveMaterial`: `Material`, `MeshPhysicalMaterial`, `MeshPhongMaterial`, `MeshBasicMaterial`, or `MaterialHandle`.
+The `material` parameter accepts any type implementing `ResolveMaterial`: `Material`, `PhysicalMaterial`, `PhongMaterial`, `UnlitMaterial`, or `MaterialHandle`.
 
 #### Query API
 
@@ -723,7 +723,7 @@ Surface appearance definitions with **static dispatch + dynamic escape** pattern
 
 ```rust
 // Factory methods
-let basic = Material::new_basic(Vec4::new(1.0, 0.0, 0.0, 1.0));
+let unlit = Material::new_unlit(Vec4::new(1.0, 0.0, 0.0, 1.0));
 let phong = Material::new_phong(Vec4::new(0.8, 0.8, 0.8, 1.0));
 let physical = Material::new_physical(Vec4::new(1.0, 1.0, 1.0, 1.0));
 let custom = Material::new_custom(my_custom_material);
@@ -731,15 +731,15 @@ let custom = Material::new_custom(my_custom_material);
 // Downcasting
 if let Some(pbr) = material.as_physical_mut() { pbr.set_roughness(0.5); }
 if let Some(phong) = material.as_phong_mut() { phong.set_shininess(32.0); }
-if let Some(basic) = material.as_basic_mut() { basic.set_map(Some(tex)); }
+if let Some(unlit) = material.as_unlit_mut() { unlit.set_map(Some(tex)); }
 ```
 
-#### MeshPhysicalMaterial (Full PBR)
+#### PhysicalMaterial (Full PBR)
 
 The most feature-rich material. Builder-style API with `#[must_use]` chaining:
 
 ```rust
-let material = MeshPhysicalMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0))
+let material = PhysicalMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0))
     .with_roughness(0.3)
     .with_metalness(1.0)
     .with_map(albedo_tex)
@@ -823,12 +823,12 @@ material.enable_feature(PhysicalFeatures::CLEARCOAT);
 material.disable_feature(PhysicalFeatures::SHEEN);
 ```
 
-#### MeshPhongMaterial (Blinn-Phong)
+#### PhongMaterial (Blinn-Phong)
 
 Classic lighting model, lighter than PBR:
 
 ```rust
-let mat = MeshPhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0))
+let mat = PhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0))
     .with_shininess(32.0)
     .with_specular(Vec3::splat(0.5))
     .with_map(diffuse_tex)
@@ -848,12 +848,12 @@ let mat = MeshPhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0))
 
 Texture slots: `map`, `normal_map`, `specular_map`, `emissive_map`
 
-#### MeshBasicMaterial (Unlit)
+#### UnlitMaterial (Unlit)
 
 No lighting calculations — useful for UI, debug, or flat-shaded objects:
 
 ```rust
-let mat = MeshBasicMaterial::new(Vec4::new(1.0, 0.0, 0.0, 1.0))
+let mat = UnlitMaterial::new(Vec4::new(1.0, 0.0, 0.0, 1.0))
     .with_map(tex_handle)
     .with_side(Side::Double);
 ```
@@ -1480,7 +1480,7 @@ let tex = assets.load_texture_async("path", ColorSpace::Srgb, true).await?;
 
 | Example | Features Demonstrated |
 |---------|----------------------|
-| `hello_triangle.rs` | Custom geometry, basic material, minimal setup |
+| `hello_triangle.rs` | Custom geometry, unlit material, minimal setup |
 | `rotating_cube.rs` | Rotation animation, frame timing |
 | `box.rs` | Phong material + checkerboard texture |
 | `box_pbr.rs` | PBR material, cubemap IBL, `spawn_box()` |

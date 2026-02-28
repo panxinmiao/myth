@@ -107,7 +107,7 @@ impl AppHandler for MyApp {
         let tex_handle = engine.assets.textures.add(texture);
         let cube = scene.spawn_box(
             1.0, 1.0, 1.0,
-            MeshPhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0))
+            PhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0))
                 .with_map(tex_handle),
         );
 
@@ -348,23 +348,23 @@ Myth provides three built-in material types:
 
 | Type | Lighting | Use Case |
 |------|----------|----------|
-| `MeshBasicMaterial` | None (unlit) | UI elements, debug visualization, flat colors |
-| `MeshPhongMaterial` | Blinn-Phong | Simple shaded objects, legacy workflows |
-| `MeshPhysicalMaterial` | Full PBR | Realistic rendering, production quality |
+| `UnlitMaterial` | None (unlit) | UI elements, debug visualization, flat colors |
+| `PhongMaterial` | Blinn-Phong | Simple shaded objects, legacy workflows |
+| `PhysicalMaterial` | Full PBR | Realistic rendering, production quality |
 
 All materials support a **builder pattern** for concise creation:
 
 ```rust
 // Basic (unlit)
-let mat = MeshBasicMaterial::new(Vec4::new(1.0, 0.0, 0.0, 1.0));
+let mat = UnlitMaterial::new(Vec4::new(1.0, 0.0, 0.0, 1.0));
 
 // Phong
-let mat = MeshPhongMaterial::new(Vec4::new(0.8, 0.8, 0.8, 1.0))
+let mat = PhongMaterial::new(Vec4::new(0.8, 0.8, 0.8, 1.0))
     .with_shininess(32.0)
     .with_map(diffuse_tex);
 
 // PBR Physical
-let mat = MeshPhysicalMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0))
+let mat = PhysicalMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0))
     .with_roughness(0.3)
     .with_metalness(1.0)
     .with_map(albedo_tex)
@@ -375,12 +375,12 @@ Materials can be passed directly to `spawn_*` methods — they're automatically 
 
 ### PBR Material Guide
 
-`MeshPhysicalMaterial` is the most capable material, supporting the full glTF 2.0 PBR specification plus extensions:
+`PhysicalMaterial` is the most capable material, supporting the full glTF 2.0 PBR specification plus extensions:
 
 #### Basic PBR Setup
 
 ```rust
-let mat = MeshPhysicalMaterial::new(Vec4::new(0.8, 0.2, 0.2, 1.0))
+let mat = PhysicalMaterial::new(Vec4::new(0.8, 0.2, 0.2, 1.0))
     .with_roughness(0.4)    // 0 = mirror, 1 = matte
     .with_metalness(0.0);   // 0 = dielectric, 1 = metal
 ```
@@ -389,43 +389,43 @@ let mat = MeshPhysicalMaterial::new(Vec4::new(0.8, 0.2, 0.2, 1.0))
 
 ```rust
 // Gold metal
-MeshPhysicalMaterial::new(Vec4::new(1.0, 0.84, 0.0, 1.0))
+PhysicalMaterial::new(Vec4::new(1.0, 0.84, 0.0, 1.0))
     .with_roughness(0.3)
     .with_metalness(1.0)
 
 // Smooth plastic
-MeshPhysicalMaterial::new(Vec4::new(0.2, 0.5, 1.0, 1.0))
+PhysicalMaterial::new(Vec4::new(0.2, 0.5, 1.0, 1.0))
     .with_roughness(0.15)
     .with_metalness(0.0)
 
 // Rough concrete
-MeshPhysicalMaterial::new(Vec4::new(0.6, 0.6, 0.55, 1.0))
+PhysicalMaterial::new(Vec4::new(0.6, 0.6, 0.55, 1.0))
     .with_roughness(0.95)
     .with_metalness(0.0)
 
 // Glass
-MeshPhysicalMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0))
+PhysicalMaterial::new(Vec4::new(1.0, 1.0, 1.0, 1.0))
     .with_roughness(0.0)
     .with_metalness(0.0)
     .with_transmission(1.0, 0.01, 0.5, Vec3::ONE)
 
 // Car paint (clearcoat)
-MeshPhysicalMaterial::new(Vec4::new(0.8, 0.0, 0.0, 1.0))
+PhysicalMaterial::new(Vec4::new(0.8, 0.0, 0.0, 1.0))
     .with_roughness(0.6)
     .with_clearcoat(1.0, 0.03)
 
 // Velvet cloth (sheen)
-MeshPhysicalMaterial::new(Vec4::new(0.3, 0.0, 0.5, 1.0))
+PhysicalMaterial::new(Vec4::new(0.3, 0.0, 0.5, 1.0))
     .with_roughness(0.8)
     .with_sheen(Vec3::new(0.5, 0.3, 0.7), 0.5)
 
 // Soap bubble (iridescence)
-MeshPhysicalMaterial::new(Vec4::new(1.0, 1.0, 1.0, 0.3))
+PhysicalMaterial::new(Vec4::new(1.0, 1.0, 1.0, 0.3))
     .with_iridescence(1.0, 1.3, 100.0, 400.0)
     .with_alpha_mode(AlphaMode::Blend)
 
 // Brushed metal (anisotropy)
-MeshPhysicalMaterial::new(Vec4::new(0.9, 0.9, 0.9, 1.0))
+PhysicalMaterial::new(Vec4::new(0.9, 0.9, 0.9, 1.0))
     .with_roughness(0.3)
     .with_metalness(1.0)
     .with_anisotropy(0.8, 0.0)

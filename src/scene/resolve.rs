@@ -8,15 +8,13 @@
 //!
 //! ```rust,ignore
 //! // Both of these work:
-//! scene.spawn(Geometry::new_box(1.0, 1.0, 1.0), Material::new_basic(color));
+//! scene.spawn(Geometry::new_box(1.0, 1.0, 1.0), Material::new_unlit(color));
 //! scene.spawn(existing_geo_handle, existing_mat_handle);
 //! ```
 
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::resources::geometry::Geometry;
-use crate::resources::material::{
-    Material, MeshBasicMaterial, MeshPhongMaterial, MeshPhysicalMaterial,
-};
+use crate::resources::material::{Material, PhongMaterial, PhysicalMaterial, UnlitMaterial};
 
 // ---------------------------------------------------------------------------
 // Material resolution
@@ -27,7 +25,7 @@ use crate::resources::material::{
 /// Implemented for:
 /// - `MaterialHandle` — returned as-is (zero cost).
 /// - `Material` — auto-registered in `AssetServer`.
-/// - `MeshBasicMaterial`, `MeshPhongMaterial`, `MeshPhysicalMaterial` — converted
+/// - `UnlitMaterial`, `PhongMaterial`, `PhysicalMaterial` — converted
 ///   to `Material` and auto-registered.
 pub trait ResolveMaterial {
     fn resolve(self, assets: &AssetServer) -> MaterialHandle;
@@ -47,21 +45,21 @@ impl ResolveMaterial for Material {
     }
 }
 
-impl ResolveMaterial for MeshBasicMaterial {
+impl ResolveMaterial for UnlitMaterial {
     #[inline]
     fn resolve(self, assets: &AssetServer) -> MaterialHandle {
         assets.materials.add(Material::from(self))
     }
 }
 
-impl ResolveMaterial for MeshPhongMaterial {
+impl ResolveMaterial for PhongMaterial {
     #[inline]
     fn resolve(self, assets: &AssetServer) -> MaterialHandle {
         assets.materials.add(Material::from(self))
     }
 }
 
-impl ResolveMaterial for MeshPhysicalMaterial {
+impl ResolveMaterial for PhysicalMaterial {
     #[inline]
     fn resolve(self, assets: &AssetServer) -> MaterialHandle {
         assets.materials.add(Material::from(self))

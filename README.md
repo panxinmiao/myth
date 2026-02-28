@@ -106,7 +106,7 @@ impl AppHandler for MyApp {
         let tex_handle = engine.assets.textures.add(texture);
         let mesh_handle = scene.spawn_box(
             1.0, 1.0, 1.0, 
-            MeshPhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0)).with_map(tex_handle)
+            PhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0)).with_map(tex_handle)
         );
         
         // 2. Setup Camera

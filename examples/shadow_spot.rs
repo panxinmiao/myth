@@ -11,10 +11,8 @@ impl AppHandler for ShadowSpotDemo {
         let scene = engine.scene_manager.create_active();
 
         // Sphere
-        let sphere_node = scene.spawn_sphere(
-            1.0,
-            MeshPhysicalMaterial::new(Vec4::new(0.2, 0.7, 1.0, 1.0)),
-        );
+        let sphere_node =
+            scene.spawn_sphere(1.0, PhysicalMaterial::new(Vec4::new(0.2, 0.7, 1.0, 1.0)));
         scene
             .node(&sphere_node)
             .set_position(0.0, 1.0, 0.0)
@@ -24,7 +22,7 @@ impl AppHandler for ShadowSpotDemo {
         let floor_node = scene.spawn_plane(
             30.0,
             30.0,
-            MeshPhysicalMaterial::new(Vec4::new(0.9, 0.9, 0.9, 1.0)).with_side(Side::Double),
+            PhysicalMaterial::new(Vec4::new(0.9, 0.9, 0.9, 1.0)).with_side(Side::Double),
         );
         scene
             .node(&floor_node)

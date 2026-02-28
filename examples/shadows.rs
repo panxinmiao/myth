@@ -50,7 +50,7 @@ impl AppHandler for SkinningDemo {
         let ground_node = scene.spawn_plane(
             30.0,
             30.0,
-            MeshPhongMaterial::new(Vec4::new(0.2, 0.3, 0.4, 1.0)).with_side(Side::Double),
+            PhongMaterial::new(Vec4::new(0.2, 0.3, 0.4, 1.0)).with_side(Side::Double),
         );
         scene
             .node(&ground_node)

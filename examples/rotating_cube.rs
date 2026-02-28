@@ -15,7 +15,7 @@ impl AppHandler for RotatingCube {
             2.0,
             2.0,
             2.0,
-            Material::new_basic(Vec4::new(0.8, 0.3, 0.3, 1.0)),
+            Material::new_unlit(Vec4::new(0.8, 0.3, 0.3, 1.0)),
         );
 
         let camera_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
