@@ -1,16 +1,31 @@
-//! UI Pass 插件模块
+//! UI Pass Plugin Module
 //!
-//! 这是一个外部插件示例，演示如何将 egui 集成到 myth 渲染引擎中。
-//! 该模块暂时**不属于**引擎核心，是"用户代码"(User Land Code)。
-//! 未来，它可能会被移入引擎核心，作为官方 UI 解决方案提供。
+//! An external plugin example demonstrating how to integrate [egui](https://github.com/emilk/egui)
+//! into the Myth rendering engine. This module is **not** part of the engine core — it lives
+//! entirely in user land. In the future it may be promoted to an official built-in UI solution.
 //!
-//! # 设计说明
-//! - `UiPass` 实现了 `RenderNode` trait，可以被注入到引擎的 RenderGraph 中
-//! - 使用 `RefCell` 处理 `RenderNode::run(&self)` 的不可变借用限制
-//! - CPU 侧逻辑（输入处理、帧开始/结束）由应用显式调用
-//! - GPU 侧逻辑（绘制）由 RenderGraph 自动调用
-
-use std::cell::RefCell;
+//! # Architecture
+//!
+//! `UiPass` implements the [`RenderNode`] trait so it can be injected into the engine's
+//! transient render graph. The lifecycle is split into clearly separated phases:
+//!
+//! | Phase | Receiver | Responsibility |
+//! |-------|----------|----------------|
+//! | **CPU / App** | `&mut self` | Input forwarding, egui frame begin/end, tessellation |
+//! | **Prepare** | `&mut self` | Deferred texture registration, buffer uploads, delta application |
+//! | **Run** | `&self` | Record a single render pass — purely read-only |
+//!
+//! # Per-Frame Usage
+//!
+//! ```text
+//! handle_input()          // forward winit events to egui
+//! begin_frame(window)     // start an egui pass
+//! … build UI via context() …
+//! end_frame(window)       // tessellate shapes, capture texture delta
+//! ── RenderGraph ──
+//! prepare(ctx)            // upload textures & geometry to GPU
+//! run(ctx, encoder)       // record the egui render pass
+//! ```
 
 use rustc_hash::FxHashMap;
 use wgpu::{Device, TextureFormat};
@@ -19,57 +34,55 @@ use winit::window::Window;
 
 use myth::{
     assets::TextureHandle,
-    renderer::graph::{ExecuteContext, RenderNode},
+    renderer::graph::{ExecuteContext, PrepareContext, RenderNode},
 };
 
-/// UI 渲染 Pass
+/// Egui-based UI render pass.
 ///
-/// 封装 egui 的完整生命周期，作为 RenderNode 注入到引擎中。
+/// Wraps the full egui lifecycle (input → frame → tessellation → GPU upload → draw)
+/// behind the engine's [`RenderNode`] interface.
 ///
-/// # 使用流程
-/// 1. 创建: `UiPass::new(device, format, window)`
-/// 2. 每帧循环:
-///    - 输入处理: `handle_input(window, event)` (在事件处理中)
-///    - 开始: `begin_frame(window)` (在 update 开始)
-///    - 构建 UI: 使用 `context()` 访问 egui::Context
-///    - 结束: `end_frame(window)` (在 update 结束)
-///    - 渲染: 通过 `renderer.render(..., &[&ui_pass])` 自动调用
+/// # Deferred Texture Registration
+///
+/// Engine textures ([`TextureHandle`]) are not immediately available to egui.
+/// Call [`request_texture`](Self::request_texture) during the UI-build phase;
+/// the actual GPU registration happens in [`prepare`](RenderNode::prepare) once the
+/// resource manager confirms the texture is uploaded.
 pub struct UiPass {
-    /// egui 上下文
+    /// Shared egui context (cheap to clone — reference-counted internally).
     egui_ctx: egui::Context,
-    /// winit 状态管理器
-    state: RefCell<egui_winit::State>,
-    /// wgpu 渲染器
-    renderer: RefCell<egui_wgpu::Renderer>,
+    /// Bridges winit events into egui raw input.
+    state: egui_winit::State,
+    /// Egui's wgpu backend — owns GPU pipelines, textures, and vertex buffers.
+    renderer: egui_wgpu::Renderer,
 
-    /// 每帧的绘制数据
-    clipped_primitives: RefCell<Vec<egui::ClippedPrimitive>>,
-    /// 纹理变化
-    textures_delta: RefCell<egui::TexturesDelta>,
-    /// 屏幕描述符
-    screen_descriptor: RefCell<egui_wgpu::ScreenDescriptor>,
+    /// Tessellated draw data produced by [`end_frame`](Self::end_frame),
+    /// consumed by [`prepare`](RenderNode::prepare) and [`run`](RenderNode::run).
+    clipped_primitives: Vec<egui::ClippedPrimitive>,
+    /// Texture create/update/free operations accumulated during the egui frame.
+    textures_delta: egui::TexturesDelta,
+    /// Current viewport size and DPI, kept in sync via [`resize`](Self::resize).
+    screen_descriptor: egui_wgpu::ScreenDescriptor,
 
-    // === 延迟注册系统， 提供给外部App访问内部纹理的方法 ===
-    /// 待处理的纹理请求队列
-    texture_requests: RefCell<Vec<TextureHandle>>,
-    /// 已注册的纹理映射表 (Handle -> egui::TextureId)
-    texture_map: RefCell<FxHashMap<TextureHandle, egui::TextureId>>,
-    /// 记录 GPU 资源 ID 用于失效检测 (Handle -> GpuImageId)
-    gpu_resource_ids: RefCell<FxHashMap<TextureHandle, u64>>,
+    // ── Deferred texture registration ──────────────────────────────────────
+    /// Handles waiting for GPU-side readiness (drained each prepare phase).
+    texture_requests: Vec<TextureHandle>,
+    /// Successfully registered engine textures → egui texture IDs.
+    texture_map: FxHashMap<TextureHandle, egui::TextureId>,
+    /// Tracks the GPU image ID per handle for staleness detection.
+    gpu_resource_ids: FxHashMap<TextureHandle, u64>,
 }
 
 impl UiPass {
-    /// 创建新的 UI Pass
+    /// Creates a new UI pass.
     ///
-    /// # 参数
-    /// - `device`: wgpu 设备
-    /// - `output_format`: 输出纹理格式
-    /// - `window`: 窗口引用
+    /// Initializes the egui context, winit integration state, and wgpu renderer.
+    /// The initial screen descriptor is derived from `window`'s inner size and
+    /// scale factor.
     pub fn new(device: &Device, output_format: TextureFormat, window: &Window) -> Self {
         let size = window.inner_size();
         let egui_ctx = egui::Context::default();
 
-        // egui_winit 初始化
         let id = egui_ctx.viewport_id();
         let state = egui_winit::State::new(egui_ctx.clone(), id, window, None, None, None);
 
@@ -78,33 +91,29 @@ impl UiPass {
 
         Self {
             egui_ctx,
-            state: RefCell::new(state),
-            renderer: RefCell::new(renderer),
-            clipped_primitives: RefCell::new(Vec::new()),
-            textures_delta: RefCell::new(egui::TexturesDelta::default()),
-            screen_descriptor: RefCell::new(egui_wgpu::ScreenDescriptor {
+            state,
+            renderer,
+            clipped_primitives: Vec::new(),
+            textures_delta: egui::TexturesDelta::default(),
+            screen_descriptor: egui_wgpu::ScreenDescriptor {
                 size_in_pixels: [size.width, size.height],
                 pixels_per_point: window.scale_factor() as f32,
-            }),
-
-            // 初始化延迟注册系统
-            texture_requests: RefCell::new(Vec::new()),
-            texture_map: RefCell::new(FxHashMap::default()),
-            gpu_resource_ids: RefCell::new(FxHashMap::default()),
+            },
+            texture_requests: Vec::new(),
+            texture_map: FxHashMap::default(),
+            gpu_resource_ids: FxHashMap::default(),
         }
     }
 
-    // === CPU 侧公开 API ===
+    // ── CPU-side public API ────────────────────────────────────────────────
 
-    /// 处理输入事件
+    /// Forwards a winit window event to egui.
     ///
-    /// 返回 `true` 表示事件被 UI 消耗，应用不应再处理
-    pub fn handle_input(&self, window: &Window, event: &WindowEvent) -> bool {
-        // Use try_borrow_mut to avoid panic on WASM when events re-enter
-        let response = match self.state.try_borrow_mut() {
-            Ok(mut state) => state.on_window_event(window, event),
-            Err(_) => return false, // RefCell already borrowed, skip this event
-        };
+    /// Returns `true` if egui consumed the event (the application should skip
+    /// its own handling). Mouse-button releases are always reported as
+    /// unconsumed so that orbit controls etc. can detect "drag end".
+    pub fn handle_input(&mut self, window: &Window, event: &WindowEvent) -> bool {
+        let response = self.state.on_window_event(window, event);
 
         if let WindowEvent::MouseInput {
             state: winit::event::ElementState::Released,
@@ -117,54 +126,58 @@ impl UiPass {
         response.consumed
     }
 
+    /// Requests that an engine texture be made available in egui.
+    ///
+    /// If the texture has already been registered, its [`egui::TextureId`] is
+    /// returned immediately. Otherwise the handle is enqueued for deferred
+    /// registration during the next [`prepare`](RenderNode::prepare) phase.
     #[allow(dead_code)]
-    pub fn request_texture(&self, handle: TextureHandle) -> Option<egui::TextureId> {
-        // 1. 如果已存在，直接返回
-        if let Some(&id) = self.texture_map.borrow().get(&handle) {
+    pub fn request_texture(&mut self, handle: TextureHandle) -> Option<egui::TextureId> {
+        if let Some(&id) = self.texture_map.get(&handle) {
             return Some(id);
         }
 
-        // 2. 如果不存在，检查是否已在请求队列中
-        let mut requests = self.texture_requests.borrow_mut();
-        if !requests.contains(&handle) {
-            requests.push(handle);
+        if !self.texture_requests.contains(&handle) {
+            self.texture_requests.push(handle);
         }
 
         None
     }
 
+    /// Unregisters a previously registered engine texture from egui.
     #[allow(dead_code)]
-    pub fn free_texture(&self, handle: TextureHandle) {
-        if let Some(id) = self.texture_map.borrow_mut().remove(&handle) {
-            self.gpu_resource_ids.borrow_mut().remove(&handle);
-            self.renderer.borrow_mut().free_texture(&id);
+    pub fn free_texture(&mut self, handle: TextureHandle) {
+        if let Some(id) = self.texture_map.remove(&handle) {
+            self.gpu_resource_ids.remove(&handle);
+            self.renderer.free_texture(&id);
         }
     }
 
+    /// Registers a raw wgpu texture view with egui, returning the assigned
+    /// [`egui::TextureId`]. Useful for off-screen render targets or
+    /// externally managed textures.
+    #[allow(dead_code)]
     pub fn register_native_texture(
-        &self,
+        &mut self,
         device: &wgpu::Device,
         view: &wgpu::TextureView,
         filter: wgpu::FilterMode,
     ) -> egui::TextureId {
-        self.renderer
-            .borrow_mut()
-            .register_native_texture(device, view, filter)
+        self.renderer.register_native_texture(device, view, filter)
     }
 
-    /// 每帧开始时调用
-    pub fn begin_frame(&self, window: &Window) {
-        // Use try_borrow_mut to avoid panic on WASM re-entrant events
-        if let Ok(mut state) = self.state.try_borrow_mut() {
-            let raw_input = state.take_egui_input(window);
-            self.egui_ctx.begin_pass(raw_input);
-        }
+    /// Begins a new egui frame. Call once per frame **before** building UI.
+    pub fn begin_frame(&mut self, window: &Window) {
+        let raw_input = self.state.take_egui_input(window);
+        self.egui_ctx.begin_pass(raw_input);
     }
 
-    /// 用户 UI 构建完成后调用
+    /// Ends the current egui frame.
     ///
-    /// 会生成绘制数据供 GPU 阶段使用
-    pub fn end_frame(&self, window: &Window) {
+    /// Tessellates all accumulated shapes into [`ClippedPrimitive`]s and
+    /// captures the [`TexturesDelta`] for the prepare phase.
+    /// Also forwards platform output (cursor icon, clipboard, IME) back to winit.
+    pub fn end_frame(&mut self, window: &Window) {
         let egui::FullOutput {
             shapes,
             textures_delta,
@@ -172,96 +185,81 @@ impl UiPass {
             ..
         } = self.egui_ctx.end_pass();
 
-        // 处理平台输出（鼠标指针、剪贴板等）
-        // Use try_borrow_mut to avoid panic on WASM re-entrant events
-        if let Ok(mut state) = self.state.try_borrow_mut() {
-            state.handle_platform_output(window, platform_output);
-        }
-
-        if let Ok(mut delta) = self.textures_delta.try_borrow_mut() {
-            *delta = textures_delta;
-        }
-        if let Ok(mut primitives) = self.clipped_primitives.try_borrow_mut() {
-            *primitives = self
-                .egui_ctx
-                .tessellate(shapes, self.egui_ctx.pixels_per_point());
-        }
+        self.state.handle_platform_output(window, platform_output);
+        self.textures_delta = textures_delta;
+        self.clipped_primitives = self
+            .egui_ctx
+            .tessellate(shapes, self.egui_ctx.pixels_per_point());
     }
 
-    /// 获取 egui 上下文
-    ///
-    /// 用于构建 UI
+    /// Returns the shared [`egui::Context`] for building UI widgets.
     pub fn context(&self) -> &egui::Context {
         &self.egui_ctx
     }
 
-    /// 窗口大小调整
-    pub fn resize(&self, width: u32, height: u32, scale_factor: f32) {
-        if let Ok(mut desc) = self.screen_descriptor.try_borrow_mut() {
-            desc.size_in_pixels = [width, height];
-            desc.pixels_per_point = scale_factor;
-        }
+    /// Updates the screen descriptor after a window resize.
+    pub fn resize(&mut self, width: u32, height: u32, scale_factor: f32) {
+        self.screen_descriptor.size_in_pixels = [width, height];
+        self.screen_descriptor.pixels_per_point = scale_factor;
     }
 
-    /// 检查 UI 是否想要捕获键盘输入
+    /// Returns `true` if egui wants exclusive keyboard focus (e.g. a text field is active).
     #[allow(dead_code)]
     pub fn wants_keyboard_input(&self) -> bool {
         self.egui_ctx.egui_wants_keyboard_input()
     }
 
-    /// 检查 UI 是否想要捕获鼠标输入
+    /// Returns `true` if egui wants exclusive pointer focus (e.g. hovering a widget).
     #[allow(dead_code)]
     pub fn wants_pointer_input(&self) -> bool {
         self.egui_ctx.egui_wants_pointer_input()
     }
 }
 
-/// 实现 RenderNode trait
+/// [`RenderNode`] implementation for `UiPass`.
 ///
-/// 这使得 UiPass 可以被注入到 RenderGraph 中，由引擎统一调度
+/// # Phase Responsibilities
+///
+/// ## Prepare (`&mut self`)
+///
+/// 1. **Deferred texture registration** — drain pending [`request_texture`](UiPass::request_texture)
+///    requests, look up GPU images via [`ResourceManager`](myth::renderer::core::ResourceManager),
+///    and register them as native egui textures.
+/// 2. **Texture delta application** — upload new/updated egui textures to the GPU.
+/// 3. **Geometry buffer upload** — write tessellated vertex/index data through a temporary
+///    command encoder (submitted immediately).
+/// 4. **Stale texture cleanup** — free textures that egui no longer references.
+///
+/// ## Run (`&self`)
+///
+/// Records a single `wgpu::RenderPass` that draws the tessellated primitives onto the
+/// swap-chain surface. No mutable state is touched — fully compatible with the engine's
+/// read-only execute phase.
 impl RenderNode for UiPass {
     fn name(&self) -> &str {
         "UI Pass (egui)"
     }
 
-    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        // === 1. 处理延迟纹理注册 (使用 Swap & Drain 模式避免死锁) ===
-        // 将请求队列移出 RefCell，避免持有锁时调用外部系统
-        let pending_requests: Vec<TextureHandle> = {
-            match self.texture_requests.try_borrow_mut() {
-                Ok(mut reqs) if !reqs.is_empty() => reqs.drain(..).collect(),
-                _ => Vec::new(), // 空或者已被借用，本帧跳过
-            }
-        };
-
-        let mut remaining_requests = Vec::new();
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
+        // 1. Process deferred texture registration requests.
+        let pending_requests: Vec<TextureHandle> = self.texture_requests.drain(..).collect();
 
         if !pending_requests.is_empty() {
-            let resources = &ctx.resource_manager;
+            let mut remaining_requests = Vec::new();
+            let resources = &*ctx.resource_manager;
 
             for handle in pending_requests {
                 let mut registered = false;
 
-                // 尝试获取资源 (不持有 texture_requests 锁)
                 if let Some(binding) = resources.get_texture_binding(handle) {
-                    let image_id = binding.cpu_image_id;
-
-                    if let Some(gpu_image) = resources.get_image(image_id) {
-                        // 注册纹理 (短暂持有 renderer 锁)
-                        let id = self.register_native_texture(
+                    if let Some(gpu_image) = resources.get_image(binding.cpu_image_id) {
+                        let id = self.renderer.register_native_texture(
                             &ctx.wgpu_ctx.device,
                             &gpu_image.default_view,
                             wgpu::FilterMode::Linear,
                         );
-
-                        // 更新映射表 (短暂持有各自的锁)
-                        if let Ok(mut map) = self.texture_map.try_borrow_mut() {
-                            map.insert(handle, id);
-                        }
-                        if let Ok(mut gpu_ids) = self.gpu_resource_ids.try_borrow_mut() {
-                            gpu_ids.insert(handle, gpu_image.id);
-                        }
-
+                        self.texture_map.insert(handle, id);
+                        self.gpu_resource_ids.insert(handle, gpu_image.id);
                         registered = true;
                     }
                 }
@@ -270,81 +268,69 @@ impl RenderNode for UiPass {
                     remaining_requests.push(handle);
                 }
             }
-        }
 
-        // 将未就绪的请求放回队列
-        if !remaining_requests.is_empty()
-            && let Ok(mut reqs) = self.texture_requests.try_borrow_mut()
-        {
-            reqs.extend(remaining_requests);
+            self.texture_requests = remaining_requests;
         }
 
         let device = &ctx.wgpu_ctx.device;
         let queue = &ctx.wgpu_ctx.queue;
-        let view = ctx.surface_view;
 
-        // 尝试获取渲染器锁，添加防重入保护
-        let mut renderer = match self.renderer.try_borrow_mut() {
-            Ok(r) => r,
-            Err(_) => {
-                log::warn!("UiPass::run re-entry detected, skipping frame!");
-                return;
-            }
-        };
-
-        let paint_jobs = match self.clipped_primitives.try_borrow() {
-            Ok(jobs) => jobs,
-            Err(_) => return,
-        };
-        let mut textures_delta = match self.textures_delta.try_borrow_mut() {
-            Ok(delta) => delta,
-            Err(_) => return,
-        };
-        let screen_desc = match self.screen_descriptor.try_borrow() {
-            Ok(desc) => desc,
-            Err(_) => return,
-        };
-
-        // 1. 更新纹理
-        for (id, delta) in &textures_delta.set {
-            renderer.update_texture(device, queue, *id, delta);
+        // 2. Upload new / updated egui-managed textures.
+        for (id, delta) in &self.textures_delta.set {
+            self.renderer.update_texture(device, queue, *id, delta);
         }
 
-        // 2. 更新几何缓冲
-        renderer.update_buffers(device, queue, encoder, &paint_jobs, &screen_desc);
+        // 3. Upload vertex & index buffers via a temporary encoder.
+        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("egui buffer upload"),
+        });
+        let user_cmd_bufs = self.renderer.update_buffers(
+            device,
+            queue,
+            &mut encoder,
+            &self.clipped_primitives,
+            &self.screen_descriptor,
+        );
+        let mut cmd_bufs: Vec<wgpu::CommandBuffer> = Vec::with_capacity(1 + user_cmd_bufs.len());
+        cmd_bufs.push(encoder.finish());
+        cmd_bufs.extend(user_cmd_bufs);
+        queue.submit(cmd_bufs);
 
-        // 3. 录制绘制命令
-        {
-            let mut rpass = encoder
-                .begin_render_pass(&wgpu::RenderPassDescriptor {
-                    label: Some("egui Pass"),
-                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                        view,
-                        resolve_target: None,
-                        ops: wgpu::Operations {
-                            load: wgpu::LoadOp::Load,
-                            store: wgpu::StoreOp::Store,
-                        },
-                        depth_slice: None,
-                    })],
-                    depth_stencil_attachment: None,
-                    timestamp_writes: None,
-                    occlusion_query_set: None,
-                    multiview_mask: None,
-                })
-                .forget_lifetime();
-
-            renderer.render(&mut rpass, &paint_jobs, &screen_desc);
+        // 4. Free textures that egui no longer needs.
+        for id in &self.textures_delta.free {
+            self.renderer.free_texture(id);
+            self.texture_map.retain(|_, v| v != id);
         }
 
-        // 4. 释放已删除的纹理
-        for id in &textures_delta.free {
-            renderer.free_texture(id);
-            self.texture_map.borrow_mut().retain(|_, &mut v| v != *id);
-        }
+        // 5. Clear the delta so it is not re-processed next frame.
+        self.textures_delta.set.clear();
+        self.textures_delta.free.clear();
+    }
 
-        // 清空 delta 防止重复处理
-        textures_delta.set.clear();
-        textures_delta.free.clear();
+    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+        let mut rpass = encoder
+            .begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("egui Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: ctx.surface_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            })
+            .forget_lifetime();
+
+        self.renderer.render(
+            &mut rpass,
+            &self.clipped_primitives,
+            &self.screen_descriptor,
+        );
     }
 }

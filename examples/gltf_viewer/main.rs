@@ -2122,7 +2122,7 @@ impl GltfViewer {
 
     /// 渲染纹理详情
     fn render_texture_details(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         assets: &AssetServer,
         handle: TextureHandle,
