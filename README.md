@@ -47,6 +47,7 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
     * **Image-Based Lighting (IBL)**: Supports cubemap and equirectangular environment maps with automatic PMREM generation.
     * **Dynamic Shadows**: Cascaded Shadow Maps (CSM) for large-scale outdoor scenes.
     * **SSAO**: Screen Space Ambient Occlusion for enhanced depth perception and contact shadows.
+    * **SSSSS**: Screen Space Subsurface Scattering for realistic skin and organic materials.
     * **Skybox & Background**: Color, gradient, image, cubemap, and equirectangular sky rendering modes.
 
 * **Post-Processing & FX**

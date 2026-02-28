@@ -1797,8 +1797,12 @@ impl GltfViewer {
                                                             file_handle
                                                                 .path()
                                                                 .file_name()
-                                                                .map(|n| n.to_string_lossy().to_string())
-                                                                .unwrap_or_else(|| "Unknown.cube".to_string())
+                                                                .map(|n| {
+                                                                    n.to_string_lossy().to_string()
+                                                                })
+                                                                .unwrap_or_else(|| {
+                                                                    "Unknown.cube".to_string()
+                                                                })
                                                         }
                                                         #[cfg(target_arch = "wasm32")]
                                                         {
@@ -1821,7 +1825,9 @@ impl GltfViewer {
                                                     let result = {
                                                         let data = file_handle.read().await;
                                                         assets_clone
-                                                            .load_lut_texture_from_bytes_async(&name, data)
+                                                            .load_lut_texture_from_bytes_async(
+                                                                &name, data,
+                                                            )
                                                             .await
                                                     };
 
@@ -1830,7 +1836,10 @@ impl GltfViewer {
                                                             let _ = lut_tx.send((name, handle));
                                                         }
                                                         Err(e) => {
-                                                            log::error!("Failed to load LUT: {}", e);
+                                                            log::error!(
+                                                                "Failed to load LUT: {}",
+                                                                e
+                                                            );
                                                         }
                                                     }
                                                 }
