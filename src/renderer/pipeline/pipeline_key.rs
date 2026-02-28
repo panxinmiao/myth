@@ -10,7 +10,7 @@
 //!   (opaque, transparent, shadow).
 //! - [`FullscreenPipelineKey`] — post-processing / fullscreen passes
 //!   (bloom, SSAO, FXAA, tone map, SSSSS, skybox…).
-//! - [`PrepassPipelineKey`] — depth-normal prepass geometry pipelines.
+//! - [`SimpleGeometryPipelineKey`] — simplified geometry passes (prepass, shadow).
 //! - [`ComputePipelineKey`] — compute shader pipelines (BRDF LUT, IBL).
 
 use std::hash::{Hash, Hasher};
@@ -238,28 +238,20 @@ pub struct ComputePipelineKey {
     pub shader_hash: u128,
 }
 
-// ─── Shadow Pipeline Key (unchanged from previous design) ─────────────────────
+// ─── Simple Geometry Pipeline Key ─────────────────────────────────────────────
 
-/// L2 cache key for depth-only shadow pipelines.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct ShadowPipelineKey {
-    pub shader_hash: u64,
-    pub topology: wgpu::PrimitiveTopology,
-    pub cull_mode: Option<wgpu::Face>,
-    pub depth_format: wgpu::TextureFormat,
-    pub front_face: wgpu::FrontFace,
-}
-
-// ─── Prepass Pipeline Key ─────────────────────────────────────────────────────
-
-/// L2 cache key for Depth-Normal Prepass pipelines.
+/// L2 cache key for simplified geometry passes (Depth Prepass, Shadow Pass).
 ///
-/// This is a **geometry** pass (not fullscreen!) — it renders actual meshes, so
-/// the `vertex_layout_id` is critical for correct deduplication. Two meshes with
-/// different vertex buffer layouts (e.g. static vs skinned) must produce
-/// distinct pipeline entries even if their shader defines are identical.
+/// These passes render actual meshes with vertex input but skip complex PBR/Phong
+/// material state. The `vertex_layout_id` is critical for correct deduplication —
+/// two meshes with different vertex buffer layouts (e.g. static vs skinned) must
+/// produce distinct pipeline entries even if their shader defines are identical.
+///
+/// - **Prepass**: `color_targets` = normal/feature-id; `depth_stencil` = main camera depth.
+/// - **Shadow**: `color_targets` = empty (depth-only); `depth_stencil` = shadow map depth.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct PrepassPipelineKey {
+pub struct SimpleGeometryPipelineKey {
+    /// xxh3-128 hash of the final WGSL source code.
     pub shader_hash: u128,
     /// Distinguishes different vertex buffer layouts (static, skinned, morphed…).
     pub vertex_layout_id: u64,

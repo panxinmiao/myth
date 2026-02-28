@@ -28,7 +28,8 @@ use crate::renderer::graph::frame::{RenderCommand, RenderKey, ShadowRenderComman
 use crate::renderer::graph::shadow_utils;
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::renderer::pipeline::{
-    BlendStateKey, FastPipelineKey, FastShadowPipelineKey, GraphicsPipelineKey, ShadowPipelineKey,
+    BlendStateKey, DepthStencilKey, FastPipelineKey, FastShadowPipelineKey,
+    GraphicsPipelineKey, SimpleGeometryPipelineKey,
 };
 use crate::resources::material::{AlphaMode, Side};
 use crate::resources::uniforms::{DynamicModelUniforms, Mat3Uniform};
@@ -496,33 +497,81 @@ impl SceneCullPass {
 
                         options.add_define("SHADOW_PASS", "1");
 
-                        let shader_hash = options.compute_hash();
-                        let canonical_key = ShadowPipelineKey {
-                            shader_hash,
-                            topology: geometry.topology,
-                            cull_mode: match material.side() {
-                                Side::Front => Some(wgpu::Face::Back),
-                                Side::Back => Some(wgpu::Face::Front),
-                                Side::Double => None,
+                        // Compile shader (caller-side, not inside cache)
+                        let binding_code = format!(
+                            "{}\n{}\n{}",
+                            SHADOW_BINDING_WGSL,
+                            &gpu_material.binding_wgsl,
+                            &item.object_bind_group.binding_wgsl
+                        );
+
+                        let (shader_module, code_hash) =
+                            ctx.shader_manager.get_or_compile_template(
+                                &ctx.wgpu_ctx.device,
+                                "passes/depth",
+                                &options,
+                                &gpu_geometry.layout_info.vertex_input_code,
+                                &binding_code,
+                            );
+
+                        let layout = ctx.wgpu_ctx.device.create_pipeline_layout(
+                            &wgpu::PipelineLayoutDescriptor {
+                                label: Some("Shadow Pipeline Layout"),
+                                bind_group_layouts: &[
+                                    &shadow_global_layout,
+                                    &gpu_material.layout,
+                                    &item.object_bind_group.layout,
+                                ],
+                                immediate_size: 0,
                             },
-                            depth_format,
-                            front_face: if item.item_variant_flags & 0x1 != 0 {
-                                wgpu::FrontFace::Cw
-                            } else {
-                                wgpu::FrontFace::Ccw
-                            },
+                        );
+
+                        let vertex_buffers_layout: Vec<_> = gpu_geometry
+                            .layout_info
+                            .buffers
+                            .iter()
+                            .map(|l| l.as_wgpu())
+                            .collect();
+
+                        let cull_mode = match material.side() {
+                            Side::Front => Some(wgpu::Face::Back),
+                            Side::Back => Some(wgpu::Face::Front),
+                            Side::Double => None,
                         };
 
-                        let id = ctx.pipeline_cache.get_or_create_shadow(
+                        let front_face = if item.item_variant_flags & 0x1 != 0 {
+                            wgpu::FrontFace::Cw
+                        } else {
+                            wgpu::FrontFace::Ccw
+                        };
+
+                        let canonical_key = SimpleGeometryPipelineKey {
+                            shader_hash: code_hash,
+                            vertex_layout_id: gpu_geometry.layout_id,
+                            color_targets: smallvec::smallvec![],
+                            depth_stencil: DepthStencilKey::from(wgpu::DepthStencilState {
+                                format: depth_format,
+                                depth_write_enabled: true,
+                                depth_compare: wgpu::CompareFunction::LessEqual,
+                                stencil: wgpu::StencilState::default(),
+                                bias: wgpu::DepthBiasState {
+                                    constant: 2,
+                                    slope_scale: 2.0,
+                                    clamp: 0.0,
+                                },
+                            }),
+                            topology: geometry.topology,
+                            cull_mode,
+                            front_face,
+                        };
+
+                        let id = ctx.pipeline_cache.get_or_create_simple_geometry(
                             &ctx.wgpu_ctx.device,
-                            ctx.shader_manager,
+                            shader_module,
+                            &layout,
                             &canonical_key,
-                            &options,
-                            &gpu_geometry.layout_info,
-                            &shadow_global_layout,
-                            SHADOW_BINDING_WGSL,
-                            gpu_material,
-                            &item.object_bind_group,
+                            "Shadow Pipeline",
+                            &vertex_buffers_layout,
                         );
 
                         ctx.pipeline_cache
