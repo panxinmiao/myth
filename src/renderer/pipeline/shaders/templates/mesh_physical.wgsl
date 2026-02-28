@@ -348,7 +348,14 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         opacity *= material.transmission_alpha;
     $$ endif
 
+    // 5. 最终合成：根据是否启用屏幕空间特效，选择输出格式
     var out: FragmentOutput;
+
+    $$ if HDR
+    // 结果色彩钳制，防止 HDR 过曝值导致后续特效（如 bloom）失控
+    out_diffuse = clamp(out_diffuse, vec3<f32>(0.0), vec3<f32>(65000.0));
+    out_specular = clamp(out_specular, vec3<f32>(0.0), vec3<f32>(65000.0));
+    $$ endif
 
     $$ if USE_SCREEN_SPACE_FEATUREs
         out.specular = vec4<f32>(total_specular, material.roughness);

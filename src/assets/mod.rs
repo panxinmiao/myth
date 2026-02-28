@@ -199,3 +199,38 @@ pub fn load_cube_texture_from_files(
 
     Ok(texture)
 }
+
+/// Loads a 3D LUT texture from a .cube file.
+///
+/// Parses the `.cube` format and returns a 3D texture with `Rgba16Float` format,
+/// suitable for color grading in the tone mapping pipeline.
+///
+/// # Arguments
+///
+/// * `path` - Path to the .cube LUT file
+///
+/// # Returns
+///
+/// A 3D texture that can be used for LUT-based color grading.
+pub fn load_lut_texture_from_file(
+    path: impl AsRef<Path>,
+) -> Result<crate::resources::texture::Texture> {
+    let bytes = std::fs::read(&path)?;
+
+    // Reuse the CPU decoder from AssetServer
+    let image = server::AssetServer::decode_cube_cpu(&bytes)?;
+
+    let mut texture = crate::resources::texture::Texture::new(
+        path.as_ref().to_str(),
+        image,
+        wgpu::TextureViewDimension::D3,
+    );
+
+    texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
+    texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
+    texture.sampler.address_mode_w = wgpu::AddressMode::ClampToEdge;
+    texture.sampler.mag_filter = wgpu::FilterMode::Linear;
+    texture.sampler.min_filter = wgpu::FilterMode::Linear;
+
+    Ok(texture)
+}

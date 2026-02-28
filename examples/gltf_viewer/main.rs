@@ -276,6 +276,13 @@ struct GltfViewer {
     #[allow(dead_code)]
     skybox_tx: Sender<(String, TextureHandle)>,
 
+    // === LUT Loading ===
+    /// Receiver for async LUT texture loads
+    lut_rx: Receiver<(String, TextureHandle)>,
+    /// Sender for async LUT texture loads
+    #[allow(dead_code)]
+    lut_tx: Sender<(String, TextureHandle)>,
+
     // === SSS Profiles ===
     sss_profiles: Vec<(
         myth::resources::screen_space::FeatureId,
@@ -373,6 +380,7 @@ impl AppHandler for GltfViewer {
         let (file_dialog_tx, file_dialog_rx) = channel();
         let (prefab_tx, prefab_rx) = channel();
         let (skybox_tx, skybox_rx) = channel();
+        let (lut_tx, lut_rx) = channel();
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -438,6 +446,9 @@ impl AppHandler for GltfViewer {
             skybox_file_name: None,
             skybox_rx,
             skybox_tx,
+
+            lut_rx,
+            lut_tx,
 
             sss_profiles: Vec::new(),
         };
@@ -679,6 +690,12 @@ impl GltfViewer {
                     self.skybox_rotation,
                 );
             }
+        }
+
+        // 处理 LUT 加载结果（来自「Load LUT」按钮）
+        while let Ok((name, lut_handle)) = self.lut_rx.try_recv() {
+            log::info!("Loaded LUT texture: {}", name);
+            scene.tone_mapping.set_lut_texture(Some(lut_handle));
         }
 
         // 处理 Prefab 加载结果 - 实例化到场景中
@@ -1764,7 +1781,61 @@ impl GltfViewer {
                                             scene.tone_mapping.set_lut_texture(None);
                                         }
                                     } else {
-                                        ui.label("No LUT loaded");
+                                        if ui.button("📂 Load LUT (.cube)...").clicked() {
+                                            let lut_tx = self.lut_tx.clone();
+                                            let assets_clone = assets.clone();
+                                            execute_future(async move {
+                                                let file = rfd::AsyncFileDialog::new()
+                                                    .add_filter("LUT Files", &["cube"])
+                                                    .pick_file()
+                                                    .await;
+
+                                                if let Some(file_handle) = file {
+                                                    let name = {
+                                                        #[cfg(not(target_arch = "wasm32"))]
+                                                        {
+                                                            file_handle
+                                                                .path()
+                                                                .file_name()
+                                                                .map(|n| n.to_string_lossy().to_string())
+                                                                .unwrap_or_else(|| "Unknown.cube".to_string())
+                                                        }
+                                                        #[cfg(target_arch = "wasm32")]
+                                                        {
+                                                            file_handle.file_name()
+                                                        }
+                                                    };
+
+                                                    #[cfg(not(target_arch = "wasm32"))]
+                                                    let result = {
+                                                        let path_str = file_handle
+                                                            .path()
+                                                            .to_string_lossy()
+                                                            .to_string();
+                                                        assets_clone
+                                                            .load_lut_texture_async(path_str)
+                                                            .await
+                                                    };
+
+                                                    #[cfg(target_arch = "wasm32")]
+                                                    let result = {
+                                                        let data = file_handle.read().await;
+                                                        assets_clone
+                                                            .load_lut_texture_from_bytes_async(&name, data)
+                                                            .await
+                                                    };
+
+                                                    match result {
+                                                        Ok(handle) => {
+                                                            let _ = lut_tx.send((name, handle));
+                                                        }
+                                                        Err(e) => {
+                                                            log::error!("Failed to load LUT: {}", e);
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        }
                                     }
                                 });
 
