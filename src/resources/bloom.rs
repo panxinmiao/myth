@@ -90,7 +90,7 @@ pub struct BloomSettings {
     /// target size.
     ///
     /// Default: `6`
-    pub max_mip_levels: u32,
+    max_mip_levels: u32,
 
     /// Whether to apply Karis average on the first downsample pass.
     ///
@@ -103,11 +103,11 @@ pub struct BloomSettings {
 
     /// Upsample filter uniforms (`filter_radius`).
     /// Updated via `set_radius()` — version tracking is automatic.
-    pub upsample_uniforms: CpuBuffer<UpsampleUniforms>,
+    pub(crate) upsample_uniforms: CpuBuffer<UpsampleUniforms>,
 
     /// Composite blend uniforms (`bloom_strength`).
     /// Updated via `set_strength()` — version tracking is automatic.
-    pub composite_uniforms: CpuBuffer<CompositeUniforms>,
+    pub(crate) composite_uniforms: CpuBuffer<CompositeUniforms>,
 }
 
 impl Default for BloomSettings {
@@ -159,6 +159,13 @@ impl BloomSettings {
     #[must_use]
     pub fn radius(&self) -> f32 {
         self.upsample_uniforms.read().filter_radius
+    }
+
+    /// Returns the maximum number of mip levels.
+    #[inline]
+    #[must_use]
+    pub fn max_mip_levels(&self) -> u32 {
+        self.max_mip_levels
     }
 
     /// Sets whether bloom is enabled.

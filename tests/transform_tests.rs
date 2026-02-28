@@ -190,11 +190,11 @@ fn create_chain(length: usize) -> (HierarchySetup, Vec<NodeHandle>) {
         let mut node = Node::new();
         node.transform.position = Vec3::new(1.0, 0.0, 0.0); // Each translates +1 in X
         if i > 0 {
-            node.parent = Some(handles[i - 1]);
+            node.set_parent(Some(handles[i - 1]));
         }
         let handle = nodes.insert(node);
         if i > 0 {
-            nodes.get_mut(handles[i - 1]).unwrap().children.push(handle);
+            nodes.get_mut(handles[i - 1]).unwrap().push_child(handle);
         }
         handles.push(handle);
     }
@@ -319,9 +319,9 @@ fn hierarchy_with_rotation_and_scale() {
     // Child: translate (1,0,0) in local space
     let mut child = Node::new();
     child.transform.position = Vec3::new(1.0, 0.0, 0.0);
-    child.parent = Some(parent_h);
+    child.set_parent(Some(parent_h));
     let child_h = nodes.insert(child);
-    nodes.get_mut(parent_h).unwrap().children.push(child_h);
+    nodes.get_mut(parent_h).unwrap().push_child(child_h);
 
     let roots = vec![parent_h];
     update_hierarchy_iterative(&mut nodes, &mut cameras, &roots);
@@ -419,9 +419,9 @@ fn bfs_batches_wide_tree() {
     let root = nodes.insert(Node::new());
     for _ in 0..10 {
         let mut child = Node::new();
-        child.parent = Some(root);
+        child.set_parent(Some(root));
         let child_h = nodes.insert(child);
-        nodes.get_mut(root).unwrap().children.push(child_h);
+        nodes.get_mut(root).unwrap().push_child(child_h);
     }
 
     let roots = vec![root];
@@ -455,9 +455,9 @@ fn bfs_batches_multiple_roots() {
     // root1 has 2 children
     for _ in 0..2 {
         let mut child = Node::new();
-        child.parent = Some(root1);
+        child.set_parent(Some(root1));
         let ch = nodes.insert(child);
-        nodes.get_mut(root1).unwrap().children.push(ch);
+        nodes.get_mut(root1).unwrap().push_child(ch);
     }
 
     let roots = vec![root1, root2];
@@ -505,9 +505,9 @@ fn identity_hierarchy_produces_identity_world() {
 
     let root = nodes.insert(Node::new());
     let mut child = Node::new();
-    child.parent = Some(root);
+    child.set_parent(Some(root));
     let child_h = nodes.insert(child);
-    nodes.get_mut(root).unwrap().children.push(child_h);
+    nodes.get_mut(root).unwrap().push_child(child_h);
 
     let roots = vec![root];
     update_hierarchy_iterative(&mut nodes, &mut cameras, &roots);

@@ -1090,7 +1090,7 @@ impl GltfLoader {
             && geometry.has_morph_targets()
         {
             engine_mesh
-                .init_morph_targets(geometry.morph_target_count, geometry.morph_vertex_count);
+                .init_morph_targets(geometry.morph_target_count(), geometry.morph_vertex_count());
         }
 
         engine_mesh

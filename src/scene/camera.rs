@@ -20,16 +20,16 @@ pub struct RenderCamera {
 
 #[derive(Debug, Clone)]
 pub struct Camera {
-    pub uuid: Uuid,
+    uuid: Uuid,
     pub name: Cow<'static, str>,
 
     // === Projection Properties (Projection Only) ===
-    pub projection_type: ProjectionType,
-    pub fov: f32,
-    pub aspect: f32,
-    pub near: f32,
-    pub far: f32,
-    pub ortho_size: f32,
+    projection_type: ProjectionType,
+    fov: f32,
+    aspect: f32,
+    near: f32,
+    far: f32,
+    ortho_size: f32,
 
     // Cached matrices (read-only for renderer)
     pub(crate) world_matrix: Affine3A,
@@ -46,6 +46,105 @@ pub enum ProjectionType {
 }
 
 impl Camera {
+    /// Returns the unique identifier for this camera.
+    #[inline]
+    #[must_use]
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
+    // ========================================================================
+    // Projection property getters
+    // ========================================================================
+
+    /// Returns the projection type (perspective or orthographic).
+    #[inline]
+    #[must_use]
+    pub fn projection_type(&self) -> ProjectionType {
+        self.projection_type
+    }
+
+    /// Returns the field of view in radians (perspective only).
+    #[inline]
+    #[must_use]
+    pub fn fov(&self) -> f32 {
+        self.fov
+    }
+
+    /// Returns the aspect ratio (width / height).
+    #[inline]
+    #[must_use]
+    pub fn aspect(&self) -> f32 {
+        self.aspect
+    }
+
+    /// Returns the near clipping plane distance.
+    #[inline]
+    #[must_use]
+    pub fn near(&self) -> f32 {
+        self.near
+    }
+
+    /// Returns the far clipping plane distance.
+    #[inline]
+    #[must_use]
+    pub fn far(&self) -> f32 {
+        self.far
+    }
+
+    /// Returns the orthographic size (half-height).
+    #[inline]
+    #[must_use]
+    pub fn ortho_size(&self) -> f32 {
+        self.ortho_size
+    }
+
+    // ========================================================================
+    // Projection property setters (auto-update projection matrix)
+    // ========================================================================
+
+    /// Sets the projection type and updates the projection matrix.
+    pub fn set_projection_type(&mut self, projection_type: ProjectionType) {
+        self.projection_type = projection_type;
+        self.update_projection_matrix();
+    }
+
+    /// Sets the field of view in radians and updates the projection matrix.
+    pub fn set_fov(&mut self, fov: f32) {
+        self.fov = fov;
+        self.update_projection_matrix();
+    }
+
+    /// Sets the field of view in degrees and updates the projection matrix.
+    pub fn set_fov_degrees(&mut self, fov_degrees: f32) {
+        self.fov = fov_degrees.to_radians();
+        self.update_projection_matrix();
+    }
+
+    /// Sets the aspect ratio and updates the projection matrix.
+    pub fn set_aspect(&mut self, aspect: f32) {
+        self.aspect = aspect;
+        self.update_projection_matrix();
+    }
+
+    /// Sets the near clipping plane and updates the projection matrix.
+    pub fn set_near(&mut self, near: f32) {
+        self.near = near;
+        self.update_projection_matrix();
+    }
+
+    /// Sets the far clipping plane and updates the projection matrix.
+    pub fn set_far(&mut self, far: f32) {
+        self.far = far;
+        self.update_projection_matrix();
+    }
+
+    /// Sets the orthographic size and updates the projection matrix.
+    pub fn set_ortho_size(&mut self, ortho_size: f32) {
+        self.ortho_size = ortho_size;
+        self.update_projection_matrix();
+    }
+
     #[must_use]
     pub fn new_perspective(fov_degrees: f32, aspect: f32, near: f32) -> Self {
         let mut cam = Self {

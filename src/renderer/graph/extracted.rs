@@ -222,7 +222,7 @@ impl ExtractedScene {
                 .normalize_or_zero();
 
             self.lights.push(ExtractedLight {
-                id: light.id,
+                id: light.id(),
                 cast_shadows: light.cast_shadows,
                 kind: light.kind.clone(),
                 position,
@@ -368,8 +368,8 @@ impl ExtractedScene {
     /// Extract environment data
     fn extract_environment(&mut self, scene: &Scene) {
         self.background = scene.background.mode.clone();
-        self.scene_defines = scene.shader_defines.clone();
-        self.scene_id = scene.id;
+        self.scene_defines = scene.shader_defines().clone();
+        self.scene_id = scene.id();
         self.envvironment = scene.environment.clone();
     }
 

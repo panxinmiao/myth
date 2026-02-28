@@ -100,8 +100,8 @@ pub struct SplitPrimitiveTag;
 /// scene.set_mesh(child, Mesh::new(geometry, material));
 /// ```
 pub struct Scene {
-    /// Unique scene identifier
-    pub id: u32,
+    /// Unique scene identifier (assigned automatically, read-only)
+    id: u32,
 
     /// Built-in asset server reference (cheap Arc clone).
     /// Enables `spawn()` and other helpers to auto-register resources.
@@ -109,9 +109,9 @@ pub struct Scene {
 
     // === Core Node Storage ===
     /// All nodes in the scene (`SlotMap` for O(1) access)
-    pub nodes: SlotMap<NodeHandle, Node>,
+    pub(crate) nodes: SlotMap<NodeHandle, Node>,
     /// Root-level nodes (no parent)
-    pub root_nodes: Vec<NodeHandle>,
+    root_nodes: Vec<NodeHandle>,
 
     // === Dense Components (most nodes have these) ===
     /// Node names - almost all nodes have a name
@@ -160,7 +160,7 @@ pub struct Scene {
     pub(crate) uniforms_buffer: CpuBuffer<EnvironmentUniforms>,
     light_data_cache: Vec<GpuLightStorage>,
 
-    pub shader_defines: ShaderDefines,
+    shader_defines: ShaderDefines,
 
     last_env_version: u64,
 
@@ -227,6 +227,31 @@ impl Scene {
 
             logics: Vec::new(),
         }
+    }
+
+    // ========================================================================
+    // Accessors
+    // ========================================================================
+
+    /// Returns the unique scene identifier.
+    #[inline]
+    #[must_use]
+    pub fn id(&self) -> u32 {
+        self.id
+    }
+
+    /// Returns a read-only slice of root-level node handles.
+    #[inline]
+    #[must_use]
+    pub fn root_nodes(&self) -> &[NodeHandle] {
+        &self.root_nodes
+    }
+
+    /// Returns a read-only reference to the node storage.
+    #[inline]
+    #[must_use]
+    pub fn nodes(&self) -> &SlotMap<NodeHandle, Node> {
+        &self.nodes
     }
 
     // ========================================================================

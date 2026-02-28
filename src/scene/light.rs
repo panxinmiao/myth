@@ -57,8 +57,8 @@ pub enum LightKind {
 
 #[derive(Debug, Clone)]
 pub struct Light {
-    pub uuid: Uuid,
-    pub id: u64,
+    uuid: Uuid,
+    id: u64,
     pub color: Vec3,
     pub intensity: f32, // Suggestion: specify units, e.g. in PBR: Point uses Candela, Directional uses Lux
     pub kind: LightKind,
@@ -68,6 +68,20 @@ pub struct Light {
 }
 
 impl Light {
+    /// Returns the unique identifier for this light.
+    #[inline]
+    #[must_use]
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
+    /// Returns the hash-based id derived from uuid.
+    #[inline]
+    #[must_use]
+    pub fn id(&self) -> u64 {
+        self.id
+    }
+
     fn generate_id_from_uuid(uuid: &Uuid) -> u64 {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         uuid.hash(&mut hasher);

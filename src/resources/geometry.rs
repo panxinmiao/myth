@@ -286,7 +286,7 @@ pub struct BoundingSphere {
 
 #[derive(Debug)]
 pub struct Geometry {
-    pub uuid: Uuid,
+    uuid: Uuid,
 
     // vertex lay out versioning
     layout_version: u64,
@@ -297,16 +297,16 @@ pub struct Geometry {
     attributes: FxHashMap<String, Attribute>,
     index_attribute: Option<Attribute>,
 
-    pub morph_attributes: FxHashMap<String, Vec<Attribute>>,
+    pub(crate) morph_attributes: FxHashMap<String, Vec<Attribute>>,
 
-    pub morph_target_names: Vec<String>,
+    pub(crate) morph_target_names: Vec<String>,
 
     /// Morph Target Storage Buffers (compact f32 storage)
     /// Layout: [ Target 0 all vertices | Target 1 all vertices | ... ]
     /// Each vertex stores 3 f32 values (Position/Normal/Tangent displacement)
-    pub morph_position_buffer: Option<BufferRef>,
-    pub morph_normal_buffer: Option<BufferRef>,
-    pub morph_tangent_buffer: Option<BufferRef>,
+    pub(crate) morph_position_buffer: Option<BufferRef>,
+    pub(crate) morph_normal_buffer: Option<BufferRef>,
+    pub(crate) morph_tangent_buffer: Option<BufferRef>,
 
     /// Morph Target data (kept on CPU side to support uploading)
     morph_position_data: Option<Vec<f32>>,
@@ -314,9 +314,9 @@ pub struct Geometry {
     morph_tangent_data: Option<Vec<f32>>,
 
     /// Vertex count per target
-    pub morph_vertex_count: u32,
+    pub(crate) morph_vertex_count: u32,
     /// Morph target count
-    pub morph_target_count: u32,
+    pub(crate) morph_target_count: u32,
 
     pub topology: PrimitiveTopology,
     pub draw_range: Range<u32>,
@@ -335,6 +335,33 @@ impl Default for Geometry {
 }
 
 impl Geometry {
+    /// Returns the unique identifier for this geometry.
+    #[inline]
+    #[must_use]
+    pub fn uuid(&self) -> Uuid {
+        self.uuid
+    }
+
+    /// Returns the number of morph targets in this geometry.
+    #[inline]
+    #[must_use]
+    pub fn morph_target_count(&self) -> u32 {
+        self.morph_target_count
+    }
+
+    /// Returns the vertex count per morph target.
+    #[inline]
+    #[must_use]
+    pub fn morph_vertex_count(&self) -> u32 {
+        self.morph_vertex_count
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn morph_target_names(&self) -> &[String] {
+        &self.morph_target_names
+    }
+
     #[must_use]
     pub fn new() -> Self {
         Self {

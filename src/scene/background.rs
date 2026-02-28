@@ -237,11 +237,11 @@ impl BackgroundMode {
 #[derive(Debug, Clone)]
 pub struct BackgroundSettings {
     /// The current background rendering mode.
-    pub mode: BackgroundMode,
+    pub(crate) mode: BackgroundMode,
 
     /// Skybox parameters uniform buffer (version-tracked).
     /// Updated via setter methods; render pass only reads.
-    pub uniforms: CpuBuffer<SkyboxParamsUniforms>,
+    pub(crate) uniforms: CpuBuffer<SkyboxParamsUniforms>,
 }
 
 impl Default for BackgroundSettings {
@@ -259,6 +259,13 @@ impl Default for BackgroundSettings {
 }
 
 impl BackgroundSettings {
+    /// Returns a reference to the current background mode.
+    #[inline]
+    #[must_use]
+    pub fn mode(&self) -> &BackgroundMode {
+        &self.mode
+    }
+
     /// Sets the background mode and syncs uniform values accordingly.
     ///
     /// The `CpuBuffer` version is bumped only if the derived uniform values

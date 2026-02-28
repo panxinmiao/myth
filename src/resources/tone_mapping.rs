@@ -123,7 +123,7 @@ pub struct ToneMappingSettings {
     /// Selected tone mapping algorithm
     pub mode: ToneMappingMode,
 
-    pub uniforms: CpuBuffer<ToneMappingUniforms>,
+    pub(crate) uniforms: CpuBuffer<ToneMappingUniforms>,
     /// Exposure multiplier (default: 1.0)
     // pub exposure: f32,
 
@@ -252,5 +252,75 @@ impl ToneMappingSettings {
     #[must_use]
     pub fn has_lut(&self) -> bool {
         self.lut_texture.is_some()
+    }
+
+    /// Returns the current exposure value.
+    #[inline]
+    #[must_use]
+    pub fn exposure(&self) -> f32 {
+        self.uniforms.read().exposure
+    }
+
+    /// Returns the current vignette intensity.
+    #[inline]
+    #[must_use]
+    pub fn vignette_intensity(&self) -> f32 {
+        self.uniforms.read().vignette_intensity
+    }
+
+    /// Returns the current tone mapping mode.
+    #[inline]
+    #[must_use]
+    pub fn mode(&self) -> ToneMappingMode {
+        self.mode
+    }
+
+    /// Returns the current contrast value.
+    #[inline]
+    #[must_use]
+    pub fn contrast(&self) -> f32 {
+        self.uniforms.read().contrast
+    }
+
+    /// Returns the current saturation value.
+    #[inline]
+    #[must_use]
+    pub fn saturation(&self) -> f32 {
+        self.uniforms.read().saturation
+    }
+
+    /// Returns the current chromatic aberration intensity.
+    #[inline]
+    #[must_use]
+    pub fn chromatic_aberration(&self) -> f32 {
+        self.uniforms.read().chromatic_aberration
+    }
+
+    /// Returns the current film grain intensity.
+    #[inline]
+    #[must_use]
+    pub fn film_grain(&self) -> f32 {
+        self.uniforms.read().film_grain
+    }
+
+    /// Returns the current vignette smoothness.
+    #[inline]
+    #[must_use]
+    pub fn vignette_smoothness(&self) -> f32 {
+        self.uniforms.read().vignette_smoothness
+    }
+
+    /// Returns the current vignette color.
+    #[inline]
+    #[must_use]
+    pub fn vignette_color(&self) -> Vec4 {
+        self.uniforms.read().vignette_color
+    }
+
+    /// Returns the current LUT contribution.
+    #[inline]
+    #[must_use]
+    pub fn lut_contribution(&self) -> f32 {
+        self.uniforms.read().lut_contribution
     }
 }
