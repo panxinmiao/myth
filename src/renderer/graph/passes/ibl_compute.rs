@@ -1,22 +1,24 @@
 use crate::renderer::core::resources::CubeSourceType;
 use crate::renderer::graph::RenderNode;
 use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
+use crate::renderer::pipeline::{
+    ColorTargetKey, ComputePipelineId, ComputePipelineKey, FullscreenPipelineKey, RenderPipelineId,
+};
 use crate::resources::texture::TextureSource;
-use std::borrow::Cow;
-use wgpu::{PipelineCompilationOptions, TextureViewDimension};
+use wgpu::TextureViewDimension;
 
 pub struct IBLComputePass {
     // PMREM prefilter
-    pmrem_pipeline: wgpu::ComputePipeline,
+    pmrem_pipeline_id: Option<ComputePipelineId>,
     pmrem_layout_source: wgpu::BindGroupLayout,
     pmrem_layout_dest: wgpu::BindGroupLayout,
 
     // Equirectangular → Cube
-    equirect_pipeline: wgpu::ComputePipeline,
+    equirect_pipeline_id: Option<ComputePipelineId>,
     equirect_layout: wgpu::BindGroupLayout,
 
     // Face blit (for CubeNoMipmaps: copy source cube → owned cube)
-    blit_pipeline: wgpu::RenderPipeline,
+    blit_pipeline_id: Option<RenderPipelineId>,
     blit_layout: wgpu::BindGroupLayout,
     blit_sampler: wgpu::Sampler,
 }
@@ -25,14 +27,7 @@ impl IBLComputePass {
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn new(device: &wgpu::Device) -> Self {
-        // ====== PMREM prefilter pipeline ======
-        let pmrem_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("IBL Prefilter Shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                "../../pipeline/shaders/program/ibl.wgsl"
-            ))),
-        });
-
+        // ====== PMREM prefilter layouts ======
         let pmrem_layout_source =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("IBL Source Layout"),
@@ -80,29 +75,7 @@ impl IBLComputePass {
             }],
         });
 
-        let pmrem_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("IBL Pipeline Layout"),
-            bind_group_layouts: &[&pmrem_layout_source, &pmrem_layout_dest],
-            immediate_size: 0,
-        });
-
-        let pmrem_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("IBL Compute Pipeline"),
-            layout: Some(&pmrem_layout),
-            module: &pmrem_shader,
-            entry_point: Some("main"),
-            compilation_options: PipelineCompilationOptions::default(),
-            cache: None,
-        });
-
-        // ====== Equirectangular → Cube pipeline ======
-        let equirect_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Equirect to Cube Shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                "../../pipeline/shaders/program/equirect_to_cube.wgsl"
-            ))),
-        });
-
+        // ====== Equirectangular → Cube layouts ======
         let equirect_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("Equirect Layout"),
             entries: &[
@@ -135,30 +108,7 @@ impl IBLComputePass {
             ],
         });
 
-        let equirect_pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("Equirect Pipeline Layout"),
-                bind_group_layouts: &[&equirect_layout],
-                immediate_size: 0,
-            });
-
-        let equirect_pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("Equirect to Cube Pipeline"),
-            layout: Some(&equirect_pipeline_layout),
-            module: &equirect_shader,
-            entry_point: Some("main"),
-            compilation_options: PipelineCompilationOptions::default(),
-            cache: None,
-        });
-
-        // ====== Blit pipeline (for CubeNoMipmaps face copy) ======
-        let blit_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("IBL Blit Shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                "../../pipeline/shaders/program/blit.wgsl"
-            ))),
-        });
-
+        // ====== Blit layout + sampler ======
         let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("IBL Blit Layout"),
             entries: &[
@@ -181,41 +131,6 @@ impl IBLComputePass {
             ],
         });
 
-        let blit_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("IBL Blit Pipeline"),
-            layout: Some(
-                &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("IBL Blit Pipeline Layout"),
-                    bind_group_layouts: &[&blit_layout],
-                    immediate_size: 0,
-                }),
-            ),
-            vertex: wgpu::VertexState {
-                module: &blit_shader,
-                entry_point: Some("vs_main"),
-                buffers: &[],
-                compilation_options: PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: &blit_shader,
-                entry_point: Some("fs_main"),
-                targets: &[Some(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                compilation_options: PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: wgpu::PrimitiveTopology::TriangleList,
-                ..Default::default()
-            },
-            depth_stencil: None,
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
         let blit_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("IBL Blit Sampler"),
             mag_filter: wgpu::FilterMode::Linear,
@@ -227,14 +142,102 @@ impl IBLComputePass {
         });
 
         Self {
-            pmrem_pipeline,
+            pmrem_pipeline_id: None,
             pmrem_layout_source,
             pmrem_layout_dest,
-            equirect_pipeline,
+            equirect_pipeline_id: None,
             equirect_layout,
-            blit_pipeline,
+            blit_pipeline_id: None,
             blit_layout,
             blit_sampler,
+        }
+    }
+
+    /// Ensures all three pipelines are created via the global `PipelineCache`.
+    fn ensure_pipelines(&mut self, ctx: &mut PrepareContext) {
+        if self.pmrem_pipeline_id.is_some() {
+            return;
+        }
+
+        let device = &ctx.wgpu_ctx.device;
+
+        // --- PMREM compute pipeline ---
+        {
+            let source = include_str!("../../pipeline/shaders/program/ibl.wgsl");
+            let (module, hash) =
+                ctx.shader_manager
+                    .get_or_compile_raw(device, "IBL Prefilter Shader", source);
+
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("IBL Pipeline Layout"),
+                bind_group_layouts: &[&self.pmrem_layout_source, &self.pmrem_layout_dest],
+                immediate_size: 0,
+            });
+
+            let key = ComputePipelineKey { shader_hash: hash };
+            self.pmrem_pipeline_id = Some(ctx.pipeline_cache.get_or_create_compute(
+                device,
+                module,
+                &layout,
+                &key,
+                "IBL Compute Pipeline",
+            ));
+        }
+
+        // --- Equirectangular → Cube compute pipeline ---
+        {
+            let source = include_str!("../../pipeline/shaders/program/equirect_to_cube.wgsl");
+            let (module, hash) =
+                ctx.shader_manager
+                    .get_or_compile_raw(device, "Equirect to Cube Shader", source);
+
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("Equirect Pipeline Layout"),
+                bind_group_layouts: &[&self.equirect_layout],
+                immediate_size: 0,
+            });
+
+            let key = ComputePipelineKey { shader_hash: hash };
+            self.equirect_pipeline_id = Some(ctx.pipeline_cache.get_or_create_compute(
+                device,
+                module,
+                &layout,
+                &key,
+                "Equirect to Cube Pipeline",
+            ));
+        }
+
+        // --- Blit render pipeline ---
+        {
+            let source = include_str!("../../pipeline/shaders/program/blit.wgsl");
+            let (module, hash) =
+                ctx.shader_manager
+                    .get_or_compile_raw(device, "IBL Blit Shader", source);
+
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("IBL Blit Pipeline Layout"),
+                bind_group_layouts: &[&self.blit_layout],
+                immediate_size: 0,
+            });
+
+            let key = FullscreenPipelineKey::fullscreen(
+                hash,
+                smallvec::smallvec![ColorTargetKey::from(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                None,
+            );
+
+            self.blit_pipeline_id = Some(ctx.pipeline_cache.get_or_create_fullscreen(
+                device,
+                module,
+                &layout,
+                &key,
+                "IBL Blit Pipeline",
+                &[],
+            ));
         }
     }
 
@@ -246,6 +249,7 @@ impl IBLComputePass {
         encoder: &mut wgpu::CommandEncoder,
         src_texture: &wgpu::Texture,
         dst_texture: &wgpu::Texture,
+        blit_pipeline: &wgpu::RenderPipeline,
     ) {
         let layer_count = src_texture
             .depth_or_array_layers()
@@ -305,7 +309,7 @@ impl IBLComputePass {
                 occlusion_query_set: None,
                 multiview_mask: None,
             });
-            rpass.set_pipeline(&self.blit_pipeline);
+            rpass.set_pipeline(blit_pipeline);
             rpass.set_bind_group(0, &bind_group, &[]);
             rpass.draw(0..3, 0..1);
         }
@@ -325,6 +329,21 @@ impl RenderNode for IBLComputePass {
         let Some(source) = ctx.resource_manager.pending_ibl_source.take() else {
             return;
         };
+
+        // Ensure all pipelines are created via PipelineCache
+        self.ensure_pipelines(ctx);
+
+        // Resolve pipeline IDs to references for use in this frame
+        let pmrem_pipeline = ctx
+            .pipeline_cache
+            .get_compute_pipeline(self.pmrem_pipeline_id.expect("PMREM pipeline must exist"));
+        let equirect_pipeline = ctx.pipeline_cache.get_compute_pipeline(
+            self.equirect_pipeline_id
+                .expect("Equirect pipeline must exist"),
+        );
+        let blit_pipeline = ctx
+            .pipeline_cache
+            .get_render_pipeline(self.blit_pipeline_id.expect("Blit pipeline must exist"));
 
         // Temporarily take GpuEnvironment to split borrows:
         // we need simultaneous access to textures (in gpu_env) and
@@ -422,7 +441,7 @@ impl RenderNode for IBLComputePass {
                             label: Some("Equirect to Cube"),
                             timestamp_writes: None,
                         });
-                        cpass.set_pipeline(&self.equirect_pipeline);
+                        cpass.set_pipeline(equirect_pipeline);
                         cpass.set_bind_group(0, &bind_group, &[]);
 
                         let group_count = cube_size.div_ceil(8);
@@ -467,6 +486,7 @@ impl RenderNode for IBLComputePass {
                         &mut encoder,
                         source_texture,
                         cube_texture,
+                        blit_pipeline,
                     );
                 }
 
@@ -596,7 +616,7 @@ impl RenderNode for IBLComputePass {
                     label: Some("IBL Gen"),
                     timestamp_writes: None,
                 });
-                cpass.set_pipeline(&self.pmrem_pipeline);
+                cpass.set_pipeline(pmrem_pipeline);
                 cpass.set_bind_group(0, &bg_src, &[]);
                 cpass.set_bind_group(1, &bg_dst, &[]);
 

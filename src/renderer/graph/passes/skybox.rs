@@ -25,15 +25,16 @@
 //! | Equirectangular | `SKYBOX_EQUIRECT` | `texture_2d<f32>` |
 //! | Planar | `SKYBOX_PLANAR` | `texture_2d<f32>` |
 
-use std::borrow::Cow;
-
 use rustc_hash::FxHashMap;
 
 use crate::render::RenderNode;
 use crate::renderer::core::{binding::BindGroupKey, resources::Tracked};
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
-use crate::renderer::pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator};
+use crate::renderer::pipeline::{
+    ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
+    ShaderCompilationOptions,
+};
 use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::texture::TextureSource;
 use crate::resources::uniforms::WgslStruct;
@@ -215,11 +216,11 @@ pub struct SkyboxPass {
     sampler: Tracked<wgpu::Sampler>,
 
     // --- Pipeline Cache ---
-    pipeline_cache: FxHashMap<SkyboxPipelineKey, wgpu::RenderPipeline>,
+    local_cache: FxHashMap<SkyboxPipelineKey, RenderPipelineId>,
 
     // --- Runtime State (set during prepare, consumed during run) ---
     current_bind_group: Option<wgpu::BindGroup>,
-    current_pipeline: Option<wgpu::RenderPipeline>,
+    current_pipeline: Option<RenderPipelineId>,
 }
 
 impl SkyboxPass {
@@ -254,7 +255,7 @@ impl SkyboxPass {
             layout_cube: Tracked::new(layout_cube),
             layout_2d: Tracked::new(layout_2d),
             sampler: Tracked::new(sampler),
-            pipeline_cache: FxHashMap::default(),
+            local_cache: FxHashMap::default(),
             current_bind_group: None,
             current_pipeline: None,
         }
@@ -272,11 +273,11 @@ impl SkyboxPass {
     /// Gets or creates a pipeline for the given key.
     fn get_or_create_pipeline(
         &mut self,
-        ctx: &PrepareContext,
+        ctx: &mut PrepareContext,
         key: SkyboxPipelineKey,
-    ) -> wgpu::RenderPipeline {
-        if let Some(pipeline) = self.pipeline_cache.get(&key) {
-            return pipeline.clone();
+    ) -> RenderPipelineId {
+        if let Some(&pipeline_id) = self.local_cache.get(&key) {
+            return pipeline_id;
         }
 
         log::debug!(
@@ -303,86 +304,62 @@ impl SkyboxPass {
             SkyboxParamsUniforms::wgsl_struct_def("SkyboxParams").as_str(),
         );
 
-        let shader_code = ShaderGenerator::generate_shader(
-            "",                      // vertex snippet (use default)
-            &gpu_world.binding_wgsl, // global bind group binding code
-            "passes/skybox",         // template name
-            &options,
-        );
+        let device = &ctx.wgpu_ctx.device;
 
-        let shader_module =
-            ctx.wgpu_ctx
-                .device
-                .create_shader_module(wgpu::ShaderModuleDescriptor {
-                    label: Some(&format!("Skybox Shader ({:?})", key.variant)),
-                    source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_code)),
-                });
+        let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
+            device,
+            "passes/skybox",
+            &options,
+            "",
+            &gpu_world.binding_wgsl,
+        );
 
         // 3. Pipeline layout: Group 0 = global, Group 1 = skybox-specific
         let layout = self.layout_for_variant(key.variant);
-        let pipeline_layout =
-            ctx.wgpu_ctx
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("Skybox Pipeline Layout"),
-                    bind_group_layouts: &[
-                        &gpu_world.layout, // Group 0: Global bind group (frame-level resources)
-                        layout,            // Group 1: Skybox-specific bind group
-                    ],
-                    immediate_size: 0,
-                });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("Skybox Pipeline Layout"),
+            bind_group_layouts: &[
+                &gpu_world.layout, // Group 0: Global bind group (frame-level resources)
+                layout,            // Group 1: Skybox-specific bind group
+            ],
+            immediate_size: 0,
+        });
 
-        let pipeline =
-            ctx.wgpu_ctx
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(&format!("Skybox Pipeline ({:?})", key.variant)),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader_module,
-                        entry_point: Some("vs_main"),
-                        buffers: &[], // Fullscreen triangle — no vertex buffers
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader_module,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: key.color_format,
-                            blend: Some(wgpu::BlendState::REPLACE),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState {
-                        topology: wgpu::PrimitiveTopology::TriangleList,
-                        front_face: wgpu::FrontFace::Ccw,
-                        cull_mode: None, // Fullscreen triangle — no culling
-                        ..Default::default()
-                    },
-                    depth_stencil: Some(wgpu::DepthStencilState {
-                        format: key.depth_format,
-                        // Skybox sits at Z=0.0 (Reverse-Z far plane).
-                        // depth_write: false — skybox never writes depth (infinitely far).
-                        depth_write_enabled: false,
-                        // GreaterEqual: pass if fragment_z >= buffer_z.
-                        //   - Where opaque exists (buffer > 0): 0.0 >= buffer → fail → culled ✓
-                        //   - Where empty (buffer = 0.0): 0.0 >= 0.0 → pass → draws ✓
-                        depth_compare: wgpu::CompareFunction::GreaterEqual,
-                        stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState::default(),
-                    }),
-                    multisample: wgpu::MultisampleState {
-                        count: key.sample_count,
-                        mask: !0,
-                        alpha_to_coverage_enabled: false,
-                    },
-                    multiview_mask: None,
-                    cache: None,
-                });
+        let fullscreen_key = FullscreenPipelineKey {
+            shader_hash,
+            color_targets: smallvec::smallvec![ColorTargetKey::from(wgpu::ColorTargetState {
+                format: key.color_format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            depth_stencil: Some(DepthStencilKey::from(wgpu::DepthStencilState {
+                format: key.depth_format,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::GreaterEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            })),
+            multisample: MultisampleKey::from(wgpu::MultisampleState {
+                count: key.sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            }),
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+        };
 
-        self.pipeline_cache.insert(key, pipeline.clone());
-        pipeline
+        let pipeline_id = ctx.pipeline_cache.get_or_create_fullscreen(
+            device,
+            shader_module,
+            &pipeline_layout,
+            &fullscreen_key,
+            "Skybox Pipeline",
+            &[],
+        );
+
+        self.local_cache.insert(key, pipeline_id);
+        pipeline_id
     }
 
     /// Resolves the texture view for a skybox background texture source.
@@ -562,11 +539,11 @@ impl RenderNode for SkyboxPass {
 
         // 6. Store prepared draw state for potential inline use (LDR path)
         //    SimpleForwardPass reads this to draw skybox within its own render pass.
-        if let (Some(pipeline), Some(bind_group)) =
-            (&self.current_pipeline, &self.current_bind_group)
+        if let (Some(pipeline_id), Some(bind_group)) =
+            (self.current_pipeline, &self.current_bind_group)
         {
             ctx.render_lists.prepared_skybox = Some(PreparedSkyboxDraw {
-                pipeline: pipeline.clone(),
+                pipeline_id,
                 bind_group: bind_group.clone(),
             });
         }
@@ -580,7 +557,8 @@ impl RenderNode for SkyboxPass {
         }
 
         // Skip if no pipeline/bind group (Color mode or missing resources)
-        let (Some(pipeline), Some(bind_group)) = (&self.current_pipeline, &self.current_bind_group)
+        let (Some(pipeline_id), Some(bind_group)) =
+            (self.current_pipeline, &self.current_bind_group)
         else {
             return;
         };
@@ -630,6 +608,7 @@ impl RenderNode for SkyboxPass {
 
         let mut pass = encoder.begin_render_pass(&pass_desc);
 
+        let pipeline = ctx.pipeline_cache.get_render_pipeline(pipeline_id);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, gpu_global_bind_group, &[]);
         pass.set_bind_group(1, bind_group, &[]);

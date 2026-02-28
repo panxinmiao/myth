@@ -26,8 +26,10 @@ use rustc_hash::FxHashMap;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::{RenderNode, TrackedRenderPass, TransientTextureDesc};
-use crate::renderer::pipeline::RenderPipelineId;
-use crate::renderer::pipeline::shader_gen::{ShaderCompilationOptions, ShaderGenerator};
+use crate::renderer::pipeline::{
+    ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
+    ShaderCompilationOptions,
+};
 use crate::resources::material::{AlphaMode, Side};
 use crate::resources::screen_space::STENCIL_WRITE_MASK;
 
@@ -46,7 +48,7 @@ pub struct DepthNormalPrepass {
     ///
     /// Two objects sharing a main pipeline will share a prepass pipeline
     /// (identical vertex layout, topology, cull mode and material macros).
-    pipeline_cache: FxHashMap<(RenderPipelineId, bool, bool), wgpu::RenderPipeline>,
+    local_cache: FxHashMap<(RenderPipelineId, bool, bool), RenderPipelineId>,
 }
 
 impl DepthNormalPrepass {
@@ -56,7 +58,7 @@ impl DepthNormalPrepass {
             needs_normal: false,
             needs_feature_id: false,
             depth_view: None,
-            pipeline_cache: FxHashMap::default(),
+            local_cache: FxHashMap::default(),
         }
     }
 
@@ -83,7 +85,7 @@ impl DepthNormalPrepass {
 
         for cmd in &ctx.render_lists.opaque {
             // Skip if already cached
-            if self.pipeline_cache.contains_key(&(
+            if self.local_cache.contains_key(&(
                 cmd.pipeline_id,
                 self.needs_normal,
                 self.needs_feature_id,
@@ -152,20 +154,13 @@ impl DepthNormalPrepass {
                 &cmd.object_bind_group.binding_wgsl
             );
 
-            let shader_source = ShaderGenerator::generate_shader(
-                &gpu_geometry.layout_info.vertex_input_code,
-                &binding_code,
+            let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
+                &ctx.wgpu_ctx.device,
                 "passes/depth",
                 &options,
+                &gpu_geometry.layout_info.vertex_input_code,
+                &binding_code,
             );
-
-            let shader_module =
-                ctx.wgpu_ctx
-                    .device
-                    .create_shader_module(wgpu::ShaderModuleDescriptor {
-                        label: Some("Prepass Shader"),
-                        source: wgpu::ShaderSource::Wgsl(shader_source.into()),
-                    });
 
             // ── Pipeline layout ────────────────────────────────────────
             let layout =
@@ -211,76 +206,68 @@ impl DepthNormalPrepass {
                 None
             };
 
-            // ── Pipeline ───────────────────────────────────────────────
-            let pipeline =
-                ctx.wgpu_ctx
-                    .device
-                    .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                        label: Some("Prepass Pipeline"),
-                        layout: Some(&layout),
-                        vertex: wgpu::VertexState {
-                            module: &shader_module,
-                            entry_point: Some("vs_main"),
-                            buffers: &vertex_buffers_layout,
-                            compilation_options: wgpu::PipelineCompilationOptions::default(),
-                        },
-                        fragment: Some(wgpu::FragmentState {
-                            module: &shader_module,
-                            entry_point: Some("fs_main"),
-                            targets: if self.needs_feature_id {
-                                &[
-                                    Some(wgpu::ColorTargetState {
-                                        format: NORMAL_FORMAT,
-                                        blend: None,
-                                        write_mask: wgpu::ColorWrites::ALL,
-                                    }),
-                                    Some(wgpu::ColorTargetState {
-                                        format: FEATURE_ID_FORMAT,
-                                        blend: None,
-                                        write_mask: wgpu::ColorWrites::ALL,
-                                    }),
-                                ]
-                            } else if self.needs_normal {
-                                &[Some(wgpu::ColorTargetState {
-                                    format: NORMAL_FORMAT,
-                                    blend: None,
-                                    write_mask: wgpu::ColorWrites::ALL,
-                                })]
-                            } else {
-                                &[]
-                            },
-                            compilation_options: wgpu::PipelineCompilationOptions::default(),
+            // ── Build color targets ────────────────────────────────────
+            let color_targets: smallvec::SmallVec<[ColorTargetKey; 2]> =
+                if self.needs_feature_id {
+                    smallvec::smallvec![
+                        ColorTargetKey::from(wgpu::ColorTargetState {
+                            format: NORMAL_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
                         }),
-                        primitive: wgpu::PrimitiveState {
-                            topology: geometry.topology,
-                            cull_mode,
-                            front_face,
-                            ..Default::default()
-                        },
-                        depth_stencil: Some(wgpu::DepthStencilState {
-                            format: depth_format,
-                            depth_write_enabled: true,
-                            // Reverse-Z: Greater
-                            depth_compare: wgpu::CompareFunction::Greater,
-                            stencil: wgpu::StencilState {
-                                front: stencil_state.unwrap_or_default(),
-                                back: stencil_state.unwrap_or_default(),
-                                read_mask: 0xFF,
-                                write_mask: STENCIL_WRITE_MASK,
-                            },
-                            bias: wgpu::DepthBiasState::default(),
+                        ColorTargetKey::from(wgpu::ColorTargetState {
+                            format: FEATURE_ID_FORMAT,
+                            blend: None,
+                            write_mask: wgpu::ColorWrites::ALL,
                         }),
-                        multisample: wgpu::MultisampleState {
-                            count: 1, // Prepass is always 1× (no MSAA)
-                            ..Default::default()
-                        },
-                        multiview_mask: None,
-                        cache: None,
-                    });
+                    ]
+                } else if self.needs_normal {
+                    smallvec::smallvec![ColorTargetKey::from(wgpu::ColorTargetState {
+                        format: NORMAL_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })]
+                } else {
+                    smallvec::smallvec![]
+                };
 
-            self.pipeline_cache.insert(
+            // ── Pipeline key ───────────────────────────────────────────
+            let fullscreen_key = FullscreenPipelineKey {
+                shader_hash,
+                color_targets,
+                depth_stencil: Some(DepthStencilKey::from(wgpu::DepthStencilState {
+                    format: depth_format,
+                    depth_write_enabled: true,
+                    depth_compare: wgpu::CompareFunction::Greater,
+                    stencil: wgpu::StencilState {
+                        front: stencil_state.unwrap_or_default(),
+                        back: stencil_state.unwrap_or_default(),
+                        read_mask: 0xFF,
+                        write_mask: STENCIL_WRITE_MASK,
+                    },
+                    bias: wgpu::DepthBiasState::default(),
+                })),
+                multisample: MultisampleKey::from(wgpu::MultisampleState {
+                    count: 1,
+                    ..Default::default()
+                }),
+                primitive_topology: geometry.topology,
+                cull_mode,
+                front_face,
+            };
+
+            let pipeline_id = ctx.pipeline_cache.get_or_create_fullscreen(
+                &ctx.wgpu_ctx.device,
+                shader_module,
+                &layout,
+                &fullscreen_key,
+                "Prepass Pipeline",
+                &vertex_buffers_layout,
+            );
+
+            self.local_cache.insert(
                 (cmd.pipeline_id, self.needs_normal, self.needs_feature_id),
-                pipeline,
+                pipeline_id,
             );
         }
     }
@@ -436,7 +423,7 @@ impl RenderNode for DepthNormalPrepass {
         );
 
         for cmd in &render_lists.opaque {
-            let Some(pipeline) = self.pipeline_cache.get(&(
+            let Some(&prepass_pipeline_id) = self.local_cache.get(&(
                 cmd.pipeline_id,
                 self.needs_normal,
                 self.needs_feature_id,
@@ -444,7 +431,8 @@ impl RenderNode for DepthNormalPrepass {
                 continue;
             };
 
-            tracked_pass.set_pipeline(cmd.pipeline_id.0, pipeline);
+            let pipeline = ctx.pipeline_cache.get_render_pipeline(prepass_pipeline_id);
+            tracked_pass.set_pipeline(prepass_pipeline_id.0, pipeline);
 
             // Set 1: Material (for alpha-tested materials to read the base map)
             if let Some(gpu_material) = ctx.resource_manager.get_material(cmd.material_handle) {

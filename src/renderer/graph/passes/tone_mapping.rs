@@ -22,8 +22,6 @@
 //! Final Surface Output
 //! ```
 
-use std::borrow::Cow;
-
 use rustc_hash::FxHashMap;
 
 use crate::ShaderDefines;
@@ -31,7 +29,9 @@ use crate::render::RenderNode;
 use crate::renderer::core::{binding::BindGroupKey, resources::Tracked};
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::transient_pool::TransientTextureId;
-use crate::renderer::pipeline::{ShaderCompilationOptions, shader_gen::ShaderGenerator};
+use crate::renderer::pipeline::{
+    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
+};
 use crate::resources::texture::TextureSource;
 use crate::resources::tone_mapping::{ToneMappingMode, ToneMappingUniforms};
 use crate::resources::uniforms::WgslStruct;
@@ -71,14 +71,14 @@ pub struct ToneMapPass {
     current_mode: ToneMappingMode,
     /// Whether the current configuration has a LUT texture
     current_has_lut: bool,
-    /// Cached pipelines by (mode, `output_format`, has_lut) to handle HDR toggle and LUT changes
-    pipeline_cache: FxHashMap<PipelineCacheKey, wgpu::RenderPipeline>,
+    /// Cached pipeline IDs by (mode, `output_format`, has_lut)
+    local_cache: FxHashMap<PipelineCacheKey, RenderPipelineId>,
 
     // === Runtime State (set during prepare, used during run) ===
     /// Current frame's bind group
     current_bind_group: Option<wgpu::BindGroup>,
-    /// Current frame's pipeline
-    current_pipeline: Option<wgpu::RenderPipeline>,
+    /// Current frame's pipeline ID
+    current_pipeline: Option<RenderPipelineId>,
 
     // === Output Routing ===
     /// If `Some`, output to a transient texture (for downstream FXAA).
@@ -181,7 +181,7 @@ impl ToneMapPass {
             lut_sampler: Tracked::new(lut_sampler),
             current_mode: ToneMappingMode::default(),
             current_has_lut: false,
-            pipeline_cache: FxHashMap::default(),
+            local_cache: FxHashMap::default(),
             current_pipeline: None,
             current_bind_group: None,
             output_texture_id: None,
@@ -199,16 +199,16 @@ impl ToneMapPass {
     }
 
     /// Gets or creates a pipeline for the current tone mapping configuration.
-    fn get_or_create_pipeline(&mut self, ctx: &PrepareContext) -> wgpu::RenderPipeline {
+    fn get_or_create_pipeline(&mut self, ctx: &mut PrepareContext) -> RenderPipelineId {
         let cache_key = (
             self.current_mode,
             ctx.wgpu_ctx.surface_view_format,
             self.current_has_lut,
         );
 
-        // Check cache first
-        if let Some(pipeline) = self.pipeline_cache.get(&cache_key) {
-            return pipeline.clone();
+        // Check local cache first
+        if let Some(&id) = self.local_cache.get(&cache_key) {
+            return id;
         }
 
         // Cache miss - compile new pipeline
@@ -218,6 +218,8 @@ impl ToneMapPass {
             ctx.wgpu_ctx.surface_view_format,
             self.current_has_lut,
         );
+
+        let device = &ctx.wgpu_ctx.device;
 
         // 1. Prepare shader defines
         let mut defines = ShaderDefines::new();
@@ -231,7 +233,7 @@ impl ToneMapPass {
             .get_global_state(ctx.render_state.id, ctx.scene.id)
             .expect("Global state must exist");
 
-        // 2. Generate shader code
+        // 2. Generate shader code via ShaderManager
         let mut options = ShaderCompilationOptions { defines };
 
         options.add_define(
@@ -239,75 +241,55 @@ impl ToneMapPass {
             ToneMappingUniforms::wgsl_struct_def("Uniforms").as_str(),
         );
 
-        let shader_code = ShaderGenerator::generate_shader(
-            "",                      // vertex snippet (use default)
-            &gpu_world.binding_wgsl, // binding code (use default)
-            "passes/tone_mapping",   // template name
+        let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
+            device,
+            "passes/tone_mapping",
             &options,
+            "",
+            &gpu_world.binding_wgsl,
         );
-
-        let shader = ctx
-            .wgpu_ctx
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(&format!(
-                    "ToneMap Shader {:?} lut={}",
-                    self.current_mode, self.current_has_lut
-                )),
-                source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_code)),
-            });
 
         // 3. Create pipeline layout with the appropriate bind group layout
         let layout = self.current_layout();
 
         let pipeline_layout =
-            ctx.wgpu_ctx
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("ToneMap Pipeline Layout"),
-                    bind_group_layouts: &[
-                        &gpu_world.layout, // Global bind group (frame-level resources)
-                        layout,
-                    ],
-                    immediate_size: 0,
-                });
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("ToneMap Pipeline Layout"),
+                bind_group_layouts: &[
+                    &gpu_world.layout, // Global bind group (frame-level resources)
+                    layout,
+                ],
+                immediate_size: 0,
+            });
 
-        // 4. Create render pipeline
-        let pipeline =
-            ctx.wgpu_ctx
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(&format!(
-                        "ToneMap Pipeline {:?} lut={}",
-                        self.current_mode, self.current_has_lut
-                    )),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: ctx.wgpu_ctx.surface_view_format,
-                            blend: Some(wgpu::BlendState::REPLACE),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                });
+        // 4. Build key and create pipeline via PipelineCache
+        let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
+            format: ctx.wgpu_ctx.surface_view_format,
+            blend: Some(wgpu::BlendState::REPLACE),
+            write_mask: wgpu::ColorWrites::ALL,
+        });
 
-        // Store in cache
-        self.pipeline_cache.insert(cache_key, pipeline.clone());
-        pipeline
+        let key = FullscreenPipelineKey::fullscreen(
+            shader_hash,
+            smallvec::smallvec![color_target],
+            None,
+        );
+
+        let id = ctx.pipeline_cache.get_or_create_fullscreen(
+            device,
+            shader_module,
+            &pipeline_layout,
+            &key,
+            &format!(
+                "ToneMap Pipeline {:?} lut={}",
+                self.current_mode, self.current_has_lut
+            ),
+            &[],
+        );
+
+        // Store in local cache
+        self.local_cache.insert(cache_key, id);
+        id
     }
 }
 
@@ -456,7 +438,8 @@ impl RenderNode for ToneMapPass {
 
         let mut pass = encoder.begin_render_pass(&pass_desc);
 
-        if let Some(pipeline) = &self.current_pipeline {
+        if let Some(pipeline_id) = self.current_pipeline {
+            let pipeline = ctx.pipeline_cache.get_render_pipeline(pipeline_id);
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, gpu_global_bind_group, &[]);
             if let Some(bg) = &self.current_bind_group {

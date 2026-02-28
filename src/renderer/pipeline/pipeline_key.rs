@@ -192,29 +192,54 @@ pub struct GraphicsPipelineKey {
     pub is_specular_split: bool,
 }
 
-/// L2 cache key for post-processing / fullscreen passes.
+/// L2 cache key for non-material render pipelines.
 ///
-/// Unlike `GraphicsPipelineKey`, these pipelines use a fixed fullscreen
-/// triangle vertex layout (no vertex buffers) and a simpler bind-group
-/// structure. The `shader_hash` is an xxh3-128 of the final WGSL source,
-/// truncated to `u64` when used as a lookup key and stored as full `u128`
-/// inside the shader manager.
+/// Covers fullscreen / post-processing passes **and** other custom pipelines
+/// that do not go through the material-driven `GraphicsPipelineKey` path
+/// (e.g. skybox, depth-normal prepass).  The optional `multisample`,
+/// `primitive_topology`, `cull_mode`, and `front_face` fields default to
+/// standard fullscreen-triangle values when constructed via
+/// [`FullscreenPipelineKey::fullscreen()`].
+///
+/// The `shader_hash` is an xxh3-128 of the final WGSL source code.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct FullscreenPipelineKey {
-    /// Truncated xxh3-128 hash of the final WGSL source code.
+    /// xxh3-128 hash of the final WGSL source code.
     pub shader_hash: u128,
     /// Color render targets (usually 1).
     pub color_targets: smallvec::SmallVec<[ColorTargetKey; 2]>,
     /// Depth/stencil configuration (optional).
     pub depth_stencil: Option<DepthStencilKey>,
-    /// Multisample state.
+    /// Multisample configuration (default: 1× no-MSAA).
     pub multisample: MultisampleKey,
-    /// Primitive topology (usually `TriangleList`).
-    pub topology: wgpu::PrimitiveTopology,
-    /// Cull mode (usually `None` for fullscreen).
+    /// Primitive topology (default: `TriangleList`).
+    pub primitive_topology: wgpu::PrimitiveTopology,
+    /// Face culling mode (default: `None` — no culling).
     pub cull_mode: Option<wgpu::Face>,
-    /// Front face winding (usually `Ccw`).
+    /// Front face winding (default: `Ccw`).
     pub front_face: wgpu::FrontFace,
+}
+
+impl FullscreenPipelineKey {
+    /// Convenience constructor for a standard fullscreen-triangle pipeline.
+    ///
+    /// Sets `multisample` to 1×, topology to `TriangleList`, no culling, CCW.
+    #[must_use]
+    pub fn fullscreen(
+        shader_hash: u128,
+        color_targets: smallvec::SmallVec<[ColorTargetKey; 2]>,
+        depth_stencil: Option<DepthStencilKey>,
+    ) -> Self {
+        Self {
+            shader_hash,
+            color_targets,
+            depth_stencil,
+            multisample: MultisampleKey::from(wgpu::MultisampleState::default()),
+            primitive_topology: wgpu::PrimitiveTopology::TriangleList,
+            cull_mode: None,
+            front_face: wgpu::FrontFace::Ccw,
+        }
+    }
 }
 
 /// L2 cache key for compute pipelines.

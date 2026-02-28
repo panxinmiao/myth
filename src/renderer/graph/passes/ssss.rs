@@ -33,14 +33,17 @@ use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::{RenderNode, TransientTextureDesc};
-use crate::renderer::pipeline::ShaderCompilationOptions;
+use crate::renderer::pipeline::{
+    ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, RenderPipelineId,
+    ShaderCompilationOptions,
+};
 use crate::resources::screen_space::{STENCIL_FEATURE_SSS, SssProfileData};
 use std::mem::size_of;
 
 pub struct SssssPass {
     enabled: bool,
-    horizontal_pipeline: Option<wgpu::RenderPipeline>,
-    vertical_pipeline: Option<wgpu::RenderPipeline>,
+    horizontal_pipeline: Option<RenderPipelineId>,
+    vertical_pipeline: Option<RenderPipelineId>,
     bind_group_layout: Option<Tracked<wgpu::BindGroupLayout>>,
 
     // Global configuration buffer
@@ -193,32 +196,22 @@ impl RenderNode for SssssPass {
                 immediate_size: 0,
             });
 
+            // ── Shader compilation via ShaderManager ───────────────────
             let mut shader_defines = ShaderCompilationOptions::default();
 
-            let hor_shader_code =
-                crate::renderer::pipeline::shader_gen::ShaderGenerator::generate_shader(
-                    "",
-                    "",
-                    "passes/ssss",
-                    &shader_defines,
-                );
+            let (hor_shader, hor_hash) = ctx.shader_manager.get_or_compile_template(
+                device,
+                "passes/ssss",
+                &shader_defines,
+                "",
+                "",
+            );
 
-            let hor_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("SSSSS Shader"),
-                source: wgpu::ShaderSource::Wgsl(std::borrow::Cow::Owned(hor_shader_code)),
-            });
-
-            shader_defines.add_define("SSSSS_VERTICAL_PASS", "1");
-            let vert_shader_code =
-                crate::renderer::pipeline::shader_gen::ShaderGenerator::generate_shader(
-                    "",
-                    "",
-                    "passes/ssss",
-                    &shader_defines,
-                );
-            let vert_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("SSSSS Vertical Shader"),
-                source: wgpu::ShaderSource::Wgsl(vert_shader_code.into()),
+            // ── Build the shared key fragments ─────────────────────────
+            let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
+                format: HDR_TEXTURE_FORMAT,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
             });
 
             let stencil_face = wgpu::StencilFaceState {
@@ -228,7 +221,7 @@ impl RenderNode for SssssPass {
                 pass_op: wgpu::StencilOperation::Keep,
             };
 
-            let depth_stencil = Some(wgpu::DepthStencilState {
+            let depth_stencil = DepthStencilKey::from(wgpu::DepthStencilState {
                 format: wgpu::TextureFormat::Depth24PlusStencil8,
                 depth_write_enabled: false,
                 depth_compare: wgpu::CompareFunction::Always,
@@ -241,67 +234,50 @@ impl RenderNode for SssssPass {
                 bias: wgpu::DepthBiasState::default(),
             });
 
-            let hor_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("SSSSS Horizontal Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &hor_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &hor_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_TEXTURE_FORMAT,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil: depth_stencil.clone(),
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            });
+            // ── Horizontal pipeline via PipelineCache ──────────────────
+            let hor_key = FullscreenPipelineKey::fullscreen(
+                hor_hash,
+                smallvec::smallvec![color_target.clone()],
+                Some(depth_stencil),
+            );
 
-            let vert_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                label: Some("SSSSS Vertical Pipeline"),
-                layout: Some(&pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &vert_shader,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &vert_shader,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_TEXTURE_FORMAT,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState {
-                    topology: wgpu::PrimitiveTopology::TriangleList,
-                    ..Default::default()
-                },
-                depth_stencil,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            });
+            self.horizontal_pipeline = Some(ctx.pipeline_cache.get_or_create_fullscreen(
+                device,
+                hor_shader,
+                &pipeline_layout,
+                &hor_key,
+                "SSSSS Horizontal Pipeline",
+                &[],
+            ));
 
-            self.horizontal_pipeline = Some(hor_pipeline);
-            self.vertical_pipeline = Some(vert_pipeline);
+            // ── Vertical pipeline via PipelineCache ────────────────────
+            shader_defines.add_define("SSSSS_VERTICAL_PASS", "1");
+
+            let (vert_shader, vert_hash) = ctx.shader_manager.get_or_compile_template(
+                device,
+                "passes/ssss",
+                &shader_defines,
+                "",
+                "",
+            );
+
+            let vert_key = FullscreenPipelineKey::fullscreen(
+                vert_hash,
+                smallvec::smallvec![color_target],
+                Some(depth_stencil),
+            );
+
+            self.vertical_pipeline = Some(ctx.pipeline_cache.get_or_create_fullscreen(
+                device,
+                vert_shader,
+                &pipeline_layout,
+                &vert_key,
+                "SSSSS Vertical Pipeline",
+                &[],
+            ));
+
             self.bind_group_layout = Some(Tracked::new(bind_group_layout));
+            // self.pipeline_layout = Some(pipeline_layout);
         }
 
         if self.sampler.is_none() {
@@ -484,6 +460,14 @@ impl RenderNode for SssssPass {
         let pingpong_tex = ctx.blackboard.sssss_pingpong_texture_id.unwrap();
         let pingpong_view = ctx.transient_pool.get_view(pingpong_tex);
 
+        // Resolve pipeline handles to actual GPU pipeline references (O(1))
+        let hor_pipeline = ctx
+            .pipeline_cache
+            .get_render_pipeline(self.horizontal_pipeline.unwrap());
+        let vert_pipeline = ctx
+            .pipeline_cache
+            .get_render_pipeline(self.vertical_pipeline.unwrap());
+
         // First draw: Horizontal blur
         {
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -507,7 +491,7 @@ impl RenderNode for SssssPass {
                 ..Default::default()
             });
 
-            rpass.set_pipeline(self.horizontal_pipeline.as_ref().unwrap());
+            rpass.set_pipeline(hor_pipeline);
             rpass.set_stencil_reference(STENCIL_FEATURE_SSS); // Trigger hardware stencil culling!
             rpass.set_bind_group(0, self.horizontal_bind_group.as_ref().unwrap(), &[]);
             rpass.draw(0..3, 0..1);
@@ -535,7 +519,7 @@ impl RenderNode for SssssPass {
                 ..Default::default()
             });
 
-            rpass.set_pipeline(self.vertical_pipeline.as_ref().unwrap());
+            rpass.set_pipeline(vert_pipeline);
             rpass.set_stencil_reference(STENCIL_FEATURE_SSS); // Trigger hardware stencil culling!
             rpass.set_bind_group(0, self.vertical_bind_group.as_ref().unwrap(), &[]);
             rpass.draw(0..3, 0..1);
