@@ -352,7 +352,8 @@ impl RenderNode for ShadowPass {
             };
 
             for cmd in commands {
-                pass.set_pipeline(&cmd.pipeline);
+                let pipeline = ctx.pipeline_cache.get_render_pipeline(cmd.pipeline_id);
+                pass.set_pipeline(pipeline);
 
                 if let Some(gpu_material) = ctx.resource_manager.get_material(cmd.material_handle) {
                     pass.set_bind_group(1, &gpu_material.bind_group, &[]);

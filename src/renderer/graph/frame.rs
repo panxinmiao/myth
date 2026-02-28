@@ -26,6 +26,7 @@ use rustc_hash::FxHashMap;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::renderer::core::{BindGroupContext, RenderView, ResourceManager};
 use crate::renderer::graph::transient_pool::TransientTextureId;
+use crate::renderer::pipeline::RenderPipelineId;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
@@ -123,10 +124,11 @@ pub struct RenderCommand {
     pub geometry_handle: GeometryHandle,
     /// Material handle
     pub material_handle: MaterialHandle,
-    /// Pipeline ID (used for state tracking to avoid redundant switches)
-    pub pipeline_id: u16,
-    /// Render pipeline (`wgpu::RenderPipeline` is internally `Arc`)
-    pub pipeline: wgpu::RenderPipeline,
+    /// Pipeline handle (index into [`PipelineCache`] storage).
+    ///
+    /// Resolve to a `&wgpu::RenderPipeline` via
+    /// [`PipelineCache::get_render_pipeline`] during the execute phase.
+    pub pipeline_id: RenderPipelineId,
     /// Model-to-world matrix
     pub model_matrix: Mat4,
     /// Sort key
@@ -141,7 +143,8 @@ pub struct ShadowRenderCommand {
     pub object_bind_group: BindGroupContext,
     pub geometry_handle: GeometryHandle,
     pub material_handle: MaterialHandle,
-    pub pipeline: wgpu::RenderPipeline,
+    /// Pipeline handle (index into [`PipelineCache`] storage).
+    pub pipeline_id: RenderPipelineId,
     pub dynamic_offset: u32,
 }
 
@@ -305,12 +308,12 @@ impl RenderKey {
     /// Constructs a sort key.
     ///
     /// # Parameters
-    /// - `pipeline_id`: Pipeline index (14 bits)
+    /// - `pipeline_id`: Pipeline handle
     /// - `material_index`: Material index (20 bits)
     /// - `depth`: Squared distance to the camera
     /// - `transparent`: Whether the object is transparent
     #[must_use]
-    pub fn new(pipeline_id: u16, material_index: u32, depth: f32, transparent: bool) -> Self {
+    pub fn new(pipeline_id: RenderPipelineId, material_index: u32, depth: f32, transparent: bool) -> Self {
         // 1. Compress depth into 30 bits.
         // Note: assumes depth >= 0.0. Clamping negative values to 0 is safe.
         let d_u32 = if depth.is_sign_negative() {
@@ -321,7 +324,7 @@ impl RenderKey {
         let raw_d_bits = u64::from(d_u32) & 0x3FFF_FFFF;
 
         // 2. Prepare other fields
-        let p_bits = u64::from(pipeline_id & 0x3FFF); // 14 bits
+        let p_bits = u64::from(pipeline_id.0 & 0x3FFF); // 14 bits
         let m_bits = u64::from(material_index & 0xFFFFF); // 20 bits
 
         if transparent {

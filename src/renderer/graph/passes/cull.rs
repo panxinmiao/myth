@@ -28,7 +28,7 @@ use crate::renderer::graph::frame::{RenderCommand, RenderKey, ShadowRenderComman
 use crate::renderer::graph::shadow_utils;
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::renderer::pipeline::{
-    FastPipelineKey, FastShadowPipelineKey, PipelineKey, ShadowPipelineKey,
+    BlendStateKey, FastPipelineKey, FastShadowPipelineKey, GraphicsPipelineKey, ShadowPipelineKey,
 };
 use crate::resources::material::{AlphaMode, Side};
 use crate::resources::uniforms::{DynamicModelUniforms, Mat3Uniform};
@@ -150,10 +150,10 @@ impl SceneCullPass {
                 };
 
                 // ========== Hot Path Optimization: Check L1 Cache First ==========
-                let (pipeline, pipeline_id) =
-                    if let Some(p) = ctx.pipeline_cache.get_pipeline_fast(fast_key) {
-                        // L1 cache hit: Directly use cached Pipeline
-                        p.clone()
+                let pipeline_id =
+                    if let Some(id) = ctx.pipeline_cache.get_pipeline_fast(fast_key) {
+                        // L1 cache hit: Directly use cached Pipeline ID
+                        id
                     } else {
                         // L1 cache miss: Need full shader_defines computation
                         let geo_defines = geometry.shader_defines();
@@ -198,7 +198,7 @@ impl SceneCullPass {
                             RenderPath::BasicForward { .. } => false,
                         };
 
-                        let canonical_key = PipelineKey {
+                        let canonical_key = GraphicsPipelineKey {
                             shader_hash,
                             vertex_layout_id: gpu_geometry.layout_id,
                             bind_group_layout_ids: [
@@ -237,7 +237,7 @@ impl SceneCullPass {
                                 wgpu::CompareFunction::Always
                             },
                             blend_state: if material.alpha_mode() == AlphaMode::Blend {
-                                Some(wgpu::BlendState::ALPHA_BLENDING)
+                                Some(BlendStateKey::from(wgpu::BlendState::ALPHA_BLENDING))
                             } else {
                                 None
                             },
@@ -254,10 +254,11 @@ impl SceneCullPass {
                             is_specular_split,
                         };
 
-                        let (pipeline, pipeline_id) = ctx.pipeline_cache.get_pipeline(
+                        let id = ctx.pipeline_cache.get_or_create_graphics(
                             &ctx.wgpu_ctx.device,
+                            ctx.shader_manager,
                             material.shader_name(),
-                            canonical_key,
+                            &canonical_key,
                             &options,
                             &gpu_geometry.layout_info,
                             gpu_material,
@@ -266,9 +267,8 @@ impl SceneCullPass {
                             ctx.frame_resources,
                         );
 
-                        ctx.pipeline_cache
-                            .insert_pipeline_fast(fast_key, (pipeline.clone(), pipeline_id));
-                        (pipeline, pipeline_id)
+                        ctx.pipeline_cache.insert_pipeline_fast(fast_key, id);
+                        id
                     };
 
                 let mat_id = item.material.data().as_ffi() as u32;
@@ -292,7 +292,6 @@ impl SceneCullPass {
                     geometry_handle: item.geometry,
                     material_handle: item.material,
                     pipeline_id,
-                    pipeline,
                     model_matrix: item.world_matrix,
                     sort_key,
                     dynamic_offset: 0,
@@ -481,9 +480,9 @@ impl SceneCullPass {
                     pipeline_settings_version,
                 };
 
-                let pipeline =
-                    if let Some(p) = ctx.pipeline_cache.get_shadow_pipeline_fast(fast_key) {
-                        p.clone()
+                let pipeline_id =
+                    if let Some(id) = ctx.pipeline_cache.get_shadow_pipeline_fast(fast_key) {
+                        id
                     } else {
                         let geo_defines = geometry.shader_defines();
                         let mat_defines = material.shader_defines();
@@ -514,9 +513,10 @@ impl SceneCullPass {
                             },
                         };
 
-                        let pipeline = ctx.pipeline_cache.get_shadow_pipeline(
+                        let id = ctx.pipeline_cache.get_or_create_shadow(
                             &ctx.wgpu_ctx.device,
-                            canonical_key,
+                            ctx.shader_manager,
+                            &canonical_key,
                             &options,
                             &gpu_geometry.layout_info,
                             &shadow_global_layout,
@@ -526,8 +526,8 @@ impl SceneCullPass {
                         );
 
                         ctx.pipeline_cache
-                            .insert_shadow_pipeline_fast(fast_key, pipeline.clone());
-                        pipeline
+                            .insert_shadow_pipeline_fast(fast_key, id);
+                        id
                     };
 
                 let world_matrix_inverse = item.world_matrix.inverse();
@@ -545,7 +545,7 @@ impl SceneCullPass {
                     object_bind_group: item.object_bind_group.clone(),
                     geometry_handle: item.geometry,
                     material_handle: item.material,
-                    pipeline,
+                    pipeline_id,
                     dynamic_offset,
                 });
             }

@@ -70,6 +70,7 @@ use crate::{FrameBuilder, RenderStage};
 use self::core::{ResourceManager, WgpuContext};
 use self::graph::{FrameComposer, RenderFrame};
 use self::pipeline::PipelineCache;
+use self::pipeline::ShaderManager;
 use self::settings::{RenderPath, RendererSettings};
 
 /// HDR texture format.
@@ -92,9 +93,9 @@ pub const HDR_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16F
 /// 3. Render frames with [`Renderer::begin_frame`]
 /// 4. Clean up with [`Renderer::maybe_prune`]
 pub struct Renderer {
+    pub size: (u32, u32),
     settings: RendererSettings,
     context: Option<RendererState>,
-    size: (u32, u32),
 }
 
 /// Internal renderer state
@@ -102,6 +103,7 @@ struct RendererState {
     wgpu_ctx: WgpuContext,
     resource_manager: ResourceManager,
     pipeline_cache: PipelineCache,
+    shader_manager: ShaderManager,
 
     render_frame: RenderFrame,
     /// Render lists (separated from `render_frame` to avoid borrow conflicts)
@@ -231,6 +233,7 @@ impl Renderer {
             wgpu_ctx,
             resource_manager,
             pipeline_cache: PipelineCache::new(),
+            shader_manager: ShaderManager::new(),
 
             render_frame,
             render_lists: RenderLists::new(),
@@ -454,6 +457,7 @@ impl Renderer {
             wgpu_ctx: &mut state.wgpu_ctx,
             resource_manager: &mut state.resource_manager,
             pipeline_cache: &mut state.pipeline_cache,
+            shader_manager: &mut state.shader_manager,
 
             extracted_scene: &state.render_frame.extracted_scene,
             render_state: &state.render_frame.render_state,
