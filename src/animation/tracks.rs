@@ -38,11 +38,12 @@ impl<T: Interpolatable> KeyframeTrack<T> {
         // For simplicity, assume non-empty here.
         assert!(!self.times.is_empty(), "Track is empty");
 
-        // 1. Find the keyframe
-        // partition_point finds the first index where t > time, i.e. next_index
+        // partition_point returns the first index where t > time (right boundary).
+        // sample_at_frame expects the left boundary of the interval, so subtract 1.
         let next_idx = self.times.partition_point(|&t| t <= time);
+        let idx = if next_idx > 0 { next_idx - 1 } else { 0 };
 
-        self.sample_at_frame(next_idx, time)
+        self.sample_at_frame(idx, time)
     }
 
     /// Core optimization: sampling with cursor.
