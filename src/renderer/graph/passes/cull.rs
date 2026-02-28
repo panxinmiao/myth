@@ -28,8 +28,8 @@ use crate::renderer::graph::frame::{RenderCommand, RenderKey, ShadowRenderComman
 use crate::renderer::graph::shadow_utils;
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::renderer::pipeline::{
-    BlendStateKey, DepthStencilKey, FastPipelineKey, FastShadowPipelineKey,
-    GraphicsPipelineKey, SimpleGeometryPipelineKey,
+    BlendStateKey, DepthStencilKey, FastPipelineKey, FastShadowPipelineKey, GraphicsPipelineKey,
+    SimpleGeometryPipelineKey,
 };
 use crate::resources::material::{AlphaMode, Side};
 use crate::resources::uniforms::{DynamicModelUniforms, Mat3Uniform};
@@ -151,126 +151,125 @@ impl SceneCullPass {
                 };
 
                 // ========== Hot Path Optimization: Check L1 Cache First ==========
-                let pipeline_id =
-                    if let Some(id) = ctx.pipeline_cache.get_pipeline_fast(fast_key) {
-                        // L1 cache hit: Directly use cached Pipeline ID
-                        id
-                    } else {
-                        // L1 cache miss: Need full shader_defines computation
-                        let geo_defines = geometry.shader_defines();
-                        let mat_defines = material.shader_defines();
+                let pipeline_id = if let Some(id) = ctx.pipeline_cache.get_pipeline_fast(fast_key) {
+                    // L1 cache hit: Directly use cached Pipeline ID
+                    id
+                } else {
+                    // L1 cache miss: Need full shader_defines computation
+                    let geo_defines = geometry.shader_defines();
+                    let mat_defines = material.shader_defines();
 
-                        let final_a2c_enable = match material.alpha_mode() {
-                            AlphaMode::Mask(_, a2c) => a2c,
-                            AlphaMode::Blend | AlphaMode::Opaque => false,
-                        };
-
-                        let mut options = ShaderCompilationOptions::from_merged(
-                            &mat_defines,
-                            geo_defines,
-                            &ctx.extracted_scene.scene_defines,
-                            &item.item_shader_defines,
-                        );
-
-                        if final_a2c_enable {
-                            options.add_define("ALPHA_TO_COVERAGE", "1");
-                        }
-
-                        if ctx.wgpu_ctx.render_path.supports_post_processing() {
-                            options.add_define("HDR", "1");
-                        }
-
-                        let shader_hash = options.compute_hash();
-
-                        // Determine if this is an opaque item (not transparent
-                        // and not using transmission) so that Z-prepass depth
-                        // compare overrides are only applied to opaque pipelines.
-                        let is_opaque_item = material.alpha_mode() != AlphaMode::Blend
-                            && !material.use_transmission();
-
-                        let is_specular_split = match ctx.wgpu_ctx.render_path {
-                            RenderPath::HighFidelity => {
-                                is_opaque_item
-                                    && ctx
-                                        .extracted_scene
-                                        .scene_variants
-                                        .contains(SceneFeatures::USE_SSS)
-                            }
-                            RenderPath::BasicForward { .. } => false,
-                        };
-
-                        let canonical_key = GraphicsPipelineKey {
-                            shader_hash,
-                            vertex_layout_id: gpu_geometry.layout_id,
-                            bind_group_layout_ids: [
-                                gpu_world.layout_id,
-                                gpu_material.layout_id,
-                                object_bind_group.layout_id,
-                                ctx.frame_resources.screen_bind_group_layout.id(),
-                            ],
-                            topology: geometry.topology,
-                            cull_mode: match material.side() {
-                                Side::Front => Some(wgpu::Face::Back),
-                                Side::Back => Some(wgpu::Face::Front),
-                                Side::Double => None,
-                            },
-                            // When the Z-Normal prepass has written depth for
-                            // opaque objects, the main pass can use Equal compare
-                            // with depth writes disabled — every fragment that
-                            // survives is guaranteed visible, eliminating
-                            // overdraw.  Transparent objects still need the
-                            // normal depth path.
-                            depth_write: if is_opaque_item
-                                && ctx.wgpu_ctx.render_path.requires_z_prepass()
-                            {
-                                false
-                            } else {
-                                material.depth_write()
-                            },
-                            depth_compare: if is_opaque_item
-                                && ctx.wgpu_ctx.render_path.requires_z_prepass()
-                                && material.depth_test()
-                            {
-                                wgpu::CompareFunction::Equal
-                            } else if material.depth_test() {
-                                wgpu::CompareFunction::Greater
-                            } else {
-                                wgpu::CompareFunction::Always
-                            },
-                            blend_state: if material.alpha_mode() == AlphaMode::Blend {
-                                Some(BlendStateKey::from(wgpu::BlendState::ALPHA_BLENDING))
-                            } else {
-                                None
-                            },
-                            color_format,
-                            depth_format,
-                            sample_count,
-                            alpha_to_coverage: final_a2c_enable,
-                            front_face: if item.item_variant_flags & 0x1 != 0 {
-                                wgpu::FrontFace::Cw
-                            } else {
-                                wgpu::FrontFace::Ccw
-                            },
-
-                            is_specular_split,
-                        };
-
-                        let id = ctx.pipeline_cache.get_or_create_graphics(
-                            &ctx.wgpu_ctx.device,
-                            ctx.shader_manager,
-                            material.shader_name(),
-                            &canonical_key,
-                            &options,
-                            &gpu_geometry.layout_info,
-                            gpu_material,
-                            object_bind_group,
-                            gpu_world,
-                            ctx.frame_resources,
-                        );
-
-                        ctx.pipeline_cache.insert_pipeline_fast(fast_key, id);
-                        id
+                    let final_a2c_enable = match material.alpha_mode() {
+                        AlphaMode::Mask(_, a2c) => a2c,
+                        AlphaMode::Blend | AlphaMode::Opaque => false,
                     };
+
+                    let mut options = ShaderCompilationOptions::from_merged(
+                        &mat_defines,
+                        geo_defines,
+                        &ctx.extracted_scene.scene_defines,
+                        &item.item_shader_defines,
+                    );
+
+                    if final_a2c_enable {
+                        options.add_define("ALPHA_TO_COVERAGE", "1");
+                    }
+
+                    if ctx.wgpu_ctx.render_path.supports_post_processing() {
+                        options.add_define("HDR", "1");
+                    }
+
+                    let shader_hash = options.compute_hash();
+
+                    // Determine if this is an opaque item (not transparent
+                    // and not using transmission) so that Z-prepass depth
+                    // compare overrides are only applied to opaque pipelines.
+                    let is_opaque_item =
+                        material.alpha_mode() != AlphaMode::Blend && !material.use_transmission();
+
+                    let is_specular_split = match ctx.wgpu_ctx.render_path {
+                        RenderPath::HighFidelity => {
+                            is_opaque_item
+                                && ctx
+                                    .extracted_scene
+                                    .scene_variants
+                                    .contains(SceneFeatures::USE_SSS)
+                        }
+                        RenderPath::BasicForward { .. } => false,
+                    };
+
+                    let canonical_key = GraphicsPipelineKey {
+                        shader_hash,
+                        vertex_layout_id: gpu_geometry.layout_id,
+                        bind_group_layout_ids: [
+                            gpu_world.layout_id,
+                            gpu_material.layout_id,
+                            object_bind_group.layout_id,
+                            ctx.frame_resources.screen_bind_group_layout.id(),
+                        ],
+                        topology: geometry.topology,
+                        cull_mode: match material.side() {
+                            Side::Front => Some(wgpu::Face::Back),
+                            Side::Back => Some(wgpu::Face::Front),
+                            Side::Double => None,
+                        },
+                        // When the Z-Normal prepass has written depth for
+                        // opaque objects, the main pass can use Equal compare
+                        // with depth writes disabled — every fragment that
+                        // survives is guaranteed visible, eliminating
+                        // overdraw.  Transparent objects still need the
+                        // normal depth path.
+                        depth_write: if is_opaque_item
+                            && ctx.wgpu_ctx.render_path.requires_z_prepass()
+                        {
+                            false
+                        } else {
+                            material.depth_write()
+                        },
+                        depth_compare: if is_opaque_item
+                            && ctx.wgpu_ctx.render_path.requires_z_prepass()
+                            && material.depth_test()
+                        {
+                            wgpu::CompareFunction::Equal
+                        } else if material.depth_test() {
+                            wgpu::CompareFunction::Greater
+                        } else {
+                            wgpu::CompareFunction::Always
+                        },
+                        blend_state: if material.alpha_mode() == AlphaMode::Blend {
+                            Some(BlendStateKey::from(wgpu::BlendState::ALPHA_BLENDING))
+                        } else {
+                            None
+                        },
+                        color_format,
+                        depth_format,
+                        sample_count,
+                        alpha_to_coverage: final_a2c_enable,
+                        front_face: if item.item_variant_flags & 0x1 != 0 {
+                            wgpu::FrontFace::Cw
+                        } else {
+                            wgpu::FrontFace::Ccw
+                        },
+
+                        is_specular_split,
+                    };
+
+                    let id = ctx.pipeline_cache.get_or_create_graphics(
+                        &ctx.wgpu_ctx.device,
+                        ctx.shader_manager,
+                        material.shader_name(),
+                        &canonical_key,
+                        &options,
+                        &gpu_geometry.layout_info,
+                        gpu_material,
+                        object_bind_group,
+                        gpu_world,
+                        ctx.frame_resources,
+                    );
+
+                    ctx.pipeline_cache.insert_pipeline_fast(fast_key, id);
+                    id
+                };
 
                 let mat_id = item.material.data().as_ffi() as u32;
 
@@ -481,103 +480,103 @@ impl SceneCullPass {
                     pipeline_settings_version,
                 };
 
-                let pipeline_id =
-                    if let Some(id) = ctx.pipeline_cache.get_shadow_pipeline_fast(fast_key) {
-                        id
-                    } else {
-                        let geo_defines = geometry.shader_defines();
-                        let mat_defines = material.shader_defines();
+                let pipeline_id = if let Some(id) =
+                    ctx.pipeline_cache.get_shadow_pipeline_fast(fast_key)
+                {
+                    id
+                } else {
+                    let geo_defines = geometry.shader_defines();
+                    let mat_defines = material.shader_defines();
 
-                        let mut options = ShaderCompilationOptions::from_merged(
-                            &mat_defines,
-                            geo_defines,
-                            &crate::resources::shader_defines::ShaderDefines::new(),
-                            &item.item_shader_defines,
-                        );
+                    let mut options = ShaderCompilationOptions::from_merged(
+                        &mat_defines,
+                        geo_defines,
+                        &crate::resources::shader_defines::ShaderDefines::new(),
+                        &item.item_shader_defines,
+                    );
 
-                        options.add_define("SHADOW_PASS", "1");
+                    options.add_define("SHADOW_PASS", "1");
 
-                        // Compile shader (caller-side, not inside cache)
-                        let binding_code = format!(
-                            "{}\n{}\n{}",
-                            SHADOW_BINDING_WGSL,
-                            &gpu_material.binding_wgsl,
-                            &item.object_bind_group.binding_wgsl
-                        );
+                    // Compile shader (caller-side, not inside cache)
+                    let binding_code = format!(
+                        "{}\n{}\n{}",
+                        SHADOW_BINDING_WGSL,
+                        &gpu_material.binding_wgsl,
+                        &item.object_bind_group.binding_wgsl
+                    );
 
-                        let (shader_module, code_hash) =
-                            ctx.shader_manager.get_or_compile_template(
-                                &ctx.wgpu_ctx.device,
-                                "passes/depth",
-                                &options,
-                                &gpu_geometry.layout_info.vertex_input_code,
-                                &binding_code,
-                            );
+                    let (shader_module, code_hash) = ctx.shader_manager.get_or_compile_template(
+                        &ctx.wgpu_ctx.device,
+                        "passes/depth",
+                        &options,
+                        &gpu_geometry.layout_info.vertex_input_code,
+                        &binding_code,
+                    );
 
-                        let layout = ctx.wgpu_ctx.device.create_pipeline_layout(
-                            &wgpu::PipelineLayoutDescriptor {
-                                label: Some("Shadow Pipeline Layout"),
-                                bind_group_layouts: &[
-                                    &shadow_global_layout,
-                                    &gpu_material.layout,
-                                    &item.object_bind_group.layout,
-                                ],
-                                immediate_size: 0,
-                            },
-                        );
+                    let layout = ctx.wgpu_ctx.device.create_pipeline_layout(
+                        &wgpu::PipelineLayoutDescriptor {
+                            label: Some("Shadow Pipeline Layout"),
+                            bind_group_layouts: &[
+                                &shadow_global_layout,
+                                &gpu_material.layout,
+                                &item.object_bind_group.layout,
+                            ],
+                            immediate_size: 0,
+                        },
+                    );
 
-                        let vertex_buffers_layout: Vec<_> = gpu_geometry
-                            .layout_info
-                            .buffers
-                            .iter()
-                            .map(|l| l.as_wgpu())
-                            .collect();
+                    let vertex_buffers_layout: Vec<_> = gpu_geometry
+                        .layout_info
+                        .buffers
+                        .iter()
+                        .map(|l| l.as_wgpu())
+                        .collect();
 
-                        let cull_mode = match material.side() {
-                            Side::Front => Some(wgpu::Face::Back),
-                            Side::Back => Some(wgpu::Face::Front),
-                            Side::Double => None,
-                        };
-
-                        let front_face = if item.item_variant_flags & 0x1 != 0 {
-                            wgpu::FrontFace::Cw
-                        } else {
-                            wgpu::FrontFace::Ccw
-                        };
-
-                        let canonical_key = SimpleGeometryPipelineKey {
-                            shader_hash: code_hash,
-                            vertex_layout_id: gpu_geometry.layout_id,
-                            color_targets: smallvec::smallvec![],
-                            depth_stencil: DepthStencilKey::from(wgpu::DepthStencilState {
-                                format: depth_format,
-                                depth_write_enabled: true,
-                                depth_compare: wgpu::CompareFunction::LessEqual,
-                                stencil: wgpu::StencilState::default(),
-                                bias: wgpu::DepthBiasState {
-                                    constant: 2,
-                                    slope_scale: 2.0,
-                                    clamp: 0.0,
-                                },
-                            }),
-                            topology: geometry.topology,
-                            cull_mode,
-                            front_face,
-                        };
-
-                        let id = ctx.pipeline_cache.get_or_create_simple_geometry(
-                            &ctx.wgpu_ctx.device,
-                            shader_module,
-                            &layout,
-                            &canonical_key,
-                            "Shadow Pipeline",
-                            &vertex_buffers_layout,
-                        );
-
-                        ctx.pipeline_cache
-                            .insert_shadow_pipeline_fast(fast_key, id);
-                        id
+                    let cull_mode = match material.side() {
+                        Side::Front => Some(wgpu::Face::Back),
+                        Side::Back => Some(wgpu::Face::Front),
+                        Side::Double => None,
                     };
+
+                    let front_face = if item.item_variant_flags & 0x1 != 0 {
+                        wgpu::FrontFace::Cw
+                    } else {
+                        wgpu::FrontFace::Ccw
+                    };
+
+                    let canonical_key = SimpleGeometryPipelineKey {
+                        shader_hash: code_hash,
+                        vertex_layout_id: gpu_geometry.layout_id,
+                        color_targets: smallvec::smallvec![],
+                        depth_stencil: DepthStencilKey::from(wgpu::DepthStencilState {
+                            format: depth_format,
+                            depth_write_enabled: true,
+                            depth_compare: wgpu::CompareFunction::LessEqual,
+                            stencil: wgpu::StencilState::default(),
+                            bias: wgpu::DepthBiasState {
+                                constant: 2,
+                                slope_scale: 2.0,
+                                clamp: 0.0,
+                            },
+                        }),
+                        topology: geometry.topology,
+                        cull_mode,
+                        front_face,
+                        sample_count: 1,
+                    };
+
+                    let id = ctx.pipeline_cache.get_or_create_simple_geometry(
+                        &ctx.wgpu_ctx.device,
+                        shader_module,
+                        &layout,
+                        &canonical_key,
+                        "Shadow Pipeline",
+                        &vertex_buffers_layout,
+                    );
+
+                    ctx.pipeline_cache.insert_shadow_pipeline_fast(fast_key, id);
+                    id
+                };
 
                 let world_matrix_inverse = item.world_matrix.inverse();
                 let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());

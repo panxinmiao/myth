@@ -37,9 +37,9 @@ impl BRDFLutComputePass {
         }
 
         let source = include_str!("../../pipeline/shaders/program/brdf_lut.wgsl");
-        let (module, shader_hash) = ctx
-            .shader_manager
-            .get_or_compile_raw(&ctx.wgpu_ctx.device, "BRDF LUT Shader", source);
+        let (module, shader_hash) =
+            ctx.shader_manager
+                .get_or_compile_raw(&ctx.wgpu_ctx.device, "BRDF LUT Shader", source);
 
         let layout = ctx
             .wgpu_ctx

@@ -252,15 +252,14 @@ impl ToneMapPass {
         // 3. Create pipeline layout with the appropriate bind group layout
         let layout = self.current_layout();
 
-        let pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("ToneMap Pipeline Layout"),
-                bind_group_layouts: &[
-                    &gpu_world.layout, // Global bind group (frame-level resources)
-                    layout,
-                ],
-                immediate_size: 0,
-            });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ToneMap Pipeline Layout"),
+            bind_group_layouts: &[
+                &gpu_world.layout, // Global bind group (frame-level resources)
+                layout,
+            ],
+            immediate_size: 0,
+        });
 
         // 4. Build key and create pipeline via PipelineCache
         let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
@@ -269,11 +268,8 @@ impl ToneMapPass {
             write_mask: wgpu::ColorWrites::ALL,
         });
 
-        let key = FullscreenPipelineKey::fullscreen(
-            shader_hash,
-            smallvec::smallvec![color_target],
-            None,
-        );
+        let key =
+            FullscreenPipelineKey::fullscreen(shader_hash, smallvec::smallvec![color_target], None);
 
         let id = ctx.pipeline_cache.get_or_create_fullscreen(
             device,

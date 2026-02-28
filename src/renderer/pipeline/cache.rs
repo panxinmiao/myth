@@ -219,18 +219,21 @@ impl PipelineCache {
             vertex_layout.buffers.iter().map(|l| l.as_wgpu()).collect();
 
         let blend_state: Option<wgpu::BlendState> =
-            canonical_key.blend_state.as_ref().map(|bk| wgpu::BlendState {
-                color: wgpu::BlendComponent {
-                    src_factor: bk.color.src_factor,
-                    dst_factor: bk.color.dst_factor,
-                    operation: bk.color.operation,
-                },
-                alpha: wgpu::BlendComponent {
-                    src_factor: bk.alpha.src_factor,
-                    dst_factor: bk.alpha.dst_factor,
-                    operation: bk.alpha.operation,
-                },
-            });
+            canonical_key
+                .blend_state
+                .as_ref()
+                .map(|bk| wgpu::BlendState {
+                    color: wgpu::BlendComponent {
+                        src_factor: bk.color.src_factor,
+                        dst_factor: bk.color.dst_factor,
+                        operation: bk.color.operation,
+                    },
+                    alpha: wgpu::BlendComponent {
+                        src_factor: bk.alpha.src_factor,
+                        dst_factor: bk.alpha.dst_factor,
+                        operation: bk.alpha.operation,
+                    },
+                });
 
         let color_targets = if canonical_key.is_specular_split {
             vec![
@@ -341,32 +344,34 @@ impl PipelineCache {
             })
             .collect();
 
-        let depth_stencil = canonical_key.depth_stencil.map(|dk| wgpu::DepthStencilState {
-            format: dk.format,
-            depth_write_enabled: dk.depth_write_enabled,
-            depth_compare: dk.depth_compare,
-            stencil: wgpu::StencilState {
-                front: wgpu::StencilFaceState {
-                    compare: dk.stencil.front.compare,
-                    fail_op: dk.stencil.front.fail_op,
-                    depth_fail_op: dk.stencil.front.depth_fail_op,
-                    pass_op: dk.stencil.front.pass_op,
+        let depth_stencil = canonical_key
+            .depth_stencil
+            .map(|dk| wgpu::DepthStencilState {
+                format: dk.format,
+                depth_write_enabled: dk.depth_write_enabled,
+                depth_compare: dk.depth_compare,
+                stencil: wgpu::StencilState {
+                    front: wgpu::StencilFaceState {
+                        compare: dk.stencil.front.compare,
+                        fail_op: dk.stencil.front.fail_op,
+                        depth_fail_op: dk.stencil.front.depth_fail_op,
+                        pass_op: dk.stencil.front.pass_op,
+                    },
+                    back: wgpu::StencilFaceState {
+                        compare: dk.stencil.back.compare,
+                        fail_op: dk.stencil.back.fail_op,
+                        depth_fail_op: dk.stencil.back.depth_fail_op,
+                        pass_op: dk.stencil.back.pass_op,
+                    },
+                    read_mask: dk.stencil.read_mask,
+                    write_mask: dk.stencil.write_mask,
                 },
-                back: wgpu::StencilFaceState {
-                    compare: dk.stencil.back.compare,
-                    fail_op: dk.stencil.back.fail_op,
-                    depth_fail_op: dk.stencil.back.depth_fail_op,
-                    pass_op: dk.stencil.back.pass_op,
+                bias: wgpu::DepthBiasState {
+                    constant: dk.bias.constant,
+                    slope_scale: f32::from_bits(dk.bias.slope_scale_bits),
+                    clamp: f32::from_bits(dk.bias.clamp_bits),
                 },
-                read_mask: dk.stencil.read_mask,
-                write_mask: dk.stencil.write_mask,
-            },
-            bias: wgpu::DepthBiasState {
-                constant: dk.bias.constant,
-                slope_scale: f32::from_bits(dk.bias.slope_scale_bits),
-                clamp: f32::from_bits(dk.bias.clamp_bits),
-            },
-        });
+            });
 
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(label),
@@ -499,7 +504,11 @@ impl PipelineCache {
                 ..Default::default()
             },
             depth_stencil,
-            multisample: wgpu::MultisampleState::default(),
+            multisample: wgpu::MultisampleState {
+                count: canonical_key.sample_count,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            },
             multiview_mask: None,
             cache: None,
         });
