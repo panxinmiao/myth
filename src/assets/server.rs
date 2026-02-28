@@ -278,6 +278,37 @@ impl AssetServer {
         Ok(handle)
     }
 
+    /// Loads a 2D texture from raw bytes (e.g. from a file dialog on WASM).
+    pub async fn load_texture_from_bytes_async(
+        &self,
+        name: &str,
+        bytes: Vec<u8>,
+        color_space: ColorSpace,
+        generate_mipmaps: bool,
+    ) -> Result<TextureHandle> {
+        let image = Self::decode_image_async(bytes, color_space, name.to_string()).await?;
+        let mut texture = Texture::new(Some(name), image, wgpu::TextureViewDimension::D2);
+        texture.generate_mipmaps = generate_mipmaps;
+        let handle = self.textures.add(texture);
+        Ok(handle)
+    }
+
+    /// Loads an HDR environment map from raw bytes (e.g. from a file dialog on WASM).
+    pub async fn load_hdr_texture_from_bytes_async(
+        &self,
+        name: &str,
+        bytes: Vec<u8>,
+    ) -> Result<TextureHandle> {
+        let image = Self::decode_hdr_async(bytes).await?;
+        let mut texture = Texture::new(Some(name), image, wgpu::TextureViewDimension::D2);
+        texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
+        texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
+        texture.sampler.mag_filter = wgpu::FilterMode::Linear;
+        texture.sampler.min_filter = wgpu::FilterMode::Linear;
+        let handle = self.textures.add(texture);
+        Ok(handle)
+    }
+
     // ========================================================================
     // Internal Helpers
     // ========================================================================

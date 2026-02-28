@@ -114,7 +114,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let NdotL = saturate(dot(N, L));
     if (NdotL > 0.0) {
       let NdotH = clamp(dot(N, H), 0.0, 1.0);
-      let HdotV = clamp(dot(H, V), 0.0, 1.0);
+      let HdotV = clamp(dot(H, V), 0.0001, 1.0);
       
       let D = distributionGGX(NdotH, params.roughness);
       let pdf = D * NdotH / (4.0 * HdotV) + 0.0001;
@@ -128,6 +128,7 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     }
   }
 
-  prefilteredColor = prefilteredColor / totalWeight;
-  textureStore(destTex, vec2<u32>(id.xy), face, vec4<f32>(prefilteredColor, 1.0));
+  prefilteredColor = prefilteredColor / max(totalWeight, 0.0001);
+  let safe_color = clamp(prefilteredColor, vec3<f32>(0.0), vec3<f32>(65000.0));
+  textureStore(destTex, vec2<u32>(id.xy), face, vec4<f32>(safe_color, 1.0));
 }

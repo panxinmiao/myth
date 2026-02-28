@@ -438,8 +438,9 @@ define_gpu_data_struct!(
         pub num_lights: u32 = 0,
 
         pub env_map_intensity: f32 = 1.0,
+        pub env_map_rotation: f32 = 0.0,
         pub env_map_max_mip_level: f32 = 0.0,
-        pub(crate) __padding: UniformArray<f32, 2>,
+        pub(crate) __padding: f32 = 0.0, // Padding to make total size a multiple of 16 bytes
     }
 );
 
