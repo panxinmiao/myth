@@ -152,20 +152,15 @@ impl FxaaPass {
             options.add_define(self.current_quality.define_key(), "1");
         }
 
-        let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
-            device,
-            "passes/fxaa",
-            &options,
-            "",
-            "",
-        );
+        let (shader_module, shader_hash) =
+            ctx.shader_manager
+                .get_or_compile_template(device, "passes/fxaa", &options, "", "");
 
-        let pipeline_layout =
-            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("FXAA Pipeline Layout"),
-                bind_group_layouts: &[&self.layout],
-                immediate_size: 0,
-            });
+        let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("FXAA Pipeline Layout"),
+            bind_group_layouts: &[&self.layout],
+            immediate_size: 0,
+        });
 
         let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
             format: ctx.wgpu_ctx.surface_view_format,
@@ -173,11 +168,8 @@ impl FxaaPass {
             write_mask: wgpu::ColorWrites::ALL,
         });
 
-        let key = FullscreenPipelineKey::fullscreen(
-            shader_hash,
-            smallvec::smallvec![color_target],
-            None,
-        );
+        let key =
+            FullscreenPipelineKey::fullscreen(shader_hash, smallvec::smallvec![color_target], None);
 
         let id = ctx.pipeline_cache.get_or_create_fullscreen(
             device,

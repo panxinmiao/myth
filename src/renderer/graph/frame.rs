@@ -315,7 +315,12 @@ impl RenderKey {
     /// - `depth`: Squared distance to the camera
     /// - `transparent`: Whether the object is transparent
     #[must_use]
-    pub fn new(pipeline_id: RenderPipelineId, material_index: u32, depth: f32, transparent: bool) -> Self {
+    pub fn new(
+        pipeline_id: RenderPipelineId,
+        material_index: u32,
+        depth: f32,
+        transparent: bool,
+    ) -> Self {
         // 1. Compress depth into 30 bits.
         // Note: assumes depth >= 0.0. Clamping negative values to 0 is safe.
         let d_u32 = if depth.is_sign_negative() {

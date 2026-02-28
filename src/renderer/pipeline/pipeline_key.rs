@@ -260,6 +260,8 @@ pub struct SimpleGeometryPipelineKey {
     pub topology: wgpu::PrimitiveTopology,
     pub cull_mode: Option<wgpu::Face>,
     pub front_face: wgpu::FrontFace,
+
+    pub sample_count: u32,
 }
 
 // ─── Convenience helpers ──────────────────────────────────────────────────────

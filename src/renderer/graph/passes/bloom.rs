@@ -46,7 +46,9 @@ use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTextureId};
-use crate::renderer::pipeline::{ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions};
+use crate::renderer::pipeline::{
+    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
+};
 use crate::resources::WgslType;
 use crate::resources::bloom::{CompositeUniforms, UpsampleUniforms};
 use crate::resources::buffer::CpuBuffer;
@@ -786,9 +788,13 @@ impl RenderNode for BloomPass {
             return;
         };
 
-        let downsample_pipeline = ctx.pipeline_cache.get_render_pipeline(downsample_pipeline_id);
+        let downsample_pipeline = ctx
+            .pipeline_cache
+            .get_render_pipeline(downsample_pipeline_id);
         let upsample_pipeline = ctx.pipeline_cache.get_render_pipeline(upsample_pipeline_id);
-        let composite_pipeline = ctx.pipeline_cache.get_render_pipeline(composite_pipeline_id);
+        let composite_pipeline = ctx
+            .pipeline_cache
+            .get_render_pipeline(composite_pipeline_id);
 
         // =====================================================================
         // Phase 1: Downsample — Scene HDR → Bloom Mip Chain

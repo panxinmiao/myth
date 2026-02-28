@@ -27,8 +27,8 @@ use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::{RenderNode, TrackedRenderPass, TransientTextureDesc};
 use crate::renderer::pipeline::{
-    ColorTargetKey, DepthStencilKey, SimpleGeometryPipelineKey, RenderPipelineId,
-    ShaderCompilationOptions,
+    ColorTargetKey, DepthStencilKey, RenderPipelineId, ShaderCompilationOptions,
+    SimpleGeometryPipelineKey,
 };
 use crate::resources::material::{AlphaMode, Side};
 use crate::resources::screen_space::STENCIL_WRITE_MASK;
@@ -207,29 +207,28 @@ impl DepthNormalPrepass {
             };
 
             // ── Build color targets ────────────────────────────────────
-            let color_targets: smallvec::SmallVec<[ColorTargetKey; 2]> =
-                if self.needs_feature_id {
-                    smallvec::smallvec![
-                        ColorTargetKey::from(wgpu::ColorTargetState {
-                            format: NORMAL_FORMAT,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        }),
-                        ColorTargetKey::from(wgpu::ColorTargetState {
-                            format: FEATURE_ID_FORMAT,
-                            blend: None,
-                            write_mask: wgpu::ColorWrites::ALL,
-                        }),
-                    ]
-                } else if self.needs_normal {
-                    smallvec::smallvec![ColorTargetKey::from(wgpu::ColorTargetState {
+            let color_targets: smallvec::SmallVec<[ColorTargetKey; 2]> = if self.needs_feature_id {
+                smallvec::smallvec![
+                    ColorTargetKey::from(wgpu::ColorTargetState {
                         format: NORMAL_FORMAT,
                         blend: None,
                         write_mask: wgpu::ColorWrites::ALL,
-                    })]
-                } else {
-                    smallvec::smallvec![]
-                };
+                    }),
+                    ColorTargetKey::from(wgpu::ColorTargetState {
+                        format: FEATURE_ID_FORMAT,
+                        blend: None,
+                        write_mask: wgpu::ColorWrites::ALL,
+                    }),
+                ]
+            } else if self.needs_normal {
+                smallvec::smallvec![ColorTargetKey::from(wgpu::ColorTargetState {
+                    format: NORMAL_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })]
+            } else {
+                smallvec::smallvec![]
+            };
 
             // ── Pipeline key ───────────────────────────────────────────
             let prepass_key = SimpleGeometryPipelineKey {
@@ -251,6 +250,8 @@ impl DepthNormalPrepass {
                 topology: geometry.topology,
                 cull_mode,
                 front_face,
+
+                sample_count: ctx.wgpu_ctx.msaa_samples,
             };
 
             let pipeline_id = ctx.pipeline_cache.get_or_create_simple_geometry(
@@ -420,11 +421,10 @@ impl RenderNode for DepthNormalPrepass {
         );
 
         for cmd in &render_lists.opaque {
-            let Some(&prepass_pipeline_id) = self.local_cache.get(&(
-                cmd.pipeline_id,
-                self.needs_normal,
-                self.needs_feature_id,
-            )) else {
+            let Some(&prepass_pipeline_id) =
+                self.local_cache
+                    .get(&(cmd.pipeline_id, self.needs_normal, self.needs_feature_id))
+            else {
                 continue;
             };
 
