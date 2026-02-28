@@ -26,7 +26,7 @@ use rustc_hash::FxHashMap;
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::renderer::core::{BindGroupContext, RenderView, ResourceManager};
 use crate::renderer::graph::transient_pool::TransientTextureId;
-use crate::renderer::pipeline::RenderPipelineId;
+use crate::renderer::pipeline::{PipelineCache, RenderPipelineId};
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
@@ -161,8 +161,8 @@ pub struct ShadowLightInstance {
 /// [`SimpleForwardPass::run()`] to draw the skybox between
 /// opaque and transparent objects within a single render pass.
 pub struct PreparedSkyboxDraw {
-    /// The skybox render pipeline (variant-specific).
-    pub pipeline: wgpu::RenderPipeline,
+    /// The skybox render pipeline ID (variant-specific, resolved via `PipelineCache`).
+    pub pipeline_id: RenderPipelineId,
     /// The skybox bind group (uniforms + optional texture/sampler).
     pub bind_group: wgpu::BindGroup,
 }
@@ -172,8 +172,10 @@ impl PreparedSkyboxDraw {
         &'a self,
         pass: &mut wgpu::RenderPass<'a>,
         global_bind_group: &'a wgpu::BindGroup,
+        pipeline_cache: &'a PipelineCache,
     ) {
-        pass.set_pipeline(&self.pipeline);
+        let pipeline = pipeline_cache.get_render_pipeline(self.pipeline_id);
+        pass.set_pipeline(pipeline);
         pass.set_bind_group(0, global_bind_group, &[]);
         pass.set_bind_group(1, &self.bind_group, &[]);
         pass.draw(0..3, 0..1);

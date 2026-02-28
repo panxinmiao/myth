@@ -1,22 +1,15 @@
 use crate::renderer::graph::RenderNode;
 use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
-use std::borrow::Cow;
+use crate::renderer::pipeline::{ComputePipelineId, ComputePipelineKey};
 
 pub struct BRDFLutComputePass {
-    pipeline: wgpu::ComputePipeline,
+    pipeline_id: Option<ComputePipelineId>,
     bind_group_layout: wgpu::BindGroupLayout,
 }
 
 impl BRDFLutComputePass {
     #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
-        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("BRDF LUT Shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                "../../pipeline/shaders/program/brdf_lut.wgsl"
-            ))),
-        });
-
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("BRDF LUT Layout"),
             entries: &[wgpu::BindGroupLayoutEntry {
@@ -31,25 +24,40 @@ impl BRDFLutComputePass {
             }],
         });
 
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("BRDF LUT Pipeline Layout"),
-            bind_group_layouts: &[&bind_group_layout],
-            immediate_size: 0,
-        });
-
-        let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("BRDF LUT Pipeline"),
-            layout: Some(&layout),
-            module: &shader,
-            entry_point: Some("main"),
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-            cache: None,
-        });
-
         Self {
-            pipeline,
+            pipeline_id: None,
             bind_group_layout,
         }
+    }
+
+    /// Ensures the compute pipeline is created via the global `PipelineCache`.
+    fn ensure_pipeline(&mut self, ctx: &mut PrepareContext) {
+        if self.pipeline_id.is_some() {
+            return;
+        }
+
+        let source = include_str!("../../pipeline/shaders/program/brdf_lut.wgsl");
+        let (module, shader_hash) = ctx
+            .shader_manager
+            .get_or_compile_raw(&ctx.wgpu_ctx.device, "BRDF LUT Shader", source);
+
+        let layout = ctx
+            .wgpu_ctx
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("BRDF LUT Pipeline Layout"),
+                bind_group_layouts: &[&self.bind_group_layout],
+                immediate_size: 0,
+            });
+
+        let key = ComputePipelineKey { shader_hash };
+        self.pipeline_id = Some(ctx.pipeline_cache.get_or_create_compute(
+            &ctx.wgpu_ctx.device,
+            module,
+            &layout,
+            &key,
+            "BRDF LUT Pipeline",
+        ));
     }
 }
 
@@ -62,6 +70,13 @@ impl RenderNode for BRDFLutComputePass {
         if !ctx.resource_manager.needs_brdf_compute {
             return;
         }
+
+        // Ensure pipeline exists (lazy creation via PipelineCache)
+        self.ensure_pipeline(ctx);
+
+        let pipeline = ctx
+            .pipeline_cache
+            .get_compute_pipeline(self.pipeline_id.expect("Pipeline must exist after ensure"));
 
         let texture = ctx
             .resource_manager
@@ -96,7 +111,7 @@ impl RenderNode for BRDFLutComputePass {
                 label: Some("BRDF LUT Pass"),
                 timestamp_writes: None,
             });
-            cpass.set_pipeline(&self.pipeline);
+            cpass.set_pipeline(pipeline);
             cpass.set_bind_group(0, &bind_group, &[]);
             cpass.dispatch_workgroups(size / 8, size / 8, 1);
         }

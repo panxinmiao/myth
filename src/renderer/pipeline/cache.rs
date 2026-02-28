@@ -469,7 +469,7 @@ impl PipelineCache {
                 compilation_options: wgpu::PipelineCompilationOptions::default(),
             }),
             primitive: wgpu::PrimitiveState {
-                topology: canonical_key.topology,
+                topology: canonical_key.primitive_topology,
                 front_face: canonical_key.front_face,
                 cull_mode: canonical_key.cull_mode,
                 ..Default::default()

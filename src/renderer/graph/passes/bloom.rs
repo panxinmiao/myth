@@ -39,8 +39,6 @@
 //! - Only 2 BindGroups created per frame (first downsample + composite, both
 //!   depend on the ping-pong scene color view)
 
-use std::borrow::Cow;
-
 use crate::define_gpu_data_struct;
 use crate::render::RenderNode;
 use crate::renderer::HDR_TEXTURE_FORMAT;
@@ -48,8 +46,7 @@ use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTextureId};
-use crate::renderer::pipeline::ShaderCompilationOptions;
-use crate::renderer::pipeline::shader_gen::ShaderGenerator;
+use crate::renderer::pipeline::{ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions};
 use crate::resources::WgslType;
 use crate::resources::bloom::{CompositeUniforms, UpsampleUniforms};
 use crate::resources::buffer::CpuBuffer;
@@ -79,10 +76,10 @@ define_gpu_data_struct!(
 /// created per-frame because they reference the ping-pong scene color view
 /// which alternates each frame.
 pub struct BloomPass {
-    // === Pipelines (created once, cached) ===
-    downsample_pipeline: Option<wgpu::RenderPipeline>,
-    upsample_pipeline: Option<wgpu::RenderPipeline>,
-    composite_pipeline: Option<wgpu::RenderPipeline>,
+    // === Pipelines (cached as IDs in the global PipelineCache) ===
+    downsample_pipeline: Option<RenderPipelineId>,
+    upsample_pipeline: Option<RenderPipelineId>,
+    composite_pipeline: Option<RenderPipelineId>,
 
     // === Bind Group Layouts ===
     downsample_layout: Tracked<wgpu::BindGroupLayout>,
@@ -305,10 +302,31 @@ impl BloomPass {
     // Pipeline Creation
     // =========================================================================
 
-    fn ensure_pipelines(&mut self, device: &wgpu::Device) {
+    fn ensure_pipelines(&mut self, ctx: &mut PrepareContext) {
         if self.downsample_pipeline.is_some() {
             return;
         }
+
+        let device = &ctx.wgpu_ctx.device;
+
+        let color_target_replace = ColorTargetKey::from(wgpu::ColorTargetState {
+            format: HDR_TEXTURE_FORMAT,
+            blend: Some(wgpu::BlendState::REPLACE),
+            write_mask: wgpu::ColorWrites::ALL,
+        });
+
+        let color_target_additive = ColorTargetKey::from(wgpu::ColorTargetState {
+            format: HDR_TEXTURE_FORMAT,
+            blend: Some(wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::One,
+                    dst_factor: wgpu::BlendFactor::One,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent::OVER,
+            }),
+            write_mask: wgpu::ColorWrites::ALL,
+        });
 
         // --- Downsample pipeline ---
         let mut ds_options = ShaderCompilationOptions::default();
@@ -316,12 +334,6 @@ impl BloomPass {
             "struct_definitions",
             DownsampleUniforms::wgsl_struct_def("DownsampleUniforms").as_str(),
         );
-        let downsample_shader_code =
-            ShaderGenerator::generate_shader("", "", "passes/bloom_downsample", &ds_options);
-        let downsample_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Bloom Downsample Shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Owned(downsample_shader_code)),
-        });
 
         let downsample_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -330,32 +342,27 @@ impl BloomPass {
                 immediate_size: 0,
             });
 
-        self.downsample_pipeline = Some(device.create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("Bloom Downsample Pipeline"),
-                layout: Some(&downsample_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &downsample_module,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &downsample_module,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_TEXTURE_FORMAT,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            },
+        let (ds_module, ds_hash) = ctx.shader_manager.get_or_compile_template(
+            device,
+            "passes/bloom_downsample",
+            &ds_options,
+            "",
+            "",
+        );
+
+        let ds_key = FullscreenPipelineKey::fullscreen(
+            ds_hash,
+            smallvec::smallvec![color_target_replace.clone()],
+            None,
+        );
+
+        self.downsample_pipeline = Some(ctx.pipeline_cache.get_or_create_fullscreen(
+            device,
+            ds_module,
+            &downsample_pipeline_layout,
+            &ds_key,
+            "Bloom Downsample Pipeline",
+            &[],
         ));
 
         // --- Upsample pipeline (additive blend) ---
@@ -364,12 +371,6 @@ impl BloomPass {
             "struct_definitions",
             UpsampleUniforms::wgsl_struct_def("UpsampleUniforms").as_str(),
         );
-        let upsample_shader_code =
-            ShaderGenerator::generate_shader("", "", "passes/bloom_upsample", &us_options);
-        let upsample_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Bloom Upsample Shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Owned(upsample_shader_code)),
-        });
 
         let upsample_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -378,40 +379,27 @@ impl BloomPass {
                 immediate_size: 0,
             });
 
-        self.upsample_pipeline = Some(device.create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("Bloom Upsample Pipeline"),
-                layout: Some(&upsample_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &upsample_module,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &upsample_module,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_TEXTURE_FORMAT,
-                        // Additive blend: src + dst
-                        blend: Some(wgpu::BlendState {
-                            color: wgpu::BlendComponent {
-                                src_factor: wgpu::BlendFactor::One,
-                                dst_factor: wgpu::BlendFactor::One,
-                                operation: wgpu::BlendOperation::Add,
-                            },
-                            alpha: wgpu::BlendComponent::OVER,
-                        }),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            },
+        let (us_module, us_hash) = ctx.shader_manager.get_or_compile_template(
+            device,
+            "passes/bloom_upsample",
+            &us_options,
+            "",
+            "",
+        );
+
+        let us_key = FullscreenPipelineKey::fullscreen(
+            us_hash,
+            smallvec::smallvec![color_target_additive],
+            None,
+        );
+
+        self.upsample_pipeline = Some(ctx.pipeline_cache.get_or_create_fullscreen(
+            device,
+            us_module,
+            &upsample_pipeline_layout,
+            &us_key,
+            "Bloom Upsample Pipeline",
+            &[],
         ));
 
         // --- Composite pipeline ---
@@ -420,12 +408,6 @@ impl BloomPass {
             "struct_definitions",
             CompositeUniforms::wgsl_struct_def("CompositeUniforms").as_str(),
         );
-        let composite_shader_code =
-            ShaderGenerator::generate_shader("", "", "passes/bloom_composite", &comp_options);
-        let composite_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("Bloom Composite Shader"),
-            source: wgpu::ShaderSource::Wgsl(Cow::Owned(composite_shader_code)),
-        });
 
         let composite_pipeline_layout =
             device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -434,32 +416,27 @@ impl BloomPass {
                 immediate_size: 0,
             });
 
-        self.composite_pipeline = Some(device.create_render_pipeline(
-            &wgpu::RenderPipelineDescriptor {
-                label: Some("Bloom Composite Pipeline"),
-                layout: Some(&composite_pipeline_layout),
-                vertex: wgpu::VertexState {
-                    module: &composite_module,
-                    entry_point: Some("vs_main"),
-                    buffers: &[],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                },
-                fragment: Some(wgpu::FragmentState {
-                    module: &composite_module,
-                    entry_point: Some("fs_main"),
-                    targets: &[Some(wgpu::ColorTargetState {
-                        format: HDR_TEXTURE_FORMAT,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    })],
-                    compilation_options: wgpu::PipelineCompilationOptions::default(),
-                }),
-                primitive: wgpu::PrimitiveState::default(),
-                depth_stencil: None,
-                multisample: wgpu::MultisampleState::default(),
-                multiview_mask: None,
-                cache: None,
-            },
+        let (comp_module, comp_hash) = ctx.shader_manager.get_or_compile_template(
+            device,
+            "passes/bloom_composite",
+            &comp_options,
+            "",
+            "",
+        );
+
+        let comp_key = FullscreenPipelineKey::fullscreen(
+            comp_hash,
+            smallvec::smallvec![color_target_replace],
+            None,
+        );
+
+        self.composite_pipeline = Some(ctx.pipeline_cache.get_or_create_fullscreen(
+            device,
+            comp_module,
+            &composite_pipeline_layout,
+            &comp_key,
+            "Bloom Composite Pipeline",
+            &[],
         ));
     }
 
@@ -756,10 +733,8 @@ impl RenderNode for BloomPass {
         }
         self.enabled = true;
 
-        let device = &ctx.wgpu_ctx.device;
-
         // 1. Ensure pipelines exist
-        self.ensure_pipelines(device);
+        self.ensure_pipelines(ctx);
 
         // 2. Ensure all GPU buffers are synced
         //    - Static karis buffers: written once at creation, only synced on first frame
@@ -795,13 +770,13 @@ impl RenderNode for BloomPass {
             return;
         }
 
-        let Some(downsample_pipeline) = &self.downsample_pipeline else {
+        let Some(downsample_pipeline_id) = self.downsample_pipeline else {
             return;
         };
-        let Some(upsample_pipeline) = &self.upsample_pipeline else {
+        let Some(upsample_pipeline_id) = self.upsample_pipeline else {
             return;
         };
-        let Some(composite_pipeline) = &self.composite_pipeline else {
+        let Some(composite_pipeline_id) = self.composite_pipeline else {
             return;
         };
         let Some(composite_bind_group) = &self.composite_bind_group else {
@@ -813,6 +788,10 @@ impl RenderNode for BloomPass {
         let Some(bloom_id) = self.bloom_texture_id else {
             return;
         };
+
+        let downsample_pipeline = ctx.pipeline_cache.get_render_pipeline(downsample_pipeline_id);
+        let upsample_pipeline = ctx.pipeline_cache.get_render_pipeline(upsample_pipeline_id);
+        let composite_pipeline = ctx.pipeline_cache.get_render_pipeline(composite_pipeline_id);
 
         // =====================================================================
         // Phase 1: Downsample — Scene HDR → Bloom Mip Chain

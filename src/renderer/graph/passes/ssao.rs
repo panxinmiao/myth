@@ -31,15 +31,14 @@
 //! - The bilateral blur is a single-pass 5×5 filter (no separable passes
 //!   needed at this kernel size)
 
-use std::borrow::Cow;
-
 use crate::render::RenderNode;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
 use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTextureId};
-use crate::renderer::pipeline::ShaderCompilationOptions;
-use crate::renderer::pipeline::shader_gen::ShaderGenerator;
+use crate::renderer::pipeline::{
+    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
+};
 use crate::resources::ssao::{SsaoUniforms, generate_ssao_noise};
 use crate::resources::uniforms::WgslStruct;
 
@@ -56,9 +55,9 @@ const SSAO_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 /// so that `FrameResources` can bind it into the `screen_bind_group`
 /// at group 3 binding 2.
 pub struct SsaoPass {
-    // === Pipelines (created once, cached) ===
-    raw_pipeline: Option<wgpu::RenderPipeline>,
-    blur_pipeline: Option<wgpu::RenderPipeline>,
+    // === Pipelines (cached as IDs in the global PipelineCache) ===
+    raw_pipeline: Option<RenderPipelineId>,
+    blur_pipeline: Option<RenderPipelineId>,
 
     // === Bind Group Layouts ===
     raw_layout: Tracked<wgpu::BindGroupLayout>,
@@ -324,7 +323,7 @@ impl SsaoPass {
     // Pipeline Creation
     // =========================================================================
 
-    fn ensure_pipelines(&mut self, ctx: &PrepareContext) {
+    fn ensure_pipelines(&mut self, ctx: &mut PrepareContext) {
         if self.raw_pipeline.is_some() {
             return;
         }
@@ -336,6 +335,12 @@ impl SsaoPass {
             .get_global_state(ctx.render_state.id, ctx.scene.id)
             .expect("Global state must exist");
 
+        let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
+            format: SSAO_TEXTURE_FORMAT,
+            blend: Some(wgpu::BlendState::REPLACE),
+            write_mask: wgpu::ColorWrites::ALL,
+        });
+
         // --- Raw SSAO Pipeline ---
         {
             let mut options = ShaderCompilationOptions::default();
@@ -344,17 +349,13 @@ impl SsaoPass {
                 SsaoUniforms::wgsl_struct_def("SsaoUniforms").as_str(),
             );
 
-            let shader_code = ShaderGenerator::generate_shader(
-                "",
-                &gpu_world.binding_wgsl,
+            let (module, shader_hash) = ctx.shader_manager.get_or_compile_template(
+                device,
                 "passes/ssao_raw",
                 &options,
+                "",
+                &gpu_world.binding_wgsl,
             );
-
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("SSAO Raw Shader"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_code)),
-            });
 
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("SSAO Raw Pipeline Layout"),
@@ -366,48 +367,31 @@ impl SsaoPass {
                 immediate_size: 0,
             });
 
-            self.raw_pipeline = Some(device.create_render_pipeline(
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some("SSAO Raw Pipeline"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &module,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &module,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: SSAO_TEXTURE_FORMAT,
-                            blend: Some(wgpu::BlendState::REPLACE),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                },
+            let key = FullscreenPipelineKey::fullscreen(
+                shader_hash,
+                smallvec::smallvec![color_target.clone()],
+                None,
+            );
+
+            self.raw_pipeline = Some(ctx.pipeline_cache.get_or_create_fullscreen(
+                device,
+                module,
+                &pipeline_layout,
+                &key,
+                "SSAO Raw Pipeline",
+                &[],
             ));
         }
 
         // --- Bilateral Blur Pipeline ---
         {
-            let shader_code = ShaderGenerator::generate_shader(
-                "",
-                "",
+            let (module, shader_hash) = ctx.shader_manager.get_or_compile_template(
+                device,
                 "passes/ssao_blur",
                 &ShaderCompilationOptions::default(),
+                "",
+                "",
             );
-
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("SSAO Blur Shader"),
-                source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_code)),
-            });
 
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("SSAO Blur Pipeline Layout"),
@@ -415,32 +399,19 @@ impl SsaoPass {
                 immediate_size: 0,
             });
 
-            self.blur_pipeline = Some(device.create_render_pipeline(
-                &wgpu::RenderPipelineDescriptor {
-                    label: Some("SSAO Blur Pipeline"),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &module,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &module,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: SSAO_TEXTURE_FORMAT,
-                            blend: Some(wgpu::BlendState::REPLACE),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                },
+            let key = FullscreenPipelineKey::fullscreen(
+                shader_hash,
+                smallvec::smallvec![color_target],
+                None,
+            );
+
+            self.blur_pipeline = Some(ctx.pipeline_cache.get_or_create_fullscreen(
+                device,
+                module,
+                &pipeline_layout,
+                &key,
+                "SSAO Blur Pipeline",
+                &[],
             ));
         }
     }
@@ -671,10 +642,10 @@ impl RenderNode for SsaoPass {
             return;
         }
 
-        let Some(raw_pipeline) = &self.raw_pipeline else {
+        let Some(raw_pipeline_id) = self.raw_pipeline else {
             return;
         };
-        let Some(blur_pipeline) = &self.blur_pipeline else {
+        let Some(blur_pipeline_id) = self.blur_pipeline else {
             return;
         };
         let Some(raw_bg) = &self.raw_bind_group else {
@@ -691,6 +662,9 @@ impl RenderNode for SsaoPass {
         let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {
             return;
         };
+
+        let raw_pipeline = ctx.pipeline_cache.get_render_pipeline(raw_pipeline_id);
+        let blur_pipeline = ctx.pipeline_cache.get_render_pipeline(blur_pipeline_id);
 
         // =====================================================================
         // Sub-Pass 1: Raw SSAO

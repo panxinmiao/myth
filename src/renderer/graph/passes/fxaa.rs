@@ -28,8 +28,6 @@
 //! - Zero uniform buffers — all parameters are compile-time constants
 //! - Uses `textureSampleLevel` with integer offsets for cache-friendly sampling
 
-use std::borrow::Cow;
-
 use rustc_hash::FxHashMap;
 
 use crate::render::RenderNode;
@@ -37,8 +35,9 @@ use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, PrepareContext};
 use crate::renderer::graph::transient_pool::TransientTextureId;
-use crate::renderer::pipeline::ShaderCompilationOptions;
-use crate::renderer::pipeline::shader_gen::ShaderGenerator;
+use crate::renderer::pipeline::{
+    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
+};
 use crate::resources::fxaa::FxaaQuality;
 
 /// Pipeline cache key: (quality, output_format).
@@ -65,14 +64,14 @@ pub struct FxaaPass {
     // === Cache State ===
     /// Current quality level (mirrors `Scene.fxaa.quality()`)
     current_quality: FxaaQuality,
-    /// Cached pipelines by (quality, format) — typically 1 entry
-    pipeline_cache: FxHashMap<PipelineCacheKey, wgpu::RenderPipeline>,
+    /// Cached pipeline IDs by (quality, format) — typically 1 entry
+    local_cache: FxHashMap<PipelineCacheKey, RenderPipelineId>,
 
     // === Runtime State (set during prepare, used during run) ===
     /// Current frame's bind group
     current_bind_group: Option<wgpu::BindGroup>,
-    /// Current frame's pipeline
-    current_pipeline: Option<wgpu::RenderPipeline>,
+    /// Current frame's pipeline ID
+    current_pipeline: Option<RenderPipelineId>,
 
     /// Input transient texture ID (set by the graph wiring code before prepare)
     pub input_texture_id: Option<TransientTextureId>,
@@ -123,7 +122,7 @@ impl FxaaPass {
             layout: Tracked::new(layout),
             sampler: Tracked::new(sampler),
             current_quality: FxaaQuality::default(),
-            pipeline_cache: FxHashMap::default(),
+            local_cache: FxHashMap::default(),
             current_pipeline: None,
             current_bind_group: None,
             input_texture_id: None,
@@ -131,11 +130,11 @@ impl FxaaPass {
     }
 
     /// Gets or creates a pipeline for the current quality and format.
-    fn get_or_create_pipeline(&mut self, ctx: &PrepareContext) -> wgpu::RenderPipeline {
+    fn get_or_create_pipeline(&mut self, ctx: &mut PrepareContext) -> RenderPipelineId {
         let cache_key = (self.current_quality, ctx.wgpu_ctx.surface_view_format);
 
-        if let Some(pipeline) = self.pipeline_cache.get(&cache_key) {
-            return pipeline.clone();
+        if let Some(&id) = self.local_cache.get(&cache_key) {
+            return id;
         }
 
         log::debug!(
@@ -144,6 +143,8 @@ impl FxaaPass {
             ctx.wgpu_ctx.surface_view_format,
         );
 
+        let device = &ctx.wgpu_ctx.device;
+
         let mut options = ShaderCompilationOptions::default();
 
         // Only Low and High need explicit defines; Medium is the default in the shader
@@ -151,56 +152,44 @@ impl FxaaPass {
             options.add_define(self.current_quality.define_key(), "1");
         }
 
-        let shader_code = ShaderGenerator::generate_shader("", "", "passes/fxaa", &options);
-
-        let shader = ctx
-            .wgpu_ctx
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(&format!("FXAA Shader {:?}", self.current_quality)),
-                source: wgpu::ShaderSource::Wgsl(Cow::Owned(shader_code)),
-            });
+        let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
+            device,
+            "passes/fxaa",
+            &options,
+            "",
+            "",
+        );
 
         let pipeline_layout =
-            ctx.wgpu_ctx
-                .device
-                .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("FXAA Pipeline Layout"),
-                    bind_group_layouts: &[&self.layout],
-                    immediate_size: 0,
-                });
+            device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("FXAA Pipeline Layout"),
+                bind_group_layouts: &[&self.layout],
+                immediate_size: 0,
+            });
 
-        let pipeline =
-            ctx.wgpu_ctx
-                .device
-                .create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-                    label: Some(&format!("FXAA Pipeline {:?}", self.current_quality)),
-                    layout: Some(&pipeline_layout),
-                    vertex: wgpu::VertexState {
-                        module: &shader,
-                        entry_point: Some("vs_main"),
-                        buffers: &[],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    },
-                    fragment: Some(wgpu::FragmentState {
-                        module: &shader,
-                        entry_point: Some("fs_main"),
-                        targets: &[Some(wgpu::ColorTargetState {
-                            format: ctx.wgpu_ctx.surface_view_format,
-                            blend: Some(wgpu::BlendState::REPLACE),
-                            write_mask: wgpu::ColorWrites::ALL,
-                        })],
-                        compilation_options: wgpu::PipelineCompilationOptions::default(),
-                    }),
-                    primitive: wgpu::PrimitiveState::default(),
-                    depth_stencil: None,
-                    multisample: wgpu::MultisampleState::default(),
-                    multiview_mask: None,
-                    cache: None,
-                });
+        let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
+            format: ctx.wgpu_ctx.surface_view_format,
+            blend: Some(wgpu::BlendState::REPLACE),
+            write_mask: wgpu::ColorWrites::ALL,
+        });
 
-        self.pipeline_cache.insert(cache_key, pipeline.clone());
-        pipeline
+        let key = FullscreenPipelineKey::fullscreen(
+            shader_hash,
+            smallvec::smallvec![color_target],
+            None,
+        );
+
+        let id = ctx.pipeline_cache.get_or_create_fullscreen(
+            device,
+            shader_module,
+            &pipeline_layout,
+            &key,
+            &format!("FXAA Pipeline {:?}", self.current_quality),
+            &[],
+        );
+
+        self.local_cache.insert(cache_key, id);
+        id
     }
 }
 
@@ -265,12 +254,14 @@ impl RenderNode for FxaaPass {
     }
 
     fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let Some(pipeline) = &self.current_pipeline else {
+        let Some(pipeline_id) = self.current_pipeline else {
             return;
         };
         let Some(bind_group) = &self.current_bind_group else {
             return;
         };
+
+        let pipeline = ctx.pipeline_cache.get_render_pipeline(pipeline_id);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("FXAA Pass"),
