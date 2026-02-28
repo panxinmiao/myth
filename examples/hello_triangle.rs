@@ -24,19 +24,19 @@ impl AppHandler for HelloTriangle {
             ),
         );
 
-        // 2. Create basic material with a solid color texture
+        // 2. Create unlit material with a solid color texture
         let texture = Texture::create_solid_color(Some("red_tex"), [255, 0, 0, 255]);
-        let mut basic_mat = Material::new_basic(Vec4::new(1.0, 1.0, 1.0, 1.0));
+        let mut unlit_mat = Material::new_unlit(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         // 3. Add resources to AssetServer
         let tex_handle = engine.assets.textures.add(texture);
 
-        if let Some(basic) = basic_mat.as_basic_mut() {
-            basic.set_map(Some(tex_handle));
+        if let Some(unlit) = unlit_mat.as_unlit_mut() {
+            unlit.set_map(Some(tex_handle));
         }
 
         let geo_handle = engine.assets.geometries.add(geometry);
-        let mat_handle = engine.assets.materials.add(basic_mat);
+        let mat_handle = engine.assets.materials.add(unlit_mat);
 
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();

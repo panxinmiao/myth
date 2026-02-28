@@ -444,9 +444,9 @@ define_gpu_data_struct!(
     }
 );
 
-// Basic Material
+// Unlit Material
 define_gpu_data_struct!(
-    struct MeshBasicUniforms {
+    struct UnlitUniforms {
         pub color: Vec4 = Vec4::ONE,           // 16
 
         pub opacity: f32 = 1.0,          // 4
@@ -459,7 +459,7 @@ define_gpu_data_struct!(
 
 // Phong Material
 define_gpu_data_struct!(
-    struct MeshPhongUniforms {
+    struct PhongUniforms {
         pub color: Vec4 = Vec4::ONE,
 
         pub specular: Vec3 = Vec3::splat(0.06667),  // 0x111111. Represents non-metallic (dielectric) materials like plastic, rock, or water
@@ -513,7 +513,7 @@ define_gpu_data_struct!(
 );
 
 define_gpu_data_struct!(
-    struct MeshPhysicalUniforms {
+    struct PhysicalUniforms {
         pub color: Vec4 = Vec4::ONE,          // 16
 
         pub emissive: Vec3 = Vec3::ZERO,      // 12
@@ -641,7 +641,7 @@ mod tests {
             "Standard Uniforms not aligned to 16 bytes"
         );
         assert_eq!(
-            mem::size_of::<MeshBasicUniforms>() % 16,
+            mem::size_of::<UnlitUniforms>() % 16,
             0,
             "Basic Uniforms not aligned to 16 bytes"
         );

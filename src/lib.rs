@@ -19,7 +19,7 @@
 //!         
 //!         // Add a cube
 //!         let geometry = Geometry::new_box(1.0, 1.0, 1.0);
-//!         let material = Material::new_basic(Vec4::new(1.0, 0.5, 0.2, 1.0));
+//!         let material = Material::new_unlit(Vec4::new(1.0, 0.5, 0.2, 1.0));
 //!         let mesh = Mesh::new(
 //!             engine.assets.geometries.add(geometry),
 //!             engine.assets.materials.add(material),
@@ -150,8 +150,8 @@ pub mod prelude {
     // Resources
     pub use crate::resources::{
         AlphaMode, BloomSettings, FxaaQuality, FxaaSettings, Geometry, Image, Material,
-        MaterialType, Mesh, MeshBasicMaterial, MeshPhongMaterial, MeshPhysicalMaterial, Side,
-        SsaoSettings, Texture, TextureSlot,
+        MaterialType, Mesh, PhongMaterial, PhysicalMaterial, Side, SsaoSettings, Texture,
+        TextureSlot, UnlitMaterial,
     };
 
     // Assets
@@ -313,9 +313,8 @@ pub use resources::{
     MaterialTrait,
     MaterialType,
     Mesh,
-    MeshBasicMaterial,
-    MeshPhongMaterial,
-    MeshPhysicalMaterial,
+    PhongMaterial,
+    PhysicalMaterial,
     RenderableMaterialTrait,
     // Geometry primitives
     ShaderDefines,
@@ -326,6 +325,7 @@ pub use resources::{
     // Tone mapping
     ToneMappingMode,
     ToneMappingSettings,
+    UnlitMaterial,
 };
 
 // Primitives - Geometry creation functions

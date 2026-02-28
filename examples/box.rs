@@ -16,7 +16,7 @@ impl AppHandler for TexturedBox {
         let scene = engine.scene_manager.create_active();
 
         // spawn + builder material
-        let mat = MeshBasicMaterial::new(Vec4::ONE).with_map(tex_handle);
+        let mat = UnlitMaterial::new(Vec4::ONE).with_map(tex_handle);
         let cube_node_id = scene.spawn_box(2.0, 2.0, 2.0, mat);
 
         let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));

@@ -1020,7 +1020,7 @@ impl Scene {
     /// // Pass structs (auto-registered):
     /// let cube = scene.spawn(
     ///     Geometry::new_box(1.0, 1.0, 1.0),
-    ///     MeshPhongMaterial::new(Vec4::ONE),
+    ///     PhongMaterial::new(Vec4::ONE),
     /// );
     ///
     /// // Or pass existing handles:

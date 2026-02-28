@@ -1,12 +1,12 @@
-mod basic;
 mod macros;
 mod phong;
 mod physical;
+mod unlit;
 use parking_lot::RwLockWriteGuard;
 
-pub use basic::MeshBasicMaterial;
-pub use phong::MeshPhongMaterial;
-pub use physical::{MeshPhysicalMaterial, PhysicalFeatures};
+pub use phong::PhongMaterial;
+pub use physical::{PhysicalFeatures, PhysicalMaterial};
+pub use unlit::UnlitMaterial;
 
 use std::{
     any::Any,
@@ -279,7 +279,7 @@ pub trait MaterialTrait: Any + Send + Sync + std::fmt::Debug {
 /// 3. Define your uniform struct with `#[repr(C)]` and `bytemuck`
 /// 4. Create a corresponding shader template
 ///
-/// See `MeshPhysicalMaterial` for a reference implementation.
+/// See `PhysicalMaterial` for a reference implementation.
 pub trait RenderableMaterialTrait: MaterialTrait {
     /// Returns the shader template name.
     fn shader_name(&self) -> &'static str;
@@ -423,23 +423,23 @@ impl Drop for SettingsGuard<'_> {
 /// Material data enum with hybrid dispatch strategy.
 ///
 /// Uses "static dispatch + dynamic escape hatch" approach:
-/// - Built-in materials (Basic/Phong/Physical) use static dispatch for performance
+/// - Built-in materials (Unlit/Phong/Physical) use static dispatch for performance
 /// - Custom variant allows user-defined materials via dynamic dispatch
 ///
 /// # Built-in Materials
 ///
-/// - [`MeshBasicMaterial`]: Unlit, flat-shaded material
-/// - [`MeshPhongMaterial`]: Classic Blinn-Phong shading
-/// - [`MeshPhysicalMaterial`]: PBR material with metallic-roughness workflow, clearcoat, transmission, etc.
+/// - [`UnlitMaterial`]: Unlit, flat-shaded material
+/// - [`PhongMaterial`]: Classic Blinn-Phong shading
+/// - [`PhysicalMaterial`]: PBR material with metallic-roughness workflow, clearcoat, transmission, etc.
 #[derive(Debug)]
 #[allow(clippy::large_enum_variant)]
 pub enum MaterialType {
     /// Unlit material (no lighting calculations)
-    Basic(MeshBasicMaterial),
+    Unlit(UnlitMaterial),
     /// Classic Blinn-Phong shading model
-    Phong(MeshPhongMaterial),
+    Phong(PhongMaterial),
     /// Advanced PBR material with additional features
-    Physical(MeshPhysicalMaterial),
+    Physical(PhysicalMaterial),
     /// User-defined custom material
     Custom(Box<dyn RenderableMaterialTrait>),
 }
@@ -447,7 +447,7 @@ pub enum MaterialType {
 impl MaterialTrait for MaterialType {
     fn as_any(&self) -> &dyn Any {
         match self {
-            Self::Basic(m) => m.as_any(),
+            Self::Unlit(m) => m.as_any(),
             Self::Phong(m) => m.as_any(),
             Self::Physical(m) => m.as_any(),
             Self::Custom(m) => m.as_any(),
@@ -456,7 +456,7 @@ impl MaterialTrait for MaterialType {
 
     fn as_any_mut(&mut self) -> &mut dyn Any {
         match self {
-            Self::Basic(m) => m.as_any_mut(),
+            Self::Unlit(m) => m.as_any_mut(),
             Self::Phong(m) => m.as_any_mut(),
             Self::Physical(m) => m.as_any_mut(),
             Self::Custom(m) => m.as_any_mut(),
@@ -467,7 +467,7 @@ impl MaterialTrait for MaterialType {
 impl RenderableMaterialTrait for MaterialType {
     fn shader_name(&self) -> &'static str {
         match self {
-            Self::Basic(m) => m.shader_name(),
+            Self::Unlit(m) => m.shader_name(),
             Self::Phong(m) => m.shader_name(),
             Self::Physical(m) => m.shader_name(),
             Self::Custom(m) => m.shader_name(),
@@ -476,7 +476,7 @@ impl RenderableMaterialTrait for MaterialType {
 
     fn version(&self) -> u64 {
         match self {
-            Self::Basic(m) => m.version(),
+            Self::Unlit(m) => m.version(),
             Self::Phong(m) => m.version(),
             Self::Physical(m) => m.version(),
             Self::Custom(m) => m.version(),
@@ -485,7 +485,7 @@ impl RenderableMaterialTrait for MaterialType {
 
     fn shader_defines(&self) -> ShaderDefines {
         match self {
-            Self::Basic(m) => m.shader_defines(),
+            Self::Unlit(m) => m.shader_defines(),
             Self::Phong(m) => m.shader_defines(),
             Self::Physical(m) => m.shader_defines(),
             Self::Custom(m) => m.shader_defines(),
@@ -494,7 +494,7 @@ impl RenderableMaterialTrait for MaterialType {
 
     fn settings(&self) -> MaterialSettings {
         match self {
-            Self::Basic(m) => m.settings(),
+            Self::Unlit(m) => m.settings(),
             Self::Phong(m) => m.settings(),
             Self::Physical(m) => m.settings(),
             Self::Custom(m) => m.settings(),
@@ -503,7 +503,7 @@ impl RenderableMaterialTrait for MaterialType {
 
     fn visit_textures(&self, visitor: &mut dyn FnMut(&TextureSource)) {
         match self {
-            Self::Basic(m) => m.visit_textures(visitor),
+            Self::Unlit(m) => m.visit_textures(visitor),
             Self::Phong(m) => m.visit_textures(visitor),
             Self::Physical(m) => m.visit_textures(visitor),
             Self::Custom(m) => m.visit_textures(visitor),
@@ -512,7 +512,7 @@ impl RenderableMaterialTrait for MaterialType {
 
     fn define_bindings<'a>(&'a self, builder: &mut ResourceBuilder<'a>) {
         match self {
-            Self::Basic(m) => m.define_bindings(builder),
+            Self::Unlit(m) => m.define_bindings(builder),
             Self::Phong(m) => m.define_bindings(builder),
             Self::Physical(m) => m.define_bindings(builder),
             Self::Custom(m) => m.define_bindings(builder),
@@ -521,7 +521,7 @@ impl RenderableMaterialTrait for MaterialType {
 
     fn uniform_buffer(&self) -> BufferRef {
         match self {
-            Self::Basic(m) => m.uniform_buffer(),
+            Self::Unlit(m) => m.uniform_buffer(),
             Self::Phong(m) => m.uniform_buffer(),
             Self::Physical(m) => m.uniform_buffer(),
             Self::Custom(m) => m.uniform_buffer(),
@@ -530,7 +530,7 @@ impl RenderableMaterialTrait for MaterialType {
 
     fn with_uniform_bytes(&self, visitor: &mut dyn FnMut(&[u8])) {
         match self {
-            Self::Basic(m) => m.with_uniform_bytes(visitor),
+            Self::Unlit(m) => m.with_uniform_bytes(visitor),
             Self::Phong(m) => m.with_uniform_bytes(visitor),
             Self::Physical(m) => m.with_uniform_bytes(visitor),
             Self::Custom(m) => m.with_uniform_bytes(visitor),
@@ -583,18 +583,18 @@ impl Material {
 
     // Helper constructors
     #[must_use]
-    pub fn new_basic(color: Vec4) -> Self {
-        Self::from(MeshBasicMaterial::new(color))
+    pub fn new_unlit(color: Vec4) -> Self {
+        Self::from(UnlitMaterial::new(color))
     }
 
     #[must_use]
     pub fn new_phong(color: Vec4) -> Self {
-        Self::from(MeshPhongMaterial::new(color))
+        Self::from(PhongMaterial::new(color))
     }
 
     #[must_use]
     pub fn new_physical(color: Vec4) -> Self {
-        Self::from(MeshPhysicalMaterial::new(color))
+        Self::from(PhysicalMaterial::new(color))
     }
 
     /// Exposes the rendering behavior interface
@@ -614,42 +614,42 @@ impl Material {
     }
 
     // Type conversion helper methods
-    pub fn as_basic(&self) -> Option<&MeshBasicMaterial> {
+    pub fn as_unlit(&self) -> Option<&UnlitMaterial> {
         match &self.data {
-            MaterialType::Basic(m) => Some(m),
+            MaterialType::Unlit(m) => Some(m),
             _ => None,
         }
     }
 
-    pub fn as_basic_mut(&mut self) -> Option<&mut MeshBasicMaterial> {
+    pub fn as_unlit_mut(&mut self) -> Option<&mut UnlitMaterial> {
         match &mut self.data {
-            MaterialType::Basic(m) => Some(m),
+            MaterialType::Unlit(m) => Some(m),
             _ => None,
         }
     }
 
-    pub fn as_phong(&self) -> Option<&MeshPhongMaterial> {
+    pub fn as_phong(&self) -> Option<&PhongMaterial> {
         match &self.data {
             MaterialType::Phong(m) => Some(m),
             _ => None,
         }
     }
 
-    pub fn as_phong_mut(&mut self) -> Option<&mut MeshPhongMaterial> {
+    pub fn as_phong_mut(&mut self) -> Option<&mut PhongMaterial> {
         match &mut self.data {
             MaterialType::Phong(m) => Some(m),
             _ => None,
         }
     }
 
-    pub fn as_physical(&self) -> Option<&MeshPhysicalMaterial> {
+    pub fn as_physical(&self) -> Option<&PhysicalMaterial> {
         match &self.data {
             MaterialType::Physical(m) => Some(m),
             _ => None,
         }
     }
 
-    pub fn as_physical_mut(&mut self) -> Option<&mut MeshPhysicalMaterial> {
+    pub fn as_physical_mut(&mut self) -> Option<&mut PhysicalMaterial> {
         match &mut self.data {
             MaterialType::Physical(m) => Some(m),
             _ => None,
@@ -714,7 +714,7 @@ impl Material {
     #[inline]
     pub fn auto_sync_texture_to_uniforms(&self) -> bool {
         match &self.data {
-            MaterialType::Basic(m) => m.auto_sync_texture_to_uniforms,
+            MaterialType::Unlit(m) => m.auto_sync_texture_to_uniforms,
             MaterialType::Phong(m) => m.auto_sync_texture_to_uniforms,
             MaterialType::Physical(m) => m.auto_sync_texture_to_uniforms,
             MaterialType::Custom(_) => false,
@@ -770,20 +770,20 @@ impl Material {
 // Syntax Sugar: Allows direct conversion from concrete material to generic Material
 // ============================================================================
 
-impl From<MeshBasicMaterial> for Material {
-    fn from(data: MeshBasicMaterial) -> Self {
-        Material::new(MaterialType::Basic(data))
+impl From<UnlitMaterial> for Material {
+    fn from(data: UnlitMaterial) -> Self {
+        Material::new(MaterialType::Unlit(data))
     }
 }
 
-impl From<MeshPhongMaterial> for Material {
-    fn from(data: MeshPhongMaterial) -> Self {
+impl From<PhongMaterial> for Material {
+    fn from(data: PhongMaterial) -> Self {
         Material::new(MaterialType::Phong(data))
     }
 }
 
-impl From<MeshPhysicalMaterial> for Material {
-    fn from(data: MeshPhysicalMaterial) -> Self {
+impl From<PhysicalMaterial> for Material {
+    fn from(data: PhysicalMaterial) -> Self {
         Material::new(MaterialType::Physical(data))
     }
 }

@@ -23,7 +23,7 @@ impl AppHandler for PbrBox {
             2.0,
             2.0,
             2.0,
-            MeshPhysicalMaterial::new(Vec4::ONE).with_map(tex_handle),
+            PhysicalMaterial::new(Vec4::ONE).with_map(tex_handle),
         );
 
         scene.add_light(Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 1.0));

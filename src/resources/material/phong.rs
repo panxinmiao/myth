@@ -7,11 +7,11 @@ use crate::assets::TextureHandle;
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::material::{AlphaMode, MaterialSettings, Side, TextureSlot};
 use crate::resources::texture::SamplerSource;
-use crate::resources::uniforms::MeshPhongUniforms;
+use crate::resources::uniforms::PhongUniforms;
 use crate::{impl_material_api, impl_material_trait};
 
 #[derive(Clone, Default, Debug)]
-pub struct MeshPhongTextureSet {
+pub struct PhongTextureSet {
     pub map: TextureSlot,
     pub normal_map: TextureSlot,
     pub specular_map: TextureSlot,
@@ -24,20 +24,20 @@ pub struct MeshPhongTextureSet {
 }
 
 #[derive(Debug)]
-pub struct MeshPhongMaterial {
-    pub(crate) uniforms: CpuBuffer<MeshPhongUniforms>,
+pub struct PhongMaterial {
+    pub(crate) uniforms: CpuBuffer<PhongUniforms>,
     pub(crate) settings: RwLock<MaterialSettings>,
     pub(crate) version: AtomicU64,
 
-    pub(crate) textures: RwLock<MeshPhongTextureSet>,
+    pub(crate) textures: RwLock<PhongTextureSet>,
 
     pub auto_sync_texture_to_uniforms: bool,
 }
 
-impl MeshPhongMaterial {
+impl PhongMaterial {
     #[must_use]
     pub fn new(color: Vec4) -> Self {
-        let uniform_data = MeshPhongUniforms {
+        let uniform_data = PhongUniforms {
             color,
             ..Default::default()
         };
@@ -46,11 +46,11 @@ impl MeshPhongMaterial {
             uniforms: CpuBuffer::new(
                 uniform_data,
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("MeshPhongUniforms"),
+                Some("PhongUniforms"),
             ),
             settings: RwLock::new(MaterialSettings::default()),
             version: AtomicU64::new(0),
-            textures: RwLock::new(MeshPhongTextureSet::default()),
+            textures: RwLock::new(PhongTextureSet::default()),
             auto_sync_texture_to_uniforms: false,
         }
     }
@@ -154,8 +154,8 @@ impl MeshPhongMaterial {
 }
 
 impl_material_api!(
-    MeshPhongMaterial,
-    MeshPhongUniforms,
+    PhongMaterial,
+    PhongUniforms,
     uniforms: [
         (color,              Vec4, "Diffuse color."),
         (alpha_test,         f32,  "Alpha test threshold."),
@@ -175,9 +175,9 @@ impl_material_api!(
 );
 
 impl_material_trait!(
-    MeshPhongMaterial,
-    "templates/mesh_phong",
-    MeshPhongUniforms,
+    PhongMaterial,
+    "templates/phong",
+    PhongUniforms,
     textures: [
         map,
         normal_map,
@@ -186,7 +186,7 @@ impl_material_trait!(
     ]
 );
 
-impl Default for MeshPhongMaterial {
+impl Default for PhongMaterial {
     fn default() -> Self {
         Self::new(Vec4::ONE)
     }

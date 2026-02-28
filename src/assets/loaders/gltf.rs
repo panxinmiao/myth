@@ -11,7 +11,7 @@ use crate::resources::geometry::{Attribute, Geometry};
 use crate::resources::material::AlphaMode;
 use crate::resources::texture::Texture;
 use crate::resources::{
-    Material, MeshPhysicalMaterial, PhysicalFeatures, TextureSampler, TextureSlot, TextureTransform,
+    Material, PhysicalFeatures, PhysicalMaterial, TextureSampler, TextureSlot, TextureTransform,
 };
 use futures::future::try_join_all;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
@@ -272,7 +272,7 @@ pub trait GltfExtensionParser {
         &mut self,
         ctx: &mut LoadContext,
         gltf_mat: &gltf::Material,
-        engine_mat: &MeshPhysicalMaterial,
+        engine_mat: &PhysicalMaterial,
         extension_value: &Value,
     ) -> Result<()> {
         Ok(())
@@ -788,7 +788,7 @@ impl GltfLoader {
         for material in gltf.materials() {
             let pbr = material.pbr_metallic_roughness();
             let base_color_factor = Vec4::from_array(pbr.base_color_factor());
-            let mat = MeshPhysicalMaterial::new(base_color_factor);
+            let mat = PhysicalMaterial::new(base_color_factor);
 
             {
                 let mut uniforms = mat.uniforms.write();
@@ -1543,7 +1543,7 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         &mut self,
         ctx: &mut LoadContext,
         gltf_mat: &gltf::Material,
-        physical_mat: &MeshPhysicalMaterial,
+        physical_mat: &PhysicalMaterial,
         _extension_value: &Value,
     ) -> Result<()> {
         let sg = gltf_mat.pbr_specular_glossiness().ok_or_else(|| {
@@ -1673,7 +1673,7 @@ impl GltfExtensionParser for KhrMaterialsClearcoat {
         &mut self,
         ctx: &mut LoadContext,
         _gltf_mat: &gltf::Material,
-        physical_mat: &MeshPhysicalMaterial,
+        physical_mat: &PhysicalMaterial,
         extension_value: &Value,
     ) -> Result<()> {
         let clearcoat_info = extension_value.as_object().ok_or_else(|| {
@@ -1745,7 +1745,7 @@ impl GltfExtensionParser for KhrMaterialsSheen {
         &mut self,
         ctx: &mut LoadContext,
         _gltf_mat: &gltf::Material,
-        physical_mat: &MeshPhysicalMaterial,
+        physical_mat: &PhysicalMaterial,
         extension_value: &Value,
     ) -> Result<()> {
         let sheen_info = extension_value.as_object().ok_or_else(|| {
@@ -1818,7 +1818,7 @@ impl GltfExtensionParser for KhrMaterialsIridescence {
         &mut self,
         ctx: &mut LoadContext,
         _gltf_mat: &gltf::Material,
-        physical_mat: &MeshPhysicalMaterial,
+        physical_mat: &PhysicalMaterial,
         extension_value: &Value,
     ) -> Result<()> {
         let iridescence_info = extension_value.as_object().ok_or_else(|| {
@@ -1894,7 +1894,7 @@ impl GltfExtensionParser for KhrMaterialsAnisotropy {
         &mut self,
         ctx: &mut LoadContext,
         _gltf_mat: &gltf::Material,
-        physical_mat: &MeshPhysicalMaterial,
+        physical_mat: &PhysicalMaterial,
         extension_value: &Value,
     ) -> Result<()> {
         let anisotropy_info = extension_value.as_object().ok_or_else(|| {
@@ -1948,7 +1948,7 @@ impl GltfExtensionParser for KhrMaterialsTransmission {
         &mut self,
         ctx: &mut LoadContext,
         _gltf_mat: &gltf::Material,
-        physical_mat: &MeshPhysicalMaterial,
+        physical_mat: &PhysicalMaterial,
         extension_value: &Value,
     ) -> Result<()> {
         let transmission_info = extension_value.as_object().ok_or_else(|| {
@@ -1993,7 +1993,7 @@ impl GltfExtensionParser for KhrMaterialsVolume {
         &mut self,
         ctx: &mut LoadContext,
         _gltf_mat: &gltf::Material,
-        physical_mat: &MeshPhysicalMaterial,
+        physical_mat: &PhysicalMaterial,
         extension_value: &Value,
     ) -> Result<()> {
         let volume_info = extension_value.as_object().ok_or_else(|| {
@@ -2061,7 +2061,7 @@ impl GltfExtensionParser for KhrMaterialsDispersion {
         &mut self,
         _ctx: &mut LoadContext,
         _gltf_mat: &gltf::Material,
-        physical_mat: &MeshPhysicalMaterial,
+        physical_mat: &PhysicalMaterial,
         extension_value: &Value,
     ) -> Result<()> {
         let dispersion_info = extension_value.as_object().ok_or_else(|| {

@@ -41,9 +41,8 @@ pub mod uniforms;
 pub mod version_tracker;
 
 pub use material::{
-    AlphaMode, Material, MaterialTrait, MaterialType, MeshBasicMaterial, MeshPhongMaterial,
-    MeshPhysicalMaterial, PhysicalFeatures, RenderableMaterialTrait, Side, TextureSlot,
-    TextureTransform,
+    AlphaMode, Material, MaterialTrait, MaterialType, PhongMaterial, PhysicalFeatures,
+    PhysicalMaterial, RenderableMaterialTrait, Side, TextureSlot, TextureTransform, UnlitMaterial,
 };
 pub use mesh::Mesh;
 

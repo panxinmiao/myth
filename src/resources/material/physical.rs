@@ -9,7 +9,7 @@ use crate::resources::buffer::CpuBuffer;
 use crate::resources::material::{AlphaMode, MaterialSettings, Side, TextureSlot};
 use crate::resources::screen_space::FeatureId;
 use crate::resources::texture::SamplerSource;
-use crate::resources::uniforms::MeshPhysicalUniforms;
+use crate::resources::uniforms::PhysicalUniforms;
 use crate::{ShaderDefines, impl_material_api, impl_material_trait};
 
 bitflags! {
@@ -40,7 +40,7 @@ impl Default for PhysicalFeatures {
 }
 
 #[derive(Clone, Default, Debug)]
-pub struct MeshPhysicalTextureSet {
+pub struct PhysicalTextureSet {
     pub map: TextureSlot,
     pub normal_map: TextureSlot,
     pub roughness_map: TextureSlot,
@@ -82,10 +82,10 @@ pub struct MeshPhysicalTextureSet {
 }
 
 #[derive(Debug)]
-pub struct MeshPhysicalMaterial {
-    pub(crate) uniforms: CpuBuffer<MeshPhysicalUniforms>,
+pub struct PhysicalMaterial {
+    pub(crate) uniforms: CpuBuffer<PhysicalUniforms>,
     pub(crate) settings: RwLock<MaterialSettings>,
-    pub(crate) textures: RwLock<MeshPhysicalTextureSet>,
+    pub(crate) textures: RwLock<PhysicalTextureSet>,
 
     pub(crate) features: RwLock<PhysicalFeatures>,
 
@@ -93,10 +93,10 @@ pub struct MeshPhysicalMaterial {
     pub auto_sync_texture_to_uniforms: bool,
 }
 
-impl MeshPhysicalMaterial {
+impl PhysicalMaterial {
     #[must_use]
     pub fn new(color: Vec4) -> Self {
-        let uniform_data = MeshPhysicalUniforms {
+        let uniform_data = PhysicalUniforms {
             color,
             ..Default::default()
         };
@@ -105,10 +105,10 @@ impl MeshPhysicalMaterial {
             uniforms: CpuBuffer::new(
                 uniform_data,
                 wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("MeshPhysicalUniforms"),
+                Some("PhysicalUniforms"),
             ),
             settings: RwLock::new(MaterialSettings::default()),
-            textures: RwLock::new(MeshPhysicalTextureSet::default()),
+            textures: RwLock::new(PhysicalTextureSet::default()),
             features: RwLock::new(PhysicalFeatures::default()),
 
             version: AtomicU64::new(0),
@@ -406,8 +406,8 @@ impl MeshPhysicalMaterial {
 }
 
 impl_material_api!(
-    MeshPhysicalMaterial,
-    MeshPhysicalUniforms,
+    PhysicalMaterial,
+    PhysicalUniforms,
     uniforms: [
         (color,               Vec4, "Base color."),
         (alpha_test,          f32,  "Alpha test threshold."),
@@ -466,9 +466,9 @@ impl_material_api!(
 );
 
 impl_material_trait!(
-    MeshPhysicalMaterial,
-    "templates/mesh_physical",
-    MeshPhysicalUniforms,
+    PhysicalMaterial,
+    "templates/physical",
+    PhysicalUniforms,
     textures: [
         map,
         normal_map,
@@ -491,7 +491,7 @@ impl_material_trait!(
     ]
 );
 
-impl Default for MeshPhysicalMaterial {
+impl Default for PhysicalMaterial {
     fn default() -> Self {
         Self::new(Vec4::ONE)
     }

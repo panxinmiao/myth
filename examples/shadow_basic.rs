@@ -16,7 +16,7 @@ impl AppHandler for ShadowBasicDemo {
             1.5,
             1.5,
             1.5,
-            MeshPhongMaterial::new(Vec4::new(0.9, 0.3, 0.2, 1.0)),
+            PhongMaterial::new(Vec4::new(0.9, 0.3, 0.2, 1.0)),
         );
         scene
             .node(&cube_node)
@@ -27,7 +27,7 @@ impl AppHandler for ShadowBasicDemo {
         let ground_node = scene.spawn_plane(
             30.0,
             30.0,
-            MeshPhongMaterial::new(Vec4::new(0.8, 0.8, 0.85, 1.0)).with_side(Side::Double),
+            PhongMaterial::new(Vec4::new(0.8, 0.8, 0.85, 1.0)).with_side(Side::Double),
         );
         scene
             .node(&ground_node)
