@@ -871,6 +871,7 @@ impl Scene {
             ambient_light: env.ambient,
             num_lights: light_count as u32,
             env_map_intensity: env.intensity,
+            env_map_rotation: env.rotation,
             // env_map_max_mip_level is set by ResourceManager::resolve_gpu_environment
             // during the prepare phase, so we preserve the existing value here.
             env_map_max_mip_level: self.uniforms_buffer.read().env_map_max_mip_level,

@@ -73,7 +73,7 @@ $$ if SKYBOX_CUBE or SKYBOX_EQUIRECT
     let s = sin(u_params.rotation);
     let c = cos(u_params.rotation);
     let rot_dir = vec3<f32>(
-        world_dir.x * c - world_dir.z * s,
+        -(world_dir.x * c - world_dir.z * s), // Negate X to convert from left-handed to right-handed coordinates for cubemap sampling
         world_dir.y,
         world_dir.x * s + world_dir.z * c
     );
@@ -95,7 +95,10 @@ $$ if SKYBOX_EQUIRECT
         eq_uv.y * INV_ATAN.y
     );
 
+    // HDR Color
     color = textureSample(t_skybox_2d, s_skybox, tex_uv);
+
+    color = clamp(color, vec4<f32>(0.0), vec4<f32>(65000.0));
 $$ endif
 
 $$ if SKYBOX_PLANAR

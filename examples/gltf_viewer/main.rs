@@ -104,6 +104,43 @@ enum ModelSource {
 }
 
 // ============================================================================
+// Skybox / Background Mode
+// ============================================================================
+
+/// Background mode for skybox selection in the viewer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SkyboxMode {
+    /// Default: dark clear color, no skybox
+    Off,
+    /// Solid color background
+    SolidColor,
+    /// Vertical gradient background
+    Gradient,
+    /// Equirectangular HDR panorama as skybox
+    Equirectangular,
+}
+
+impl SkyboxMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Off => "Off",
+            Self::SolidColor => "Solid Color",
+            Self::Gradient => "Gradient",
+            Self::Equirectangular => "Equirectangular HDR",
+        }
+    }
+
+    fn all() -> &'static [Self] {
+        &[
+            Self::Off,
+            Self::SolidColor,
+            Self::Gradient,
+            Self::Equirectangular,
+        ]
+    }
+}
+
+// ============================================================================
 // Inspector Related Data Structures
 // ============================================================================
 
@@ -216,6 +253,29 @@ struct GltfViewer {
 
     show_ui: bool,
 
+    // === Skybox / Background ===
+    /// Current background mode
+    skybox_mode: SkyboxMode,
+    /// Background solid color [r, g, b, a]
+    bg_color: [f32; 4],
+    /// Gradient top color
+    gradient_top: [f32; 4],
+    /// Gradient bottom color
+    gradient_bottom: [f32; 4],
+    /// Environment texture handle (used for both IBL and Equirectangular skybox)
+    env_texture: Option<TextureHandle>,
+    /// Skybox intensity multiplier
+    skybox_intensity: f32,
+    /// Skybox rotation in degrees
+    skybox_rotation: f32,
+    /// Name of the loaded custom skybox file
+    skybox_file_name: Option<String>,
+    /// Receiver for async skybox texture loads
+    skybox_rx: Receiver<(String, TextureHandle)>,
+    /// Sender for async skybox texture loads
+    #[allow(dead_code)]
+    skybox_tx: Sender<(String, TextureHandle)>,
+
     // === SSS Profiles ===
     sss_profiles: Vec<(
         myth::resources::screen_space::FeatureId,
@@ -312,6 +372,7 @@ impl AppHandler for GltfViewer {
         let (tx, rx) = channel();
         let (file_dialog_tx, file_dialog_rx) = channel();
         let (prefab_tx, prefab_rx) = channel();
+        let (skybox_tx, skybox_rx) = channel();
 
         #[cfg(target_arch = "wasm32")]
         {
@@ -365,6 +426,19 @@ impl AppHandler for GltfViewer {
             hdr_receiver: Some(hdr_rx),
 
             show_ui: true,
+
+            // Skybox / Background
+            skybox_mode: SkyboxMode::Off,
+            bg_color: [0.03, 0.03, 0.03, 1.0],
+            gradient_top: [0.05, 0.05, 0.25, 1.0],
+            gradient_bottom: [0.7, 0.45, 0.2, 1.0],
+            env_texture: None,
+            skybox_intensity: 1.0,
+            skybox_rotation: 0.0,
+            skybox_file_name: None,
+            skybox_rx,
+            skybox_tx,
+
             sss_profiles: Vec::new(),
         };
 
@@ -483,6 +557,48 @@ impl AppHandler for GltfViewer {
 
 impl GltfViewer {
     // ========================================================================
+    // Skybox / Background
+    // ========================================================================
+
+    /// Applies the current skybox/background mode to the scene.
+    ///
+    /// This is a static-style helper to avoid borrow conflicts inside egui closures:
+    /// all parameters are passed explicitly instead of through `&mut self`.
+    fn apply_skybox(
+        scene: &mut Scene,
+        mode: SkyboxMode,
+        bg_color: &[f32; 4],
+        gradient_top: &[f32; 4],
+        gradient_bottom: &[f32; 4],
+        texture: Option<TextureHandle>,
+        intensity: f32,
+        rotation_deg: f32,
+    ) {
+        let bg_mode = match mode {
+            SkyboxMode::Off => BackgroundMode::Color(Vec4::new(0.03, 0.03, 0.03, 1.0)),
+            SkyboxMode::SolidColor => BackgroundMode::Color(Vec4::from_array(*bg_color)),
+            SkyboxMode::Gradient => BackgroundMode::Gradient {
+                top: Vec4::from_array(*gradient_top),
+                bottom: Vec4::from_array(*gradient_bottom),
+            },
+            SkyboxMode::Equirectangular => {
+                if let Some(tex) = texture {
+                    BackgroundMode::equirectangular(tex, intensity)
+                } else {
+                    // No texture available — fall back to dark color
+                    BackgroundMode::Color(Vec4::new(0.03, 0.03, 0.03, 1.0))
+                }
+            }
+        };
+        scene.background.set_mode(bg_mode);
+
+        // Apply rotation for texture modes
+        if mode == SkyboxMode::Equirectangular {
+            scene.background.set_rotation(rotation_deg.to_radians());
+        }
+    }
+
+    // ========================================================================
     // 模型加载
     // ========================================================================
 
@@ -524,6 +640,45 @@ impl GltfViewer {
             log::info!("Applying HDR environment map");
             scene.environment.set_env_map(Some(texture));
             scene.environment.set_intensity(3.0);
+            self.env_texture = Some(texture);
+
+            // 如果当前已选择 Equirectangular 模式，自动应用到天空盒
+            if self.skybox_mode == SkyboxMode::Equirectangular {
+                Self::apply_skybox(
+                    scene,
+                    self.skybox_mode,
+                    &self.bg_color,
+                    &self.gradient_top,
+                    &self.gradient_bottom,
+                    self.env_texture,
+                    self.skybox_intensity,
+                    self.skybox_rotation,
+                );
+            }
+        }
+
+        // 处理 HDR/环境贴图加载结果（来自「Load HDR」按钮）
+        while let Ok((name, texture)) = self.skybox_rx.try_recv() {
+            log::info!("Loaded environment texture: {}", name);
+            self.env_texture = Some(texture);
+            self.skybox_file_name = Some(name);
+
+            // 更新 IBL 环境贴图
+            scene.environment.set_env_map(Some(texture));
+
+            // 如果当前是 Equirectangular 天空盒模式，同步更新背景
+            if self.skybox_mode == SkyboxMode::Equirectangular {
+                Self::apply_skybox(
+                    scene,
+                    self.skybox_mode,
+                    &self.bg_color,
+                    &self.gradient_top,
+                    &self.gradient_bottom,
+                    self.env_texture,
+                    self.skybox_intensity,
+                    self.skybox_rotation,
+                );
+            }
         }
 
         // 处理 Prefab 加载结果 - 实例化到场景中
@@ -1000,6 +1155,287 @@ impl GltfViewer {
 
                         ui.separator();
 
+                        // ===== 天空盒/背景 =====
+                        CollapsingHeader::new("🌌 Skybox / Background")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                let mut bg_changed = false;
+
+                                // --- 模式选择 ---
+                                ui.horizontal(|ui| {
+                                    ui.label("Mode:");
+                                    egui::ComboBox::from_id_salt("skybox_mode_selector")
+                                        .width(160.0)
+                                        .selected_text(self.skybox_mode.label())
+                                        .show_ui(ui, |ui| {
+                                            for &mode in SkyboxMode::all() {
+                                                if ui
+                                                    .selectable_value(
+                                                        &mut self.skybox_mode,
+                                                        mode,
+                                                        mode.label(),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    bg_changed = true;
+                                                }
+                                            }
+                                        });
+                                });
+
+                                // --- 模式相关参数 ---
+                                match self.skybox_mode {
+                                    SkyboxMode::Off => {}
+                                    SkyboxMode::SolidColor => {
+                                        ui.horizontal(|ui| {
+                                            ui.label("Color:");
+                                            if ui
+                                                .color_edit_button_rgba_unmultiplied(
+                                                    &mut self.bg_color,
+                                                )
+                                                .changed()
+                                            {
+                                                bg_changed = true;
+                                            }
+                                        });
+                                    }
+                                    SkyboxMode::Gradient => {
+                                        ui.horizontal(|ui| {
+                                            ui.label("Top:");
+                                            if ui
+                                                .color_edit_button_rgba_unmultiplied(
+                                                    &mut self.gradient_top,
+                                                )
+                                                .changed()
+                                            {
+                                                bg_changed = true;
+                                            }
+                                        });
+                                        ui.horizontal(|ui| {
+                                            ui.label("Bottom:");
+                                            if ui
+                                                .color_edit_button_rgba_unmultiplied(
+                                                    &mut self.gradient_bottom,
+                                                )
+                                                .changed()
+                                            {
+                                                bg_changed = true;
+                                            }
+                                        });
+                                    }
+                                    SkyboxMode::Equirectangular => {
+                                        // 显示当前纹理状态
+                                        if let Some(name) = &self.skybox_file_name {
+                                            ui.label(format!("Env: {}", name));
+                                        } else if self.env_texture.is_some() {
+                                            ui.label("(Using default env map)");
+                                        } else {
+                                            ui.colored_label(
+                                                egui::Color32::YELLOW,
+                                                "⚠ No HDR texture loaded",
+                                            );
+                                        }
+
+                                        // 亮度滑块
+                                        ui.horizontal(|ui| {
+                                            ui.label("Intensity:");
+                                            if ui
+                                                .add(
+                                                    egui::Slider::new(
+                                                        &mut self.skybox_intensity,
+                                                        0.1..=5.0,
+                                                    )
+                                                    .step_by(0.1)
+                                                    .logarithmic(true),
+                                                )
+                                                .changed()
+                                            {
+                                                scene
+                                                    .background
+                                                    .set_intensity(self.skybox_intensity);
+                                            }
+                                        });
+
+                                        // 旋转滑块
+                                        ui.horizontal(|ui| {
+                                            ui.label("Rotation:");
+                                            if ui
+                                                .add(
+                                                    egui::Slider::new(
+                                                        &mut self.skybox_rotation,
+                                                        0.0..=360.0,
+                                                    )
+                                                    .step_by(1.0)
+                                                    .suffix("°"),
+                                                )
+                                                .changed()
+                                            {
+                                                let radians = self.skybox_rotation.to_radians();
+                                                scene.background.set_rotation(radians);
+                                                scene.environment.rotation = radians;
+                                            }
+                                        });
+                                    }
+                                }
+
+                                // 应用模式变更
+                                if bg_changed {
+                                    Self::apply_skybox(
+                                        scene,
+                                        self.skybox_mode,
+                                        &self.bg_color,
+                                        &self.gradient_top,
+                                        &self.gradient_bottom,
+                                        self.env_texture,
+                                        self.skybox_intensity,
+                                        self.skybox_rotation,
+                                    );
+                                }
+
+                                ui.separator();
+                                // --- IBL 环境贴图 ---
+                                ui.horizontal(|ui| {
+                                    if ui.checkbox(&mut self.ibl_enabled, "IBL").changed() {
+                                        scene.environment.set_intensity(if self.ibl_enabled {
+                                            3.0
+                                        } else {
+                                            0.0
+                                        });
+                                    }
+
+                                    if self.ibl_enabled {
+                                        ui.add(
+                                            egui::Slider::new(
+                                                &mut scene.environment.intensity,
+                                                0.1..=5.0,
+                                            )
+                                            .step_by(0.1)
+                                            .logarithmic(true),
+                                        );
+                                    }
+
+                                    // --- 加载 HDR 文件按钮（始终显示，同时更新 IBL 和天空盒）---
+                                    if ui.button("📂 Load HDR...").clicked() {
+                                        let skybox_tx = self.skybox_tx.clone();
+                                        let assets_clone = assets.clone();
+                                        execute_future(async move {
+                                            let file = rfd::AsyncFileDialog::new()
+                                                .add_filter(
+                                                    "HDR & Images",
+                                                    &["hdr", "jpg", "jpeg", "png"],
+                                                )
+                                                .pick_file()
+                                                .await;
+
+                                            if let Some(file_handle) = file {
+                                                let name = {
+                                                    #[cfg(not(target_arch = "wasm32"))]
+                                                    {
+                                                        file_handle
+                                                            .path()
+                                                            .file_name()
+                                                            .map(|n| {
+                                                                n.to_string_lossy().to_string()
+                                                            })
+                                                            .unwrap_or_else(|| {
+                                                                "Unknown".to_string()
+                                                            })
+                                                    }
+                                                    #[cfg(target_arch = "wasm32")]
+                                                    {
+                                                        file_handle.file_name()
+                                                    }
+                                                };
+
+                                                let is_hdr = name.ends_with(".hdr")
+                                                    || name.ends_with(".hdr.jpg");
+
+                                                // Native: load via file path
+                                                #[cfg(not(target_arch = "wasm32"))]
+                                                let result = {
+                                                    let path_str = file_handle
+                                                        .path()
+                                                        .to_string_lossy()
+                                                        .to_string();
+                                                    if is_hdr {
+                                                        assets_clone
+                                                            .load_hdr_texture_async(path_str)
+                                                            .await
+                                                    } else {
+                                                        assets_clone
+                                                            .load_texture_async(
+                                                                path_str,
+                                                                ColorSpace::Srgb,
+                                                                true,
+                                                            )
+                                                            .await
+                                                    }
+                                                };
+
+                                                // WASM: load via file bytes
+                                                #[cfg(target_arch = "wasm32")]
+                                                let result = {
+                                                    let data = file_handle.read().await;
+                                                    if is_hdr {
+                                                        assets_clone
+                                                            .load_hdr_texture_from_bytes_async(
+                                                                &name, data,
+                                                            )
+                                                            .await
+                                                    } else {
+                                                        assets_clone
+                                                            .load_texture_from_bytes_async(
+                                                                &name,
+                                                                data,
+                                                                ColorSpace::Srgb,
+                                                                true,
+                                                            )
+                                                            .await
+                                                    }
+                                                };
+
+                                                match result {
+                                                    Ok(handle) => {
+                                                        let _ = skybox_tx.send((name, handle));
+                                                    }
+                                                    Err(e) => {
+                                                        log::error!(
+                                                            "Failed to load HDR texture: {}",
+                                                            e
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                        });
+                                    }
+                                });
+
+                                // --- Light 光源 ---
+                                ui.horizontal(|ui| {
+                                    if let Some(light_bundle) =
+                                        scene.get_light_bundle(self.light_node)
+                                    {
+                                        ui.checkbox(&mut light_bundle.1.visible, "Light");
+                                        if light_bundle.1.visible {
+                                            ui.add(
+                                                egui::Slider::new(
+                                                    &mut light_bundle.0.intensity,
+                                                    0.1..=5.0,
+                                                )
+                                                .step_by(0.1)
+                                                .logarithmic(true),
+                                            );
+                                            ui.checkbox(
+                                                &mut light_bundle.0.cast_shadows,
+                                                "Cast Shadows",
+                                            );
+                                        }
+                                    }
+                                });
+                            });
+
+                        ui.separator();
+
                         // ===== 动画控制 =====
                         CollapsingHeader::new("🎬 Animation")
                             .default_open(true)
@@ -1180,49 +1616,6 @@ impl GltfViewer {
                                     });
                                 });
                             }
-
-                            ui.separator();
-
-                            // --- IBL 环境贴图 ---
-                            ui.horizontal(|ui| {
-                                if ui.checkbox(&mut self.ibl_enabled, "IBL").changed() {
-                                    scene.environment.set_intensity(if self.ibl_enabled {
-                                        3.0
-                                    } else {
-                                        0.0
-                                    });
-                                }
-
-                                if self.ibl_enabled {
-                                    ui.add(
-                                        egui::Slider::new(
-                                            &mut scene.environment.intensity,
-                                            0.1..=5.0,
-                                        )
-                                        .step_by(0.1)
-                                        .logarithmic(true),
-                                    );
-                                }
-                            });
-
-                            // --- Light 光源 ---
-                            ui.horizontal(|ui| {
-                                if let Some(light_bundle) = scene.get_light_bundle(self.light_node)
-                                {
-                                    ui.checkbox(&mut light_bundle.1.visible, "Light");
-                                    if light_bundle.1.visible {
-                                        ui.add(
-                                            egui::Slider::new(
-                                                &mut light_bundle.0.intensity,
-                                                0.1..=5.0,
-                                            )
-                                            .step_by(0.1)
-                                            .logarithmic(true),
-                                        );
-                                        // ui.checkbox(&mut light_bundle.0.cast_shadows, "Cast Shadows");
-                                    }
-                                }
-                            });
 
                             ui.separator();
 

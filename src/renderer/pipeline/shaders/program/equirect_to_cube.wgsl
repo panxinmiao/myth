@@ -44,5 +44,6 @@ fn main(@builtin(global_invocation_id) id: vec3<u32>) {
     let dir = normalize(getCubeDirection(face, uv));
     let src_uv = dirToUV(dir);
     let color = textureSampleLevel(src_tex, s, src_uv, 0.0);
-    textureStore(dst_tex, vec2<u32>(id.xy), face, color);
+    let safe_color = clamp(color, vec4<f32>(0.0), vec4<f32>(65000.0));
+    textureStore(dst_tex, vec2<u32>(id.xy), face, safe_color);
 }

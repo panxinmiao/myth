@@ -201,18 +201,34 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     RE_IndirectDiffuse( irradiance, geometry, material, &reflected_light );
 
     $$ if USE_IBL is defined
+
+        // Apply Y-axis rotation
+        let s = sin(u_environment.env_map_rotation);
+        let c = cos(u_environment.env_map_rotation);
+
+        let ibl_rotated_view = vec3<f32>(
+            view.x * c - view.z * s,
+            view.y,
+            view.x * s + view.z * c
+        );
+
         $$ if USE_ANISOTROPY is defined
-            let ibl_radiance = getIBLAnisotropyRadiance( view, normal, material.roughness, material.anisotropy_b, material.anisotropy );
+            let ibl_radiance = getIBLAnisotropyRadiance( ibl_rotated_view, normal, material.roughness, material.anisotropy_b, material.anisotropy );
         $$ else
-            let ibl_radiance = getIBLRadiance( view, normal, material.roughness);
+            let ibl_radiance = getIBLRadiance( ibl_rotated_view, normal, material.roughness);
         $$ endif
 
         var clearcoat_ibl_radiance = vec3<f32>(0.0);
         $$ if USE_CLEARCOAT is defined
-            clearcoat_ibl_radiance += getIBLRadiance( view, clearcoat_normal, material.clearcoat_roughness );
+            clearcoat_ibl_radiance += getIBLRadiance( ibl_rotated_view, clearcoat_normal, material.clearcoat_roughness );
         $$ endif
 
-        let ibl_irradiance = getIBLIrradiance( geometry.normal );
+        let ibl_rotated_normal = vec3<f32>(
+            normal.x * c - normal.z * s,
+            normal.y,
+            normal.x * s + normal.z * c
+        );
+        let ibl_irradiance = getIBLIrradiance( ibl_rotated_normal );
         RE_IndirectSpecular(ibl_radiance, ibl_irradiance, clearcoat_ibl_radiance, geometry, material, &reflected_light);
     $$ endif
 
