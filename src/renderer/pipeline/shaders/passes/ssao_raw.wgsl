@@ -11,6 +11,7 @@
 @group(1) @binding(2) var t_noise: texture_2d<f32>;
 @group(1) @binding(3) var s_linear: sampler;
 @group(1) @binding(4) var s_noise: sampler;
+@group(1) @binding(5) var s_point: sampler;
 
 // --- Group 2: SSAO Uniforms ---
 @group(2) @binding(0) var<uniform> u_ssao: SsaoUniforms;
@@ -31,7 +32,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let uv = in.uv;
 
     // 1. Read depth — skip skybox pixels (reverse-Z: near=1, far=0; skybox=0)
-    let depth = textureSampleLevel(t_depth, s_linear, uv, 0u);
+    let depth = textureSampleLevel(t_depth, s_point, uv, 0u);
     if (depth <= 0.0) { // background / skybox — no occlusion
         return vec4<f32>(1.0);
     }
@@ -72,7 +73,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         );
 
         // Read actual depth at that screen position and reconstruct its view-space Z
-        let real_depth = textureSampleLevel(t_depth, s_linear, offset_uv, 0u);
+        let real_depth = textureSampleLevel(t_depth, s_point, offset_uv, 0u);
         let real_view_pos = reconstruct_view_position(offset_uv, real_depth);
 
         // Range check: smooth falloff prevents far-away geometry from casting false AO.

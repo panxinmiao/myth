@@ -521,7 +521,6 @@ impl Renderer {
                 state.wgpu_ctx.pipeline_settings_version += 1;
                 let size = state.wgpu_ctx.size();
                 state.frame_resources.force_recreate(&state.wgpu_ctx, size);
-                state.pipeline_cache.clear();
             }
         }
     }
@@ -555,7 +554,6 @@ impl Renderer {
                         state.wgpu_ctx.pipeline_settings_version += 1;
                         let size = state.wgpu_ctx.size();
                         state.frame_resources.force_recreate(&state.wgpu_ctx, size);
-                        state.pipeline_cache.clear();
                     }
                 }
             }

@@ -101,6 +101,8 @@ web-time = "1.1"
 console_error_panic_hook = "0.1.7"
 console_log = "1.0"
 
+getrandom = { version = "0.4.1", features = ["wasm_js"] }
+
 rust-embed = { version = "8.11", features = ["debug-embed"] }
 wgpu = { version = "28.0", features = ["webgpu"] }
 

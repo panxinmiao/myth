@@ -5,6 +5,7 @@
 @group(0) @binding(1) var t_depth: texture_depth_2d;
 @group(0) @binding(2) var t_normal: texture_2d<f32>;
 @group(0) @binding(3) var s_linear: sampler;
+@group(0) @binding(4) var s_point: sampler;
 
 // Cross-bilateral filter configuration
 const BLUR_RADIUS: i32 = 2; // 5×5 kernel (2*2+1)
@@ -19,7 +20,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Centre pixel reference values
     let center_ao = textureSampleLevel(t_raw_ao, s_linear, uv, 0.0).r;
-    let center_depth = textureSampleLevel(t_depth, s_linear, uv, 0u);
+    let center_depth = textureSampleLevel(t_depth, s_point, uv, 0u);
     let center_normal_packed = textureSampleLevel(t_normal, s_linear, uv, 0.0);
 
     // If no geometry (skybox), return full-lit
@@ -39,7 +40,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
             let sample_uv = uv + offset;
 
             let sample_ao = textureSampleLevel(t_raw_ao, s_linear, sample_uv, 0.0).r;
-            let sample_depth = textureSampleLevel(t_depth, s_linear, sample_uv, 0u);
+            let sample_depth = textureSampleLevel(t_depth, s_point, sample_uv, 0u);
             let sample_normal_packed = textureSampleLevel(t_normal, s_linear, sample_uv, 0.0);
 
             // Skip background pixels
