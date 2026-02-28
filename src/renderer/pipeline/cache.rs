@@ -13,7 +13,7 @@
 //!
 //! All pipeline families share the **L2 canonical cache** keyed by the full
 //! state descriptor (`GraphicsPipelineKey`, `FullscreenPipelineKey`,
-//! `ComputePipelineKey`, `ShadowPipelineKey`). A full-state hash is computed
+//! `ComputePipelineKey`, `SimpleGeometryPipelineKey`). A full-state hash is computed
 //! only on L1 miss (or for families without L1).
 //!
 //! # Shader Modules
@@ -33,8 +33,8 @@ use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::extracted::SceneFeatures;
 use crate::renderer::pipeline::pipeline_id::{ComputePipelineId, RenderPipelineId};
 use crate::renderer::pipeline::pipeline_key::{
-    ComputePipelineKey, FullscreenPipelineKey, GraphicsPipelineKey, PrepassPipelineKey,
-    ShadowPipelineKey, fx_hash_key,
+    ComputePipelineKey, FullscreenPipelineKey, GraphicsPipelineKey, SimpleGeometryPipelineKey,
+    fx_hash_key,
 };
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::renderer::pipeline::shader_manager::ShaderManager;
@@ -77,8 +77,7 @@ pub struct PipelineCache {
     // ---- L2 canonical lookups (full-state hash → Id) ----
     graphics_lookup: FxHashMap<u64, RenderPipelineId>,
     fullscreen_lookup: FxHashMap<u64, RenderPipelineId>,
-    shadow_lookup: FxHashMap<u64, RenderPipelineId>,
-    prepass_lookup: FxHashMap<u64, RenderPipelineId>,
+    simple_geometry_lookup: FxHashMap<u64, RenderPipelineId>,
     compute_lookup: FxHashMap<u64, ComputePipelineId>,
 
     // ---- L1 fast lookups (handle+version → Id) ----
@@ -100,8 +99,7 @@ impl PipelineCache {
             compute_pipelines: Vec::with_capacity(8),
             graphics_lookup: FxHashMap::default(),
             fullscreen_lookup: FxHashMap::default(),
-            shadow_lookup: FxHashMap::default(),
-            prepass_lookup: FxHashMap::default(),
+            simple_geometry_lookup: FxHashMap::default(),
             compute_lookup: FxHashMap::default(),
             fast_cache: FxHashMap::default(),
             fast_shadow_cache: FxHashMap::default(),
@@ -135,8 +133,7 @@ impl PipelineCache {
         self.compute_pipelines.clear();
         self.graphics_lookup.clear();
         self.fullscreen_lookup.clear();
-        self.shadow_lookup.clear();
-        self.prepass_lookup.clear();
+        self.simple_geometry_lookup.clear();
         self.compute_lookup.clear();
         self.fast_cache.clear();
         self.fast_shadow_cache.clear();
@@ -298,94 +295,6 @@ impl PipelineCache {
         id
     }
 
-    // ── L2 Canonical: Shadow Pipeline ────────────────────────────────────────
-
-    #[allow(clippy::too_many_arguments)]
-    pub fn get_or_create_shadow(
-        &mut self,
-        device: &wgpu::Device,
-        shader_manager: &mut ShaderManager,
-        canonical_key: &ShadowPipelineKey,
-        options: &ShaderCompilationOptions,
-        vertex_layout: &GeneratedVertexLayout,
-        shadow_global_layout: &wgpu::BindGroupLayout,
-        shadow_binding_wgsl: &str,
-        gpu_material: &GpuMaterial,
-        object_bind_group: &BindGroupContext,
-    ) -> RenderPipelineId {
-        let hash = fx_hash_key(canonical_key);
-        if let Some(&id) = self.shadow_lookup.get(&hash) {
-            return id;
-        }
-
-        let binding_code = format!(
-            "{}\n{}\n{}",
-            shadow_binding_wgsl, &gpu_material.binding_wgsl, &object_bind_group.binding_wgsl
-        );
-
-        let (shader_module, _code_hash) = shader_manager.get_or_compile_template(
-            device,
-            "passes/depth",
-            options,
-            &vertex_layout.vertex_input_code,
-            &binding_code,
-        );
-
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: Some("Shadow Pipeline Layout"),
-            bind_group_layouts: &[
-                shadow_global_layout,
-                &gpu_material.layout,
-                &object_bind_group.layout,
-            ],
-            immediate_size: 0,
-        });
-
-        let vertex_buffers_layout: Vec<_> =
-            vertex_layout.buffers.iter().map(|l| l.as_wgpu()).collect();
-
-        let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-            label: Some("Shadow Pipeline"),
-            layout: Some(&layout),
-            vertex: wgpu::VertexState {
-                module: shader_module,
-                entry_point: Some("vs_main"),
-                buffers: &vertex_buffers_layout,
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            },
-            fragment: Some(wgpu::FragmentState {
-                module: shader_module,
-                entry_point: Some("fs_main"),
-                targets: &[],
-                compilation_options: wgpu::PipelineCompilationOptions::default(),
-            }),
-            primitive: wgpu::PrimitiveState {
-                topology: canonical_key.topology,
-                front_face: canonical_key.front_face,
-                cull_mode: canonical_key.cull_mode,
-                ..Default::default()
-            },
-            depth_stencil: Some(wgpu::DepthStencilState {
-                format: canonical_key.depth_format,
-                depth_write_enabled: true,
-                depth_compare: wgpu::CompareFunction::LessEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState {
-                    constant: 2,
-                    slope_scale: 2.0,
-                    clamp: 0.0,
-                },
-            }),
-            multisample: wgpu::MultisampleState::default(),
-            multiview_mask: None,
-            cache: None,
-        });
-
-        let id = self.push_render_pipeline(pipeline);
-        self.shadow_lookup.insert(hash, id);
-        id
-    }
-
     // ── L2 Canonical: Fullscreen / Post-Process Pipeline ─────────────────────
 
     /// Look up or create a fullscreen / post-processing render pipeline.
@@ -495,23 +404,24 @@ impl PipelineCache {
         id
     }
 
-    // ── L2 Canonical: Prepass Geometry Pipeline ──────────────────────────────
+    // ── L2 Canonical: Simple Geometry Pipeline (Prepass, Shadow) ──────────
 
-    /// Look up or create a depth-normal prepass geometry pipeline.
+    /// Look up or create a simplified geometry pipeline (prepass or shadow).
     ///
-    /// Unlike `get_or_create_fullscreen`, this accepts vertex buffer layouts
-    /// and per-object primitive state because the prepass renders actual meshes.
-    pub fn get_or_create_prepass(
+    /// These passes render actual meshes with vertex input but skip complex
+    /// material/lighting state. The caller supplies pre-compiled shader module,
+    /// pipeline layout, and vertex buffer layouts.
+    pub fn get_or_create_simple_geometry(
         &mut self,
         device: &wgpu::Device,
         shader_module: &wgpu::ShaderModule,
         pipeline_layout: &wgpu::PipelineLayout,
-        canonical_key: &PrepassPipelineKey,
+        canonical_key: &SimpleGeometryPipelineKey,
         label: &str,
         vertex_buffers: &[wgpu::VertexBufferLayout<'_>],
     ) -> RenderPipelineId {
         let hash = fx_hash_key(canonical_key);
-        if let Some(&id) = self.prepass_lookup.get(&hash) {
+        if let Some(&id) = self.simple_geometry_lookup.get(&hash) {
             return id;
         }
 
@@ -589,16 +499,13 @@ impl PipelineCache {
                 ..Default::default()
             },
             depth_stencil,
-            multisample: wgpu::MultisampleState {
-                count: 1, // Prepass is always 1× (no MSAA)
-                ..Default::default()
-            },
+            multisample: wgpu::MultisampleState::default(),
             multiview_mask: None,
             cache: None,
         });
 
         let id = self.push_render_pipeline(pipeline);
-        self.prepass_lookup.insert(hash, id);
+        self.simple_geometry_lookup.insert(hash, id);
         id
     }
 

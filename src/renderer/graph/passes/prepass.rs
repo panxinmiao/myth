@@ -27,7 +27,7 @@ use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::context::{ExecuteContext, GraphResource, PrepareContext};
 use crate::renderer::graph::{RenderNode, TrackedRenderPass, TransientTextureDesc};
 use crate::renderer::pipeline::{
-    ColorTargetKey, DepthStencilKey, PrepassPipelineKey, RenderPipelineId,
+    ColorTargetKey, DepthStencilKey, SimpleGeometryPipelineKey, RenderPipelineId,
     ShaderCompilationOptions,
 };
 use crate::resources::material::{AlphaMode, Side};
@@ -232,7 +232,7 @@ impl DepthNormalPrepass {
                 };
 
             // ── Pipeline key ───────────────────────────────────────────
-            let prepass_key = PrepassPipelineKey {
+            let prepass_key = SimpleGeometryPipelineKey {
                 shader_hash,
                 vertex_layout_id: gpu_geometry.layout_id,
                 color_targets,
@@ -253,7 +253,7 @@ impl DepthNormalPrepass {
                 front_face,
             };
 
-            let pipeline_id = ctx.pipeline_cache.get_or_create_prepass(
+            let pipeline_id = ctx.pipeline_cache.get_or_create_simple_geometry(
                 &ctx.wgpu_ctx.device,
                 shader_module,
                 &layout,
