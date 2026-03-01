@@ -31,7 +31,7 @@ use glam::Vec4;
 
 use crate::define_gpu_data_struct;
 use crate::resources::WgslType;
-use crate::resources::buffer::CpuBuffer;
+use crate::resources::buffer::{BufferGuard, BufferReadGuard, CpuBuffer};
 use crate::resources::uniforms::UniformArray;
 
 // ============================================================================
@@ -126,6 +126,14 @@ impl SsaoSettings {
     /// Sets whether SSAO is enabled.
     pub fn set_enabled(&mut self, enabled: bool) {
         self.enabled = enabled;
+    }
+
+    pub fn uniforms(&self) -> BufferReadGuard<'_, SsaoUniforms> {
+        self.uniforms.read()
+    }
+
+    pub fn uniforms_mut(&mut self) -> BufferGuard<'_, SsaoUniforms> {
+        self.uniforms.write()
     }
 
     /// Sets the sampling radius in view-space units (meters).
