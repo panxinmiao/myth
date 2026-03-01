@@ -30,6 +30,7 @@ pub mod graph;
 pub mod node;
 pub mod pass;
 pub mod passes;
+pub mod rdg;
 pub mod render_state;
 pub mod shadow_utils;
 pub mod stage;
