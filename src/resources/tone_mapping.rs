@@ -13,7 +13,7 @@ use glam::Vec4;
 
 use crate::assets::TextureHandle;
 use crate::resources::WgslType;
-use crate::resources::buffer::CpuBuffer;
+use crate::resources::buffer::{BufferGuard, BufferReadGuard, CpuBuffer};
 use crate::{ShaderDefines, define_gpu_data_struct};
 
 /// Tone mapping algorithm selection.
@@ -173,6 +173,14 @@ impl ToneMappingSettings {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn uniforms(&self) -> BufferReadGuard<'_, ToneMappingUniforms> {
+        self.uniforms.read()
+    }
+
+    pub fn uniforms_mut(&mut self) -> BufferGuard<'_, ToneMappingUniforms> {
+        self.uniforms.write()
     }
 
     /// Sets the tone mapping mode.
