@@ -1681,6 +1681,96 @@ impl GltfViewer {
                                         }
                                     });
 
+                                    ui.separator();
+                                    // --- Color Grading (LUT) ---
+                                    ui.label("Color Grading (LUT):");
+
+                                    ui.horizontal(|ui| {
+                                        ui.label("Contribution:");
+                                        let mut contribution =
+                                            scene.tone_mapping.lut_contribution();
+                                        if ui
+                                            .add(
+                                                egui::Slider::new(&mut contribution, 0.0..=1.0)
+                                                    .step_by(0.05),
+                                            )
+                                            .changed()
+                                        {
+                                            scene.tone_mapping.set_lut_contribution(contribution);
+                                        }
+                                    });
+
+                                    if scene.tone_mapping.has_lut() {
+                                        if ui.button("Remove LUT").clicked() {
+                                            scene.tone_mapping.set_lut_texture(None);
+                                        }
+                                    } else {
+                                        if ui.button("📂 Load LUT (.cube)...").clicked() {
+                                            let lut_tx = self.lut_tx.clone();
+                                            let assets_clone = assets.clone();
+                                            execute_future(async move {
+                                                let file = rfd::AsyncFileDialog::new()
+                                                    .add_filter("LUT Files", &["cube"])
+                                                    .pick_file()
+                                                    .await;
+
+                                                if let Some(file_handle) = file {
+                                                    let name = {
+                                                        #[cfg(not(target_arch = "wasm32"))]
+                                                        {
+                                                            file_handle
+                                                                .path()
+                                                                .file_name()
+                                                                .map(|n| {
+                                                                    n.to_string_lossy().to_string()
+                                                                })
+                                                                .unwrap_or_else(|| {
+                                                                    "Unknown.cube".to_string()
+                                                                })
+                                                        }
+                                                        #[cfg(target_arch = "wasm32")]
+                                                        {
+                                                            file_handle.file_name()
+                                                        }
+                                                    };
+
+                                                    #[cfg(not(target_arch = "wasm32"))]
+                                                    let result = {
+                                                        let path_str = file_handle
+                                                            .path()
+                                                            .to_string_lossy()
+                                                            .to_string();
+                                                        assets_clone
+                                                            .load_lut_texture_async(path_str)
+                                                            .await
+                                                    };
+
+                                                    #[cfg(target_arch = "wasm32")]
+                                                    let result = {
+                                                        let data = file_handle.read().await;
+                                                        assets_clone
+                                                            .load_lut_texture_from_bytes_async(
+                                                                &name, data,
+                                                            )
+                                                            .await
+                                                    };
+
+                                                    match result {
+                                                        Ok(handle) => {
+                                                            let _ = lut_tx.send((name, handle));
+                                                        }
+                                                        Err(e) => {
+                                                            log::error!(
+                                                                "Failed to load LUT: {}",
+                                                                e
+                                                            );
+                                                        }
+                                                    }
+                                                }
+                                            });
+                                        }
+                                    }
+
                                     // --- Vignette ---
                                     ui.separator();
                                     ui.label("Vignette:");
@@ -1786,96 +1876,6 @@ impl GltfViewer {
                                             scene.tone_mapping.set_film_grain(film_grain);
                                         }
                                     });
-
-                                    // --- Color Grading (LUT) ---
-                                    ui.separator();
-                                    ui.label("Color Grading (LUT):");
-
-                                    ui.horizontal(|ui| {
-                                        ui.label("Contribution:");
-                                        let mut contribution =
-                                            scene.tone_mapping.lut_contribution();
-                                        if ui
-                                            .add(
-                                                egui::Slider::new(&mut contribution, 0.0..=1.0)
-                                                    .step_by(0.05),
-                                            )
-                                            .changed()
-                                        {
-                                            scene.tone_mapping.set_lut_contribution(contribution);
-                                        }
-                                    });
-
-                                    if scene.tone_mapping.has_lut() {
-                                        if ui.button("Remove LUT").clicked() {
-                                            scene.tone_mapping.set_lut_texture(None);
-                                        }
-                                    } else {
-                                        if ui.button("📂 Load LUT (.cube)...").clicked() {
-                                            let lut_tx = self.lut_tx.clone();
-                                            let assets_clone = assets.clone();
-                                            execute_future(async move {
-                                                let file = rfd::AsyncFileDialog::new()
-                                                    .add_filter("LUT Files", &["cube"])
-                                                    .pick_file()
-                                                    .await;
-
-                                                if let Some(file_handle) = file {
-                                                    let name = {
-                                                        #[cfg(not(target_arch = "wasm32"))]
-                                                        {
-                                                            file_handle
-                                                                .path()
-                                                                .file_name()
-                                                                .map(|n| {
-                                                                    n.to_string_lossy().to_string()
-                                                                })
-                                                                .unwrap_or_else(|| {
-                                                                    "Unknown.cube".to_string()
-                                                                })
-                                                        }
-                                                        #[cfg(target_arch = "wasm32")]
-                                                        {
-                                                            file_handle.file_name()
-                                                        }
-                                                    };
-
-                                                    #[cfg(not(target_arch = "wasm32"))]
-                                                    let result = {
-                                                        let path_str = file_handle
-                                                            .path()
-                                                            .to_string_lossy()
-                                                            .to_string();
-                                                        assets_clone
-                                                            .load_lut_texture_async(path_str)
-                                                            .await
-                                                    };
-
-                                                    #[cfg(target_arch = "wasm32")]
-                                                    let result = {
-                                                        let data = file_handle.read().await;
-                                                        assets_clone
-                                                            .load_lut_texture_from_bytes_async(
-                                                                &name, data,
-                                                            )
-                                                            .await
-                                                    };
-
-                                                    match result {
-                                                        Ok(handle) => {
-                                                            let _ = lut_tx.send((name, handle));
-                                                        }
-                                                        Err(e) => {
-                                                            log::error!(
-                                                                "Failed to load LUT: {}",
-                                                                e
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                            });
-                                        }
-                                    }
                                 });
 
                                 ui.separator();
