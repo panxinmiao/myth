@@ -138,6 +138,11 @@ pub fn preload_common_macros() {
         "SUPPORT_SKINNING",
         // Scene-related
         "HAS_ENV_MAP",
+        "HAS_SHADOWS",
+        "USE_SSAO",
+        "USE_SCREEN_SPACE_FEATURES",
+        "USE_SSS",
+        "USE_SSR",
         // Pipeline-related
         "ALPHA_MODE",
         "OPAQUE",
@@ -145,6 +150,15 @@ pub fn preload_common_macros() {
         "BLEND",
         "ALPHA_TO_COVERAGE",
         "HDR",
+        // Post-processing effects
+        "TONE_MAPPING_MODE",
+        "NEUTRAL",
+        "LINEAR",
+        "REINHARD",
+        "CINEON",
+        "ACES_FILMIC",
+        "AGX",
+        "AGX_LOOK",
         // Common values
         "0",
         "1",

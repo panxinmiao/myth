@@ -40,7 +40,15 @@ pub enum ToneMappingMode {
     /// ACES Filmic (industry standard)
     ACESFilmic,
     /// `AgX` tonemapper (modern, excellent color handling)
-    AgX,
+    AgX(AgxLook),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AgxLook {
+    None,
+    // Golden,
+    #[default]
+    Punchy,
 }
 
 impl ToneMappingMode {
@@ -55,7 +63,15 @@ impl ToneMappingMode {
             Self::Cineon => "CINEON",
             Self::ACESFilmic => "ACES_FILMIC",
             Self::Neutral => "NEUTRAL",
-            Self::AgX => "AGXX",
+            Self::AgX(look) => {
+                match look {
+                    AgxLook::Punchy => {
+                        defines.set("AGX_LOOK", "PUNCHY");
+                    }
+                    AgxLook::None => (),
+                }
+                "AGX"
+            }
         };
         defines.set("TONE_MAPPING_MODE", mode_str);
     }
@@ -69,7 +85,11 @@ impl ToneMappingMode {
             Self::Reinhard => "Reinhard",
             Self::Cineon => "Cineon",
             Self::ACESFilmic => "ACES Filmic",
-            Self::AgX => "AgX",
+            Self::AgX(look) => match look {
+                AgxLook::None => "AgX-None",
+                // AgxLook::Golden => "AgX-Golden",
+                AgxLook::Punchy => "AgX-Punchy",
+            },
         }
     }
 
@@ -82,7 +102,9 @@ impl ToneMappingMode {
             Self::Reinhard,
             Self::Cineon,
             Self::ACESFilmic,
-            Self::AgX,
+            Self::AgX(AgxLook::None),
+            // Self::AgX(AgxLook::Golden),
+            Self::AgX(AgxLook::Punchy),
         ]
     }
 }
