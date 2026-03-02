@@ -55,7 +55,7 @@ $$ if TONE_MAPPING_MODE == "ACES_FILMIC"
     }
 $$ endif
 
-$$ if TONE_MAPPING_MODE == "AGXX"
+$$ if TONE_MAPPING_MODE == "AGX"
     // Matrices for rec 2020 <> rec 709 color space conversion
     // matrix provided in row-major order so it has been transposed
     // https://www.itu.int/pub/R-REP-BT.2407-201
@@ -73,18 +73,62 @@ $$ if TONE_MAPPING_MODE == "AGXX"
 
     // https://iolite-engine.com/blog_posts/minimal_agx_implementation
     // Mean error^2: 3.6705141e-06
+    // fn agxDefaultContrastApprox( x: vec3<f32> ) -> vec3<f32> {
+
+    //     let x2 = x * x;
+    //     let x4 = x2 * x2;
+
+    //     return 15.5 * x4 * x2
+    //         - 40.14 * x4 * x
+    //         + 31.96 * x4
+    //         - 6.868 * x2 * x
+    //         + 0.4298 * x2
+    //         + 0.1191 * x
+    //         - 0.00232;
+    // }
+
     fn agxDefaultContrastApprox( x: vec3<f32> ) -> vec3<f32> {
 
         let x2 = x * x;
         let x4 = x2 * x2;
+        let x6 = x4 * x2;
 
-        return 15.5 * x4 * x2
-            - 40.14 * x4 * x
-            + 31.96 * x4
-            - 6.868 * x2 * x
-            + 0.4298 * x2
-            + 0.1191 * x
-            - 0.00232;
+        return  - 17.86 * x6 * x
+            + 78.01 * x6
+            - 126.7 * x4 * x
+            + 92.06 * x4
+            - 28.72 * x2 * x
+            + 4.361 * x2
+            - 0.1718 * x
+            + 0.002857;
+    }
+
+    fn agxLook( x: vec3<f32>) -> vec3<f32> {
+        $$ if AGX_LOOK is not defined or AGX_LOOK == "NONE"
+            return x;
+        $$ else
+
+            let lw = vec3f(0.2126, 0.7152, 0.0722);
+            let luma = dot(x, lw);
+
+            // Deault
+            let offset = vec3f(0.0);
+
+            $$ if AGX_LOOK == "GOLDEN"
+                // Golden
+                let slope = vec3f(1.0, 0.9, 0.5);
+                let power = vec3f(0.8);
+                let sat = 1.3;
+            $$ elif AGX_LOOK == "PUNCHY"
+                // Punchy
+                let slope = vec3f(1.0);
+                let power = vec3f(1.35);
+                let sat = 1.4;
+            $$ endif
+
+            let val = pow(x * slope + offset, power);
+            return luma + sat * (val - luma);
+        $$ endif
     }
 
     // AgX Tone Mapping implementation based on Filament, which in turn is based
@@ -121,6 +165,7 @@ $$ if TONE_MAPPING_MODE == "AGXX"
         mapped_color = agxDefaultContrastApprox( mapped_color );
         // Apply AgX look
         // v = agxLook(v, look);
+        mapped_color = agxLook(mapped_color);
         mapped_color = AgXOutsetMatrix * mapped_color;
         // Linearize
         mapped_color = pow( max( vec3f( 0.0 ), mapped_color), vec3f( 2.2 ) );
