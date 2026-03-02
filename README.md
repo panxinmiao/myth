@@ -30,8 +30,6 @@ Inspired by the simplicity of **Three.js** and built on the modern power of **wg
 
 ## Features
 
-## Features
-
 * **Core Architecture & Platform**
     * **Modern Backend**: Built on **wgpu**, fully supporting Vulkan, Metal, DX12, and WebGPU.
     * **Transient Render Graph**: A highly optimized, frame-graph based rendering architecture that minimizes CPU overhead and maximizes pass reordering flexibility.
@@ -86,10 +84,9 @@ myth = { git = "https://github.com/panxinmiao/myth", branch = "main" }
 
 ```
 
-### The "Hello World" (Three.js Style)
+### The "Hello World"
 
-A spinning cube with a checkerboard texture within less than 50 lines of code.
-Notice how similar this feels to the JS equivalent, but statically typed:
+A spinning cube with a checkerboard texture within less than 50 lines of code:
 
 ```rust
 use myth::prelude::*;
