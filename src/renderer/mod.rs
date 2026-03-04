@@ -54,6 +54,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use crate::assets::AssetServer;
 use crate::errors::Result;
 use crate::renderer::core::binding::GlobalBindGroupCache;
+use crate::renderer::core::resources::SamplerRegistry;
 use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
@@ -62,6 +63,7 @@ use crate::renderer::graph::passes::{
     SceneCullPass, ShadowPass, SimpleForwardPass, SkyboxPass, SsaoPass, SssssPass, ToneMapPass,
     TransmissionCopyPass, TransparentPass,
 };
+use crate::renderer::graph::rdg::allocator::RdgTransientPool;
 use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTexturePool};
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
@@ -145,6 +147,13 @@ struct RendererState {
     pub(crate) tone_mapping_pass: ToneMapPass,
     pub(crate) fxaa_pass: FxaaPass,
     pub(crate) ssao_pass: SsaoPass,
+
+
+    // Test RDG
+    pub(crate) rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph,
+    pub(crate) sampler_registry: SamplerRegistry,
+    pub(crate) rdg_pool: RdgTransientPool,
+    pub(crate) test_fxaa_pass: crate::renderer::graph::rdg::test_pass::RdgFxaaPass,
 }
 
 impl Renderer {
@@ -235,6 +244,9 @@ impl Renderer {
         // Skybox / Background
         let skybox_pass = SkyboxPass::new(&wgpu_ctx.device);
 
+        //
+        let sampler_registry = SamplerRegistry::new(&wgpu_ctx.device);
+
         // 6. Assemble state
         self.context = Some(RendererState {
             wgpu_ctx,
@@ -265,6 +277,12 @@ impl Renderer {
             fxaa_pass,
             ssao_pass,
             skybox_pass,
+
+            //
+            rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph::new(),
+            sampler_registry: sampler_registry,
+            rdg_pool: RdgTransientPool::new(),
+            test_fxaa_pass: crate::renderer::graph::rdg::test_pass::RdgFxaaPass::new(),
         });
 
         log::info!("Renderer Initialized");
@@ -481,6 +499,11 @@ impl Renderer {
             camera,
             assets,
             time,
+
+            rdg_graph: &mut state.rdg_graph,
+            test_fxaa_pass: &mut state.test_fxaa_pass,
+            rdg_pool: &mut state.rdg_pool,
+            sampler_registry: &mut state.sampler_registry,
         };
 
         // Return FrameComposer, defer Surface acquisition to render() call

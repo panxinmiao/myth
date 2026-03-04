@@ -40,8 +40,8 @@ impl RdgTransientPool {
         // 1. 尝试寻找可复用的纹理 (Memory Aliasing 魔法就在这里)
         for (i, res) in self.resources.iter().enumerate() {
             // 条件：它的上一次占用结束时间 < 新需求的开始时间，并且规格完全一致
-            if self.active_allocations[i] < first_use && res.desc == *desc {
-                self.active_allocations[i] = last_use; // 续租
+            if self.active_allocations[i] <= first_use && res.desc == *desc {
+                self.active_allocations[i] = last_use + 1; // 续租
                 return i;
             }
         }
