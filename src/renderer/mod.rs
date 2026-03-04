@@ -64,7 +64,7 @@ use crate::renderer::graph::passes::{
     TransmissionCopyPass, TransparentPass,
 };
 use crate::renderer::graph::rdg::allocator::RdgTransientPool;
-use crate::renderer::graph::transient_pool::{TransientTextureDesc, TransientTexturePool};
+use crate::renderer::graph::transient_pool::TransientTexturePool;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 use crate::{FrameBuilder, RenderStage};
@@ -149,11 +149,14 @@ struct RendererState {
     pub(crate) ssao_pass: SsaoPass,
 
 
-    // Test RDG
+    // ===== RDG (Declarative Render Graph) =====
     pub(crate) rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph,
     pub(crate) sampler_registry: SamplerRegistry,
     pub(crate) rdg_pool: RdgTransientPool,
-    pub(crate) test_fxaa_pass: crate::renderer::graph::rdg::test_pass::RdgFxaaPass,
+    pub(crate) rdg_fxaa_pass: crate::renderer::graph::rdg::test_pass::RdgFxaaPass,
+    pub(crate) rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass,
+    pub(crate) rdg_bloom_pass: crate::renderer::graph::rdg::bloom::RdgBloomPass,
+    pub(crate) rdg_ssao_pass: crate::renderer::graph::rdg::ssao::RdgSsaoPass,
 }
 
 impl Renderer {
@@ -278,11 +281,14 @@ impl Renderer {
             ssao_pass,
             skybox_pass,
 
-            //
+            // RDG
             rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph::new(),
-            sampler_registry: sampler_registry,
+            sampler_registry,
             rdg_pool: RdgTransientPool::new(),
-            test_fxaa_pass: crate::renderer::graph::rdg::test_pass::RdgFxaaPass::new(),
+            rdg_fxaa_pass: crate::renderer::graph::rdg::test_pass::RdgFxaaPass::new(),
+            rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass::new(),
+            rdg_bloom_pass: crate::renderer::graph::rdg::bloom::RdgBloomPass::new(),
+            rdg_ssao_pass: crate::renderer::graph::rdg::ssao::RdgSsaoPass::new(),
         });
 
         log::info!("Renderer Initialized");
@@ -425,42 +431,10 @@ impl Renderer {
                 // Transparent rendering
                 frame_builder.add_node(RenderStage::Transparent, &mut state.transparent_pass);
 
-                // Bloom (conditional — only when enabled in Scene.bloom)
-                if scene.bloom.enabled {
-                    frame_builder.add_node(RenderStage::PostProcess, &mut state.bloom_pass);
-                }
-
-                // FXAA routing: when enabled, ToneMap outputs to a transient LDR texture
-                // which FXAA then reads and writes to the surface.
-                // When disabled, ToneMap writes directly to the surface.
-                if scene.fxaa.enabled {
-                    let ldr_tex_id = state.transient_pool.allocate(
-                        &state.wgpu_ctx.device,
-                        &TransientTextureDesc {
-                            width: state.wgpu_ctx.size().0,
-                            height: state.wgpu_ctx.size().1,
-                            format: state.wgpu_ctx.surface_view_format,
-                            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                                | wgpu::TextureUsages::TEXTURE_BINDING,
-                            mip_level_count: 1,
-                            label: "FXAA LDR Intermediate",
-                        },
-                    );
-
-                    state.tone_mapping_pass.output_texture_id = Some(ldr_tex_id);
-                    state.fxaa_pass.input_texture_id = Some(ldr_tex_id);
-                } else {
-                    state.tone_mapping_pass.output_texture_id = None;
-                    state.fxaa_pass.input_texture_id = None;
-                }
-
-                // Tone mapping (HDR → LDR)
-                frame_builder.add_node(RenderStage::PostProcess, &mut state.tone_mapping_pass);
-
-                // FXAA (conditional — only when enabled in Scene.fxaa)
-                if scene.fxaa.enabled {
-                    frame_builder.add_node(RenderStage::PostProcess, &mut state.fxaa_pass);
-                }
+                // ─── Phase 2 RDG Migration ───────────────────────
+                // Bloom, ToneMapping, and FXAA are now handled by the
+                // new RDG system. The old graph stops after transparent
+                // rendering; HDR scene color is forwarded to RDG.
             }
 
             RenderPath::BasicForward { .. } => {
@@ -501,9 +475,12 @@ impl Renderer {
             time,
 
             rdg_graph: &mut state.rdg_graph,
-            test_fxaa_pass: &mut state.test_fxaa_pass,
             rdg_pool: &mut state.rdg_pool,
             sampler_registry: &mut state.sampler_registry,
+            rdg_fxaa_pass: &mut state.rdg_fxaa_pass,
+            rdg_tone_map_pass: &mut state.rdg_tone_map_pass,
+            rdg_bloom_pass: &mut state.rdg_bloom_pass,
+            rdg_ssao_pass: &mut state.rdg_ssao_pass,
         };
 
         // Return FrameComposer, defer Surface acquisition to render() call

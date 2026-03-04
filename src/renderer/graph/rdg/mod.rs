@@ -1,7 +1,10 @@
 pub mod allocator;
+pub mod bloom;
 pub mod builder;
 pub mod context;
 pub mod graph;
 pub mod node;
+pub mod ssao;
 pub mod test_pass;
+pub mod tone_mapping;
 pub mod types;

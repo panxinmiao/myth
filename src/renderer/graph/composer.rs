@@ -62,9 +62,14 @@ pub struct ComposerContext<'a> {
     pub time: f32,
 
     pub rdg_graph: &'a mut crate::renderer::graph::rdg::graph::RenderGraph,
-    pub test_fxaa_pass: &'a mut crate::renderer::graph::rdg::test_pass::RdgFxaaPass,
     pub rdg_pool: &'a mut crate::renderer::graph::rdg::allocator::RdgTransientPool,
     pub sampler_registry: &'a mut crate::renderer::core::resources::SamplerRegistry,
+
+    // 鈹€鈹€鈹€ RDG Passes (Phase 2) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+    pub rdg_fxaa_pass: &'a mut crate::renderer::graph::rdg::test_pass::RdgFxaaPass,
+    pub rdg_tone_map_pass: &'a mut crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass,
+    pub rdg_bloom_pass: &'a mut crate::renderer::graph::rdg::bloom::RdgBloomPass,
+    pub rdg_ssao_pass: &'a mut crate::renderer::graph::rdg::ssao::RdgSsaoPass,
 }
 
 /// Frame Composer
@@ -82,7 +87,7 @@ pub struct ComposerContext<'a> {
 ///
 /// - Internal `FrameBuilder` pre-allocates capacity for 16 nodes
 /// - Sorting uses `FrameBuilder`'s efficient sorting mechanism
-/// - All fields are references — no heap allocation overhead
+/// - All fields are references 锟?no heap allocation overhead
 pub struct FrameComposer<'a> {
     // GPU context
     ctx: ComposerContext<'a>,
@@ -144,18 +149,15 @@ impl<'a> FrameComposer<'a> {
 
     /// Executes the render pipeline and presents to the screen.
     ///
-    /// This is the final step of the rendering workflow:
-    /// 1. Acquire the Surface texture
-    /// 2. Build the `RenderContext`
-    /// 3. Convert the Builder into a sorted `RenderGraph`
-    /// 4. Execute the render graph
-    /// 5. Present
+    /// Phase 2 architecture: old graph renders scene (PrePass 锟?SSAO 锟?Opaque
+    /// 锟?Transparent) to HDR `scene_color_view`, then RDG runs the full
+    /// post-processing chain (Bloom 锟?ToneMapping 锟?FXAA) with topology sort,
+    /// memory aliasing, and conditional wiring based on scene settings.
     ///
-    /// # Note
-    ///
-    /// This method consumes `self`; the `FrameComposer` cannot be reused after calling it.
+    /// This method consumes `self`; the `FrameComposer` cannot be reused.
     pub fn render(self) {
-        // 1. 获取真实 Surface
+        // 鈹佲攣锟?1. Acquire Surface 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+
         let output = match self.ctx.wgpu_ctx.surface.get_current_texture() {
             Ok(output) => output,
             Err(wgpu::SurfaceError::Lost) => return,
@@ -170,53 +172,16 @@ impl<'a> FrameComposer<'a> {
             format: Some(view_format),
             ..Default::default()
         });
-        
-        // 提取物理屏幕尺寸
+
         let width = output.texture.width();
         let height = output.texture.height();
 
-        // 3. 旧图
+        // 鈹佲攣锟?2. Old Graph: scene rendering only 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+
         let mut graph = self.builder.build();
 
-        // 2. 构建 RDG 拓扑并规划内存
-        // use crate::renderer::graph::rdg::graph::RenderGraph as RdgGraph;
-        // use crate::renderer::graph::rdg::test_pass::RdgFxaaPass;
-        use crate::renderer::graph::rdg::types::RdgTextureDesc;
-        use crate::renderer::graph::rdg::context::{RdgPrepareContext, RdgExecuteContext};
-        use rustc_hash::FxHashMap;
-        
-        // let mut rdg = RdgGraph::new();
-        let rdg =  self.ctx.rdg_graph; // 直接使用 Renderer 中的 RDG 实例，避免重复创建和内存浪费
-        rdg.begin_frame();
-
-        let desc = RdgTextureDesc::new_2d(
-            width, height, view_format,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING
-        );
-
-        // 【大升级】：Bridge 不再是 external！交给 RDG 去在对象池里智能复用！
-        let node_in = rdg.register_resource("Bridge_In", desc.clone(), false);
-        // 输出端绑定真实的屏幕 (依然是外部资源)
-        let node_out = rdg.register_resource("Surface_Out", desc.clone(), true);
-
-        // let mut fxaa_pass = RdgFxaaPass::new();
-        let fxaa_pass = self.ctx.test_fxaa_pass; // 直接使用 Renderer 中的测试 Pass 实例，避免重复创建和内存浪费
-        fxaa_pass.input_tex = node_in;
-        fxaa_pass.output_tex = node_out;
-        rdg.add_pass(fxaa_pass);
-
-        // 编译 RDG，触发物理内存池的 acquire 分配
-        rdg.compile(self.ctx.rdg_pool, &self.ctx.wgpu_ctx.device);
-
-        // 3. 从 RDG 分配好的物理池中，把纹理“借”出来给旧系统
-        let bridge_idx = rdg.resources[node_in.0 as usize].physical_index.expect("RDG failed to allocate bridge");
-        let bridge_tracked = &self.ctx.rdg_pool.resources[bridge_idx].view;
-
-
-        // 4. 准备并执行旧图
         {
             let mut prepare_ctx = PrepareContext {
-                // ... 保留你原有的 PrepareContext 参数填法 ...
                 wgpu_ctx: &*self.ctx.wgpu_ctx,
                 resource_manager: self.ctx.resource_manager,
                 pipeline_cache: self.ctx.pipeline_cache,
@@ -237,24 +202,115 @@ impl<'a> FrameComposer<'a> {
             graph.prepare(&mut prepare_ctx);
         }
 
-        // 4. 执行旧图
-        // 注意：这里传入 &*bridge_tracked 代替旧的 &surface_view
-        // 所有输出到 Surface 的操作，现在都会悄无声息地写入到我们的桥接纹理上！
+        // Execute old graph 锟?writes HDR scene color to
+        // frame_resources.scene_color_view[0]. surface_view is passed for API
+        // compatibility but no remaining old pass writes to it.
         let execute_ctx = ExecuteContext::new(
             &*self.ctx.wgpu_ctx,
             &*self.ctx.resource_manager,
-            &*bridge_tracked, 
+            &surface_view,
             &*self.ctx.render_lists,
             &*self.ctx.blackboard,
             self.ctx.frame_resources,
             &*self.ctx.transient_pool,
             &*self.ctx.pipeline_cache,
         );
-        graph.execute(&execute_ctx); // 旧的 graph 会自己提交一个 CommandEncoder 到 Queue
+        graph.execute(&execute_ctx);
 
-        // 5. 准备并执行 RDG 图
-        // 因为 node_in 是内部资源，external_resources 现在只需要传空的 HashMap 了！
-        let ext_res = FxHashMap::default();
+        // 鈹佲攣锟?3. Build RDG Post-Processing Chain 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+
+        use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+        use crate::renderer::graph::rdg::types::RdgTextureDesc;
+        use crate::renderer::HDR_TEXTURE_FORMAT;
+        use rustc_hash::FxHashMap;
+
+        let rdg = self.ctx.rdg_graph;
+        rdg.begin_frame();
+
+        // External: HDR scene color (written by old system)
+        let hdr_desc = RdgTextureDesc::new_2d(
+            width,
+            height,
+            HDR_TEXTURE_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let scene_hdr = rdg.register_resource("Scene_HDR", hdr_desc.clone(), true);
+
+        // External: surface output (final write target)
+        let surface_desc = RdgTextureDesc::new_2d(
+            width,
+            height,
+            view_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let surface_out = rdg.register_resource("Surface_Out", surface_desc.clone(), true);
+
+        let bloom_enabled = self.ctx.scene.bloom.enabled;
+        let fxaa_enabled = self.ctx.scene.fxaa.enabled;
+
+        // 鈹€鈹€ Conditional Wiring 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        //
+        // Bloom ON  + FXAA ON  锟?HDR 锟?Bloom 锟?HDR' 锟?ToneMap 锟?LDR 锟?FXAA 锟?Surface
+        // Bloom ON  + FXAA OFF 锟?HDR 锟?Bloom 锟?HDR' 锟?ToneMap 锟?Surface
+        // Bloom OFF + FXAA ON  锟?HDR 锟?ToneMap 锟?LDR 锟?FXAA 锟?Surface
+        // Bloom OFF + FXAA OFF 锟?HDR 锟?ToneMap 锟?Surface
+
+        let bloom_pass = self.ctx.rdg_bloom_pass;
+        let tone_map_pass = self.ctx.rdg_tone_map_pass;
+        let fxaa_pass = self.ctx.rdg_fxaa_pass;
+
+        let tonemap_input = if bloom_enabled {
+            let bloom_out = rdg.register_resource("Bloom_Out", hdr_desc.clone(), false);
+
+            bloom_pass.input_tex = scene_hdr;
+            bloom_pass.output_tex = bloom_out;
+            bloom_pass.karis_average = self.ctx.scene.bloom.karis_average;
+            bloom_pass.max_mip_levels = self.ctx.scene.bloom.max_mip_levels();
+            self.ctx.resource_manager.ensure_buffer(&self.ctx.scene.bloom.upsample_uniforms);
+            self.ctx.resource_manager.ensure_buffer(&self.ctx.scene.bloom.composite_uniforms);
+            bloom_pass.upsample_uniforms_cpu_id = self.ctx.scene.bloom.upsample_uniforms.id();
+            bloom_pass.composite_uniforms_cpu_id = self.ctx.scene.bloom.composite_uniforms.id();
+
+            rdg.add_pass(bloom_pass);
+            bloom_out
+        } else {
+            scene_hdr
+        };
+
+        let tonemap_output = if fxaa_enabled {
+            rdg.register_resource("LDR_Intermediate", surface_desc.clone(), false)
+        } else {
+            surface_out
+        };
+
+        // Wire ToneMap
+        tone_map_pass.input_tex = tonemap_input;
+        tone_map_pass.output_tex = tonemap_output;
+        tone_map_pass.mode = self.ctx.scene.tone_mapping.mode;
+        tone_map_pass.has_lut = self.ctx.scene.tone_mapping.lut_texture.is_some();
+        let cpu_buffer = &self.ctx.scene.tone_mapping.uniforms;
+        self.ctx.resource_manager.ensure_buffer(cpu_buffer);
+        tone_map_pass.uniforms_cpu_id = cpu_buffer.id();
+        tone_map_pass.lut_handle = self.ctx.scene.tone_mapping.lut_texture.clone();
+        tone_map_pass.global_state_key =
+            (self.ctx.render_state.id, self.ctx.scene.id());
+        rdg.add_pass(tone_map_pass);
+
+        // Wire FXAA (conditional)
+        if fxaa_enabled {
+            fxaa_pass.input_tex = tonemap_output;
+            fxaa_pass.output_tex = surface_out;
+            rdg.add_pass(fxaa_pass);
+        }
+
+        // 鈹佲攣锟?4. Compile & Execute RDG 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣锟?
+
+        rdg.compile(self.ctx.rdg_pool, &self.ctx.wgpu_ctx.device);
+
+        let scene_color_view = &self.ctx.frame_resources.scene_color_view[0];
+        let ext_res: FxHashMap<_, _> =
+            [(scene_hdr, scene_color_view)].into_iter().collect();
+
         let mut rdg_prepare_ctx = RdgPrepareContext {
             graph: &rdg,
             pool: self.ctx.rdg_pool,
@@ -265,6 +321,7 @@ impl<'a> FrameComposer<'a> {
             global_bind_group_cache: self.ctx.global_bind_group_cache,
             shader_manager: self.ctx.shader_manager,
             external_resources: &ext_res,
+            resource_manager: self.ctx.resource_manager,
         };
 
         for &pass_idx in &rdg.execution_queue {
@@ -272,8 +329,12 @@ impl<'a> FrameComposer<'a> {
             pass.prepare(&mut rdg_prepare_ctx);
         }
 
-        let mut ext_views = FxHashMap::default();
-        ext_views.insert(node_out, &surface_view); // 仅映射真实的屏幕输出
+        // Execute phase 锟?map external views
+        let mut ext_views: FxHashMap<_, &wgpu::TextureView> = FxHashMap::default();
+        ext_views.insert(scene_hdr, &**scene_color_view);
+        ext_views.insert(surface_out, &surface_view);
+
+        let global_bg_ref = self.ctx.render_lists.gpu_global_bind_group.as_ref();
 
         let rdg_execute_ctx = RdgExecuteContext {
             graph: &rdg,
@@ -283,20 +344,26 @@ impl<'a> FrameComposer<'a> {
             pipeline_cache: self.ctx.pipeline_cache,
             global_bind_group_cache: self.ctx.global_bind_group_cache,
             external_views: ext_views,
+            global_bind_group: global_bg_ref,
         };
 
-        let mut rdg_encoder = self.ctx.wgpu_ctx.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("RDG Encoder"),
-        });
+        let mut rdg_encoder =
+            self.ctx
+                .wgpu_ctx
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("RDG Post-Process Encoder"),
+                });
 
         for &pass_idx in &rdg.execution_queue {
             let pass = rdg.passes[pass_idx].get_pass_mut();
             pass.execute(&rdg_execute_ctx, &mut rdg_encoder);
         }
 
-        // 6. 统一收尾
+        // 鈹佲攣锟?5. Submit & Present 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
+
         self.ctx.wgpu_ctx.queue.submit(Some(rdg_encoder.finish()));
         output.present();
-        self.ctx.transient_pool.reset(); // 旧系统池清理
+        self.ctx.transient_pool.reset();
     }
 }
