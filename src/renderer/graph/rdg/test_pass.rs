@@ -24,7 +24,7 @@ pub struct RdgFxaaPass {
     pipeline_id: Option<RenderPipelineId>,
     bind_group_layout: Option<Tracked<wgpu::BindGroupLayout>>,
 
-    current_bind_group: Option<wgpu::BindGroup>,
+    current_bind_group_key: Option<BindGroupKey>,
 }
 
 impl RdgFxaaPass {
@@ -41,7 +41,7 @@ impl RdgFxaaPass {
             l1_cache_key: None,
             pipeline_id: None,
             bind_group_layout: None,
-            current_bind_group: None,
+            current_bind_group_key: None,
         }
     }
 }
@@ -147,53 +147,49 @@ impl PassNode for RdgFxaaPass {
             self.l1_cache_key = Some(current_key);
 
             // 管线/格式变了，强制使当前绑定的 BindGroup 失效
-            self.current_bind_group = None;
+            self.current_bind_group_key = None;
         }
 
         // --------------------------------------------------------
         // 3. 物理别名感知与全局 BindGroup 去重缓存
         // --------------------------------------------------------
 
-        if self.current_bind_group.is_none() {
-            let input_view = ctx.get_physical_texture(self.input_tex);
+        let input_view = ctx.get_physical_texture(self.input_tex);
+        let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
+        let bind_group_layout = self.bind_group_layout.as_ref().unwrap();
 
-            let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
+        let current_key = BindGroupKey::new(bind_group_layout.id())
+            .with_resource(input_view.id())
+            .with_resource(sampler.id());
 
-            let bind_group_layout = self.bind_group_layout.as_ref().unwrap();
+        if self.current_bind_group_key.as_ref() != Some(&current_key) {
+            // 只确保 Cache 中存在，不保留实体引用
+            if ctx.global_bind_group_cache.get(&current_key).is_none() {
+                let new_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("FXAA BindGroup"),
+                    // 🌟 修正：解引用 Tracked
+                    layout: &**bind_group_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&**input_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&**sampler),
+                        },
+                    ],
+                });
+                ctx.global_bind_group_cache
+                    .insert(current_key.clone(), new_bg);
+            }
 
-            let key = BindGroupKey::new(bind_group_layout.id())
-                .with_resource(input_view.id())
-                .with_resource(sampler.id());
-
-            self.current_bind_group = Some(
-                if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
-                    cached.clone()
-                } else {
-                    let new_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("FXAA BindGroup"),
-                        layout: &bind_group_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(input_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::Sampler(sampler),
-                            },
-                        ],
-                    });
-
-                    ctx.global_bind_group_cache.insert(key, new_bg.clone());
-                    new_bg
-                },
-            );
+            self.current_bind_group_key = Some(current_key);
         }
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut CommandEncoder) {
         // 1. 从 RDG 上下文中获取真实的 wgpu::TextureView
-        // let input_view = ctx.get_texture_view(self.input_tex);
         let output_view = ctx.get_texture_view(self.output_tex);
 
         // 2.我们确信 prepare 阶段已经装填好了所需资源
@@ -201,7 +197,14 @@ impl PassNode for RdgFxaaPass {
             .pipeline_cache
             .get_render_pipeline(self.pipeline_id.expect("Pipeline not initialized!"));
 
-        let bind_group = self.current_bind_group.as_ref().unwrap();
+        let bind_group_key = self
+            .current_bind_group_key
+            .as_ref()
+            .expect("BindGroupKey should have been set in prepare!");
+        let bind_group = ctx
+            .global_bind_group_cache
+            .get(&bind_group_key)
+            .expect("BindGroup should have been prepared!");
 
         // 3. 录制原生的 WGPU 渲染指令
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -210,7 +213,7 @@ impl PassNode for RdgFxaaPass {
                 view: output_view,
                 resolve_target: None,
                 ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK), // 后续由 RDG 自动推导 LoadOp
+                    load: wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),
                     store: wgpu::StoreOp::Store,
                 },
                 depth_slice: None,
@@ -223,6 +226,6 @@ impl PassNode for RdgFxaaPass {
 
         rpass.set_pipeline(pipeline);
         rpass.set_bind_group(0, bind_group, &[]);
-        rpass.draw(0..3, 0..1); // 绘制全屏三角形
+        rpass.draw(0..3, 0..1);
     }
 }

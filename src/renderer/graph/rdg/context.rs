@@ -41,6 +41,7 @@ pub struct RdgExecuteContext<'a> {
     pub device: &'a Device,
     pub queue: &'a Queue,
     pub pipeline_cache: &'a PipelineCache,
+    pub global_bind_group_cache: &'a GlobalBindGroupCache,
     // 外部资源（如 Swapchain 的 Backbuffer）需要在 Execute 前注入
     pub external_views: FxHashMap<TextureNodeId, &'a TextureView>,
 }
