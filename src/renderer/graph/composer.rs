@@ -66,7 +66,7 @@ pub struct ComposerContext<'a> {
     pub sampler_registry: &'a mut crate::renderer::core::resources::SamplerRegistry,
 
     // 鈹€鈹€鈹€ RDG Passes (Phase 2) 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
-    pub rdg_fxaa_pass: &'a mut crate::renderer::graph::rdg::test_pass::RdgFxaaPass,
+    pub rdg_fxaa_pass: &'a mut crate::renderer::graph::rdg::fxaa::RdgFxaaPass,
     pub rdg_tone_map_pass: &'a mut crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass,
     pub rdg_bloom_pass: &'a mut crate::renderer::graph::rdg::bloom::RdgBloomPass,
     pub rdg_ssao_pass: &'a mut crate::renderer::graph::rdg::ssao::RdgSsaoPass,
@@ -179,7 +179,7 @@ impl<'a> FrameComposer<'a> {
         // 鈹佲攣锟?2. Old Graph: scene rendering only 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 
         let mut graph = self.builder.build();
-
+        let active_hdr_tracked;
         {
             let mut prepare_ctx = PrepareContext {
                 wgpu_ctx: &*self.ctx.wgpu_ctx,
@@ -200,28 +200,30 @@ impl<'a> FrameComposer<'a> {
                 color_view_flip_flop: 0,
             };
             graph.prepare(&mut prepare_ctx);
+            active_hdr_tracked = prepare_ctx
+                .get_resource_view(crate::renderer::graph::context::GraphResource::SceneColorInput)
+                .clone();
         }
 
         // Execute old graph 锟?writes HDR scene color to
-        // frame_resources.scene_color_view[0]. surface_view is passed for API
         // compatibility but no remaining old pass writes to it.
         let execute_ctx = ExecuteContext::new(
-            &*self.ctx.wgpu_ctx,
-            &*self.ctx.resource_manager,
+            self.ctx.wgpu_ctx,
+            self.ctx.resource_manager,
             &surface_view,
-            &*self.ctx.render_lists,
-            &*self.ctx.blackboard,
+            self.ctx.render_lists,
+            self.ctx.blackboard,
             self.ctx.frame_resources,
-            &*self.ctx.transient_pool,
-            &*self.ctx.pipeline_cache,
+            self.ctx.transient_pool,
+            self.ctx.pipeline_cache,
         );
         graph.execute(&execute_ctx);
 
         // 鈹佲攣锟?3. Build RDG Post-Processing Chain 鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣鈹佲攣
 
+        use crate::renderer::HDR_TEXTURE_FORMAT;
         use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
         use crate::renderer::graph::rdg::types::RdgTextureDesc;
-        use crate::renderer::HDR_TEXTURE_FORMAT;
         use rustc_hash::FxHashMap;
 
         let rdg = self.ctx.rdg_graph;
@@ -262,12 +264,45 @@ impl<'a> FrameComposer<'a> {
         let tonemap_input = if bloom_enabled {
             let bloom_out = rdg.register_resource("Bloom_Out", hdr_desc.clone(), false);
 
+            // let source_w = input_desc.size.width;
+            // let source_h = input_desc.size.height;
+            let (source_w, source_h) = self.ctx.wgpu_ctx.size();
+            let bloom_w = (source_w / 2).max(1);
+            let bloom_h = (source_h / 2).max(1);
+
+            let max_possible = ((bloom_w.max(bloom_h) as f32).log2().floor() as u32) + 1;
+            let mip_count = self
+                .ctx
+                .scene
+                .bloom
+                .max_mip_levels()
+                .min(max_possible)
+                .max(1);
+
+            let mut bloom_chain_desc = RdgTextureDesc::new_2d(
+                width,
+                height,
+                HDR_TEXTURE_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            bloom_chain_desc.mip_level_count = mip_count; // <--- 关键：告诉 RDG 分配带 mip 的物理纹理
+
+            // 注册为一个内部节点，RDG 会在 Bloom 结束后自动回收这块显存给别的 Pass 用！
+            let node_bloom_chain = rdg.register_resource("Bloom_MipChain", bloom_chain_desc, false);
+
+            bloom_pass.bloom_texture = node_bloom_chain;
+            // bloom_pass.current_mip_count = mip_count;
+
             bloom_pass.input_tex = scene_hdr;
             bloom_pass.output_tex = bloom_out;
             bloom_pass.karis_average = self.ctx.scene.bloom.karis_average;
-            bloom_pass.max_mip_levels = self.ctx.scene.bloom.max_mip_levels();
-            self.ctx.resource_manager.ensure_buffer(&self.ctx.scene.bloom.upsample_uniforms);
-            self.ctx.resource_manager.ensure_buffer(&self.ctx.scene.bloom.composite_uniforms);
+            // bloom_pass.max_mip_levels = self.ctx.scene.bloom.max_mip_levels();
+            self.ctx
+                .resource_manager
+                .ensure_buffer(&self.ctx.scene.bloom.upsample_uniforms);
+            self.ctx
+                .resource_manager
+                .ensure_buffer(&self.ctx.scene.bloom.composite_uniforms);
             bloom_pass.upsample_uniforms_cpu_id = self.ctx.scene.bloom.upsample_uniforms.id();
             bloom_pass.composite_uniforms_cpu_id = self.ctx.scene.bloom.composite_uniforms.id();
 
@@ -292,8 +327,7 @@ impl<'a> FrameComposer<'a> {
         self.ctx.resource_manager.ensure_buffer(cpu_buffer);
         tone_map_pass.uniforms_cpu_id = cpu_buffer.id();
         tone_map_pass.lut_handle = self.ctx.scene.tone_mapping.lut_texture.clone();
-        tone_map_pass.global_state_key =
-            (self.ctx.render_state.id, self.ctx.scene.id());
+        tone_map_pass.global_state_key = (self.ctx.render_state.id, self.ctx.scene.id());
         rdg.add_pass(tone_map_pass);
 
         // Wire FXAA (conditional)
@@ -307,9 +341,8 @@ impl<'a> FrameComposer<'a> {
 
         rdg.compile(self.ctx.rdg_pool, &self.ctx.wgpu_ctx.device);
 
-        let scene_color_view = &self.ctx.frame_resources.scene_color_view[0];
-        let ext_res: FxHashMap<_, _> =
-            [(scene_hdr, scene_color_view)].into_iter().collect();
+        // let scene_color_view = &self.ctx.frame_resources.scene_color_view[0];
+        let ext_res: FxHashMap<_, _> = [(scene_hdr, &active_hdr_tracked)].into_iter().collect();
 
         let mut rdg_prepare_ctx = RdgPrepareContext {
             graph: &rdg,
@@ -331,7 +364,7 @@ impl<'a> FrameComposer<'a> {
 
         // Execute phase 锟?map external views
         let mut ext_views: FxHashMap<_, &wgpu::TextureView> = FxHashMap::default();
-        ext_views.insert(scene_hdr, &**scene_color_view);
+        ext_views.insert(scene_hdr, &active_hdr_tracked);
         ext_views.insert(surface_out, &surface_view);
 
         let global_bg_ref = self.ctx.render_lists.gpu_global_bind_group.as_ref();

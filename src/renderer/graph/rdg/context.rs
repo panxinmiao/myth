@@ -1,6 +1,6 @@
+use crate::renderer::core::ResourceManager;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::{SamplerRegistry, Tracked};
-use crate::renderer::core::ResourceManager;
 use crate::renderer::pipeline::{PipelineCache, ShaderManager};
 use rustc_hash::FxHashMap;
 use wgpu::{Device, Queue, TextureView};
@@ -44,7 +44,7 @@ impl<'a> RdgPrepareContext<'a> {
     ///
     /// For external resources, the view is looked up in `external_resources`.
     /// For transient resources, the view is obtained from the physical pool.
-    pub fn get_physical_texture(&self, id: TextureNodeId) -> &Tracked<wgpu::TextureView> {
+    pub fn get_texture_view(&self, id: TextureNodeId) -> &Tracked<wgpu::TextureView> {
         let res = &self.graph.resources[id.0 as usize];
 
         if res.is_external {
