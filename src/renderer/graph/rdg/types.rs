@@ -3,10 +3,47 @@ use smallvec::SmallVec;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureNodeId(pub u32);
 
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct RdgTextureDesc {
+    pub size: wgpu::Extent3d,
+    pub mip_level_count: u32,
+    pub sample_count: u32,
+    pub dimension: wgpu::TextureDimension,
+    pub format: wgpu::TextureFormat,
+    pub usage: wgpu::TextureUsages,
+}
+
+impl RdgTextureDesc {
+    pub fn new_2d(
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+        usage: wgpu::TextureUsages,
+    ) -> Self {
+        Self {
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage,
+        }
+    }
+}
+
 pub struct ResourceRecord {
     pub name: &'static str,
+    pub desc: RdgTextureDesc,
     pub is_external: bool,
-    // 使用 SmallVec 避免堆分配
+
     pub producers: SmallVec<[usize; 4]>,
     pub consumers: SmallVec<[usize; 8]>,
+
+    pub first_use: usize,
+    pub last_use: usize,
+    pub physical_index: Option<usize>,
 }

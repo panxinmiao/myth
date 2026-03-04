@@ -27,6 +27,7 @@ mod geometry;
 mod material;
 mod mipmap;
 mod resource_ids;
+mod sampler_registry;
 mod texture;
 mod tracked;
 
@@ -58,6 +59,7 @@ pub use allocator::ModelBufferAllocator;
 pub use resource_ids::{
     BindGroupFingerprint, EnsureResult, ResourceId, ResourceIdSet, hash_layout_entries,
 };
+pub use sampler_registry::{CommonSampler, SamplerKey, SamplerRegistry};
 pub use tracked::Tracked;
 
 static NEXT_GPU_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
