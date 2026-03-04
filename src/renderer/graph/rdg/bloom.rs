@@ -519,6 +519,67 @@ impl RdgBloomPass {
         }
     }
 
+
+    fn get_composite_bind_group(&self, ctx: &mut RdgPrepareContext) -> wgpu::BindGroup {
+        let input_view = ctx.get_texture_view(self.input_tex);
+
+        let bloom_view = &self.mip_views[0];
+
+        // 1. Prepare Cache Key IDs
+        let layout_id = self.composite_layout.as_ref().unwrap().id();
+        let input_view_id = input_view.id();
+        let bloom_view_id = bloom_view.id();
+        let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
+
+        // 2. Build Key
+        let key = BindGroupKey::new(layout_id)
+            .with_resource(input_view_id)
+            .with_resource(bloom_view_id)
+            .with_resource(sampler.id())
+            .with_resource(self.composite_uniforms_cpu_id);
+
+        // 3. Get from cache or create
+        if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
+            cached.clone()
+        } else {
+            let composite_gpu = ctx
+                .resource_manager
+                .gpu_buffers
+                .get(&self.composite_uniforms_cpu_id)
+                .expect("Bloom composite GPU buffer must exist");
+
+            let comp_layout = self.composite_layout.as_ref().unwrap();
+
+            let new_bg = ctx
+                .device
+                .create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Bloom Composite BG"),
+                    layout: comp_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(input_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(bloom_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: composite_gpu.buffer.as_entire_binding(),
+                        },
+                    ],
+                });
+
+            ctx.global_bind_group_cache.insert(key, new_bg.clone());
+            new_bg
+        }
+    }
+
     /// Build all internal bind groups. Called every frame since the first
     /// downsample BG and composite BG depend on the input scene color view,
     /// which may change due to RDG memory aliasing.
@@ -530,7 +591,7 @@ impl RdgBloomPass {
 
         let ds_layout = self.downsample_layout.as_ref().unwrap();
         let us_layout = self.upsample_layout.as_ref().unwrap();
-        let comp_layout = self.composite_layout.as_ref().unwrap();
+        
 
         // Check if the input view or mip0 changed
         let needs_full_rebuild = self.downsample_bind_groups.len() != mip_count as usize
@@ -609,40 +670,11 @@ impl RdgBloomPass {
             self.downsample_bind_groups[0] = first_ds_bg;
         }
 
-        // ─── Composite BG (original + bloom mip0 → output) ────────
-        // Always rebuild since input_tex view may alias differently each frame.
-        let composite_gpu = ctx
-            .resource_manager
-            .gpu_buffers
-            .get(&self.composite_uniforms_cpu_id)
-            .expect("RDG Bloom: composite GPU buffer must exist");
-
-        let input_view_for_composite = ctx.get_texture_view(self.input_tex);
-        let sampler_for_composite = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
-
-        self.composite_bind_group =
-            Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("RDG Bloom Composite BG"),
-                layout: comp_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(input_view_for_composite),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(&*self.mip_views[0]),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(&**sampler_for_composite),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: composite_gpu.buffer.as_entire_binding(),
-                    },
-                ],
-            }));
+        if needs_full_rebuild || self.composite_bind_group.is_none() {
+            // ─── Composite BG (original + bloom mip0 → output) ────────
+            // Always rebuild since input_tex view may alias differently each frame.
+            self.composite_bind_group = Some(self.get_composite_bind_group(ctx));
+        }
     }
 }
 
