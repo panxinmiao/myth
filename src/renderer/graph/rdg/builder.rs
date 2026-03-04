@@ -7,8 +7,12 @@ pub struct PassBuilder<'a> {
 }
 
 impl<'a> PassBuilder<'a> {
-    pub fn create_texture(&mut self, name: &'static str) -> TextureNodeId {
-        let id = self.graph.register_resource(name, false);
+    pub fn create_texture(
+        &mut self,
+        name: &'static str,
+        desc: super::types::RdgTextureDesc,
+    ) -> TextureNodeId {
+        let id = self.graph.register_resource(name, desc, false);
         self.graph.passes[self.pass_index].creates.push(id);
         id
     }

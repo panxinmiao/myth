@@ -1,7 +1,11 @@
+use crate::renderer::graph::rdg::allocator::RdgTransientPool;
+use crate::renderer::graph::rdg::types::RdgTextureDesc;
+
 use super::builder::PassBuilder;
 use super::node::{PassNode, PassRecord};
 use super::types::{ResourceRecord, TextureNodeId};
 use smallvec::SmallVec;
+use wgpu::Device;
 
 #[derive(Default)]
 pub struct RenderGraph {
@@ -31,13 +35,22 @@ impl RenderGraph {
         self.execution_queue.clear();
     }
 
-    pub fn register_resource(&mut self, name: &'static str, is_external: bool) -> TextureNodeId {
-        let id = TextureNodeId(self.resources.len() as u32);
-        self.resources.push(ResourceRecord {
+    pub fn register_resource(
+        &mut self,
+        name: &'static str,
+        desc: RdgTextureDesc,
+        is_external: bool,
+    ) -> super::types::TextureNodeId {
+        let id = super::types::TextureNodeId(self.resources.len() as u32);
+        self.resources.push(super::types::ResourceRecord {
             name,
+            desc,
             is_external,
-            producers: SmallVec::new(),
-            consumers: SmallVec::new(),
+            producers: smallvec::SmallVec::new(),
+            consumers: smallvec::SmallVec::new(),
+            first_use: usize::MAX,
+            last_use: 0,
+            physical_index: None,
         });
         id
     }
@@ -61,10 +74,18 @@ impl RenderGraph {
         unsafe { (*static_ptr).setup(&mut builder) };
     }
 
-    pub fn compile(&mut self) {
+    pub fn compile_topology(&mut self) {
         self.build_physical_dependencies();
         self.cull_dead_passes();
         self.topological_sort();
+
+        self.compute_resource_lifetimes();
+    }
+
+    pub fn compile(&mut self, pool: &mut RdgTransientPool, device: &Device) {
+        self.compile_topology();
+
+        self.allocate_physical_resources(pool, device);
     }
 
     fn build_physical_dependencies(&mut self) {
@@ -161,29 +182,80 @@ impl RenderGraph {
             "Render Graph Detected Circular Dependency!"
         );
     }
+
+    fn compute_resource_lifetimes(&mut self) {
+        for res in &mut self.resources {
+            res.first_use = usize::MAX;
+            res.last_use = 0;
+        }
+
+        for (timeline_index, &pass_idx) in self.execution_queue.iter().enumerate() {
+            let pass = &self.passes[pass_idx];
+
+            let mut touch_resource = |id: TextureNodeId| {
+                let res = &mut self.resources[id.0 as usize];
+                res.first_use = res.first_use.min(timeline_index);
+                res.last_use = res.last_use.max(timeline_index);
+            };
+
+            for &id in &pass.reads {
+                touch_resource(id);
+            }
+            for &id in &pass.writes {
+                touch_resource(id);
+            }
+            for &id in &pass.creates {
+                touch_resource(id);
+            }
+        }
+    }
+
+    fn allocate_physical_resources(&mut self, pool: &mut RdgTransientPool, device: &Device) {
+        pool.begin_frame();
+
+        for res in &mut self.resources {
+            if res.is_external || res.first_use == usize::MAX {
+                continue;
+            }
+
+            res.physical_index = Some(pool.acquire(device, &res.desc, res.first_use, res.last_use));
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use super::super::context::RdgExecuteContext;
+    use super::super::types::RdgTextureDesc;
     use super::*;
 
-    struct OpaquePass {
+    fn dummy_desc() -> RdgTextureDesc {
+        RdgTextureDesc::new_2d(
+            1,
+            1,
+            wgpu::TextureFormat::Rgba8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT,
+        )
+    }
+
+    struct MockOpaquePass {
         out_color: TextureNodeId,
     }
-    impl PassNode for OpaquePass {
+    impl PassNode for MockOpaquePass {
         fn name(&self) -> &'static str {
             "Opaque"
         }
         fn setup(&mut self, builder: &mut PassBuilder) {
             builder.write_texture(self.out_color);
         }
+        fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
 
-    struct BloomPass {
+    struct MockBloomPass {
         in_color: TextureNodeId,
         out_bloom: TextureNodeId,
     }
-    impl PassNode for BloomPass {
+    impl PassNode for MockBloomPass {
         fn name(&self) -> &'static str {
             "Bloom"
         }
@@ -191,14 +263,15 @@ mod tests {
             builder.read_texture(self.in_color);
             builder.write_texture(self.out_bloom);
         }
+        fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
 
-    struct ToneMappingPass {
+    struct MockToneMappingPass {
         in_color: TextureNodeId,
         in_bloom: TextureNodeId,
         out_target: TextureNodeId,
     }
-    impl PassNode for ToneMappingPass {
+    impl PassNode for MockToneMappingPass {
         fn name(&self) -> &'static str {
             "ToneMapping"
         }
@@ -207,6 +280,7 @@ mod tests {
             builder.read_texture(self.in_bloom);
             builder.write_texture(self.out_target);
         }
+        fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
 
     #[test]
@@ -217,20 +291,20 @@ mod tests {
         for frame in 0..2 {
             graph.begin_frame();
 
-            let scene_color = graph.register_resource("SceneColor", false);
-            let bloom_tex = graph.register_resource("BloomTex", false);
-            let backbuffer = graph.register_resource("Backbuffer", true);
+            let scene_color = graph.register_resource("SceneColor", dummy_desc(), false);
+            let bloom_tex = graph.register_resource("BloomTex", dummy_desc(), false);
+            let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-            let mut tm_pass = ToneMappingPass {
+            let mut tm_pass = MockToneMappingPass {
                 in_color: scene_color,
                 in_bloom: bloom_tex,
                 out_target: backbuffer,
             };
-            let mut bloom_pass = BloomPass {
+            let mut bloom_pass = MockBloomPass {
                 in_color: scene_color,
                 out_bloom: bloom_tex,
             };
-            let mut opaque_pass = OpaquePass {
+            let mut opaque_pass = MockOpaquePass {
                 out_color: scene_color,
             };
 
@@ -239,7 +313,7 @@ mod tests {
             graph.add_pass(&mut bloom_pass);
             graph.add_pass(&mut opaque_pass);
 
-            graph.compile();
+            graph.compile_topology();
 
             assert_eq!(graph.execution_queue.len(), 3);
             assert_eq!(graph.passes[graph.execution_queue[0]].name, "Opaque");

@@ -1,15 +1,24 @@
+use crate::renderer::graph::rdg::context::RdgPrepareContext;
+
 use super::builder::PassBuilder;
+use super::context::RdgExecuteContext;
 use super::types::TextureNodeId;
 use smallvec::SmallVec;
+use wgpu::CommandEncoder;
 
 pub trait PassNode {
     fn name(&self) -> &'static str;
     fn setup(&mut self, builder: &mut PassBuilder);
+
+    #[allow(unused_variables)]
+    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {}
+
+    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut CommandEncoder);
 }
 
 pub struct PassRecord {
     pub name: &'static str,
-    // 直接借用外部的 mut 引用，坚决不使用 Box 产生堆分配！
+    // 直接借用外部的 mut 引用，不使用 Box 产生堆分配
     pub node: *mut (dyn PassNode + 'static),
 
     // 局部的依赖声明全部在栈上完成 (或随 RenderGraph 驻留)
