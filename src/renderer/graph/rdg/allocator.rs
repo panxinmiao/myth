@@ -4,7 +4,6 @@ use wgpu::{Device, TextureView};
 use super::types::RdgTextureDesc;
 
 pub(crate) struct PhysicalTexture {
-    // texture: wgpu::Texture,
     pub(crate) view: Tracked<wgpu::TextureView>,
     desc: RdgTextureDesc,
 }
@@ -65,7 +64,6 @@ impl RdgTransientPool {
 
         let index = self.resources.len();
         self.resources.push(PhysicalTexture {
-            // texture,
             view: tracked_view,
             desc: desc.clone(),
         });

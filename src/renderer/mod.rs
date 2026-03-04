@@ -148,12 +148,11 @@ struct RendererState {
     pub(crate) fxaa_pass: FxaaPass,
     pub(crate) ssao_pass: SsaoPass,
 
-
     // ===== RDG (Declarative Render Graph) =====
     pub(crate) rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph,
     pub(crate) sampler_registry: SamplerRegistry,
     pub(crate) rdg_pool: RdgTransientPool,
-    pub(crate) rdg_fxaa_pass: crate::renderer::graph::rdg::test_pass::RdgFxaaPass,
+    pub(crate) rdg_fxaa_pass: crate::renderer::graph::rdg::fxaa::RdgFxaaPass,
     pub(crate) rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass,
     pub(crate) rdg_bloom_pass: crate::renderer::graph::rdg::bloom::RdgBloomPass,
     pub(crate) rdg_ssao_pass: crate::renderer::graph::rdg::ssao::RdgSsaoPass,
@@ -285,7 +284,7 @@ impl Renderer {
             rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph::new(),
             sampler_registry,
             rdg_pool: RdgTransientPool::new(),
-            rdg_fxaa_pass: crate::renderer::graph::rdg::test_pass::RdgFxaaPass::new(),
+            rdg_fxaa_pass: crate::renderer::graph::rdg::fxaa::RdgFxaaPass::new(),
             rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass::new(),
             rdg_bloom_pass: crate::renderer::graph::rdg::bloom::RdgBloomPass::new(),
             rdg_ssao_pass: crate::renderer::graph::rdg::ssao::RdgSsaoPass::new(),

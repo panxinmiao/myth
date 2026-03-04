@@ -48,6 +48,6 @@ impl PassRecord {
 
     #[inline]
     pub fn get_pass_mut(&self) -> &mut dyn PassNode {
-        unsafe { &mut *self.node } 
+        unsafe { &mut *self.node }
     }
 }

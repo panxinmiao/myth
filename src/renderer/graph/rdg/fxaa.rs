@@ -154,7 +154,7 @@ impl PassNode for RdgFxaaPass {
         // 3. 物理别名感知与全局 BindGroup 去重缓存
         // --------------------------------------------------------
 
-        let input_view = ctx.get_physical_texture(self.input_tex);
+        let input_view = ctx.get_texture_view(self.input_tex);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
         let bind_group_layout = self.bind_group_layout.as_ref().unwrap();
 

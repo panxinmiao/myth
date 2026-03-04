@@ -401,11 +401,8 @@ impl RdgSsaoPass {
                 immediate_size: 0,
             });
 
-            let key = FullscreenPipelineKey::fullscreen(
-                hash,
-                smallvec::smallvec![color_target],
-                None,
-            );
+            let key =
+                FullscreenPipelineKey::fullscreen(hash, smallvec::smallvec![color_target], None);
 
             self.blur_pipeline = Some(ctx.pipeline_cache.get_or_create_fullscreen(
                 device,
@@ -465,14 +462,14 @@ impl RdgSsaoPass {
 
         // Extract physical texture view IDs and raw pointers up front
         // to avoid holding the immutable borrow on `ctx` across mutable cache operations.
-        let depth_view_id = ctx.get_physical_texture(self.depth_tex).id();
-        let normal_view_id = ctx.get_physical_texture(self.normal_tex).id();
+        let depth_view_id = ctx.get_texture_view(self.depth_tex).id();
+        let normal_view_id = ctx.get_texture_view(self.normal_tex).id();
         // SAFETY: We use raw pointers to break the borrow conflict. The views
         // remain valid for the entire scope since ctx/pool outlive them.
-        let depth_view_ptr = ctx.get_physical_texture(self.depth_tex)
-            as *const Tracked<wgpu::TextureView>;
-        let normal_view_ptr = ctx.get_physical_texture(self.normal_tex)
-            as *const Tracked<wgpu::TextureView>;
+        let depth_view_ptr =
+            ctx.get_texture_view(self.depth_tex) as *const Tracked<wgpu::TextureView>;
+        let normal_view_ptr =
+            ctx.get_texture_view(self.normal_tex) as *const Tracked<wgpu::TextureView>;
 
         let noise_view = self.noise_texture_view.as_ref().unwrap();
         let raw_view = self.raw_texture_view.as_ref().unwrap();

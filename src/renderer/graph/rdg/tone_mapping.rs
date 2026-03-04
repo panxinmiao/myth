@@ -21,7 +21,7 @@ use rustc_hash::FxHashMap;
 use crate::ShaderDefines;
 use crate::assets::TextureHandle;
 use crate::renderer::core::binding::BindGroupKey;
-use crate::renderer::core::resources::Tracked;
+use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
@@ -69,15 +69,10 @@ pub struct RdgToneMapPass {
     pub global_state_key: (u32, u32),
 
     // ─── Internal Stateful Cache ───────────────────────────────────
-
     /// Base bind group layout (without LUT bindings).
     layout_base: Option<Tracked<wgpu::BindGroupLayout>>,
     /// Extended bind group layout (with LUT bindings).
     layout_with_lut: Option<Tracked<wgpu::BindGroupLayout>>,
-    /// Linear sampler for input texture.
-    sampler: Option<Tracked<wgpu::Sampler>>,
-    /// Linear sampler dedicated to 3D LUT texture.
-    lut_sampler: Option<Tracked<wgpu::Sampler>>,
 
     /// Cached pipeline IDs by (mode, output_format, has_lut).
     local_cache: FxHashMap<PipelineCacheKey, RenderPipelineId>,
@@ -105,9 +100,8 @@ impl RdgToneMapPass {
 
             layout_base: None,
             layout_with_lut: None,
-            sampler: None,
-            lut_sampler: None,
-
+            // sampler: None,
+            // lut_sampler: None,
             local_cache: FxHashMap::default(),
             current_pipeline: None,
             current_bind_group_key: None,
@@ -151,12 +145,12 @@ impl RdgToneMapPass {
             },
         ];
 
-        self.layout_base = Some(Tracked::new(
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        self.layout_base = Some(Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
                 label: Some("RDG ToneMap Layout (base)"),
                 entries: &base_entries,
-            }),
-        ));
+            },
+        )));
 
         // Extended layout: base + LUT 3D texture + LUT sampler
         let mut lut_entries = base_entries.to_vec();
@@ -177,38 +171,10 @@ impl RdgToneMapPass {
             count: None,
         });
 
-        self.layout_with_lut = Some(Tracked::new(
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        self.layout_with_lut = Some(Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
                 label: Some("RDG ToneMap Layout (LUT)"),
                 entries: &lut_entries,
-            }),
-        ));
-    }
-
-    fn ensure_samplers(&mut self, device: &wgpu::Device) {
-        if self.sampler.is_some() {
-            return;
-        }
-
-        self.sampler = Some(Tracked::new(device.create_sampler(
-            &wgpu::SamplerDescriptor {
-                label: Some("RDG ToneMap Sampler"),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            },
-        )));
-
-        self.lut_sampler = Some(Tracked::new(device.create_sampler(
-            &wgpu::SamplerDescriptor {
-                label: Some("RDG ToneMap LUT Sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                ..Default::default()
             },
         )));
     }
@@ -289,10 +255,7 @@ impl RdgToneMapPass {
             shader_module,
             &pipeline_layout,
             &key,
-            &format!(
-                "RDG ToneMap Pipeline {:?} lut={}",
-                self.mode, self.has_lut
-            ),
+            &format!("RDG ToneMap Pipeline {:?} lut={}", self.mode, self.has_lut),
         );
 
         self.local_cache.insert(cache_key, id);
@@ -313,7 +276,7 @@ impl PassNode for RdgToneMapPass {
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         // ─── 1. Lazy initialization ────────────────────────────────
         self.ensure_layouts(ctx.device);
-        self.ensure_samplers(ctx.device);
+        // self.ensure_samplers(ctx.device);
 
         // ─── 2. Pipeline (re)creation ──────────────────────────────
         //
@@ -321,17 +284,15 @@ impl PassNode for RdgToneMapPass {
         let output_format = ctx.graph.resources[self.output_tex.0 as usize].desc.format;
         let cache_key = (self.mode, output_format, self.has_lut);
 
-        if self.current_pipeline.is_none()
-            || !self.local_cache.contains_key(&cache_key)
-        {
+        if self.current_pipeline.is_none() || !self.local_cache.contains_key(&cache_key) {
             self.current_pipeline = Some(self.get_or_create_pipeline(ctx));
         } else {
             self.current_pipeline = self.local_cache.get(&cache_key).copied();
         }
 
         // ─── 3. BindGroup construction ─────────────────────────────
-        let input_view = ctx.get_physical_texture(self.input_tex);
-        let sampler = self.sampler.as_ref().unwrap();
+        let input_view = ctx.get_texture_view(self.input_tex);
+        let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
         let layout = self.current_layout();
 
         // Look up GPU buffer for uniforms
@@ -359,10 +320,8 @@ impl PassNode for RdgToneMapPass {
         };
 
         if let Some(lut_id) = lut_view_id {
-            let lut_sampler = self.lut_sampler.as_ref().unwrap();
-            key = key
-                .with_resource(lut_id)
-                .with_resource(lut_sampler.id());
+            // let lut_sampler = self.lut_sampler.as_ref().unwrap();
+            key = key.with_resource(lut_id).with_resource(sampler.id());
         }
 
         if self.current_bind_group_key.as_ref() != Some(&key) {
@@ -387,7 +346,7 @@ impl PassNode for RdgToneMapPass {
                         let lut_view = ctx
                             .resource_manager
                             .get_texture_view(&TextureSource::Asset(lut_handle));
-                        let lut_sampler = self.lut_sampler.as_ref().unwrap();
+                        // let lut_sampler = self.lut_sampler.as_ref().unwrap();
 
                         entries.push(wgpu::BindGroupEntry {
                             binding: 3,
@@ -395,7 +354,7 @@ impl PassNode for RdgToneMapPass {
                         });
                         entries.push(wgpu::BindGroupEntry {
                             binding: 4,
-                            resource: wgpu::BindingResource::Sampler(lut_sampler),
+                            resource: wgpu::BindingResource::Sampler(sampler),
                         });
                     }
                 }
