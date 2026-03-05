@@ -1,0 +1,255 @@
+//! RDG Opaque Render Pass
+//!
+//! Draws opaque objects to the HDR scene color buffer. Clears color to the
+//! scene background color and conditionally clears or loads depth depending
+//! on whether a Z-prepass has already written depth data.
+//!
+//! # RDG Slots
+//!
+//! - `scene_color`: HDR color output (write, Clear)
+//! - `scene_depth`: Depth buffer (read if prepass, write if no prepass)
+//! - `ssao_tex`: Optional SSAO texture (read, for screen bind group)
+//!
+//! # Push Parameters
+//!
+//! - `has_prepass`: Whether depth was already written by RdgPrepass
+//! - `clear_color`: Background clear color
+//! - `needs_specular`: Whether to output a specular MRT attachment
+
+use crate::renderer::core::resources::Tracked;
+use crate::renderer::graph::frame::RenderCommand;
+use crate::renderer::graph::rdg::builder::PassBuilder;
+use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::node::PassNode;
+use crate::renderer::graph::rdg::types::TextureNodeId;
+use crate::renderer::graph::transient_pool::TransientTextureDesc;
+use crate::renderer::graph::TrackedRenderPass;
+use crate::renderer::HDR_TEXTURE_FORMAT;
+
+/// RDG Opaque Render Pass.
+///
+/// Draws `render_lists.opaque` to the HDR scene color buffer. Builds a
+/// dynamic screen bind group (group 3) containing SSAO + transmission dummy
+/// textures.
+pub struct RdgOpaquePass {
+    // ─── RDG Resource Slots (set by Composer) ──────────────────────
+    pub scene_color: TextureNodeId,
+    pub scene_depth: TextureNodeId,
+    pub ssao_tex: TextureNodeId,
+
+    // ─── Push Parameters ───────────────────────────────────────────
+    pub has_prepass: bool,
+    pub clear_color: wgpu::Color,
+    pub needs_specular: bool,
+    pub ssao_enabled: bool,
+
+    // ─── Internal Cache ────────────────────────────────────────────
+    screen_bind_group: Option<wgpu::BindGroup>,
+    screen_bind_group_id: u64,
+}
+
+impl RdgOpaquePass {
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            scene_color: TextureNodeId(0),
+            scene_depth: TextureNodeId(0),
+            ssao_tex: TextureNodeId(0),
+            has_prepass: false,
+            clear_color: wgpu::Color::BLACK,
+            needs_specular: false,
+            ssao_enabled: false,
+            screen_bind_group: None,
+            screen_bind_group_id: 0,
+        }
+    }
+
+    /// Execute the draw list.
+    fn draw_list<'pass>(
+        ctx: &'pass RdgExecuteContext,
+        pass: &mut TrackedRenderPass<'pass>,
+        cmds: &'pass [RenderCommand],
+        screen_bind_group: &'pass wgpu::BindGroup,
+        screen_bind_group_id: u64,
+    ) {
+        if cmds.is_empty() {
+            return;
+        }
+
+        for cmd in cmds {
+            let pipeline = ctx.pipeline_cache.get_render_pipeline(cmd.pipeline_id);
+            pass.set_pipeline(cmd.pipeline_id.0, pipeline);
+
+            if let Some(gpu_material) = ctx.resource_manager.get_material(cmd.material_handle) {
+                pass.set_bind_group(1, gpu_material.bind_group_id, &gpu_material.bind_group, &[]);
+            }
+
+            pass.set_bind_group(
+                2,
+                cmd.object_bind_group.bind_group_id,
+                &cmd.object_bind_group.bind_group,
+                &[cmd.dynamic_offset],
+            );
+
+            pass.set_bind_group(3, screen_bind_group_id, screen_bind_group, &[]);
+
+            if let Some(gpu_geometry) = ctx.resource_manager.get_geometry(cmd.geometry_handle) {
+                for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
+                    pass.set_vertex_buffer(
+                        slot as u32,
+                        gpu_geometry.vertex_buffer_ids[slot],
+                        buffer.slice(..),
+                    );
+                }
+
+                if let Some((index_buffer, index_format, count, id)) = &gpu_geometry.index_buffer {
+                    pass.set_index_buffer(*id, index_buffer.slice(..), *index_format);
+                    pass.draw_indexed(0..*count, 0, gpu_geometry.instance_range.clone());
+                } else {
+                    pass.draw(
+                        gpu_geometry.draw_range.clone(),
+                        gpu_geometry.instance_range.clone(),
+                    );
+                }
+            }
+        }
+    }
+}
+
+impl PassNode for RdgOpaquePass {
+    fn name(&self) -> &'static str {
+        "RDG_Opaque_Pass"
+    }
+
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        builder.write_texture(self.scene_color);
+        if self.has_prepass {
+            builder.read_texture(self.scene_depth);
+        }
+        builder.write_texture(self.scene_depth);
+
+        if self.ssao_enabled {
+            builder.read_texture(self.ssao_tex);
+        }
+    }
+
+    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+        // Extract clear color from scene
+        self.clear_color = ctx.extracted_scene.background.clear_color();
+
+        // Build screen bind group (group 3): SSAO + transmission dummy + sampler
+        let ssao_view: Tracked<wgpu::TextureView> = if self.ssao_enabled {
+            ctx.get_texture_view(self.ssao_tex).clone()
+        } else {
+            ctx.frame_resources.ssao_dummy_view.clone()
+        };
+
+        let transmission_view = &ctx.frame_resources.dummy_transmission_view;
+
+        let (bg, bg_id) = ctx.frame_resources.build_screen_bind_group(
+            ctx.device,
+            ctx.global_bind_group_cache,
+            transmission_view,
+            &ssao_view,
+        );
+        self.screen_bind_group = Some(bg);
+        self.screen_bind_group_id = bg_id;
+
+        // Allocate specular texture via old transient pool if needed
+        if self.needs_specular {
+            let size = ctx.wgpu_ctx.size();
+            let specular_tex = ctx.transient_pool.allocate(
+                ctx.device,
+                &TransientTextureDesc {
+                    width: size.0,
+                    height: size.1,
+                    format: HDR_TEXTURE_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    mip_level_count: 1,
+                    label: "Transient Specular Texture",
+                },
+            );
+            ctx.blackboard.specular_texture_id = Some(specular_tex);
+        }
+    }
+
+    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+        let render_lists = &ctx.render_lists;
+
+        let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {
+            log::warn!("RDG OpaquePass: gpu_global_bind_group missing, skipping");
+            return;
+        };
+
+        let color_view = ctx.get_texture_view(self.scene_color);
+        let depth_view = ctx.get_texture_view(self.scene_depth);
+
+        let mut color_attachments: smallvec::SmallVec<
+            [Option<wgpu::RenderPassColorAttachment>; 2],
+        > = smallvec::smallvec![Some(wgpu::RenderPassColorAttachment {
+            view: color_view,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: wgpu::LoadOp::Clear(self.clear_color),
+                store: wgpu::StoreOp::Store,
+            },
+            depth_slice: None,
+        })];
+
+        // Optional specular MRT
+        if self.needs_specular {
+            if let Some(specular_id) = ctx.blackboard.specular_texture_id {
+                let specular_view = ctx.transient_pool.get_view(specular_id);
+                color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+                    view: specular_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                }));
+            }
+        }
+
+        let pass_desc = wgpu::RenderPassDescriptor {
+            label: Some("RDG Opaque Pass"),
+            color_attachments: &color_attachments,
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: depth_view,
+                depth_ops: Some(wgpu::Operations {
+                    load: if self.has_prepass {
+                        wgpu::LoadOp::Load
+                    } else {
+                        wgpu::LoadOp::Clear(0.0) // Reverse-Z: 0.0 = far
+                    },
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        };
+
+        let raw_pass = encoder.begin_render_pass(&pass_desc);
+        let mut tracked_pass = TrackedRenderPass::new(raw_pass);
+
+        tracked_pass.set_bind_group(
+            0,
+            render_lists.gpu_global_bind_group_id,
+            gpu_global_bind_group,
+            &[],
+        );
+
+        let screen_bg = self.screen_bind_group.as_ref().unwrap();
+        Self::draw_list(
+            ctx,
+            &mut tracked_pass,
+            &render_lists.opaque,
+            screen_bg,
+            self.screen_bind_group_id,
+        );
+    }
+}
