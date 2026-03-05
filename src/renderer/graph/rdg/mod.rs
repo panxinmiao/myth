@@ -1,4 +1,5 @@
 pub mod allocator;
+pub mod blackboard;
 pub mod bloom;
 pub mod builder;
 pub mod compute;
@@ -9,8 +10,10 @@ pub mod node;
 pub mod opaque;
 pub mod prepass;
 pub mod shadow;
+pub mod simple_forward;
 pub mod skybox;
 pub mod ssao;
+pub mod sssss;
 pub mod tone_mapping;
 pub mod transmission_copy;
 pub mod transparent;

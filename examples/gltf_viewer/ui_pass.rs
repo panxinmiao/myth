@@ -1,19 +1,21 @@
 //! UI Pass Plugin Module
 //!
-//! An external plugin example demonstrating how to integrate [egui](https://github.com/emilk/egui)
-//! into the Myth rendering engine. This module is **not** part of the engine core — it lives
-//! entirely in user land. In the future it may be promoted to an official built-in UI solution.
+//! An external plugin example demonstrating how to integrate
+//! [egui](https://github.com/emilk/egui) into the Myth rendering engine.
+//! This module is **not** part of the engine core — it lives entirely in user
+//! land.
 //!
 //! # Architecture
 //!
-//! `UiPass` implements the [`RenderNode`] trait so it can be injected into the engine's
-//! transient render graph. The lifecycle is split into clearly separated phases:
+//! `UiPass` implements the RDG [`PassNode`] trait so it can be injected into
+//! the declarative render graph via a [`CustomPassHook`]. The lifecycle is
+//! split into clearly separated phases:
 //!
 //! | Phase | Receiver | Responsibility |
 //! |-------|----------|----------------|
 //! | **CPU / App** | `&mut self` | Input forwarding, egui frame begin/end, tessellation |
 //! | **Prepare** | `&mut self` | Deferred texture registration, buffer uploads, delta application |
-//! | **Run** | `&self` | Record a single render pass — purely read-only |
+//! | **Execute** | `&self` | Record a single render pass — purely read-only |
 //!
 //! # Per-Frame Usage
 //!
@@ -22,10 +24,16 @@
 //! begin_frame(window)     // start an egui pass
 //! … build UI via context() …
 //! end_frame(window)       // tessellate shapes, capture texture delta
-//! ── RenderGraph ──
+//! ── RDG ──
 //! prepare(ctx)            // upload textures & geometry to GPU
-//! run(ctx, encoder)       // record the egui render pass
+//! execute(ctx, encoder)   // record the egui render pass
 //! ```
+//!
+//! # Integration with RDG
+//!
+//! The pass reads `target_tex` from the [`GraphBlackboard`]'s `surface_out`
+//! slot. It uses `LoadOp::Load` so that 3D content rendered by preceding
+//! passes is preserved beneath the UI overlay.
 
 use rustc_hash::FxHashMap;
 use wgpu::{Device, TextureFormat};
@@ -34,20 +42,25 @@ use winit::window::Window;
 
 use myth::{
     assets::TextureHandle,
-    renderer::graph::{ExecuteContext, PrepareContext, RenderNode},
+    renderer::graph::rdg::{
+        builder::PassBuilder,
+        context::{RdgExecuteContext, RdgPrepareContext},
+        node::PassNode,
+        types::TextureNodeId,
+    },
 };
 
-/// Egui-based UI render pass.
+/// Egui-based UI render pass (RDG).
 ///
-/// Wraps the full egui lifecycle (input → frame → tessellation → GPU upload → draw)
-/// behind the engine's [`RenderNode`] interface.
+/// Wraps the full egui lifecycle (input → frame → tessellation → GPU upload →
+/// draw) behind the RDG [`PassNode`] interface.
 ///
 /// # Deferred Texture Registration
 ///
 /// Engine textures ([`TextureHandle`]) are not immediately available to egui.
 /// Call [`request_texture`](Self::request_texture) during the UI-build phase;
-/// the actual GPU registration happens in [`prepare`](RenderNode::prepare) once the
-/// resource manager confirms the texture is uploaded.
+/// the actual GPU registration happens in [`prepare`](PassNode::prepare) once
+/// the resource manager confirms the texture is uploaded.
 pub struct UiPass {
     /// Shared egui context (cheap to clone — reference-counted internally).
     egui_ctx: egui::Context,
@@ -57,12 +70,17 @@ pub struct UiPass {
     renderer: egui_wgpu::Renderer,
 
     /// Tessellated draw data produced by [`end_frame`](Self::end_frame),
-    /// consumed by [`prepare`](RenderNode::prepare) and [`run`](RenderNode::run).
+    /// consumed by [`prepare`](PassNode::prepare) and
+    /// [`execute`](PassNode::execute).
     clipped_primitives: Vec<egui::ClippedPrimitive>,
     /// Texture create/update/free operations accumulated during the egui frame.
     textures_delta: egui::TexturesDelta,
     /// Current viewport size and DPI, kept in sync via [`resize`](Self::resize).
     screen_descriptor: egui_wgpu::ScreenDescriptor,
+
+    /// RDG resource slot: the final swap-chain output target.
+    /// Set by the custom pass hook from [`GraphBlackboard::surface_out`].
+    pub target_tex: TextureNodeId,
 
     // ── Deferred texture registration ──────────────────────────────────────
     /// Handles waiting for GPU-side readiness (drained each prepare phase).
@@ -76,9 +94,9 @@ pub struct UiPass {
 impl UiPass {
     /// Creates a new UI pass.
     ///
-    /// Initializes the egui context, winit integration state, and wgpu renderer.
-    /// The initial screen descriptor is derived from `window`'s inner size and
-    /// scale factor.
+    /// Initialises the egui context, winit integration state, and wgpu
+    /// renderer. The initial screen descriptor is derived from `window`'s
+    /// inner size and scale factor.
     pub fn new(device: &Device, output_format: TextureFormat, window: &Window) -> Self {
         let size = window.inner_size();
         let egui_ctx = egui::Context::default();
@@ -99,6 +117,7 @@ impl UiPass {
                 size_in_pixels: [size.width, size.height],
                 pixels_per_point: window.scale_factor() as f32,
             },
+            target_tex: TextureNodeId(0),
             texture_requests: Vec::new(),
             texture_map: FxHashMap::default(),
             gpu_resource_ids: FxHashMap::default(),
@@ -130,7 +149,7 @@ impl UiPass {
     ///
     /// If the texture has already been registered, its [`egui::TextureId`] is
     /// returned immediately. Otherwise the handle is enqueued for deferred
-    /// registration during the next [`prepare`](RenderNode::prepare) phase.
+    /// registration during the next [`prepare`](PassNode::prepare) phase.
     #[allow(dead_code)]
     pub fn request_texture(&mut self, handle: TextureHandle) -> Option<egui::TextureId> {
         if let Some(&id) = self.texture_map.get(&handle) {
@@ -216,7 +235,7 @@ impl UiPass {
     }
 }
 
-/// [`RenderNode`] implementation for `UiPass`.
+/// [`PassNode`] implementation for `UiPass`.
 ///
 /// # Phase Responsibilities
 ///
@@ -230,17 +249,24 @@ impl UiPass {
 ///    command encoder (submitted immediately).
 /// 4. **Stale texture cleanup** — free textures that egui no longer references.
 ///
-/// ## Run (`&self`)
+/// ## Execute (`&self`)
 ///
-/// Records a single `wgpu::RenderPass` that draws the tessellated primitives onto the
-/// swap-chain surface. No mutable state is touched — fully compatible with the engine's
-/// read-only execute phase.
-impl RenderNode for UiPass {
-    fn name(&self) -> &str {
-        "UI Pass (egui)"
+/// Records a single `wgpu::RenderPass` that draws the tessellated primitives onto
+/// the RDG-resolved surface. No mutable state is touched — fully compatible with the
+/// engine's read-only execute phase.
+impl PassNode for UiPass {
+    fn name(&self) -> &'static str {
+        "RDG_UI_Pass"
     }
 
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        // UI writes (overlays) to the surface output. Topological sort
+        // ensures it runs after all post-processing passes.
+        builder.read_texture(self.target_tex);
+        builder.write_texture(self.target_tex);
+    }
+
+    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         // 1. Process deferred texture registration requests.
         let pending_requests: Vec<TextureHandle> = self.texture_requests.drain(..).collect();
 
@@ -254,7 +280,7 @@ impl RenderNode for UiPass {
                 if let Some(binding) = resources.get_texture_binding(handle) {
                     if let Some(gpu_image) = resources.get_image(binding.cpu_image_id) {
                         let id = self.renderer.register_native_texture(
-                            &ctx.wgpu_ctx.device,
+                            ctx.device,
                             &gpu_image.default_view,
                             wgpu::FilterMode::Linear,
                         );
@@ -272,8 +298,8 @@ impl RenderNode for UiPass {
             self.texture_requests = remaining_requests;
         }
 
-        let device = &ctx.wgpu_ctx.device;
-        let queue = &ctx.wgpu_ctx.queue;
+        let device = ctx.device;
+        let queue = ctx.queue;
 
         // 2. Upload new / updated egui-managed textures.
         for (id, delta) in &self.textures_delta.set {
@@ -307,14 +333,18 @@ impl RenderNode for UiPass {
         self.textures_delta.free.clear();
     }
 
-    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+        // Resolve the final swap-chain surface view from the RDG.
+        let target_view = ctx.get_texture_view(self.target_tex);
+
         let mut rpass = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("egui Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: ctx.surface_view,
+                    view: target_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
+                        // Load — preserve 3D content rendered by preceding passes.
                         load: wgpu::LoadOp::Load,
                         store: wgpu::StoreOp::Store,
                     },

@@ -22,9 +22,7 @@ use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::TextureNodeId;
-use crate::renderer::graph::transient_pool::TransientTextureDesc;
 use crate::renderer::graph::TrackedRenderPass;
-use crate::renderer::HDR_TEXTURE_FORMAT;
 
 /// RDG Opaque Render Pass.
 ///
@@ -36,6 +34,7 @@ pub struct RdgOpaquePass {
     pub scene_color: TextureNodeId,
     pub scene_depth: TextureNodeId,
     pub ssao_tex: TextureNodeId,
+    pub specular_tex: TextureNodeId,
 
     // ─── Push Parameters ───────────────────────────────────────────
     pub has_prepass: bool,
@@ -55,6 +54,7 @@ impl RdgOpaquePass {
             scene_color: TextureNodeId(0),
             scene_depth: TextureNodeId(0),
             ssao_tex: TextureNodeId(0),
+            specular_tex: TextureNodeId(0),
             has_prepass: false,
             clear_color: wgpu::Color::BLACK,
             needs_specular: false,
@@ -131,6 +131,9 @@ impl PassNode for RdgOpaquePass {
         if self.ssao_enabled {
             builder.read_texture(self.ssao_tex);
         }
+        if self.needs_specular {
+            builder.write_texture(self.specular_tex);
+        }
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
@@ -155,23 +158,7 @@ impl PassNode for RdgOpaquePass {
         self.screen_bind_group = Some(bg);
         self.screen_bind_group_id = bg_id;
 
-        // Allocate specular texture via old transient pool if needed
-        if self.needs_specular {
-            let size = ctx.wgpu_ctx.size();
-            let specular_tex = ctx.transient_pool.allocate(
-                ctx.device,
-                &TransientTextureDesc {
-                    width: size.0,
-                    height: size.1,
-                    format: HDR_TEXTURE_FORMAT,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
-                    mip_level_count: 1,
-                    label: "Transient Specular Texture",
-                },
-            );
-            ctx.blackboard.specular_texture_id = Some(specular_tex);
-        }
+        // specular_tex is now an RDG transient resource — no old pool allocation needed.
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -199,18 +186,16 @@ impl PassNode for RdgOpaquePass {
 
         // Optional specular MRT
         if self.needs_specular {
-            if let Some(specular_id) = ctx.blackboard.specular_texture_id {
-                let specular_view = ctx.transient_pool.get_view(specular_id);
-                color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                    view: specular_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                }));
-            }
+            let specular_view = ctx.get_texture_view(self.specular_tex);
+            color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+                view: specular_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            }));
         }
 
         let pass_desc = wgpu::RenderPassDescriptor {

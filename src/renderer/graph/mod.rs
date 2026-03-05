@@ -6,11 +6,7 @@
 //! - [`RenderState`]: Render state (camera, time, etc.)
 //! - [`TrackedRenderPass`]: Render pass with state tracking
 //! - [`ExtractedScene`]: Scene data extracted for GPU rendering
-//! - [`RenderGraph`]: Render graph executor
-//! - [`RenderNode`]: Render node trait for custom passes
-//! - [`RenderStage`]: Render stage definitions (Opaque, Transparent, UI, etc.)
-//! - [`FrameBuilder`]: Frame construction utilities
-//! - [`FrameComposer`]: Chainable API for frame composition
+//! - [`FrameComposer`]: Chainable API for frame composition (hook-based RDG)
 //! - [`RenderLists`]: Sorted render command lists
 //!
 //! # Frame Lifecycle
@@ -18,33 +14,22 @@
 //! 1. **Extract**: Scene data is copied into GPU-friendly format
 //! 2. **Prepare**: Resources are uploaded and bind groups created
 //! 3. **Queue**: Render items are sorted by material/distance
-//! 4. **Render**: Render nodes execute their passes
+//! 4. **Render**: RDG passes execute their passes
 
-pub mod builder;
 pub mod composer;
 pub mod context;
 pub mod culling;
 pub mod extracted;
 pub mod frame;
-#[allow(clippy::module_inception)]
-pub mod graph;
-pub mod node;
 pub mod pass;
-pub mod passes;
 pub mod rdg;
 pub mod render_state;
 pub mod shadow_utils;
-pub mod stage;
 pub mod transient_pool;
 
-pub use builder::FrameBuilder;
 pub use composer::FrameComposer;
-pub use context::{ExecuteContext, GraphResource, PrepareContext};
 pub use extracted::{ExtractedRenderItem, ExtractedScene, ExtractedSkeleton};
 pub use frame::{FrameBlackboard, RenderCommand, RenderFrame, RenderKey, RenderLists};
-pub use graph::RenderGraph;
-pub use node::RenderNode;
 pub use pass::TrackedRenderPass;
 pub use render_state::RenderState;
-pub use stage::RenderStage;
 pub use transient_pool::{TransientTextureDesc, TransientTextureId, TransientTexturePool};

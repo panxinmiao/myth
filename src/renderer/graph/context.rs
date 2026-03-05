@@ -57,6 +57,7 @@ use crate::scene::camera::RenderCamera;
 ///   the surface view (execute only) — calling from `PrepareContext` in LDR
 ///   mode will panic.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[allow(dead_code)]
 pub enum GraphResource {
     /// Current ping-pong input for post-processing reads (HDR only).
     SceneColorInput,
@@ -95,6 +96,7 @@ pub enum GraphResource {
 /// passes. Passes that write to the output buffer (e.g. Bloom) must call
 /// [`flip_scene_color`](Self::flip_scene_color) at the end of `prepare`
 /// so that subsequent passes see the correct input.
+#[allow(dead_code)]
 pub struct PrepareContext<'a> {
     /// WGPU core context (device, queue, surface configuration)
     pub wgpu_ctx: &'a WgpuContext,
@@ -130,6 +132,7 @@ pub struct PrepareContext<'a> {
     pub(crate) color_view_flip_flop: usize,
 }
 
+#[allow(dead_code)]
 impl PrepareContext<'_> {
     /// Returns the current "input" scene color texture (previous pass output).
     #[must_use]
@@ -244,6 +247,7 @@ impl PrepareContext<'_> {
 /// The `color_view_flip_flop` field uses [`Cell`] for interior mutability,
 /// allowing passes to call [`flip_scene_color`](Self::flip_scene_color)
 /// through `&self` without requiring `&mut self` on the context.
+#[allow(dead_code)]
 pub struct ExecuteContext<'a> {
     /// WGPU core context (device, queue, surface configuration)
     pub wgpu_ctx: &'a WgpuContext,
@@ -263,6 +267,7 @@ pub struct ExecuteContext<'a> {
     pub pipeline_cache: &'a PipelineCache,
 }
 
+#[allow(dead_code)]
 impl<'a> ExecuteContext<'a> {
     /// Creates a new `ExecuteContext`.
     #[allow(clippy::too_many_arguments)]

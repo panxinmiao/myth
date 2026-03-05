@@ -1,17 +1,53 @@
-use crate::renderer::core::resources::Tracked;
+﻿use crate::renderer::core::resources::Tracked;
+use rustc_hash::FxHashMap;
 use wgpu::{Device, TextureView};
 
 use super::types::RdgTextureDesc;
 
-pub(crate) struct PhysicalTexture {
-    pub(crate) view: Tracked<wgpu::TextureView>,
-    desc: RdgTextureDesc,
+// --- Sub-View Key --------------------------------------------------------------
+
+/// Discriminator for lazily-cached sub-views of a physical texture.
+#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+pub struct SubViewKey {
+    pub base_mip: u32,
+    pub mip_count: Option<u32>,
+    pub base_layer: u32,
+    pub layer_count: Option<u32>,
+    pub aspect: wgpu::TextureAspect,
 }
+
+impl Default for SubViewKey {
+    fn default() -> Self {
+        Self {
+            base_mip: 0,
+            mip_count: None,
+            base_layer: 0,
+            layer_count: None,
+            aspect: wgpu::TextureAspect::All,
+        }
+    }
+}
+
+// --- Physical Texture ----------------------------------------------------------
+
+pub(crate) struct PhysicalTexture {
+    /// Monotonically-increasing allocation identifier.
+    pub(crate) uid: u64,
+    pub(crate) desc: RdgTextureDesc,
+    /// Raw wgpu texture handle -- kept alive for sub-view creation.
+    pub(crate) texture: wgpu::Texture,
+    /// Full-texture default view (all mips, all layers, aspect = All).
+    pub(crate) default_view: Tracked<wgpu::TextureView>,
+    /// Lazily-populated sub-view cache.
+    pub(crate) sub_views: FxHashMap<SubViewKey, Tracked<wgpu::TextureView>>,
+}
+
+// --- RDG Transient Pool --------------------------------------------------------
 
 pub struct RdgTransientPool {
     pub(crate) resources: Vec<PhysicalTexture>,
-    // 记录每个物理纹理在当前帧被占用到的 `last_use` 次序
     active_allocations: Vec<usize>,
+    uid_counter: u64,
 }
 
 impl RdgTransientPool {
@@ -19,16 +55,14 @@ impl RdgTransientPool {
         Self {
             resources: Vec::new(),
             active_allocations: Vec::new(),
+            uid_counter: 0,
         }
     }
 
-    /// 每帧编译图前调用，重置占用状态，但不销毁实际纹理
     pub fn begin_frame(&mut self) {
-        // 将所有物理纹理标记为“在时间 0 之前已结束占用” (也就是全空闲)
         self.active_allocations.fill(0);
     }
 
-    /// 贪心算法分配物理显存
     pub fn acquire(
         &mut self,
         device: &Device,
@@ -36,18 +70,15 @@ impl RdgTransientPool {
         first_use: usize,
         last_use: usize,
     ) -> usize {
-        // 1. 尝试寻找可复用的纹理 (Memory Aliasing 魔法就在这里)
         for (i, res) in self.resources.iter().enumerate() {
-            // 条件：它的上一次占用结束时间 < 新需求的开始时间，并且规格完全一致
             if self.active_allocations[i] <= first_use && res.desc == *desc {
-                self.active_allocations[i] = last_use + 1; // 续租
+                self.active_allocations[i] = last_use + 1;
                 return i;
             }
         }
 
-        // 2. 如果找不到，只能向 wgpu 申请一张新的
         let wgpu_desc = wgpu::TextureDescriptor {
-            label: Some("RDG Transient Texture"), // 可以考虑使用传递过来的 name
+            label: Some("RDG Transient Texture"),
             size: desc.size,
             mip_level_count: desc.mip_level_count,
             sample_count: desc.sample_count,
@@ -60,21 +91,61 @@ impl RdgTransientPool {
         let texture = device.create_texture(&wgpu_desc);
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
-        let tracked_view = Tracked::new(view);
+        self.uid_counter += 1;
 
         let index = self.resources.len();
         self.resources.push(PhysicalTexture {
-            view: tracked_view,
+            uid: self.uid_counter,
             desc: desc.clone(),
+            texture,
+            default_view: Tracked::new(view),
+            sub_views: FxHashMap::default(),
         });
 
-        // 扩容占用表
-        self.active_allocations.push(last_use);
-
+        self.active_allocations.push(last_use + 1);
         index
     }
 
+    #[inline]
     pub fn get_view(&self, index: usize) -> &TextureView {
-        &self.resources[index].view
+        &self.resources[index].default_view
+    }
+
+    #[inline]
+    pub fn get_tracked_view(&self, index: usize) -> &Tracked<wgpu::TextureView> {
+        &self.resources[index].default_view
+    }
+
+    #[inline]
+    pub fn get_texture(&self, index: usize) -> &wgpu::Texture {
+        &self.resources[index].texture
+    }
+
+    #[inline]
+    pub fn get_uid(&self, index: usize) -> u64 {
+        self.resources[index].uid
+    }
+
+    pub fn get_or_create_sub_view(
+        &mut self,
+        physical_index: usize,
+        key: SubViewKey,
+    ) -> &Tracked<wgpu::TextureView> {
+        let res = &mut self.resources[physical_index];
+        res.sub_views.entry(key.clone()).or_insert_with(|| {
+            let view = res.texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("RDG Sub-View"),
+                format: None,
+                dimension: None,
+                usage: None,
+                aspect: key.aspect,
+                base_mip_level: key.base_mip,
+                mip_level_count: key.mip_count,
+                base_array_layer: key.base_layer,
+                array_layer_count: key.layer_count,
+                ..Default::default()
+            });
+            Tracked::new(view)
+        })
     }
 }

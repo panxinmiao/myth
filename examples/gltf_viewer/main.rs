@@ -17,8 +17,8 @@
 //!
 //! # Architecture Notes
 //! This example demonstrates the "UI as a Plugin" pattern:
-//! - `UiPass` implements `RenderNode` trait, can be injected into RenderGraph
-//! - Inject UI Pass into UI stage via `configure_render_pipeline()` method
+//! - `UiPass` implements `PassNode` trait, can be injected into RDG
+//! - Inject UI Pass via `compose_frame()` hook into RDG
 //! - Engine core does not depend on egui at all
 
 mod ui_pass;
@@ -559,9 +559,15 @@ impl AppHandler for GltfViewer {
     }
 
     fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
+        use myth::renderer::graph::rdg::blackboard::HookStage;
+
         if self.show_ui {
+            let ui_pass = &mut self.ui_pass;
             composer
-                .add_node(RenderStage::UI, &mut self.ui_pass)
+                .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
+                    ui_pass.target_tex = bb.surface_out;
+                    rdg.add_pass(ui_pass);
+                })
                 .render();
         } else {
             composer.render();

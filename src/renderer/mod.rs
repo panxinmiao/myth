@@ -3,7 +3,7 @@
 //! This module handles all GPU rendering operations using a layered architecture:
 //!
 //! - **[`core`]**: wgpu context wrapper (Device, Queue, Surface, `ResourceManager`)
-//! - **[`graph`]**: Render frame organization (`RenderFrame`, `RenderNode`, `FrameBuilder`)
+//! - **[`graph`]**: Declarative Render Graph (RDG) frame organization
 //! - **[`pipeline`]**: Shader compilation and pipeline caching (L1/L2 cache strategy)
 //!
 //! # Architecture Overview
@@ -13,8 +13,8 @@
 //! │                  FrameComposer                  │
 //! │          (High-level rendering API)             │
 //! ├───────────────────────────────────────────────┤
-//! │     RenderGraph     │     RenderFrame           │
-//! │   (Node execution)  │  (Scene extraction)       │
+//! │  Declarative RDG  │     RenderFrame           │
+//! │   (Pass execution)│  (Scene extraction)       │
 //! ├───────────────────────────────────────────────┤
 //! │   PipelineCache    │    ResourceManager        │
 //! │  (Shader/PSO cache) │  (GPU resource lifecycle) │
@@ -31,16 +31,14 @@
 //! 1. **Extract**: Scene data is extracted into GPU-friendly format
 //! 2. **Prepare**: Resources are uploaded/updated on GPU
 //! 3. **Queue**: Render commands are sorted and batched
-//! 4. **Render**: Commands are executed via render passes
+//! 4. **Render**: RDG passes execute via topological order
 //!
 //! # Example
 //!
 //! ```rust,ignore
 //! // Start a frame
 //! if let Some(composer) = renderer.begin_frame(scene, camera, assets, time) {
-//!     composer
-//!         .add_node(RenderStage::UI, &ui_pass)
-//!         .render();
+//!     composer.render();
 //! }
 //! ```
 
@@ -58,12 +56,9 @@ use crate::renderer::core::resources::SamplerRegistry;
 use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
-use crate::renderer::graph::passes::{SimpleForwardPass, SkyboxPass};
 use crate::renderer::graph::rdg::allocator::RdgTransientPool;
-use crate::renderer::graph::transient_pool::TransientTexturePool;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
-use crate::{FrameBuilder, RenderStage};
 
 use self::core::{ResourceManager, WgpuContext};
 use self::graph::{FrameComposer, RenderFrame};
@@ -110,12 +105,7 @@ struct RendererState {
     blackboard: FrameBlackboard,
 
     frame_resources: FrameResources,
-    transient_pool: TransientTexturePool,
     global_bind_group_cache: GlobalBindGroupCache,
-
-    // ===== Built-in passes (BasicForward LDR path only) =====
-    pub(crate) simple_forward_pass: SimpleForwardPass,
-    pub(crate) skybox_pass: SkyboxPass,
 
     // ===== RDG (Declarative Render Graph) =====
     pub(crate) rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph,
@@ -134,6 +124,8 @@ struct RendererState {
     pub(crate) rdg_skybox_pass: crate::renderer::graph::rdg::skybox::RdgSkyboxPass,
     pub(crate) rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass,
     pub(crate) rdg_transmission_copy_pass: crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass,
+    pub(crate) rdg_simple_forward_pass: crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass,
+    pub(crate) rdg_sssss_pass: crate::renderer::graph::rdg::sssss::RdgSssssPass,
 
     // Shadow + Compute passes (migrated from old system)
     pub(crate) rdg_shadow_pass: crate::renderer::graph::rdg::shadow::RdgShadowPass,
@@ -199,11 +191,6 @@ impl Renderer {
         // 5. Create global bind group cache
         let global_bind_group_cache = GlobalBindGroupCache::new();
 
-        // Build passes
-        // BasicForward LDR path only
-        let simple_forward_pass = SimpleForwardPass::new(self.settings.clear_color);
-        let skybox_pass = SkyboxPass::new(&wgpu_ctx.device);
-
         let sampler_registry = SamplerRegistry::new(&wgpu_ctx.device);
 
         // Shadow + compute passes (need device ref before wgpu_ctx moves)
@@ -226,11 +213,7 @@ impl Renderer {
             blackboard: FrameBlackboard::new(),
 
             frame_resources,
-            transient_pool: TransientTexturePool::new(),
             global_bind_group_cache,
-
-            simple_forward_pass,
-            skybox_pass,
 
             // RDG
             rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph::new(),
@@ -247,6 +230,8 @@ impl Renderer {
             rdg_skybox_pass: crate::renderer::graph::rdg::skybox::RdgSkyboxPass::new(),
             rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass::new(),
             rdg_transmission_copy_pass: crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass::new(),
+            rdg_simple_forward_pass: crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass::new(),
+            rdg_sssss_pass: crate::renderer::graph::rdg::sssss::RdgSssssPass::new(),
 
             // Shadow + Compute passes (migrated from old system)
             rdg_shadow_pass,
@@ -271,7 +256,7 @@ impl Renderer {
     /// Begins building a new frame for rendering.
     ///
     /// Returns a [`FrameComposer`] that provides a chainable API for
-    /// configuring the render pipeline.
+    /// configuring the render pipeline via custom pass hooks.
     ///
     /// # Usage
     ///
@@ -281,11 +266,13 @@ impl Renderer {
     ///     composer.render();
     /// }
     ///
-    /// // Method 2: Custom pipeline with chained nodes
+    /// // Method 2: With custom hooks (e.g., UI overlay)
     /// if let Some(composer) = renderer.begin_frame(scene, camera, assets, time) {
     ///     composer
-    ///         .add_node(RenderStage::UI, &ui_pass)
-    ///         .add_node(RenderStage::PostProcess, &bloom_pass)
+    ///         .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
+    ///             ui_pass.target_tex = bb.surface_out;
+    ///             rdg.add_pass(&mut ui_pass);
+    ///         })
     ///         .render();
     /// }
     /// ```
@@ -334,27 +321,7 @@ impl Renderer {
             assets,
         );
 
-        // ── Phase 3: Build old FrameBuilder (only for BasicForward LDR) ─
-        let mut frame_builder = FrameBuilder::new();
-
-        match &self.settings.path {
-            RenderPath::HighFidelity => {
-                // All passes (shadow, compute, scene, post) handled by RDG.
-                // FrameBuilder is empty — the old graph runs with zero nodes.
-            }
-
-            RenderPath::BasicForward { .. } => {
-                // SkyboxPass and SimpleForwardPass still use the old graph.
-                if scene.background.needs_skybox_pass() {
-                    frame_builder.add_node(RenderStage::PreProcess, &mut state.skybox_pass);
-                }
-                frame_builder.add_node(RenderStage::Opaque, &mut state.simple_forward_pass);
-            }
-        }
-
-        // ========================================
-        // 3. Build ComposerContext
-        // ========================================
+        // ── Phase 3: Build ComposerContext ──────────────────────────────
         let ctx = ComposerContext {
             wgpu_ctx: &mut state.wgpu_ctx,
             resource_manager: &mut state.resource_manager,
@@ -365,7 +332,6 @@ impl Renderer {
             render_state: &state.render_frame.render_state,
 
             frame_resources: &mut state.frame_resources,
-            transient_pool: &mut state.transient_pool,
             global_bind_group_cache: &mut state.global_bind_group_cache,
 
             render_lists: &mut state.render_lists,
@@ -390,6 +356,8 @@ impl Renderer {
             rdg_skybox_pass: &mut state.rdg_skybox_pass,
             rdg_transparent_pass: &mut state.rdg_transparent_pass,
             rdg_transmission_copy_pass: &mut state.rdg_transmission_copy_pass,
+            rdg_simple_forward_pass: &mut state.rdg_simple_forward_pass,
+            rdg_sssss_pass: &mut state.rdg_sssss_pass,
 
             rdg_shadow_pass: &mut state.rdg_shadow_pass,
             rdg_brdf_pass: &mut state.rdg_brdf_pass,
@@ -397,7 +365,7 @@ impl Renderer {
         };
 
         // Return FrameComposer, defer Surface acquisition to render() call
-        Some(FrameComposer::new(frame_builder, ctx))
+        Some(FrameComposer::new(ctx))
     }
 
     /// Performs periodic resource cleanup.
@@ -407,8 +375,6 @@ impl Renderer {
     pub fn maybe_prune(&mut self) {
         if let Some(state) = &mut self.context {
             state.render_frame.maybe_prune(&mut state.resource_manager);
-            // Trim transient pool textures idle for > 600 frames (~10 seconds at 60 fps)
-            state.transient_pool.trim(600);
         }
     }
 
