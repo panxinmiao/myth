@@ -14,6 +14,32 @@ pub struct RdgTextureDesc {
 }
 
 impl RdgTextureDesc {
+
+    pub fn new(
+        width: u32,
+        height: u32,
+        depth_or_array_layers: u32,
+        mip_level_count: u32,
+        sample_count: u32,
+        dimension: wgpu::TextureDimension,
+        format: wgpu::TextureFormat,
+        usage: wgpu::TextureUsages,
+    ) -> Self {
+        Self {
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers,
+            },
+            mip_level_count,
+            sample_count,
+            dimension,
+            format,
+            usage,
+        }
+    }
+
+
     pub fn new_2d(
         width: u32,
         height: u32,

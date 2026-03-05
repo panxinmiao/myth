@@ -22,7 +22,6 @@
 //!
 //! [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
 
-use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
@@ -41,12 +40,13 @@ pub struct RdgSimpleForwardPass {
     // ─── RDG Resource Slots (set by Composer) ────────────────────────
     pub surface_out: TextureNodeId,
     pub scene_depth: TextureNodeId,
+    pub msaa_view: Option<TextureNodeId>,
 
     // ─── Push Parameters ─────────────────────────────────────────────
     pub clear_color: wgpu::Color,
 
     // ─── Internal Cache ──────────────────────────────────────────────
-    msaa_view: Option<Tracked<wgpu::TextureView>>,
+    // msaa_view: Option<Tracked<wgpu::TextureView>>,
     screen_bind_group: Option<wgpu::BindGroup>,
     screen_bind_group_id: u64,
 }
@@ -123,6 +123,9 @@ impl PassNode for RdgSimpleForwardPass {
 
     fn setup(&mut self, builder: &mut PassBuilder) {
         builder.write_texture(self.surface_out);
+        if let Some(msaa) = self.msaa_view {
+            builder.write_texture(msaa);
+        }
         builder.write_texture(self.scene_depth);
     }
 
@@ -130,7 +133,7 @@ impl PassNode for RdgSimpleForwardPass {
         self.clear_color = ctx.extracted_scene.background.clear_color();
 
         // Cache MSAA intermediate view (if MSAA is active)
-        self.msaa_view = ctx.frame_resources.scene_msaa_view.clone();
+        // self.msaa_view = ctx.frame_resources.scene_msaa_view.clone();
 
         // Build screen bind group (group 3) with dummy textures (LDR path
         // has no SSAO or transmission).
@@ -155,11 +158,22 @@ impl PassNode for RdgSimpleForwardPass {
         let target_view = ctx.get_texture_view(self.surface_out);
         let depth_view = ctx.get_texture_view(self.scene_depth);
 
-        let (color_view, resolve_target) = if let Some(msaa) = self.msaa_view.as_deref() {
-            (msaa as &wgpu::TextureView, Some(target_view))
-        } else {
+        // let msaa_view = self
+        //     .msaa_view
+        //     .as_ref()
+        //     .map(|id| ctx.get_texture_view(*id));
+
+        let (color_view, resolve_target) = if let Some(msaa_view) = self.msaa_view {
+            (ctx.get_texture_view(msaa_view), Some(target_view))
+        }else{
             (target_view, None)
         };
+
+        // let (color_view, resolve_target) = if let Some(msaa_view) = msaa_view {
+        //     (msaa_view, Some(target_view))
+        // } else {
+        //     (target_view, None)
+        // };
 
         let store_op = if resolve_target.is_some() {
             wgpu::StoreOp::Discard

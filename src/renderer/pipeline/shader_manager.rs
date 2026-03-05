@@ -187,9 +187,9 @@ impl ShaderManager {
             options,
         );
 
-        if cfg!(debug_assertions) {
-            Self::debug_print_shader(template_name, &source);
-        }
+        // if cfg!(debug_assertions) {
+        //     Self::debug_print_shader(template_name, &source);
+        // }
 
         let hash = xxh3_128(source.as_bytes());
 
@@ -233,28 +233,28 @@ impl ShaderManager {
         self.module_cache.len()
     }
 
-    fn debug_print_shader(template_name: &str, source: &str) {
-        fn normalize_newlines(s: &str) -> String {
-            let mut result = String::with_capacity(s.len());
-            let mut last_was_newline = false;
-            for c in s.chars() {
-                if c == '\n' {
-                    if !last_was_newline {
-                        result.push('\n');
-                        last_was_newline = true;
-                    }
-                } else {
-                    result.push(c);
-                    last_was_newline = false;
-                }
-            }
-            result
-        }
+    // fn debug_print_shader(template_name: &str, source: &str) {
+    //     fn normalize_newlines(s: &str) -> String {
+    //         let mut result = String::with_capacity(s.len());
+    //         let mut last_was_newline = false;
+    //         for c in s.chars() {
+    //             if c == '\n' {
+    //                 if !last_was_newline {
+    //                     result.push('\n');
+    //                     last_was_newline = true;
+    //                 }
+    //             } else {
+    //                 result.push(c);
+    //                 last_was_newline = false;
+    //             }
+    //         }
+    //         result
+    //     }
 
-        println!(
-            "================= Generated Shader Code {} ==================\n {}",
-            template_name,
-            normalize_newlines(source)
-        );
-    }
+    //     println!(
+    //         "================= Generated Shader Code {} ==================\n {}",
+    //         template_name,
+    //         normalize_newlines(source)
+    //     );
+    // }
 }

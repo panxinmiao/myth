@@ -21,6 +21,9 @@ pub struct RenderGraph {
     compile_in_degrees: Vec<usize>,
     compile_queue: Vec<usize>,
     compile_dependency_graph: Vec<SmallVec<[usize; 8]>>,
+
+    #[cfg(debug_assertions)]
+    prev_execution_names: Vec<&'static str>,
 }
 
 impl RenderGraph {
@@ -55,7 +58,6 @@ impl RenderGraph {
         id
     }
 
-    /// 完美的零分配借用签名，和现有的引擎无缝对接
     pub fn add_pass(&mut self, node: &mut dyn PassNode) {
         let pass_index = self.passes.len();
 
@@ -167,7 +169,8 @@ impl RenderGraph {
         }
 
         // Kahn's Algorithm
-        while let Some(node) = self.compile_queue.pop() {
+        while !self.compile_queue.is_empty() {
+            let node = self.compile_queue.remove(0);
             self.execution_queue.push(node);
 
             for &downstream in &self.compile_dependency_graph[node] {
@@ -184,6 +187,9 @@ impl RenderGraph {
             alive_count,
             "Render Graph Detected Circular Dependency!"
         );
+
+        #[cfg(debug_assertions)]
+        self.debug_print_topology_changes();
     }
 
     fn compute_resource_lifetimes(&mut self) {
@@ -224,6 +230,33 @@ impl RenderGraph {
             res.physical_index = Some(pool.acquire(device, &res.desc, res.first_use, res.last_use));
         }
     }
+
+
+    #[cfg(debug_assertions)]
+    fn debug_print_topology_changes(&mut self) {
+        // 将当前帧的 execution_queue 映射为可读的 Pass 名字列表
+        let current_names: Vec<&'static str> = self
+            .execution_queue
+            .iter()
+            .map(|&idx| self.passes[idx].name)
+            .collect();
+
+        // 比较当前顺序和上一帧的顺序是否一致
+        if current_names != self.prev_execution_names {
+            // 如果发生了变化，打印出日志。
+            log::info!(
+                "🌈 RDG Topology Changed! New Execution Order ({} passes): \n{:#?}",
+                current_names.len(),
+                current_names
+            );
+
+            println!("🌈 RDG Topology Changed! New Execution Order: {:?}", current_names);
+
+            // 更新缓存，以便下一帧对比
+            self.prev_execution_names = current_names;
+        }
+    }
+
 }
 
 #[cfg(test)]
