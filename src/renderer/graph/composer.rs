@@ -391,14 +391,13 @@ impl<'a> FrameComposer<'a> {
             // SSSSS (Screen-Space Sub-Surface Scattering) — SSA-compliant
             // Reads scene_color, writes a NEW sssss_output node. current_color
             // cursor is advanced so downstream passes read the post-SSSSS result.
-            let mut current_color = scene_color;
             if needs_specular {
                 let sssss_temp = rdg.register_resource("SSSSS_Temp", hdr_desc.clone(), false);
-                let sssss_output = rdg.register_resource("SceneColor_PostSSSS", hdr_desc.clone(), false);
+                // let sssss_output = rdg.register_resource("SceneColor_PostSSSS", hdr_desc.clone(), false);
 
                 let sssss = self.ctx.rdg_sssss_pass;
-                sssss.color_in = current_color;
-                sssss.color_out = sssss_output;
+                // sssss.color_in = scene_color;
+                sssss.scene_color = scene_color;
                 sssss.temp_blur = sssss_temp;
                 sssss.depth_in = scene_depth;
                 sssss.normal_in = scene_normals;
@@ -407,7 +406,6 @@ impl<'a> FrameComposer<'a> {
                 sssss.enabled = true;
                 rdg.add_pass(sssss);
 
-                current_color = sssss_output;
             }
 
             // ── Before-Post-Process Hooks ──────────────────────────────
@@ -446,7 +444,7 @@ impl<'a> FrameComposer<'a> {
 
                 let bloom_pass = self.ctx.rdg_bloom_pass;
                 bloom_pass.bloom_texture = bloom_chain;
-                bloom_pass.input_tex = current_color;
+                bloom_pass.input_tex = scene_color;
                 bloom_pass.output_tex = bloom_out;
                 bloom_pass.karis_average = self.ctx.scene.bloom.karis_average;
                 self.ctx
@@ -462,7 +460,7 @@ impl<'a> FrameComposer<'a> {
 
                 bloom_out
             } else {
-                current_color
+                scene_color
             };
 
             let tonemap_output = if fxaa_enabled {

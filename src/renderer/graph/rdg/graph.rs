@@ -94,10 +94,13 @@ impl RenderGraph {
             for res_id in reads {
                 let producers = &self.resources[res_id.0 as usize].producers;
                 for &producer_idx in producers {
-                    if producer_idx != pass_idx {
-                        self.passes[pass_idx]
-                            .physical_dependencies
-                            .push(producer_idx);
+                    // 只依赖在之前注册的 producer，打破 In-Place 读写形成的未来依赖
+                    if producer_idx < pass_idx {
+                        if !self.passes[pass_idx].physical_dependencies.contains(&producer_idx) {
+                            self.passes[pass_idx]
+                                .physical_dependencies
+                                .push(producer_idx);
+                        }
                     }
                 }
             }
