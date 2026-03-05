@@ -1,20 +1,21 @@
 //! Frame Composer
 //!
 //! `FrameComposer` orchestrates the entire rendering pipeline for a single frame.
-//! It connects the old-system pre-passes (CullPass, ShadowPass, Compute) with
-//! the new RDG-based scene rendering and post-processing chain.
+//! It connects the old-system BasicForward passes (Skybox, SimpleForward) with
+//! the unified RDG-based rendering chain that handles compute, shadows, scene
+//! rendering and post-processing.
 //!
 //! # Rendering Architecture
 //!
 //! ```text
-//! ┌─────────────────────────────────────────┐
-//! │   Old Graph (CullPass, ShadowPass, …)   │  ← FrameBuilder / RenderGraph
-//! ├─────────────────────────────────────────┤
-//! │         Unified RDG Pipeline            │  ← RenderGraph (topology sort)
-//! │  Prepass → SSAO → Opaque → Skybox →    │
-//! │  TransmissionCopy → Transparent →       │
-//! │  Bloom → ToneMap → FXAA → Surface      │
-//! └─────────────────────────────────────────┘
+//! ┌─────────────────────────────────────────────────────────────┐
+//! │  Old Graph (BasicForward only: SkyboxPass, SimpleForward)   │
+//! ├─────────────────────────────────────────────────────────────┤
+//! │                  Unified RDG Pipeline                       │
+//! │  BRDF LUT → IBL → Shadow → Prepass → SSAO → Opaque →      │
+//! │  Skybox → TransmissionCopy → Transparent →                 │
+//! │  Bloom → ToneMap → FXAA → Surface                          │
+//! └─────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! # Example
@@ -82,6 +83,11 @@ pub struct ComposerContext<'a> {    pub wgpu_ctx: &'a mut WgpuContext,
     pub rdg_skybox_pass: &'a mut crate::renderer::graph::rdg::skybox::RdgSkyboxPass,
     pub rdg_transparent_pass: &'a mut crate::renderer::graph::rdg::transparent::RdgTransparentPass,
     pub rdg_transmission_copy_pass: &'a mut crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass,
+
+    // Shadow + Compute (migrated from old system)
+    pub rdg_shadow_pass: &'a mut crate::renderer::graph::rdg::shadow::RdgShadowPass,
+    pub rdg_brdf_pass: &'a mut crate::renderer::graph::rdg::compute::RdgBrdfLutPass,
+    pub rdg_ibl_pass: &'a mut crate::renderer::graph::rdg::compute::RdgIblComputePass,
 }
 
 /// Frame Composer
@@ -135,11 +141,10 @@ impl<'a> FrameComposer<'a> {
     /// # Architecture
     ///
     /// 1. **Acquire Surface** — get the swap-chain back buffer
-    /// 2. **Old Graph** — prepare + execute pre-RDG passes (CullPass fills
-    ///    `RenderLists`, ShadowPass renders shadow maps, Compute passes
-    ///    run BRDF LUT / IBL generation)
-    /// 3. **Unified RDG** — build, compile, prepare, execute the full scene
-    ///    rendering + post-processing chain via topology-sorted RDG
+    /// 2. **Old Graph** — prepare + execute BasicForward-only passes
+    ///    (SkyboxPass, SimpleForwardPass). Empty for HighFidelity path.
+    /// 3. **Unified RDG** — build, compile, prepare, execute the full
+    ///    pipeline: compute (BRDF LUT, IBL) → shadow → scene → post
     /// 4. **Submit & Present** — submit GPU command buffer, present swap-chain
     ///
     /// Consumes `self`; the composer cannot be reused after render.
@@ -168,7 +173,7 @@ impl<'a> FrameComposer<'a> {
         let width = output.texture.width();
         let height = output.texture.height();
 
-        // ━━━ 2. Old Graph: CullPass + ShadowPass + Compute ━━━━━━━━━━━━
+        // ━━━ 2. Old Graph: BasicForward LDR passes only ━━━━━━━━━━━━━━
 
         let mut graph = self.builder.build();
         {
@@ -297,7 +302,22 @@ impl<'a> FrameComposer<'a> {
             super::rdg::types::TextureNodeId(u32::MAX)
         };
 
-        // ── 3d. Wire Scene Rendering Passes ────────────────────────────
+        // ── 3d. Wire Compute + Shadow Passes ───────────────────────────
+        //
+        // These passes are side-effect nodes with no RDG dependencies.
+        // Topological sort places zero-in-degree nodes first, so they
+        // execute before scene passes — exactly the needed ordering.
+
+        // BRDF LUT (one-shot; skipped when needs_brdf_compute == false)
+        rdg.add_pass(self.ctx.rdg_brdf_pass);
+
+        // IBL (one-shot per environment change)
+        rdg.add_pass(self.ctx.rdg_ibl_pass);
+
+        // Shadow depth rendering
+        rdg.add_pass(self.ctx.rdg_shadow_pass);
+
+        // ── 3e. Wire Scene Rendering Passes ────────────────────────────
 
         // Prepass (conditional: depth + optional normals + optional feature_id)
         if needs_prepass {
@@ -330,7 +350,7 @@ impl<'a> FrameComposer<'a> {
             opaque.scene_color = scene_color;
             opaque.scene_depth = scene_depth;
             opaque.has_prepass = needs_prepass;
-            opaque.clear_color = self.ctx.scene.background.clear_color();
+            opaque.clear_color = self.ctx.extracted_scene.background.clear_color();
             opaque.needs_specular = needs_specular;
             opaque.ssao_enabled = ssao_enabled;
             opaque.ssao_tex = ssao_output;
@@ -366,7 +386,7 @@ impl<'a> FrameComposer<'a> {
             rdg.add_pass(transparent);
         }
 
-        // ── 3e. Wire Post-Processing Passes ───────────────────────────
+        // ── 3f. Wire Post-Processing Passes ───────────────────────────
         //
         // Chain: SceneColor → [Bloom] → ToneMap → [FXAA] → Surface
         //
@@ -450,7 +470,7 @@ impl<'a> FrameComposer<'a> {
             rdg.add_pass(fxaa);
         }
 
-        // ━━━ 4. Compile & Execute RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+        // ━━━ 4. Compile & Execute RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
         rdg.compile(self.ctx.rdg_pool, &self.ctx.wgpu_ctx.device);
 

@@ -1,12 +1,14 @@
 pub mod allocator;
 pub mod bloom;
 pub mod builder;
+pub mod compute;
 pub mod context;
 pub mod fxaa;
 pub mod graph;
 pub mod node;
 pub mod opaque;
 pub mod prepass;
+pub mod shadow;
 pub mod skybox;
 pub mod ssao;
 pub mod tone_mapping;

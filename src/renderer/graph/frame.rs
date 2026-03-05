@@ -32,6 +32,7 @@ use crate::scene::camera::RenderCamera;
 
 use super::extracted::ExtractedScene;
 use super::render_state::RenderState;
+use super::shadow_utils;
 
 // ============================================================================
 // FrameBlackboard
@@ -404,19 +405,24 @@ impl RenderFrame {
         &self.extracted_scene
     }
 
-    /// Phase 1: Extract scene data and prepare global resources.
-    ///
-    /// Runs the Extract and Prepare phases to set up for Compose and Execute.
+    /// Extract scene data, build shadow views, and prepare global GPU resources.
     ///
     /// # Phases
     ///
-    /// 1. **Extract**: Pull rendering data from the [`Scene`] into [`ExtractedScene`]
-    /// 2. **Prepare**: Prepare global GPU resources (camera uniforms, lighting data, etc.)
+    /// 1. **Extract** — Pull rendering data from the [`Scene`] into
+    ///    [`ExtractedScene`].
+    /// 2. **Shadow View Generation** — Build [`RenderView`]s for all
+    ///    shadow-casting lights (pure math, no GPU work).
+    /// 3. **Shadow Metadata** — Write per-light shadow layer indices,
+    ///    cascade matrices and split distances into the light storage
+    ///    buffer so the global bind group already contains correct data.
+    /// 4. **Global Prepare** — Upload camera / scene / light uniforms and
+    ///    create the global bind group (Group 0).
     ///
     /// # Note
     ///
-    /// This method does **not** acquire the surface texture. Surface acquisition is
-    /// deferred to `FrameComposer::render()` to minimize swap-chain buffer hold time.
+    /// Surface acquisition is deferred to `FrameComposer::render()` to
+    /// minimise swap-chain buffer hold time.
     pub fn extract_and_prepare(
         &mut self,
         resource_manager: &mut ResourceManager,
@@ -424,19 +430,21 @@ impl RenderFrame {
         camera: &RenderCamera,
         assets: &AssetServer,
         time: f32,
+        render_lists: &mut RenderLists,
+        surface_size: (u32, u32),
     ) {
+        use crate::renderer::core::view::RenderView;
+
         resource_manager.next_frame();
 
-        // 1. Extract: reuse memory, avoid per-frame allocation
+        // ── 1. Extract ─────────────────────────────────────────────────
         self.extracted_scene
             .extract_into(scene, camera, assets, resource_manager);
 
-        // 2. Resolve GPU environment and BRDF LUT before prepare_global.
-        //    This creates textures in the cache and determines env_map_max_mip_level.
+        // ── 2. Resolve GPU environment + BRDF LUT ─────────────────────
         let env_max_mip = resource_manager.resolve_gpu_environment(assets, &scene.environment);
         resource_manager.ensure_brdf_lut();
 
-        // Patch env_map_max_mip_level into the scene uniform buffer
         {
             let current = scene.uniforms_buffer.read().env_map_max_mip_level;
             if (current - env_max_mip).abs() > f32::EPSILON {
@@ -444,9 +452,236 @@ impl RenderFrame {
             }
         }
 
-        // 3. Prepare: global GPU resources
+        // ── 3. Build shadow views (pure math) ──────────────────────────
+        render_lists.clear();
+        render_lists.active_views.push(RenderView::new_main_camera(
+            camera.view_projection_matrix,
+            camera.frustum,
+            surface_size,
+        ));
+
+        let shadow_views = Self::build_shadow_views(
+            &self.extracted_scene,
+            camera,
+            render_lists.active_views.len(),
+        );
+
+        // ── 4. Ensure shadow map resources ─────────────────────────────
+        let total_shadow_layers = shadow_views.len() as u32;
+        let max_shadow_map_size = shadow_views
+            .iter()
+            .map(|v| v.viewport_size.0)
+            .max()
+            .unwrap_or(1);
+        resource_manager.ensure_shadow_maps(total_shadow_layers, max_shadow_map_size);
+
+        render_lists.active_views.extend(shadow_views);
+
+        // ── 5. Update light storage buffer with shadow metadata ────────
+        Self::update_light_shadow_metadata(
+            &render_lists.active_views,
+            &self.extracted_scene.lights,
+            scene,
+            resource_manager,
+        );
+
+        // ── 6. Global GPU resources ────────────────────────────────────
         self.render_state.update(camera, time);
         resource_manager.prepare_global(assets, scene, &self.render_state);
+    }
+
+    /// Build [`RenderView`]s for all shadow-casting lights.
+    ///
+    /// Returns a `Vec` of shadow views. Each directional light may produce
+    /// multiple cascade views; spot lights produce a single view; point
+    /// lights are reserved for future cubemap shadows.
+    fn build_shadow_views(
+        extracted_scene: &ExtractedScene,
+        camera: &RenderCamera,
+        _existing_view_count: usize,
+    ) -> Vec<crate::renderer::core::view::RenderView> {
+        use crate::scene::light::LightKind;
+
+        // Compute scene caster extent (for CSM Z extension)
+        let camera_pos: glam::Vec3 = camera.position.to_array().into();
+        let mut max_distance = 0.0f32;
+        for item in &extracted_scene.render_items {
+            if !item.cast_shadows {
+                continue;
+            }
+            let aabb = item.world_aabb;
+            let effective_radius = if aabb.is_finite() {
+                aabb.size().length() * 0.5
+            } else {
+                0.0
+            };
+            let center_ws = aabb.center();
+            let distance = camera_pos.distance(center_ws) + effective_radius;
+            max_distance = max_distance.max(distance);
+        }
+        let scene_caster_extent = max_distance.max(50.0);
+
+        let mut shadow_views = Vec::with_capacity(16);
+
+        for (light_buffer_index, light) in extracted_scene.lights.iter().enumerate() {
+            if !light.cast_shadows {
+                continue;
+            }
+            let shadow_cfg = light.shadow.clone().unwrap_or_default();
+
+            match &light.kind {
+                LightKind::Directional(_) => {
+                    let cam_far = if camera.far.is_finite() {
+                        camera.far
+                    } else {
+                        shadow_cfg.max_shadow_distance
+                    };
+                    let shadow_far = shadow_cfg.max_shadow_distance.min(cam_far);
+                    let caster_extension =
+                        scene_caster_extent.max(shadow_cfg.max_shadow_distance);
+                    let base_layer = shadow_views.len() as u32;
+
+                    let (views, _splits) = shadow_utils::build_directional_views(
+                        light.id,
+                        light.direction,
+                        light_buffer_index,
+                        camera,
+                        &shadow_cfg,
+                        shadow_far,
+                        caster_extension,
+                        base_layer,
+                    );
+                    shadow_views.extend(views);
+                }
+                LightKind::Spot(spot) => {
+                    let base_layer = shadow_views.len() as u32;
+                    shadow_views.push(shadow_utils::build_spot_view(
+                        light.id,
+                        light_buffer_index,
+                        light.position,
+                        light.direction,
+                        spot,
+                        &shadow_cfg,
+                        base_layer,
+                    ));
+                }
+                LightKind::Point(_) => {
+                    // Future: build 6 cubemap face views
+                }
+            }
+        }
+
+        shadow_views
+    }
+
+    /// Write per-light shadow metadata (layer indices, cascade matrices,
+    /// bias values) into the scene's light storage buffer.
+    ///
+    /// Also populates `render_lists.shadow_lights` for the GPU shadow pass.
+    fn update_light_shadow_metadata(
+        active_views: &[crate::renderer::core::view::RenderView],
+        extracted_lights: &[crate::renderer::graph::extracted::ExtractedLight],
+        scene: &mut Scene,
+        resource_manager: &mut ResourceManager,
+    ) {
+        use crate::renderer::core::view::ViewTarget;
+        use crate::renderer::graph::shadow_utils::MAX_CASCADES;
+        use glam::{Mat4, Vec4};
+
+        // Reset shadow fields
+        {
+            let mut light_storage = scene.light_storage_buffer.write();
+            for light in light_storage.iter_mut() {
+                light.shadow_layer_index = -1;
+                light.shadow_matrices.0 = [Mat4::IDENTITY; 4];
+                light.cascade_count = 0;
+                light.cascade_splits = Vec4::ZERO;
+            }
+        }
+
+        let total_layers = active_views
+            .iter()
+            .filter(|v| v.is_shadow())
+            .count() as u32;
+
+        if total_layers == 0 {
+            resource_manager.ensure_buffer(&scene.light_storage_buffer);
+            return;
+        }
+
+        // Aggregate per-light shadow metadata
+        {
+            let mut light_storage = scene.light_storage_buffer.write();
+
+            for (light_buffer_index, light) in extracted_lights.iter().enumerate() {
+                if !light.cast_shadows {
+                    continue;
+                }
+                let shadow_cfg = light.shadow.clone().unwrap_or_default();
+
+                let mut base_layer = u32::MAX;
+                let mut cascade_count = 0u32;
+                let mut cascade_matrices = [Mat4::IDENTITY; MAX_CASCADES as usize];
+                let mut cascade_splits_arr = [0.0f32; MAX_CASCADES as usize];
+
+                for view in active_views {
+                    let ViewTarget::ShadowLight {
+                        light_id,
+                        layer_index,
+                    } = view.target
+                    else {
+                        continue;
+                    };
+                    if light_id != light.id {
+                        continue;
+                    }
+                    if layer_index < base_layer {
+                        base_layer = layer_index;
+                    }
+                    cascade_count += 1;
+                }
+
+                if cascade_count == 0 {
+                    continue;
+                }
+
+                for view in active_views {
+                    let ViewTarget::ShadowLight {
+                        light_id,
+                        layer_index,
+                    } = view.target
+                    else {
+                        continue;
+                    };
+                    if light_id != light.id {
+                        continue;
+                    }
+                    let cascade_idx = (layer_index - base_layer) as usize;
+                    if cascade_idx < MAX_CASCADES as usize {
+                        cascade_matrices[cascade_idx] = view.view_projection;
+                        if let Some(split) = view.csm_split {
+                            cascade_splits_arr[cascade_idx] = split;
+                        }
+                    }
+                }
+
+                if let Some(gpu_light) = light_storage.get_mut(light_buffer_index) {
+                    gpu_light.shadow_layer_index = base_layer.cast_signed();
+                    gpu_light.shadow_matrices.0 = cascade_matrices;
+                    gpu_light.cascade_count = cascade_count;
+                    gpu_light.cascade_splits = Vec4::new(
+                        cascade_splits_arr[0],
+                        cascade_splits_arr[1.min(cascade_count as usize - 1)],
+                        cascade_splits_arr[2.min(cascade_count as usize - 1)],
+                        cascade_splits_arr[3.min(cascade_count as usize - 1)],
+                    );
+                    gpu_light.shadow_bias = shadow_cfg.bias;
+                    gpu_light.shadow_normal_bias = shadow_cfg.normal_bias;
+                }
+            }
+        }
+
+        resource_manager.ensure_buffer(&scene.light_storage_buffer);
     }
 
     /// Periodically prune stale resources.
