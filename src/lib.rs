@@ -170,7 +170,7 @@ pub mod prelude {
     pub use crate::utils::orbit_control::OrbitControls;
 
     // Renderer (limited exposure)
-    pub use crate::renderer::graph::{FrameComposer, RenderStage};
+    pub use crate::renderer::graph::FrameComposer;
     pub use crate::renderer::settings::{RenderPath, RendererSettings};
 
     // Backward compatibility
@@ -244,16 +244,20 @@ pub mod math {
 ///
 /// # Advanced: Custom Render Passes
 ///
-/// Implement [`RenderNode`](renderer::graph::RenderNode) to add custom
+/// Implement [`PassNode`](renderer::graph::rdg::node::PassNode) to add custom
 /// rendering passes:
 ///
 /// ```rust,ignore
-/// use myth::render::{FrameComposer, RenderStage, RenderNode};
+/// use myth::render::FrameComposer;
+/// use myth::renderer::graph::rdg::blackboard::HookStage;
 ///
 /// impl AppHandler for MyApp {
-///     fn compose_frame<'a>(&'a self, composer: FrameComposer<'a>) {
+///     fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
 ///         composer
-///             .add_node(RenderStage::UI, &self.ui_pass)
+///             .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
+///                 my_pass.target_tex = bb.surface_out;
+///                 rdg.add_pass(&mut my_pass);
+///             })
 ///             .render();
 ///     }
 /// }
@@ -261,8 +265,7 @@ pub mod math {
 pub mod render {
     pub use crate::renderer::Renderer;
     pub use crate::renderer::graph::{
-        ExecuteContext, FrameBuilder, FrameComposer, GraphResource, PrepareContext, RenderNode,
-        RenderStage, RenderState, TrackedRenderPass,
+        FrameComposer, RenderState, TrackedRenderPass,
     };
     pub use crate::renderer::settings::{RenderPath, RendererSettings};
 
@@ -344,7 +347,7 @@ pub use animation::{
 
 // Renderer
 pub use renderer::Renderer;
-pub use renderer::graph::{FrameBuilder, FrameComposer, RenderStage};
+pub use renderer::graph::FrameComposer;
 pub use renderer::settings::{RenderPath, RendererSettings};
 
 // Backward compatibility

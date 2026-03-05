@@ -132,7 +132,7 @@ use myth::{Engine, App, AppHandler, Scene, Mesh, Camera, Light, OrbitControls};
 use myth::{Geometry, Material, PhysicalMaterial, PhongMaterial, Texture};
 use myth::{NodeHandle, GeometryHandle, MaterialHandle, TextureHandle};
 use myth::{create_box, create_sphere, create_plane, SphereOptions, PlaneOptions};
-use myth::{FrameComposer, RenderStage, RendererSettings, RenderPath};
+use myth::{FrameComposer, RendererSettings, RenderPath};
 use myth::{AnimationClip, AnimationMixer, AnimationAction, LoopMode};
 use myth::{Error, Result};
 ```
@@ -1223,35 +1223,50 @@ scene.screen_space.enable_ssr = true;   // Screen-space reflections (reserved)
 
 ### Custom Render Passes
 
-Implement the `RenderNode` trait to add custom GPU work:
+Implement the `PassNode` trait to add custom GPU work via the RDG:
 
 ```rust
-use myth::render::{RenderNode, RenderStage, FrameComposer};
-use myth::render::core::{PrepareContext, ExecuteContext};
+use myth::renderer::graph::rdg::node::PassNode;
+use myth::renderer::graph::rdg::builder::PassBuilder;
+use myth::renderer::graph::rdg::context::{RdgPrepareContext, RdgExecuteContext};
+use myth::renderer::graph::rdg::types::TextureNodeId;
+use myth::renderer::graph::rdg::blackboard::HookStage;
+use myth::render::FrameComposer;
 
-struct MyPass { /* ... */ }
+struct MyPass {
+    target_tex: TextureNodeId,
+    // ...
+}
 
-impl RenderNode for MyPass {
+impl PassNode for MyPass {
     fn name(&self) -> &str { "MyPass" }
 
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        builder.read_texture(self.target_tex);
+        builder.write_texture(self.target_tex);
+    }
+
+    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         // Mutable phase: allocate GPU resources, compile pipelines, create bind groups
     }
 
-    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        // Read-only phase: record GPU commands (no allocations allowed)
+    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+        // Read-only phase: record GPU commands
+        let view = ctx.get_texture_view(self.target_tex);
     }
 }
 ```
 
-Register in `compose_frame`:
+Register via `compose_frame` hooks:
 
 ```rust
 impl AppHandler for MyApp {
     fn compose_frame(&mut self, composer: FrameComposer<'_>) {
         composer
-            .add_node(RenderStage::UI, &mut self.ui_pass)
-            .add_node(RenderStage::PostProcess, &mut self.custom_effect)
+            .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
+                self.my_pass.target_tex = bb.surface_out;
+                rdg.add_pass(&mut self.my_pass);
+            })
             .render();
     }
 }
@@ -1259,37 +1274,44 @@ impl AppHandler for MyApp {
 
 ### Render Graph API
 
-#### RenderStage (Execution Order)
+#### GraphBlackboard
 
-| Stage | Value | Purpose |
-|-------|-------|---------|
-| `PreProcess` | 0 | BRDF LUT, IBL prefiltering |
-| `ShadowMap` | 1 | Shadow map generation |
-| `Opaque` | 2 | Opaque geometry |
-| `Skybox` | 3 | Sky rendering |
-| `BeforeTransparent` | 4 | Pre-transparent (e.g., transmission copy) |
-| `Transparent` | 5 | Alpha-blended geometry |
-| `PostProcess` | 6 | Bloom, tone mapping, FXAA |
-| `UI` | 7 | UI overlays (egui, debug) |
+The `GraphBlackboard` provides well-known resource slots to hook closures:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `scene_color` | `TextureNodeId` | HDR scene color buffer |
+| `scene_depth` | `TextureNodeId` | Scene depth buffer |
+| `surface_out` | `TextureNodeId` | Final swap-chain output |
+
+#### HookStage
+
+| Stage | Description |
+|-------|-------------|
+| `BeforePostProcess` | After scene rendering, before Bloom/ToneMap/FXAA |
+| `AfterPostProcess` | After all post-processing (typical for UI overlays) |
 
 #### FrameComposer
 
 ```rust
 composer
-    .add_node(RenderStage::UI, &mut ui_pass)       // Single node
-    .add_nodes(RenderStage::PostProcess, nodes)      // Batch add
+    .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
+        my_pass.target_tex = bb.surface_out;
+        rdg.add_pass(&mut my_pass);
+    })
     .render();                                        // Execute pipeline
 ```
 
-`render()` consumes the composer and executes: acquire surface → sort nodes → **Prepare** → **Execute** → present → recycle transient textures.
+`render()` consumes the composer and executes: acquire surface → build RDG → compile (topo-sort + dead-pass cull) → **Prepare** → **Execute** → present → recycle transient textures.
 
-#### PrepareContext / ExecuteContext
+#### RdgPrepareContext / RdgExecuteContext
 
-| Field | PrepareContext | ExecuteContext |
-|-------|---------------|----------------|
-| `wgpu_ctx` | ✅ | ✅ |
+| Field | RdgPrepareContext | RdgExecuteContext |
+|-------|-------------------|-------------------|
+| `device` | ✅ | ✅ |
+| `queue` | ✅ | ✅ |
 | `resource_manager` | ✅ (mutable) | ✅ (read-only) |
-| `pipeline_cache` | ✅ (mutable) | ❌ |
+| `pipeline_cache` | ✅ (mutable) | ✅ (read-only) |
 | `assets` | ✅ | ❌ |
 | `scene` | ✅ (mutable) | ❌ |
 | `camera` | ✅ | ❌ |
@@ -1297,7 +1319,6 @@ composer
 | `frame_resources` | ✅ | ✅ |
 | `transient_pool` | ✅ (mutable) | ✅ (read-only) |
 | `render_lists` | ✅ (mutable) | ✅ (read-only) |
-| `surface_view` | ❌ | ✅ |
 
 #### Low-Level GPU Access
 

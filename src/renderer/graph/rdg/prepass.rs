@@ -21,7 +21,6 @@ use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext}
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::TextureNodeId;
 use crate::renderer::graph::TrackedRenderPass;
-use crate::renderer::graph::transient_pool::TransientTextureDesc;
 use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, RenderPipelineId, ShaderCompilationOptions,
     SimpleGeometryPipelineKey,
@@ -44,6 +43,7 @@ pub struct RdgPrepass {
     // ─── RDG Resource Slots (set by Composer) ──────────────────────
     pub scene_depth: TextureNodeId,
     pub scene_normals: TextureNodeId,
+    pub feature_id: TextureNodeId,
 
     // ─── Push Parameters ───────────────────────────────────────────
     pub needs_normal: bool,
@@ -60,6 +60,7 @@ impl RdgPrepass {
         Self {
             scene_depth: TextureNodeId(0),
             scene_normals: TextureNodeId(0),
+            feature_id: TextureNodeId(0),
             needs_normal: false,
             needs_feature_id: false,
             local_cache: FxHashMap::default(),
@@ -273,27 +274,13 @@ impl PassNode for RdgPrepass {
         if self.needs_normal {
             builder.write_texture(self.scene_normals);
         }
+        if self.needs_feature_id {
+            builder.write_texture(self.feature_id);
+        }
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        // Allocate feature ID texture via old transient pool if needed
-        if self.needs_feature_id {
-            let size = ctx.wgpu_ctx.size();
-            let feature_id_tex = ctx.transient_pool.allocate(
-                ctx.device,
-                &TransientTextureDesc {
-                    width: size.0,
-                    height: size.1,
-                    format: FEATURE_ID_FORMAT,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
-                    mip_level_count: 1,
-                    label: "Transient Feature ID",
-                },
-            );
-            ctx.blackboard.feature_id_texture_id = Some(feature_id_tex);
-        }
-
+        // feature_id is now an RDG transient resource — no old pool allocation needed.
         self.prepare_pipelines(ctx);
     }
 
@@ -327,18 +314,16 @@ impl PassNode for RdgPrepass {
         }
 
         if self.needs_feature_id {
-            if let Some(feature_id) = ctx.blackboard.feature_id_texture_id {
-                let feature_view = ctx.transient_pool.get_view(feature_id);
-                color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                    view: feature_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                }));
-            }
+            let feature_view = ctx.get_texture_view(self.feature_id);
+            color_attachments.push(Some(wgpu::RenderPassColorAttachment {
+                view: feature_view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                    store: wgpu::StoreOp::Store,
+                },
+                depth_slice: None,
+            }));
         }
 
         let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

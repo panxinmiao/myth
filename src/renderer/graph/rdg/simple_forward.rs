@@ -1,63 +1,72 @@
-//! Simple Forward Render Pass
+//! RDG Simple Forward Render Pass
 //!
-//! Simplified Forward Pass for LDR/non-HDR rendering paths.
-//! Draws opaque and transparent objects in a single `RenderPass`.
+//! Single-pass LDR rendering for the [`BasicForward`] path. Combines opaque,
+//! skybox, and transparent drawing into one `wgpu::RenderPass` with optional
+//! hardware MSAA.
 //!
-//! # Data Flow
-//! ```text
-//! RenderLists (from SceneCullPass) → SimpleForwardPass → Surface/LDR Target
-//! ```
+//! # RDG Slots
 //!
-//! # Use Cases
-//! - Low-end mode
-//! - UI scenes
-//! - Non-PBR scenes
-//! - Scenes without Transmission effects
+//! - `surface_out`: LDR colour output (write, Clear)
+//! - `scene_depth`: Depth buffer (write, Clear)
+//!
+//! # Push Parameters
+//!
+//! - `clear_color`: Background clear colour (from scene settings)
+//!
+//! # Rendering Order
+//!
+//! 1. **Clear** colour and depth
+//! 2. **Opaque** objects (front-to-back)
+//! 3. **Skybox** (drawn behind opaque geometry via Reverse-Z)
+//! 4. **Transparent** objects (back-to-front)
+//!
+//! [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
 
-use crate::render::PrepareContext;
 use crate::renderer::core::resources::Tracked;
-use crate::renderer::graph::context::{ExecuteContext, GraphResource};
 use crate::renderer::graph::frame::RenderCommand;
-use crate::renderer::graph::{RenderNode, TrackedRenderPass};
+use crate::renderer::graph::rdg::builder::PassBuilder;
+use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::node::PassNode;
+use crate::renderer::graph::rdg::types::TextureNodeId;
+use crate::renderer::graph::TrackedRenderPass;
 
-/// Simple Forward Render Pass
+/// RDG Simple Forward Render Pass.
 ///
-/// In a single `RenderPass`, it completes all drawing:
-/// 1. Clear color and depth buffers
-/// 2. Draw opaque objects (Front-to-Back)
-/// 3. Draw transparent objects (Back-to-Front)
+/// Draws the entire scene in a single LDR render pass with optional MSAA,
+/// intended for the [`BasicForward`] rendering path. The pass writes
+/// directly to the swap-chain surface via `surface_out`.
 ///
-/// # Performance Considerations
-/// - Use `TrackedRenderPass` to avoid redundant state changes
-/// - Command lists are pre-sorted, no additional sorting overhead
-pub struct SimpleForwardPass {
-    /// Clear color
+/// [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
+pub struct RdgSimpleForwardPass {
+    // ─── RDG Resource Slots (set by Composer) ────────────────────────
+    pub surface_out: TextureNodeId,
+    pub scene_depth: TextureNodeId,
+
+    // ─── Push Parameters ─────────────────────────────────────────────
     pub clear_color: wgpu::Color,
 
-    /// Cached render target views during prepare phase.
+    // ─── Internal Cache ──────────────────────────────────────────────
     msaa_view: Option<Tracked<wgpu::TextureView>>,
-    depth_view: Option<Tracked<wgpu::TextureView>>,
-
-    /// Dynamic screen (group 3) bind group built each frame.
     screen_bind_group: Option<wgpu::BindGroup>,
     screen_bind_group_id: u64,
 }
 
-impl SimpleForwardPass {
+impl RdgSimpleForwardPass {
     #[must_use]
-    pub fn new(clear_color: wgpu::Color) -> Self {
+    pub fn new() -> Self {
         Self {
-            clear_color,
+            surface_out: TextureNodeId(0),
+            scene_depth: TextureNodeId(0),
+            clear_color: wgpu::Color::BLACK,
             msaa_view: None,
-            depth_view: None,
             screen_bind_group: None,
             screen_bind_group_id: 0,
         }
     }
 
-    /// Execute the draw list
+    /// Draws a batch of render commands using [`TrackedRenderPass`] state tracking.
     fn draw_list<'pass>(
-        ctx: &'pass ExecuteContext,
+        ctx: &'pass RdgExecuteContext,
         pass: &mut TrackedRenderPass<'pass>,
         cmds: &'pass [RenderCommand],
         screen_bind_group: &'pass wgpu::BindGroup,
@@ -107,26 +116,26 @@ impl SimpleForwardPass {
     }
 }
 
-impl Default for SimpleForwardPass {
-    fn default() -> Self {
-        Self::new(wgpu::Color::BLACK)
-    }
-}
-
-impl RenderNode for SimpleForwardPass {
+impl PassNode for RdgSimpleForwardPass {
     fn name(&self) -> &'static str {
-        "Simple Forward Pass"
+        "RDG_SimpleForward_Pass"
     }
 
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        builder.write_texture(self.surface_out);
+        builder.write_texture(self.scene_depth);
+    }
+
+    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         self.clear_color = ctx.extracted_scene.background.clear_color();
 
-        self.msaa_view = ctx.try_get_resource_view(GraphResource::SceneMsaa).cloned();
-        self.depth_view = Some(ctx.get_resource_view(GraphResource::DepthStencil).clone());
+        // Cache MSAA intermediate view (if MSAA is active)
+        self.msaa_view = ctx.frame_resources.scene_msaa_view.clone();
 
-        // LDR path: no SSAO or Transmission, use both dummies.
+        // Build screen bind group (group 3) with dummy textures (LDR path
+        // has no SSAO or transmission).
         let (bg, bg_id) = ctx.frame_resources.build_screen_bind_group(
-            &ctx.wgpu_ctx.device,
+            ctx.device,
             ctx.global_bind_group_cache,
             &ctx.frame_resources.dummy_transmission_view,
             &ctx.frame_resources.ssao_dummy_view,
@@ -135,24 +144,22 @@ impl RenderNode for SimpleForwardPass {
         self.screen_bind_group_id = bg_id;
     }
 
-    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let render_lists = &ctx.render_lists;
 
-        // get global BindGroup
         let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {
-            log::warn!("SimpleForwardPass: gpu_global_bind_group missing, skipping");
+            log::warn!("RDG SimpleForwardPass: gpu_global_bind_group missing, skipping");
             return;
         };
 
-        let target_view = ctx.surface_view;
+        let target_view = ctx.get_texture_view(self.surface_out);
+        let depth_view = ctx.get_texture_view(self.scene_depth);
 
         let (color_view, resolve_target) = if let Some(msaa) = self.msaa_view.as_deref() {
-            (msaa, Some(target_view))
+            (msaa as &wgpu::TextureView, Some(target_view))
         } else {
             (target_view, None)
         };
-
-        let depth_view = self.depth_view.as_ref().unwrap();
 
         let store_op = if resolve_target.is_some() {
             wgpu::StoreOp::Discard
@@ -160,9 +167,9 @@ impl RenderNode for SimpleForwardPass {
             wgpu::StoreOp::Store
         };
 
-        // Single RenderPass: Clear → Opaque → Transparent → Resolve
+        // Single RenderPass: Clear → Opaque → Skybox → Transparent → Resolve
         let pass_desc = wgpu::RenderPassDescriptor {
-            label: Some("Simple Forward Pass"),
+            label: Some("RDG Simple Forward Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: color_view,
                 resolve_target,
@@ -175,7 +182,7 @@ impl RenderNode for SimpleForwardPass {
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
                 depth_ops: Some(wgpu::Operations {
-                    // Reverse Z: Clear to 0.0 (far clipping plane)
+                    // Reverse-Z: far plane is 0.0
                     load: wgpu::LoadOp::Clear(0.0),
                     store: wgpu::StoreOp::Store,
                 }),
@@ -189,7 +196,7 @@ impl RenderNode for SimpleForwardPass {
         let raw_pass = encoder.begin_render_pass(&pass_desc);
         let mut tracked_pass = TrackedRenderPass::new(raw_pass);
 
-        // setup global bind group (camera, lights, etc.)
+        // Set global bind group (group 0: camera, lights, etc.)
         tracked_pass.set_bind_group(
             0,
             render_lists.gpu_global_bind_group_id,
@@ -197,31 +204,23 @@ impl RenderNode for SimpleForwardPass {
             &[],
         );
 
-        // draw opaque objects first (Front-to-Back)
+        // 1. Opaque (front-to-back)
         let screen_bg = self.screen_bind_group.as_ref().unwrap();
-        let screen_bg_id = self.screen_bind_group_id;
         Self::draw_list(
             ctx,
             &mut tracked_pass,
             &render_lists.opaque,
             screen_bg,
-            screen_bg_id,
+            self.screen_bind_group_id,
         );
 
-        // ── Skybox: draw between opaque and transparent ──────────────
-        //
-        // In the LDR path, SkyboxPass::prepare() stores the prepared pipeline
-        // and bind group in render_lists.prepared_skybox. We draw the skybox
-        // here using the raw pass to bypass TrackedRenderPass state tracking,
-        // then invalidate cached state so that transparent draws re-set
-        // everything correctly.
-        if let Some(skybox) = &ctx.render_lists.prepared_skybox {
+        // 2. Skybox (between opaque and transparent)
+        if let Some(skybox) = &render_lists.prepared_skybox {
             let raw = tracked_pass.raw_pass();
-
             skybox.draw(raw, gpu_global_bind_group, ctx.pipeline_cache);
 
-            // Invalidate all tracked state — the skybox used a completely
-            // different pipeline and bind group layout at slot 0.
+            // Invalidate tracked state — skybox uses a different pipeline and
+            // bind group layout at slot 0.
             tracked_pass.invalidate_state();
 
             // Re-set global bind group for subsequent transparent draws.
@@ -233,15 +232,15 @@ impl RenderNode for SimpleForwardPass {
             );
         }
 
-        // Then draw transparent objects (Back-to-Front)
+        // 3. Transparent (back-to-front)
         Self::draw_list(
             ctx,
             &mut tracked_pass,
             &render_lists.transparent,
             screen_bg,
-            screen_bg_id,
+            self.screen_bind_group_id,
         );
 
-        // RenderPass will automatically resolve MSAA if resolve_target is Some, and end when dropped
+        // RenderPass automatically resolves MSAA on drop if resolve_target is set.
     }
 }

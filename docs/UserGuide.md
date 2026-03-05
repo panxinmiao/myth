@@ -893,43 +893,55 @@ self.controls.fit(scene, root); // Adjusts distance based on bounding box
 
 ## Custom Render Passes
 
-For advanced rendering, implement the `RenderNode` trait:
+For advanced rendering, implement the `PassNode` trait and inject it via
+the hook-based `FrameComposer` API:
 
 ```rust
-use myth::render::{RenderNode, RenderStage, FrameComposer};
-use myth::render::core::{PrepareContext, ExecuteContext};
+use myth::renderer::graph::rdg::node::PassNode;
+use myth::renderer::graph::rdg::builder::PassBuilder;
+use myth::renderer::graph::rdg::context::{RdgPrepareContext, RdgExecuteContext};
+use myth::renderer::graph::rdg::blackboard::HookStage;
+use myth::render::FrameComposer;
 
 struct UiOverlay {
+    target_tex: TextureNodeId,
     // Your GPU resources, bind groups, pipelines...
 }
 
-impl RenderNode for UiOverlay {
+impl PassNode for UiOverlay {
     fn name(&self) -> &str { "UiOverlay" }
 
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
-        // Phase 1: Allocate GPU resources, compile shaders, etc.
-        // This is the MUTABLE phase — you can access device, queue,
-        // create buffers, bind groups, and pipelines here.
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        // Declare resource dependencies for the RDG topology
+        builder.read_texture(self.target_tex);
+        builder.write_texture(self.target_tex);
     }
 
-    fn run(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+        // Phase 1: Allocate GPU resources, compile shaders, etc.
+    }
+
+    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         // Phase 2: Record GPU commands
-        // This is READ-ONLY — no allocations.
-        // Use ctx.surface_view for the final output texture.
+        let view = ctx.get_texture_view(self.target_tex);
     }
 }
 
-// Register in compose_frame
+// Register in compose_frame via hook
 impl AppHandler for MyApp {
     fn compose_frame(&mut self, composer: FrameComposer<'_>) {
         composer
-            .add_node(RenderStage::UI, &mut self.ui_overlay)
+            .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
+                self.ui_overlay.target_tex = bb.surface_out;
+                rdg.add_pass(&mut self.ui_overlay);
+            })
             .render();
     }
 }
 ```
 
-**Render stages** execute in order: PreProcess → ShadowMap → Opaque → Skybox → BeforeTransparent → Transparent → PostProcess → **UI**. Choose the appropriate stage for your custom pass.
+Custom passes are injected into the RDG and participate in the full
+dependency-driven scheduling (topological sort, dead-pass culling, etc.).
 
 ---
 

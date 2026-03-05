@@ -134,15 +134,20 @@ pub trait AppHandler: Sized + 'static {
 
     /// Configures the render pipeline for this frame.
     ///
-    /// Override this method to add custom render passes (UI, post-processing, etc.).
-    /// The default implementation only renders the built-in forward pass.
+    /// Override this method to add custom render passes (UI, post-processing, etc.)
+    /// via the hook-based API. The default implementation only renders the built-in
+    /// pipeline (BasicForward or HighFidelity depending on `RenderPath`).
     ///
     /// # Example
     ///
     /// ```rust,ignore
     /// fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
+    ///     use myth::renderer::graph::rdg::blackboard::HookStage;
     ///     composer
-    ///         .add_node(RenderStage::UI, &mut self.ui_pass)
+    ///         .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
+    ///             self.ui_pass.target_tex = bb.surface_out;
+    ///             rdg.add_pass(&mut self.ui_pass);
+    ///         })
     ///         .render();
     /// }
     /// ```

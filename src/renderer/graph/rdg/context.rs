@@ -5,7 +5,6 @@ use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::{SamplerRegistry, Tracked};
 use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
-use crate::renderer::graph::transient_pool::TransientTexturePool;
 use crate::renderer::graph::{ExtractedScene, RenderState};
 use crate::renderer::pipeline::{PipelineCache, ShaderManager};
 use crate::scene::Scene;
@@ -13,7 +12,7 @@ use crate::scene::camera::RenderCamera;
 use rustc_hash::FxHashMap;
 use wgpu::{Device, Queue, TextureView};
 
-use super::allocator::RdgTransientPool;
+use super::allocator::{RdgTransientPool, SubViewKey};
 use super::graph::RenderGraph;
 use super::types::TextureNodeId;
 
@@ -33,7 +32,7 @@ use super::types::TextureNodeId;
 /// provided through this context.
 pub struct RdgPrepareContext<'a> {
     pub graph: &'a RenderGraph,
-    pub pool: &'a RdgTransientPool,
+    pub pool: &'a mut RdgTransientPool,
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
     pub pipeline_cache: &'a mut PipelineCache,
@@ -46,7 +45,7 @@ pub struct RdgPrepareContext<'a> {
     /// texture upload, and global state access (layouts, bind groups).
     pub resource_manager: &'a mut ResourceManager,
 
-    // ─── Scene Data (Phase 3: full RDG integration) ──────────────────
+    // ─── Scene Data ──────────────────────────────────────────────────
 
     /// Full wgpu context — depth format, MSAA samples, render path, etc.
     pub wgpu_ctx: &'a WgpuContext,
@@ -54,8 +53,7 @@ pub struct RdgPrepareContext<'a> {
     /// Render lists populated by SceneCullPass (read-only during RDG prepare).
     pub render_lists: &'a mut RenderLists,
 
-    /// Frame-level GPU resources (depth buffer, ping-pong textures, screen bind
-    /// group layout, dummy views).
+    /// Frame-level GPU resources (screen bind group layout, dummy views, sampler).
     pub frame_resources: &'a FrameResources,
 
     /// Extracted scene data (render items, scene defines, etc.).
@@ -73,11 +71,7 @@ pub struct RdgPrepareContext<'a> {
     /// Asset server for geometry/material lookups.
     pub assets: &'a AssetServer,
 
-    /// Old-system transient pool — still used by pre-RDG passes and for
-    /// resources not yet migrated to RDG (e.g. feature_id, specular).
-    pub transient_pool: &'a mut TransientTexturePool,
-
-    /// Frame blackboard for cross-pass transient data (SSAO IDs, feature IDs, etc.).
+    /// Frame blackboard for cross-pass transient data.
     pub blackboard: &'a mut FrameBlackboard,
 }
 
@@ -85,7 +79,7 @@ impl<'a> RdgPrepareContext<'a> {
     /// Resolve a virtual [`TextureNodeId`] to its physical [`Tracked<TextureView>`].
     ///
     /// For external resources, the view is looked up in `external_resources`.
-    /// For transient resources, the view is obtained from the physical pool.
+    /// For transient resources, the **default** view is obtained from the pool.
     pub fn get_texture_view(&self, id: TextureNodeId) -> &Tracked<wgpu::TextureView> {
         let res = &self.graph.resources[id.0 as usize];
 
@@ -95,8 +89,41 @@ impl<'a> RdgPrepareContext<'a> {
                 .expect("External resource missing!")
         } else {
             let physical_index = res.physical_index.expect("No physical memory!");
-            &self.pool.resources[physical_index].view
+            &self.pool.resources[physical_index].default_view
         }
+    }
+
+    /// Returns the physical-texture allocation UID for the given node.
+    ///
+    /// Useful for dirty-checking: if the UID hasn't changed between frames,
+    /// the physical texture is the same and derived state can be reused.
+    pub fn get_physical_texture_uid(&self, id: TextureNodeId) -> u64 {
+        let res = &self.graph.resources[id.0 as usize];
+        let physical_index = res.physical_index.expect("No physical memory!");
+        self.pool.get_uid(physical_index)
+    }
+
+    /// Returns the raw `wgpu::Texture` handle for the given node.
+    ///
+    /// Useful for passes that need to create custom views (e.g. Bloom mip chain).
+    pub fn get_texture(&self, id: TextureNodeId) -> &wgpu::Texture {
+        let res = &self.graph.resources[id.0 as usize];
+        let physical_index = res.physical_index.expect("No physical memory!");
+        self.pool.get_texture(physical_index)
+    }
+
+    /// Lazily creates and caches a sub-view for a transient resource.
+    ///
+    /// Typical use: obtaining a `DepthOnly` aspect view from the combined
+    /// depth-stencil texture for bind-group sampling.
+    pub fn get_or_create_sub_view(
+        &mut self,
+        id: TextureNodeId,
+        key: SubViewKey,
+    ) -> &Tracked<wgpu::TextureView> {
+        let res = &self.graph.resources[id.0 as usize];
+        let physical_index = res.physical_index.expect("No physical memory!");
+        self.pool.get_or_create_sub_view(physical_index, key)
     }
 }
 
@@ -131,9 +158,6 @@ pub struct RdgExecuteContext<'a> {
     /// Frame-level GPU resources (screen bind group layout, dummy views, etc.).
     pub frame_resources: &'a FrameResources,
 
-    /// Old-system transient pool (read-only) — for resources not yet in RDG.
-    pub transient_pool: &'a TransientTexturePool,
-
     /// Full wgpu context — depth format, render path, etc.
     pub wgpu_ctx: &'a WgpuContext,
 
@@ -158,5 +182,14 @@ impl<'a> RdgExecuteContext<'a> {
                 .expect("Transient resource has no physical memory assigned!");
             self.pool.get_view(physical_index)
         }
+    }
+
+    /// Returns the [`Tracked<TextureView>`] for cache-key use during execute.
+    pub fn get_tracked_texture_view(&self, id: TextureNodeId) -> &Tracked<wgpu::TextureView> {
+        let res = &self.graph.resources[id.0 as usize];
+        let physical_index = res
+            .physical_index
+            .expect("Resource has no physical memory!");
+        self.pool.get_tracked_view(physical_index)
     }
 }
