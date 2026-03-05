@@ -23,6 +23,7 @@
 pub mod builder;
 pub mod composer;
 pub mod context;
+pub mod culling;
 pub mod extracted;
 pub mod frame;
 #[allow(clippy::module_inception)]

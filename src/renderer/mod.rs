@@ -58,9 +58,7 @@ use crate::renderer::core::resources::SamplerRegistry;
 use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
-use crate::renderer::graph::passes::{
-    BRDFLutComputePass, IBLComputePass, SceneCullPass, ShadowPass, SimpleForwardPass, SkyboxPass,
-};
+use crate::renderer::graph::passes::{SimpleForwardPass, SkyboxPass};
 use crate::renderer::graph::rdg::allocator::RdgTransientPool;
 use crate::renderer::graph::transient_pool::TransientTexturePool;
 use crate::scene::Scene;
@@ -115,17 +113,7 @@ struct RendererState {
     transient_pool: TransientTexturePool,
     global_bind_group_cache: GlobalBindGroupCache,
 
-    // ===== Built-in passes (old system — retained for pre-RDG phases) =====
-
-    // Data Preparation (pre-RDG: fills RenderLists / shadow maps)
-    pub(crate) cull_pass: SceneCullPass,
-    pub(crate) shadow_pass: ShadowPass,
-
-    // Compute Passes (pre-RDG: BRDF LUT / IBL generation)
-    pub(crate) brdf_pass: BRDFLutComputePass,
-    pub(crate) ibl_pass: IBLComputePass,
-
-    // BasicForward LDR Path (old system — not yet migrated to RDG)
+    // ===== Built-in passes (BasicForward LDR path only) =====
     pub(crate) simple_forward_pass: SimpleForwardPass,
     pub(crate) skybox_pass: SkyboxPass,
 
@@ -140,12 +128,17 @@ struct RendererState {
     pub(crate) rdg_bloom_pass: crate::renderer::graph::rdg::bloom::RdgBloomPass,
     pub(crate) rdg_ssao_pass: crate::renderer::graph::rdg::ssao::RdgSsaoPass,
 
-    // Scene rendering passes (Phase 3)
+    // Scene rendering passes
     pub(crate) rdg_prepass: crate::renderer::graph::rdg::prepass::RdgPrepass,
     pub(crate) rdg_opaque_pass: crate::renderer::graph::rdg::opaque::RdgOpaquePass,
     pub(crate) rdg_skybox_pass: crate::renderer::graph::rdg::skybox::RdgSkyboxPass,
     pub(crate) rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass,
     pub(crate) rdg_transmission_copy_pass: crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass,
+
+    // Shadow + Compute passes (migrated from old system)
+    pub(crate) rdg_shadow_pass: crate::renderer::graph::rdg::shadow::RdgShadowPass,
+    pub(crate) rdg_brdf_pass: crate::renderer::graph::rdg::compute::RdgBrdfLutPass,
+    pub(crate) rdg_ibl_pass: crate::renderer::graph::rdg::compute::RdgIblComputePass,
 }
 
 impl Renderer {
@@ -207,21 +200,19 @@ impl Renderer {
         let global_bind_group_cache = GlobalBindGroupCache::new();
 
         // Build passes
-        // Data Preparation
-        let cull_pass = SceneCullPass::new();
-        let shadow_pass = ShadowPass::new(&wgpu_ctx.device);
-
-        // Simple Path (LDR)
+        // BasicForward LDR path only
         let simple_forward_pass = SimpleForwardPass::new(self.settings.clear_color);
-
-        // Compute Passes
-        let brdf_pass = BRDFLutComputePass::new(&wgpu_ctx.device);
-        let ibl_pass = IBLComputePass::new(&wgpu_ctx.device);
-
-        // Skybox / Background (still used in BasicForward path)
         let skybox_pass = SkyboxPass::new(&wgpu_ctx.device);
 
         let sampler_registry = SamplerRegistry::new(&wgpu_ctx.device);
+
+        // Shadow + compute passes (need device ref before wgpu_ctx moves)
+        let rdg_shadow_pass =
+            crate::renderer::graph::rdg::shadow::RdgShadowPass::new(&wgpu_ctx.device);
+        let rdg_brdf_pass =
+            crate::renderer::graph::rdg::compute::RdgBrdfLutPass::new(&wgpu_ctx.device);
+        let rdg_ibl_pass =
+            crate::renderer::graph::rdg::compute::RdgIblComputePass::new(&wgpu_ctx.device);
 
         // 6. Assemble state
         self.context = Some(RendererState {
@@ -238,10 +229,6 @@ impl Renderer {
             transient_pool: TransientTexturePool::new(),
             global_bind_group_cache,
 
-            cull_pass,
-            shadow_pass,
-            brdf_pass,
-            ibl_pass,
             simple_forward_pass,
             skybox_pass,
 
@@ -260,6 +247,11 @@ impl Renderer {
             rdg_skybox_pass: crate::renderer::graph::rdg::skybox::RdgSkyboxPass::new(),
             rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass::new(),
             rdg_transmission_copy_pass: crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass::new(),
+
+            // Shadow + Compute passes (migrated from old system)
+            rdg_shadow_pass,
+            rdg_brdf_pass,
+            rdg_ibl_pass,
         });
 
         log::info!("Renderer Initialized");
@@ -315,59 +307,44 @@ impl Renderer {
 
         let state = self.context.as_mut()?;
 
-        // Prepare phase: extract scene, prepare built-in passes
+        // ── Phase 1: Extract scene, build shadow views, prepare global ──
+        let surface_size = state.wgpu_ctx.size();
         state.render_frame.extract_and_prepare(
             &mut state.resource_manager,
             scene,
             camera,
             assets,
             time,
+            &mut state.render_lists,
+            surface_size,
         );
 
+        // ── Phase 2: Cull + sort + command generation ───────────────────
+        crate::renderer::graph::culling::cull_and_sort(
+            &state.render_frame.extracted_scene,
+            &state.render_frame.render_state,
+            &state.wgpu_ctx,
+            &mut state.resource_manager,
+            &mut state.pipeline_cache,
+            &mut state.shader_manager,
+            &mut state.render_lists,
+            &mut state.blackboard,
+            &state.frame_resources,
+            camera,
+            assets,
+        );
+
+        // ── Phase 3: Build old FrameBuilder (only for BasicForward LDR) ─
         let mut frame_builder = FrameBuilder::new();
 
-        // ========================================
-        // 1. Compute passes (conditional)
-        // ========================================
-        if state.resource_manager.needs_brdf_compute {
-            frame_builder.add_node(RenderStage::PreProcess, &mut state.brdf_pass);
-        }
-        if state.resource_manager.pending_ibl_source.is_some() {
-            frame_builder.add_node(RenderStage::PreProcess, &mut state.ibl_pass);
-        }
-
-        // ========================================
-        // 2. Scene culling
-        // ========================================
-        frame_builder.add_node(RenderStage::PreProcess, &mut state.cull_pass);
-
-        // ========================================
-        // 2. Shadows
-        // ========================================
-        frame_builder.add_node(RenderStage::ShadowMap, &mut state.shadow_pass);
-
-        // ========================================
-        // 3. Path selection: HighFidelity (PBR/HDR Path) vs BasicForward (LDR Path)
-        // ========================================
-        //
-        // HighFidelity: OpaquePass → [TransmissionCopyPass] → TransparentPass → ToneMapPass
-        // BasicForward: SimpleForwardPass (outputs directly to Surface)
-        //
         match &self.settings.path {
             RenderPath::HighFidelity => {
-                // === PBR Path (HDR) ===
-                // Scene rendering passes (Prepass, SSAO, Opaque, Skybox,
-                // TransmissionCopy, Transparent) are now handled by the
-                // unified RDG system in FrameComposer::render().
-                // Only CullPass, ShadowPass, and Compute passes remain
-                // in the old FrameBuilder graph.
+                // All passes (shadow, compute, scene, post) handled by RDG.
+                // FrameBuilder is empty — the old graph runs with zero nodes.
             }
 
             RenderPath::BasicForward { .. } => {
-                // === BasicForward Path (LDR) ===
-                // Prepare skybox for potential inline drawing by SimpleForwardPass.
-                // SkyboxPass::prepare() stores pipeline/bind_group in render_lists.
-                // SkyboxPass::run() is a no-op in BasicForward mode (checked via render_path).
+                // SkyboxPass and SimpleForwardPass still use the old graph.
                 if scene.background.needs_skybox_pass() {
                     frame_builder.add_node(RenderStage::PreProcess, &mut state.skybox_pass);
                 }
@@ -413,6 +390,10 @@ impl Renderer {
             rdg_skybox_pass: &mut state.rdg_skybox_pass,
             rdg_transparent_pass: &mut state.rdg_transparent_pass,
             rdg_transmission_copy_pass: &mut state.rdg_transmission_copy_pass,
+
+            rdg_shadow_pass: &mut state.rdg_shadow_pass,
+            rdg_brdf_pass: &mut state.rdg_brdf_pass,
+            rdg_ibl_pass: &mut state.rdg_ibl_pass,
         };
 
         // Return FrameComposer, defer Surface acquisition to render() call
