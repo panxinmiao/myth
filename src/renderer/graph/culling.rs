@@ -33,7 +33,7 @@ use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::extracted::{ExtractedScene, SceneFeatures};
 use crate::renderer::graph::frame::{
-    FrameBlackboard, RenderCommand, RenderKey, RenderLists, ShadowRenderCommand,
+    RenderCommand, RenderKey, RenderLists, ShadowRenderCommand,
 };
 use crate::renderer::graph::render_state::RenderState;
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
@@ -77,7 +77,7 @@ pub fn cull_and_sort(
     pipeline_cache: &mut PipelineCache,
     shader_manager: &mut ShaderManager,
     render_lists: &mut RenderLists,
-    blackboard: &mut FrameBlackboard,
+    // blackboard: &mut FrameBlackboard,
     frame_resources: &FrameResources,
     camera: &RenderCamera,
     assets: &AssetServer,
@@ -90,7 +90,7 @@ pub fn cull_and_sort(
         pipeline_cache,
         shader_manager,
         render_lists,
-        blackboard,
+        // blackboard,
         frame_resources,
         camera,
         assets,
@@ -131,7 +131,7 @@ fn prepare_main_camera_commands(
     pipeline_cache: &mut PipelineCache,
     shader_manager: &mut ShaderManager,
     render_lists: &mut RenderLists,
-    blackboard: &mut FrameBlackboard,
+    // blackboard: &mut FrameBlackboard,
     frame_resources: &FrameResources,
     camera: &RenderCamera,
     assets: &AssetServer,
@@ -147,7 +147,7 @@ fn prepare_main_camera_commands(
     let camera_frustum = camera.frustum;
     let camera_pos = camera.position;
 
-    blackboard.clear();
+    // blackboard.clear();
 
     let Some(gpu_world) = resource_manager.get_global_state(render_state_id, scene_id) else {
         error!(

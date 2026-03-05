@@ -25,7 +25,6 @@ use rustc_hash::FxHashMap;
 
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::renderer::core::{BindGroupContext, RenderView, ResourceManager};
-use crate::renderer::graph::transient_pool::TransientTextureId;
 use crate::renderer::pipeline::{PipelineCache, RenderPipelineId};
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
@@ -34,76 +33,6 @@ use super::extracted::ExtractedScene;
 use super::render_state::RenderState;
 use super::shadow_utils;
 
-// ============================================================================
-// FrameBlackboard
-// ============================================================================
-
-/// Frame blackboard for passing loose transient data between render passes.
-///
-/// `FrameBlackboard` serves as a per-frame communication bridge, storing
-/// transient resource IDs (e.g. SSAO output, transmission copy) that are
-/// shared across passes. Its lifetime is strictly limited to a single
-/// frame — [`clear`](Self::clear) must be called at the start of each frame.
-///
-/// # Design Principles
-///
-/// - **Single Responsibility**: Decouples loose cross-pass transient IDs
-///   from [`RenderLists`], keeping `RenderLists` focused on draw call management.
-/// - **Declarative-Ready**: Lays the groundwork for future migration to a
-///   declarative render graph.
-/// - **Zero-Cost Abstraction**: Contains only `Option<TransientTextureId>` (`Copy`)
-///   fields; clearing is a zero-overhead assignment.
-#[derive(Default)]
-pub struct FrameBlackboard {
-    /// Transient texture ID of the current frame's SSAO blur output.
-    ///
-    /// Written by [`SsaoPass::prepare()`], read by `OpaquePass` / `TransparentPass`
-    /// when building their group 3 bind groups. `None` means SSAO is disabled this frame.
-    pub ssao_texture_id: Option<TransientTextureId>,
-
-    /// Transient texture ID of the current frame's transmission copy.
-    ///
-    /// Written by [`TransmissionCopyPass::prepare()`], read by `TransparentPass`
-    /// when building its group 3 bind group. `None` means no transmission effect this frame.
-    pub transmission_texture_id: Option<TransientTextureId>,
-
-    /// Transient texture ID for scene normals (HighFidelity path, consumed by SSAO).
-    ///
-    /// Written by `DepthNormalPrepass`, read by `SsaoPass`.
-    pub scene_normal_texture_id: Option<TransientTextureId>,
-
-    /// Transient texture ID for the screen-space feature ID texture.
-    ///
-    /// Written by `Prepass` in `rguint8` format; the R channel stores `sss_id`,
-    /// the G channel stores `ssr_id`. Consumed by screen-space effect passes.
-    pub feature_id_texture_id: Option<TransientTextureId>,
-
-    /// SSSSS ping-pong texture ID.
-    pub sssss_pingpong_texture_id: Option<TransientTextureId>,
-
-    /// Specular texture ID (consumed by `OpaquePass` and `SssssPass`).
-    pub specular_texture_id: Option<TransientTextureId>,
-}
-
-impl FrameBlackboard {
-    /// Creates an empty frame blackboard.
-    #[must_use]
-    #[inline]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Clears all fields at the start of each frame to prevent stale data.
-    #[inline]
-    pub fn clear(&mut self) {
-        self.ssao_texture_id = None;
-        self.transmission_texture_id = None;
-        self.scene_normal_texture_id = None;
-        self.feature_id_texture_id = None;
-        self.sssss_pingpong_texture_id = None;
-        self.specular_texture_id = None;
-    }
-}
 
 // ============================================================================
 // RenderCommand & RenderLists
