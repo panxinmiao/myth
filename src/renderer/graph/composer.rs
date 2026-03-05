@@ -239,7 +239,8 @@ impl<'a> FrameComposer<'a> {
         );
 
         let scene_color = rdg.register_resource("Scene_Color_HDR", hdr_desc.clone(), true);
-        let scene_depth = rdg.register_resource("Scene_Depth", depth_desc, true);
+        let scene_depth = rdg.register_resource("Scene_Depth", depth_desc.clone(), true);
+        let scene_depth_only = rdg.register_resource("Scene_Depth_Only", depth_desc, true);
         let surface_out = rdg.register_resource("Surface_Out", surface_desc.clone(), true);
 
         // ── 3b. Scene Configuration ────────────────────────────────────
@@ -311,7 +312,7 @@ impl<'a> FrameComposer<'a> {
         // SSAO (conditional: reads depth + normals, writes AO texture)
         if ssao_enabled {
             let ssao_pass = self.ctx.rdg_ssao_pass;
-            ssao_pass.depth_tex = scene_depth;
+            ssao_pass.depth_tex = scene_depth_only;
             ssao_pass.normal_tex = scene_normals;
             ssao_pass.output_tex = ssao_output;
 
@@ -455,11 +456,13 @@ impl<'a> FrameComposer<'a> {
 
         // Map external resources to physical views for prepare + execute
         let scene_color_tracked = &self.ctx.frame_resources.scene_color_view[0];
-        let depth_tracked = &self.ctx.frame_resources.depth_only_view;
+        let depth_tracked = &self.ctx.frame_resources.depth_view;
+        let depth_only_tracked = &self.ctx.frame_resources.depth_only_view;
 
         let ext_res: FxHashMap<_, _> = [
             (scene_color, scene_color_tracked),
             (scene_depth, depth_tracked),
+            (scene_depth_only, depth_only_tracked),
         ]
         .into_iter()
         .collect();
