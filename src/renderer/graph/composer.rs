@@ -210,9 +210,13 @@ impl<'a> FrameComposer<'a> {
                 | wgpu::TextureUsages::COPY_SRC,
         );
 
-        let depth_desc = RdgTextureDesc::new_2d(
+        let depth_desc = RdgTextureDesc::new(
             width,
             height,
+            1,
+            1,
+            self.ctx.wgpu_ctx.msaa_samples,
+            wgpu::TextureDimension::D2,
             self.ctx.wgpu_ctx.depth_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
@@ -237,7 +241,7 @@ impl<'a> FrameComposer<'a> {
         let needs_feature_id = is_high_fidelity
             && (self.ctx.scene.screen_space.enable_sss || self.ctx.scene.screen_space.enable_ssr);
         let needs_normal = ssao_enabled || needs_feature_id;
-        let needs_prepass = needs_normal;
+        // let needs_prepass = needs_normal;
         let needs_skybox = self.ctx.scene.background.needs_skybox_pass();
         let needs_specular = self.ctx.scene.screen_space.enable_sss && is_high_fidelity;
         let has_transmission = self.ctx.render_lists.use_transmission && is_high_fidelity;
@@ -278,8 +282,8 @@ impl<'a> FrameComposer<'a> {
 
         let ssao_output = if ssao_enabled {
             let desc = RdgTextureDesc::new_2d(
-                width,
-                height,
+                width / 2,
+                height / 2,
                 wgpu::TextureFormat::R8Unorm,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
@@ -321,15 +325,15 @@ impl<'a> FrameComposer<'a> {
             // HighFidelity pipeline: separate passes for opaque, skybox,
             // transparent with HDR targets and post-processing chain.
 
-            if needs_prepass {
-                let prepass = self.ctx.rdg_prepass;
-                prepass.scene_depth = scene_depth;
-                prepass.scene_normals = scene_normals;
-                prepass.needs_normal = needs_normal;
-                prepass.needs_feature_id = needs_feature_id;
-                prepass.feature_id = feature_id;
-                rdg.add_pass(prepass);
-            }
+            // if needs_prepass {
+            let prepass = self.ctx.rdg_prepass;
+            prepass.scene_depth = scene_depth;
+            prepass.scene_normals = scene_normals;
+            prepass.needs_normal = needs_normal;
+            prepass.needs_feature_id = needs_feature_id;
+            prepass.feature_id = feature_id;
+            rdg.add_pass(prepass);
+            //}
 
             if ssao_enabled {
                 let ssao_pass = self.ctx.rdg_ssao_pass;
@@ -350,7 +354,7 @@ impl<'a> FrameComposer<'a> {
                 let opaque = self.ctx.rdg_opaque_pass;
                 opaque.scene_color = scene_color;
                 opaque.scene_depth = scene_depth;
-                opaque.has_prepass = needs_prepass;
+                opaque.has_prepass = true;
                 opaque.clear_color = self.ctx.extracted_scene.background.clear_color();
                 opaque.needs_specular = needs_specular;
                 opaque.specular_tex = specular_tex;
@@ -432,13 +436,17 @@ impl<'a> FrameComposer<'a> {
                     .min(max_possible)
                     .max(1);
 
-                let mut bloom_chain_desc = RdgTextureDesc::new_2d(
-                    width,
-                    height,
+                let bloom_chain_desc = RdgTextureDesc::new(
+                    bloom_w,
+                    bloom_h,
+                    1,
+                    mip_count,
+                    1,
+                    wgpu::TextureDimension::D2,
                     HDR_TEXTURE_FORMAT,
                     wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 );
-                bloom_chain_desc.mip_level_count = mip_count;
+                // bloom_chain_desc.mip_level_count = mip_count;
 
                 let bloom_chain = rdg.register_resource("Bloom_MipChain", bloom_chain_desc, false);
 
@@ -507,11 +515,28 @@ impl<'a> FrameComposer<'a> {
                 rdg.add_pass(skybox);
             }
 
+            let msaa_desc = RdgTextureDesc::new(
+                width,
+                height,
+                1,
+                1,
+                self.ctx.wgpu_ctx.msaa_samples,
+                wgpu::TextureDimension::D2,
+                view_format,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+
             // SimpleForwardPass: opaque + skybox (inline) + transparent
             {
                 let simple_fwd = self.ctx.rdg_simple_forward_pass;
                 simple_fwd.surface_out = surface_out;
                 simple_fwd.scene_depth = scene_depth;
+                if self.ctx.wgpu_ctx.msaa_samples > 1{
+                    let msaa = rdg.register_resource("Scene_Msaa", msaa_desc, false);
+                    simple_fwd.msaa_view = Some(msaa);
+                }else {
+                    simple_fwd.msaa_view = None;
+                }
                 rdg.add_pass(simple_fwd);
             }
         }
