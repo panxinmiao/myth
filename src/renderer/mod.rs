@@ -59,9 +59,7 @@ use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
 use crate::renderer::graph::passes::{
-    BRDFLutComputePass, BloomPass, DepthNormalPrepass, FxaaPass, IBLComputePass, OpaquePass,
-    SceneCullPass, ShadowPass, SimpleForwardPass, SkyboxPass, SsaoPass, SssssPass, ToneMapPass,
-    TransmissionCopyPass, TransparentPass,
+    BRDFLutComputePass, IBLComputePass, SceneCullPass, ShadowPass, SimpleForwardPass, SkyboxPass,
 };
 use crate::renderer::graph::rdg::allocator::RdgTransientPool;
 use crate::renderer::graph::transient_pool::TransientTexturePool;
@@ -117,45 +115,37 @@ struct RendererState {
     transient_pool: TransientTexturePool,
     global_bind_group_cache: GlobalBindGroupCache,
 
-    // ===== Built-in passes =====
+    // ===== Built-in passes (old system — retained for pre-RDG phases) =====
 
-    // Data Preparation
+    // Data Preparation (pre-RDG: fills RenderLists / shadow maps)
     pub(crate) cull_pass: SceneCullPass,
     pub(crate) shadow_pass: ShadowPass,
 
-    // Pre Pass (Z-Normal)
-    pub(crate) prepass: DepthNormalPrepass,
-
-    // Simple Path (LDR)
-    pub(crate) simple_forward_pass: SimpleForwardPass,
-
-    // PBR Path (HDR)
-    pub(crate) opaque_pass: OpaquePass,
-    pub(crate) transparent_pass: TransparentPass,
-    pub(crate) transmission_copy_pass: TransmissionCopyPass,
-
-    // Skybox / Background
-    pub(crate) skybox_pass: SkyboxPass,
-
-    // Compute Passes
+    // Compute Passes (pre-RDG: BRDF LUT / IBL generation)
     pub(crate) brdf_pass: BRDFLutComputePass,
     pub(crate) ibl_pass: IBLComputePass,
 
-    // Post Processing
-    pub(crate) sssss_pass: SssssPass,
-    pub(crate) bloom_pass: BloomPass,
-    pub(crate) tone_mapping_pass: ToneMapPass,
-    pub(crate) fxaa_pass: FxaaPass,
-    pub(crate) ssao_pass: SsaoPass,
+    // BasicForward LDR Path (old system — not yet migrated to RDG)
+    pub(crate) simple_forward_pass: SimpleForwardPass,
+    pub(crate) skybox_pass: SkyboxPass,
 
     // ===== RDG (Declarative Render Graph) =====
     pub(crate) rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph,
     pub(crate) sampler_registry: SamplerRegistry,
     pub(crate) rdg_pool: RdgTransientPool,
+
+    // Post-processing passes
     pub(crate) rdg_fxaa_pass: crate::renderer::graph::rdg::fxaa::RdgFxaaPass,
     pub(crate) rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass,
     pub(crate) rdg_bloom_pass: crate::renderer::graph::rdg::bloom::RdgBloomPass,
     pub(crate) rdg_ssao_pass: crate::renderer::graph::rdg::ssao::RdgSsaoPass,
+
+    // Scene rendering passes (Phase 3)
+    pub(crate) rdg_prepass: crate::renderer::graph::rdg::prepass::RdgPrepass,
+    pub(crate) rdg_opaque_pass: crate::renderer::graph::rdg::opaque::RdgOpaquePass,
+    pub(crate) rdg_skybox_pass: crate::renderer::graph::rdg::skybox::RdgSkyboxPass,
+    pub(crate) rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass,
+    pub(crate) rdg_transmission_copy_pass: crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass,
 }
 
 impl Renderer {
@@ -221,32 +211,16 @@ impl Renderer {
         let cull_pass = SceneCullPass::new();
         let shadow_pass = ShadowPass::new(&wgpu_ctx.device);
 
-        // Pre Pass (Z-Normal)
-        let prepass = DepthNormalPrepass::new();
-
         // Simple Path (LDR)
         let simple_forward_pass = SimpleForwardPass::new(self.settings.clear_color);
-
-        // PBR Path (HDR)
-        let opaque_pass = OpaquePass::new(self.settings.clear_color);
-        let transparent_pass = TransparentPass::new();
-        let transmission_copy_pass = TransmissionCopyPass::new();
 
         // Compute Passes
         let brdf_pass = BRDFLutComputePass::new(&wgpu_ctx.device);
         let ibl_pass = IBLComputePass::new(&wgpu_ctx.device);
 
-        // Post Processing
-        let sssss_pass = SssssPass::new(&wgpu_ctx.device);
-        let bloom_pass = BloomPass::new(&wgpu_ctx.device);
-        let tone_mapping_pass = ToneMapPass::new(&wgpu_ctx.device);
-        let fxaa_pass = FxaaPass::new(&wgpu_ctx.device);
-        let ssao_pass = SsaoPass::new(&wgpu_ctx.device);
-
-        // Skybox / Background
+        // Skybox / Background (still used in BasicForward path)
         let skybox_pass = SkyboxPass::new(&wgpu_ctx.device);
 
-        //
         let sampler_registry = SamplerRegistry::new(&wgpu_ctx.device);
 
         // 6. Assemble state
@@ -266,18 +240,9 @@ impl Renderer {
 
             cull_pass,
             shadow_pass,
-            prepass,
-            simple_forward_pass,
-            opaque_pass,
-            transparent_pass,
-            transmission_copy_pass,
             brdf_pass,
             ibl_pass,
-            sssss_pass,
-            bloom_pass,
-            tone_mapping_pass,
-            fxaa_pass,
-            ssao_pass,
+            simple_forward_pass,
             skybox_pass,
 
             // RDG
@@ -288,6 +253,13 @@ impl Renderer {
             rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass::new(),
             rdg_bloom_pass: crate::renderer::graph::rdg::bloom::RdgBloomPass::new(),
             rdg_ssao_pass: crate::renderer::graph::rdg::ssao::RdgSsaoPass::new(),
+
+            // RDG Scene Passes
+            rdg_prepass: crate::renderer::graph::rdg::prepass::RdgPrepass::new(),
+            rdg_opaque_pass: crate::renderer::graph::rdg::opaque::RdgOpaquePass::new(),
+            rdg_skybox_pass: crate::renderer::graph::rdg::skybox::RdgSkyboxPass::new(),
+            rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass::new(),
+            rdg_transmission_copy_pass: crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass::new(),
         });
 
         log::info!("Renderer Initialized");
@@ -384,56 +356,11 @@ impl Renderer {
         match &self.settings.path {
             RenderPath::HighFidelity => {
                 // === PBR Path (HDR) ===
-
-                let is_ssao_enabled = scene.ssao.enabled;
-
-                let needs_feature_id =
-                    scene.screen_space.enable_sss || scene.screen_space.enable_ssr;
-
-                let needs_normal = is_ssao_enabled || needs_feature_id;
-
-                // Z-Normal pre-pass (conditional)
-                state.prepass.needs_normal = needs_normal;
-                state.prepass.needs_feature_id = needs_feature_id;
-                frame_builder.add_node(RenderStage::PreProcess, &mut state.prepass);
-
-                // SSAO (after depth-normal prepass, before opaque rendering)
-                // When enabled, SsaoPass reads depth+normal, writes AO texture,
-                // then we update the screen bind group so PBR shaders can sample it.
-                if is_ssao_enabled {
-                    frame_builder.add_node(RenderStage::Opaque, &mut state.ssao_pass);
-                }
-
-                let needs_specular = scene.screen_space.enable_sss;
-                state.opaque_pass.needs_specular = needs_specular;
-                // Opaque rendering
-                frame_builder.add_node(RenderStage::Opaque, &mut state.opaque_pass);
-
-                // Skybox / Background (after opaque, before transparent)
-                if scene.background.needs_skybox_pass() {
-                    frame_builder.add_node(RenderStage::Skybox, &mut state.skybox_pass);
-                }
-
-                // SSSSS (after opaque, before transparent)
-                if scene.screen_space.enable_sss {
-                    frame_builder.add_node(RenderStage::BeforeTransparent, &mut state.sssss_pass);
-                }
-
-                // Transmission copy (conditional)
-                // Note: TransmissionCopyPass internally checks the use_transmission flag.
-                // If no materials in the scene use Transmission, this pass returns early.
-                frame_builder.add_node(
-                    RenderStage::BeforeTransparent,
-                    &mut state.transmission_copy_pass,
-                );
-
-                // Transparent rendering
-                frame_builder.add_node(RenderStage::Transparent, &mut state.transparent_pass);
-
-                // ─── Phase 2 RDG Migration ───────────────────────
-                // Bloom, ToneMapping, and FXAA are now handled by the
-                // new RDG system. The old graph stops after transparent
-                // rendering; HDR scene color is forwarded to RDG.
+                // Scene rendering passes (Prepass, SSAO, Opaque, Skybox,
+                // TransmissionCopy, Transparent) are now handled by the
+                // unified RDG system in FrameComposer::render().
+                // Only CullPass, ShadowPass, and Compute passes remain
+                // in the old FrameBuilder graph.
             }
 
             RenderPath::BasicForward { .. } => {
@@ -480,6 +407,12 @@ impl Renderer {
             rdg_tone_map_pass: &mut state.rdg_tone_map_pass,
             rdg_bloom_pass: &mut state.rdg_bloom_pass,
             rdg_ssao_pass: &mut state.rdg_ssao_pass,
+
+            rdg_prepass: &mut state.rdg_prepass,
+            rdg_opaque_pass: &mut state.rdg_opaque_pass,
+            rdg_skybox_pass: &mut state.rdg_skybox_pass,
+            rdg_transparent_pass: &mut state.rdg_transparent_pass,
+            rdg_transmission_copy_pass: &mut state.rdg_transmission_copy_pass,
         };
 
         // Return FrameComposer, defer Surface acquisition to render() call
