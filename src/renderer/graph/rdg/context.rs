@@ -4,7 +4,7 @@ use crate::renderer::core::WgpuContext;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::{SamplerRegistry, Tracked};
 use crate::renderer::graph::context::FrameResources;
-use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
+use crate::renderer::graph::frame::{RenderLists};
 use crate::renderer::graph::{ExtractedScene, RenderState};
 use crate::renderer::pipeline::{PipelineCache, ShaderManager};
 use crate::scene::Scene;
@@ -71,8 +71,8 @@ pub struct RdgPrepareContext<'a> {
     /// Asset server for geometry/material lookups.
     pub assets: &'a AssetServer,
 
-    /// Frame blackboard for cross-pass transient data.
-    pub blackboard: &'a mut FrameBlackboard,
+    // /// Frame blackboard for cross-pass transient data.
+    // pub blackboard: &'a mut FrameBlackboard,
 }
 
 impl<'a> RdgPrepareContext<'a> {
@@ -161,8 +161,8 @@ pub struct RdgExecuteContext<'a> {
     /// Full wgpu context — depth format, render path, etc.
     pub wgpu_ctx: &'a WgpuContext,
 
-    /// Frame blackboard for cross-pass transient data (read-only during execute).
-    pub blackboard: &'a FrameBlackboard,
+    // /// Frame blackboard for cross-pass transient data (read-only during execute).
+    // pub blackboard: &'a FrameBlackboard,
 }
 
 impl<'a> RdgExecuteContext<'a> {

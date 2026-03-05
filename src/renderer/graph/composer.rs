@@ -39,7 +39,7 @@ use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::ExtractedScene;
 use crate::renderer::graph::context::FrameResources;
-use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
+use crate::renderer::graph::frame::{RenderLists};
 use crate::renderer::graph::rdg::blackboard::{GraphBlackboard, HookStage};
 use crate::renderer::pipeline::PipelineCache;
 use crate::renderer::pipeline::ShaderManager;
@@ -61,8 +61,8 @@ pub struct ComposerContext<'a> {
     /// Render lists (populated by `SceneCullPass`)
     pub render_lists: &'a mut RenderLists,
 
-    /// Frame blackboard (cross-pass transient data communication)
-    pub blackboard: &'a mut FrameBlackboard,
+    // /// Frame blackboard (cross-pass transient data communication)
+    // pub blackboard: &'a mut FrameBlackboard,
 
     // External scene data
     pub scene: &'a mut Scene,
@@ -575,7 +575,7 @@ impl<'a> FrameComposer<'a> {
             scene: self.ctx.scene,
             camera: self.ctx.camera,
             assets: self.ctx.assets,
-            blackboard: self.ctx.blackboard,
+            // blackboard: self.ctx.blackboard,
         };
 
         for &pass_idx in &rdg.execution_queue {
@@ -602,7 +602,7 @@ impl<'a> FrameComposer<'a> {
             render_lists: self.ctx.render_lists,
             frame_resources: self.ctx.frame_resources,
             wgpu_ctx: &*self.ctx.wgpu_ctx,
-            blackboard: self.ctx.blackboard,
+            // blackboard: self.ctx.blackboard,
         };
 
         let mut rdg_encoder =

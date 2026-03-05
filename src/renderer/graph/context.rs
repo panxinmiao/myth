@@ -24,8 +24,7 @@ use crate::assets::AssetServer;
 use crate::renderer::core::binding::{BindGroupKey, GlobalBindGroupCache};
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::core::{ResourceManager, WgpuContext};
-use crate::renderer::graph::frame::{FrameBlackboard, RenderLists};
-use crate::renderer::graph::transient_pool::TransientTexturePool;
+use crate::renderer::graph::frame::{RenderLists};
 use crate::renderer::graph::{ExtractedScene, RenderState};
 use crate::renderer::pipeline::PipelineCache;
 use crate::renderer::pipeline::ShaderManager;
@@ -118,12 +117,8 @@ pub struct PrepareContext<'a> {
     pub extracted_scene: &'a ExtractedScene,
     /// Render command lists (filled by SceneCullPass, consumed by draw passes)
     pub render_lists: &'a mut RenderLists,
-    /// Frame blackboard for cross-pass transient data (SSAO / Transmission IDs)
-    pub blackboard: &'a mut FrameBlackboard,
     /// Frame-persistent GPU resources (ping-pong buffers, depth, MSAA)
     pub frame_resources: &'a FrameResources,
-    /// Transient texture pool (per-frame temporary allocations)
-    pub transient_pool: &'a mut TransientTexturePool,
     /// Current time in seconds
     pub time: f32,
     /// Global bind group cache (cross-pass deduplication)
@@ -257,12 +252,8 @@ pub struct ExecuteContext<'a> {
     pub surface_view: &'a wgpu::TextureView,
     /// Render command lists (read-only; filled during prepare)
     pub render_lists: &'a RenderLists,
-    /// Frame blackboard (read-only during execute)
-    pub blackboard: &'a FrameBlackboard,
     /// Frame-persistent GPU resources
     pub frame_resources: &'a FrameResources,
-    /// Transient texture pool (read-only during execute)
-    pub transient_pool: &'a TransientTexturePool,
     /// Pipeline cache (read-only O(1) pipeline lookup during execute)
     pub pipeline_cache: &'a PipelineCache,
 }
@@ -276,9 +267,7 @@ impl<'a> ExecuteContext<'a> {
         resource_manager: &'a ResourceManager,
         surface_view: &'a wgpu::TextureView,
         render_lists: &'a RenderLists,
-        blackboard: &'a FrameBlackboard,
         frame_resources: &'a FrameResources,
-        transient_pool: &'a TransientTexturePool,
         pipeline_cache: &'a PipelineCache,
     ) -> Self {
         Self {
@@ -286,9 +275,7 @@ impl<'a> ExecuteContext<'a> {
             resource_manager,
             surface_view,
             render_lists,
-            blackboard,
             frame_resources,
-            transient_pool,
             pipeline_cache,
         }
     }
