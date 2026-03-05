@@ -22,6 +22,7 @@
 
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
+use crate::renderer::graph::rdg::allocator::SubViewKey;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
@@ -462,12 +463,22 @@ impl RdgSsaoPass {
 
         // Extract physical texture view IDs and raw pointers up front
         // to avoid holding the immutable borrow on `ctx` across mutable cache operations.
-        let depth_view_id = ctx.get_texture_view(self.depth_tex).id();
+        // let depth_view_id = ctx.get_texture_view(self.depth_tex).id();
         let normal_view_id = ctx.get_texture_view(self.normal_tex).id();
         // SAFETY: We use raw pointers to break the borrow conflict. The views
         // remain valid for the entire scope since ctx/pool outlive them.
-        let depth_view_ptr =
-            ctx.get_texture_view(self.depth_tex) as *const Tracked<wgpu::TextureView>;
+        let depth_only_view = ctx.get_or_create_sub_view(
+            self.depth_tex,
+            SubViewKey {
+                aspect: wgpu::TextureAspect::DepthOnly,
+                ..Default::default()
+            },
+        );
+        let depth_view_id = depth_only_view.id();
+        let depth_view_ptr = depth_only_view as *const Tracked<wgpu::TextureView>;
+
+        // let depth_view_ptr =
+        //     ctx.get_texture_view(self.depth_tex) as *const Tracked<wgpu::TextureView>;
         let normal_view_ptr =
             ctx.get_texture_view(self.normal_tex) as *const Tracked<wgpu::TextureView>;
 

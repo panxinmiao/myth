@@ -55,10 +55,10 @@ use std::mem::size_of;
 /// the stencil buffer.  Reads from `color_in`, writes a distinct `color_out`.
 pub struct RdgSssssPass {
     // --- RDG Resource Slots (set by Composer) ----------------------
-    /// HDR scene colour input (read only -- H sub-pass source)
-    pub color_in: TextureNodeId,
-    /// HDR scene colour output (write only -- V sub-pass destination)
-    pub color_out: TextureNodeId,
+    /// HDR scene colour
+    pub scene_color: TextureNodeId,
+    // /// HDR scene colour output (write only -- V sub-pass destination)
+    // pub color_out: TextureNodeId,
     /// Intermediate blur target (write H, read V)
     pub temp_blur: TextureNodeId,
     /// Scene depth buffer (stencil for culling + depth-aware blur)
@@ -93,8 +93,8 @@ impl RdgSssssPass {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            color_in: TextureNodeId(0),
-            color_out: TextureNodeId(0),
+            scene_color: TextureNodeId(0),
+            // color_out: TextureNodeId(0),
             temp_blur: TextureNodeId(0),
             depth_in: TextureNodeId(0),
             normal_in: TextureNodeId(0),
@@ -123,9 +123,9 @@ impl PassNode for RdgSssssPass {
             return;
         }
         // SSA: read input colour, write distinct output + temp
-        builder.read_texture(self.color_in);
+        builder.read_texture(self.scene_color);
         builder.write_texture(self.temp_blur);
-        builder.write_texture(self.color_out);
+        builder.write_texture(self.scene_color);
         // Read auxiliary textures
         builder.read_texture(self.depth_in);
         builder.read_texture(self.normal_in);
@@ -345,9 +345,9 @@ impl PassNode for RdgSssssPass {
         // Extract IDs and raw pointers upfront to avoid holding the immutable
         // borrow on `ctx` across mutable cache operations (same pattern as SSAO).
 
-        let color_in_view_id = ctx.get_texture_view(self.color_in).id();
+        let color_in_view_id = ctx.get_texture_view(self.scene_color).id();
         let color_in_view_ptr =
-            ctx.get_texture_view(self.color_in) as *const Tracked<wgpu::TextureView>;
+            ctx.get_texture_view(self.scene_color) as *const Tracked<wgpu::TextureView>;
 
         let normal_view_id = ctx.get_texture_view(self.normal_in).id();
         let normal_view_ptr =
@@ -505,7 +505,7 @@ impl PassNode for RdgSssssPass {
 
         let depth_stencil_view = ctx.get_texture_view(self.depth_in);
         let temp_blur_view = ctx.get_texture_view(self.temp_blur);
-        let color_out_view = ctx.get_texture_view(self.color_out);
+        let color_out_view = ctx.get_texture_view(self.scene_color);
 
         // Resolve pipeline handles -> actual GPU pipeline references (O(1))
         let hor_pipeline = ctx
