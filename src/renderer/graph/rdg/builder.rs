@@ -56,7 +56,7 @@ impl<'a> PassBuilder<'a> {
     ) -> TextureNodeId {
         let id = self.graph.register_resource(name, desc, false);
         self.graph.passes[self.pass_index].creates.push(id);
-        id
+        self.write_texture(id)
     }
 
     /// Declares that this pass reads from the given texture resource.
