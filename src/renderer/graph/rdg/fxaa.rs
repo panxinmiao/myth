@@ -52,8 +52,8 @@ impl PassNode for RdgFxaaPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.read_blackboard("LDR_Intermediate");
-        builder.write_blackboard("Surface_Out");
+        self.input_tex = builder.read_blackboard("LDR_Intermediate");
+        self.output_tex = builder.write_blackboard("Surface_Out");
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {

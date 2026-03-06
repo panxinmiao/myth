@@ -33,7 +33,6 @@ use super::extracted::ExtractedScene;
 use super::render_state::RenderState;
 use super::shadow_utils;
 
-
 // ============================================================================
 // RenderCommand & RenderLists
 // ============================================================================
@@ -466,8 +465,7 @@ impl RenderFrame {
                         shadow_cfg.max_shadow_distance
                     };
                     let shadow_far = shadow_cfg.max_shadow_distance.min(cam_far);
-                    let caster_extension =
-                        scene_caster_extent.max(shadow_cfg.max_shadow_distance);
+                    let caster_extension = scene_caster_extent.max(shadow_cfg.max_shadow_distance);
                     let base_layer = shadow_views.len() as u32;
 
                     let (views, _splits) = shadow_utils::build_directional_views(
@@ -528,10 +526,7 @@ impl RenderFrame {
             }
         }
 
-        let total_layers = active_views
-            .iter()
-            .filter(|v| v.is_shadow())
-            .count() as u32;
+        let total_layers = active_views.iter().filter(|v| v.is_shadow()).count() as u32;
 
         if total_layers == 0 {
             resource_manager.ensure_buffer(&scene.light_storage_buffer);

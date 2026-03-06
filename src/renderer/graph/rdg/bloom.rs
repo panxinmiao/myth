@@ -483,7 +483,6 @@ impl RdgBloomPass {
         // 1. Prepare Cache Key IDs (GPU buffer IDs from resource manager)
         let downsample_layout = self.downsample_layout.as_ref().unwrap();
         let input_view_id = input_view.id();
-        // let sampler_id = self.sampler.id();
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
 
         // 2. Build Key
@@ -520,7 +519,6 @@ impl RdgBloomPass {
         }
     }
 
-
     fn get_composite_bind_group(&self, ctx: &mut RdgPrepareContext) -> wgpu::BindGroup {
         let input_view = ctx.views.get_texture_view(self.input_tex);
 
@@ -551,30 +549,28 @@ impl RdgBloomPass {
 
             let comp_layout = self.composite_layout.as_ref().unwrap();
 
-            let new_bg = ctx
-                .device
-                .create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Bloom Composite BG"),
-                    layout: comp_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(input_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::TextureView(bloom_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: composite_gpu.buffer.as_entire_binding(),
-                        },
-                    ],
-                });
+            let new_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Bloom Composite BG"),
+                layout: comp_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(input_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(bloom_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: composite_gpu.buffer.as_entire_binding(),
+                    },
+                ],
+            });
 
             ctx.global_bind_group_cache.insert(key, new_bg.clone());
             new_bg
@@ -592,7 +588,6 @@ impl RdgBloomPass {
 
         let ds_layout = self.downsample_layout.as_ref().unwrap();
         let us_layout = self.upsample_layout.as_ref().unwrap();
-        
 
         // Check if the input view or mip0 changed
         let needs_full_rebuild = self.downsample_bind_groups.len() != mip_count as usize
@@ -697,7 +692,7 @@ impl PassNode for RdgBloomPass {
         );
 
         // Producer: create the bloom output and mip chain textures.
-        self.output_tex = builder.create_and_export("Bloom_Out", hdr_desc);
+        self.output_tex = builder.create_texture("Bloom_Out", hdr_desc);
 
         let bloom_w = (w / 2).max(1);
         let bloom_h = (h / 2).max(1);
@@ -714,7 +709,7 @@ impl PassNode for RdgBloomPass {
             hdr_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        self.bloom_texture = builder.create_and_export("Bloom_MipChain", bloom_chain_desc);
+        self.bloom_texture = builder.create_texture("Bloom_MipChain", bloom_chain_desc);
 
         // Consumer: read scene color input.
         self.input_tex = builder.read_blackboard("Scene_Color_HDR");

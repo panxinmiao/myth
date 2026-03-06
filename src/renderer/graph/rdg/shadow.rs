@@ -60,22 +60,19 @@ impl RdgShadowPass {
         let min_alignment = device.limits().min_uniform_buffer_offset_alignment.max(1);
         let stride = align_to(std::mem::size_of::<Mat4>() as u32, min_alignment);
 
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("RDG Shadow Light BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::VERTEX,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Uniform,
-                        has_dynamic_offset: true,
-                        min_binding_size: wgpu::BufferSize::new(
-                            std::mem::size_of::<Mat4>() as u64,
-                        ),
-                    },
-                    count: None,
-                }],
-            });
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("RDG Shadow Light BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: true,
+                    min_binding_size: wgpu::BufferSize::new(std::mem::size_of::<Mat4>() as u64),
+                },
+                count: None,
+            }],
+        });
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("RDG Shadow VP Buffer"),
@@ -177,8 +174,7 @@ impl PassNode for RdgShadowPass {
         self.recreate_bind_group(ctx.device);
 
         // Build uniform data + shadow light instances
-        let mut uniform_data =
-            vec![0u8; self.uniform_stride as usize * total_layers as usize];
+        let mut uniform_data = vec![0u8; self.uniform_stride as usize * total_layers as usize];
 
         for view in &ctx.render_lists.active_views {
             let ViewTarget::ShadowLight {
@@ -251,27 +247,18 @@ impl PassNode for RdgShadowPass {
                 let pipeline = ctx.pipeline_cache.get_render_pipeline(cmd.pipeline_id);
                 pass.set_pipeline(pipeline);
 
-                if let Some(gpu_material) =
-                    ctx.resource_manager.get_material(cmd.material_handle)
-                {
+                if let Some(gpu_material) = ctx.resource_manager.get_material(cmd.material_handle) {
                     pass.set_bind_group(1, &gpu_material.bind_group, &[]);
                 }
 
-                pass.set_bind_group(
-                    2,
-                    &cmd.object_bind_group.bind_group,
-                    &[cmd.dynamic_offset],
-                );
+                pass.set_bind_group(2, &cmd.object_bind_group.bind_group, &[cmd.dynamic_offset]);
 
-                if let Some(gpu_geometry) =
-                    ctx.resource_manager.get_geometry(cmd.geometry_handle)
-                {
+                if let Some(gpu_geometry) = ctx.resource_manager.get_geometry(cmd.geometry_handle) {
                     for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
                         pass.set_vertex_buffer(slot as u32, buffer.slice(..));
                     }
 
-                    if let Some((index_buffer, index_format, count, _)) =
-                        &gpu_geometry.index_buffer
+                    if let Some((index_buffer, index_format, count, _)) = &gpu_geometry.index_buffer
                     {
                         pass.set_index_buffer(index_buffer.slice(..), *index_format);
                         pass.draw_indexed(0..*count, 0, gpu_geometry.instance_range.clone());

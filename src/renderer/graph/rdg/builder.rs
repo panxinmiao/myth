@@ -84,15 +84,6 @@ impl<'a> PassBuilder<'a> {
         self.graph.passes[self.pass_index].has_side_effect = true;
     }
 
-    /// Looks up a resource by name in the graph's resource registry.
-    ///
-    /// Returns `None` if no resource with that name has been registered
-    /// in the current frame.
-    #[inline]
-    pub fn find_resource(&self, name: &str) -> Option<TextureNodeId> {
-        self.graph.find_resource(name)
-    }
-
     // ─── Blackboard API (Semantic Resource Wiring) ───────────────────
 
     /// Reads a **required** resource from the blackboard.
@@ -101,7 +92,9 @@ impl<'a> PassBuilder<'a> {
     /// Panics if the resource has not been registered.
     #[inline]
     pub fn read_blackboard(&mut self, name: &str) -> TextureNodeId {
-        let id = self.graph.find_resource(name)
+        let id = self
+            .graph
+            .find_resource(name)
             .unwrap_or_else(|| panic!("{name} must be registered before this pass"));
         self.read_texture(id);
         id
@@ -113,7 +106,9 @@ impl<'a> PassBuilder<'a> {
     /// Panics if the resource has not been registered.
     #[inline]
     pub fn write_blackboard(&mut self, name: &str) -> TextureNodeId {
-        let id = self.graph.find_resource(name)
+        let id = self
+            .graph
+            .find_resource(name)
             .unwrap_or_else(|| panic!("{name} must be registered before this pass"));
         self.write_texture(id);
         id
@@ -128,20 +123,5 @@ impl<'a> PassBuilder<'a> {
         let id = self.graph.find_resource(name)?;
         self.read_texture(id);
         Some(id)
-    }
-
-    /// Creates a transient texture and publishes it to the blackboard
-    /// so downstream passes can discover it via `find_resource` /
-    /// `read_blackboard`.
-    ///
-    /// Equivalent to `create_texture` — the resource is automatically
-    /// entered into the graph's name registry by `register_resource`.
-    #[inline]
-    pub fn create_and_export(
-        &mut self,
-        name: &'static str,
-        desc: super::types::RdgTextureDesc,
-    ) -> TextureNodeId {
-        self.create_texture(name, desc)
     }
 }

@@ -17,11 +17,11 @@
 
 use rustc_hash::FxHashMap;
 
+use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
-use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, RenderPipelineId, ShaderCompilationOptions,
     SimpleGeometryPipelineKey,
@@ -285,10 +285,9 @@ impl PassNode for RdgPrepass {
                 w,
                 h,
                 NORMAL_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            self.scene_normals = builder.create_and_export("Scene_Normals", desc);
+            self.scene_normals = builder.create_texture("Scene_Normals", desc);
         }
 
         if self.needs_feature_id {
@@ -296,10 +295,9 @@ impl PassNode for RdgPrepass {
                 w,
                 h,
                 FEATURE_ID_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            self.feature_id = builder.create_and_export("Feature_ID", desc);
+            self.feature_id = builder.create_texture("Feature_ID", desc);
         }
     }
 

@@ -176,7 +176,6 @@ pub struct ResourceManager {
     //
     // Previously lived in `FrameResources`; moved here so that RDG passes
     // access them via `ctx.resource_manager` instead.
-
     /// BindGroupLayout for group 3 (transmission + sampler + SSAO).
     pub screen_bind_group_layout: Tracked<wgpu::BindGroupLayout>,
 
@@ -400,8 +399,8 @@ impl ResourceManager {
         );
 
         // ── Screen BindGroup (Group 3) static resources ────────────────
-        let screen_bind_group_layout =
-            Tracked::new(device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+        let screen_bind_group_layout = Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
                 label: Some("Screen/Transmission Layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
@@ -431,22 +430,26 @@ impl ResourceManager {
                         count: None,
                     },
                 ],
-            }));
+            },
+        ));
 
-        let screen_sampler =
-            Tracked::new(device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("Screen Linear Sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            }));
+        let screen_sampler = Tracked::new(device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("Screen Linear Sampler"),
+            address_mode_u: wgpu::AddressMode::ClampToEdge,
+            address_mode_v: wgpu::AddressMode::ClampToEdge,
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        }));
 
         // SSAO dummy: 1×1 white R8Unorm texture (AO = 1.0 = fully lit)
         let ssao_dummy_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("SSAO White Dummy"),
-            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -454,14 +457,17 @@ impl ResourceManager {
             usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         });
-        let ssao_dummy_view = Tracked::new(
-            ssao_dummy_tex.create_view(&wgpu::TextureViewDescriptor::default()),
-        );
+        let ssao_dummy_view =
+            Tracked::new(ssao_dummy_tex.create_view(&wgpu::TextureViewDescriptor::default()));
 
         // Transmission dummy: 1×1 HDR placeholder (black)
         let dummy_tx_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Transmission Dummy Texture"),
-            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            size: wgpu::Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
             mip_level_count: 1,
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
@@ -469,9 +475,8 @@ impl ResourceManager {
             usage: wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
-        let dummy_transmission_view = Tracked::new(
-            dummy_tx_tex.create_view(&wgpu::TextureViewDescriptor::default()),
-        );
+        let dummy_transmission_view =
+            Tracked::new(dummy_tx_tex.create_view(&wgpu::TextureViewDescriptor::default()));
 
         Self {
             device,

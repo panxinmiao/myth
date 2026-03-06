@@ -383,21 +383,21 @@ impl RdgSsaoPass {
             aspect: wgpu::TextureAspect::DepthOnly,
             ..Default::default()
         };
-        ctx.views.get_or_create_sub_view(
-            self.depth_tex,
-            depth_key.clone(),
-        );
-        let depth_only_view = ctx.views.get_sub_view(
-            self.depth_tex,
-            &depth_key,
-        ).expect("RDG SSAO: depth-only view must exist");
+        ctx.views
+            .get_or_create_sub_view(self.depth_tex, depth_key.clone());
+        let depth_only_view = ctx
+            .views
+            .get_sub_view(self.depth_tex, &depth_key)
+            .expect("RDG SSAO: depth-only view must exist");
 
         let normal_view = ctx.views.get_texture_view(self.normal_tex);
 
         let noise_view = self.noise_texture_view.as_ref().unwrap();
 
         let linear_sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
-        let noise_sampler = ctx.sampler_registry.get_common(CommonSampler::NearestRepeat);
+        let noise_sampler = ctx
+            .sampler_registry
+            .get_common(CommonSampler::NearestRepeat);
         let point_sampler = ctx.sampler_registry.get_common(CommonSampler::NearestClamp);
 
         let raw_layout = self.raw_layout.as_ref().unwrap();
@@ -406,7 +406,6 @@ impl RdgSsaoPass {
 
         // ─── Raw SSAO BindGroup (Group 1) ──────────────────────────
         {
-            
             let key = BindGroupKey::new(raw_layout.id())
                 .with_resource(depth_only_view.id())
                 .with_resource(normal_view.id())
@@ -540,7 +539,7 @@ impl PassNode for RdgSsaoPass {
             wgpu::TextureFormat::R8Unorm,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        self.output_tex = builder.create_and_export("SSAO_Output", desc.clone());
+        self.output_tex = builder.create_texture("SSAO_Output", desc.clone());
 
         self.internal_raw_tex = builder.create_texture("SSAO_Raw_Internal", desc);
 

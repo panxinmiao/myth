@@ -46,7 +46,7 @@ use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, RenderPipelineId,
     ShaderCompilationOptions,
 };
-use crate::resources::screen_space::{SssProfileData, STENCIL_FEATURE_SSS};
+use crate::resources::screen_space::{STENCIL_FEATURE_SSS, SssProfileData};
 use std::mem::size_of;
 
 /// RDG Screen-Space Sub-Surface Scattering pass (SSA-compliant).
@@ -130,7 +130,7 @@ impl PassNode for RdgSssssPass {
             hdr_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        self.temp_blur = builder.create_and_export("SSSSS_Temp", desc);
+        self.temp_blur = builder.create_texture("SSSSS_Temp", desc);
 
         // Consumer: wire upstream resources.
         self.scene_color = builder.write_blackboard("Scene_Color_HDR");
@@ -351,15 +351,14 @@ impl PassNode for RdgSssssPass {
             aspect: wgpu::TextureAspect::DepthOnly,
             ..Default::default()
         };
-        
-        ctx.views.get_or_create_sub_view(
-            self.depth_in,
-            depth_sub_key.clone(),
-        );
 
-        let depth_only_view = ctx.views.get_sub_view(self.depth_in, &depth_sub_key).expect(
-            "RDG SSSSS: depth-only view must exist"
-        );
+        ctx.views
+            .get_or_create_sub_view(self.depth_in, depth_sub_key.clone());
+
+        let depth_only_view = ctx
+            .views
+            .get_sub_view(self.depth_in, &depth_sub_key)
+            .expect("RDG SSSSS: depth-only view must exist");
 
         let color_in_view = ctx.views.get_texture_view(self.scene_color);
 
@@ -421,10 +420,7 @@ impl PassNode for RdgSssssPass {
             ctx.global_bind_group_cache
                 .insert(horizontal_key.clone(), bg);
         }
-        self.horizontal_bind_group = ctx
-            .global_bind_group_cache
-            .get(&horizontal_key)
-            .cloned();
+        self.horizontal_bind_group = ctx.global_bind_group_cache.get(&horizontal_key).cloned();
 
         // Vertical: temp_blur -> color_out
         let vertical_key = BindGroupKey::new(layout.id())
@@ -438,11 +434,11 @@ impl PassNode for RdgSssssPass {
 
         if ctx.global_bind_group_cache.get(&vertical_key).is_none() {
             // SAFETY: All views are alive for the entire frame scope.
-                // let temp_blur_view = unsafe { &*temp_blur_view_ptr };
-                // let normal_view = unsafe { &*normal_view_ptr };
-                // let depth_view = unsafe { &*depth_view_ptr };
-                // let feature_view = unsafe { &*feature_view_ptr };
-                // let specular_view = unsafe { &*specular_view_ptr };
+            // let temp_blur_view = unsafe { &*temp_blur_view_ptr };
+            // let normal_view = unsafe { &*normal_view_ptr };
+            // let depth_view = unsafe { &*depth_view_ptr };
+            // let feature_view = unsafe { &*feature_view_ptr };
+            // let specular_view = unsafe { &*specular_view_ptr };
 
             let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SSSSS Vertical Bind Group"),
