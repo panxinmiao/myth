@@ -342,36 +342,31 @@ impl PassNode for RdgSssssPass {
         // Extract IDs and raw pointers upfront to avoid holding the immutable
         // borrow on `ctx` across mutable cache operations (same pattern as SSAO).
 
-        let color_in_view_id = ctx.get_texture_view(self.scene_color).id();
-        let color_in_view_ptr =
-            ctx.get_texture_view(self.scene_color) as *const Tracked<wgpu::TextureView>;
-
-        let normal_view_id = ctx.get_texture_view(self.normal_in).id();
-        let normal_view_ptr =
-            ctx.get_texture_view(self.normal_in) as *const Tracked<wgpu::TextureView>;
+        // let color_in_view_id = ctx.get_texture_view(self.scene_color).id();
+        // let color_in_view_ptr =
+        //     ctx.get_texture_view(self.scene_color) as *const Tracked<wgpu::TextureView>;
 
         // Depth: need a DepthOnly sub-view for sampling
-        let depth_only_view = ctx.get_or_create_sub_view(
+        let depth_sub_key = SubViewKey {
+            aspect: wgpu::TextureAspect::DepthOnly,
+            ..Default::default()
+        };
+        
+        ctx.views.get_or_create_sub_view(
             self.depth_in,
-            SubViewKey {
-                aspect: wgpu::TextureAspect::DepthOnly,
-                ..Default::default()
-            },
+            depth_sub_key.clone(),
         );
-        let depth_view_id = depth_only_view.id();
-        let depth_view_ptr = depth_only_view as *const Tracked<wgpu::TextureView>;
 
-        let feature_view_id = ctx.get_texture_view(self.feature_id).id();
-        let feature_view_ptr =
-            ctx.get_texture_view(self.feature_id) as *const Tracked<wgpu::TextureView>;
+        let depth_only_view = ctx.views.get_sub_view(self.depth_in, &depth_sub_key).expect(
+            "RDG SSSSS: depth-only view must exist"
+        );
 
-        let temp_blur_view_id = ctx.get_texture_view(self.temp_blur).id();
-        let temp_blur_view_ptr =
-            ctx.get_texture_view(self.temp_blur) as *const Tracked<wgpu::TextureView>;
+        let color_in_view = ctx.views.get_texture_view(self.scene_color);
 
-        let specular_view_id = ctx.get_texture_view(self.specular_tex).id();
-        let specular_view_ptr =
-            ctx.get_texture_view(self.specular_tex) as *const Tracked<wgpu::TextureView>;
+        let normal_view = ctx.views.get_texture_view(self.normal_in);
+        let feature_view = ctx.views.get_texture_view(self.feature_id);
+        let temp_blur_view = ctx.views.get_texture_view(self.temp_blur);
+        let specular_view = ctx.views.get_texture_view(self.specular_tex);
 
         // -- 5. Build bind groups (H: read color_in, V: read temp_blur)
         let layout = self.bind_group_layout.as_ref().unwrap();
@@ -380,22 +375,15 @@ impl PassNode for RdgSssssPass {
 
         // Horizontal: color_in -> temp_blur
         let horizontal_key = BindGroupKey::new(layout.id())
-            .with_resource(color_in_view_id)
-            .with_resource(normal_view_id)
-            .with_resource(depth_view_id)
+            .with_resource(color_in_view.id())
+            .with_resource(normal_view.id())
+            .with_resource(depth_only_view.id())
             .with_resource(profiles_buffer.id())
             .with_resource(sampler.id())
-            .with_resource(feature_view_id)
-            .with_resource(specular_view_id);
+            .with_resource(feature_view.id())
+            .with_resource(specular_view.id());
 
         if ctx.global_bind_group_cache.get(&horizontal_key).is_none() {
-            // SAFETY: All views are alive for the entire frame scope.
-            let color_in_view = unsafe { &*color_in_view_ptr };
-            let normal_view = unsafe { &*normal_view_ptr };
-            let depth_view = unsafe { &*depth_view_ptr };
-            let feature_view = unsafe { &*feature_view_ptr };
-            let specular_view = unsafe { &*specular_view_ptr };
-
             let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SSSSS Horizontal Bind Group"),
                 layout,
@@ -410,7 +398,7 @@ impl PassNode for RdgSssssPass {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(depth_view),
+                        resource: wgpu::BindingResource::TextureView(depth_only_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
@@ -440,21 +428,21 @@ impl PassNode for RdgSssssPass {
 
         // Vertical: temp_blur -> color_out
         let vertical_key = BindGroupKey::new(layout.id())
-            .with_resource(temp_blur_view_id)
-            .with_resource(normal_view_id)
-            .with_resource(depth_view_id)
+            .with_resource(temp_blur_view.id())
+            .with_resource(normal_view.id())
+            .with_resource(depth_only_view.id())
             .with_resource(profiles_buffer.id())
             .with_resource(sampler.id())
-            .with_resource(feature_view_id)
-            .with_resource(specular_view_id);
+            .with_resource(feature_view.id())
+            .with_resource(specular_view.id());
 
         if ctx.global_bind_group_cache.get(&vertical_key).is_none() {
             // SAFETY: All views are alive for the entire frame scope.
-            let temp_blur_view = unsafe { &*temp_blur_view_ptr };
-            let normal_view = unsafe { &*normal_view_ptr };
-            let depth_view = unsafe { &*depth_view_ptr };
-            let feature_view = unsafe { &*feature_view_ptr };
-            let specular_view = unsafe { &*specular_view_ptr };
+                // let temp_blur_view = unsafe { &*temp_blur_view_ptr };
+                // let normal_view = unsafe { &*normal_view_ptr };
+                // let depth_view = unsafe { &*depth_view_ptr };
+                // let feature_view = unsafe { &*feature_view_ptr };
+                // let specular_view = unsafe { &*specular_view_ptr };
 
             let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SSSSS Vertical Bind Group"),
@@ -470,7 +458,7 @@ impl PassNode for RdgSssssPass {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(depth_view),
+                        resource: wgpu::BindingResource::TextureView(depth_only_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,

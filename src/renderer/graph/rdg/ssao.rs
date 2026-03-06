@@ -378,18 +378,21 @@ impl RdgSsaoPass {
         let device = ctx.device;
 
         // Extract physical texture view IDs and raw pointers up front
-        // to avoid holding the immutable borrow on `ctx` across mutable cache operations.
-        // SAFETY: We use raw pointers to break the borrow conflict. The views
-        // remain valid for the entire scope since ctx/pool outlive them.
-        let depth_only_view = ctx.get_or_create_sub_view(
+
+        let depth_key = SubViewKey {
+            aspect: wgpu::TextureAspect::DepthOnly,
+            ..Default::default()
+        };
+        ctx.views.get_or_create_sub_view(
             self.depth_tex,
-            SubViewKey {
-                aspect: wgpu::TextureAspect::DepthOnly,
-                ..Default::default()
-            },
+            depth_key.clone(),
         );
-        let depth_view_id = depth_only_view.id();
-        let depth_view_ptr = depth_only_view as *const Tracked<wgpu::TextureView>;
+        let depth_only_view = ctx.views.get_sub_view(
+            self.depth_tex,
+            &depth_key,
+        ).expect("RDG SSAO: depth-only view must exist");
+
+        let normal_view = ctx.views.get_texture_view(self.normal_tex);
 
         let noise_view = self.noise_texture_view.as_ref().unwrap();
 
@@ -404,9 +407,8 @@ impl RdgSsaoPass {
         // ─── Raw SSAO BindGroup (Group 1) ──────────────────────────
         {
             
-            let normal_view = ctx.get_texture_view(self.normal_tex);
             let key = BindGroupKey::new(raw_layout.id())
-                .with_resource(depth_view_id)
+                .with_resource(depth_only_view.id())
                 .with_resource(normal_view.id())
                 .with_resource(noise_view.id())
                 .with_resource(linear_sampler.id())
@@ -415,36 +417,33 @@ impl RdgSsaoPass {
 
             if self.raw_bind_group_key.as_ref() != Some(&key) {
                 if ctx.global_bind_group_cache.get(&key).is_none() {
-                    // SAFETY: depth/normal views are alive for entire frame
-                    let depth_view = unsafe { &*depth_view_ptr };
-                    // let normal_view = unsafe { &*normal_view_ptr };
                     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("RDG SSAO Raw BG"),
                         layout: raw_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
                                 binding: 0,
-                                resource: wgpu::BindingResource::TextureView(&**depth_view),
+                                resource: wgpu::BindingResource::TextureView(depth_only_view),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::TextureView(&**normal_view),
+                                resource: wgpu::BindingResource::TextureView(normal_view),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 2,
-                                resource: wgpu::BindingResource::TextureView(&**noise_view),
+                                resource: wgpu::BindingResource::TextureView(noise_view),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 3,
-                                resource: wgpu::BindingResource::Sampler(&**linear_sampler),
+                                resource: wgpu::BindingResource::Sampler(linear_sampler),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 4,
-                                resource: wgpu::BindingResource::Sampler(&**noise_sampler),
+                                resource: wgpu::BindingResource::Sampler(noise_sampler),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 5,
-                                resource: wgpu::BindingResource::Sampler(&**point_sampler),
+                                resource: wgpu::BindingResource::Sampler(point_sampler),
                             },
                         ],
                     });
@@ -482,43 +481,40 @@ impl RdgSsaoPass {
 
         // ─── Blur BindGroup (Group 0) ──────────────────────────────
         {
-            let raw_view = ctx.get_texture_view(self.internal_raw_tex);
-            let normal_view = ctx.get_texture_view(self.normal_tex);
+            let raw_view = ctx.views.get_texture_view(self.internal_raw_tex);
 
             let key = BindGroupKey::new(blur_layout.id())
                 .with_resource(raw_view.id())
-                .with_resource(depth_view_id)
+                .with_resource(depth_only_view.id())
                 .with_resource(normal_view.id())
                 .with_resource(linear_sampler.id())
                 .with_resource(point_sampler.id());
 
             if self.blur_bind_group_key.as_ref() != Some(&key) {
                 if ctx.global_bind_group_cache.get(&key).is_none() {
-                    // SAFETY: depth/normal views alive for entire frame
-                    let depth_view = unsafe { &*depth_view_ptr };
                     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("RDG SSAO Blur BG"),
                         layout: blur_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
                                 binding: 0,
-                                resource: wgpu::BindingResource::TextureView(&**raw_view),
+                                resource: wgpu::BindingResource::TextureView(raw_view),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::TextureView(&**depth_view),
+                                resource: wgpu::BindingResource::TextureView(depth_only_view),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 2,
-                                resource: wgpu::BindingResource::TextureView(&**normal_view),
+                                resource: wgpu::BindingResource::TextureView(normal_view),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 3,
-                                resource: wgpu::BindingResource::Sampler(&**linear_sampler),
+                                resource: wgpu::BindingResource::Sampler(linear_sampler),
                             },
                             wgpu::BindGroupEntry {
                                 binding: 4,
-                                resource: wgpu::BindingResource::Sampler(&**point_sampler),
+                                resource: wgpu::BindingResource::Sampler(point_sampler),
                             },
                         ],
                     });

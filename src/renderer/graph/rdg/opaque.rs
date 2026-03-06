@@ -163,10 +163,10 @@ impl PassNode for RdgOpaquePass {
         self.clear_color = ctx.extracted_scene.background.clear_color();
 
         // Build screen bind group (group 3): SSAO + transmission dummy + sampler
-        let ssao_view: Tracked<wgpu::TextureView> = if self.ssao_enabled {
-            ctx.get_texture_view(self.ssao_tex).clone()
+        let ssao_view: &Tracked<wgpu::TextureView> = if self.ssao_enabled {
+            ctx.views.get_texture_view(self.ssao_tex)
         } else {
-            ctx.resource_manager.ssao_dummy_view.clone()
+            &ctx.resource_manager.ssao_dummy_view
         };
 
         let transmission_view = &ctx.resource_manager.dummy_transmission_view;
@@ -174,7 +174,7 @@ impl PassNode for RdgOpaquePass {
         let (bg, bg_id) = ctx.resource_manager.build_screen_bind_group(
             ctx.global_bind_group_cache,
             transmission_view,
-            &ssao_view,
+            ssao_view,
         );
         self.screen_bind_group = Some(bg);
         self.screen_bind_group_id = bg_id;

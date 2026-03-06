@@ -30,15 +30,16 @@ use super::types::TextureNodeId;
 /// read-only infrastructure. `Scene` is **not** available here — all scene
 /// data must be pre-extracted into [`ExtractedScene`] or pushed via parameters.
 pub struct RdgPrepareContext<'a> {
-    pub graph: &'a RenderGraph,
-    pub pool: &'a mut RdgTransientPool,
+    // pub graph: &'a RenderGraph,
+    pub views: RdgViewResolver<'a>,
+    // pub pool: &'a mut RdgTransientPool,
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
     pub pipeline_cache: &'a mut PipelineCache,
     pub sampler_registry: &'a mut SamplerRegistry,
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
     pub shader_manager: &'a mut ShaderManager,
-    pub external_resources: &'a FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
+    // pub external_resources: &'a FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
 
     /// GPU resource manager — provides `CpuBuffer → GpuBuffer` resolution,
     /// texture upload, and global state access (layouts, bind groups).
@@ -65,7 +66,13 @@ pub struct RdgPrepareContext<'a> {
     pub assets: &'a AssetServer,
 }
 
-impl<'a> RdgPrepareContext<'a> {
+pub struct RdgViewResolver<'a> {
+    pub graph: &'a RenderGraph,
+    pub pool: &'a mut RdgTransientPool,
+    pub external_resources: &'a FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
+}
+
+impl<'a> RdgViewResolver<'a> {
     /// Resolve a virtual [`TextureNodeId`] to its physical [`Tracked<TextureView>`].
     ///
     /// For external resources, the view is looked up in `external_resources`.
@@ -76,7 +83,7 @@ impl<'a> RdgPrepareContext<'a> {
         if res.is_external {
             self.external_resources
                 .get(&id)
-                .expect("External resource missing!")
+                .expect(&format!("External {} resource missing!", res.name))
         } else {
             let physical_index = res.physical_index.expect("No physical memory!");
             &self.pool.resources[physical_index].default_view
@@ -115,6 +122,12 @@ impl<'a> RdgPrepareContext<'a> {
         let physical_index = res.physical_index.expect("No physical memory!");
         self.pool.get_or_create_sub_view(physical_index, key)
     }
+
+    pub fn get_sub_view(&self, id: TextureNodeId, key: &SubViewKey) -> Option<&Tracked<wgpu::TextureView>> {
+        let res = &self.graph.resources[id.0 as usize];
+        let physical_index = res.physical_index.expect("No physical memory!");
+        self.pool.get_sub_view(physical_index, key)
+    }
 }
 
 // ─── Execute Context ──────────────────────────────────────────────────────────
@@ -132,7 +145,7 @@ pub struct RdgExecuteContext<'a> {
     pub pipeline_cache: &'a PipelineCache,
     pub global_bind_group_cache: &'a GlobalBindGroupCache,
     /// External views (e.g. swapchain backbuffer) injected before the execute loop.
-    pub external_views: FxHashMap<TextureNodeId, &'a TextureView>,
+    pub external_views: &'a FxHashMap<TextureNodeId, &'a TextureView>,
     /// Per-frame global bind group (group 0 in most shaders).
     /// Built by SceneCullPass; consumed by all scene and post-processing passes.
     pub global_bind_group: Option<&'a wgpu::BindGroup>,
