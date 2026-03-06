@@ -6,7 +6,6 @@ use crate::renderer::core::resources::{SamplerRegistry, Tracked};
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::{ExtractedScene, RenderState};
 use crate::renderer::pipeline::{PipelineCache, ShaderManager};
-use crate::scene::camera::RenderCamera;
 use rustc_hash::FxHashMap;
 use wgpu::{Device, Queue, TextureView};
 
@@ -55,9 +54,6 @@ pub struct RdgPrepareContext<'a> {
 
     /// Render state (camera matrices, time, render_state_id, etc.).
     pub render_state: &'a RenderState,
-
-    /// Active camera.
-    pub camera: &'a RenderCamera,
 
     /// Asset server for geometry/material lookups.
     pub assets: &'a AssetServer,
