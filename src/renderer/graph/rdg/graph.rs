@@ -4,19 +4,34 @@ use crate::renderer::graph::rdg::types::RdgTextureDesc;
 use super::builder::PassBuilder;
 use super::node::{PassNode, PassRecord};
 use super::types::{ResourceRecord, TextureNodeId};
+use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use wgpu::Device;
 
+/// Declarative Render Graph.
+///
+/// Stores pass and resource records, performs dependency analysis,
+/// dead-pass culling, topological sorting, and physical resource allocation.
+///
+/// # Resource Registry
+///
+/// Named resources registered via [`register_resource`](Self::register_resource)
+/// are stored in a `name → TextureNodeId` lookup table so that passes can
+/// resolve well-known resources by name during [`PassNode::setup`] via
+/// [`PassBuilder::find_resource`].
 #[derive(Default)]
 pub struct RenderGraph {
-    // 核心数据
+    /// All pass records for the current frame.
     pub passes: Vec<PassRecord>,
+    /// All resource records for the current frame.
     pub resources: Vec<ResourceRecord>,
-
-    // 最终生成的执行队列
+    /// Compiled execution queue (topologically sorted pass indices).
     pub execution_queue: Vec<usize>,
 
-    // --- 编译期专用的驻留缓冲区 (彻底消灭每帧 malloc) ---
+    /// Name-based resource registry for self-wiring passes.
+    resource_registry: FxHashMap<&'static str, TextureNodeId>,
+
+    // --- Compile-time scratch buffers (zero-alloc across frames) ---
     compile_stack: Vec<usize>,
     compile_in_degrees: Vec<usize>,
     compile_queue: Vec<usize>,
@@ -31,21 +46,29 @@ impl RenderGraph {
         Self::default()
     }
 
-    /// 每帧开始前调用，保留所有 Vec 的 Capacity！
+    /// Resets per-frame state while retaining allocated capacity.
+    ///
+    /// Must be called once at the start of each frame, before any
+    /// `register_resource` or `add_pass` calls.
     pub fn begin_frame(&mut self) {
         self.passes.clear();
         self.resources.clear();
         self.execution_queue.clear();
+        self.resource_registry.clear();
     }
 
+    /// Registers a named texture resource.
+    ///
+    /// The name is recorded in the resource registry so that passes can
+    /// look it up via [`PassBuilder::find_resource`] during setup.
     pub fn register_resource(
         &mut self,
         name: &'static str,
         desc: RdgTextureDesc,
         is_external: bool,
-    ) -> super::types::TextureNodeId {
-        let id = super::types::TextureNodeId(self.resources.len() as u32);
-        self.resources.push(super::types::ResourceRecord {
+    ) -> TextureNodeId {
+        let id = TextureNodeId(self.resources.len() as u32);
+        self.resources.push(ResourceRecord {
             name,
             desc,
             is_external,
@@ -55,7 +78,15 @@ impl RenderGraph {
             last_use: 0,
             physical_index: None,
         });
+        self.resource_registry.insert(name, id);
         id
+    }
+
+    /// Looks up a resource by name. Returns `None` if the name has not been
+    /// registered in the current frame.
+    #[inline]
+    pub fn find_resource(&self, name: &str) -> Option<TextureNodeId> {
+        self.resource_registry.get(name).copied()
     }
 
     pub fn add_pass(&mut self, node: &mut dyn PassNode) {
@@ -90,25 +121,42 @@ impl RenderGraph {
         self.allocate_physical_resources(pool, device);
     }
 
+    /// Builds physical pass-to-pass dependencies from resource read/write edges.
+    ///
+    /// For each pass, every resource it reads creates a dependency on the
+    /// passes that produce (write) that resource. Only backward dependencies
+    /// are considered to prevent cycles from in-place read-write patterns.
+    ///
+    /// Uses index-based traversal to avoid cloning `SmallVec`s in the hot loop.
     fn build_physical_dependencies(&mut self) {
         for pass_idx in 0..self.passes.len() {
-            let reads = self.passes[pass_idx].reads.clone();
-            for res_id in reads {
-                let producers = &self.resources[res_id.0 as usize].producers;
-                for &producer_idx in producers {
-                    // 只依赖在之前注册的 producer，打破 In-Place 读写形成的未来依赖
-                    if producer_idx < pass_idx {
-                        if !self.passes[pass_idx].physical_dependencies.contains(&producer_idx) {
-                            self.passes[pass_idx]
-                                .physical_dependencies
-                                .push(producer_idx);
-                        }
+            let num_reads = self.passes[pass_idx].reads.len();
+            for read_i in 0..num_reads {
+                let res_id = self.passes[pass_idx].reads[read_i];
+                let num_producers = self.resources[res_id.0 as usize].producers.len();
+                for prod_i in 0..num_producers {
+                    let producer_idx = self.resources[res_id.0 as usize].producers[prod_i];
+                    if producer_idx < pass_idx
+                        && !self.passes[pass_idx]
+                            .physical_dependencies
+                            .contains(&producer_idx)
+                    {
+                        self.passes[pass_idx]
+                            .physical_dependencies
+                            .push(producer_idx);
                     }
                 }
             }
         }
     }
 
+    /// Marks passes as "alive" by back-propagating reference counts from
+    /// root passes (those with side effects or external outputs).
+    ///
+    /// Dead passes that contribute to no external output are left with
+    /// `reference_count == 0` and will be excluded from the execution queue.
+    ///
+    /// Uses index-based iteration to avoid cloning dependency lists.
     fn cull_dead_passes(&mut self) {
         self.compile_stack.clear();
 
@@ -129,13 +177,13 @@ impl RenderGraph {
         }
 
         while let Some(pass_idx) = self.compile_stack.pop() {
-            let deps = self.passes[pass_idx].physical_dependencies.clone();
-            for dep_idx in deps {
-                let dep_pass = &mut self.passes[dep_idx];
-                if dep_pass.reference_count == 0 {
+            let num_deps = self.passes[pass_idx].physical_dependencies.len();
+            for dep_i in 0..num_deps {
+                let dep_idx = self.passes[pass_idx].physical_dependencies[dep_i];
+                if self.passes[dep_idx].reference_count == 0 {
                     self.compile_stack.push(dep_idx);
                 }
-                dep_pass.reference_count += 1;
+                self.passes[dep_idx].reference_count += 1;
             }
         }
     }
@@ -168,9 +216,11 @@ impl RenderGraph {
             }
         }
 
-        // Kahn's Algorithm
-        while !self.compile_queue.is_empty() {
-            let node = self.compile_queue.remove(0);
+        // Kahn's algorithm — uses a cursor instead of remove(0) to avoid O(N²).
+        let mut cursor = 0;
+        while cursor < self.compile_queue.len() {
+            let node = self.compile_queue[cursor];
+            cursor += 1;
             self.execution_queue.push(node);
 
             for &downstream in &self.compile_dependency_graph[node] {
@@ -323,7 +373,7 @@ mod tests {
     fn test_zero_alloc_graph() {
         let mut graph = RenderGraph::new();
 
-        // 模拟跑两帧，验证 begin_frame 的复用逻辑
+        // Run two frames to verify begin_frame capacity reuse.
         for frame in 0..2 {
             graph.begin_frame();
 
@@ -331,23 +381,25 @@ mod tests {
             let bloom_tex = graph.register_resource("BloomTex", dummy_desc(), false);
             let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-            let mut tm_pass = MockToneMappingPass {
-                in_color: scene_color,
-                in_bloom: bloom_tex,
-                out_target: backbuffer,
+            let mut opaque_pass = MockOpaquePass {
+                out_color: scene_color,
             };
             let mut bloom_pass = MockBloomPass {
                 in_color: scene_color,
                 out_bloom: bloom_tex,
             };
-            let mut opaque_pass = MockOpaquePass {
-                out_color: scene_color,
+            let mut tm_pass = MockToneMappingPass {
+                in_color: scene_color,
+                in_bloom: bloom_tex,
+                out_target: backbuffer,
             };
 
-            // 逆序添加，看是否能正确排序
-            graph.add_pass(&mut tm_pass);
-            graph.add_pass(&mut bloom_pass);
+            // Add in forward order (Opaque → Bloom → ToneMapping).
+            // The graph should resolve dependencies and produce the same
+            // topological order.
             graph.add_pass(&mut opaque_pass);
+            graph.add_pass(&mut bloom_pass);
+            graph.add_pass(&mut tm_pass);
 
             graph.compile_topology();
 

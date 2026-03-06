@@ -30,7 +30,6 @@ use crate::RenderPath;
 use crate::assets::AssetServer;
 use crate::renderer::core::view::ViewTarget;
 use crate::renderer::core::{ResourceManager, WgpuContext};
-use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::extracted::{ExtractedScene, SceneFeatures};
 use crate::renderer::graph::frame::{
     RenderCommand, RenderKey, RenderLists, ShadowRenderCommand,
@@ -77,8 +76,6 @@ pub fn cull_and_sort(
     pipeline_cache: &mut PipelineCache,
     shader_manager: &mut ShaderManager,
     render_lists: &mut RenderLists,
-    // blackboard: &mut FrameBlackboard,
-    frame_resources: &FrameResources,
     camera: &RenderCamera,
     assets: &AssetServer,
 ) {
@@ -90,8 +87,6 @@ pub fn cull_and_sort(
         pipeline_cache,
         shader_manager,
         render_lists,
-        // blackboard,
-        frame_resources,
         camera,
         assets,
     );
@@ -131,8 +126,6 @@ fn prepare_main_camera_commands(
     pipeline_cache: &mut PipelineCache,
     shader_manager: &mut ShaderManager,
     render_lists: &mut RenderLists,
-    // blackboard: &mut FrameBlackboard,
-    frame_resources: &FrameResources,
     camera: &RenderCamera,
     assets: &AssetServer,
 ) {
@@ -253,7 +246,7 @@ fn prepare_main_camera_commands(
                         gpu_world.layout_id,
                         gpu_material.layout_id,
                         object_bind_group.layout_id,
-                        frame_resources.screen_bind_group_layout.id(),
+                        resource_manager.screen_bind_group_layout.id(),
                     ],
                     topology: geometry.topology,
                     cull_mode: match material.side() {
@@ -305,7 +298,7 @@ fn prepare_main_camera_commands(
                     gpu_material,
                     object_bind_group,
                     gpu_world,
-                    frame_resources,
+                    &resource_manager.screen_bind_group_layout,
                 );
 
                 pipeline_cache.insert_pipeline_fast(fast_key, id);

@@ -54,7 +54,6 @@ use crate::errors::Result;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::SamplerRegistry;
 use crate::renderer::graph::composer::ComposerContext;
-use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::{RenderLists};
 use crate::renderer::graph::rdg::allocator::RdgTransientPool;
 use crate::scene::Scene;
@@ -104,7 +103,6 @@ struct RendererState {
     // /// Frame blackboard (cross-pass transient data communication, cleared each frame)
     // blackboard: FrameBlackboard,
 
-    frame_resources: FrameResources,
     global_bind_group_cache: GlobalBindGroupCache,
 
     // ===== RDG (Declarative Render Graph) =====
@@ -181,13 +179,6 @@ impl Renderer {
         // 3. Create render frame manager
         let render_frame = RenderFrame::new();
 
-        // 4. Create frame resources
-        let frame_resources = FrameResources::new(
-            &wgpu_ctx,
-            // &self.settings,
-            (width, height),
-        );
-
         // 5. Create global bind group cache
         let global_bind_group_cache = GlobalBindGroupCache::new();
 
@@ -212,7 +203,6 @@ impl Renderer {
             render_lists: RenderLists::new(),
             // blackboard: FrameBlackboard::new(),
 
-            frame_resources,
             global_bind_group_cache,
 
             // RDG
@@ -247,9 +237,6 @@ impl Renderer {
         self.size = (width, height);
         if let Some(state) = &mut self.context {
             state.wgpu_ctx.resize(width, height);
-            state
-                .frame_resources
-                .resize(&state.wgpu_ctx, (width, height));
         }
     }
 
@@ -315,8 +302,6 @@ impl Renderer {
             &mut state.pipeline_cache,
             &mut state.shader_manager,
             &mut state.render_lists,
-            // &mut state.blackboard,
-            &state.frame_resources,
             camera,
             assets,
         );
@@ -331,7 +316,6 @@ impl Renderer {
             extracted_scene: &state.render_frame.extracted_scene,
             render_state: &state.render_frame.render_state,
 
-            frame_resources: &mut state.frame_resources,
             global_bind_group_cache: &mut state.global_bind_group_cache,
 
             render_lists: &mut state.render_lists,
@@ -405,8 +389,6 @@ impl Renderer {
                 state.wgpu_ctx.msaa_samples = self.settings.msaa_samples();
                 state.wgpu_ctx.render_path = path;
                 state.wgpu_ctx.pipeline_settings_version += 1;
-                let size = state.wgpu_ctx.size();
-                state.frame_resources.force_recreate(&state.wgpu_ctx, size);
             }
         }
     }
@@ -438,8 +420,6 @@ impl Renderer {
                         state.wgpu_ctx.msaa_samples = samples;
                         state.wgpu_ctx.render_path = self.settings.path;
                         state.wgpu_ctx.pipeline_settings_version += 1;
-                        let size = state.wgpu_ctx.size();
-                        state.frame_resources.force_recreate(&state.wgpu_ctx, size);
                     }
                 }
             }

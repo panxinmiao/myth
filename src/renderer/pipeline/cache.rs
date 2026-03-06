@@ -29,7 +29,6 @@ use rustc_hash::FxHashMap;
 use crate::assets::{GeometryHandle, MaterialHandle};
 use crate::renderer::core::BindGroupContext;
 use crate::renderer::core::resources::{GpuGlobalState, GpuMaterial};
-use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::extracted::SceneFeatures;
 use crate::renderer::pipeline::pipeline_id::{ComputePipelineId, RenderPipelineId};
 use crate::renderer::pipeline::pipeline_key::{
@@ -184,7 +183,7 @@ impl PipelineCache {
         gpu_material: &GpuMaterial,
         object_bind_group: &BindGroupContext,
         gpu_world: &GpuGlobalState,
-        frame_resources: &FrameResources,
+        screen_bind_group_layout: &wgpu::BindGroupLayout,
     ) -> RenderPipelineId {
         let hash = fx_hash_key(&canonical_key);
         if let Some(&id) = self.graphics_lookup.get(&hash) {
@@ -211,7 +210,7 @@ impl PipelineCache {
                 &gpu_world.layout,
                 &gpu_material.layout,
                 &object_bind_group.layout,
-                &frame_resources.screen_bind_group_layout,
+                screen_bind_group_layout,
             ],
             immediate_size: 0,
         });

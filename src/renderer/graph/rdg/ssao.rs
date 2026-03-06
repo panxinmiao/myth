@@ -624,6 +624,14 @@ impl PassNode for RdgSsaoPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
+        // Self-wire well-known resources from the registry.
+        self.depth_tex = builder.find_resource("Scene_Depth")
+            .expect("Scene_Depth must be registered before RdgSsaoPass");
+        self.normal_tex = builder.find_resource("Scene_Normals")
+            .expect("Scene_Normals must be registered before RdgSsaoPass");
+        self.output_tex = builder.find_resource("SSAO_Output")
+            .expect("SSAO_Output must be registered before RdgSsaoPass");
+
         builder.read_texture(self.depth_tex);
         builder.read_texture(self.normal_tex);
         builder.write_texture(self.output_tex);

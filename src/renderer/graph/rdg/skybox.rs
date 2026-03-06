@@ -9,9 +9,16 @@
 //! - `scene_color`: HDR color buffer (read + write, LoadOp::Load)
 //! - `scene_depth`: Depth buffer (read, LoadOp::Load)
 //!
-//! # Push Parameters
+//! # Push Parameters (set by Composer)
 //!
-//! Pipeline variant and textures are resolved from `scene.background` during prepare.
+//! All scene-level configuration is pushed into the public fields by the
+//! Composer before the RDG prepare loop. The pass itself never accesses
+//! `Scene` directly.
+//!
+//! - `background_mode`: Background rendering mode (gradient, texture, etc.)
+//! - `bg_uniforms_cpu_id`: CPU buffer ID for `CpuBuffer<SkyboxParamsUniforms>`
+//! - `bg_uniforms_gpu_id`: GPU buffer ID (from `ensure_buffer_id`)
+//! - `scene_id`: Scene unique ID for global state lookup
 
 use rustc_hash::FxHashMap;
 
@@ -142,6 +149,16 @@ pub struct RdgSkyboxPass {
     pub scene_color: TextureNodeId,
     pub scene_depth: TextureNodeId,
 
+    // ─── Push Parameters (set by Composer) ─────────────────────────
+    /// Background rendering mode (gradient, texture, etc.).
+    pub background_mode: BackgroundMode,
+    /// CPU buffer ID for `CpuBuffer<SkyboxParamsUniforms>`.
+    pub bg_uniforms_cpu_id: u64,
+    /// GPU buffer ID for the skybox params uniform buffer.
+    pub bg_uniforms_gpu_id: u64,
+    /// Scene unique ID for global state lookup.
+    pub scene_id: u32,
+
     // ─── Bind Group Layouts (Group 1) ──────────────────────────────
     layout_gradient: Option<Tracked<wgpu::BindGroupLayout>>,
     layout_cube: Option<Tracked<wgpu::BindGroupLayout>>,
@@ -164,6 +181,10 @@ impl RdgSkyboxPass {
         Self {
             scene_color: TextureNodeId(0),
             scene_depth: TextureNodeId(0),
+            background_mode: BackgroundMode::default(),
+            bg_uniforms_cpu_id: 0,
+            bg_uniforms_gpu_id: 0,
+            scene_id: 0,
             layout_gradient: None,
             layout_cube: None,
             layout_2d: None,
@@ -226,7 +247,7 @@ impl RdgSkyboxPass {
 
         let gpu_world = ctx
             .resource_manager
-            .get_global_state(ctx.render_state.id, ctx.scene.id())
+            .get_global_state(ctx.render_state.id, self.scene_id)
             .expect("Global state must exist");
 
         let mut defines = ShaderDefines::new();
@@ -331,31 +352,28 @@ impl PassNode for RdgSkyboxPass {
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         self.ensure_layouts(ctx.device);
 
-        let background = &ctx.scene.background;
-
-        let Some(variant) = SkyboxVariant::from_background(&background.mode) else {
+        let Some(variant) = SkyboxVariant::from_background(&self.background_mode) else {
             self.current_bind_group = None;
             self.current_pipeline = None;
             return;
         };
 
-        // Ensure GPU buffer for skybox params
-        let params_gpu_id = ctx.resource_manager.ensure_buffer_id(&background.uniforms);
-        let params_cpu_id = background.uniforms.id();
+        // GPU buffer was already ensured by the Composer; use pushed IDs.
+        let params_gpu_id = self.bg_uniforms_gpu_id;
+        let params_cpu_id = self.bg_uniforms_cpu_id;
 
         if let BackgroundMode::Texture {
             source: TextureSource::Asset(handle),
             ..
-        } = &background.mode
+        } = &self.background_mode
         {
-            ctx.resource_manager
-                .prepare_texture(&ctx.scene.assets, *handle);
+            ctx.resource_manager.prepare_texture(ctx.assets, *handle);
         }
 
         // Resolve texture view
         let texture_view = if let BackgroundMode::Texture {
             source, mapping, ..
-        } = &background.mode
+        } = &self.background_mode
         {
             Self::resolve_texture_view(ctx, source, *mapping)
         } else {

@@ -122,6 +122,20 @@ impl PassNode for RdgSssssPass {
         if !self.enabled {
             return;
         }
+        // Self-wire well-known resources from the registry.
+        self.scene_color = builder.find_resource("Scene_Color_HDR")
+            .expect("Scene_Color_HDR must be registered before RdgSssssPass");
+        self.temp_blur = builder.find_resource("SSSSS_Temp")
+            .expect("SSSSS_Temp must be registered before RdgSssssPass");
+        self.depth_in = builder.find_resource("Scene_Depth")
+            .expect("Scene_Depth must be registered before RdgSssssPass");
+        self.normal_in = builder.find_resource("Scene_Normals")
+            .expect("Scene_Normals must be registered before RdgSssssPass");
+        self.feature_id = builder.find_resource("Feature_ID")
+            .expect("Feature_ID must be registered before RdgSssssPass");
+        self.specular_tex = builder.find_resource("Specular_MRT")
+            .expect("Specular_MRT must be registered before RdgSssssPass");
+
         // SSA: read input colour, write distinct output + temp
         builder.read_texture(self.scene_color);
         builder.write_texture(self.temp_blur);

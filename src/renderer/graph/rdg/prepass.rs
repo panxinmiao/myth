@@ -270,12 +270,27 @@ impl PassNode for RdgPrepass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
+        // Self-wire well-known resources from the registry.
+        self.scene_depth = builder.find_resource("Scene_Depth")
+            .expect("Scene_Depth must be registered before RdgPrepass");
         builder.write_texture(self.scene_depth);
-        if self.needs_normal {
-            builder.write_texture(self.scene_normals);
+
+        // Detect optional normals resource.
+        if let Some(normals) = builder.find_resource("Scene_Normals") {
+            self.scene_normals = normals;
+            self.needs_normal = true;
+            builder.write_texture(normals);
+        } else {
+            self.needs_normal = false;
         }
-        if self.needs_feature_id {
-            builder.write_texture(self.feature_id);
+
+        // Detect optional feature-ID resource.
+        if let Some(fid) = builder.find_resource("Feature_ID") {
+            self.feature_id = fid;
+            self.needs_feature_id = true;
+            builder.write_texture(fid);
+        } else {
+            self.needs_feature_id = false;
         }
     }
 
