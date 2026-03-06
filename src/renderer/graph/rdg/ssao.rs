@@ -49,6 +49,8 @@ pub struct RdgSsaoPass {
     pub normal_tex: TextureNodeId,
     pub output_tex: TextureNodeId,
 
+    internal_raw_tex: TextureNodeId,
+
     // ─── Push Parameters (set by Composer from Scene) ──────────────
     /// CPU buffer ID for `CpuBuffer<SsaoUniforms>`.
     pub uniforms_cpu_id: u64,
@@ -67,11 +69,6 @@ pub struct RdgSsaoPass {
     // ─── Persistent Resources ──────────────────────────────────────
     noise_texture_view: Option<Tracked<wgpu::TextureView>>,
 
-    // ─── Internal Transient Texture (raw AO, owned by pass) ───────
-    raw_texture: Option<wgpu::Texture>,
-    raw_texture_view: Option<Tracked<wgpu::TextureView>>,
-    raw_texture_size: (u32, u32),
-
     // ─── Cached BindGroups ─────────────────────────────────────────
     raw_bind_group_key: Option<BindGroupKey>,
     raw_uniforms_bind_group_key: Option<BindGroupKey>,
@@ -86,6 +83,8 @@ impl RdgSsaoPass {
             normal_tex: TextureNodeId(0),
             output_tex: TextureNodeId(0),
 
+            internal_raw_tex: TextureNodeId(0),
+
             uniforms_cpu_id: 0,
             global_state_key: (0, 0),
 
@@ -97,10 +96,6 @@ impl RdgSsaoPass {
             blur_layout: None,
 
             noise_texture_view: None,
-
-            raw_texture: None,
-            raw_texture_view: None,
-            raw_texture_size: (0, 0),
 
             raw_bind_group_key: None,
             raw_uniforms_bind_group_key: None,
@@ -376,45 +371,6 @@ impl RdgSsaoPass {
     }
 
     // =========================================================================
-    // Internal Raw AO Texture
-    // =========================================================================
-
-    fn ensure_raw_texture(&mut self, device: &wgpu::Device, width: u32, height: u32) {
-        // SSAO raw pass runs at half resolution
-        let raw_w = (width / 2).max(1);
-        let raw_h = (height / 2).max(1);
-
-        if self.raw_texture_size == (raw_w, raw_h) && self.raw_texture.is_some() {
-            return;
-        }
-
-        let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("RDG SSAO Raw Texture"),
-            size: wgpu::Extent3d {
-                width: raw_w,
-                height: raw_h,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: SSAO_TEXTURE_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-
-        let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-        self.raw_texture = Some(texture);
-        self.raw_texture_view = Some(Tracked::new(view));
-        self.raw_texture_size = (raw_w, raw_h);
-
-        // Invalidate bind groups
-        self.raw_bind_group_key = None;
-        self.blur_bind_group_key = None;
-    }
-
-    // =========================================================================
     // BindGroup Construction
     // =========================================================================
 
@@ -423,8 +379,6 @@ impl RdgSsaoPass {
 
         // Extract physical texture view IDs and raw pointers up front
         // to avoid holding the immutable borrow on `ctx` across mutable cache operations.
-        // let depth_view_id = ctx.get_texture_view(self.depth_tex).id();
-        let normal_view_id = ctx.get_texture_view(self.normal_tex).id();
         // SAFETY: We use raw pointers to break the borrow conflict. The views
         // remain valid for the entire scope since ctx/pool outlive them.
         let depth_only_view = ctx.get_or_create_sub_view(
@@ -437,13 +391,7 @@ impl RdgSsaoPass {
         let depth_view_id = depth_only_view.id();
         let depth_view_ptr = depth_only_view as *const Tracked<wgpu::TextureView>;
 
-        // let depth_view_ptr =
-        //     ctx.get_texture_view(self.depth_tex) as *const Tracked<wgpu::TextureView>;
-        let normal_view_ptr =
-            ctx.get_texture_view(self.normal_tex) as *const Tracked<wgpu::TextureView>;
-
         let noise_view = self.noise_texture_view.as_ref().unwrap();
-        let raw_view = self.raw_texture_view.as_ref().unwrap();
 
         let linear_sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
         let noise_sampler = ctx.sampler_registry.get_common(CommonSampler::NearestRepeat);
@@ -455,9 +403,11 @@ impl RdgSsaoPass {
 
         // ─── Raw SSAO BindGroup (Group 1) ──────────────────────────
         {
+            
+            let normal_view = ctx.get_texture_view(self.normal_tex);
             let key = BindGroupKey::new(raw_layout.id())
                 .with_resource(depth_view_id)
-                .with_resource(normal_view_id)
+                .with_resource(normal_view.id())
                 .with_resource(noise_view.id())
                 .with_resource(linear_sampler.id())
                 .with_resource(noise_sampler.id())
@@ -467,7 +417,7 @@ impl RdgSsaoPass {
                 if ctx.global_bind_group_cache.get(&key).is_none() {
                     // SAFETY: depth/normal views are alive for entire frame
                     let depth_view = unsafe { &*depth_view_ptr };
-                    let normal_view = unsafe { &*normal_view_ptr };
+                    // let normal_view = unsafe { &*normal_view_ptr };
                     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("RDG SSAO Raw BG"),
                         layout: raw_layout,
@@ -532,10 +482,13 @@ impl RdgSsaoPass {
 
         // ─── Blur BindGroup (Group 0) ──────────────────────────────
         {
+            let raw_view = ctx.get_texture_view(self.internal_raw_tex);
+            let normal_view = ctx.get_texture_view(self.normal_tex);
+
             let key = BindGroupKey::new(blur_layout.id())
                 .with_resource(raw_view.id())
                 .with_resource(depth_view_id)
-                .with_resource(normal_view_id)
+                .with_resource(normal_view.id())
                 .with_resource(linear_sampler.id())
                 .with_resource(point_sampler.id());
 
@@ -543,7 +496,6 @@ impl RdgSsaoPass {
                 if ctx.global_bind_group_cache.get(&key).is_none() {
                     // SAFETY: depth/normal views alive for entire frame
                     let depth_view = unsafe { &*depth_view_ptr };
-                    let normal_view = unsafe { &*normal_view_ptr };
                     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("RDG SSAO Blur BG"),
                         layout: blur_layout,
@@ -592,7 +544,9 @@ impl PassNode for RdgSsaoPass {
             wgpu::TextureFormat::R8Unorm,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        self.output_tex = builder.create_and_export("SSAO_Output", desc);
+        self.output_tex = builder.create_and_export("SSAO_Output", desc.clone());
+
+        self.internal_raw_tex = builder.create_texture("SSAO_Raw_Internal", desc);
 
         // Consumer: read depth and normals from upstream passes.
         self.depth_tex = builder.read_blackboard("Scene_Depth");
@@ -606,8 +560,8 @@ impl PassNode for RdgSsaoPass {
         self.ensure_pipelines(ctx);
 
         // 2. Internal raw AO texture
-        let output_desc = &ctx.graph.resources[self.output_tex.0 as usize].desc;
-        self.ensure_raw_texture(ctx.device, output_desc.size.width, output_desc.size.height);
+        // let output_desc = &ctx.graph.resources[self.output_tex.0 as usize].desc;
+        // self.ensure_raw_texture(ctx.device, output_desc.size.width, output_desc.size.height);
 
         // 3. Bind groups
         self.build_bind_groups(ctx);
@@ -650,10 +604,7 @@ impl PassNode for RdgSsaoPass {
         let raw_pipeline = ctx.pipeline_cache.get_render_pipeline(raw_pipeline_id);
         let blur_pipeline = ctx.pipeline_cache.get_render_pipeline(blur_pipeline_id);
 
-        let raw_view = self
-            .raw_texture_view
-            .as_ref()
-            .expect("Raw texture must be allocated");
+        let raw_view = ctx.get_texture_view(self.internal_raw_tex);
 
         // =====================================================================
         // Sub-Pass 1: Raw SSAO
