@@ -21,7 +21,7 @@ use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::TextureNodeId;
+use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::graph::TrackedRenderPass;
 
 /// RDG Opaque Render Pass.
@@ -122,13 +122,11 @@ impl PassNode for RdgOpaquePass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Self-wire well-known resources from the registry.
-        self.scene_color = builder.find_resource("Scene_Color_HDR")
-            .expect("Scene_Color_HDR must be registered before OpaquePass");
+        // Consumer: wire backbone resources.
+        self.scene_color = builder.write_blackboard("Scene_Color_HDR");
         self.scene_depth = builder.find_resource("Scene_Depth")
             .expect("Scene_Depth must be registered before OpaquePass");
 
-        builder.write_texture(self.scene_color);
         if self.has_prepass {
             builder.read_texture(self.scene_depth);
         }
@@ -143,13 +141,20 @@ impl PassNode for RdgOpaquePass {
             self.ssao_enabled = false;
         }
 
-        // Detect optional specular MRT.
-        if let Some(spec) = builder.find_resource("Specular_MRT") {
-            self.specular_tex = spec;
-            self.needs_specular = true;
-            builder.write_texture(spec);
-        } else {
-            self.needs_specular = false;
+        // Producer: conditionally create specular MRT.
+        // The Composer sets `needs_specular` before `add_pass`.
+        if self.needs_specular {
+            let (w, h) = builder.global_resolution();
+            let hdr_format = builder.frame_config().hdr_format;
+            let desc = RdgTextureDesc::new_2d(
+                w,
+                h,
+                hdr_format,
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
+            );
+            self.specular_tex = builder.create_and_export("Specular_MRT", desc);
         }
     }
 

@@ -6,20 +6,21 @@
 //!
 //! # RDG Slots
 //!
-//! - `scene_depth`: Scene depth buffer (created, Clear(0.0))
-//! - `scene_normals`: Optional normal buffer (created, Rgba8Unorm)
+//! - `scene_depth`: Scene depth buffer (write via blackboard)
+//! - `scene_normals`: Optional normal buffer (created via `create_and_export`)
+//! - `feature_id`: Optional feature-ID buffer (created via `create_and_export`)
 //!
 //! # Push Parameters
 //!
-//! - `needs_normal`: Whether to output view-space normals (for SSAO)
-//! - `needs_feature_id`: Whether to output feature IDs (for SSS/SSR)
+//! - `needs_normal`: Whether to create and output view-space normals (for SSAO)
+//! - `needs_feature_id`: Whether to create and output feature IDs (for SSS/SSR)
 
 use rustc_hash::FxHashMap;
 
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::TextureNodeId;
+use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, RenderPipelineId, ShaderCompilationOptions,
@@ -270,27 +271,35 @@ impl PassNode for RdgPrepass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Self-wire well-known resources from the registry.
-        self.scene_depth = builder.find_resource("Scene_Depth")
-            .expect("Scene_Depth must be registered before RdgPrepass");
-        builder.write_texture(self.scene_depth);
+        // Consumer: write the shared depth buffer.
+        self.scene_depth = builder.write_blackboard("Scene_Depth");
 
-        // Detect optional normals resource.
-        if let Some(normals) = builder.find_resource("Scene_Normals") {
-            self.scene_normals = normals;
-            self.needs_normal = true;
-            builder.write_texture(normals);
-        } else {
-            self.needs_normal = false;
+        // Producer: conditionally create normals and feature-ID textures.
+        // The Composer sets `needs_normal` / `needs_feature_id` push params
+        // before `add_pass`, so downstream passes discover them via
+        // `find_resource` / `try_read_blackboard`.
+        let (w, h) = builder.global_resolution();
+
+        if self.needs_normal {
+            let desc = RdgTextureDesc::new_2d(
+                w,
+                h,
+                NORMAL_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            self.scene_normals = builder.create_and_export("Scene_Normals", desc);
         }
 
-        // Detect optional feature-ID resource.
-        if let Some(fid) = builder.find_resource("Feature_ID") {
-            self.feature_id = fid;
-            self.needs_feature_id = true;
-            builder.write_texture(fid);
-        } else {
-            self.needs_feature_id = false;
+        if self.needs_feature_id {
+            let desc = RdgTextureDesc::new_2d(
+                w,
+                h,
+                FEATURE_ID_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            self.feature_id = builder.create_and_export("Feature_ID", desc);
         }
     }
 

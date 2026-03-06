@@ -176,4 +176,18 @@ impl SamplerRegistry {
             }))
         })
     }
+
+    /// 以共享引用查找先前已创建的自定义采样器。
+    ///
+    /// 适用于 `prepare()` 中 `&mut` 与其它共享引用冲突的场景：
+    /// 先调用 [`get_custom`] 确保采样器存在，再用本方法做只读查找。
+    ///
+    /// # Panics
+    ///
+    /// 如果指定 key 的采样器尚未通过 [`get_custom`] 创建，则 panic。
+    pub fn get_custom_ref(&self, key: &SamplerKey) -> &Tracked<wgpu::Sampler> {
+        self.custom_samplers
+            .get(key)
+            .expect("Custom sampler not found — call get_custom() first to ensure creation")
+    }
 }
