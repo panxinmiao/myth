@@ -114,15 +114,32 @@ impl PassNode for RdgTransparentPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
+        // Self-wire well-known resources from the registry.
+        self.scene_color = builder.find_resource("Scene_Color_HDR")
+            .expect("Scene_Color_HDR must be registered before TransparentPass");
+        self.scene_depth = builder.find_resource("Scene_Depth")
+            .expect("Scene_Depth must be registered before TransparentPass");
+
         builder.read_texture(self.scene_color);
         builder.write_texture(self.scene_color);
         builder.read_texture(self.scene_depth);
 
-        if self.has_transmission {
-            builder.read_texture(self.transmission_tex);
+        // Detect optional transmission resource.
+        if let Some(tx) = builder.find_resource("Transmission_Tex") {
+            self.transmission_tex = tx;
+            self.has_transmission = true;
+            builder.read_texture(tx);
+        } else {
+            self.has_transmission = false;
         }
-        if self.ssao_enabled {
-            builder.read_texture(self.ssao_tex);
+
+        // Detect optional SSAO resource.
+        if let Some(ssao) = builder.find_resource("SSAO_Output") {
+            self.ssao_tex = ssao;
+            self.ssao_enabled = true;
+            builder.read_texture(ssao);
+        } else {
+            self.ssao_enabled = false;
         }
     }
 
@@ -132,17 +149,16 @@ impl PassNode for RdgTransparentPass {
         let ssao_view: Tracked<wgpu::TextureView> = if self.ssao_enabled {
             ctx.get_texture_view(self.ssao_tex).clone()
         } else {
-            ctx.frame_resources.ssao_dummy_view.clone()
+            ctx.resource_manager.ssao_dummy_view.clone()
         };
 
         let transmission_view: Tracked<wgpu::TextureView> = if self.has_transmission {
             ctx.get_texture_view(self.transmission_tex).clone()
         } else {
-            ctx.frame_resources.dummy_transmission_view.clone()
+            ctx.resource_manager.dummy_transmission_view.clone()
         };
 
-        let (bg, bg_id) = ctx.frame_resources.build_screen_bind_group(
-            ctx.device,
+        let (bg, bg_id) = ctx.resource_manager.build_screen_bind_group(
             ctx.global_bind_group_cache,
             &transmission_view,
             &ssao_view,

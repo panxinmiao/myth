@@ -3,11 +3,9 @@ use crate::renderer::core::ResourceManager;
 use crate::renderer::core::WgpuContext;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::{SamplerRegistry, Tracked};
-use crate::renderer::graph::context::FrameResources;
 use crate::renderer::graph::frame::{RenderLists};
 use crate::renderer::graph::{ExtractedScene, RenderState};
 use crate::renderer::pipeline::{PipelineCache, ShaderManager};
-use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 use rustc_hash::FxHashMap;
 use wgpu::{Device, Queue, TextureView};
@@ -21,15 +19,16 @@ use super::types::TextureNodeId;
 
 /// Mutable context available during the RDG **prepare** phase.
 ///
-/// Provides both low-level rendering infrastructure (Device, Queue, PipelineCache,
-/// ShaderManager, etc.) and high-level scene data needed by scene rendering passes.
+/// Provides low-level rendering infrastructure (Device, Queue, PipelineCache,
+/// ShaderManager, etc.) and extracted scene data needed by rendering passes.
 ///
 /// # Push Model
 ///
-/// Pass-specific parameters (TextureNodeId slots, configuration flags) are pushed
-/// into [`PassNode`](super::node::PassNode) fields by the Composer before the
-/// prepare loop. Shared scene infrastructure (RenderLists, FrameResources) is
-/// provided through this context.
+/// Pass-specific parameters (TextureNodeId slots, configuration flags, uniform
+/// buffer IDs) are pushed into [`PassNode`](super::node::PassNode) fields by
+/// the Composer **before** the prepare loop. The context provides only shared,
+/// read-only infrastructure. `Scene` is **not** available here — all scene
+/// data must be pre-extracted into [`ExtractedScene`] or pushed via parameters.
 pub struct RdgPrepareContext<'a> {
     pub graph: &'a RenderGraph,
     pub pool: &'a mut RdgTransientPool,
@@ -53,26 +52,17 @@ pub struct RdgPrepareContext<'a> {
     /// Render lists populated by SceneCullPass (read-only during RDG prepare).
     pub render_lists: &'a mut RenderLists,
 
-    /// Frame-level GPU resources (screen bind group layout, dummy views, sampler).
-    pub frame_resources: &'a FrameResources,
-
     /// Extracted scene data (render items, scene defines, etc.).
     pub extracted_scene: &'a ExtractedScene,
 
     /// Render state (camera matrices, time, render_state_id, etc.).
     pub render_state: &'a RenderState,
 
-    /// Live scene reference (for background settings, SSAO config, etc.).
-    pub scene: &'a Scene,
-
     /// Active camera.
     pub camera: &'a RenderCamera,
 
     /// Asset server for geometry/material lookups.
     pub assets: &'a AssetServer,
-
-    // /// Frame blackboard for cross-pass transient data.
-    // pub blackboard: &'a mut FrameBlackboard,
 }
 
 impl<'a> RdgPrepareContext<'a> {
@@ -154,9 +144,6 @@ pub struct RdgExecuteContext<'a> {
 
     /// Render lists populated by SceneCullPass — opaque/transparent draw commands.
     pub render_lists: &'a RenderLists,
-
-    /// Frame-level GPU resources (screen bind group layout, dummy views, etc.).
-    pub frame_resources: &'a FrameResources,
 
     /// Full wgpu context — depth format, render path, etc.
     pub wgpu_ctx: &'a WgpuContext,

@@ -52,7 +52,12 @@ impl PassNode for RdgFxaaPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // 声明读写意图
+        // Self-wire well-known resources from the registry.
+        self.input_tex = builder.find_resource("LDR_Intermediate")
+            .expect("LDR_Intermediate must be registered before RdgFxaaPass");
+        self.output_tex = builder.find_resource("Surface_Out")
+            .expect("Surface_Out must be registered before RdgFxaaPass");
+
         builder.read_texture(self.input_tex);
         builder.write_texture(self.output_tex);
     }

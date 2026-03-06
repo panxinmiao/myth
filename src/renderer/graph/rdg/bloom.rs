@@ -684,6 +684,14 @@ impl PassNode for RdgBloomPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
+        // Self-wire well-known resources from the registry.
+        self.input_tex = builder.find_resource("Scene_Color_HDR")
+            .expect("Scene_Color_HDR must be registered before RdgBloomPass");
+        self.output_tex = builder.find_resource("Bloom_Out")
+            .expect("Bloom_Out must be registered before RdgBloomPass");
+        self.bloom_texture = builder.find_resource("Bloom_MipChain")
+            .expect("Bloom_MipChain must be registered before RdgBloomPass");
+
         builder.read_texture(self.input_tex);
         builder.write_texture(self.output_tex);
         // Bloom mip chain — we both read and write mip levels internally.

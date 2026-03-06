@@ -50,6 +50,12 @@ impl PassNode for RdgTransmissionCopyPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
+        // Self-wire well-known resources from the registry.
+        self.scene_color = builder.find_resource("Scene_Color_HDR")
+            .expect("Scene_Color_HDR must be registered before RdgTransmissionCopyPass");
+        self.transmission_tex = builder.find_resource("Transmission_Tex")
+            .expect("Transmission_Tex must be registered before RdgTransmissionCopyPass");
+
         builder.read_texture(self.scene_color);
         builder.write_texture(self.transmission_tex);
     }

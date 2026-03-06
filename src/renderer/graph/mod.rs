@@ -17,7 +17,6 @@
 //! 4. **Render**: RDG passes execute their passes
 
 pub mod composer;
-pub mod context;
 pub mod culling;
 pub mod extracted;
 pub mod frame;

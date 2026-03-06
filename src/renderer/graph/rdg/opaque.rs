@@ -122,17 +122,34 @@ impl PassNode for RdgOpaquePass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
+        // Self-wire well-known resources from the registry.
+        self.scene_color = builder.find_resource("Scene_Color_HDR")
+            .expect("Scene_Color_HDR must be registered before OpaquePass");
+        self.scene_depth = builder.find_resource("Scene_Depth")
+            .expect("Scene_Depth must be registered before OpaquePass");
+
         builder.write_texture(self.scene_color);
         if self.has_prepass {
             builder.read_texture(self.scene_depth);
         }
         builder.write_texture(self.scene_depth);
 
-        if self.ssao_enabled {
-            builder.read_texture(self.ssao_tex);
+        // Detect optional SSAO resource.
+        if let Some(ssao) = builder.find_resource("SSAO_Output") {
+            self.ssao_tex = ssao;
+            self.ssao_enabled = true;
+            builder.read_texture(ssao);
+        } else {
+            self.ssao_enabled = false;
         }
-        if self.needs_specular {
-            builder.write_texture(self.specular_tex);
+
+        // Detect optional specular MRT.
+        if let Some(spec) = builder.find_resource("Specular_MRT") {
+            self.specular_tex = spec;
+            self.needs_specular = true;
+            builder.write_texture(spec);
+        } else {
+            self.needs_specular = false;
         }
     }
 
@@ -144,13 +161,12 @@ impl PassNode for RdgOpaquePass {
         let ssao_view: Tracked<wgpu::TextureView> = if self.ssao_enabled {
             ctx.get_texture_view(self.ssao_tex).clone()
         } else {
-            ctx.frame_resources.ssao_dummy_view.clone()
+            ctx.resource_manager.ssao_dummy_view.clone()
         };
 
-        let transmission_view = &ctx.frame_resources.dummy_transmission_view;
+        let transmission_view = &ctx.resource_manager.dummy_transmission_view;
 
-        let (bg, bg_id) = ctx.frame_resources.build_screen_bind_group(
-            ctx.device,
+        let (bg, bg_id) = ctx.resource_manager.build_screen_bind_group(
             ctx.global_bind_group_cache,
             transmission_view,
             &ssao_view,

@@ -122,26 +122,34 @@ impl PassNode for RdgSimpleForwardPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
+        // Self-wire well-known resources from the registry.
+        self.surface_out = builder.find_resource("Surface_Out")
+            .expect("Surface_Out must be registered before SimpleForwardPass");
+        self.scene_depth = builder.find_resource("Scene_Depth")
+            .expect("Scene_Depth must be registered before SimpleForwardPass");
+
         builder.write_texture(self.surface_out);
-        if let Some(msaa) = self.msaa_view {
+
+        // Detect optional MSAA intermediate.
+        if let Some(msaa) = builder.find_resource("Scene_Msaa") {
+            self.msaa_view = Some(msaa);
             builder.write_texture(msaa);
+        } else {
+            self.msaa_view = None;
         }
+
         builder.write_texture(self.scene_depth);
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         self.clear_color = ctx.extracted_scene.background.clear_color();
 
-        // Cache MSAA intermediate view (if MSAA is active)
-        // self.msaa_view = ctx.frame_resources.scene_msaa_view.clone();
-
         // Build screen bind group (group 3) with dummy textures (LDR path
         // has no SSAO or transmission).
-        let (bg, bg_id) = ctx.frame_resources.build_screen_bind_group(
-            ctx.device,
+        let (bg, bg_id) = ctx.resource_manager.build_screen_bind_group(
             ctx.global_bind_group_cache,
-            &ctx.frame_resources.dummy_transmission_view,
-            &ctx.frame_resources.ssao_dummy_view,
+            &ctx.resource_manager.dummy_transmission_view,
+            &ctx.resource_manager.ssao_dummy_view,
         );
         self.screen_bind_group = Some(bg);
         self.screen_bind_group_id = bg_id;
