@@ -440,7 +440,7 @@ impl RdgBloomPass {
     /// Allocate the bloom mip chain texture and rebuild internal bind groups
     /// when the resolution or input view changes.
     fn ensure_mip_chain(&mut self, ctx: &mut RdgPrepareContext) {
-        let texture = ctx.get_texture_view(self.bloom_texture).texture();
+        let texture = ctx.views.get_texture_view(self.bloom_texture).texture();
         let current_size = (texture.width(), texture.height());
 
         if self.cached_size != current_size || self.mip_views.is_empty() {
@@ -478,7 +478,7 @@ impl RdgBloomPass {
         };
 
         // let input_view = ctx.get_resource_view(GraphResource::SceneColorInput);
-        let input_view = ctx.get_texture_view(self.input_tex);
+        let input_view = ctx.views.get_texture_view(self.input_tex);
 
         // 1. Prepare Cache Key IDs (GPU buffer IDs from resource manager)
         let downsample_layout = self.downsample_layout.as_ref().unwrap();
@@ -522,7 +522,7 @@ impl RdgBloomPass {
 
 
     fn get_composite_bind_group(&self, ctx: &mut RdgPrepareContext) -> wgpu::BindGroup {
-        let input_view = ctx.get_texture_view(self.input_tex);
+        let input_view = ctx.views.get_texture_view(self.input_tex);
 
         let bloom_view = &self.mip_views[0];
 
@@ -585,9 +585,9 @@ impl RdgBloomPass {
     /// downsample BG and composite BG depend on the input scene color view,
     /// which may change due to RDG memory aliasing.
     fn rebuild_bind_groups(&mut self, ctx: &mut RdgPrepareContext) {
-        let input_view_id = ctx.get_texture_view(self.input_tex).id();
+        let input_view_id = ctx.views.get_texture_view(self.input_tex).id();
 
-        let bloom_texture = ctx.get_texture_view(self.bloom_texture).texture();
+        let bloom_texture = ctx.views.get_texture_view(self.bloom_texture).texture();
         let mip_count = bloom_texture.mip_level_count();
 
         let ds_layout = self.downsample_layout.as_ref().unwrap();

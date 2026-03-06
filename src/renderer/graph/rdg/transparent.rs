@@ -146,22 +146,22 @@ impl PassNode for RdgTransparentPass {
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         // Build screen bind group (group 3)
         // TransparentPass uses the real transmission texture if available.
-        let ssao_view: Tracked<wgpu::TextureView> = if self.ssao_enabled {
-            ctx.get_texture_view(self.ssao_tex).clone()
+        let ssao_view: &Tracked<wgpu::TextureView> = if self.ssao_enabled {
+            ctx.views.get_texture_view(self.ssao_tex)
         } else {
-            ctx.resource_manager.ssao_dummy_view.clone()
+            &ctx.resource_manager.ssao_dummy_view
         };
 
-        let transmission_view: Tracked<wgpu::TextureView> = if self.has_transmission {
-            ctx.get_texture_view(self.transmission_tex).clone()
+        let transmission_view: &Tracked<wgpu::TextureView> = if self.has_transmission {
+            ctx.views.get_texture_view(self.transmission_tex)
         } else {
-            ctx.resource_manager.dummy_transmission_view.clone()
+            &ctx.resource_manager.dummy_transmission_view
         };
 
         let (bg, bg_id) = ctx.resource_manager.build_screen_bind_group(
             ctx.global_bind_group_cache,
-            &transmission_view,
-            &ssao_view,
+            transmission_view,
+            ssao_view,
         );
         self.screen_bind_group = Some(bg);
         self.screen_bind_group_id = bg_id;

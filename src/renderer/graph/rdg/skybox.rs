@@ -466,7 +466,7 @@ impl PassNode for RdgSkyboxPass {
         self.current_bind_group = Some(bind_group.clone());
 
         // Pipeline
-        let color_format = ctx.graph.resources[self.scene_color.0 as usize].desc.format;
+        let color_format = ctx.views.graph.resources[self.scene_color.0 as usize].desc.format;
         let pipeline_key = SkyboxPipelineKey {
             variant,
             color_format,

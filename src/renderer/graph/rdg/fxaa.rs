@@ -52,14 +52,8 @@ impl PassNode for RdgFxaaPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Self-wire well-known resources from the registry.
-        self.input_tex = builder.find_resource("LDR_Intermediate")
-            .expect("LDR_Intermediate must be registered before RdgFxaaPass");
-        self.output_tex = builder.find_resource("Surface_Out")
-            .expect("Surface_Out must be registered before RdgFxaaPass");
-
-        builder.read_texture(self.input_tex);
-        builder.write_texture(self.output_tex);
+        builder.read_blackboard("LDR_Intermediate");
+        builder.write_blackboard("Surface_Out");
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
@@ -96,7 +90,7 @@ impl PassNode for RdgFxaaPass {
         // --------------------------------------------------------
         // 2. L1 Cache Diffing：极速拦截管线变更
         // --------------------------------------------------------
-        let output_desc = &ctx.graph.resources[self.output_tex.0 as usize].desc;
+        let output_desc = &ctx.views.graph.resources[self.output_tex.0 as usize].desc;
         let output_format = output_desc.format;
         let current_key = (self.target_quality, output_format);
 
@@ -159,7 +153,7 @@ impl PassNode for RdgFxaaPass {
         // 3. 物理别名感知与全局 BindGroup 去重缓存
         // --------------------------------------------------------
 
-        let input_view = ctx.get_texture_view(self.input_tex);
+        let input_view = ctx.views.get_texture_view(self.input_tex);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
         let bind_group_layout = self.bind_group_layout.as_ref().unwrap();
 

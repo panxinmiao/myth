@@ -41,13 +41,18 @@
 //!     .render();
 //! ```
 
+use rustc_hash::FxHashMap;
+
 use crate::assets::AssetServer;
 use crate::render::RenderState;
 use crate::renderer::core::binding::GlobalBindGroupCache;
+use crate::renderer::core::resources::Tracked;
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::ExtractedScene;
 use crate::renderer::graph::frame::{RenderLists};
 use crate::renderer::graph::rdg::blackboard::{GraphBlackboard, HookStage};
+use crate::renderer::graph::rdg::context::RdgViewResolver;
+use crate::renderer::graph::rdg::types::TextureNodeId;
 use crate::renderer::pipeline::PipelineCache;
 use crate::renderer::pipeline::ShaderManager;
 use crate::scene::Scene;
@@ -118,6 +123,7 @@ pub struct ComposerContext<'a> {
 ///   `.render()` to minimise hold time.
 pub struct FrameComposer<'a> {
     ctx: ComposerContext<'a>,
+    external_res: FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
     hooks: smallvec::SmallVec<[(HookStage, Box<dyn FnMut(&mut crate::renderer::graph::rdg::graph::RenderGraph, &GraphBlackboard) + 'a>); 4]>,
 }
 
@@ -126,6 +132,7 @@ impl<'a> FrameComposer<'a> {
     pub(crate) fn new(ctx: ComposerContext<'a>) -> Self {
         Self {
             ctx,
+            external_res: FxHashMap::default(),
             hooks: smallvec::SmallVec::new(),
         }
     }
@@ -439,18 +446,21 @@ impl<'a> FrameComposer<'a> {
 
         // Only the swapchain surface is truly external — all other textures
         // (scene_color, scene_depth, etc.) are RDG transient resources.
-        let ext_res: FxHashMap<_, _> = FxHashMap::default();
+        // let ext_res: FxHashMap<_, _> = FxHashMap::default();
+        self.external_res.clear();
 
         let mut rdg_prepare_ctx = RdgPrepareContext {
-            graph: &rdg,
-            pool: self.ctx.rdg_pool,
+            views: RdgViewResolver {
+                graph: &rdg,
+                pool: self.ctx.rdg_pool,
+                external_resources: &self.external_res,
+            },
             device: &self.ctx.wgpu_ctx.device,
             queue: &self.ctx.wgpu_ctx.queue,
             pipeline_cache: self.ctx.pipeline_cache,
             sampler_registry: self.ctx.sampler_registry,
             global_bind_group_cache: self.ctx.global_bind_group_cache,
             shader_manager: self.ctx.shader_manager,
-            external_resources: &ext_res,
             resource_manager: self.ctx.resource_manager,
             wgpu_ctx: &*self.ctx.wgpu_ctx,
             render_lists: self.ctx.render_lists,
@@ -478,7 +488,7 @@ impl<'a> FrameComposer<'a> {
             queue: &self.ctx.wgpu_ctx.queue,
             pipeline_cache: self.ctx.pipeline_cache,
             global_bind_group_cache: self.ctx.global_bind_group_cache,
-            external_views: ext_views,
+            external_views: &ext_views,
             global_bind_group: global_bg_ref,
             resource_manager: self.ctx.resource_manager,
             render_lists: self.ctx.render_lists,

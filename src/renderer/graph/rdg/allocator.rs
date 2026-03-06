@@ -289,4 +289,8 @@ impl RdgTransientPool {
             Tracked::new(view)
         })
     }
+
+    pub fn get_sub_view(&self, physical_index: usize, key: &SubViewKey) -> Option<&Tracked<wgpu::TextureView>> {
+        self.resources[physical_index].sub_views.get(key)
+    }
 }

@@ -192,7 +192,7 @@ impl RdgToneMapPass {
 
     /// Gets or creates a pipeline for the current (mode, format, has_lut) triple.
     fn get_or_create_pipeline(&mut self, ctx: &mut RdgPrepareContext) -> RenderPipelineId {
-        let output_format = ctx.graph.resources[self.output_tex.0 as usize].desc.format;
+        let output_format = ctx.views.graph.resources[self.output_tex.0 as usize].desc.format;
         let cache_key = (self.mode, output_format, self.has_lut);
 
         if let Some(&id) = self.local_cache.get(&cache_key) {
@@ -281,7 +281,7 @@ impl PassNode for RdgToneMapPass {
         // ─── 2. Pipeline (re)creation ──────────────────────────────
         //
         // Check if mode/format/lut changed since last frame.
-        let output_format = ctx.graph.resources[self.output_tex.0 as usize].desc.format;
+        let output_format = ctx.views.graph.resources[self.output_tex.0 as usize].desc.format;
         let cache_key = (self.mode, output_format, self.has_lut);
 
         if self.current_pipeline.is_none() || !self.local_cache.contains_key(&cache_key) {
@@ -291,7 +291,7 @@ impl PassNode for RdgToneMapPass {
         }
 
         // ─── 3. BindGroup construction ─────────────────────────────
-        let input_view = ctx.get_texture_view(self.input_tex);
+        let input_view = ctx.views.get_texture_view(self.input_tex);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
         let layout = self.current_layout();
 
