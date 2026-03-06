@@ -433,13 +433,6 @@ impl PassNode for RdgSssssPass {
             .with_resource(specular_view.id());
 
         if ctx.global_bind_group_cache.get(&vertical_key).is_none() {
-            // SAFETY: All views are alive for the entire frame scope.
-            // let temp_blur_view = unsafe { &*temp_blur_view_ptr };
-            // let normal_view = unsafe { &*normal_view_ptr };
-            // let depth_view = unsafe { &*depth_view_ptr };
-            // let feature_view = unsafe { &*feature_view_ptr };
-            // let specular_view = unsafe { &*specular_view_ptr };
-
             let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SSSSS Vertical Bind Group"),
                 layout,

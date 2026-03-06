@@ -475,7 +475,6 @@ impl<'a> FrameComposer<'a> {
             render_lists: self.ctx.render_lists,
             extracted_scene: self.ctx.extracted_scene,
             render_state: self.ctx.render_state,
-            camera: self.ctx.camera,
             assets: self.ctx.assets,
         };
 
