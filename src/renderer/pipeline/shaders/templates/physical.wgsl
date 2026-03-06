@@ -61,7 +61,8 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     $$ endif
 
     $$ if HAS_TANGENT
-    let v_tangent = normalize(( u_model.world_matrix  * vec4f(object_tangent, 0.0) ).xyz);
+    var v_tangent = normalize(( u_model.world_matrix  * vec4f(object_tangent, 0.0) ).xyz);
+    v_tangent = normalize(v_tangent - out.normal * dot(out.normal, v_tangent));
     let v_bitangent = normalize(cross(out.normal, v_tangent) * in.tangent.w);
     out.v_tangent = vec3<f32>(v_tangent);
     out.v_bitangent = vec3<f32>(v_bitangent);
@@ -119,7 +120,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
 
     $$ if HAS_NORMAL_MAP is defined or USE_ANISOTROPY is defined
         $$ if HAS_TANGENT is defined
-            var tbn = mat3x3f(varyings.v_tangent, varyings.v_bitangent, surface_normal);
+            var tbn = mat3x3f(normalize(varyings.v_tangent), normalize(varyings.v_bitangent), surface_normal);
         $$ else
             $$ if HAS_NORMAL_MAP is defined
                 let n_uv = varyings.normal_map_uv; 
@@ -357,7 +358,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     out_specular = clamp(out_specular, vec3<f32>(0.0), vec3<f32>(65000.0));
     $$ endif
 
-    $$ if USE_SCREEN_SPACE_FEATUREs
+    $$ if USE_SCREEN_SPACE_FEATURES
         out.specular = vec4<f32>(total_specular, material.roughness);
         if (u_material.sss_id != 0u) {
             // SSSSS 材质：分离漫反射与高光

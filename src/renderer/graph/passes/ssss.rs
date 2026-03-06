@@ -18,7 +18,7 @@
 //!
 //! # Integration
 //!
-//! Must come **after** `TransparentPass` and **before** `BloomPass` in the
+//! Must come **after** `OpaquePass` and **before** `TransparentPass` in the
 //! `HighFidelity` render path.  Zero cost when disabled.
 //!
 //! # GPU Resources

@@ -386,14 +386,14 @@ impl Renderer {
                 // Opaque rendering
                 frame_builder.add_node(RenderStage::Opaque, &mut state.opaque_pass);
 
-                // Skybox / Background (after opaque, before transparent)
-                if scene.background.needs_skybox_pass() {
-                    frame_builder.add_node(RenderStage::Skybox, &mut state.skybox_pass);
-                }
-
                 // SSSSS (after opaque, before transparent)
                 if scene.screen_space.enable_sss {
                     frame_builder.add_node(RenderStage::BeforeTransparent, &mut state.sssss_pass);
+                }
+
+                // Skybox / Background (after opaque, before transparent)
+                if scene.background.needs_skybox_pass() {
+                    frame_builder.add_node(RenderStage::Skybox, &mut state.skybox_pass);
                 }
 
                 // Transmission copy (conditional)
