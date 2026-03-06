@@ -5,6 +5,14 @@
 //! pre-processing, shadow mapping, scene rendering, post-processing, and
 //! custom user hooks — flows through a single unified RDG.
 //!
+//! # Resource Ownership
+//!
+//! The Composer registers only the shared **backbone** resources
+//! (`Scene_Color_HDR`, `Scene_Depth`, `Surface_Out`) and the routing-level
+//! `LDR_Intermediate`. All other transient resources are created by their
+//! **producer passes** inside `PassNode::setup()` via
+//! `builder.create_and_export()`, making each pass self-contained.
+//!
 //! # Rendering Architecture
 //!
 //! ```text
@@ -13,7 +21,7 @@
 //! │                                                             │
 //! │  HighFidelity:                                              │
 //! │  BRDF LUT → IBL → Shadow → Prepass → SSAO → Opaque →      │
-//! │  SSSSS → Skybox → TransmissionCopy → Transparent →          │
+//! │  SSSSS → Skybox → TransmissionCopy → Transparent →         │
 //! │  Bloom → ToneMap → FXAA → [User Hooks] → Surface           │
 //! │                                                             │
 //! │  BasicForward:                                              │
@@ -193,7 +201,14 @@ impl<'a> FrameComposer<'a> {
         // ━━━ 2. Build Unified RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
         let rdg = self.ctx.rdg_graph;
-        rdg.begin_frame();
+        rdg.begin_frame(crate::renderer::graph::rdg::graph::FrameConfig {
+            width,
+            height,
+            depth_format: self.ctx.wgpu_ctx.depth_format,
+            msaa_samples: self.ctx.wgpu_ctx.msaa_samples,
+            surface_format: view_format,
+            hdr_format: HDR_TEXTURE_FORMAT,
+        });
 
         // ── 2a. Register Resources ──────────────────────────────────────
         // Only the swapchain surface is truly external.
@@ -229,8 +244,8 @@ impl<'a> FrameComposer<'a> {
         let surface_out = rdg.register_resource("Surface_Out", surface_desc.clone(), true);
 
         // Transient scene resources — RDG manages allocation & aliasing
-        let scene_color = rdg.register_resource("Scene_Color_HDR", hdr_desc.clone(), false);
-        let scene_depth = rdg.register_resource("Scene_Depth", depth_desc.clone(), false);
+        let scene_color = rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
+        let scene_depth = rdg.register_resource("Scene_Depth", depth_desc, false);
 
         // ── 2b. Scene Configuration ────────────────────────────────────
 
@@ -239,66 +254,13 @@ impl<'a> FrameComposer<'a> {
         let needs_feature_id = is_high_fidelity
             && (self.ctx.scene.screen_space.enable_sss || self.ctx.scene.screen_space.enable_ssr);
         let needs_normal = ssao_enabled || needs_feature_id;
-        // let needs_prepass = needs_normal;
         let needs_skybox = self.ctx.scene.background.needs_skybox_pass();
         let needs_specular = self.ctx.scene.screen_space.enable_sss && is_high_fidelity;
         let has_transmission = self.ctx.render_lists.use_transmission && is_high_fidelity;
         let bloom_enabled = self.ctx.scene.bloom.enabled && is_high_fidelity;
         let fxaa_enabled = self.ctx.scene.fxaa.enabled && is_high_fidelity;
 
-        // ── 2c. Register Transient Resources ───────────────────────────
-        //
-        // Passes detect available resources via `builder.find_resource()`
-        // during setup. We only need to register; no local IDs are captured
-        // (except where post-processing routing requires them).
-
-        if needs_normal {
-            let desc = RdgTextureDesc::new_2d(
-                width,
-                height,
-                wgpu::TextureFormat::Rgba8Unorm,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            );
-            rdg.register_resource("Scene_Normals", desc, false);
-        }
-
-        if needs_feature_id {
-            let desc = RdgTextureDesc::new_2d(
-                width,
-                height,
-                wgpu::TextureFormat::Rg8Uint,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            );
-            rdg.register_resource("Feature_ID", desc, false);
-        }
-
-        if needs_specular {
-            rdg.register_resource("Specular_MRT", hdr_desc.clone(), false);
-        }
-
-        if ssao_enabled {
-            let desc = RdgTextureDesc::new_2d(
-                width / 2,
-                height / 2,
-                wgpu::TextureFormat::R8Unorm,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            );
-            rdg.register_resource("SSAO_Output", desc, false);
-        }
-
-        if has_transmission {
-            let desc = RdgTextureDesc::new_2d(
-                width,
-                height,
-                HDR_TEXTURE_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_DST,
-            );
-            rdg.register_resource("Transmission_Tex", desc, false);
-        }
-
-        // ── 2d. Wire Compute + Shadow Passes ───────────────────────────
+        // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
 
         rdg.add_pass(self.ctx.rdg_brdf_pass);
         rdg.add_pass(self.ctx.rdg_ibl_pass);
@@ -326,7 +288,10 @@ impl<'a> FrameComposer<'a> {
             // HighFidelity pipeline: separate passes for opaque, skybox,
             // transparent with HDR targets and post-processing chain.
 
-            // Prepass — self-wires Scene_Depth, Scene_Normals, Feature_ID
+            // Prepass — creates Scene_Depth (write), Scene_Normals, Feature_ID
+            // (conditionally via push params).
+            self.ctx.rdg_prepass.needs_normal = needs_normal;
+            self.ctx.rdg_prepass.needs_feature_id = needs_feature_id;
             rdg.add_pass(self.ctx.rdg_prepass);
 
             // SSAO
@@ -340,13 +305,15 @@ impl<'a> FrameComposer<'a> {
                 rdg.add_pass(ssao_pass);
             }
 
-            // Opaque — self-wires Scene_Color_HDR, Scene_Depth, SSAO_Output, Specular_MRT
+            // Opaque — writes Scene_Color_HDR, Scene_Depth; reads SSAO;
+            // conditionally creates Specular_MRT.
             self.ctx.rdg_opaque_pass.has_prepass = true;
+            self.ctx.rdg_opaque_pass.needs_specular = needs_specular;
             rdg.add_pass(self.ctx.rdg_opaque_pass);
 
-            // SSSSS — self-wires all slots from registry
+            // SSSSS — creates SSSSS_Temp; reads Scene_Color_HDR, depth,
+            // normals, Feature_ID, Specular_MRT.
             if needs_specular {
-                rdg.register_resource("SSSSS_Temp", hdr_desc.clone(), false);
                 self.ctx.rdg_sssss_pass.enabled = true;
                 rdg.add_pass(self.ctx.rdg_sssss_pass);
             }
@@ -363,13 +330,13 @@ impl<'a> FrameComposer<'a> {
                 rdg.add_pass(skybox);
             }
 
-            // Transmission Copy — self-wires Scene_Color_HDR, Transmission_Tex
+            // Transmission Copy — creates Transmission_Tex; reads Scene_Color_HDR
             if has_transmission {
                 self.ctx.rdg_transmission_copy_pass.active = true;
                 rdg.add_pass(self.ctx.rdg_transmission_copy_pass);
             }
 
-            // Transparent — self-wires all slots (color, depth, transmission, ssao)
+            // Transparent — reads color, depth, transmission, ssao via blackboard
             rdg.add_pass(self.ctx.rdg_transparent_pass);
 
             // ── Before-Post-Process Hooks ──────────────────────────────
@@ -382,36 +349,10 @@ impl<'a> FrameComposer<'a> {
             // ── Post-Processing Chain ──────────────────────────────────
 
             let tonemap_input = if bloom_enabled {
-                let bloom_out = rdg.register_resource("Bloom_Out", hdr_desc.clone(), false);
-
-                let (source_w, source_h) = self.ctx.wgpu_ctx.size();
-                let bloom_w = (source_w / 2).max(1);
-                let bloom_h = (source_h / 2).max(1);
-                let max_possible = ((bloom_w.max(bloom_h) as f32).log2().floor() as u32) + 1;
-                let mip_count = self
-                    .ctx
-                    .scene
-                    .bloom
-                    .max_mip_levels()
-                    .min(max_possible)
-                    .max(1);
-
-                let bloom_chain_desc = RdgTextureDesc::new(
-                    bloom_w,
-                    bloom_h,
-                    1,
-                    mip_count,
-                    1,
-                    wgpu::TextureDimension::D2,
-                    HDR_TEXTURE_FORMAT,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-                );
-
-                rdg.register_resource("Bloom_MipChain", bloom_chain_desc, false);
-
-                // Bloom — self-wires Scene_Color_HDR, Bloom_Out, Bloom_MipChain
+                // Bloom creates Bloom_Out and Bloom_MipChain in its setup().
                 let bloom_pass = self.ctx.rdg_bloom_pass;
                 bloom_pass.karis_average = self.ctx.scene.bloom.karis_average;
+                bloom_pass.max_mip_levels = self.ctx.scene.bloom.max_mip_levels();
                 self.ctx
                     .resource_manager
                     .ensure_buffer(&self.ctx.scene.bloom.upsample_uniforms);
@@ -423,7 +364,8 @@ impl<'a> FrameComposer<'a> {
                     self.ctx.scene.bloom.composite_uniforms.id();
                 rdg.add_pass(bloom_pass);
 
-                bloom_out
+                rdg.find_resource("Bloom_Out")
+                    .expect("Bloom pass must register Bloom_Out")
             } else {
                 scene_color
             };
@@ -456,7 +398,7 @@ impl<'a> FrameComposer<'a> {
                 rdg.add_pass(tone_map);
             }
 
-            // FXAA — self-wires LDR_Intermediate → Surface_Out
+            // FXAA — reads LDR_Intermediate, writes Surface_Out via blackboard
             if fxaa_enabled {
                 rdg.add_pass(self.ctx.rdg_fxaa_pass);
             }
@@ -479,21 +421,8 @@ impl<'a> FrameComposer<'a> {
                 rdg.add_pass(skybox);
             }
 
-            let msaa_desc = RdgTextureDesc::new(
-                width,
-                height,
-                1,
-                1,
-                self.ctx.wgpu_ctx.msaa_samples,
-                wgpu::TextureDimension::D2,
-                view_format,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            );
-
-            // SimpleForward — self-wires Surface_Out, Scene_Depth, Scene_Msaa
-            if self.ctx.wgpu_ctx.msaa_samples > 1 {
-                rdg.register_resource("Scene_Msaa", msaa_desc, false);
-            }
+            // SimpleForward — creates Scene_Msaa if MSAA > 1; writes
+            // Surface_Out, Scene_Depth.
             rdg.add_pass(self.ctx.rdg_simple_forward_pass);
         }
 

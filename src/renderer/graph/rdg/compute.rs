@@ -15,6 +15,7 @@
 //! is performed during the prepare phase with a dedicated command encoder.
 
 use crate::renderer::core::resources::{CubeSourceType, BRDF_LUT_SIZE};
+use crate::renderer::core::resources::SamplerKey;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
@@ -165,6 +166,26 @@ impl PassNode for RdgBrdfLutPass {
 // IBL Compute Pass
 // ============================================================================
 
+/// Trilinear filtering, all-axes clamped. Used for the face blit sub-pass.
+const IBL_BLIT_SAMPLER_KEY: SamplerKey = SamplerKey::LINEAR_CLAMP;
+
+/// Linear filtering with horizontal repeat (seamless equirectangular wrap)
+/// and vertical/depth clamp. Mipmap filtering is not needed for the single-mip
+/// equirect source.
+const IBL_EQUIRECT_SAMPLER_KEY: SamplerKey = SamplerKey {
+    address_mode_u: wgpu::AddressMode::Repeat,
+    address_mode_v: wgpu::AddressMode::ClampToEdge,
+    address_mode_w: wgpu::AddressMode::ClampToEdge,
+    mag_filter: wgpu::FilterMode::Linear,
+    min_filter: wgpu::FilterMode::Linear,
+    mipmap_filter: wgpu::MipmapFilterMode::Nearest,
+    lod_min_clamp: 0.0,
+    lod_max_clamp: 32.0,
+    compare: None,
+    anisotropy_clamp: 1,
+    border_color: None,
+};
+
 /// RDG IBL (Image-Based Lighting) compute pass.
 ///
 /// Performs equirectangular → cube conversion, mipmap generation, and PMREM
@@ -185,7 +206,6 @@ pub struct RdgIblComputePass {
     // Face blit (CubeNoMipmaps → owned cube)
     blit_pipeline_id: Option<RenderPipelineId>,
     blit_layout: wgpu::BindGroupLayout,
-    blit_sampler: wgpu::Sampler,
 }
 
 impl RdgIblComputePass {
@@ -298,16 +318,6 @@ impl RdgIblComputePass {
             ],
         });
 
-        let blit_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("RDG IBL Blit Sampler"),
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            mipmap_filter: wgpu::MipmapFilterMode::Linear,
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            ..Default::default()
-        });
-
         Self {
             pmrem_pipeline_id: None,
             pmrem_layout_source,
@@ -316,7 +326,6 @@ impl RdgIblComputePass {
             equirect_layout,
             blit_pipeline_id: None,
             blit_layout,
-            blit_sampler,
         }
     }
 
@@ -415,6 +424,7 @@ impl RdgIblComputePass {
         src_texture: &wgpu::Texture,
         dst_texture: &wgpu::Texture,
         blit_pipeline: &wgpu::RenderPipeline,
+        blit_sampler: &wgpu::Sampler,
     ) {
         let layer_count = src_texture
             .depth_or_array_layers()
@@ -453,7 +463,7 @@ impl RdgIblComputePass {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::Sampler(&self.blit_sampler),
+                        resource: wgpu::BindingResource::Sampler(blit_sampler),
                     },
                 ],
             });
@@ -501,6 +511,13 @@ impl PassNode for RdgIblComputePass {
         };
 
         self.ensure_pipelines(ctx);
+
+        // Ensure custom samplers exist in the registry. The mutable borrows
+        // are released immediately; later code uses get_custom_ref() (shared).
+        ctx.sampler_registry
+            .get_custom(ctx.device, IBL_BLIT_SAMPLER_KEY);
+        ctx.sampler_registry
+            .get_custom(ctx.device, IBL_EQUIRECT_SAMPLER_KEY);
 
         let pmrem_pipeline = ctx
             .pipeline_cache
@@ -561,15 +578,8 @@ impl PassNode for RdgIblComputePass {
                         ..Default::default()
                     });
 
-                    let clamp_sampler = ctx.device.create_sampler(&wgpu::SamplerDescriptor {
-                        label: Some("IBL Clamp Sampler"),
-                        address_mode_u: wgpu::AddressMode::Repeat,
-                        address_mode_v: wgpu::AddressMode::ClampToEdge,
-                        address_mode_w: wgpu::AddressMode::ClampToEdge,
-                        mag_filter: wgpu::FilterMode::Linear,
-                        min_filter: wgpu::FilterMode::Linear,
-                        ..Default::default()
-                    });
+                    let equirect_sampler =
+                        ctx.sampler_registry.get_custom_ref(&IBL_EQUIRECT_SAMPLER_KEY);
 
                     let bind_group =
                         ctx.device
@@ -583,7 +593,7 @@ impl PassNode for RdgIblComputePass {
                                     },
                                     wgpu::BindGroupEntry {
                                         binding: 1,
-                                        resource: wgpu::BindingResource::Sampler(&clamp_sampler),
+                                        resource: wgpu::BindingResource::Sampler(equirect_sampler),
                                     },
                                     wgpu::BindGroupEntry {
                                         binding: 2,
@@ -634,12 +644,16 @@ impl PassNode for RdgIblComputePass {
                         }
                     };
 
+                    let blit_sampler =
+                        ctx.sampler_registry.get_custom_ref(&IBL_BLIT_SAMPLER_KEY);
+
                     self.blit_cube_faces(
                         ctx.device,
                         &mut encoder,
                         source_texture,
                         cube_texture,
                         blit_pipeline,
+                        blit_sampler,
                     );
                 }
 

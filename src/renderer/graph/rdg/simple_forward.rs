@@ -26,7 +26,7 @@ use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::TextureNodeId;
+use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::graph::TrackedRenderPass;
 
 /// RDG Simple Forward Render Pass.
@@ -122,23 +122,30 @@ impl PassNode for RdgSimpleForwardPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Self-wire well-known resources from the registry.
-        self.surface_out = builder.find_resource("Surface_Out")
-            .expect("Surface_Out must be registered before SimpleForwardPass");
-        self.scene_depth = builder.find_resource("Scene_Depth")
-            .expect("Scene_Depth must be registered before SimpleForwardPass");
+        // Consumer: wire backbone resources.
+        self.surface_out = builder.write_blackboard("Surface_Out");
+        self.scene_depth = builder.write_blackboard("Scene_Depth");
 
-        builder.write_texture(self.surface_out);
-
-        // Detect optional MSAA intermediate.
-        if let Some(msaa) = builder.find_resource("Scene_Msaa") {
-            self.msaa_view = Some(msaa);
-            builder.write_texture(msaa);
+        // Producer: conditionally create MSAA intermediate.
+        let msaa_samples = builder.frame_config().msaa_samples;
+        if msaa_samples > 1 {
+            let (w, h) = builder.global_resolution();
+            let surface_format = builder.frame_config().surface_format;
+            let desc = RdgTextureDesc::new(
+                w,
+                h,
+                1,
+                1,
+                msaa_samples,
+                wgpu::TextureDimension::D2,
+                surface_format,
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            self.msaa_view = Some(builder.create_and_export("Scene_Msaa", desc));
         } else {
             self.msaa_view = None;
         }
-
-        builder.write_texture(self.scene_depth);
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {

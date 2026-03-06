@@ -5,8 +5,8 @@
 //!
 //! # RDG Slots
 //!
-//! - `scene_color`: HDR scene color (read, source)
-//! - `transmission_tex`: Transmission output (write, copy destination)
+//! - `scene_color`: HDR scene color (read via blackboard)
+//! - `transmission_tex`: Transmission output (created via `create_and_export`)
 //!
 //! # Notes
 //!
@@ -17,7 +17,7 @@
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::TextureNodeId;
+use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 
 /// RDG Transmission Copy Pass.
 ///
@@ -50,14 +50,21 @@ impl PassNode for RdgTransmissionCopyPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Self-wire well-known resources from the registry.
-        self.scene_color = builder.find_resource("Scene_Color_HDR")
-            .expect("Scene_Color_HDR must be registered before RdgTransmissionCopyPass");
-        self.transmission_tex = builder.find_resource("Transmission_Tex")
-            .expect("Transmission_Tex must be registered before RdgTransmissionCopyPass");
+        // Producer: create the transmission copy destination texture.
+        let (w, h) = builder.global_resolution();
+        let hdr_format = builder.frame_config().hdr_format;
+        let desc = RdgTextureDesc::new_2d(
+            w,
+            h,
+            hdr_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST,
+        );
+        self.transmission_tex = builder.create_and_export("Transmission_Tex", desc);
 
-        builder.read_texture(self.scene_color);
-        builder.write_texture(self.transmission_tex);
+        // Consumer: read the scene colour as copy source.
+        self.scene_color = builder.read_blackboard("Scene_Color_HDR");
     }
 
     fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {

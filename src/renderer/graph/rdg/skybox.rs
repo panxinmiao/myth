@@ -24,6 +24,7 @@ use rustc_hash::FxHashMap;
 
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::Tracked;
+use crate::renderer::core::resources::SamplerKey;
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
@@ -37,6 +38,22 @@ use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::texture::TextureSource;
 use crate::resources::uniforms::WgslStruct;
 use crate::scene::background::{BackgroundMapping, BackgroundMode, SkyboxParamsUniforms};
+
+/// Sampler key for the skybox environment map: trilinear filtering with
+/// horizontal repeat (seamless panorama wrap) and vertical/depth clamp.
+const SKYBOX_SAMPLER_KEY: SamplerKey = SamplerKey {
+    address_mode_u: wgpu::AddressMode::Repeat,
+    address_mode_v: wgpu::AddressMode::ClampToEdge,
+    address_mode_w: wgpu::AddressMode::ClampToEdge,
+    mag_filter: wgpu::FilterMode::Linear,
+    min_filter: wgpu::FilterMode::Linear,
+    mipmap_filter: wgpu::MipmapFilterMode::Linear,
+    lod_min_clamp: 0.0,
+    lod_max_clamp: 32.0,
+    compare: None,
+    anisotropy_clamp: 1,
+    border_color: None,
+};
 
 // ─── Pipeline Variant Key ─────────────────────────────────────────────────────
 
@@ -164,9 +181,6 @@ pub struct RdgSkyboxPass {
     layout_cube: Option<Tracked<wgpu::BindGroupLayout>>,
     layout_2d: Option<Tracked<wgpu::BindGroupLayout>>,
 
-    // ─── Sampler ───────────────────────────────────────────────────
-    sampler: Option<Tracked<wgpu::Sampler>>,
-
     // ─── Pipeline Cache ────────────────────────────────────────────
     local_cache: FxHashMap<SkyboxPipelineKey, RenderPipelineId>,
 
@@ -188,7 +202,6 @@ impl RdgSkyboxPass {
             layout_gradient: None,
             layout_cube: None,
             layout_2d: None,
-            sampler: None,
             local_cache: FxHashMap::default(),
             current_bind_group: None,
             current_pipeline: None,
@@ -210,19 +223,6 @@ impl RdgSkyboxPass {
             device,
             wgpu::TextureViewDimension::D2,
             "RDG Skybox Layout (2D)",
-        )));
-
-        self.sampler = Some(Tracked::new(device.create_sampler(
-            &wgpu::SamplerDescriptor {
-                label: Some("RDG Skybox Sampler"),
-                address_mode_u: wgpu::AddressMode::Repeat,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                ..Default::default()
-            },
         )));
     }
 
@@ -370,6 +370,12 @@ impl PassNode for RdgSkyboxPass {
             ctx.resource_manager.prepare_texture(ctx.assets, *handle);
         }
 
+        // Ensure the custom sampler is created (first frame only; subsequent
+        // frames are a no-op HashMap lookup). The mutable borrow is released
+        // before we resolve the texture view below.
+        ctx.sampler_registry
+            .get_custom(ctx.device, SKYBOX_SAMPLER_KEY);
+
         // Resolve texture view
         let texture_view = if let BackgroundMode::Texture {
             source, mapping, ..
@@ -383,7 +389,7 @@ impl PassNode for RdgSkyboxPass {
         // Build bind group (group 1)
         let layout = self.layout_for_variant(variant);
         let layout_id = layout.id();
-        let sampler = self.sampler.as_ref().unwrap();
+        let sampler = ctx.sampler_registry.get_custom_ref(&SKYBOX_SAMPLER_KEY);
 
         let bind_group = if variant.needs_texture() {
             let Some(tex_view) = texture_view else {

@@ -1,4 +1,4 @@
-use super::graph::RenderGraph;
+use super::graph::{FrameConfig, RenderGraph};
 use super::types::TextureNodeId;
 
 /// Builder for declaring a pass's resource dependencies.
@@ -6,12 +6,48 @@ use super::types::TextureNodeId;
 /// Provides ergonomic APIs for creating, reading, and writing texture
 /// resources within the graph, as well as looking up shared resources
 /// by name via the graph's resource registry.
+///
+/// # Blackboard API
+///
+/// The "blackboard" is the graph's named resource registry.  Well-known
+/// resources (e.g. `"Scene_Color_HDR"`, `"Scene_Depth"`) are registered
+/// there by either the Composer or by producer passes.
+///
+/// - [`read_blackboard`](Self::read_blackboard) — read a required resource.
+/// - [`write_blackboard`](Self::write_blackboard) — write a required resource.
+/// - [`try_read_blackboard`](Self::try_read_blackboard) — read an optional resource.
+/// - [`create_and_export`](Self::create_and_export) — create a resource and
+///   publish it to the blackboard for downstream consumers.
+///
+/// # Frame Configuration
+///
+/// The builder exposes the current frame's resolution and device format
+/// information via [`frame_config`](Self::frame_config), so passes can
+/// derive their own `RdgTextureDesc`s in `setup()` without external push.
 pub struct PassBuilder<'a> {
     pub(crate) graph: &'a mut RenderGraph,
     pub(crate) pass_index: usize,
 }
 
 impl<'a> PassBuilder<'a> {
+    // ─── Frame Configuration ─────────────────────────────────────────
+
+    /// Returns the current frame's rendering configuration (resolution,
+    /// depth format, MSAA samples, surface/HDR formats).
+    #[inline]
+    pub fn frame_config(&self) -> &FrameConfig {
+        self.graph.frame_config()
+    }
+
+    /// Shorthand for `(config.width, config.height)`.
+    #[inline]
+    pub fn global_resolution(&self) -> (u32, u32) {
+        let c = self.graph.frame_config();
+        (c.width, c.height)
+    }
+
+    // ─── Low-Level Resource API ──────────────────────────────────────
+
     /// Creates a new transient texture resource owned by this pass.
     pub fn create_texture(
         &mut self,
@@ -51,10 +87,61 @@ impl<'a> PassBuilder<'a> {
     /// Looks up a resource by name in the graph's resource registry.
     ///
     /// Returns `None` if no resource with that name has been registered
-    /// in the current frame. Useful for passes that want to self-wire
-    /// to well-known resources (e.g. "Scene_Color_HDR", "Scene_Depth").
+    /// in the current frame.
     #[inline]
     pub fn find_resource(&self, name: &str) -> Option<TextureNodeId> {
         self.graph.find_resource(name)
+    }
+
+    // ─── Blackboard API (Semantic Resource Wiring) ───────────────────
+
+    /// Reads a **required** resource from the blackboard.
+    ///
+    /// Convenience for `find_resource(name).unwrap()` + `read_texture()`.
+    /// Panics if the resource has not been registered.
+    #[inline]
+    pub fn read_blackboard(&mut self, name: &str) -> TextureNodeId {
+        let id = self.graph.find_resource(name)
+            .unwrap_or_else(|| panic!("{name} must be registered before this pass"));
+        self.read_texture(id);
+        id
+    }
+
+    /// Writes a **required** resource from the blackboard.
+    ///
+    /// Convenience for `find_resource(name).unwrap()` + `write_texture()`.
+    /// Panics if the resource has not been registered.
+    #[inline]
+    pub fn write_blackboard(&mut self, name: &str) -> TextureNodeId {
+        let id = self.graph.find_resource(name)
+            .unwrap_or_else(|| panic!("{name} must be registered before this pass"));
+        self.write_texture(id);
+        id
+    }
+
+    /// Reads an **optional** resource from the blackboard.
+    ///
+    /// Returns `None` if the resource has not been registered.
+    /// If present, registers a read-dependency automatically.
+    #[inline]
+    pub fn try_read_blackboard(&mut self, name: &str) -> Option<TextureNodeId> {
+        let id = self.graph.find_resource(name)?;
+        self.read_texture(id);
+        Some(id)
+    }
+
+    /// Creates a transient texture and publishes it to the blackboard
+    /// so downstream passes can discover it via `find_resource` /
+    /// `read_blackboard`.
+    ///
+    /// Equivalent to `create_texture` — the resource is automatically
+    /// entered into the graph's name registry by `register_resource`.
+    #[inline]
+    pub fn create_and_export(
+        &mut self,
+        name: &'static str,
+        desc: super::types::RdgTextureDesc,
+    ) -> TextureNodeId {
+        self.create_texture(name, desc)
     }
 }

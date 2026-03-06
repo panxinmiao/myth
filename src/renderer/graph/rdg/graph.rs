@@ -8,6 +8,28 @@ use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use wgpu::Device;
 
+/// Per-frame rendering configuration stored in the [`RenderGraph`].
+///
+/// Set once per frame via [`RenderGraph::begin_frame`] and read by passes
+/// during [`PassNode::setup`] through [`PassBuilder`] accessors.  This
+/// eliminates the need for passes to receive screen-size or format information
+/// through push parameters — they can derive `RdgTextureDesc`s directly.
+#[derive(Debug, Clone, Copy)]
+pub struct FrameConfig {
+    /// Framebuffer width in pixels.
+    pub width: u32,
+    /// Framebuffer height in pixels.
+    pub height: u32,
+    /// Device depth-stencil format (e.g. `Depth24PlusStencil8`).
+    pub depth_format: wgpu::TextureFormat,
+    /// MSAA sample count (1 = disabled).
+    pub msaa_samples: u32,
+    /// Swap-chain surface format (e.g. `Bgra8UnormSrgb`).
+    pub surface_format: wgpu::TextureFormat,
+    /// HDR render-target format (e.g. `Rgba16Float`).
+    pub hdr_format: wgpu::TextureFormat,
+}
+
 /// Declarative Render Graph.
 ///
 /// Stores pass and resource records, performs dependency analysis,
@@ -19,7 +41,6 @@ use wgpu::Device;
 /// are stored in a `name → TextureNodeId` lookup table so that passes can
 /// resolve well-known resources by name during [`PassNode::setup`] via
 /// [`PassBuilder::find_resource`].
-#[derive(Default)]
 pub struct RenderGraph {
     /// All pass records for the current frame.
     pub passes: Vec<PassRecord>,
@@ -30,6 +51,9 @@ pub struct RenderGraph {
 
     /// Name-based resource registry for self-wiring passes.
     resource_registry: FxHashMap<&'static str, TextureNodeId>,
+
+    /// Per-frame rendering configuration (resolution, formats, MSAA).
+    frame_config: FrameConfig,
 
     // --- Compile-time scratch buffers (zero-alloc across frames) ---
     compile_stack: Vec<usize>,
@@ -43,18 +67,46 @@ pub struct RenderGraph {
 
 impl RenderGraph {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            passes: Vec::new(),
+            resources: Vec::new(),
+            execution_queue: Vec::new(),
+            resource_registry: FxHashMap::default(),
+            frame_config: FrameConfig {
+                width: 1,
+                height: 1,
+                depth_format: wgpu::TextureFormat::Depth24PlusStencil8,
+                msaa_samples: 1,
+                surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+                hdr_format: wgpu::TextureFormat::Rgba16Float,
+            },
+            compile_stack: Vec::new(),
+            compile_in_degrees: Vec::new(),
+            compile_queue: Vec::new(),
+            compile_dependency_graph: Vec::new(),
+            #[cfg(debug_assertions)]
+            prev_execution_names: Vec::new(),
+        }
     }
 
     /// Resets per-frame state while retaining allocated capacity.
     ///
     /// Must be called once at the start of each frame, before any
-    /// `register_resource` or `add_pass` calls.
-    pub fn begin_frame(&mut self) {
+    /// `register_resource` or `add_pass` calls.  The [`FrameConfig`] is
+    /// stored and made available to passes via [`PassBuilder`] accessors
+    /// so they can derive `RdgTextureDesc`s without external push params.
+    pub fn begin_frame(&mut self, config: FrameConfig) {
         self.passes.clear();
         self.resources.clear();
         self.execution_queue.clear();
         self.resource_registry.clear();
+        self.frame_config = config;
+    }
+
+    /// Returns the current frame's rendering configuration.
+    #[inline]
+    pub fn frame_config(&self) -> &FrameConfig {
+        &self.frame_config
     }
 
     /// Registers a named texture resource.
@@ -315,6 +367,17 @@ mod tests {
     use super::super::types::RdgTextureDesc;
     use super::*;
 
+    fn dummy_config() -> FrameConfig {
+        FrameConfig {
+            width: 1920,
+            height: 1080,
+            depth_format: wgpu::TextureFormat::Depth24PlusStencil8,
+            msaa_samples: 1,
+            surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+            hdr_format: wgpu::TextureFormat::Rgba16Float,
+        }
+    }
+
     fn dummy_desc() -> RdgTextureDesc {
         RdgTextureDesc::new_2d(
             1,
@@ -375,7 +438,7 @@ mod tests {
 
         // Run two frames to verify begin_frame capacity reuse.
         for frame in 0..2 {
-            graph.begin_frame();
+            graph.begin_frame(dummy_config());
 
             let scene_color = graph.register_resource("SceneColor", dummy_desc(), false);
             let bloom_tex = graph.register_resource("BloomTex", dummy_desc(), false);

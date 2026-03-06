@@ -36,12 +36,12 @@
 
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
-use crate::renderer::core::resources::Tracked;
+use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::allocator::SubViewKey;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::TextureNodeId;
+use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, RenderPipelineId,
     ShaderCompilationOptions,
@@ -82,7 +82,6 @@ pub struct RdgSssssPass {
     // --- Persistent GPU Resources ----------------------------------
     profiles_buffer: Option<Tracked<wgpu::Buffer>>,
     last_registry_version: u64,
-    sampler: Option<Tracked<wgpu::Sampler>>,
 
     // --- Per-Frame BindGroups --------------------------------------
     horizontal_bind_group: Option<wgpu::BindGroup>,
@@ -106,7 +105,6 @@ impl RdgSssssPass {
             bind_group_layout: None,
             profiles_buffer: None,
             last_registry_version: 0,
-            sampler: None,
             horizontal_bind_group: None,
             vertical_bind_group: None,
         }
@@ -122,29 +120,25 @@ impl PassNode for RdgSssssPass {
         if !self.enabled {
             return;
         }
-        // Self-wire well-known resources from the registry.
-        self.scene_color = builder.find_resource("Scene_Color_HDR")
-            .expect("Scene_Color_HDR must be registered before RdgSssssPass");
-        self.temp_blur = builder.find_resource("SSSSS_Temp")
-            .expect("SSSSS_Temp must be registered before RdgSssssPass");
-        self.depth_in = builder.find_resource("Scene_Depth")
-            .expect("Scene_Depth must be registered before RdgSssssPass");
-        self.normal_in = builder.find_resource("Scene_Normals")
-            .expect("Scene_Normals must be registered before RdgSssssPass");
-        self.feature_id = builder.find_resource("Feature_ID")
-            .expect("Feature_ID must be registered before RdgSssssPass");
-        self.specular_tex = builder.find_resource("Specular_MRT")
-            .expect("Specular_MRT must be registered before RdgSssssPass");
 
-        // SSA: read input colour, write distinct output + temp
+        // Producer: create the temporary blur texture.
+        let (w, h) = builder.global_resolution();
+        let hdr_format = builder.frame_config().hdr_format;
+        let desc = RdgTextureDesc::new_2d(
+            w,
+            h,
+            hdr_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        self.temp_blur = builder.create_and_export("SSSSS_Temp", desc);
+
+        // Consumer: wire upstream resources.
+        self.scene_color = builder.write_blackboard("Scene_Color_HDR");
         builder.read_texture(self.scene_color);
-        builder.write_texture(self.temp_blur);
-        builder.write_texture(self.scene_color);
-        // Read auxiliary textures
-        builder.read_texture(self.depth_in);
-        builder.read_texture(self.normal_in);
-        builder.read_texture(self.feature_id);
-        builder.read_texture(self.specular_tex);
+        self.depth_in = builder.read_blackboard("Scene_Depth");
+        self.normal_in = builder.read_blackboard("Scene_Normals");
+        self.feature_id = builder.read_blackboard("Feature_ID");
+        self.specular_tex = builder.read_blackboard("Specular_MRT");
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
@@ -344,18 +338,7 @@ impl PassNode for RdgSssssPass {
             self.bind_group_layout = Some(Tracked::new(bind_group_layout));
         }
 
-        // -- 4. Lazy-create sampler -------------------------------------
-        if self.sampler.is_none() {
-            let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("SSSSS Sampler"),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            });
-            self.sampler = Some(Tracked::new(sampler));
-        }
-
-        // -- 5. Gather input views (RDG-managed) -----------------------
+        // -- 4. Gather input views (RDG-managed) -----------------------
         // Extract IDs and raw pointers upfront to avoid holding the immutable
         // borrow on `ctx` across mutable cache operations (same pattern as SSAO).
 
@@ -390,9 +373,9 @@ impl PassNode for RdgSssssPass {
         let specular_view_ptr =
             ctx.get_texture_view(self.specular_tex) as *const Tracked<wgpu::TextureView>;
 
-        // -- 6. Build bind groups (H: read color_in, V: read temp_blur)
+        // -- 5. Build bind groups (H: read color_in, V: read temp_blur)
         let layout = self.bind_group_layout.as_ref().unwrap();
-        let sampler = self.sampler.as_ref().unwrap();
+        let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
         let profiles_buffer = self.profiles_buffer.as_ref().unwrap();
 
         // Horizontal: color_in -> temp_blur

@@ -1,25 +1,26 @@
 //! RDG Bloom Post-Processing Pass (Macro Node)
 //!
 //! Implements the Call of Duty: Advanced Warfare physically-based bloom
-//! technique within the new RDG framework. This pass is a **macro node**:
+//! technique within the RDG framework. This pass is a **macro node**:
 //! the RDG only sees a single (input → output) edge while the internal
 //! downsample-upsample-composite pipeline is managed entirely inside the
 //! pass.
 //!
 //! # RDG Slots
 //!
-//! - `input_tex`: HDR scene color
-//! - `output_tex`: HDR scene color with bloom composited
+//! - `input_tex`: HDR scene color (read via blackboard)
+//! - `output_tex`: HDR scene color with bloom composited (created via
+//!   `create_and_export`)
+//! - `bloom_texture`: Internal mip chain (created via `create_and_export`)
 //!
-//! # Internal Resources (not registered in RDG)
+//! # Internal Resources
 //!
-//! - A multi-mip bloom texture for the downsample/upsample chain
 //! - Three pipelines: downsample, upsample (additive), composite
 //! - Per-mip bind groups (cached, rebuilt only on resolution change)
 //!
 //! # Push Model
 //!
-//! All scene-level parameters (`enabled`, `karis_average`, `max_mip_levels`,
+//! All scene-level parameters (`karis_average`, `max_mip_levels`,
 //! uniform buffer IDs) are set externally by the Composer.
 
 use crate::define_gpu_data_struct;
@@ -29,7 +30,7 @@ use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::TextureNodeId;
+use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
@@ -684,19 +685,39 @@ impl PassNode for RdgBloomPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Self-wire well-known resources from the registry.
-        self.input_tex = builder.find_resource("Scene_Color_HDR")
-            .expect("Scene_Color_HDR must be registered before RdgBloomPass");
-        self.output_tex = builder.find_resource("Bloom_Out")
-            .expect("Bloom_Out must be registered before RdgBloomPass");
-        self.bloom_texture = builder.find_resource("Bloom_MipChain")
-            .expect("Bloom_MipChain must be registered before RdgBloomPass");
+        let (w, h) = builder.global_resolution();
+        let hdr_format = builder.frame_config().hdr_format;
+        let hdr_desc = RdgTextureDesc::new_2d(
+            w,
+            h,
+            hdr_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+        );
 
-        builder.read_texture(self.input_tex);
-        builder.write_texture(self.output_tex);
-        // Bloom mip chain — we both read and write mip levels internally.
-        // Declare as write so RDG tracks it in the dependency graph.
-        builder.write_texture(self.bloom_texture);
+        // Producer: create the bloom output and mip chain textures.
+        self.output_tex = builder.create_and_export("Bloom_Out", hdr_desc);
+
+        let bloom_w = (w / 2).max(1);
+        let bloom_h = (h / 2).max(1);
+        let max_possible = ((bloom_w.max(bloom_h) as f32).log2().floor() as u32) + 1;
+        let mip_count = self.max_mip_levels.min(max_possible).max(1);
+
+        let bloom_chain_desc = RdgTextureDesc::new(
+            bloom_w,
+            bloom_h,
+            1,
+            mip_count,
+            1,
+            wgpu::TextureDimension::D2,
+            hdr_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        self.bloom_texture = builder.create_and_export("Bloom_MipChain", bloom_chain_desc);
+
+        // Consumer: read scene color input.
+        self.input_tex = builder.read_blackboard("Scene_Color_HDR");
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {

@@ -1,14 +1,15 @@
 //! RDG Screen Space Ambient Occlusion (SSAO) Pass
 //!
-//! Implements production-grade SSAO within the new RDG framework.
-//! This pass receives depth and normal textures as external resources
-//! from the old system and produces a blurred AO texture.
+//! Implements production-grade SSAO within the RDG framework.
+//! The pass **creates** its own half-resolution AO output texture
+//! via `create_and_export("SSAO_Output")` during `setup()`, and reads
+//! the depth and normal textures produced by the upstream Prepass.
 //!
 //! # RDG Slots
 //!
-//! - `depth_tex`: Scene depth buffer (external, from old system prepass)
-//! - `normal_tex`: Scene normal buffer (external, from old system prepass)
-//! - `output_tex`: Blurred AO texture (transient, R8Unorm)
+//! - `depth_tex`: Scene depth buffer (read, from Prepass)
+//! - `normal_tex`: Scene normal buffer (read, from Prepass)
+//! - `output_tex`: Blurred AO texture (created, half-res R8Unorm)
 //!
 //! # Internal Sub-Passes
 //!
@@ -19,14 +20,15 @@
 //!
 //! All parameters (enabled flag, uniform buffer ID, noise scale) are pushed
 //! by the Composer. The pass never accesses Scene directly.
+//! Samplers are obtained from the global [`SamplerRegistry`].
 
 use crate::renderer::core::binding::BindGroupKey;
-use crate::renderer::core::resources::Tracked;
+use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::allocator::SubViewKey;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::TextureNodeId;
+use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
@@ -62,11 +64,6 @@ pub struct RdgSsaoPass {
     raw_uniforms_layout: Option<Tracked<wgpu::BindGroupLayout>>,
     blur_layout: Option<Tracked<wgpu::BindGroupLayout>>,
 
-    // ─── Samplers ──────────────────────────────────────────────────
-    linear_sampler: Option<Tracked<wgpu::Sampler>>,
-    noise_sampler: Option<Tracked<wgpu::Sampler>>,
-    point_sampler: Option<Tracked<wgpu::Sampler>>,
-
     // ─── Persistent Resources ──────────────────────────────────────
     noise_texture_view: Option<Tracked<wgpu::TextureView>>,
 
@@ -99,9 +96,6 @@ impl RdgSsaoPass {
             raw_uniforms_layout: None,
             blur_layout: None,
 
-            linear_sampler: None,
-            noise_sampler: None,
-            point_sampler: None,
             noise_texture_view: None,
 
             raw_texture: None,
@@ -118,7 +112,7 @@ impl RdgSsaoPass {
     // Lazy Initialization
     // =========================================================================
 
-    fn ensure_layouts_and_samplers(&mut self, device: &wgpu::Device) {
+    fn ensure_layouts(&mut self, device: &wgpu::Device) {
         if self.raw_layout.is_some() {
             return;
         }
@@ -246,40 +240,6 @@ impl RdgSsaoPass {
         self.raw_layout = Some(Tracked::new(raw_layout));
         self.raw_uniforms_layout = Some(Tracked::new(raw_uniforms_layout));
         self.blur_layout = Some(Tracked::new(blur_layout));
-
-        // ─── Samplers ──────────────────────────────────────────────
-        self.linear_sampler = Some(Tracked::new(device.create_sampler(
-            &wgpu::SamplerDescriptor {
-                label: Some("RDG SSAO Linear Sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            },
-        )));
-
-        self.noise_sampler = Some(Tracked::new(device.create_sampler(
-            &wgpu::SamplerDescriptor {
-                label: Some("RDG SSAO Noise Sampler"),
-                address_mode_u: wgpu::AddressMode::Repeat,
-                address_mode_v: wgpu::AddressMode::Repeat,
-                mag_filter: wgpu::FilterMode::Nearest,
-                min_filter: wgpu::FilterMode::Nearest,
-                ..Default::default()
-            },
-        )));
-
-        self.point_sampler = Some(Tracked::new(device.create_sampler(
-            &wgpu::SamplerDescriptor {
-                label: Some("RDG SSAO Point Sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Nearest,
-                min_filter: wgpu::FilterMode::Nearest,
-                ..Default::default()
-            },
-        )));
     }
 
     fn ensure_noise_texture(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -485,9 +445,9 @@ impl RdgSsaoPass {
         let noise_view = self.noise_texture_view.as_ref().unwrap();
         let raw_view = self.raw_texture_view.as_ref().unwrap();
 
-        let linear_sampler = self.linear_sampler.as_ref().unwrap();
-        let noise_sampler = self.noise_sampler.as_ref().unwrap();
-        let point_sampler = self.point_sampler.as_ref().unwrap();
+        let linear_sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
+        let noise_sampler = ctx.sampler_registry.get_common(CommonSampler::NearestRepeat);
+        let point_sampler = ctx.sampler_registry.get_common(CommonSampler::NearestClamp);
 
         let raw_layout = self.raw_layout.as_ref().unwrap();
         let uniforms_layout = self.raw_uniforms_layout.as_ref().unwrap();
@@ -624,22 +584,24 @@ impl PassNode for RdgSsaoPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Self-wire well-known resources from the registry.
-        self.depth_tex = builder.find_resource("Scene_Depth")
-            .expect("Scene_Depth must be registered before RdgSsaoPass");
-        self.normal_tex = builder.find_resource("Scene_Normals")
-            .expect("Scene_Normals must be registered before RdgSsaoPass");
-        self.output_tex = builder.find_resource("SSAO_Output")
-            .expect("SSAO_Output must be registered before RdgSsaoPass");
+        // Producer: create half-resolution AO output.
+        let (w, h) = builder.global_resolution();
+        let desc = RdgTextureDesc::new_2d(
+            w / 2,
+            h / 2,
+            wgpu::TextureFormat::R8Unorm,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        self.output_tex = builder.create_and_export("SSAO_Output", desc);
 
-        builder.read_texture(self.depth_tex);
-        builder.read_texture(self.normal_tex);
-        builder.write_texture(self.output_tex);
+        // Consumer: read depth and normals from upstream passes.
+        self.depth_tex = builder.read_blackboard("Scene_Depth");
+        self.normal_tex = builder.read_blackboard("Scene_Normals");
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         // 1. Lazy initialization
-        self.ensure_layouts_and_samplers(ctx.device);
+        self.ensure_layouts(ctx.device);
         self.ensure_noise_texture(ctx.device, ctx.queue);
         self.ensure_pipelines(ctx);
 
