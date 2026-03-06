@@ -47,8 +47,12 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // 限制在最大 40 像素左右，保证每个 step_size 不会夸张到离谱
     let pixel_radius = min(raw_pixel_radius, 40.0);
     
-    var final_color = vec3<f32>(0.0);
-    var total_weight = vec3<f32>(0.0); 
+    // var final_color = vec3<f32>(0.0);
+    // var total_weight = vec3<f32>(0.0);
+
+    let guard_weight = 0.0001;
+    var final_color = center_color.rgb * guard_weight;
+    var total_weight = vec3<f32>(guard_weight);
     
     // 采样半步数：6 意味着一共采 13 个点 (6*2 + 1)
     let steps = 6; 
