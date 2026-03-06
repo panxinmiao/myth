@@ -17,12 +17,12 @@
 //! - `needs_specular`: Whether to output a specular MRT attachment
 
 use crate::renderer::core::resources::Tracked;
+use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
-use crate::renderer::graph::TrackedRenderPass;
 
 /// RDG Opaque Render Pass.
 ///
@@ -124,19 +124,19 @@ impl PassNode for RdgOpaquePass {
     fn setup(&mut self, builder: &mut PassBuilder) {
         // Consumer: wire backbone resources.
         self.scene_color = builder.write_blackboard("Scene_Color_HDR");
-        self.scene_depth = builder.find_resource("Scene_Depth")
-            .expect("Scene_Depth must be registered before OpaquePass");
+
+        self.scene_depth = builder.write_blackboard("Scene_Depth");
 
         if self.has_prepass {
             builder.read_texture(self.scene_depth);
         }
-        builder.write_texture(self.scene_depth);
+
+        // self.ssao_tex = builder.try_read_blackboard("SSAO_Output");
 
         // Detect optional SSAO resource.
-        if let Some(ssao) = builder.find_resource("SSAO_Output") {
+        if let Some(ssao) = builder.try_read_blackboard("SSAO_Output") {
             self.ssao_tex = ssao;
             self.ssao_enabled = true;
-            builder.read_texture(ssao);
         } else {
             self.ssao_enabled = false;
         }
@@ -154,7 +154,7 @@ impl PassNode for RdgOpaquePass {
                     | wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::COPY_SRC,
             );
-            self.specular_tex = builder.create_and_export("Specular_MRT", desc);
+            self.specular_tex = builder.create_texture("Specular_MRT", desc);
         }
     }
 

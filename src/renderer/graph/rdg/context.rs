@@ -3,7 +3,7 @@ use crate::renderer::core::ResourceManager;
 use crate::renderer::core::WgpuContext;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::{SamplerRegistry, Tracked};
-use crate::renderer::graph::frame::{RenderLists};
+use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::{ExtractedScene, RenderState};
 use crate::renderer::pipeline::{PipelineCache, ShaderManager};
 use crate::scene::camera::RenderCamera;
@@ -13,7 +13,6 @@ use wgpu::{Device, Queue, TextureView};
 use super::allocator::{RdgTransientPool, SubViewKey};
 use super::graph::RenderGraph;
 use super::types::TextureNodeId;
-
 
 // ─── Prepare Context ──────────────────────────────────────────────────────────
 
@@ -40,13 +39,11 @@ pub struct RdgPrepareContext<'a> {
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
     pub shader_manager: &'a mut ShaderManager,
     // pub external_resources: &'a FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
-
     /// GPU resource manager — provides `CpuBuffer → GpuBuffer` resolution,
     /// texture upload, and global state access (layouts, bind groups).
     pub resource_manager: &'a mut ResourceManager,
 
     // ─── Scene Data ──────────────────────────────────────────────────
-
     /// Full wgpu context — depth format, MSAA samples, render path, etc.
     pub wgpu_ctx: &'a WgpuContext,
 
@@ -123,7 +120,11 @@ impl<'a> RdgViewResolver<'a> {
         self.pool.get_or_create_sub_view(physical_index, key)
     }
 
-    pub fn get_sub_view(&self, id: TextureNodeId, key: &SubViewKey) -> Option<&Tracked<wgpu::TextureView>> {
+    pub fn get_sub_view(
+        &self,
+        id: TextureNodeId,
+        key: &SubViewKey,
+    ) -> Option<&Tracked<wgpu::TextureView>> {
         let res = &self.graph.resources[id.0 as usize];
         let physical_index = res.physical_index.expect("No physical memory!");
         self.pool.get_sub_view(physical_index, key)
@@ -151,7 +152,6 @@ pub struct RdgExecuteContext<'a> {
     pub global_bind_group: Option<&'a wgpu::BindGroup>,
 
     // ─── Scene Data (Phase 3: full RDG integration) ──────────────────
-
     /// GPU resource manager (read-only) — material/geometry lookups during draw.
     pub resource_manager: &'a ResourceManager,
 
@@ -160,7 +160,6 @@ pub struct RdgExecuteContext<'a> {
 
     /// Full wgpu context — depth format, render path, etc.
     pub wgpu_ctx: &'a WgpuContext,
-
     // /// Frame blackboard for cross-pass transient data (read-only during execute).
     // pub blackboard: &'a FrameBlackboard,
 }

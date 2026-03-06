@@ -14,12 +14,12 @@
 //! Transparent commands are sorted back-to-front for correct alpha blending.
 
 use crate::renderer::core::resources::Tracked;
+use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::TextureNodeId;
-use crate::renderer::graph::TrackedRenderPass;
 
 /// RDG Transparent Render Pass.
 ///
@@ -114,30 +114,23 @@ impl PassNode for RdgTransparentPass {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Self-wire well-known resources from the registry.
-        self.scene_color = builder.find_resource("Scene_Color_HDR")
-            .expect("Scene_Color_HDR must be registered before TransparentPass");
-        self.scene_depth = builder.find_resource("Scene_Depth")
-            .expect("Scene_Depth must be registered before TransparentPass");
+        self.scene_color = builder.read_blackboard("Scene_Color_HDR");
 
-        builder.read_texture(self.scene_color);
         builder.write_texture(self.scene_color);
-        builder.read_texture(self.scene_depth);
+        self.scene_depth = builder.read_blackboard("Scene_Depth");
 
         // Detect optional transmission resource.
-        if let Some(tx) = builder.find_resource("Transmission_Tex") {
+        if let Some(tx) = builder.try_read_blackboard("Transmission_Tex") {
             self.transmission_tex = tx;
             self.has_transmission = true;
-            builder.read_texture(tx);
         } else {
             self.has_transmission = false;
         }
 
         // Detect optional SSAO resource.
-        if let Some(ssao) = builder.find_resource("SSAO_Output") {
+        if let Some(ssao) = builder.try_read_blackboard("SSAO_Output") {
             self.ssao_tex = ssao;
             self.ssao_enabled = true;
-            builder.read_texture(ssao);
         } else {
             self.ssao_enabled = false;
         }

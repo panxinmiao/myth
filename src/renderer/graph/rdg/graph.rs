@@ -333,7 +333,6 @@ impl RenderGraph {
         }
     }
 
-
     #[cfg(debug_assertions)]
     fn debug_print_topology_changes(&mut self) {
         // 将当前帧的 execution_queue 映射为可读的 Pass 名字列表
@@ -352,13 +351,15 @@ impl RenderGraph {
                 current_names
             );
 
-            println!("🌈 RDG Topology Changed! New Execution Order: {:?}", current_names);
+            println!(
+                "🌈 RDG Topology Changed! New Execution Order: {:?}",
+                current_names
+            );
 
             // 更新缓存，以便下一帧对比
             self.prev_execution_names = current_names;
         }
     }
-
 }
 
 #[cfg(test)]

@@ -14,8 +14,8 @@
 //! nature (equirect → cube, mipmap generation, PMREM prefiltering) the work
 //! is performed during the prepare phase with a dedicated command encoder.
 
-use crate::renderer::core::resources::{CubeSourceType, BRDF_LUT_SIZE};
 use crate::renderer::core::resources::SamplerKey;
+use crate::renderer::core::resources::{BRDF_LUT_SIZE, CubeSourceType};
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
@@ -48,20 +48,19 @@ pub struct RdgBrdfLutPass {
 impl RdgBrdfLutPass {
     #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
-        let bind_group_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("RDG BRDF LUT BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::StorageTexture {
-                        access: wgpu::StorageTextureAccess::WriteOnly,
-                        format: wgpu::TextureFormat::Rgba16Float,
-                        view_dimension: wgpu::TextureViewDimension::D2,
-                    },
-                    count: None,
-                }],
-            });
+        let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("RDG BRDF LUT BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                },
+                count: None,
+            }],
+        });
 
         Self {
             pipeline_id: None,
@@ -246,11 +245,42 @@ impl RdgIblComputePass {
                 ],
             });
 
-        let pmrem_layout_dest =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("RDG IBL Dest BGL"),
-                entries: &[wgpu::BindGroupLayoutEntry {
+        let pmrem_layout_dest = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("RDG IBL Dest BGL"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::COMPUTE,
+                ty: wgpu::BindingType::StorageTexture {
+                    access: wgpu::StorageTextureAccess::WriteOnly,
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    view_dimension: wgpu::TextureViewDimension::D2Array,
+                },
+                count: None,
+            }],
+        });
+
+        // ====== Equirectangular → Cube layouts ======
+        let equirect_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("RDG Equirect BGL"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
                     binding: 0,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::COMPUTE,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 2,
                     visibility: wgpu::ShaderStages::COMPUTE,
                     ty: wgpu::BindingType::StorageTexture {
                         access: wgpu::StorageTextureAccess::WriteOnly,
@@ -258,42 +288,9 @@ impl RdgIblComputePass {
                         view_dimension: wgpu::TextureViewDimension::D2Array,
                     },
                     count: None,
-                }],
-            });
-
-        // ====== Equirectangular → Cube layouts ======
-        let equirect_layout =
-            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("RDG Equirect BGL"),
-                entries: &[
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::COMPUTE,
-                        ty: wgpu::BindingType::StorageTexture {
-                            access: wgpu::StorageTextureAccess::WriteOnly,
-                            format: wgpu::TextureFormat::Rgba16Float,
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                        },
-                        count: None,
-                    },
-                ],
-            });
+                },
+            ],
+        });
 
         // ====== Blit layout + sampler ======
         let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -543,11 +540,11 @@ impl PassNode for RdgIblComputePass {
 
         let source_type = gpu_env.source_type;
 
-        let mut encoder =
-            ctx.device
-                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("RDG IBL Compute Encoder"),
-                });
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("RDG IBL Compute Encoder"),
+            });
 
         // ── Phase 1: Prepare mipmapped cube source for PMREM ───────────
         match source_type {
@@ -578,36 +575,34 @@ impl PassNode for RdgIblComputePass {
                         ..Default::default()
                     });
 
-                    let equirect_sampler =
-                        ctx.sampler_registry.get_custom_ref(&IBL_EQUIRECT_SAMPLER_KEY);
+                    let equirect_sampler = ctx
+                        .sampler_registry
+                        .get_custom_ref(&IBL_EQUIRECT_SAMPLER_KEY);
 
-                    let bind_group =
-                        ctx.device
-                            .create_bind_group(&wgpu::BindGroupDescriptor {
-                                label: Some("Equirect BindGroup"),
-                                layout: &self.equirect_layout,
-                                entries: &[
-                                    wgpu::BindGroupEntry {
-                                        binding: 0,
-                                        resource: wgpu::BindingResource::TextureView(source_view),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 1,
-                                        resource: wgpu::BindingResource::Sampler(equirect_sampler),
-                                    },
-                                    wgpu::BindGroupEntry {
-                                        binding: 2,
-                                        resource: wgpu::BindingResource::TextureView(&dest_view),
-                                    },
-                                ],
-                            });
+                    let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("Equirect BindGroup"),
+                        layout: &self.equirect_layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: wgpu::BindingResource::TextureView(source_view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::Sampler(equirect_sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::TextureView(&dest_view),
+                            },
+                        ],
+                    });
 
                     {
-                        let mut cpass =
-                            encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                                label: Some("Equirect to Cube"),
-                                timestamp_writes: None,
-                            });
+                        let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                            label: Some("Equirect to Cube"),
+                            timestamp_writes: None,
+                        });
                         cpass.set_pipeline(equirect_pipeline);
                         cpass.set_bind_group(0, &bind_group, &[]);
                         let group_count = cube_size.div_ceil(8);
@@ -644,8 +639,7 @@ impl PassNode for RdgIblComputePass {
                         }
                     };
 
-                    let blit_sampler =
-                        ctx.sampler_registry.get_custom_ref(&IBL_BLIT_SAMPLER_KEY);
+                    let blit_sampler = ctx.sampler_registry.get_custom_ref(&IBL_BLIT_SAMPLER_KEY);
 
                     self.blit_cube_faces(
                         ctx.device,
@@ -742,20 +736,19 @@ impl PassNode for RdgIblComputePass {
                 ],
             });
 
-            let dest_view =
-                gpu_env
-                    .pmrem_texture
-                    .create_view(&wgpu::TextureViewDescriptor {
-                        label: Some(&format!("PMREM Mip {mip}")),
-                        format: Some(format),
-                        dimension: Some(TextureViewDimension::D2Array),
-                        aspect: wgpu::TextureAspect::All,
-                        base_mip_level: mip,
-                        mip_level_count: Some(1),
-                        base_array_layer: 0,
-                        array_layer_count: Some(6),
-                        usage: Some(wgpu::TextureUsages::STORAGE_BINDING),
-                    });
+            let dest_view = gpu_env
+                .pmrem_texture
+                .create_view(&wgpu::TextureViewDescriptor {
+                    label: Some(&format!("PMREM Mip {mip}")),
+                    format: Some(format),
+                    dimension: Some(TextureViewDimension::D2Array),
+                    aspect: wgpu::TextureAspect::All,
+                    base_mip_level: mip,
+                    mip_level_count: Some(1),
+                    base_array_layer: 0,
+                    array_layer_count: Some(6),
+                    usage: Some(wgpu::TextureUsages::STORAGE_BINDING),
+                });
 
             let bg_dst = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: None,

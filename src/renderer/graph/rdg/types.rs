@@ -14,7 +14,6 @@ pub struct RdgTextureDesc {
 }
 
 impl RdgTextureDesc {
-
     pub fn new(
         width: u32,
         height: u32,
@@ -38,7 +37,6 @@ impl RdgTextureDesc {
             usage,
         }
     }
-
 
     pub fn new_2d(
         width: u32,

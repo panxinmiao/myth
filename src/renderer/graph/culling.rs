@@ -31,9 +31,7 @@ use crate::assets::AssetServer;
 use crate::renderer::core::view::ViewTarget;
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::extracted::{ExtractedScene, SceneFeatures};
-use crate::renderer::graph::frame::{
-    RenderCommand, RenderKey, RenderLists, ShadowRenderCommand,
-};
+use crate::renderer::graph::frame::{RenderCommand, RenderKey, RenderLists, ShadowRenderCommand};
 use crate::renderer::graph::render_state::RenderState;
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::renderer::pipeline::{
@@ -254,9 +252,7 @@ fn prepare_main_camera_commands(
                         Side::Back => Some(wgpu::Face::Front),
                         Side::Double => None,
                     },
-                    depth_write: if is_opaque_item
-                        && wgpu_ctx.render_path.requires_z_prepass()
-                    {
+                    depth_write: if is_opaque_item && wgpu_ctx.render_path.requires_z_prepass() {
                         false
                     } else {
                         material.depth_write()
@@ -446,101 +442,100 @@ fn prepare_shadow_commands(
                 pipeline_settings_version,
             };
 
-            let pipeline_id =
-                if let Some(id) = pipeline_cache.get_shadow_pipeline_fast(fast_key) {
-                    id
-                } else {
-                    let geo_defines = geometry.shader_defines();
-                    let mat_defines = material.shader_defines();
+            let pipeline_id = if let Some(id) = pipeline_cache.get_shadow_pipeline_fast(fast_key) {
+                id
+            } else {
+                let geo_defines = geometry.shader_defines();
+                let mat_defines = material.shader_defines();
 
-                    let mut options = ShaderCompilationOptions::from_merged(
-                        &mat_defines,
-                        geo_defines,
-                        &crate::resources::shader_defines::ShaderDefines::new(),
-                        &item.item_shader_defines,
-                    );
-                    options.add_define("SHADOW_PASS", "1");
+                let mut options = ShaderCompilationOptions::from_merged(
+                    &mat_defines,
+                    geo_defines,
+                    &crate::resources::shader_defines::ShaderDefines::new(),
+                    &item.item_shader_defines,
+                );
+                options.add_define("SHADOW_PASS", "1");
 
-                    let binding_code = format!(
-                        "{}\n{}\n{}",
-                        SHADOW_BINDING_WGSL,
-                        &gpu_material.binding_wgsl,
-                        &item.object_bind_group.binding_wgsl
-                    );
+                let binding_code = format!(
+                    "{}\n{}\n{}",
+                    SHADOW_BINDING_WGSL,
+                    &gpu_material.binding_wgsl,
+                    &item.object_bind_group.binding_wgsl
+                );
 
-                    let (shader_module, code_hash) = shader_manager.get_or_compile_template(
-                        &wgpu_ctx.device,
-                        "passes/depth",
-                        &options,
-                        &gpu_geometry.layout_info.vertex_input_code,
-                        &binding_code,
-                    );
+                let (shader_module, code_hash) = shader_manager.get_or_compile_template(
+                    &wgpu_ctx.device,
+                    "passes/depth",
+                    &options,
+                    &gpu_geometry.layout_info.vertex_input_code,
+                    &binding_code,
+                );
 
-                    let layout =
-                        wgpu_ctx
-                            .device
-                            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                                label: Some("Shadow Pipeline Layout"),
-                                bind_group_layouts: &[
-                                    &shadow_global_layout,
-                                    &gpu_material.layout,
-                                    &item.object_bind_group.layout,
-                                ],
-                                immediate_size: 0,
-                            });
+                let layout =
+                    wgpu_ctx
+                        .device
+                        .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                            label: Some("Shadow Pipeline Layout"),
+                            bind_group_layouts: &[
+                                &shadow_global_layout,
+                                &gpu_material.layout,
+                                &item.object_bind_group.layout,
+                            ],
+                            immediate_size: 0,
+                        });
 
-                    let vertex_buffers_layout: Vec<_> = gpu_geometry
-                        .layout_info
-                        .buffers
-                        .iter()
-                        .map(|l| l.as_wgpu())
-                        .collect();
+                let vertex_buffers_layout: Vec<_> = gpu_geometry
+                    .layout_info
+                    .buffers
+                    .iter()
+                    .map(|l| l.as_wgpu())
+                    .collect();
 
-                    let cull_mode = match material.side() {
-                        Side::Front => Some(wgpu::Face::Back),
-                        Side::Back => Some(wgpu::Face::Front),
-                        Side::Double => None,
-                    };
-
-                    let front_face = if item.item_variant_flags & 0x1 != 0 {
-                        wgpu::FrontFace::Cw
-                    } else {
-                        wgpu::FrontFace::Ccw
-                    };
-
-                    let canonical_key = SimpleGeometryPipelineKey {
-                        shader_hash: code_hash,
-                        vertex_layout_id: gpu_geometry.layout_id,
-                        color_targets: smallvec::smallvec![],
-                        depth_stencil: DepthStencilKey::from(wgpu::DepthStencilState {
-                            format: depth_format,
-                            depth_write_enabled: true,
-                            depth_compare: wgpu::CompareFunction::LessEqual,
-                            stencil: wgpu::StencilState::default(),
-                            bias: wgpu::DepthBiasState {
-                                constant: 2,
-                                slope_scale: 2.0,
-                                clamp: 0.0,
-                            },
-                        }),
-                        topology: geometry.topology,
-                        cull_mode,
-                        front_face,
-                        sample_count: 1,
-                    };
-
-                    let id = pipeline_cache.get_or_create_simple_geometry(
-                        &wgpu_ctx.device,
-                        shader_module,
-                        &layout,
-                        &canonical_key,
-                        "Shadow Pipeline",
-                        &vertex_buffers_layout,
-                    );
-
-                    pipeline_cache.insert_shadow_pipeline_fast(fast_key, id);
-                    id
+                let cull_mode = match material.side() {
+                    Side::Front => Some(wgpu::Face::Back),
+                    Side::Back => Some(wgpu::Face::Front),
+                    Side::Double => None,
                 };
+
+                let front_face = if item.item_variant_flags & 0x1 != 0 {
+                    wgpu::FrontFace::Cw
+                } else {
+                    wgpu::FrontFace::Ccw
+                };
+
+                let canonical_key = SimpleGeometryPipelineKey {
+                    shader_hash: code_hash,
+                    vertex_layout_id: gpu_geometry.layout_id,
+                    color_targets: smallvec::smallvec![],
+                    depth_stencil: DepthStencilKey::from(wgpu::DepthStencilState {
+                        format: depth_format,
+                        depth_write_enabled: true,
+                        depth_compare: wgpu::CompareFunction::LessEqual,
+                        stencil: wgpu::StencilState::default(),
+                        bias: wgpu::DepthBiasState {
+                            constant: 2,
+                            slope_scale: 2.0,
+                            clamp: 0.0,
+                        },
+                    }),
+                    topology: geometry.topology,
+                    cull_mode,
+                    front_face,
+                    sample_count: 1,
+                };
+
+                let id = pipeline_cache.get_or_create_simple_geometry(
+                    &wgpu_ctx.device,
+                    shader_module,
+                    &layout,
+                    &canonical_key,
+                    "Shadow Pipeline",
+                    &vertex_buffers_layout,
+                );
+
+                pipeline_cache.insert_shadow_pipeline_fast(fast_key, id);
+                id
+            };
 
             let world_matrix_inverse = item.world_matrix.inverse();
             let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
@@ -568,10 +563,7 @@ fn prepare_shadow_commands(
 
 /// Compute per-object inverse/normal matrices and upload dynamic model
 /// uniforms to the GPU.
-fn upload_dynamic_uniforms(
-    render_lists: &mut RenderLists,
-    resource_manager: &mut ResourceManager,
-) {
+fn upload_dynamic_uniforms(render_lists: &mut RenderLists, resource_manager: &mut ResourceManager) {
     if render_lists.is_empty() {
         return;
     }

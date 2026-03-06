@@ -61,7 +61,7 @@ impl PassNode for RdgTransmissionCopyPass {
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_DST,
         );
-        self.transmission_tex = builder.create_and_export("Transmission_Tex", desc);
+        self.transmission_tex = builder.create_texture("Transmission_Tex", desc);
 
         // Consumer: read the scene colour as copy source.
         self.scene_color = builder.read_blackboard("Scene_Color_HDR");
@@ -104,10 +104,8 @@ impl PassNode for RdgTransmissionCopyPass {
         );
 
         // Generate mipmaps for LOD-based transmission blur
-        ctx.resource_manager.mipmap_generator.generate(
-            ctx.device,
-            encoder,
-            dst_texture,
-        );
+        ctx.resource_manager
+            .mipmap_generator
+            .generate(ctx.device, encoder, dst_texture);
     }
 }

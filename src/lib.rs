@@ -264,9 +264,7 @@ pub mod math {
 /// ```
 pub mod render {
     pub use crate::renderer::Renderer;
-    pub use crate::renderer::graph::{
-        FrameComposer, RenderState, TrackedRenderPass,
-    };
+    pub use crate::renderer::graph::{FrameComposer, RenderState, TrackedRenderPass};
     pub use crate::renderer::settings::{RenderPath, RendererSettings};
 
     // Backward compatibility

@@ -22,12 +22,12 @@
 //!
 //! [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
 
+use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
-use crate::renderer::graph::TrackedRenderPass;
 
 /// RDG Simple Forward Render Pass.
 ///
@@ -139,10 +139,9 @@ impl PassNode for RdgSimpleForwardPass {
                 msaa_samples,
                 wgpu::TextureDimension::D2,
                 surface_format,
-                wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            self.msaa_view = Some(builder.create_and_export("Scene_Msaa", desc));
+            self.msaa_view = Some(builder.create_texture("Scene_Msaa", desc));
         } else {
             self.msaa_view = None;
         }
@@ -180,7 +179,7 @@ impl PassNode for RdgSimpleForwardPass {
 
         let (color_view, resolve_target) = if let Some(msaa_view) = self.msaa_view {
             (ctx.get_texture_view(msaa_view), Some(target_view))
-        }else{
+        } else {
             (target_view, None)
         };
 

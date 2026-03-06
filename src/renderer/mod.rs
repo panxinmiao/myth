@@ -54,7 +54,7 @@ use crate::errors::Result;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::SamplerRegistry;
 use crate::renderer::graph::composer::ComposerContext;
-use crate::renderer::graph::frame::{RenderLists};
+use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::rdg::allocator::RdgTransientPool;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
@@ -102,7 +102,6 @@ struct RendererState {
     render_lists: RenderLists,
     // /// Frame blackboard (cross-pass transient data communication, cleared each frame)
     // blackboard: FrameBlackboard,
-
     global_bind_group_cache: GlobalBindGroupCache,
 
     // ===== RDG (Declarative Render Graph) =====
@@ -121,8 +120,10 @@ struct RendererState {
     pub(crate) rdg_opaque_pass: crate::renderer::graph::rdg::opaque::RdgOpaquePass,
     pub(crate) rdg_skybox_pass: crate::renderer::graph::rdg::skybox::RdgSkyboxPass,
     pub(crate) rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass,
-    pub(crate) rdg_transmission_copy_pass: crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass,
-    pub(crate) rdg_simple_forward_pass: crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass,
+    pub(crate) rdg_transmission_copy_pass:
+        crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass,
+    pub(crate) rdg_simple_forward_pass:
+        crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass,
     pub(crate) rdg_sssss_pass: crate::renderer::graph::rdg::sssss::RdgSssssPass,
 
     // Shadow + Compute passes (migrated from old system)
@@ -202,7 +203,6 @@ impl Renderer {
             render_frame,
             render_lists: RenderLists::new(),
             // blackboard: FrameBlackboard::new(),
-
             global_bind_group_cache,
 
             // RDG
@@ -218,9 +218,12 @@ impl Renderer {
             rdg_prepass: crate::renderer::graph::rdg::prepass::RdgPrepass::new(),
             rdg_opaque_pass: crate::renderer::graph::rdg::opaque::RdgOpaquePass::new(),
             rdg_skybox_pass: crate::renderer::graph::rdg::skybox::RdgSkyboxPass::new(),
-            rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass::new(),
-            rdg_transmission_copy_pass: crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass::new(),
-            rdg_simple_forward_pass: crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass::new(),
+            rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass::new(
+            ),
+            rdg_transmission_copy_pass:
+                crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass::new(),
+            rdg_simple_forward_pass:
+                crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass::new(),
             rdg_sssss_pass: crate::renderer::graph::rdg::sssss::RdgSssssPass::new(),
 
             // Shadow + Compute passes (migrated from old system)
@@ -321,7 +324,6 @@ impl Renderer {
             render_lists: &mut state.render_lists,
 
             // blackboard: &mut state.blackboard,
-
             scene,
             camera,
             assets,

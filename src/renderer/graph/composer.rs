@@ -49,7 +49,7 @@ use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::ExtractedScene;
-use crate::renderer::graph::frame::{RenderLists};
+use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::rdg::blackboard::{GraphBlackboard, HookStage};
 use crate::renderer::graph::rdg::context::RdgViewResolver;
 use crate::renderer::graph::rdg::types::TextureNodeId;
@@ -96,8 +96,10 @@ pub struct ComposerContext<'a> {
     pub rdg_opaque_pass: &'a mut crate::renderer::graph::rdg::opaque::RdgOpaquePass,
     pub rdg_skybox_pass: &'a mut crate::renderer::graph::rdg::skybox::RdgSkyboxPass,
     pub rdg_transparent_pass: &'a mut crate::renderer::graph::rdg::transparent::RdgTransparentPass,
-    pub rdg_transmission_copy_pass: &'a mut crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass,
-    pub rdg_simple_forward_pass: &'a mut crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass,
+    pub rdg_transmission_copy_pass:
+        &'a mut crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass,
+    pub rdg_simple_forward_pass:
+        &'a mut crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass,
     pub rdg_sssss_pass: &'a mut crate::renderer::graph::rdg::sssss::RdgSssssPass,
 
     // Shadow + Compute (migrated from old system)
@@ -124,7 +126,15 @@ pub struct ComposerContext<'a> {
 pub struct FrameComposer<'a> {
     ctx: ComposerContext<'a>,
     external_res: FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
-    hooks: smallvec::SmallVec<[(HookStage, Box<dyn FnMut(&mut crate::renderer::graph::rdg::graph::RenderGraph, &GraphBlackboard) + 'a>); 4]>,
+    hooks: smallvec::SmallVec<
+        [(
+            HookStage,
+            Box<
+                dyn FnMut(&mut crate::renderer::graph::rdg::graph::RenderGraph, &GraphBlackboard)
+                    + 'a,
+            >,
+        ); 4],
+    >,
 }
 
 impl<'a> FrameComposer<'a> {
@@ -307,8 +317,7 @@ impl<'a> FrameComposer<'a> {
                 let ssao_uniforms = &self.ctx.scene.ssao.uniforms;
                 self.ctx.resource_manager.ensure_buffer(ssao_uniforms);
                 ssao_pass.uniforms_cpu_id = ssao_uniforms.id();
-                ssao_pass.global_state_key =
-                    (self.ctx.render_state.id, scene_id_val);
+                ssao_pass.global_state_key = (self.ctx.render_state.id, scene_id_val);
                 rdg.add_pass(ssao_pass);
             }
 
@@ -367,8 +376,7 @@ impl<'a> FrameComposer<'a> {
                     .resource_manager
                     .ensure_buffer(&self.ctx.scene.bloom.composite_uniforms);
                 bloom_pass.upsample_uniforms_cpu_id = self.ctx.scene.bloom.upsample_uniforms.id();
-                bloom_pass.composite_uniforms_cpu_id =
-                    self.ctx.scene.bloom.composite_uniforms.id();
+                bloom_pass.composite_uniforms_cpu_id = self.ctx.scene.bloom.composite_uniforms.id();
                 rdg.add_pass(bloom_pass);
 
                 rdg.find_resource("Bloom_Out")
@@ -393,15 +401,16 @@ impl<'a> FrameComposer<'a> {
                 self.ctx.resource_manager.ensure_buffer(cpu_buffer);
                 tone_map.uniforms_cpu_id = cpu_buffer.id();
                 if let Some(lut_handle) = self.ctx.scene.tone_mapping.lut_texture {
-                    self.ctx.resource_manager.prepare_texture(self.ctx.assets, lut_handle);
+                    self.ctx
+                        .resource_manager
+                        .prepare_texture(self.ctx.assets, lut_handle);
                     tone_map.has_lut = true;
                     tone_map.lut_handle = Some(lut_handle);
                 } else {
                     tone_map.has_lut = false;
                     tone_map.lut_handle = None;
                 }
-                tone_map.global_state_key =
-                    (self.ctx.render_state.id, scene_id_val);
+                tone_map.global_state_key = (self.ctx.render_state.id, scene_id_val);
                 rdg.add_pass(tone_map);
             }
 

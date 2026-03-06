@@ -23,8 +23,8 @@
 use rustc_hash::FxHashMap;
 
 use crate::renderer::core::binding::BindGroupKey;
-use crate::renderer::core::resources::Tracked;
 use crate::renderer::core::resources::SamplerKey;
+use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
@@ -413,26 +413,24 @@ impl PassNode for RdgSkyboxPass {
                     .get(&params_cpu_id)
                     .expect("Skybox params GPU buffer must exist");
 
-                let bg = ctx
-                    .device
-                    .create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("RDG Skybox BG (Texture)"),
-                        layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: params_gpu.buffer.as_entire_binding(),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(tex_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::Sampler(sampler),
-                            },
-                        ],
-                    });
+                let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("RDG Skybox BG (Texture)"),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: params_gpu.buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(tex_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                    ],
+                });
                 ctx.global_bind_group_cache.insert(key, bg.clone());
                 bg
             }
@@ -448,16 +446,14 @@ impl PassNode for RdgSkyboxPass {
                     .get(&params_cpu_id)
                     .expect("Skybox params GPU buffer must exist");
 
-                let bg = ctx
-                    .device
-                    .create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("RDG Skybox BG (Gradient)"),
-                        layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: params_gpu.buffer.as_entire_binding(),
-                        }],
-                    });
+                let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("RDG Skybox BG (Gradient)"),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: params_gpu.buffer.as_entire_binding(),
+                    }],
+                });
                 ctx.global_bind_group_cache.insert(key, bg.clone());
                 bg
             }
@@ -466,7 +462,9 @@ impl PassNode for RdgSkyboxPass {
         self.current_bind_group = Some(bind_group.clone());
 
         // Pipeline
-        let color_format = ctx.views.graph.resources[self.scene_color.0 as usize].desc.format;
+        let color_format = ctx.views.graph.resources[self.scene_color.0 as usize]
+            .desc
+            .format;
         let pipeline_key = SkyboxPipelineKey {
             variant,
             color_format,

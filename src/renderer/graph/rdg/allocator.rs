@@ -1,4 +1,4 @@
-﻿//! RDG Transient Resource Pool
+//! RDG Transient Resource Pool
 //!
 //! Manages GPU texture allocation for RDG transient resources with three
 //! key performance features:
@@ -290,7 +290,11 @@ impl RdgTransientPool {
         })
     }
 
-    pub fn get_sub_view(&self, physical_index: usize, key: &SubViewKey) -> Option<&Tracked<wgpu::TextureView>> {
+    pub fn get_sub_view(
+        &self,
+        physical_index: usize,
+        key: &SubViewKey,
+    ) -> Option<&Tracked<wgpu::TextureView>> {
         self.resources[physical_index].sub_views.get(key)
     }
 }
