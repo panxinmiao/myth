@@ -189,6 +189,89 @@ pub struct ResourceManager {
     pub dummy_transmission_view: Tracked<wgpu::TextureView>,
 }
 
+/// Lightweight bundle of persistent screen bind-group resources.
+///
+/// Cloned from [`ResourceManager`] and passed to RDG PassNodes so that
+/// `build_screen_bind_group` can work without a reference to the full
+/// `ResourceManager`, keeping it out of [`RdgPrepareContext`].
+#[derive(Clone)]
+pub struct ScreenBindGroupInfo {
+    pub layout: Tracked<wgpu::BindGroupLayout>,
+    pub sampler: Tracked<wgpu::Sampler>,
+    pub ssao_dummy_view: Tracked<wgpu::TextureView>,
+    pub dummy_transmission_view: Tracked<wgpu::TextureView>,
+}
+
+impl ScreenBindGroupInfo {
+    /// Creates a `ScreenBindGroupInfo` from the given [`ResourceManager`].
+    pub fn from_resource_manager(rm: &ResourceManager) -> Self {
+        Self {
+            layout: rm.screen_bind_group_layout.clone(),
+            sampler: rm.screen_sampler.clone(),
+            ssao_dummy_view: rm.ssao_dummy_view.clone(),
+            dummy_transmission_view: rm.dummy_transmission_view.clone(),
+        }
+    }
+
+    /// Build a screen bind group (group 3) using the given texture views.
+    ///
+    /// Returns `(BindGroup, composite_id)` where `composite_id` is a hash
+    /// of the resource IDs for `TrackedRenderPass` state tracking.
+    pub fn build_screen_bind_group(
+        &self,
+        device: &wgpu::Device,
+        cache: &mut crate::renderer::core::binding::GlobalBindGroupCache,
+        transmission_view: &Tracked<wgpu::TextureView>,
+        ssao_view: &Tracked<wgpu::TextureView>,
+    ) -> (wgpu::BindGroup, u64) {
+        use crate::renderer::core::binding::BindGroupKey;
+
+        let layout_id = self.layout.id();
+        let sampler_id = self.sampler.id();
+
+        let key = BindGroupKey::new(layout_id)
+            .with_resource(transmission_view.id())
+            .with_resource(sampler_id)
+            .with_resource(ssao_view.id());
+
+        let bind_group_id = transmission_view
+            .id()
+            .wrapping_mul(6_364_136_223_846_793_005)
+            ^ ssao_view.id().wrapping_mul(1_442_695_040_888_963_407)
+            ^ sampler_id;
+
+        let layout = &*self.layout;
+        let sampler = &*self.sampler;
+        let tv = &**transmission_view;
+        let sv = &**ssao_view;
+
+        let bg = cache
+            .get_or_create(key, || {
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Screen BindGroup (Dynamic)"),
+                    layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(tv),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(sv),
+                        },
+                    ],
+                })
+            })
+            .clone();
+
+        (bg, bind_group_id)
+    }
+}
+
 impl ResourceManager {
     #[must_use]
     #[allow(clippy::too_many_lines)]

@@ -4,6 +4,7 @@
 
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
+use std::cell::Cell;
 
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::renderer::graph::RenderState;
@@ -125,8 +126,30 @@ impl Bindings for Scene {
     }
 }
 
+/// Number of idle frames before a cached bind group is evicted.
+const BIND_GROUP_EVICTION_THRESHOLD: u64 = 10;
+
+/// A cached bind group entry with TTL (Time-To-Live) tracking.
+///
+/// Records the last frame the bind group was accessed so that stale
+/// entries can be garbage-collected when the associated physical
+/// textures are released by the transient pool.
+struct CachedBindGroup {
+    bg: wgpu::BindGroup,
+    last_accessed_frame: Cell<u64>,
+}
+
+/// Global bind group cache with frame-based TTL eviction.
+///
+/// Caches `wgpu::BindGroup` instances keyed by their resource composition.
+/// Each entry tracks the last frame it was accessed; entries idle for more
+/// than [`BIND_GROUP_EVICTION_THRESHOLD`] consecutive frames are evicted
+/// by [`garbage_collect`](Self::garbage_collect), ensuring that VRAM held
+/// by stale bind groups (e.g. after SSAO is disabled or a resize occurs)
+/// is promptly released.
 pub struct GlobalBindGroupCache {
-    cache: FxHashMap<BindGroupKey, wgpu::BindGroup>,
+    cache: FxHashMap<BindGroupKey, CachedBindGroup>,
+    current_frame: u64,
 }
 
 impl Default for GlobalBindGroupCache {
@@ -140,29 +163,89 @@ impl GlobalBindGroupCache {
     pub fn new() -> Self {
         Self {
             cache: FxHashMap::default(),
+            current_frame: 0,
         }
     }
 
+    /// Advances the internal frame counter.
+    ///
+    /// Must be called once per frame **before** any `get` / `insert` /
+    /// `get_or_create` calls so that TTL timestamps are correct.
+    #[inline]
+    pub fn begin_frame(&mut self) {
+        self.current_frame += 1;
+    }
+
+    /// Returns the current frame number.
+    #[inline]
+    pub fn current_frame(&self) -> u64 {
+        self.current_frame
+    }
+
+    /// Looks up a cached bind group, updating its TTL timestamp on hit.
     #[must_use]
     pub fn get(&self, key: &BindGroupKey) -> Option<&wgpu::BindGroup> {
-        self.cache.get(key)
+        if let Some(entry) = self.cache.get(key) {
+            entry.last_accessed_frame.set(self.current_frame);
+            Some(&entry.bg)
+        } else {
+            None
+        }
     }
 
+    /// Inserts a bind group into the cache with the current frame timestamp.
     pub fn insert(&mut self, key: BindGroupKey, bind_group: wgpu::BindGroup) {
-        self.cache.insert(key, bind_group);
+        self.cache.insert(
+            key,
+            CachedBindGroup {
+                bg: bind_group,
+                last_accessed_frame: Cell::new(self.current_frame),
+            },
+        );
     }
 
+    /// Returns an existing entry or creates one via `factory`, updating TTL.
     pub fn get_or_create(
         &mut self,
         key: BindGroupKey,
         factory: impl FnOnce() -> wgpu::BindGroup,
     ) -> &wgpu::BindGroup {
-        self.cache.entry(key).or_insert_with(factory)
+        let frame = self.current_frame;
+        let entry = self.cache.entry(key).or_insert_with(|| CachedBindGroup {
+            bg: factory(),
+            last_accessed_frame: Cell::new(frame),
+        });
+        entry.last_accessed_frame.set(frame);
+        &entry.bg
     }
 
-    /// Called on resize to completely clear the cache
+    /// Forcibly clears all entries.
+    ///
+    /// Call on window resize to drop every bind group that references
+    /// now-stale texture views.
     pub fn clear(&mut self) {
         self.cache.clear();
+    }
+
+    /// Evicts entries that have not been accessed for
+    /// [`BIND_GROUP_EVICTION_THRESHOLD`] frames.
+    ///
+    /// Should be called once at the **end** of each frame, after all
+    /// passes have executed.  This keeps the cache in sync with the
+    /// transient pool's own idle-eviction policy, preventing VRAM leaks
+    /// from orphaned bind groups.
+    pub fn garbage_collect(&mut self) {
+        let threshold = self.current_frame.saturating_sub(BIND_GROUP_EVICTION_THRESHOLD);
+        let before = self.cache.len();
+        self.cache
+            .retain(|_, entry| entry.last_accessed_frame.get() >= threshold);
+        let evicted = before - self.cache.len();
+        if evicted > 0 {
+            log::debug!(
+                "GlobalBindGroupCache: evicted {evicted} stale entries, {} remaining",
+                self.cache.len()
+            );
+        }
     }
 }
 

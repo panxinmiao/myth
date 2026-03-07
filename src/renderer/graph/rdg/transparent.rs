@@ -13,7 +13,7 @@
 //!
 //! Transparent commands are sorted back-to-front for correct alpha blending.
 
-use crate::renderer::core::resources::Tracked;
+use crate::renderer::core::resources::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::rdg::builder::PassBuilder;
@@ -25,15 +25,24 @@ use super::graph::RenderGraph;
 
 // ─── Feature ───────────────────────────────────────────────────────────
 
-pub struct TransparentFeature;
+pub struct TransparentFeature {
+    screen_info: Option<ScreenBindGroupInfo>,
+}
 
 impl TransparentFeature {
     pub fn new() -> Self {
-        Self
+        Self { screen_info: None }
+    }
+
+    /// Cache screen bind group info from ResourceManager.
+    pub fn set_screen_info(&mut self, info: ScreenBindGroupInfo) {
+        self.screen_info = Some(info);
     }
 
     pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
-        let node = TransparentPassNode::new();
+        let node = TransparentPassNode::new(
+            self.screen_info.clone().expect("TransparentFeature: screen_info not set"),
+        );
         rdg.add_pass(Box::new(node));
     }
 }
@@ -55,7 +64,8 @@ pub struct TransparentPassNode {
     // ─── Push Parameters ───────────────────────────────────────────
     pub has_transmission: bool,
     pub ssao_enabled: bool,
-
+    // ─── Screen Bind Group Infrastructure ──────────────────────────
+    screen_info: ScreenBindGroupInfo,
     // ─── Internal Cache ────────────────────────────────────────────
     screen_bind_group: Option<wgpu::BindGroup>,
     screen_bind_group_id: u64,
@@ -63,7 +73,7 @@ pub struct TransparentPassNode {
 
 impl TransparentPassNode {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(screen_info: ScreenBindGroupInfo) -> Self {
         Self {
             scene_color: TextureNodeId(0),
             scene_depth: TextureNodeId(0),
@@ -71,6 +81,7 @@ impl TransparentPassNode {
             ssao_tex: TextureNodeId(0),
             has_transmission: false,
             ssao_enabled: false,
+            screen_info,
             screen_bind_group: None,
             screen_bind_group_id: 0,
         }
@@ -161,16 +172,17 @@ impl PassNode for TransparentPassNode {
         let ssao_view: &Tracked<wgpu::TextureView> = if self.ssao_enabled {
             ctx.views.get_texture_view(self.ssao_tex)
         } else {
-            &ctx.resource_manager.ssao_dummy_view
+            &self.screen_info.ssao_dummy_view
         };
 
         let transmission_view: &Tracked<wgpu::TextureView> = if self.has_transmission {
             ctx.views.get_texture_view(self.transmission_tex)
         } else {
-            &ctx.resource_manager.dummy_transmission_view
+            &self.screen_info.dummy_transmission_view
         };
 
-        let (bg, bg_id) = ctx.resource_manager.build_screen_bind_group(
+        let (bg, bg_id) = self.screen_info.build_screen_bind_group(
+            ctx.device,
             ctx.global_bind_group_cache,
             transmission_view,
             ssao_view,

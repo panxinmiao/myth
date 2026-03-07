@@ -65,7 +65,15 @@ pub struct ToneMapFeature {
     current_pipeline: Option<RenderPipelineId>,
     /// Output texture format — set during `extract_and_prepare()`.
     pub output_format: wgpu::TextureFormat,
-}
+    // ─── Resolved GPU Resources (populated per-frame) ───────────────
+    /// Resolved GPU buffer for `ToneMappingUniforms`.
+    uniforms_gpu_buffer: Option<wgpu::Buffer>,
+    /// Stable resource ID for the uniforms GPU buffer.
+    uniforms_gpu_buffer_id: u64,
+    /// Resolved LUT texture view (if LUT is enabled).
+    lut_texture_view: Option<wgpu::TextureView>,
+    /// Tracked ID of the LUT view (for bind-group cache key).
+    lut_view_id: Option<u64>,}
 
 impl ToneMapFeature {
     /// Creates a new tone mapping feature.
@@ -79,6 +87,11 @@ impl ToneMapFeature {
             local_cache: FxHashMap::default(),
             current_pipeline: None,
             output_format: wgpu::TextureFormat::Bgra8UnormSrgb,
+
+            uniforms_gpu_buffer: None,
+            uniforms_gpu_buffer_id: 0,
+            lut_texture_view: None,
+            lut_view_id: None,
         }
     }
 
@@ -164,7 +177,8 @@ impl ToneMapFeature {
         }
     }
 
-    /// Pre-RDG resource preparation: create layouts, compile pipeline.
+    /// Pre-RDG resource preparation: create layouts, compile pipeline,
+    /// resolve GPU buffer and optional LUT texture view.
     pub fn extract_and_prepare(
         &mut self,
         ctx: &mut ExtractContext,
@@ -172,6 +186,8 @@ impl ToneMapFeature {
         output_format: wgpu::TextureFormat,
         has_lut: bool,
         global_state_key: (u32, u32),
+        uniforms_cpu_id: u64,
+        lut_handle: Option<TextureHandle>,
     ) {
         // ─── 1. Lazy initialization ────────────────────────────────
         self.ensure_layouts(ctx.device);
@@ -185,6 +201,32 @@ impl ToneMapFeature {
                 Some(self.get_or_create_pipeline(ctx, mode, has_lut, global_state_key));
         } else {
             self.current_pipeline = self.local_cache.get(&cache_key).copied();
+        }
+
+        // ─── 3. Resolve GPU resources for the PassNode ─────────────
+        self.uniforms_gpu_buffer = ctx
+            .resource_manager
+            .gpu_buffers
+            .get(&uniforms_cpu_id)
+            .map(|g| {
+                self.uniforms_gpu_buffer_id = g.id;
+                g.buffer.clone()
+            });
+
+        // Resolve LUT texture view if present
+        self.lut_texture_view = None;
+        self.lut_view_id = None;
+        if has_lut {
+            if let Some(handle) = lut_handle {
+                let binding = ctx.resource_manager.get_texture_binding(handle);
+                if let Some(b) = binding {
+                    self.lut_view_id = Some(b.view_id);
+                    let view = ctx
+                        .resource_manager
+                        .get_texture_view(&TextureSource::Asset(handle));
+                    self.lut_texture_view = Some(view.clone());
+                }
+            }
         }
     }
 
@@ -273,8 +315,6 @@ impl ToneMapFeature {
         input_tex: TextureNodeId,
         output_tex: TextureNodeId,
         has_lut: bool,
-        uniforms_cpu_id: u64,
-        lut_handle: Option<TextureHandle>,
     ) {
         let layout = if has_lut {
             self.layout_with_lut.clone().unwrap()
@@ -288,8 +328,13 @@ impl ToneMapFeature {
             pipeline_id: self.current_pipeline.expect("ToneMapFeature not prepared"),
             layout,
             has_lut,
-            uniforms_cpu_id,
-            lut_handle,
+            uniforms_gpu_buffer: self
+                .uniforms_gpu_buffer
+                .clone()
+                .expect("ToneMapFeature: uniforms GPU buffer not resolved"),
+            uniforms_gpu_buffer_id: self.uniforms_gpu_buffer_id,
+            lut_view: self.lut_texture_view.clone(),
+            lut_view_id: self.lut_view_id,
             current_bind_group_key: None,
         };
         rdg.add_pass(Box::new(node));
@@ -308,8 +353,16 @@ struct ToneMapPassNode {
 
     // ─── Push Parameters ───────────────────────────────────────────
     has_lut: bool,
-    uniforms_cpu_id: u64,
-    lut_handle: Option<TextureHandle>,
+
+    // ─── Resolved GPU Resources (from Feature, no ResourceManager needed) ──
+    /// Resolved GPU buffer for `ToneMappingUniforms`.
+    uniforms_gpu_buffer: wgpu::Buffer,
+    /// Stable resource ID for the uniforms GPU buffer.
+    uniforms_gpu_buffer_id: u64,
+    /// Resolved LUT texture view (if LUT is enabled).
+    lut_view: Option<wgpu::TextureView>,
+    /// Tracked ID of the LUT view (for bind-group cache key).
+    lut_view_id: Option<u64>,
 
     // ─── Transient State ───────────────────────────────────────────
     current_bind_group_key: Option<BindGroupKey>,
@@ -331,32 +384,16 @@ impl PassNode for ToneMapPassNode {
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
         let layout = &self.layout;
 
-        // Look up GPU buffer for uniforms
-        let gpu_buffer = ctx
-            .resource_manager
-            .gpu_buffers
-            .get(&self.uniforms_cpu_id)
-            .expect("RDG ToneMap: GPU buffer for ToneMappingUniforms must exist");
-
         let mut key = BindGroupKey::new(layout.id())
             .with_resource(input_view.id())
             .with_resource(sampler.id())
-            .with_resource(gpu_buffer.id);
+            .with_resource(self.uniforms_gpu_buffer_id);
 
         // LUT resources
-        let lut_view_id = if self.has_lut {
-            if let Some(lut_handle) = self.lut_handle {
-                let binding = ctx.resource_manager.get_texture_binding(lut_handle);
-                binding.map(|b| b.view_id)
-            } else {
-                None
+        if self.has_lut {
+            if let Some(lut_id) = self.lut_view_id {
+                key = key.with_resource(lut_id).with_resource(sampler.id());
             }
-        } else {
-            None
-        };
-
-        if let Some(lut_id) = lut_view_id {
-            key = key.with_resource(lut_id).with_resource(sampler.id());
         }
 
         if self.current_bind_group_key.as_ref() != Some(&key) {
@@ -372,16 +409,12 @@ impl PassNode for ToneMapPassNode {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: gpu_buffer.buffer.as_entire_binding(),
+                        resource: self.uniforms_gpu_buffer.as_entire_binding(),
                     },
                 ];
 
-                if let Some(lut_handle) = self.lut_handle {
-                    if self.has_lut {
-                        let lut_view = ctx
-                            .resource_manager
-                            .get_texture_view(&TextureSource::Asset(lut_handle));
-
+                if self.has_lut {
+                    if let Some(lut_view) = &self.lut_view {
                         entries.push(wgpu::BindGroupEntry {
                             binding: 3,
                             resource: wgpu::BindingResource::TextureView(lut_view),

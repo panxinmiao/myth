@@ -231,6 +231,14 @@ impl Renderer {
             rdg_ibl_pass,
         });
 
+        // Propagate screen bind group info to features that need it.
+        if let Some(ref mut state) = self.context {
+            let screen_info = crate::renderer::core::resources::ScreenBindGroupInfo::from_resource_manager(&state.resource_manager);
+            state.rdg_opaque_pass.set_screen_info(screen_info.clone());
+            state.rdg_transparent_pass.set_screen_info(screen_info.clone());
+            state.rdg_simple_forward_pass.set_screen_info(screen_info);
+        }
+
         log::info!("Renderer Initialized");
         Ok(())
     }
@@ -239,6 +247,8 @@ impl Renderer {
         self.size = (width, height);
         if let Some(state) = &mut self.context {
             state.wgpu_ctx.resize(width, height);
+            // Invalidate all cached bind groups — texture views are now stale.
+            state.global_bind_group_cache.clear();
         }
     }
 
@@ -282,6 +292,9 @@ impl Renderer {
         }
 
         let state = self.context.as_mut()?;
+
+        // Advance the bind-group cache's frame counter for TTL tracking.
+        state.global_bind_group_cache.begin_frame();
 
         // ── Phase 1: Extract scene, build shadow views, prepare global ──
         let surface_size = state.wgpu_ctx.size();
@@ -396,13 +409,20 @@ impl Renderer {
                     .extract_and_prepare(&mut extract_ctx, needs_normal, needs_feature_id);
 
                 if ssao_enabled {
-                    state.rdg_ssao_pass.extract_and_prepare(&mut extract_ctx);
+                    state.rdg_ssao_pass.extract_and_prepare(
+                        &mut extract_ctx,
+                        scene.ssao.uniforms.id(),
+                    );
                 }
 
                 state.rdg_sssss_pass.extract_and_prepare(&mut extract_ctx);
 
                 if bloom_enabled {
-                    state.rdg_bloom_pass.extract_and_prepare(&mut extract_ctx);
+                    state.rdg_bloom_pass.extract_and_prepare(
+                        &mut extract_ctx,
+                        scene.bloom.upsample_uniforms.id(),
+                        scene.bloom.composite_uniforms.id(),
+                    );
                 }
 
                 state.rdg_tone_map_pass.extract_and_prepare(
@@ -411,6 +431,8 @@ impl Renderer {
                     view_format,
                     scene.tone_mapping.lut_texture.is_some(),
                     global_state_key,
+                    scene.tone_mapping.uniforms.id(),
+                    scene.tone_mapping.lut_texture,
                 );
 
                 if fxaa_enabled {
@@ -473,6 +495,8 @@ impl Renderer {
     pub fn maybe_prune(&mut self) {
         if let Some(state) = &mut self.context {
             state.render_frame.maybe_prune(&mut state.resource_manager);
+            // Evict stale bind groups that haven't been touched recently.
+            state.global_bind_group_cache.garbage_collect();
         }
     }
 

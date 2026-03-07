@@ -30,6 +30,7 @@ use crate::define_gpu_data_struct;
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
+use crate::renderer::graph::rdg::allocator::SubViewKey;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
@@ -77,6 +78,16 @@ pub struct BloomFeature {
     karis_on_buffer: Option<Tracked<wgpu::Buffer>>,
     /// GPU buffer with `use_karis_average = 0`, written once.
     karis_off_buffer: Option<Tracked<wgpu::Buffer>>,
+
+    // ─── Resolved GPU Buffers (populated per-frame in extract_and_prepare) ──
+    /// Resolved GPU buffer for upsample uniforms.
+    upsample_gpu_buffer: Option<wgpu::Buffer>,
+    /// Stable resource ID for the upsample GPU buffer (for bind-group cache key).
+    upsample_gpu_buffer_id: u64,
+    /// Resolved GPU buffer for composite uniforms.
+    composite_gpu_buffer: Option<wgpu::Buffer>,
+    /// Stable resource ID for the composite GPU buffer (for bind-group cache key).
+    composite_gpu_buffer_id: u64,
 }
 
 impl BloomFeature {
@@ -94,6 +105,11 @@ impl BloomFeature {
 
             karis_on_buffer: None,
             karis_off_buffer: None,
+
+            upsample_gpu_buffer: None,
+            upsample_gpu_buffer_id: 0,
+            composite_gpu_buffer: None,
+            composite_gpu_buffer_id: 0,
         }
     }
 
@@ -104,10 +120,38 @@ impl BloomFeature {
     /// Ensure all persistent GPU resources (layouts, static buffers, pipelines)
     /// are initialised.  Called once per frame by the Composer before the
     /// render graph is constructed.
-    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext) {
+    /// Pre-RDG resource preparation: create layouts, compile pipelines,
+    /// resolve GPU buffers for upsample/composite uniforms.
+    ///
+    /// `upsample_cpu_id` and `composite_cpu_id` are the CpuBuffer IDs
+    /// whose GPU mirrors have already been uploaded via `ensure_buffer()`.
+    pub fn extract_and_prepare(
+        &mut self,
+        ctx: &mut ExtractContext,
+        upsample_cpu_id: u64,
+        composite_cpu_id: u64,
+    ) {
         self.ensure_layouts(ctx.device);
         self.ensure_internal_buffers(ctx.device, ctx.queue);
         self.ensure_pipelines(ctx);
+
+        // Pre-resolve GPU buffers so the PassNode does not need ResourceManager.
+        self.upsample_gpu_buffer = ctx
+            .resource_manager
+            .gpu_buffers
+            .get(&upsample_cpu_id)
+            .map(|g| {
+                self.upsample_gpu_buffer_id = g.id;
+                g.buffer.clone()
+            });
+        self.composite_gpu_buffer = ctx
+            .resource_manager
+            .gpu_buffers
+            .get(&composite_cpu_id)
+            .map(|g| {
+                self.composite_gpu_buffer_id = g.id;
+                g.buffer.clone()
+            });
     }
 
     // =========================================================================
@@ -419,8 +463,6 @@ impl BloomFeature {
         rdg: &mut RenderGraph,
         karis_average: bool,
         max_mip_levels: u32,
-        upsample_uniforms_cpu_id: u64,
-        composite_uniforms_cpu_id: u64,
     ) -> TextureNodeId {
         let node = BloomPassNode {
             input_tex: TextureNodeId(0),
@@ -429,8 +471,17 @@ impl BloomFeature {
 
             karis_average,
             max_mip_levels,
-            upsample_uniforms_cpu_id,
-            composite_uniforms_cpu_id,
+
+            upsample_gpu_buffer: self
+                .upsample_gpu_buffer
+                .clone()
+                .expect("BloomFeature: upsample GPU buffer not resolved"),
+            _upsample_gpu_buffer_id: self.upsample_gpu_buffer_id,
+            composite_gpu_buffer: self
+                .composite_gpu_buffer
+                .clone()
+                .expect("BloomFeature: composite GPU buffer not resolved"),
+            composite_gpu_buffer_id: self.composite_gpu_buffer_id,
 
             downsample_pipeline: self
                 .downsample_pipeline
@@ -464,8 +515,8 @@ impl BloomFeature {
                 .clone()
                 .expect("BloomFeature: karis_off buffer not initialised"),
 
-            mip_views: Vec::new(),
-            cached_size: (0, 0),
+            mip_render_views: Vec::new(),
+            mip_view_ids: Vec::new(),
             downsample_bind_groups: Vec::new(),
             upsample_bind_groups: Vec::new(),
             composite_bind_group: None,
@@ -496,10 +547,16 @@ pub struct BloomPassNode {
     // ─── Push Parameters (from Composer) ───────────────────────────
     karis_average: bool,
     max_mip_levels: u32,
-    /// CPU-side buffer ID for `CpuBuffer<UpsampleUniforms>`.
-    upsample_uniforms_cpu_id: u64,
-    /// CPU-side buffer ID for `CpuBuffer<CompositeUniforms>`.
-    composite_uniforms_cpu_id: u64,
+
+    // ─── Resolved GPU Buffers (from Feature, no ResourceManager needed) ──
+    /// Resolved GPU buffer for upsample uniforms.
+    upsample_gpu_buffer: wgpu::Buffer,
+    /// Stable resource ID for the upsample GPU buffer.
+    _upsample_gpu_buffer_id: u64,
+    /// Resolved GPU buffer for composite uniforms.
+    composite_gpu_buffer: wgpu::Buffer,
+    /// Stable resource ID for the composite GPU buffer.
+    composite_gpu_buffer_id: u64,
 
     // ─── Pipeline IDs (cloned from Feature, non-Option) ────────────
     downsample_pipeline: RenderPipelineId,
@@ -517,11 +574,14 @@ pub struct BloomPassNode {
     /// GPU buffer with `use_karis_average = 0`.
     karis_off_buffer: Tracked<wgpu::Buffer>,
 
-    // ─── Internal Mip Chain (views from RDG-allocated texture) ─────
-    /// Per-mip views into the RDG-allocated bloom texture.
-    mip_views: Vec<Tracked<wgpu::TextureView>>,
-    /// Cached bloom texture size for invalidation detection.
-    cached_size: (u32, u32),
+    // ─── Per-Mip Render Views (populated during prepare) ───────────
+    /// Cloned `TextureView` handles for use as render targets in execute.
+    /// Indexed by mip level.  Populated from the pool's sub-view cache
+    /// via [`RdgViewResolver::get_or_create_sub_view`].
+    mip_render_views: Vec<wgpu::TextureView>,
+    /// Stable Tracked IDs for each mip sub-view (parallel to `mip_render_views`).
+    /// Used to detect changes and construct bind group cache keys.
+    mip_view_ids: Vec<u64>,
 
     // ─── Cached BindGroups ─────────────────────────────────────────
     /// `downsample_bind_groups[i]` binds mip_views[i] → mip_views[i+1].
@@ -538,43 +598,35 @@ pub struct BloomPassNode {
 
 impl BloomPassNode {
     // =========================================================================
-    // Mip Chain Management
+    // Mip Chain Management via RdgViewResolver
     // =========================================================================
 
-    /// Allocate the bloom mip chain texture and rebuild internal bind groups
-    /// when the resolution or input view changes.
-    fn ensure_mip_chain(&mut self, ctx: &mut RdgPrepareContext) {
-        let texture = ctx.views.get_texture(self.bloom_texture);
-        let current_size = (texture.width(), texture.height());
+    /// Populate per-mip render views from the pool's sub-view cache.
+    ///
+    /// Uses [`RdgViewResolver::get_or_create_sub_view`] so that the same
+    /// physical texture always maps to the same `Tracked` ID, giving near
+    /// 100 % bind-group cache hit rate across frames.
+    fn resolve_mip_views(&mut self, ctx: &mut RdgPrepareContext) {
+        let mip_count = ctx.views.get_texture(self.bloom_texture).mip_level_count();
 
-        if self.cached_size != current_size || self.mip_views.is_empty() {
-            self.cached_size = current_size;
+        self.mip_render_views.clear();
+        self.mip_view_ids.clear();
 
-            // Create per-mip views
-            self.mip_views.clear();
-
-            let mip_count = texture.mip_level_count();
-
-            for mip in 0..mip_count {
-                let view = texture.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("RDG Bloom Mip View"),
-                    base_mip_level: mip,
-                    mip_level_count: Some(1),
-                    ..Default::default()
-                });
-                self.mip_views.push(Tracked::new(view));
-            }
-
-            // Force bind group rebuild
-            self.last_input_view_id = 0;
-            self.downsample_bind_groups.clear();
-            self.upsample_bind_groups.clear();
-            self.composite_bind_group = None;
+        for mip in 0..mip_count {
+            let key = SubViewKey {
+                base_mip: mip,
+                mip_count: Some(1),
+                ..Default::default()
+            };
+            // Create-or-reuse in the pool; the returned ID is stable.
+            let tracked = ctx.views.get_or_create_sub_view(self.bloom_texture, key);
+            self.mip_view_ids.push(tracked.id());
+            self.mip_render_views.push((**tracked).clone());
         }
     }
 
-    fn get_first_mip_bind_group(&self, ctx: &mut RdgPrepareContext) -> wgpu::BindGroup {
-        // Select the appropriate static Karis buffer for the first downsample
+    /// Build the first downsample bind group (scene colour → mip 0).
+    fn build_first_downsample_bg(&self, ctx: &mut RdgPrepareContext) -> wgpu::BindGroup {
         let karis_buf = if self.karis_average {
             &self.karis_on_buffer
         } else {
@@ -582,172 +634,112 @@ impl BloomPassNode {
         };
 
         let input_view = ctx.views.get_texture_view(self.input_tex);
-
-        // 1. Prepare Cache Key IDs (GPU buffer IDs from resource manager)
-        let downsample_layout = &self.downsample_layout;
         let input_view_id = input_view.id();
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
 
-        // 2. Build Key
-        let key = BindGroupKey::new(downsample_layout.id())
+        let key = BindGroupKey::new(self.downsample_layout.id())
             .with_resource(input_view_id)
             .with_resource(sampler.id())
             .with_resource(karis_buf.id());
 
-        // 3. Get from cache or create
         if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
-            cached.clone()
-        } else {
-            let new_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Bloom DS BG scene→0"),
-                layout: &downsample_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(input_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: karis_buf.as_entire_binding(),
-                    },
-                ],
-            });
-
-            ctx.global_bind_group_cache.insert(key, new_bg.clone());
-            new_bg
+            return cached.clone();
         }
+
+        let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Bloom DS BG scene→0"),
+            layout: &self.downsample_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(input_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: karis_buf.as_entire_binding(),
+                },
+            ],
+        });
+        ctx.global_bind_group_cache.insert(key, bg.clone());
+        bg
     }
 
-    fn get_composite_bind_group(&self, ctx: &mut RdgPrepareContext) -> wgpu::BindGroup {
+    /// Build the composite bind group (original + bloom mip 0 → output).
+    fn build_composite_bg(&self, ctx: &mut RdgPrepareContext) -> wgpu::BindGroup {
         let input_view = ctx.views.get_texture_view(self.input_tex);
-
-        let bloom_view = &self.mip_views[0];
-
-        // 1. Prepare Cache Key IDs
-        let layout_id = self.composite_layout.id();
         let input_view_id = input_view.id();
-        let bloom_view_id = bloom_view.id();
+        let bloom_view_id = self.mip_view_ids[0];
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
 
-        // 2. Build Key
-        let key = BindGroupKey::new(layout_id)
+        let key = BindGroupKey::new(self.composite_layout.id())
             .with_resource(input_view_id)
             .with_resource(bloom_view_id)
             .with_resource(sampler.id())
-            .with_resource(self.composite_uniforms_cpu_id);
+            .with_resource(self.composite_gpu_buffer_id);
 
-        // 3. Get from cache or create
         if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
-            cached.clone()
-        } else {
-            let composite_gpu = ctx
-                .resource_manager
-                .gpu_buffers
-                .get(&self.composite_uniforms_cpu_id)
-                .expect("Bloom composite GPU buffer must exist");
-
-            let comp_layout = &self.composite_layout;
-
-            let new_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Bloom Composite BG"),
-                layout: comp_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(input_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::TextureView(bloom_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: composite_gpu.buffer.as_entire_binding(),
-                    },
-                ],
-            });
-
-            ctx.global_bind_group_cache.insert(key, new_bg.clone());
-            new_bg
+            return cached.clone();
         }
+
+        let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Bloom Composite BG"),
+            layout: &self.composite_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(input_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::TextureView(&self.mip_render_views[0]),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: self.composite_gpu_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        ctx.global_bind_group_cache.insert(key, bg.clone());
+        bg
     }
 
-    /// Build all internal bind groups. Called every frame since the first
-    /// downsample BG and composite BG depend on the input scene color view,
-    /// which may change due to RDG memory aliasing.
+    /// Build all internal bind groups.
+    ///
+    /// Checks whether the input view or mip-view IDs have changed and
+    /// performs a full or partial rebuild accordingly.
     fn rebuild_bind_groups(&mut self, ctx: &mut RdgPrepareContext) {
         let input_view_id = ctx.views.get_texture_view(self.input_tex).id();
+        let mip_count = self.mip_render_views.len();
 
-        let bloom_texture = ctx.views.get_texture_view(self.bloom_texture).texture();
-        let mip_count = bloom_texture.mip_level_count();
-
-        let ds_layout = &self.downsample_layout;
-        let us_layout = &self.upsample_layout;
-
-        // Check if the input view or mip0 changed
-        let needs_full_rebuild = self.downsample_bind_groups.len() != mip_count as usize
+        let needs_full_rebuild = self.downsample_bind_groups.len() != mip_count
             || self.last_input_view_id != input_view_id;
 
-        // ─── First downsample BG (scene color → mip0) ─────────────
-        // Always rebuild since input_tex may alias to a different physical texture.
-        let first_ds_bg = self.get_first_mip_bind_group(ctx);
+        let first_ds_bg = self.build_first_downsample_bg(ctx);
 
         if needs_full_rebuild {
+            let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
+
+            // ─── Downsample BGs ────────────────────────────────────
             self.downsample_bind_groups.clear();
             self.downsample_bind_groups.push(first_ds_bg);
 
-            let karis_off_buf = &self.karis_off_buffer;
-            let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
-
-            // Remaining downsample BGs: mip[i] → mip[i+1]
-            for i in 0..(mip_count - 1) as usize {
+            for i in 0..(mip_count - 1) {
                 let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("RDG Bloom DS BG mip→mip"),
-                    layout: ds_layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&*self.mip_views[i]),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&**sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: karis_off_buf.as_entire_binding(),
-                        },
-                    ],
-                });
-                self.downsample_bind_groups.push(bg);
-            }
-
-            // Upsample BGs: mip[i+1] → mip[i]
-            let upsample_gpu = ctx
-                .resource_manager
-                .gpu_buffers
-                .get(&self.upsample_uniforms_cpu_id)
-                .expect("RDG Bloom: upsample GPU buffer must exist");
-
-            self.upsample_bind_groups.clear();
-            for i in 0..(mip_count - 1) as usize {
-                let source_mip = i + 1;
-                let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("RDG Bloom US BG mip→mip"),
-                    layout: us_layout,
+                    layout: &self.downsample_layout,
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
                             resource: wgpu::BindingResource::TextureView(
-                                &*self.mip_views[source_mip],
+                                &self.mip_render_views[i],
                             ),
                         },
                         wgpu::BindGroupEntry {
@@ -756,7 +748,34 @@ impl BloomPassNode {
                         },
                         wgpu::BindGroupEntry {
                             binding: 2,
-                            resource: upsample_gpu.buffer.as_entire_binding(),
+                            resource: self.karis_off_buffer.as_entire_binding(),
+                        },
+                    ],
+                });
+                self.downsample_bind_groups.push(bg);
+            }
+
+            // ─── Upsample BGs ─────────────────────────────────────
+            self.upsample_bind_groups.clear();
+            for i in 0..(mip_count - 1) {
+                let source_mip = i + 1;
+                let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("RDG Bloom US BG mip→mip"),
+                    layout: &self.upsample_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(
+                                &self.mip_render_views[source_mip],
+                            ),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&**sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: self.upsample_gpu_buffer.as_entire_binding(),
                         },
                     ],
                 });
@@ -765,14 +784,11 @@ impl BloomPassNode {
 
             self.last_input_view_id = input_view_id;
         } else {
-            // Only rebuild the first DS BG (input may have changed)
             self.downsample_bind_groups[0] = first_ds_bg;
         }
 
         if needs_full_rebuild || self.composite_bind_group.is_none() {
-            // ─── Composite BG (original + bloom mip0 → output) ────────
-            // Always rebuild since input_tex view may alias differently each frame.
-            self.composite_bind_group = Some(self.get_composite_bind_group(ctx));
+            self.composite_bind_group = Some(self.build_composite_bg(ctx));
         }
     }
 }
@@ -823,14 +839,14 @@ impl PassNode for BloomPassNode {
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        // Transient work only: mip-chain views + bind groups that
-        // reference the RDG-allocated bloom texture and scene color input.
-        self.ensure_mip_chain(ctx);
+        // Resolve mip views from the pool's sub-view cache (stable Tracked IDs).
+        self.resolve_mip_views(ctx);
+        // Assemble transient bind groups using resolved views.
         self.rebuild_bind_groups(ctx);
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        if self.mip_views.is_empty() {
+        if self.mip_render_views.is_empty() {
             return;
         }
 
@@ -851,7 +867,7 @@ impl PassNode for BloomPassNode {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("RDG Bloom Downsample"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.mip_views[target_mip as usize],
+                    view: &self.mip_render_views[target_mip as usize],
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
@@ -879,7 +895,7 @@ impl PassNode for BloomPassNode {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("RDG Bloom Upsample"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.mip_views[target_mip as usize],
+                    view: &self.mip_render_views[target_mip as usize],
                     resolve_target: None,
                     ops: wgpu::Operations {
                         load: wgpu::LoadOp::Load,

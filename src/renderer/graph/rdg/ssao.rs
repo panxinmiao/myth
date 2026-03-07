@@ -66,6 +66,12 @@ pub struct SsaoFeature {
 
     // ─── Persistent Resources ──────────────────────────────────────
     noise_texture_view: Option<Tracked<wgpu::TextureView>>,
+
+    // ─── Resolved GPU Buffer (populated per-frame in extract_and_prepare) ──
+    /// Resolved GPU buffer for SSAO uniforms.
+    uniforms_gpu_buffer: Option<wgpu::Buffer>,
+    /// Stable resource ID for the SSAO uniforms GPU buffer.
+    uniforms_gpu_buffer_id: u64,
 }
 
 impl SsaoFeature {
@@ -80,6 +86,9 @@ impl SsaoFeature {
             blur_layout: None,
 
             noise_texture_view: None,
+
+            uniforms_gpu_buffer: None,
+            uniforms_gpu_buffer_id: 0,
         }
     }
 
@@ -351,19 +360,29 @@ impl SsaoFeature {
         }
     }
 
-    /// Pre-RDG resource preparation: create layouts, noise texture, compile pipelines.
-    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext) {
+    /// Pre-RDG resource preparation: create layouts, noise texture, compile pipelines,
+    /// resolve the SSAO uniforms GPU buffer.
+    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext, uniforms_cpu_id: u64) {
         // Persistent GPU resources: layouts, noise texture, pipelines.
         self.ensure_layouts(ctx.device);
         self.ensure_noise_texture(ctx.device, ctx.queue);
         self.ensure_pipelines(ctx);
+
+        // Pre-resolve GPU buffer so the PassNode does not need ResourceManager.
+        self.uniforms_gpu_buffer = ctx
+            .resource_manager
+            .gpu_buffers
+            .get(&uniforms_cpu_id)
+            .map(|g| {
+                self.uniforms_gpu_buffer_id = g.id;
+                g.buffer.clone()
+            });
     }
 
     /// Build the ephemeral pass node and insert it into the graph.
     pub fn add_to_graph(
         &self,
         rdg: &mut RenderGraph,
-        uniforms_cpu_id: u64,
     ) {
         let node = SsaoPassNode {
             depth_tex: TextureNodeId(0),
@@ -371,7 +390,11 @@ impl SsaoFeature {
             output_tex: TextureNodeId(0),
             internal_raw_tex: TextureNodeId(0),
 
-            uniforms_cpu_id,
+            uniforms_gpu_buffer: self
+                .uniforms_gpu_buffer
+                .clone()
+                .expect("SsaoFeature: uniforms GPU buffer not resolved"),
+            uniforms_gpu_buffer_id: self.uniforms_gpu_buffer_id,
 
             raw_pipeline: self.raw_pipeline.expect("SsaoFeature not prepared"),
             blur_pipeline: self.blur_pipeline.expect("SsaoFeature not prepared"),
@@ -403,9 +426,11 @@ struct SsaoPassNode {
     output_tex: TextureNodeId,
     internal_raw_tex: TextureNodeId,
 
-    // ─── Push Parameters (from Composer via add_to_graph) ──────────
-    /// CPU buffer ID for `CpuBuffer<SsaoUniforms>`.
-    uniforms_cpu_id: u64,
+    // ─── Resolved GPU Buffer (from Feature, no ResourceManager needed) ──
+    /// Resolved GPU buffer for `SsaoUniforms`.
+    uniforms_gpu_buffer: wgpu::Buffer,
+    /// Stable resource ID for the SSAO uniforms GPU buffer.
+    uniforms_gpu_buffer_id: u64,
 
     // ─── Cloned from Feature (lightweight IDs / Tracked clones) ────
     raw_pipeline: RenderPipelineId,
@@ -506,13 +531,8 @@ impl SsaoPassNode {
 
         // ─── Raw SSAO Uniforms BindGroup (Group 2) ─────────────────
         {
-            let gpu_buffer = ctx
-                .resource_manager
-                .gpu_buffers
-                .get(&self.uniforms_cpu_id)
-                .expect("RDG SSAO: uniforms GPU buffer must exist");
-
-            let key = BindGroupKey::new(uniforms_layout.id()).with_resource(gpu_buffer.id);
+            let key = BindGroupKey::new(uniforms_layout.id())
+                .with_resource(self.uniforms_gpu_buffer_id);
 
             if self.raw_uniforms_bind_group_key.as_ref() != Some(&key) {
                 if ctx.global_bind_group_cache.get(&key).is_none() {
@@ -521,7 +541,7 @@ impl SsaoPassNode {
                         layout: uniforms_layout,
                         entries: &[wgpu::BindGroupEntry {
                             binding: 0,
-                            resource: gpu_buffer.buffer.as_entire_binding(),
+                            resource: self.uniforms_gpu_buffer.as_entire_binding(),
                         }],
                     });
                     ctx.global_bind_group_cache.insert(key.clone(), bg);

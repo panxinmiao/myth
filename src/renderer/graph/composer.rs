@@ -148,6 +148,21 @@ impl<'a> FrameComposer<'a> {
         }
     }
 
+    /// Returns a reference to the wgpu device.
+    #[inline]
+    pub fn device(&self) -> &wgpu::Device {
+        &self.ctx.wgpu_ctx.device
+    }
+
+    /// Returns a reference to the resource manager.
+    ///
+    /// Useful for user-land passes that need to resolve engine resources
+    /// (e.g. texture handles) before the RDG prepare phase.
+    #[inline]
+    pub fn resource_manager(&self) -> &ResourceManager {
+        self.ctx.resource_manager
+    }
+
     /// Registers a custom pass hook that will be invoked during graph building.
     ///
     /// The closure receives a mutable reference to the [`RenderGraph`] and
@@ -306,7 +321,6 @@ impl<'a> FrameComposer<'a> {
             if ssao_enabled {
                 self.ctx.rdg_ssao_pass.add_to_graph(
                     rdg,
-                    self.ctx.scene.ssao.uniforms.id(),
                 );
             }
 
@@ -354,8 +368,6 @@ impl<'a> FrameComposer<'a> {
                     rdg,
                     self.ctx.scene.bloom.karis_average,
                     self.ctx.scene.bloom.max_mip_levels(),
-                    self.ctx.scene.bloom.upsample_uniforms.id(),
-                    self.ctx.scene.bloom.composite_uniforms.id(),
                 )
             } else {
                 scene_color
@@ -373,8 +385,6 @@ impl<'a> FrameComposer<'a> {
                 tonemap_input,
                 tonemap_output,
                 self.ctx.scene.tone_mapping.lut_texture.is_some(),
-                self.ctx.scene.tone_mapping.uniforms.id(),
-                self.ctx.scene.tone_mapping.lut_texture,
             );
 
             // FXAA — reads LDR_Intermediate, writes Surface_Out
@@ -432,11 +442,8 @@ impl<'a> FrameComposer<'a> {
             },
             device: &self.ctx.wgpu_ctx.device,
             queue: &self.ctx.wgpu_ctx.queue,
-            pipeline_cache: self.ctx.pipeline_cache,
             sampler_registry: self.ctx.sampler_registry,
             global_bind_group_cache: self.ctx.global_bind_group_cache,
-            resource_manager: self.ctx.resource_manager,
-            render_lists: self.ctx.render_lists,
         };
 
         for &pass_idx in &rdg.execution_queue {
