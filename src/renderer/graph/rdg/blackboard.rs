@@ -46,9 +46,10 @@ pub enum HookStage {
 
 /// A builder-time callback that injects passes into the render graph.
 ///
-/// The closure receives a mutable reference to the [`RenderGraph`] and a
-/// read-only [`GraphBlackboard`] so it can register resources and wire
-/// passes using the published slots.
+/// The closure receives mutable references to both the [`RenderGraph`] and
+/// the [`GraphBlackboard`], so it can register resources, wire passes, and
+/// **override** well-known resource slots (e.g. replacing `scene_color`
+/// with a custom post-FX output).
 ///
 /// # Example
 ///
@@ -56,6 +57,9 @@ pub enum HookStage {
 /// renderer.add_custom_pass_hook(HookStage::AfterPostProcess, |rdg, bb| {
 ///     let mut ui = UiPass { target_tex: bb.surface_out, .. };
 ///     rdg.add_pass(&mut ui);
+///     // Override the scene_color slot with the UI output:
+///     // bb.scene_color = ui_out_tex;
 /// });
 /// ```
-pub type CustomPassHook<'a> = Box<dyn FnMut(&mut super::graph::RenderGraph, &GraphBlackboard) + 'a>;
+pub type CustomPassHook<'a> =
+    Box<dyn FnMut(&mut super::graph::RenderGraph, &mut GraphBlackboard) + 'a>;

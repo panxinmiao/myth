@@ -51,21 +51,23 @@ pub struct ExtractContext<'a> {
 /// each pass's [`PassNode::prepare`] receives this context to assemble
 /// `wgpu::BindGroup`s that reference RDG-managed transient textures.
 ///
-/// Heavy infrastructure (`ShaderManager`, `AssetServer`, mutable
-/// `ResourceManager`, `ExtractedScene`, etc.) is deliberately excluded —
-/// all non-transient GPU work must be completed in the earlier
-/// `Feature::extract_and_prepare()` phase.
+/// This context is deliberately kept **pure**: it provides only the GPU
+/// device, transient view resolver, sampler registry, and the global bind
+/// group cache.  All persistent GPU resources (pipelines, material buffers,
+/// geometry buffers) must be resolved during the earlier
+/// `Feature::extract_and_prepare()` phase and carried into the PassNode
+/// as lightweight cloned handles.
 pub struct RdgPrepareContext<'a> {
+    /// Transient resource view resolver.
     pub views: RdgViewResolver<'a>,
+    /// GPU device for creating bind groups and sub-views.
     pub device: &'a wgpu::Device,
+    /// GPU queue for immediate buffer uploads (rare in prepare).
     pub queue: &'a wgpu::Queue,
-    pub pipeline_cache: &'a PipelineCache,
+    /// Shared sampler registry (persistent, immutable during prepare).
     pub sampler_registry: &'a SamplerRegistry,
+    /// Mutable cache for transient bind groups with TTL eviction.
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
-    /// Read-only access for GPU buffer lookups during BindGroup assembly.
-    pub resource_manager: &'a ResourceManager,
-    /// Read-only access to render lists (draw commands, global bind group).
-    pub render_lists: &'a RenderLists,
 }
 
 pub struct RdgViewResolver<'a> {

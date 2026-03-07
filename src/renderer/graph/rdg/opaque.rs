@@ -16,7 +16,7 @@
 //! - `clear_color`: Background clear color
 //! - `needs_specular`: Whether to output a specular MRT attachment
 
-use crate::renderer::core::resources::Tracked;
+use crate::renderer::core::resources::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::rdg::builder::PassBuilder;
@@ -28,11 +28,19 @@ use super::graph::RenderGraph;
 
 // ─── Feature ───────────────────────────────────────────────────────────
 
-pub struct OpaqueFeature;
+pub struct OpaqueFeature {
+    screen_info: Option<ScreenBindGroupInfo>,
+}
 
 impl OpaqueFeature {
     pub fn new() -> Self {
-        Self
+        Self { screen_info: None }
+    }
+
+    /// Cache screen bind group info from ResourceManager.
+    /// Called once (or on resize) before add_to_graph.
+    pub fn set_screen_info(&mut self, info: ScreenBindGroupInfo) {
+        self.screen_info = Some(info);
     }
 
     pub fn add_to_graph(
@@ -42,7 +50,12 @@ impl OpaqueFeature {
         clear_color: wgpu::Color,
         needs_specular: bool,
     ) {
-        let node = OpaquePassNode::new(has_prepass, clear_color, needs_specular);
+        let node = OpaquePassNode::new(
+            has_prepass,
+            clear_color,
+            needs_specular,
+            self.screen_info.clone().expect("OpaqueFeature: screen_info not set"),
+        );
         rdg.add_pass(Box::new(node));
     }
 }
@@ -66,7 +79,8 @@ pub struct OpaquePassNode {
     pub clear_color: wgpu::Color,
     pub needs_specular: bool,
     pub ssao_enabled: bool,
-
+    // ─── Screen Bind Group Infrastructure ──────────────────────────
+    screen_info: ScreenBindGroupInfo,
     // ─── Internal Cache ────────────────────────────────────────────
     screen_bind_group: Option<wgpu::BindGroup>,
     screen_bind_group_id: u64,
@@ -74,7 +88,7 @@ pub struct OpaquePassNode {
 
 impl OpaquePassNode {
     #[must_use]
-    pub fn new(has_prepass: bool, clear_color: wgpu::Color, needs_specular: bool) -> Self {
+    pub fn new(has_prepass: bool, clear_color: wgpu::Color, needs_specular: bool, screen_info: ScreenBindGroupInfo) -> Self {
         Self {
             scene_color: TextureNodeId(0),
             scene_depth: TextureNodeId(0),
@@ -84,6 +98,7 @@ impl OpaquePassNode {
             clear_color,
             needs_specular,
             ssao_enabled: false,
+            screen_info,
             screen_bind_group: None,
             screen_bind_group_id: 0,
         }
@@ -188,20 +203,19 @@ impl PassNode for OpaquePassNode {
         let ssao_view: &Tracked<wgpu::TextureView> = if self.ssao_enabled {
             ctx.views.get_texture_view(self.ssao_tex)
         } else {
-            &ctx.resource_manager.ssao_dummy_view
+            &self.screen_info.ssao_dummy_view
         };
 
-        let transmission_view = &ctx.resource_manager.dummy_transmission_view;
+        let transmission_view = &self.screen_info.dummy_transmission_view;
 
-        let (bg, bg_id) = ctx.resource_manager.build_screen_bind_group(
+        let (bg, bg_id) = self.screen_info.build_screen_bind_group(
+            ctx.device,
             ctx.global_bind_group_cache,
             transmission_view,
             ssao_view,
         );
         self.screen_bind_group = Some(bg);
         self.screen_bind_group_id = bg_id;
-
-        // specular_tex is now an RDG transient resource — no old pool allocation needed.
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {

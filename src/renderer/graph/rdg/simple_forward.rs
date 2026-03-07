@@ -22,6 +22,7 @@
 //!
 //! [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
 
+use crate::renderer::core::resources::ScreenBindGroupInfo;
 use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::rdg::builder::PassBuilder;
@@ -33,15 +34,25 @@ use super::graph::RenderGraph;
 
 // ─── Feature ───────────────────────────────────────────────────────────
 
-pub struct SimpleForwardFeature;
+pub struct SimpleForwardFeature {
+    screen_info: Option<ScreenBindGroupInfo>,
+}
 
 impl SimpleForwardFeature {
     pub fn new() -> Self {
-        Self
+        Self { screen_info: None }
+    }
+
+    /// Cache screen bind group info from ResourceManager.
+    pub fn set_screen_info(&mut self, info: ScreenBindGroupInfo) {
+        self.screen_info = Some(info);
     }
 
     pub fn add_to_graph(&self, rdg: &mut RenderGraph, clear_color: wgpu::Color) {
-        let node = SimpleForwardPassNode::new(clear_color);
+        let node = SimpleForwardPassNode::new(
+            clear_color,
+            self.screen_info.clone().expect("SimpleForwardFeature: screen_info not set"),
+        );
         rdg.add_pass(Box::new(node));
     }
 }
@@ -64,20 +75,23 @@ pub struct SimpleForwardPassNode {
     // ─── Push Parameters ─────────────────────────────────────────────
     pub clear_color: wgpu::Color,
 
-    // ─── Internal Cache ──────────────────────────────────────────────
-    // msaa_view: Option<Tracked<wgpu::TextureView>>,
+    // ─── Screen Bind Group Infrastructure ──────────────────────────
+    screen_info: ScreenBindGroupInfo,
+
+    // ─── Internal Cache ──────────────────────────────────────────
     screen_bind_group: Option<wgpu::BindGroup>,
     screen_bind_group_id: u64,
 }
 
 impl SimpleForwardPassNode {
     #[must_use]
-    pub fn new(clear_color: wgpu::Color) -> Self {
+    pub fn new(clear_color: wgpu::Color, screen_info: ScreenBindGroupInfo) -> Self {
         Self {
             surface_out: TextureNodeId(0),
             scene_depth: TextureNodeId(0),
             clear_color,
             msaa_view: None,
+            screen_info,
             screen_bind_group: None,
             screen_bind_group_id: 0,
         }
@@ -169,10 +183,11 @@ impl PassNode for SimpleForwardPassNode {
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         // Build screen bind group (group 3) with dummy textures (LDR path
         // has no SSAO or transmission).
-        let (bg, bg_id) = ctx.resource_manager.build_screen_bind_group(
+        let (bg, bg_id) = self.screen_info.build_screen_bind_group(
+            ctx.device,
             ctx.global_bind_group_cache,
-            &ctx.resource_manager.dummy_transmission_view,
-            &ctx.resource_manager.ssao_dummy_view,
+            &self.screen_info.dummy_transmission_view.clone(),
+            &self.screen_info.ssao_dummy_view.clone(),
         );
         self.screen_bind_group = Some(bg);
         self.screen_bind_group_id = bg_id;

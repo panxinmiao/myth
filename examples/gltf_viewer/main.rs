@@ -562,6 +562,11 @@ impl AppHandler for GltfViewer {
         use myth::renderer::graph::rdg::blackboard::HookStage;
 
         if self.show_ui {
+            // Resolve pending engine texture registrations before the RDG
+            // prepare phase (which no longer has access to ResourceManager).
+            self.ui_pass
+                .resolve_textures(composer.device(), composer.resource_manager());
+
             let ui_pass = &mut self.ui_pass;
             composer
                 .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {

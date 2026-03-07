@@ -42,11 +42,14 @@ use winit::window::Window;
 
 use myth::{
     assets::TextureHandle,
-    renderer::graph::rdg::{
-        builder::PassBuilder,
-        context::{RdgExecuteContext, RdgPrepareContext},
-        node::PassNode,
-        types::TextureNodeId,
+    renderer::{
+        core::ResourceManager,
+        graph::rdg::{
+            builder::PassBuilder,
+            context::{RdgExecuteContext, RdgPrepareContext},
+            node::PassNode,
+            types::TextureNodeId,
+        },
     },
 };
 
@@ -233,6 +236,43 @@ impl UiPass {
     pub fn wants_pointer_input(&self) -> bool {
         self.egui_ctx.egui_wants_pointer_input()
     }
+
+    /// Resolves pending texture registration requests against the resource
+    /// manager.
+    ///
+    /// Must be called **before** the RDG prepare phase (e.g. in the app's
+    /// `compose_frame`) so that the PassNode's `prepare()` doesn't need
+    /// access to the `ResourceManager`.
+    pub fn resolve_textures(&mut self, device: &wgpu::Device, resource_manager: &ResourceManager) {
+        let pending_requests: Vec<TextureHandle> = self.texture_requests.drain(..).collect();
+        if pending_requests.is_empty() {
+            return;
+        }
+
+        let mut remaining_requests = Vec::new();
+        for handle in pending_requests {
+            let mut registered = false;
+
+            if let Some(binding) = resource_manager.get_texture_binding(handle) {
+                if let Some(gpu_image) = resource_manager.get_image(binding.cpu_image_id) {
+                    let id = self.renderer.register_native_texture(
+                        device,
+                        &gpu_image.default_view,
+                        wgpu::FilterMode::Linear,
+                    );
+                    self.texture_map.insert(handle, id);
+                    self.gpu_resource_ids.insert(handle, gpu_image.id);
+                    registered = true;
+                }
+            }
+
+            if !registered {
+                remaining_requests.push(handle);
+            }
+        }
+
+        self.texture_requests = remaining_requests;
+    }
 }
 
 /// [`PassNode`] implementation for `UiPass`.
@@ -241,13 +281,10 @@ impl UiPass {
 ///
 /// ## Prepare (`&mut self`)
 ///
-/// 1. **Deferred texture registration** — drain pending [`request_texture`](UiPass::request_texture)
-///    requests, look up GPU images via [`ResourceManager`](myth::renderer::core::ResourceManager),
-///    and register them as native egui textures.
-/// 2. **Texture delta application** — upload new/updated egui textures to the GPU.
-/// 3. **Geometry buffer upload** — write tessellated vertex/index data through a temporary
+/// 1. **Texture delta application** — upload new/updated egui textures to the GPU.
+/// 2. **Geometry buffer upload** — write tessellated vertex/index data through a temporary
 ///    command encoder (submitted immediately).
-/// 4. **Stale texture cleanup** — free textures that egui no longer references.
+/// 3. **Stale texture cleanup** — free textures that egui no longer references.
 ///
 /// ## Execute (`&self`)
 ///
@@ -267,37 +304,6 @@ impl PassNode for UiPass {
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        // 1. Process deferred texture registration requests.
-        let pending_requests: Vec<TextureHandle> = self.texture_requests.drain(..).collect();
-
-        if !pending_requests.is_empty() {
-            let mut remaining_requests = Vec::new();
-            let resources = &*ctx.resource_manager;
-
-            for handle in pending_requests {
-                let mut registered = false;
-
-                if let Some(binding) = resources.get_texture_binding(handle) {
-                    if let Some(gpu_image) = resources.get_image(binding.cpu_image_id) {
-                        let id = self.renderer.register_native_texture(
-                            ctx.device,
-                            &gpu_image.default_view,
-                            wgpu::FilterMode::Linear,
-                        );
-                        self.texture_map.insert(handle, id);
-                        self.gpu_resource_ids.insert(handle, gpu_image.id);
-                        registered = true;
-                    }
-                }
-
-                if !registered {
-                    remaining_requests.push(handle);
-                }
-            }
-
-            self.texture_requests = remaining_requests;
-        }
-
         let device = ctx.device;
         let queue = ctx.queue;
 
