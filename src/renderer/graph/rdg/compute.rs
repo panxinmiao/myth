@@ -17,7 +17,8 @@
 use crate::renderer::core::resources::SamplerKey;
 use crate::renderer::core::resources::{BRDF_LUT_SIZE, CubeSourceType};
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext};
+use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::pipeline::{
     ColorTargetKey, ComputePipelineId, ComputePipelineKey, FullscreenPipelineKey, RenderPipelineId,
@@ -29,23 +30,21 @@ use wgpu::TextureViewDimension;
 // BRDF LUT Compute Pass
 // ============================================================================
 
-/// RDG BRDF LUT compute pass.
+/// BRDF LUT compute feature.
 ///
 /// Dispatches a single compute shader that fills a 128×128 `Rgba16Float`
 /// storage texture with pre-integrated BRDF data. The texture is managed
 /// by [`ResourceManager`] and referenced through the global bind group.
 ///
-/// The pass marks itself as a side-effect node so it is never culled, and
-/// has no RDG resource dependencies so it naturally sorts before all scene
-/// rendering passes in the topological order.
-pub struct RdgBrdfLutPass {
+/// Produces an ephemeral [`BrdfLutPassNode`] each frame via [`Self::add_to_graph`].
+pub struct BrdfLutFeature {
     pipeline_id: Option<ComputePipelineId>,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: Option<wgpu::BindGroup>,
     active: bool,
 }
 
-impl RdgBrdfLutPass {
+impl BrdfLutFeature {
     #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -71,7 +70,7 @@ impl RdgBrdfLutPass {
     }
 
     /// Lazily create the compute pipeline via the global [`PipelineCache`].
-    fn ensure_pipeline(&mut self, ctx: &mut PassPrepareContext) {
+    fn ensure_pipeline(&mut self, ctx: &mut ExtractContext) {
         if self.pipeline_id.is_some() {
             return;
         }
@@ -100,16 +99,9 @@ impl RdgBrdfLutPass {
     }
 }
 
-impl PassNode for RdgBrdfLutPass {
-    fn name(&self) -> &'static str {
-        "RDG_BRDF_LUT"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.mark_side_effect();
-    }
-
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
+impl BrdfLutFeature {
+    /// Extract and prepare BRDF LUT compute resources.
+    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext) {
         if !ctx.resource_manager.needs_brdf_compute {
             self.active = false;
             return;
@@ -138,9 +130,33 @@ impl PassNode for RdgBrdfLutPass {
         ctx.resource_manager.needs_brdf_compute = false;
     }
 
-    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
-        // All work done in prepare_resources() — BRDF LUT uses
-        // shader_manager + pipeline_cache + mutable resource_manager.
+    /// Create an ephemeral [`BrdfLutPassNode`] and add it to the render graph.
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
+        let node = BrdfLutPassNode {
+            pipeline_id: self.pipeline_id,
+            bind_group: self.bind_group.clone(),
+            active: self.active,
+        };
+        rdg.add_pass(Box::new(node));
+    }
+}
+
+// ─── BRDF LUT Pass Node ──────────────────────────────────────────────────────
+
+/// Ephemeral per-frame BRDF LUT compute pass node.
+pub struct BrdfLutPassNode {
+    pipeline_id: Option<ComputePipelineId>,
+    bind_group: Option<wgpu::BindGroup>,
+    active: bool,
+}
+
+impl PassNode for BrdfLutPassNode {
+    fn name(&self) -> &'static str {
+        "RDG_BRDF_LUT"
+    }
+
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        builder.mark_side_effect();
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -190,14 +206,16 @@ const IBL_EQUIRECT_SAMPLER_KEY: SamplerKey = SamplerKey {
     border_color: None,
 };
 
-/// RDG IBL (Image-Based Lighting) compute pass.
+/// IBL (Image-Based Lighting) compute feature.
 ///
 /// Performs equirectangular → cube conversion, mipmap generation, and PMREM
 /// pre-filtering for specular environment reflections. Due to the multi-phase
 /// nature of the work (render passes for blit + mipmap, compute for PMREM),
-/// all GPU commands are submitted during the **prepare** phase with a
-/// dedicated command encoder. The execute phase is a no-op.
-pub struct RdgIblComputePass {
+/// all GPU commands are submitted during [`Self::extract_and_prepare`] with a
+/// dedicated command encoder.
+///
+/// Produces an ephemeral [`IblPassNode`] each frame via [`Self::add_to_graph`].
+pub struct IblComputeFeature {
     // PMREM prefilter
     pmrem_pipeline_id: Option<ComputePipelineId>,
     pmrem_layout_source: wgpu::BindGroupLayout,
@@ -212,7 +230,7 @@ pub struct RdgIblComputePass {
     blit_layout: wgpu::BindGroupLayout,
 }
 
-impl RdgIblComputePass {
+impl IblComputeFeature {
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn new(device: &wgpu::Device) -> Self {
@@ -332,7 +350,7 @@ impl RdgIblComputePass {
     }
 
     /// Lazily create all three pipelines via the global [`PipelineCache`].
-    fn ensure_pipelines(&mut self, ctx: &mut PassPrepareContext) {
+    fn ensure_pipelines(&mut self, ctx: &mut ExtractContext) {
         if self.pmrem_pipeline_id.is_some() {
             return;
         }
@@ -493,21 +511,15 @@ impl RdgIblComputePass {
     }
 }
 
-impl PassNode for RdgIblComputePass {
-    fn name(&self) -> &'static str {
-        "RDG_IBL_Compute"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.mark_side_effect();
-    }
-
-    /// All IBL compute work is performed during prepare_resources with a
-    /// dedicated command encoder. The multi-phase nature of the task
-    /// (equirect → cube, mipmap generation via render passes, PMREM compute
-    /// dispatches) requires its own submission boundary.
+impl IblComputeFeature {
+    /// Extract and prepare IBL compute resources.
+    ///
+    /// All IBL compute work is performed here with a dedicated command
+    /// encoder. The multi-phase nature of the task (equirect → cube,
+    /// mipmap generation via render passes, PMREM compute dispatches)
+    /// requires its own submission boundary.
     #[allow(clippy::too_many_lines)]
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
+    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext) {
         let Some(source) = ctx.resource_manager.pending_ibl_source.take() else {
             return;
         };
@@ -787,12 +799,30 @@ impl PassNode for RdgIblComputePass {
         log::info!("RDG IBL PMREM generated. Source type: {source_type:?}");
     }
 
-    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
-        // All IBL work done in prepare_resources() — uses queue, shader_manager,
-        // pipeline_cache, mutable resource_manager and sampler_registry.
+    /// Create an ephemeral [`IblPassNode`] and add it to the render graph.
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
+        rdg.add_pass(Box::new(IblPassNode));
+    }
+}
+
+// ─── IBL Pass Node ────────────────────────────────────────────────────────────
+
+/// Ephemeral per-frame IBL pass node.
+///
+/// All IBL work is completed during [`IblComputeFeature::extract_and_prepare`];
+/// this node is a no-op placeholder so the graph stays consistent.
+pub struct IblPassNode;
+
+impl PassNode for IblPassNode {
+    fn name(&self) -> &'static str {
+        "RDG_IBL_Compute"
+    }
+
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        builder.mark_side_effect();
     }
 
     fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {
-        // All IBL compute work is completed during prepare_resources().
+        // All IBL compute work is completed during extract_and_prepare.
     }
 }

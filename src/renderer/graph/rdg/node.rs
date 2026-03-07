@@ -1,4 +1,4 @@
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::RdgPrepareContext;
 
 use super::builder::PassBuilder;
 use super::context::RdgExecuteContext;
@@ -6,28 +6,22 @@ use super::types::TextureNodeId;
 use smallvec::SmallVec;
 use wgpu::CommandEncoder;
 
-/// A single render or compute pass in the declarative render graph.
+/// An ephemeral per-frame render or compute pass in the declarative render graph.
+///
+/// PassNodes are **data-only packets** created by their corresponding
+/// `Feature` each frame via `Feature::add_to_graph()`.  They carry only
+/// lightweight IDs and transient bind-group slots — all persistent GPU
+/// resources (layouts, pipelines, buffers) live in the Feature.
 ///
 /// # Lifecycle
 ///
-/// 1. **`prepare_resources`** — called by the Composer *before* the graph is
-///    built.  Full GPU infrastructure is available.  Create layouts, compile
-///    pipelines, upload non-transient buffers here.
-/// 2. **`setup`** — declare resource read/write topology for the graph.
-/// 3. **`prepare`** — called *after* graph compilation and transient memory
+/// 1. **`setup`** — declare resource read/write topology for the graph.
+/// 2. **`prepare`** — called *after* graph compilation and transient memory
 ///    allocation.  Only assemble `BindGroup`s that reference RDG-managed
 ///    transient textures.  Context is intentionally minimal.
-/// 4. **`execute`** — record GPU commands into the shared encoder.
-pub trait PassNode {
+/// 3. **`execute`** — record GPU commands into the shared encoder.
+pub trait PassNode: 'static {
     fn name(&self) -> &'static str;
-
-    /// Pre-RDG resource preparation.
-    ///
-    /// Create `BindGroupLayout`s, compile pipelines, upload persistent GPU
-    /// data.  Called once per frame for each active pass, **before** the
-    /// render graph is constructed.
-    #[allow(unused_variables)]
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {}
 
     /// Declare resource dependencies for the graph topology.
     fn setup(&mut self, builder: &mut PassBuilder);
@@ -44,27 +38,35 @@ pub trait PassNode {
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut CommandEncoder);
 }
 
+/// Per-pass metadata stored in the [`RenderGraph`].
+///
+/// Owns the ephemeral [`PassNode`] (via `Box`) for the duration of
+/// the current frame.  The graph drops all records in `begin_frame()`.
 pub struct PassRecord {
     pub name: &'static str,
-    // 直接借用外部的 mut 引用，不使用 Box 产生堆分配
-    pub node: *mut (dyn PassNode + 'static),
+    /// Owned ephemeral pass node — `None` only briefly during `add_pass()`
+    /// between the placeholder push and the node insertion.
+    pub node: Option<Box<dyn PassNode>>,
 
-    // 局部的依赖声明全部在栈上完成 (或随 RenderGraph 驻留)
     pub reads: SmallVec<[TextureNodeId; 8]>,
     pub writes: SmallVec<[TextureNodeId; 4]>,
     pub creates: SmallVec<[TextureNodeId; 4]>,
 
-    // 编译期状态
+    // Compile-time state
     pub physical_dependencies: SmallVec<[usize; 8]>,
     pub has_side_effect: bool,
     pub reference_count: u32,
 }
 
 impl PassRecord {
-    pub fn new(name: &'static str, node: *mut (dyn PassNode + 'static)) -> Self {
+    /// Creates a placeholder record without a node.
+    ///
+    /// Used by `RenderGraph::add_pass` during the two-phase insertion:
+    /// the record is pushed first, then setup is called, then the node is stored.
+    pub fn new_empty(name: &'static str) -> Self {
         Self {
             name,
-            node,
+            node: None,
             reads: SmallVec::new(),
             writes: SmallVec::new(),
             creates: SmallVec::new(),
@@ -74,8 +76,13 @@ impl PassRecord {
         }
     }
 
+    /// Returns a mutable reference to the owned pass node.
+    ///
+    /// # Panics
+    /// Panics if the node has not been inserted yet (should never happen
+    /// outside of the `add_pass` two-phase window).
     #[inline]
-    pub fn get_pass_mut(&self) -> &mut dyn PassNode {
-        unsafe { &mut *self.node }
+    pub fn get_pass_mut(&mut self) -> &mut dyn PassNode {
+        self.node.as_mut().expect("PassRecord node not set").as_mut()
     }
 }

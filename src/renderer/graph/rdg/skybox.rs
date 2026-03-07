@@ -27,7 +27,8 @@ use crate::renderer::core::resources::SamplerKey;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext};
+use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::TextureNodeId;
 use crate::renderer::pipeline::{
@@ -157,11 +158,11 @@ fn create_texture_layout(
 
 // ─── RDG Skybox Pass ──────────────────────────────────────────────────────────
 
-/// RDG Skybox / Background render pass.
+/// Skybox / Background rendering feature.
 ///
-/// Renders the scene background using the global bind group (group 0) for
-/// camera data and its own bind group (group 1) for skybox-specific params.
-pub struct RdgSkyboxPass {
+/// Owns persistent GPU state (layouts, pipeline cache, bind groups) and
+/// produces an ephemeral [`SkyboxPassNode`] each frame via [`Self::add_to_graph`].
+pub struct SkyboxFeature {
     // ─── RDG Resource Slots ────────────────────────────────────────
     pub scene_color: TextureNodeId,
     pub scene_depth: TextureNodeId,
@@ -194,7 +195,7 @@ pub struct RdgSkyboxPass {
     current_pipeline: Option<RenderPipelineId>,
 }
 
-impl RdgSkyboxPass {
+impl SkyboxFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -245,7 +246,7 @@ impl RdgSkyboxPass {
 
     fn get_or_create_pipeline(
         &mut self,
-        ctx: &mut PassPrepareContext,
+        ctx: &mut ExtractContext,
         key: SkyboxPipelineKey,
     ) -> RenderPipelineId {
         if let Some(&pipeline_id) = self.local_cache.get(&key) {
@@ -344,14 +345,28 @@ impl RdgSkyboxPass {
             TextureSource::Attachment(id, _) => resource_manager.internal_resources.get(id),
         }
     }
-}
 
-impl PassNode for RdgSkyboxPass {
-    fn name(&self) -> &'static str {
-        "RDG_Skybox_Pass"
-    }
+    /// Extract scene data and prepare GPU resources for skybox rendering.
+    ///
+    /// Called **before** the render graph is built. Caches bind groups and
+    /// pipelines so the ephemeral [`SkyboxPassNode`] only carries lightweight IDs.
+    pub fn extract_and_prepare(
+        &mut self,
+        ctx: &mut ExtractContext,
+        background_mode: BackgroundMode,
+        bg_uniforms_cpu_id: u64,
+        bg_uniforms_gpu_id: u64,
+        scene_id: u32,
+        color_format: wgpu::TextureFormat,
+        depth_format: wgpu::TextureFormat,
+    ) {
+        self.background_mode = background_mode;
+        self.bg_uniforms_cpu_id = bg_uniforms_cpu_id;
+        self.bg_uniforms_gpu_id = bg_uniforms_gpu_id;
+        self.scene_id = scene_id;
+        self.color_format = color_format;
+        self.depth_format = depth_format;
 
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
         self.ensure_layouts(ctx.device);
 
         let Some(variant) = SkyboxVariant::from_background(&self.background_mode) else {
@@ -480,20 +495,46 @@ impl PassNode for RdgSkyboxPass {
         }
     }
 
+    /// Create an ephemeral [`SkyboxPassNode`] and add it to the render graph.
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        scene_color: TextureNodeId,
+        scene_depth: TextureNodeId,
+    ) {
+        let node = SkyboxPassNode {
+            scene_color,
+            scene_depth,
+            pipeline_id: self.current_pipeline,
+            bind_group: self.current_bind_group.clone(),
+        };
+        rdg.add_pass(Box::new(node));
+    }
+}
+
+// ─── Skybox Pass Node ─────────────────────────────────────────────────────────
+
+/// Ephemeral per-frame skybox render pass node.
+pub struct SkyboxPassNode {
+    scene_color: TextureNodeId,
+    scene_depth: TextureNodeId,
+    pipeline_id: Option<RenderPipelineId>,
+    bind_group: Option<wgpu::BindGroup>,
+}
+
+impl PassNode for SkyboxPassNode {
+    fn name(&self) -> &'static str {
+        "RDG_Skybox_Pass"
+    }
+
     fn setup(&mut self, builder: &mut PassBuilder) {
         builder.write_texture(self.scene_color);
         builder.read_texture(self.scene_depth);
     }
 
-    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
-        // All work is done in `prepare_resources()` since the skybox bind
-        // group references only persistent resources (uniform buffer +
-        // asset textures), not transient RDG allocations.
-    }
-
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let (Some(pipeline_id), Some(bind_group)) =
-            (self.current_pipeline, &self.current_bind_group)
+            (self.pipeline_id, &self.bind_group)
         else {
             return;
         };

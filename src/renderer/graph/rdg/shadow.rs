@@ -32,14 +32,15 @@ use glam::Mat4;
 use crate::renderer::core::view::ViewTarget;
 use crate::renderer::graph::frame::ShadowLightInstance;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext};
+use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 
-/// RDG Shadow Render Pass.
+/// Shadow rendering feature.
 ///
-/// Manages a dynamic uniform buffer for per-layer VP matrices and issues
-/// one depth-only render pass per shadow view.
-pub struct RdgShadowPass {
+/// Manages a dynamic uniform buffer for per-layer VP matrices.
+/// Produces an ephemeral [`ShadowPassNode`] each frame via [`Self::add_to_graph`].
+pub struct ShadowFeature {
     /// Per-light VP matrix buffer (dynamic uniform, stride-aligned).
     uniform_buffer: wgpu::Buffer,
     /// Current buffer capacity in layers.
@@ -54,7 +55,7 @@ pub struct RdgShadowPass {
     shadow_lights: Vec<ShadowLightInstance>,
 }
 
-impl RdgShadowPass {
+impl ShadowFeature {
     #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
         let min_alignment = device.limits().min_uniform_buffer_offset_alignment.max(1);
@@ -143,19 +144,11 @@ impl RdgShadowPass {
     }
 }
 
-impl PassNode for RdgShadowPass {
-    fn name(&self) -> &'static str {
-        "RDG_Shadow_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        // Shadow maps are external resources managed by ResourceManager.
-        // Mark as side-effect so the pass is never culled.
-        builder.mark_side_effect();
-    }
-
-    /// Upload per-layer VP matrices and build the shadow light instance list.
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
+impl ShadowFeature {
+    /// Extract shadow light data and prepare GPU resources.
+    ///
+    /// Uploads per-layer VP matrices and builds the shadow light instance list.
+    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext) {
         self.shadow_lights.clear();
 
         let total_layers = ctx
@@ -201,9 +194,33 @@ impl PassNode for RdgShadowPass {
             .write_buffer(&self.uniform_buffer, 0, &uniform_data);
     }
 
-    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
-        // All work done in prepare_resources() — shadow pass uses queue for
-        // VP upload which is not available in the slim RDG prepare context.
+    /// Create an ephemeral [`ShadowPassNode`] and add it to the render graph.
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
+        let node = ShadowPassNode {
+            bind_group: self.bind_group.clone(),
+            shadow_lights: self.shadow_lights.clone(),
+            uniform_stride: self.uniform_stride,
+        };
+        rdg.add_pass(Box::new(node));
+    }
+}
+
+// ─── Shadow Pass Node ─────────────────────────────────────────────────────────
+
+/// Ephemeral per-frame shadow render pass node.
+pub struct ShadowPassNode {
+    bind_group: wgpu::BindGroup,
+    shadow_lights: Vec<ShadowLightInstance>,
+    uniform_stride: u32,
+}
+
+impl PassNode for ShadowPassNode {
+    fn name(&self) -> &'static str {
+        "RDG_Shadow_Pass"
+    }
+
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        builder.mark_side_effect();
     }
 
     /// Render shadow depth maps — one render pass per shadow layer.

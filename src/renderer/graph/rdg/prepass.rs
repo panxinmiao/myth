@@ -1,25 +1,24 @@
-//! RDG Depth-Normal Pre Pass
+//! Prepass Feature + Ephemeral PassNode
 //!
-//! Writes depth and optional view-space normals before the main opaque pass.
-//! Enables Z-Prepass optimisation (zero overdraw) and provides a mini G-Buffer
-//! for SSAO and other screen-space effects.
+//! - **`PrepassFeature`** (long-lived): owns the pipeline cache.
+//!   `extract_and_prepare()` compiles prepass pipelines for the current
+//!   opaque draw list.
+//! - **`PrepassPassNode`** (ephemeral per-frame): carries cloned pipeline
+//!   cache and lightweight resource IDs.  Created by
+//!   `PrepassFeature::add_to_graph()`.
 //!
 //! # RDG Slots
 //!
 //! - `scene_depth`: Scene depth buffer (write via blackboard)
 //! - `scene_normals`: Optional normal buffer (created via `create_and_export`)
 //! - `feature_id`: Optional feature-ID buffer (created via `create_and_export`)
-//!
-//! # Push Parameters
-//!
-//! - `needs_normal`: Whether to create and output view-space normals (for SSAO)
-//! - `needs_feature_id`: Whether to create and output feature IDs (for SSS/SSR)
 
 use rustc_hash::FxHashMap;
 
 use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext};
+use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
@@ -35,42 +34,51 @@ const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 /// Feature ID texture format — Rg8Uint.
 const FEATURE_ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Uint;
 
-/// RDG Depth-Normal Pre Pass.
-///
-/// Writes scene depth (reverse-Z, Clear(0.0)) and optional normals to RDG
-/// transient textures. Subsequent passes (Opaque, SSAO) read the depth via
-/// `LoadOp::Load`.
-pub struct RdgPrepass {
-    // ─── RDG Resource Slots (set by Composer) ──────────────────────
-    pub scene_depth: TextureNodeId,
-    pub scene_normals: TextureNodeId,
-    pub feature_id: TextureNodeId,
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Feature (long-lived, stored in RenderFeatures)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    // ─── Push Parameters ───────────────────────────────────────────
-    pub needs_normal: bool,
-    pub needs_feature_id: bool,
+/// Long-lived prepass feature.
+///
+/// Compiles depth/normal prepass pipelines during `extract_and_prepare()` and
+/// stores them in `local_cache`.  The ephemeral [`PrepassPassNode`] receives
+/// a clone of the cache via [`add_to_graph()`](Self::add_to_graph).
+pub struct PrepassFeature {
+    // ─── Push Parameters (set before extract_and_prepare) ──────────
+    needs_normal: bool,
+    needs_feature_id: bool,
 
     // ─── Internal Cache ────────────────────────────────────────────
     /// Pipeline cache: (main_pipeline_id, needs_normal, needs_feature_id) → prepass pipeline.
     local_cache: FxHashMap<(RenderPipelineId, bool, bool), RenderPipelineId>,
 }
 
-impl RdgPrepass {
+impl PrepassFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            scene_depth: TextureNodeId(0),
-            scene_normals: TextureNodeId(0),
-            feature_id: TextureNodeId(0),
             needs_normal: false,
             needs_feature_id: false,
             local_cache: FxHashMap::default(),
         }
     }
 
+    /// Pre-RDG resource preparation: compile prepass pipelines for every
+    /// unique `pipeline_id` in the opaque command list.
+    pub fn extract_and_prepare(
+        &mut self,
+        ctx: &mut ExtractContext,
+        needs_normal: bool,
+        needs_feature_id: bool,
+    ) {
+        self.needs_normal = needs_normal;
+        self.needs_feature_id = needs_feature_id;
+        self.prepare_pipelines(ctx);
+    }
+
     /// Build prepass pipelines for every unique `pipeline_id` in the opaque
     /// command list.
-    fn prepare_pipelines(&mut self, ctx: &mut PassPrepareContext) {
+    fn prepare_pipelines(&mut self, ctx: &mut ExtractContext) {
         let render_state_id = ctx.render_state.id;
         let scene_id = ctx.extracted_scene.scene_id;
 
@@ -263,9 +271,50 @@ impl RdgPrepass {
             );
         }
     }
+
+    /// Build the ephemeral pass node and insert it into the graph.
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        needs_normal: bool,
+        needs_feature_id: bool,
+    ) {
+        let node = PrepassPassNode {
+            scene_depth: TextureNodeId(0),
+            scene_normals: TextureNodeId(0),
+            feature_id: TextureNodeId(0),
+            needs_normal,
+            needs_feature_id,
+            local_cache: self.local_cache.clone(),
+        };
+        rdg.add_pass(Box::new(node));
+    }
 }
 
-impl PassNode for RdgPrepass {
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PassNode (ephemeral per-frame)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Ephemeral per-frame prepass node.
+///
+/// Carries a cloned pipeline cache from [`PrepassFeature`] and lightweight
+/// RDG resource IDs.  Dropped at the end of each frame by the render graph.
+pub struct PrepassPassNode {
+    // ─── RDG Resource Slots (filled in setup) ──────────────────────
+    scene_depth: TextureNodeId,
+    scene_normals: TextureNodeId,
+    feature_id: TextureNodeId,
+
+    // ─── Push Parameters ───────────────────────────────────────────
+    needs_normal: bool,
+    needs_feature_id: bool,
+
+    // ─── Cloned Pipeline Cache ─────────────────────────────────────
+    /// Pipeline cache: (main_pipeline_id, needs_normal, needs_feature_id) → prepass pipeline.
+    local_cache: FxHashMap<(RenderPipelineId, bool, bool), RenderPipelineId>,
+}
+
+impl PassNode for PrepassPassNode {
     fn name(&self) -> &'static str {
         "RDG_Prepass"
     }
@@ -275,9 +324,6 @@ impl PassNode for RdgPrepass {
         self.scene_depth = builder.write_blackboard("Scene_Depth");
 
         // Producer: conditionally create normals and feature-ID textures.
-        // The Composer sets `needs_normal` / `needs_feature_id` push params
-        // before `add_pass`, so downstream passes discover them via
-        // `find_resource` / `try_read_blackboard`.
         let (w, h) = builder.global_resolution();
 
         if self.needs_normal {
@@ -299,15 +345,6 @@ impl PassNode for RdgPrepass {
             );
             self.feature_id = builder.create_texture("Feature_ID", desc);
         }
-    }
-
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
-        self.prepare_pipelines(ctx);
-    }
-
-    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
-        // All pipeline work is done in `prepare_resources()`; no transient
-        // bind groups are needed for the prepass.
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {

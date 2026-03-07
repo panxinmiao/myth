@@ -85,27 +85,27 @@ pub struct ComposerContext<'a> {
     pub rdg_pool: &'a mut crate::renderer::graph::rdg::allocator::RdgTransientPool,
     pub sampler_registry: &'a mut crate::renderer::core::resources::SamplerRegistry,
 
-    // ─── RDG Passes ─────────────────────────────────────────────────────
+    // ─── RDG Features ────────────────────────────────────────────────────
     // Post-processing
-    pub rdg_fxaa_pass: &'a mut crate::renderer::graph::rdg::fxaa::RdgFxaaPass,
-    pub rdg_tone_map_pass: &'a mut crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass,
-    pub rdg_bloom_pass: &'a mut crate::renderer::graph::rdg::bloom::RdgBloomPass,
-    pub rdg_ssao_pass: &'a mut crate::renderer::graph::rdg::ssao::RdgSsaoPass,
+    pub rdg_fxaa_pass: &'a mut crate::renderer::graph::rdg::fxaa::FxaaFeature,
+    pub rdg_tone_map_pass: &'a mut crate::renderer::graph::rdg::tone_mapping::ToneMapFeature,
+    pub rdg_bloom_pass: &'a mut crate::renderer::graph::rdg::bloom::BloomFeature,
+    pub rdg_ssao_pass: &'a mut crate::renderer::graph::rdg::ssao::SsaoFeature,
     // Scene rendering
-    pub rdg_prepass: &'a mut crate::renderer::graph::rdg::prepass::RdgPrepass,
-    pub rdg_opaque_pass: &'a mut crate::renderer::graph::rdg::opaque::RdgOpaquePass,
-    pub rdg_skybox_pass: &'a mut crate::renderer::graph::rdg::skybox::RdgSkyboxPass,
-    pub rdg_transparent_pass: &'a mut crate::renderer::graph::rdg::transparent::RdgTransparentPass,
+    pub rdg_prepass: &'a mut crate::renderer::graph::rdg::prepass::PrepassFeature,
+    pub rdg_opaque_pass: &'a mut crate::renderer::graph::rdg::opaque::OpaqueFeature,
+    pub rdg_skybox_pass: &'a mut crate::renderer::graph::rdg::skybox::SkyboxFeature,
+    pub rdg_transparent_pass: &'a mut crate::renderer::graph::rdg::transparent::TransparentFeature,
     pub rdg_transmission_copy_pass:
-        &'a mut crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass,
+        &'a mut crate::renderer::graph::rdg::transmission_copy::TransmissionCopyFeature,
     pub rdg_simple_forward_pass:
-        &'a mut crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass,
-    pub rdg_sssss_pass: &'a mut crate::renderer::graph::rdg::sssss::RdgSssssPass,
+        &'a mut crate::renderer::graph::rdg::simple_forward::SimpleForwardFeature,
+    pub rdg_sssss_pass: &'a mut crate::renderer::graph::rdg::sssss::SssssFeature,
 
-    // Shadow + Compute (migrated from old system)
-    pub rdg_shadow_pass: &'a mut crate::renderer::graph::rdg::shadow::RdgShadowPass,
-    pub rdg_brdf_pass: &'a mut crate::renderer::graph::rdg::compute::RdgBrdfLutPass,
-    pub rdg_ibl_pass: &'a mut crate::renderer::graph::rdg::compute::RdgIblComputePass,
+    // Shadow + Compute
+    pub rdg_shadow_pass: &'a mut crate::renderer::graph::rdg::shadow::ShadowFeature,
+    pub rdg_brdf_pass: &'a mut crate::renderer::graph::rdg::compute::BrdfLutFeature,
+    pub rdg_ibl_pass: &'a mut crate::renderer::graph::rdg::compute::IblComputeFeature,
 }
 
 /// Frame Composer
@@ -279,11 +279,11 @@ impl<'a> FrameComposer<'a> {
 
         // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
 
-        rdg.add_pass(self.ctx.rdg_brdf_pass);
-        rdg.add_pass(self.ctx.rdg_ibl_pass);
-        rdg.add_pass(self.ctx.rdg_shadow_pass);
+        self.ctx.rdg_brdf_pass.add_to_graph(rdg);
+        self.ctx.rdg_ibl_pass.add_to_graph(rdg);
+        self.ctx.rdg_shadow_pass.add_to_graph(rdg);
 
-        // ── 2e. Wire Scene Rendering Passes ────────────────────────────
+        // ── 2d. Wire Scene Rendering Passes ────────────────────────────
 
         // Build blackboard for hooks
         let blackboard = GraphBlackboard {
@@ -292,72 +292,52 @@ impl<'a> FrameComposer<'a> {
             surface_out,
         };
 
-        // Pre-compute skybox push parameters (shared by both pipeline paths).
-        let bg_uniforms_gpu_id = self
-            .ctx
-            .resource_manager
-            .ensure_buffer_id(&self.ctx.scene.background.uniforms);
-        let bg_uniforms_cpu_id = self.ctx.scene.background.uniforms.id();
-        let bg_mode = self.ctx.scene.background.mode.clone();
-        let scene_id_val = self.ctx.scene.id();
-
         if is_high_fidelity {
             // HighFidelity pipeline: separate passes for opaque, skybox,
             // transparent with HDR targets and post-processing chain.
 
             // Prepass — creates Scene_Depth (write), Scene_Normals, Feature_ID
-            // (conditionally via push params).
-            self.ctx.rdg_prepass.needs_normal = needs_normal;
-            self.ctx.rdg_prepass.needs_feature_id = needs_feature_id;
-            rdg.add_pass(self.ctx.rdg_prepass);
+            self.ctx
+                .rdg_prepass
+                .add_to_graph(rdg, needs_normal, needs_feature_id);
 
             // SSAO
             if ssao_enabled {
-                let ssao_pass = self.ctx.rdg_ssao_pass;
-                let ssao_uniforms = &self.ctx.scene.ssao.uniforms;
-                self.ctx.resource_manager.ensure_buffer(ssao_uniforms);
-                ssao_pass.uniforms_cpu_id = ssao_uniforms.id();
-                ssao_pass.global_state_key = (self.ctx.render_state.id, scene_id_val);
-                rdg.add_pass(ssao_pass);
+                self.ctx.rdg_ssao_pass.add_to_graph(
+                    rdg,
+                    self.ctx.scene.ssao.uniforms.id(),
+                );
             }
 
-            // Opaque — writes Scene_Color_HDR, Scene_Depth; reads SSAO;
-            // conditionally creates Specular_MRT.
-            self.ctx.rdg_opaque_pass.has_prepass = true;
-            self.ctx.rdg_opaque_pass.needs_specular = needs_specular;
-            self.ctx.rdg_opaque_pass.clear_color =
-                self.ctx.extracted_scene.background.clear_color();
-            rdg.add_pass(self.ctx.rdg_opaque_pass);
+            // Opaque — writes Scene_Color_HDR, Scene_Depth; reads SSAO
+            self.ctx.rdg_opaque_pass.add_to_graph(
+                rdg,
+                true, // has_prepass in HighFidelity
+                self.ctx.extracted_scene.background.clear_color(),
+                needs_specular,
+            );
 
-            // SSSSS — creates SSSSS_Temp; reads Scene_Color_HDR, depth,
-            // normals, Feature_ID, Specular_MRT.
+            // SSSSS — screen-space subsurface scattering
             if needs_specular {
-                self.ctx.rdg_sssss_pass.enabled = true;
-                rdg.add_pass(self.ctx.rdg_sssss_pass);
+                self.ctx.rdg_sssss_pass.add_to_graph(rdg);
             }
 
             // Skybox (conditional)
             if needs_skybox {
-                let skybox = self.ctx.rdg_skybox_pass;
-                skybox.scene_color = scene_color;
-                skybox.scene_depth = scene_depth;
-                skybox.background_mode = bg_mode.clone();
-                skybox.bg_uniforms_cpu_id = bg_uniforms_cpu_id;
-                skybox.bg_uniforms_gpu_id = bg_uniforms_gpu_id;
-                skybox.scene_id = scene_id_val;
-                skybox.color_format = HDR_TEXTURE_FORMAT;
-                skybox.depth_format = self.ctx.wgpu_ctx.depth_format;
-                rdg.add_pass(skybox);
+                self.ctx
+                    .rdg_skybox_pass
+                    .add_to_graph(rdg, scene_color, scene_depth);
             }
 
-            // Transmission Copy — creates Transmission_Tex; reads Scene_Color_HDR
+            // Transmission Copy — creates Transmission_Tex
             if has_transmission {
-                self.ctx.rdg_transmission_copy_pass.active = true;
-                rdg.add_pass(self.ctx.rdg_transmission_copy_pass);
+                self.ctx
+                    .rdg_transmission_copy_pass
+                    .add_to_graph(rdg, true);
             }
 
             // Transparent — reads color, depth, transmission, ssao via blackboard
-            rdg.add_pass(self.ctx.rdg_transparent_pass);
+            self.ctx.rdg_transparent_pass.add_to_graph(rdg);
 
             // ── Before-Post-Process Hooks ──────────────────────────────
             for (stage, hook) in &mut self.hooks {
@@ -369,22 +349,13 @@ impl<'a> FrameComposer<'a> {
             // ── Post-Processing Chain ──────────────────────────────────
 
             let tonemap_input = if bloom_enabled {
-                // Bloom creates Bloom_Out and Bloom_MipChain in its setup().
-                let bloom_pass = self.ctx.rdg_bloom_pass;
-                bloom_pass.karis_average = self.ctx.scene.bloom.karis_average;
-                bloom_pass.max_mip_levels = self.ctx.scene.bloom.max_mip_levels();
-                self.ctx
-                    .resource_manager
-                    .ensure_buffer(&self.ctx.scene.bloom.upsample_uniforms);
-                self.ctx
-                    .resource_manager
-                    .ensure_buffer(&self.ctx.scene.bloom.composite_uniforms);
-                bloom_pass.upsample_uniforms_cpu_id = self.ctx.scene.bloom.upsample_uniforms.id();
-                bloom_pass.composite_uniforms_cpu_id = self.ctx.scene.bloom.composite_uniforms.id();
-                rdg.add_pass(bloom_pass);
-
-                rdg.find_resource("Bloom_Out")
-                    .expect("Bloom pass must register Bloom_Out")
+                self.ctx.rdg_bloom_pass.add_to_graph(
+                    rdg,
+                    self.ctx.scene.bloom.karis_average,
+                    self.ctx.scene.bloom.max_mip_levels(),
+                    self.ctx.scene.bloom.upsample_uniforms.id(),
+                    self.ctx.scene.bloom.composite_uniforms.id(),
+                )
             } else {
                 scene_color
             };
@@ -395,61 +366,37 @@ impl<'a> FrameComposer<'a> {
                 surface_out
             };
 
-            // ToneMap — NOT self-wired: input/output depend on pipeline topology
-            {
-                let tone_map = self.ctx.rdg_tone_map_pass;
-                tone_map.input_tex = tonemap_input;
-                tone_map.output_tex = tonemap_output;
-                tone_map.mode = self.ctx.scene.tone_mapping.mode;
-                let cpu_buffer = &self.ctx.scene.tone_mapping.uniforms;
-                self.ctx.resource_manager.ensure_buffer(cpu_buffer);
-                tone_map.uniforms_cpu_id = cpu_buffer.id();
-                if let Some(lut_handle) = self.ctx.scene.tone_mapping.lut_texture {
-                    self.ctx
-                        .resource_manager
-                        .prepare_texture(self.ctx.assets, lut_handle);
-                    tone_map.has_lut = true;
-                    tone_map.lut_handle = Some(lut_handle);
-                } else {
-                    tone_map.has_lut = false;
-                    tone_map.lut_handle = None;
-                }
-                tone_map.global_state_key = (self.ctx.render_state.id, scene_id_val);
-                tone_map.output_format = view_format;
-                rdg.add_pass(tone_map);
-            }
+            // ToneMap
+            self.ctx.rdg_tone_map_pass.add_to_graph(
+                rdg,
+                tonemap_input,
+                tonemap_output,
+                self.ctx.scene.tone_mapping.lut_texture.is_some(),
+                self.ctx.scene.tone_mapping.uniforms.id(),
+                self.ctx.scene.tone_mapping.lut_texture,
+            );
 
-            // FXAA — reads LDR_Intermediate, writes Surface_Out via blackboard
+            // FXAA — reads LDR_Intermediate, writes Surface_Out
             if fxaa_enabled {
-                self.ctx.rdg_fxaa_pass.output_format = view_format;
-                rdg.add_pass(self.ctx.rdg_fxaa_pass);
+                self.ctx
+                    .rdg_fxaa_pass
+                    .add_to_graph(rdg, tonemap_output, surface_out);
             }
         } else {
             // BasicForward pipeline: single-pass LDR rendering.
 
-            // Skybox prepare is still needed (stores PreparedSkyboxDraw for
-            // inline rendering inside SimpleForwardPass). The skybox pass is
-            // wired into the graph as a side-effect node so its prepare()
-            // runs, but execute() is a no-op since SimpleForwardPass draws
-            // the skybox inline.
+            // Skybox prepare (inline rendering in SimpleForward)
             if needs_skybox {
-                let skybox = self.ctx.rdg_skybox_pass;
-                skybox.scene_color = surface_out;
-                skybox.scene_depth = scene_depth;
-                skybox.background_mode = bg_mode.clone();
-                skybox.bg_uniforms_cpu_id = bg_uniforms_cpu_id;
-                skybox.bg_uniforms_gpu_id = bg_uniforms_gpu_id;
-                skybox.scene_id = scene_id_val;
-                skybox.color_format = view_format;
-                skybox.depth_format = self.ctx.wgpu_ctx.depth_format;
-                rdg.add_pass(skybox);
+                self.ctx
+                    .rdg_skybox_pass
+                    .add_to_graph(rdg, surface_out, scene_depth);
             }
 
-            // SimpleForward — creates Scene_Msaa if MSAA > 1; writes
-            // Surface_Out, Scene_Depth.
-            self.ctx.rdg_simple_forward_pass.clear_color =
-                self.ctx.extracted_scene.background.clear_color();
-            rdg.add_pass(self.ctx.rdg_simple_forward_pass);
+            // SimpleForward — writes Surface_Out, Scene_Depth
+            self.ctx.rdg_simple_forward_pass.add_to_graph(
+                rdg,
+                self.ctx.extracted_scene.background.clear_color(),
+            );
         }
 
         // ── After-Post-Process Hooks (UI, debug overlays) ──────────────
@@ -463,34 +410,12 @@ impl<'a> FrameComposer<'a> {
 
         rdg.compile(self.ctx.rdg_pool, &self.ctx.wgpu_ctx.device);
 
-        // ─── 3a. Pre-RDG Prepare: persistent GPU resource sync ─────────
+        // ─── 3a. Feature extract_and_prepare ────────────────────────────
         //
-        // Create/warm layouts, compile pipelines, upload uniform buffers.
-        // This runs *before* the transient-resource prepare loop so the
-        // slim `RdgPrepareContext` doesn't need shader_manager, queue, etc.
-        {
-            use crate::renderer::graph::rdg::context::PassPrepareContext;
-
-            let mut pass_ctx = PassPrepareContext {
-                device: &self.ctx.wgpu_ctx.device,
-                queue: &self.ctx.wgpu_ctx.queue,
-                pipeline_cache: self.ctx.pipeline_cache,
-                shader_manager: self.ctx.shader_manager,
-                sampler_registry: self.ctx.sampler_registry,
-                global_bind_group_cache: self.ctx.global_bind_group_cache,
-                resource_manager: self.ctx.resource_manager,
-                wgpu_ctx: &*self.ctx.wgpu_ctx,
-                render_lists: self.ctx.render_lists,
-                extracted_scene: self.ctx.extracted_scene,
-                render_state: self.ctx.render_state,
-                assets: self.ctx.assets,
-            };
-
-            for &pass_idx in &rdg.execution_queue {
-                let pass = rdg.passes[pass_idx].get_pass_mut();
-                pass.prepare_resources(&mut pass_ctx);
-            }
-        }
+        // All Feature::extract_and_prepare() calls have already run in
+        // `Renderer::begin_frame()`, before the graph was built.
+        // This ensures persistent GPU resources (pipelines, layouts, bind
+        // groups) are fully resolved before any PassNode references them.
 
         // ─── 3b. RDG Prepare: transient-only BindGroup assembly ────────
         //
@@ -500,11 +425,12 @@ impl<'a> FrameComposer<'a> {
 
         let mut rdg_prepare_ctx = RdgPrepareContext {
             views: RdgViewResolver {
-                graph: &rdg,
+                resources: &rdg.resources,
                 pool: self.ctx.rdg_pool,
                 external_resources: &self.external_res,
             },
             device: &self.ctx.wgpu_ctx.device,
+            queue: &self.ctx.wgpu_ctx.queue,
             pipeline_cache: self.ctx.pipeline_cache,
             sampler_registry: self.ctx.sampler_registry,
             global_bind_group_cache: self.ctx.global_bind_group_cache,
@@ -524,7 +450,7 @@ impl<'a> FrameComposer<'a> {
         let global_bg_ref = self.ctx.render_lists.gpu_global_bind_group.as_ref();
 
         let rdg_execute_ctx = RdgExecuteContext {
-            graph: &rdg,
+            resources: &rdg.resources,
             pool: self.ctx.rdg_pool,
             device: &self.ctx.wgpu_ctx.device,
             queue: &self.ctx.wgpu_ctx.queue,

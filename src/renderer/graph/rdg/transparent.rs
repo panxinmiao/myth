@@ -21,12 +21,31 @@ use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext}
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::TextureNodeId;
 
+use super::graph::RenderGraph;
+
+// ─── Feature ───────────────────────────────────────────────────────────
+
+pub struct TransparentFeature;
+
+impl TransparentFeature {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
+        let node = TransparentPassNode::new();
+        rdg.add_pass(Box::new(node));
+    }
+}
+
+// ─── Pass Node ─────────────────────────────────────────────────────────
+
 /// RDG Transparent Render Pass.
 ///
 /// Draws `render_lists.transparent` with back-to-front sorting. Builds a
 /// screen bind group (group 3) containing the real transmission texture
 /// (if available) and SSAO view.
-pub struct RdgTransparentPass {
+pub struct TransparentPassNode {
     // ─── RDG Resource Slots (set by Composer) ──────────────────────
     pub scene_color: TextureNodeId,
     pub scene_depth: TextureNodeId,
@@ -42,7 +61,7 @@ pub struct RdgTransparentPass {
     screen_bind_group_id: u64,
 }
 
-impl RdgTransparentPass {
+impl TransparentPassNode {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -108,7 +127,7 @@ impl RdgTransparentPass {
     }
 }
 
-impl PassNode for RdgTransparentPass {
+impl PassNode for TransparentPassNode {
     fn name(&self) -> &'static str {
         "RDG_Transparent_Pass"
     }

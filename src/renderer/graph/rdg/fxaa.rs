@@ -1,11 +1,18 @@
+//! FXAA Feature + Ephemeral PassNode
+//!
+//! - **`FxaaFeature`** (long-lived): owns pipeline cache, bind group layout.
+//!   `extract_and_prepare()` compiles pipelines for the target quality/format.
+//! - **`FxaaPassNode`** (ephemeral per-frame): carries lightweight IDs and
+//!   a transient bind-group slot.  Created by `FxaaFeature::add_to_graph()`.
+
 use super::builder::PassBuilder;
-use super::context::RdgExecuteContext;
+use super::context::{ExtractContext, RdgExecuteContext, RdgPrepareContext};
+use super::graph::RenderGraph;
 use super::node::PassNode;
 use super::types::TextureNodeId;
 use crate::FxaaQuality;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgPrepareContext};
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
@@ -13,48 +20,37 @@ use wgpu::CommandEncoder;
 
 type FxaaL1CacheKey = (FxaaQuality, wgpu::TextureFormat);
 
-pub struct RdgFxaaPass {
-    // ─── RDG Slots (set by Composer) ───────────────────────────────
-    pub input_tex: TextureNodeId,
-    pub output_tex: TextureNodeId,
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Feature (long-lived, stored in RenderFeatures)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-    // ─── Push Parameters ───────────────────────────────────────────
+pub struct FxaaFeature {
+    /// Target FXAA quality — set by the caller before extract_and_prepare.
     pub target_quality: FxaaQuality,
-    /// Output texture format — pushed by the Composer before
-    /// `prepare_resources()` so the pipeline can be compiled without
-    /// access to the render graph.
-    pub output_format: wgpu::TextureFormat,
 
-    // ─── Persistent Cache (populated in prepare_resources) ─────────
+    // ─── Persistent Cache ──────────────────────────────────────────
     l1_cache_key: Option<FxaaL1CacheKey>,
     pipeline_id: Option<RenderPipelineId>,
     bind_group_layout: Option<Tracked<wgpu::BindGroupLayout>>,
-
-    current_bind_group_key: Option<BindGroupKey>,
 }
 
-impl RdgFxaaPass {
+impl FxaaFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            input_tex: TextureNodeId(0),
-            output_tex: TextureNodeId(0),
             target_quality: FxaaQuality::High,
-            output_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             l1_cache_key: None,
             pipeline_id: None,
             bind_group_layout: None,
-            current_bind_group_key: None,
         }
     }
-}
 
-impl PassNode for RdgFxaaPass {
-    fn name(&self) -> &'static str {
-        "RDG_FXAA_Pass"
-    }
-
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
+    /// Pre-RDG resource preparation: create layout, compile pipeline.
+    pub fn extract_and_prepare(
+        &mut self,
+        ctx: &mut ExtractContext,
+        output_format: wgpu::TextureFormat,
+    ) {
         // ── 1. Lazy-create BindGroupLayout (once) ──────────────────
         if self.bind_group_layout.is_none() {
             let layout = ctx
@@ -84,7 +80,7 @@ impl PassNode for RdgFxaaPass {
         }
 
         // ── 2. L1 Cache: compile pipeline on quality/format change ─
-        let current_key = (self.target_quality, self.output_format);
+        let current_key = (self.target_quality, output_format);
 
         if self.l1_cache_key != Some(current_key) {
             let mut options = ShaderCompilationOptions::default();
@@ -101,7 +97,7 @@ impl PassNode for RdgFxaaPass {
             );
 
             let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
-                format: self.output_format,
+                format: output_format,
                 blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrites::ALL,
             });
@@ -129,24 +125,54 @@ impl PassNode for RdgFxaaPass {
             );
             self.pipeline_id = Some(id);
             self.l1_cache_key = Some(current_key);
-
-            // Pipeline changed — invalidate cached BindGroup key
-            self.current_bind_group_key = None;
         }
     }
 
+    /// Build the ephemeral pass node and insert it into the graph.
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        input_tex: TextureNodeId,
+        output_tex: TextureNodeId,
+    ) {
+        let node = FxaaPassNode {
+            input_tex,
+            output_tex,
+            pipeline_id: self.pipeline_id.expect("FxaaFeature not prepared"),
+            layout: self.bind_group_layout.clone().unwrap(),
+            current_bind_group_key: None,
+        };
+        rdg.add_pass(Box::new(node));
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PassNode (ephemeral, created per frame)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+struct FxaaPassNode {
+    input_tex: TextureNodeId,
+    output_tex: TextureNodeId,
+    pipeline_id: RenderPipelineId,
+    layout: Tracked<wgpu::BindGroupLayout>,
+    current_bind_group_key: Option<BindGroupKey>,
+}
+
+impl PassNode for FxaaPassNode {
+    fn name(&self) -> &'static str {
+        "RDG_FXAA_Pass"
+    }
+
     fn setup(&mut self, builder: &mut PassBuilder) {
-        self.input_tex = builder.read_blackboard("LDR_Intermediate");
-        self.output_tex = builder.write_blackboard("Surface_Out");
+        builder.read_texture(self.input_tex);
+        builder.write_texture(self.output_tex);
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        // Assemble transient BindGroup (references RDG-allocated input view)
         let input_view = ctx.views.get_texture_view(self.input_tex);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
-        let bind_group_layout = self.bind_group_layout.as_ref().unwrap();
 
-        let current_key = BindGroupKey::new(bind_group_layout.id())
+        let current_key = BindGroupKey::new(self.layout.id())
             .with_resource(input_view.id())
             .with_resource(sampler.id());
 
@@ -154,7 +180,7 @@ impl PassNode for RdgFxaaPass {
             if ctx.global_bind_group_cache.get(&current_key).is_none() {
                 let new_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("FXAA BindGroup"),
-                    layout: &**bind_group_layout,
+                    layout: &*self.layout,
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
@@ -178,7 +204,7 @@ impl PassNode for RdgFxaaPass {
 
         let pipeline = ctx
             .pipeline_cache
-            .get_render_pipeline(self.pipeline_id.expect("Pipeline not initialized!"));
+            .get_render_pipeline(self.pipeline_id);
 
         let bind_group_key = self
             .current_bind_group_key
@@ -186,7 +212,7 @@ impl PassNode for RdgFxaaPass {
             .expect("BindGroupKey should have been set in prepare!");
         let bind_group = ctx
             .global_bind_group_cache
-            .get(&bind_group_key)
+            .get(bind_group_key)
             .expect("BindGroup should have been prepared!");
 
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

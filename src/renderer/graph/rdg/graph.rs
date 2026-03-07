@@ -141,22 +141,74 @@ impl RenderGraph {
         self.resource_registry.get(name).copied()
     }
 
-    pub fn add_pass(&mut self, node: &mut dyn PassNode) {
+    /// Adds an ephemeral pass node to the graph, transferring ownership.
+    ///
+    /// The node is owned by the graph for the duration of the current frame
+    /// and automatically dropped when [`begin_frame`](Self::begin_frame)
+    /// clears the pass list.
+    ///
+    /// Internally performs two phases:
+    /// 1. Push a placeholder `PassRecord` (node not yet stored).
+    /// 2. Call `node.setup(&mut PassBuilder)` so the node can declare
+    ///    its resource read/write topology.
+    /// 3. Move the node into the record.
+    pub fn add_pass(&mut self, mut node: Box<dyn PassNode>) {
         let pass_index = self.passes.len();
-
         let name = node.name();
-        let local_ptr = node as *mut dyn PassNode;
 
-        let static_ptr: *mut (dyn PassNode + 'static) = unsafe { std::mem::transmute(local_ptr) };
+        // Phase 1: placeholder record (node = None)
+        self.passes.push(PassRecord::new_empty(name));
 
-        self.passes.push(PassRecord::new(name, static_ptr));
+        // Phase 2: setup — node is still a local Box, disjoint from graph
+        {
+            let mut builder = PassBuilder {
+                graph: self,
+                pass_index,
+            };
+            node.setup(&mut builder);
+        }
 
-        let mut builder = PassBuilder {
-            graph: self,
-            pass_index,
-        };
+        // Phase 3: move owned node into the record
+        self.passes[pass_index].node = Some(node);
+    }
 
-        unsafe { (*static_ptr).setup(&mut builder) };
+    /// Adds a **borrowed** pass node to the graph.
+    ///
+    /// This is a convenience wrapper for external (user-land) passes that
+    /// are long-lived and allocated outside the graph. The reference must
+    /// remain valid until `FrameComposer::render()` completes (guaranteed
+    /// when called from an [`add_custom_pass`] hook closure).
+    ///
+    /// Internally wraps the raw pointer in a thin forwarding struct so that
+    /// the graph can store it alongside owned nodes.
+    pub fn add_pass_ref(&mut self, pass: &mut dyn PassNode) {
+        struct BorrowedPass(*mut dyn PassNode);
+
+        // Safety: graph build / prepare / execute are single-threaded within
+        // the FrameComposer::render() call that owns the borrow.
+        unsafe impl Send for BorrowedPass {}
+        unsafe impl Sync for BorrowedPass {}
+
+        impl PassNode for BorrowedPass {
+            fn name(&self) -> &'static str {
+                unsafe { &*self.0 }.name()
+            }
+            fn setup(&mut self, builder: &mut super::builder::PassBuilder) {
+                unsafe { &mut *self.0 }.setup(builder)
+            }
+            fn prepare(&mut self, ctx: &mut super::context::RdgPrepareContext) {
+                unsafe { &mut *self.0 }.prepare(ctx)
+            }
+            fn execute(
+                &self,
+                ctx: &super::context::RdgExecuteContext,
+                encoder: &mut wgpu::CommandEncoder,
+            ) {
+                unsafe { &*self.0 }.execute(ctx, encoder)
+            }
+        }
+
+        self.add_pass(Box::new(BorrowedPass(pass as *mut dyn PassNode)));
     }
 
     pub fn compile_topology(&mut self) {
@@ -445,14 +497,14 @@ mod tests {
             let bloom_tex = graph.register_resource("BloomTex", dummy_desc(), false);
             let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-            let mut opaque_pass = MockOpaquePass {
+            let opaque_pass = MockOpaquePass {
                 out_color: scene_color,
             };
-            let mut bloom_pass = MockBloomPass {
+            let bloom_pass = MockBloomPass {
                 in_color: scene_color,
                 out_bloom: bloom_tex,
             };
-            let mut tm_pass = MockToneMappingPass {
+            let tm_pass = MockToneMappingPass {
                 in_color: scene_color,
                 in_bloom: bloom_tex,
                 out_target: backbuffer,
@@ -461,9 +513,9 @@ mod tests {
             // Add in forward order (Opaque → Bloom → ToneMapping).
             // The graph should resolve dependencies and produce the same
             // topological order.
-            graph.add_pass(&mut opaque_pass);
-            graph.add_pass(&mut bloom_pass);
-            graph.add_pass(&mut tm_pass);
+            graph.add_pass(Box::new(opaque_pass));
+            graph.add_pass(Box::new(bloom_pass));
+            graph.add_pass(Box::new(tm_pass));
 
             graph.compile_topology();
 

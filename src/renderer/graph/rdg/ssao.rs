@@ -1,8 +1,15 @@
-//! RDG Screen Space Ambient Occlusion (SSAO) Pass
+﻿//! SSAO Feature + Ephemeral PassNode
+//!
+//! - **`SsaoFeature`** (long-lived): owns pipelines, bind group layouts,
+//!   noise texture.  `extract_and_prepare()` compiles pipelines and uploads
+//!   persistent GPU data.
+//! - **`SsaoPassNode`** (ephemeral per-frame): carries lightweight IDs,
+//!   cloned `Tracked` resources, and transient bind-group slots.
+//!   Created by `SsaoFeature::add_to_graph()`.
 //!
 //! Implements production-grade SSAO within the RDG framework.
 //! The pass **creates** its own half-resolution AO output texture
-//! via `create_and_export("SSAO_Output")` during `setup()`, and reads
+//! via `create_texture("SSAO_Output")` during `setup()`, and reads
 //! the depth and normal textures produced by the upstream Prepass.
 //!
 //! # RDG Slots
@@ -18,15 +25,16 @@
 //!
 //! # Push Model
 //!
-//! All parameters (enabled flag, uniform buffer ID, noise scale) are pushed
-//! by the Composer. The pass never accesses Scene directly.
+//! All parameters (uniform buffer ID, global state key) are pushed by the
+//! Composer via `add_to_graph()`.  The pass never accesses Scene directly.
 //! Samplers are obtained from the global [`SamplerRegistry`].
 
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::allocator::SubViewKey;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
@@ -38,25 +46,15 @@ use crate::resources::uniforms::WgslStruct;
 /// The SSAO output texture format: single-channel unsigned normalized.
 const SSAO_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
-/// RDG Screen Space Ambient Occlusion pass.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Feature (long-lived, stored in RendererState)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Long-lived SSAO feature — owns persistent GPU resources (pipelines,
+/// bind group layouts, noise texture).
 ///
-/// Produces a single-channel AO texture from depth and normal inputs.
-/// The output can be consumed by downstream passes (e.g. composited
-/// during tone mapping or bound as a screen-space resource).
-pub struct RdgSsaoPass {
-    // ─── RDG Resource Slots (set by Composer) ──────────────────────
-    pub depth_tex: TextureNodeId,
-    pub normal_tex: TextureNodeId,
-    pub output_tex: TextureNodeId,
-
-    internal_raw_tex: TextureNodeId,
-
-    // ─── Push Parameters (set by Composer from Scene) ──────────────
-    /// CPU buffer ID for `CpuBuffer<SsaoUniforms>`.
-    pub uniforms_cpu_id: u64,
-    /// Global state key (render_state_id, scene_id).
-    pub global_state_key: (u32, u32),
-
+/// Produces an ephemeral [`SsaoPassNode`] each frame via [`Self::add_to_graph`].
+pub struct SsaoFeature {
     // ─── Pipelines ─────────────────────────────────────────────────
     raw_pipeline: Option<RenderPipelineId>,
     blur_pipeline: Option<RenderPipelineId>,
@@ -68,26 +66,12 @@ pub struct RdgSsaoPass {
 
     // ─── Persistent Resources ──────────────────────────────────────
     noise_texture_view: Option<Tracked<wgpu::TextureView>>,
-
-    // ─── Cached BindGroups ─────────────────────────────────────────
-    raw_bind_group_key: Option<BindGroupKey>,
-    raw_uniforms_bind_group_key: Option<BindGroupKey>,
-    blur_bind_group_key: Option<BindGroupKey>,
 }
 
-impl RdgSsaoPass {
+impl SsaoFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            depth_tex: TextureNodeId(0),
-            normal_tex: TextureNodeId(0),
-            output_tex: TextureNodeId(0),
-
-            internal_raw_tex: TextureNodeId(0),
-
-            uniforms_cpu_id: 0,
-            global_state_key: (0, 0),
-
             raw_pipeline: None,
             blur_pipeline: None,
 
@@ -96,10 +80,6 @@ impl RdgSsaoPass {
             blur_layout: None,
 
             noise_texture_view: None,
-
-            raw_bind_group_key: None,
-            raw_uniforms_bind_group_key: None,
-            blur_bind_group_key: None,
         }
     }
 
@@ -283,7 +263,7 @@ impl RdgSsaoPass {
         self.noise_texture_view = Some(Tracked::new(view));
     }
 
-    fn ensure_pipelines(&mut self, ctx: &mut PassPrepareContext) {
+    fn ensure_pipelines(&mut self, ctx: &mut ExtractContext) {
         if self.raw_pipeline.is_some() {
             return;
         }
@@ -293,9 +273,10 @@ impl RdgSsaoPass {
         let uniforms_layout = self.raw_uniforms_layout.as_ref().unwrap();
         let blur_layout = self.blur_layout.as_ref().unwrap();
 
+        let global_state_key = (ctx.render_state.id, ctx.extracted_scene.scene_id);
         let gpu_world = ctx
             .resource_manager
-            .get_global_state(self.global_state_key.0, self.global_state_key.1)
+            .get_global_state(global_state_key.0, global_state_key.1)
             .expect("RDG SSAO: GpuGlobalState must exist");
 
         let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
@@ -370,6 +351,77 @@ impl RdgSsaoPass {
         }
     }
 
+    /// Pre-RDG resource preparation: create layouts, noise texture, compile pipelines.
+    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext) {
+        // Persistent GPU resources: layouts, noise texture, pipelines.
+        self.ensure_layouts(ctx.device);
+        self.ensure_noise_texture(ctx.device, ctx.queue);
+        self.ensure_pipelines(ctx);
+    }
+
+    /// Build the ephemeral pass node and insert it into the graph.
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        uniforms_cpu_id: u64,
+    ) {
+        let node = SsaoPassNode {
+            depth_tex: TextureNodeId(0),
+            normal_tex: TextureNodeId(0),
+            output_tex: TextureNodeId(0),
+            internal_raw_tex: TextureNodeId(0),
+
+            uniforms_cpu_id,
+
+            raw_pipeline: self.raw_pipeline.expect("SsaoFeature not prepared"),
+            blur_pipeline: self.blur_pipeline.expect("SsaoFeature not prepared"),
+            raw_layout: self.raw_layout.clone().unwrap(),
+            raw_uniforms_layout: self.raw_uniforms_layout.clone().unwrap(),
+            blur_layout: self.blur_layout.clone().unwrap(),
+            noise_texture_view: self.noise_texture_view.clone().unwrap(),
+
+            raw_bind_group_key: None,
+            raw_uniforms_bind_group_key: None,
+            blur_bind_group_key: None,
+        };
+        rdg.add_pass(Box::new(node));
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PassNode (ephemeral, created per frame)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Ephemeral per-frame SSAO render pass node.
+///
+/// Carries cloned persistent resources from [SsaoFeature] (lightweight
+/// Tracked clones) plus push parameters from the Composer.
+struct SsaoPassNode {
+    // ─── RDG Resource Slots (filled in setup via blackboard) ───────
+    depth_tex: TextureNodeId,
+    normal_tex: TextureNodeId,
+    output_tex: TextureNodeId,
+    internal_raw_tex: TextureNodeId,
+
+    // ─── Push Parameters (from Composer via add_to_graph) ──────────
+    /// CPU buffer ID for `CpuBuffer<SsaoUniforms>`.
+    uniforms_cpu_id: u64,
+
+    // ─── Cloned from Feature (lightweight IDs / Tracked clones) ────
+    raw_pipeline: RenderPipelineId,
+    blur_pipeline: RenderPipelineId,
+    raw_layout: Tracked<wgpu::BindGroupLayout>,
+    raw_uniforms_layout: Tracked<wgpu::BindGroupLayout>,
+    blur_layout: Tracked<wgpu::BindGroupLayout>,
+    noise_texture_view: Tracked<wgpu::TextureView>,
+
+    // ─── Per-Frame BindGroup Keys ──────────────────────────────────
+    raw_bind_group_key: Option<BindGroupKey>,
+    raw_uniforms_bind_group_key: Option<BindGroupKey>,
+    blur_bind_group_key: Option<BindGroupKey>,
+}
+
+impl SsaoPassNode {
     // =========================================================================
     // BindGroup Construction
     // =========================================================================
@@ -392,7 +444,7 @@ impl RdgSsaoPass {
 
         let normal_view = ctx.views.get_texture_view(self.normal_tex);
 
-        let noise_view = self.noise_texture_view.as_ref().unwrap();
+        let noise_view = &self.noise_texture_view;
 
         let linear_sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
         let noise_sampler = ctx
@@ -400,9 +452,9 @@ impl RdgSsaoPass {
             .get_common(CommonSampler::NearestRepeat);
         let point_sampler = ctx.sampler_registry.get_common(CommonSampler::NearestClamp);
 
-        let raw_layout = self.raw_layout.as_ref().unwrap();
-        let uniforms_layout = self.raw_uniforms_layout.as_ref().unwrap();
-        let blur_layout = self.blur_layout.as_ref().unwrap();
+        let raw_layout = &self.raw_layout;
+        let uniforms_layout = &self.raw_uniforms_layout;
+        let blur_layout = &self.blur_layout;
 
         // ─── Raw SSAO BindGroup (Group 1) ──────────────────────────
         {
@@ -525,7 +577,7 @@ impl RdgSsaoPass {
     }
 }
 
-impl PassNode for RdgSsaoPass {
+impl PassNode for SsaoPassNode {
     fn name(&self) -> &'static str {
         "RDG_SSAO_Pass"
     }
@@ -548,25 +600,12 @@ impl PassNode for RdgSsaoPass {
         self.normal_tex = builder.read_blackboard("Scene_Normals");
     }
 
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
-        // Persistent GPU resources: layouts, noise texture, pipelines.
-        self.ensure_layouts(ctx.device);
-        self.ensure_noise_texture(ctx.device, ctx.queue);
-        self.ensure_pipelines(ctx);
-    }
-
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         // Transient-only: bind groups referencing RDG-allocated depth/normal views.
         self.build_bind_groups(ctx);
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let Some(raw_pipeline_id) = self.raw_pipeline else {
-            return;
-        };
-        let Some(blur_pipeline_id) = self.blur_pipeline else {
-            return;
-        };
         let Some(raw_bg_key) = &self.raw_bind_group_key else {
             return;
         };
@@ -594,8 +633,8 @@ impl PassNode for RdgSsaoPass {
             .get(blur_bg_key)
             .expect("SSAO blur BG should exist");
 
-        let raw_pipeline = ctx.pipeline_cache.get_render_pipeline(raw_pipeline_id);
-        let blur_pipeline = ctx.pipeline_cache.get_render_pipeline(blur_pipeline_id);
+        let raw_pipeline = ctx.pipeline_cache.get_render_pipeline(self.raw_pipeline);
+        let blur_pipeline = ctx.pipeline_cache.get_render_pipeline(self.blur_pipeline);
 
         let raw_view = ctx.get_texture_view(self.internal_raw_tex);
 
