@@ -99,7 +99,8 @@ pub fn cull_and_sort(
         assets,
     );
 
-    upload_dynamic_uniforms(render_lists, resource_manager);
+    resource_manager.upload_model_buffer();
+    
 }
 
 // ============================================================================
@@ -139,16 +140,16 @@ fn prepare_main_camera_commands(
     let camera_pos = camera.position;
 
     // blackboard.clear();
+    {
+        let Some(gpu_world) = resource_manager.get_global_state(render_state_id, scene_id) else {
+            error!(
+                "Render Environment missing for render_state_id {render_state_id}, scene_id {scene_id}"
+            );
+            return;
+        };
 
-    let Some(gpu_world) = resource_manager.get_global_state(render_state_id, scene_id) else {
-        error!(
-            "Render Environment missing for render_state_id {render_state_id}, scene_id {scene_id}"
-        );
-        return;
-    };
-
-    render_lists.gpu_global_bind_group_id = gpu_world.bind_group_id;
-    render_lists.gpu_global_bind_group = Some(gpu_world.bind_group.clone());
+        render_lists.gpu_global_bind_group = Some(gpu_world.bind_group.clone());
+    }
 
     let mut use_transmission = false;
     {
@@ -163,6 +164,11 @@ fn prepare_main_camera_commands(
             if aabb.is_finite() && !camera_frustum.intersects_aabb(&aabb) {
                 continue;
             }
+
+            let Some(gpu_world) = resource_manager.get_global_state(render_state_id, scene_id) else {
+                error!("CRITICAL: GpuWorld missing during iteration");
+                continue;
+            };
 
             let Some(geometry) = geo_guard.map.get(item.geometry) else {
                 warn!("Geometry {:?} missing during render prepare", item.geometry);
@@ -316,14 +322,24 @@ fn prepare_main_camera_commands(
 
             let ss_feature_mask = material.ss_feature_mask();
 
+            let world_matrix_inverse = item.world_matrix.inverse();
+            let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
+
+            let dynamic_offset = resource_manager.allocate_model_uniform(DynamicModelUniforms {
+                world_matrix: item.world_matrix,
+                world_matrix_inverse,
+                normal_matrix,
+                ..Default::default()
+            });
+
             let cmd = RenderCommand {
                 object_bind_group: object_bind_group.clone(),
                 geometry_handle: item.geometry,
                 material_handle: item.material,
                 pipeline_id,
-                model_matrix: item.world_matrix,
+                // model_matrix: item.world_matrix,
                 sort_key,
-                dynamic_offset: 0,
+                dynamic_offset,
                 ss_feature_mask,
             };
 
@@ -555,40 +571,4 @@ fn prepare_shadow_commands(
             });
         }
     }
-}
-
-// ============================================================================
-// Dynamic Uniform Upload
-// ============================================================================
-
-/// Compute per-object inverse/normal matrices and upload dynamic model
-/// uniforms to the GPU.
-fn upload_dynamic_uniforms(render_lists: &mut RenderLists, resource_manager: &mut ResourceManager) {
-    if render_lists.is_empty() {
-        return;
-    }
-
-    for cmd in &mut render_lists.opaque {
-        let world_matrix_inverse = cmd.model_matrix.inverse();
-        let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
-        cmd.dynamic_offset = resource_manager.allocate_model_uniform(DynamicModelUniforms {
-            world_matrix: cmd.model_matrix,
-            world_matrix_inverse,
-            normal_matrix,
-            ..Default::default()
-        });
-    }
-
-    for cmd in &mut render_lists.transparent {
-        let world_matrix_inverse = cmd.model_matrix.inverse();
-        let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
-        cmd.dynamic_offset = resource_manager.allocate_model_uniform(DynamicModelUniforms {
-            world_matrix: cmd.model_matrix,
-            world_matrix_inverse,
-            normal_matrix,
-            ..Default::default()
-        });
-    }
-
-    resource_manager.upload_model_buffer();
 }

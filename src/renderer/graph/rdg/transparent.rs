@@ -14,10 +14,9 @@
 //! Transparent commands are sorted back-to-front for correct alpha blending.
 
 use crate::renderer::core::resources::{ScreenBindGroupInfo, Tracked};
-use crate::renderer::graph::TrackedRenderPass;
-use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::draw::submit_draw_commands;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::TextureNodeId;
 
@@ -68,7 +67,6 @@ pub struct TransparentPassNode {
     screen_info: ScreenBindGroupInfo,
     // ─── Internal Cache ────────────────────────────────────────────
     screen_bind_group: Option<wgpu::BindGroup>,
-    screen_bind_group_id: u64,
 }
 
 impl TransparentPassNode {
@@ -83,57 +81,6 @@ impl TransparentPassNode {
             ssao_enabled: false,
             screen_info,
             screen_bind_group: None,
-            screen_bind_group_id: 0,
-        }
-    }
-
-    fn draw_list<'pass>(
-        ctx: &'pass RdgExecuteContext,
-        pass: &mut TrackedRenderPass<'pass>,
-        cmds: &'pass [RenderCommand],
-        screen_bind_group: &'pass wgpu::BindGroup,
-        screen_bind_group_id: u64,
-    ) {
-        if cmds.is_empty() {
-            return;
-        }
-
-        for cmd in cmds {
-            let pipeline = ctx.pipeline_cache.get_render_pipeline(cmd.pipeline_id);
-            pass.set_pipeline(cmd.pipeline_id.0, pipeline);
-
-            if let Some(gpu_material) = ctx.resource_manager.get_material(cmd.material_handle) {
-                pass.set_bind_group(1, gpu_material.bind_group_id, &gpu_material.bind_group, &[]);
-            }
-
-            pass.set_bind_group(
-                2,
-                cmd.object_bind_group.bind_group_id,
-                &cmd.object_bind_group.bind_group,
-                &[cmd.dynamic_offset],
-            );
-
-            pass.set_bind_group(3, screen_bind_group_id, screen_bind_group, &[]);
-
-            if let Some(gpu_geometry) = ctx.resource_manager.get_geometry(cmd.geometry_handle) {
-                for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
-                    pass.set_vertex_buffer(
-                        slot as u32,
-                        gpu_geometry.vertex_buffer_ids[slot],
-                        buffer.slice(..),
-                    );
-                }
-
-                if let Some((index_buffer, index_format, count, id)) = &gpu_geometry.index_buffer {
-                    pass.set_index_buffer(*id, index_buffer.slice(..), *index_format);
-                    pass.draw_indexed(0..*count, 0, gpu_geometry.instance_range.clone());
-                } else {
-                    pass.draw(
-                        gpu_geometry.draw_range.clone(),
-                        gpu_geometry.instance_range.clone(),
-                    );
-                }
-            }
         }
     }
 }
@@ -181,14 +128,13 @@ impl PassNode for TransparentPassNode {
             &self.screen_info.dummy_transmission_view
         };
 
-        let (bg, bg_id) = self.screen_info.build_screen_bind_group(
+        let (bg, _) = self.screen_info.build_screen_bind_group(
             ctx.device,
             ctx.global_bind_group_cache,
             transmission_view,
             ssao_view,
         );
         self.screen_bind_group = Some(bg);
-        self.screen_bind_group_id = bg_id;
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -227,24 +173,20 @@ impl PassNode for TransparentPassNode {
         };
 
         let raw_pass = encoder.begin_render_pass(&pass_desc);
-        let mut tracked_pass = TrackedRenderPass::new(raw_pass);
+        let mut pass = raw_pass;
 
-        tracked_pass.set_bind_group(
+        pass.set_bind_group(
             0,
-            render_lists.gpu_global_bind_group_id,
             gpu_global_bind_group,
             &[],
         );
 
-        if !render_lists.transparent.is_empty() {
+        if !ctx.baked_lists.transparent.is_empty() {
+            // Set screen bind group (Group 3) at the pass level.
             let screen_bg = self.screen_bind_group.as_ref().unwrap();
-            Self::draw_list(
-                ctx,
-                &mut tracked_pass,
-                &render_lists.transparent,
-                screen_bg,
-                self.screen_bind_group_id,
-            );
+            pass.set_bind_group(3, screen_bg, &[]);
+
+            submit_draw_commands(&mut pass, &ctx.baked_lists.transparent);
         }
     }
 }

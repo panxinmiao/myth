@@ -450,7 +450,29 @@ impl<'a> FrameComposer<'a> {
             pass.prepare(&mut rdg_prepare_ctx);
         }
 
-        // Execute phase: only the swapchain surface is external
+        // ─── 3c. Bake render commands ──────────────────────────────────
+        //
+        // Resolve every asset handle (geometry, material, pipeline) to its
+        // physical wgpu reference.  After this point the execute phase is
+        // "blind" — it processes only pre-resolved GPU state.
+        let prepass_config = if is_high_fidelity {
+            Some(crate::renderer::graph::bake::PrepassBakeConfig {
+                local_cache: self.ctx.rdg_prepass.local_cache(),
+                needs_normal: self.ctx.rdg_prepass.needs_normal(),
+                needs_feature_id: self.ctx.rdg_prepass.needs_feature_id(),
+            })
+        } else {
+            None
+        };
+
+        let baked_lists = crate::renderer::graph::bake::bake_render_lists(
+            self.ctx.render_lists,
+            self.ctx.resource_manager,
+            self.ctx.pipeline_cache,
+            prepass_config,
+        );
+
+        // ─── 3d. Execute ───────────────────────────────────────────────
         let mut ext_views: FxHashMap<_, &wgpu::TextureView> = FxHashMap::default();
         ext_views.insert(surface_out, &surface_view);
 
@@ -467,8 +489,8 @@ impl<'a> FrameComposer<'a> {
             global_bind_group: global_bg_ref,
             resource_manager: self.ctx.resource_manager,
             render_lists: self.ctx.render_lists,
+            baked_lists: &baked_lists,
             wgpu_ctx: &*self.ctx.wgpu_ctx,
-            // blackboard: self.ctx.blackboard,
         };
 
         let mut rdg_encoder =

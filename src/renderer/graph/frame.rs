@@ -51,8 +51,6 @@ pub struct RenderCommand {
     /// Resolve to a `&wgpu::RenderPipeline` via
     /// [`PipelineCache::get_render_pipeline`] during the execute phase.
     pub pipeline_id: RenderPipelineId,
-    /// Model-to-world matrix
-    pub model_matrix: Mat4,
     /// Sort key
     pub sort_key: RenderKey,
     /// Dynamic uniform offset
@@ -68,6 +66,94 @@ pub struct ShadowRenderCommand {
     /// Pipeline handle (index into [`PipelineCache`] storage).
     pub pipeline_id: RenderPipelineId,
     pub dynamic_offset: u32,
+}
+
+// ============================================================================
+// DrawCommand — Baked Physical Draw Command
+// ============================================================================
+
+/// A single pre-baked draw command with all GPU references resolved to physical
+/// `wgpu` handles.
+///
+/// Produced by [`bake::bake_render_lists`] after culling, consumed by the
+/// unified [`submit_draw_commands`] helper during the execute phase.  Contains
+/// **zero** asset handles — only physical references — so the execute phase
+/// never performs hash-map lookups or indirection.
+///
+/// # Design Philosophy — "The Blind Execute Phase"
+///
+/// All semantic decisions (pipeline variant selection, alpha-test detection,
+/// material/geometry resolution) are completed during the earlier **cull /
+/// bake** phase.  The execute phase sees only hardware-level GPU state and
+/// can be trivially parallelised in the future.
+///
+/// [`bake::bake_render_lists`]: super::bake::bake_render_lists
+/// [`submit_draw_commands`]: super::rdg::draw::submit_draw_commands
+pub struct DrawCommand<'a> {
+    /// Composite sort key for minimising GPU state switches.
+    ///
+    /// * Opaque — Pipeline › Material › Depth (front-to-back).
+    /// * Transparent — Depth (back-to-front) › Pipeline › Material.
+    /// * Shadow — Pipeline (state-switch minimisation).
+    pub sort_key: u64,
+
+    /// Pre-resolved render pipeline.
+    ///
+    /// Redundant-state elimination is performed by comparing the raw
+    /// pointer address — `wgpu::RenderPipeline` is `Arc`-based so
+    /// identity ≡ pointer equality.
+    pub pipeline: &'a wgpu::RenderPipeline,
+
+    /// Pre-resolved vertex buffer bindings.
+    ///
+    /// Typically 1–2 entries.  Uses `Vec` (covariant in `'a`) to maintain
+    /// correct lifetime variance for the execute-phase borrow chain.
+    pub vertex_buffers: Vec<&'a wgpu::Buffer>,
+
+    /// Pre-resolved index buffer, or `None` for non-indexed draws.
+    ///
+    /// Tuple: `(buffer, format, index_count)`.
+    pub index_buffer: Option<(&'a wgpu::Buffer, wgpu::IndexFormat, u32)>,
+
+    /// Material bind group (Group 1), or `None` when unused.
+    pub bind_group_1: Option<&'a wgpu::BindGroup>,
+
+    /// Object / transform bind group (Group 2) with dynamic uniform offset.
+    ///
+    /// Tuple: `(bind_group, dynamic_offset)`.
+    pub bind_group_2: (&'a wgpu::BindGroup, u32),
+
+    /// Screen / transient bind group (Group 3), or `None` for shadow/prepass.
+    pub bind_group_3: Option<&'a wgpu::BindGroup>,
+
+    /// Stencil reference value for feature-ID writing.  `None` when unused.
+    pub stencil_reference: Option<u32>,
+
+    /// Vertex range for non-indexed draws.
+    pub vertex_range: std::ops::Range<u32>,
+
+    /// Instance range.
+    pub instance_range: std::ops::Range<u32>,
+}
+
+/// Frame-scoped pre-baked render command lists.
+///
+/// All GPU handle lookups have been resolved to physical `wgpu` references.
+/// The execute phase iterates these contiguous `Vec`s without dictionary
+/// lookups, maximising CPU cache hit rate.
+pub struct BakedRenderLists<'a> {
+    /// Baked opaque draw commands (sorted front-to-back).
+    pub opaque: Vec<DrawCommand<'a>>,
+
+    /// Baked transparent draw commands (sorted back-to-front).
+    pub transparent: Vec<DrawCommand<'a>>,
+
+    /// Baked Z-prepass draw commands (prepass-specific pipelines).
+    pub prepass: Vec<DrawCommand<'a>>,
+
+    /// Per-shadow-view baked draw commands, keyed by
+    /// `(light_id, layer_index)`.
+    pub shadow_queues: FxHashMap<(u64, u32), Vec<DrawCommand<'a>>>,
 }
 
 #[derive(Clone, Copy)]
@@ -131,8 +217,6 @@ pub struct RenderLists {
     /// Contains main camera view + all shadow views.
     pub active_views: Vec<RenderView>,
 
-    /// Global bind group ID (used for state tracking)
-    pub gpu_global_bind_group_id: u64,
     /// Global bind group (camera, lighting, environment, etc.)
     pub gpu_global_bind_group: Option<wgpu::BindGroup>,
 
@@ -155,7 +239,6 @@ impl RenderLists {
             shadow_queues: FxHashMap::default(),
             shadow_lights: Vec::with_capacity(16),
             active_views: Vec::with_capacity(16),
-            gpu_global_bind_group_id: 0,
             gpu_global_bind_group: None,
             use_transmission: false,
             prepared_skybox: None,
@@ -230,6 +313,13 @@ impl Default for RenderLists {
 pub struct RenderKey(u64);
 
 impl RenderKey {
+    /// Returns the raw 64-bit sort key value.
+    #[inline]
+    #[must_use]
+    pub fn bits(self) -> u64 {
+        self.0
+    }
+
     /// Constructs a sort key.
     ///
     /// # Parameters

@@ -33,6 +33,7 @@ use crate::renderer::core::view::ViewTarget;
 use crate::renderer::graph::frame::ShadowLightInstance;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext};
+use crate::renderer::graph::rdg::draw::submit_draw_commands;
 use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 
@@ -53,6 +54,8 @@ pub struct ShadowFeature {
     bind_group_layout: wgpu::BindGroupLayout,
     /// Populated during prepare — one entry per shadow layer.
     shadow_lights: Vec<ShadowLightInstance>,
+    /// Pre-created shadow layer texture views, parallel to `shadow_lights`.
+    shadow_layer_views: Vec<wgpu::TextureView>,
 }
 
 impl ShadowFeature {
@@ -102,6 +105,7 @@ impl ShadowFeature {
             bind_group,
             bind_group_layout,
             shadow_lights: Vec::with_capacity(16),
+            shadow_layer_views: Vec::with_capacity(16),
         }
     }
 
@@ -147,9 +151,12 @@ impl ShadowFeature {
 impl ShadowFeature {
     /// Extract shadow light data and prepare GPU resources.
     ///
-    /// Uploads per-layer VP matrices and builds the shadow light instance list.
+    /// Uploads per-layer VP matrices, builds the shadow light instance list,
+    /// and pre-creates per-layer texture views so the execute phase never
+    /// touches the resource manager.
     pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext) {
         self.shadow_lights.clear();
+        self.shadow_layer_views.clear();
 
         let total_layers = ctx
             .render_lists
@@ -192,6 +199,16 @@ impl ShadowFeature {
 
         ctx.queue
             .write_buffer(&self.uniform_buffer, 0, &uniform_data);
+
+        // Pre-create per-layer texture views for the execute phase.
+        for shadow_light in &self.shadow_lights {
+            if let Some(view) = ctx
+                .resource_manager
+                .create_shadow_2d_layer_view(shadow_light.layer_index)
+            {
+                self.shadow_layer_views.push(view);
+            }
+        }
     }
 
     /// Create an ephemeral [`ShadowPassNode`] and add it to the render graph.
@@ -200,6 +217,7 @@ impl ShadowFeature {
             bind_group: self.bind_group.clone(),
             shadow_lights: self.shadow_lights.clone(),
             uniform_stride: self.uniform_stride,
+            shadow_layer_views: self.shadow_layer_views.clone(),
         };
         rdg.add_pass(Box::new(node));
     }
@@ -208,10 +226,16 @@ impl ShadowFeature {
 // ─── Shadow Pass Node ─────────────────────────────────────────────────────────
 
 /// Ephemeral per-frame shadow render pass node.
+///
+/// Carries pre-created layer texture views and cloned light metadata.
+/// The execute phase iterates shadow layers and submits pre-baked
+/// [`DrawCommand`]s without any resource-manager lookups.
 pub struct ShadowPassNode {
     bind_group: wgpu::BindGroup,
     shadow_lights: Vec<ShadowLightInstance>,
     uniform_stride: u32,
+    /// Pre-created per-layer texture views, parallel to `shadow_lights`.
+    shadow_layer_views: Vec<wgpu::TextureView>,
 }
 
 impl PassNode for ShadowPassNode {
@@ -224,16 +248,17 @@ impl PassNode for ShadowPassNode {
     }
 
     /// Render shadow depth maps — one render pass per shadow layer.
+    ///
+    /// Uses pre-baked [`DrawCommand`]s from [`BakedRenderLists::shadow_queues`]
+    /// and pre-created layer texture views, eliminating all resource-manager
+    /// lookups during the execute phase.
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if self.shadow_lights.is_empty() {
             return;
         }
 
-        for shadow_light in &self.shadow_lights {
-            let Some(layer_view) = ctx
-                .resource_manager
-                .create_shadow_2d_layer_view(shadow_light.layer_index)
-            else {
+        for (i, shadow_light) in self.shadow_lights.iter().enumerate() {
+            let Some(layer_view) = self.shadow_layer_views.get(i) else {
                 continue;
             };
 
@@ -241,7 +266,7 @@ impl PassNode for ShadowPassNode {
                 label: Some("RDG Shadow Depth"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: &layer_view,
+                    view: layer_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -253,45 +278,21 @@ impl PassNode for ShadowPassNode {
                 multiview_mask: None,
             };
 
-            let mut pass = encoder.begin_render_pass(&pass_desc);
+            let raw_pass = encoder.begin_render_pass(&pass_desc);
+            let mut pass = raw_pass;
+
             let dynamic_offset = shadow_light.layer_index * self.uniform_stride;
             pass.set_bind_group(0, &self.bind_group, &[dynamic_offset]);
 
             let Some(commands) = ctx
-                .render_lists
+                .baked_lists
                 .shadow_queues
                 .get(&(shadow_light.light_id, shadow_light.layer_index))
             else {
                 continue;
             };
 
-            for cmd in commands {
-                let pipeline = ctx.pipeline_cache.get_render_pipeline(cmd.pipeline_id);
-                pass.set_pipeline(pipeline);
-
-                if let Some(gpu_material) = ctx.resource_manager.get_material(cmd.material_handle) {
-                    pass.set_bind_group(1, &gpu_material.bind_group, &[]);
-                }
-
-                pass.set_bind_group(2, &cmd.object_bind_group.bind_group, &[cmd.dynamic_offset]);
-
-                if let Some(gpu_geometry) = ctx.resource_manager.get_geometry(cmd.geometry_handle) {
-                    for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
-                        pass.set_vertex_buffer(slot as u32, buffer.slice(..));
-                    }
-
-                    if let Some((index_buffer, index_format, count, _)) = &gpu_geometry.index_buffer
-                    {
-                        pass.set_index_buffer(index_buffer.slice(..), *index_format);
-                        pass.draw_indexed(0..*count, 0, gpu_geometry.instance_range.clone());
-                    } else {
-                        pass.draw(
-                            gpu_geometry.draw_range.clone(),
-                            gpu_geometry.instance_range.clone(),
-                        );
-                    }
-                }
-            }
+            submit_draw_commands(&mut pass, commands);
         }
     }
 }

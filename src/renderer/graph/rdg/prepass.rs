@@ -15,9 +15,9 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext};
+use crate::renderer::graph::rdg::draw::submit_draw_commands;
 use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
@@ -61,6 +61,24 @@ impl PrepassFeature {
             needs_feature_id: false,
             local_cache: FxHashMap::default(),
         }
+    }
+
+    /// Returns the prepass pipeline cache (for baking prepass draw commands).
+    #[inline]
+    pub fn local_cache(&self) -> &FxHashMap<(RenderPipelineId, bool, bool), RenderPipelineId> {
+        &self.local_cache
+    }
+
+    /// Whether the prepass outputs view-space normals.
+    #[inline]
+    pub fn needs_normal(&self) -> bool {
+        self.needs_normal
+    }
+
+    /// Whether the prepass outputs a feature-ID stencil mask.
+    #[inline]
+    pub fn needs_feature_id(&self) -> bool {
+        self.needs_feature_id
     }
 
     /// Pre-RDG resource preparation: compile prepass pipelines for every
@@ -285,7 +303,6 @@ impl PrepassFeature {
             feature_id: TextureNodeId(0),
             needs_normal,
             needs_feature_id,
-            local_cache: self.local_cache.clone(),
         };
         rdg.add_pass(Box::new(node));
     }
@@ -297,8 +314,9 @@ impl PrepassFeature {
 
 /// Ephemeral per-frame prepass node.
 ///
-/// Carries a cloned pipeline cache from [`PrepassFeature`] and lightweight
-/// RDG resource IDs.  Dropped at the end of each frame by the render graph.
+/// Carries lightweight RDG resource IDs.  Pipeline remapping and draw
+/// command baking are now handled by [`bake::bake_render_lists`]; this
+/// node simply submits the pre-baked prepass commands.
 pub struct PrepassPassNode {
     // ─── RDG Resource Slots (filled in setup) ──────────────────────
     scene_depth: TextureNodeId,
@@ -308,10 +326,6 @@ pub struct PrepassPassNode {
     // ─── Push Parameters ───────────────────────────────────────────
     needs_normal: bool,
     needs_feature_id: bool,
-
-    // ─── Cloned Pipeline Cache ─────────────────────────────────────
-    /// Pipeline cache: (main_pipeline_id, needs_normal, needs_feature_id) → prepass pipeline.
-    local_cache: FxHashMap<(RenderPipelineId, bool, bool), RenderPipelineId>,
 }
 
 impl PassNode for PrepassPassNode {
@@ -389,7 +403,7 @@ impl PassNode for PrepassPassNode {
             }));
         }
 
-        let pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("RDG Depth-Normal Prepass"),
             color_attachments: &color_attachments,
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
@@ -412,67 +426,12 @@ impl PassNode for PrepassPassNode {
             multiview_mask: None,
         });
 
-        let mut tracked_pass = TrackedRenderPass::new(pass);
-
-        tracked_pass.set_bind_group(
+        pass.set_bind_group(
             0,
-            render_lists.gpu_global_bind_group_id,
             gpu_global_bind_group,
             &[],
         );
 
-        for cmd in &render_lists.opaque {
-            let Some(&prepass_pipeline_id) =
-                self.local_cache
-                    .get(&(cmd.pipeline_id, self.needs_normal, self.needs_feature_id))
-            else {
-                continue;
-            };
-
-            let pipeline = ctx.pipeline_cache.get_render_pipeline(prepass_pipeline_id);
-            tracked_pass.set_pipeline(prepass_pipeline_id.0, pipeline);
-
-            if let Some(gpu_material) = ctx.resource_manager.get_material(cmd.material_handle) {
-                tracked_pass.set_bind_group(
-                    1,
-                    gpu_material.bind_group_id,
-                    &gpu_material.bind_group,
-                    &[],
-                );
-            }
-
-            if self.needs_feature_id {
-                tracked_pass
-                    .raw_pass()
-                    .set_stencil_reference(cmd.ss_feature_mask);
-            }
-
-            tracked_pass.set_bind_group(
-                2,
-                cmd.object_bind_group.bind_group_id,
-                &cmd.object_bind_group.bind_group,
-                &[cmd.dynamic_offset],
-            );
-
-            if let Some(gpu_geometry) = ctx.resource_manager.get_geometry(cmd.geometry_handle) {
-                for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
-                    tracked_pass.set_vertex_buffer(
-                        slot as u32,
-                        gpu_geometry.vertex_buffer_ids[slot],
-                        buffer.slice(..),
-                    );
-                }
-
-                if let Some((index_buffer, index_format, count, id)) = &gpu_geometry.index_buffer {
-                    tracked_pass.set_index_buffer(*id, index_buffer.slice(..), *index_format);
-                    tracked_pass.draw_indexed(0..*count, 0, gpu_geometry.instance_range.clone());
-                } else {
-                    tracked_pass.draw(
-                        gpu_geometry.draw_range.clone(),
-                        gpu_geometry.instance_range.clone(),
-                    );
-                }
-            }
+        submit_draw_commands(&mut pass, &ctx.baked_lists.prepass);
         }
-    }
 }
