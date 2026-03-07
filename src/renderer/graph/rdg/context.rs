@@ -10,25 +10,25 @@ use rustc_hash::FxHashMap;
 use wgpu::{Device, Queue, TextureView};
 
 use super::allocator::{RdgTransientPool, SubViewKey};
-use super::graph::RenderGraph;
-use super::types::TextureNodeId;
+use super::types::{ResourceRecord, TextureNodeId};
 
-// ─── Pass Prepare Context (Pre-RDG) ──────────────────────────────────────────
+// ─── Extract Context (Feature Pre-RDG Phase) ────────────────────────────────
 
-/// Rich context available during the **pre-RDG resource preparation** phase.
+/// Rich context available during the **Feature extract-and-prepare** phase.
 ///
-/// The Composer calls [`PassNode::prepare_resources`] with this context for
-/// every active pass **before** the render graph is built. It provides full
+/// Each `Feature::extract_and_prepare(&mut self, ctx: &mut ExtractContext)`
+/// is called **before** the render graph is built.  The context provides full
 /// access to GPU infrastructure, scene data, and the asset server so that
-/// passes can:
+/// features can:
 ///
 /// - Create / cache `wgpu::BindGroupLayout`s
 /// - Compile pipelines via [`PipelineCache`]
 /// - Upload non-transient GPU data (uniform buffers, noise textures, etc.)
 ///
-/// After this phase the pass holds only lightweight IDs and the scene borrow
-/// can be fully released.
-pub struct PassPrepareContext<'a> {
+/// After this phase, Features hold only lightweight pipeline IDs.  The
+/// per-frame ephemeral `PassNode` created by `Feature::add_to_graph()`
+/// carries those IDs into the graph.
+pub struct ExtractContext<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
     pub pipeline_cache: &'a mut PipelineCache,
@@ -54,10 +54,11 @@ pub struct PassPrepareContext<'a> {
 /// Heavy infrastructure (`ShaderManager`, `AssetServer`, mutable
 /// `ResourceManager`, `ExtractedScene`, etc.) is deliberately excluded —
 /// all non-transient GPU work must be completed in the earlier
-/// [`PassNode::prepare_resources`] phase.
+/// `Feature::extract_and_prepare()` phase.
 pub struct RdgPrepareContext<'a> {
     pub views: RdgViewResolver<'a>,
     pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
     pub pipeline_cache: &'a PipelineCache,
     pub sampler_registry: &'a SamplerRegistry,
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
@@ -68,7 +69,7 @@ pub struct RdgPrepareContext<'a> {
 }
 
 pub struct RdgViewResolver<'a> {
-    pub graph: &'a RenderGraph,
+    pub resources: &'a [ResourceRecord],
     pub pool: &'a mut RdgTransientPool,
     pub external_resources: &'a FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
 }
@@ -79,7 +80,7 @@ impl<'a> RdgViewResolver<'a> {
     /// For external resources, the view is looked up in `external_resources`.
     /// For transient resources, the **default** view is obtained from the pool.
     pub fn get_texture_view(&self, id: TextureNodeId) -> &Tracked<wgpu::TextureView> {
-        let res = &self.graph.resources[id.0 as usize];
+        let res = &self.resources[id.0 as usize];
 
         if res.is_external {
             self.external_resources
@@ -96,7 +97,7 @@ impl<'a> RdgViewResolver<'a> {
     /// Useful for dirty-checking: if the UID hasn't changed between frames,
     /// the physical texture is the same and derived state can be reused.
     pub fn get_physical_texture_uid(&self, id: TextureNodeId) -> u64 {
-        let res = &self.graph.resources[id.0 as usize];
+        let res = &self.resources[id.0 as usize];
         let physical_index = res.physical_index.expect("No physical memory!");
         self.pool.get_uid(physical_index)
     }
@@ -105,7 +106,7 @@ impl<'a> RdgViewResolver<'a> {
     ///
     /// Useful for passes that need to create custom views (e.g. Bloom mip chain).
     pub fn get_texture(&self, id: TextureNodeId) -> &wgpu::Texture {
-        let res = &self.graph.resources[id.0 as usize];
+        let res = &self.resources[id.0 as usize];
         let physical_index = res.physical_index.expect("No physical memory!");
         self.pool.get_texture(physical_index)
     }
@@ -119,7 +120,7 @@ impl<'a> RdgViewResolver<'a> {
         id: TextureNodeId,
         key: SubViewKey,
     ) -> &Tracked<wgpu::TextureView> {
-        let res = &self.graph.resources[id.0 as usize];
+        let res = &self.resources[id.0 as usize];
         let physical_index = res.physical_index.expect("No physical memory!");
         self.pool.get_or_create_sub_view(physical_index, key)
     }
@@ -129,7 +130,7 @@ impl<'a> RdgViewResolver<'a> {
         id: TextureNodeId,
         key: &SubViewKey,
     ) -> Option<&Tracked<wgpu::TextureView>> {
-        let res = &self.graph.resources[id.0 as usize];
+        let res = &self.resources[id.0 as usize];
         let physical_index = res.physical_index.expect("No physical memory!");
         self.pool.get_sub_view(physical_index, key)
     }
@@ -143,7 +144,7 @@ impl<'a> RdgViewResolver<'a> {
 /// pool, pipeline cache, render lists, and any external views injected before
 /// execution.
 pub struct RdgExecuteContext<'a> {
-    pub graph: &'a RenderGraph,
+    pub resources: &'a [ResourceRecord],
     pub pool: &'a RdgTransientPool,
     pub device: &'a Device,
     pub queue: &'a Queue,
@@ -174,7 +175,7 @@ impl<'a> RdgExecuteContext<'a> {
     /// For external resources, the view is looked up in `external_views`.
     /// For transient resources, the view is obtained from the physical pool.
     pub fn get_texture_view(&self, id: TextureNodeId) -> &TextureView {
-        let res = &self.graph.resources[id.0 as usize];
+        let res = &self.resources[id.0 as usize];
         if res.is_external {
             self.external_views
                 .get(&id)
@@ -189,7 +190,7 @@ impl<'a> RdgExecuteContext<'a> {
 
     /// Returns the [`Tracked<TextureView>`] for cache-key use during execute.
     pub fn get_tracked_texture_view(&self, id: TextureNodeId) -> &Tracked<wgpu::TextureView> {
-        let res = &self.graph.resources[id.0 as usize];
+        let res = &self.resources[id.0 as usize];
         let physical_index = res
             .physical_index
             .expect("Resource has no physical memory!");

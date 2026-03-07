@@ -1,34 +1,37 @@
-//! RDG Bloom Post-Processing Pass (Macro Node)
+//! RDG Bloom Post-Processing — Feature + PassNode split.
 //!
 //! Implements the Call of Duty: Advanced Warfare physically-based bloom
-//! technique within the RDG framework. This pass is a **macro node**:
-//! the RDG only sees a single (input → output) edge while the internal
-//! downsample-upsample-composite pipeline is managed entirely inside the
-//! pass.
+//! technique within the RDG framework.
 //!
-//! # RDG Slots
+//! # Architecture
 //!
-//! - `input_tex`: HDR scene color (read via blackboard)
-//! - `output_tex`: HDR scene color with bloom composited (created via
-//!   `create_and_export`)
-//! - `bloom_texture`: Internal mip chain (created via `create_and_export`)
+//! - **`BloomFeature`** – persistent owner of GPU pipelines, bind-group
+//!   layouts, and static uniform buffers.  Initialised lazily by
+//!   [`extract_and_prepare`](BloomFeature::extract_and_prepare) (called
+//!   once per frame *before* the render graph is built).
 //!
-//! # Internal Resources
+//! - **`BloomPassNode`** – ephemeral per-frame node added to the render
+//!   graph by [`add_to_graph`](BloomFeature::add_to_graph).  Carries
+//!   cloned handles (pipeline IDs, layout/buffer clones, push params)
+//!   and owns transient mip-chain state.
 //!
-//! - Three pipelines: downsample, upsample (additive), composite
-//! - Per-mip bind groups (cached, rebuilt only on resolution change)
+//! # RDG Slots (declared by BloomPassNode::setup)
+//!
+//! - `input_tex`     – HDR scene color (read via blackboard)
+//! - `output_tex`    – HDR scene color with bloom composited
+//! - `bloom_texture` – internal mip chain
 //!
 //! # Push Model
 //!
 //! All scene-level parameters (`karis_average`, `max_mip_levels`,
-//! uniform buffer IDs) are set externally by the Composer.
+//! uniform buffer IDs) are passed into `add_to_graph` by the Composer.
 
 use crate::define_gpu_data_struct;
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
@@ -38,6 +41,8 @@ use crate::resources::WgslType;
 use crate::resources::bloom::{CompositeUniforms, UpsampleUniforms};
 use crate::resources::uniforms::{UniformArray, WgslStruct};
 
+use super::graph::RenderGraph;
+
 define_gpu_data_struct!(
     /// Internal GPU uniform for the downsample shader (karis on/off flag).
     struct DownsampleUniforms {
@@ -46,26 +51,17 @@ define_gpu_data_struct!(
     }
 );
 
-/// Physically-based bloom pass (macro node).
+// =============================================================================
+// BloomFeature — persistent GPU resource owner
+// =============================================================================
+
+/// Persistent bloom feature that owns GPU pipelines, layouts, and buffers.
 ///
-/// The Composer pushes scene-level bloom parameters before the RDG prepare
-/// loop. The bloom mip chain texture is registered in RDG by the Composer
-/// and allocated by the transient pool. The pass creates per-mip views
-/// and bind groups from the pool-allocated physical texture.
-pub struct RdgBloomPass {
-    // ─── RDG Resource Slots (set by Composer) ──────────────────────
-    pub input_tex: TextureNodeId,
-    pub output_tex: TextureNodeId,
-    pub bloom_texture: TextureNodeId,
-
-    // ─── Push Parameters (set by Composer from Scene) ──────────────
-    pub karis_average: bool,
-    pub max_mip_levels: u32,
-    /// CPU-side buffer ID for `CpuBuffer<UpsampleUniforms>`.
-    pub upsample_uniforms_cpu_id: u64,
-    /// CPU-side buffer ID for `CpuBuffer<CompositeUniforms>`.
-    pub composite_uniforms_cpu_id: u64,
-
+/// The Composer calls [`extract_and_prepare`](Self::extract_and_prepare)
+/// once per frame before the render graph is built, then
+/// [`add_to_graph`](Self::add_to_graph) to inject an ephemeral
+/// [`BloomPassNode`] into the RDG.
+pub struct BloomFeature {
     // ─── Pipelines ─────────────────────────────────────────────────
     downsample_pipeline: Option<RenderPipelineId>,
     upsample_pipeline: Option<RenderPipelineId>,
@@ -81,40 +77,13 @@ pub struct RdgBloomPass {
     karis_on_buffer: Option<Tracked<wgpu::Buffer>>,
     /// GPU buffer with `use_karis_average = 0`, written once.
     karis_off_buffer: Option<Tracked<wgpu::Buffer>>,
-
-    // ─── Internal Mip Chain (views from RDG-allocated texture) ─────
-    /// Per-mip views into the RDG-allocated bloom texture.
-    mip_views: Vec<Tracked<wgpu::TextureView>>,
-    /// Cached bloom texture size for invalidation detection.
-    cached_size: (u32, u32),
-
-    // ─── Cached BindGroups ─────────────────────────────────────────
-    /// `downsample_bind_groups[i]` binds mip_views[i] → mip_views[i+1].
-    /// Index 0 binds the scene color input → mip_views[0].
-    downsample_bind_groups: Vec<wgpu::BindGroup>,
-    /// `upsample_bind_groups[i]` binds mip_views[i+1] → mip_views[i].
-    upsample_bind_groups: Vec<wgpu::BindGroup>,
-    /// Composite BindGroup: original + bloom mip0 → output.
-    composite_bind_group: Option<wgpu::BindGroup>,
-
-    /// Tracked ID of the input texture view; when it changes, first DS BG must rebuild.
-    last_input_view_id: u64,
 }
 
-impl RdgBloomPass {
-    /// Creates a new bloom pass. All GPU resources are lazily allocated.
+impl BloomFeature {
+    /// Creates a new bloom feature. All GPU resources are lazily allocated.
     #[must_use]
     pub fn new() -> Self {
         Self {
-            input_tex: TextureNodeId(0),
-            output_tex: TextureNodeId(0),
-            bloom_texture: TextureNodeId(0),
-
-            karis_average: true,
-            max_mip_levels: 6,
-            upsample_uniforms_cpu_id: 0,
-            composite_uniforms_cpu_id: 0,
-
             downsample_pipeline: None,
             upsample_pipeline: None,
             composite_pipeline: None,
@@ -125,16 +94,20 @@ impl RdgBloomPass {
 
             karis_on_buffer: None,
             karis_off_buffer: None,
-
-            mip_views: Vec::new(),
-            cached_size: (0, 0),
-
-            downsample_bind_groups: Vec::new(),
-            upsample_bind_groups: Vec::new(),
-            composite_bind_group: None,
-
-            last_input_view_id: 0,
         }
+    }
+
+    // =========================================================================
+    // Extract & Prepare (called before RDG build)
+    // =========================================================================
+
+    /// Ensure all persistent GPU resources (layouts, static buffers, pipelines)
+    /// are initialised.  Called once per frame by the Composer before the
+    /// render graph is constructed.
+    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext) {
+        self.ensure_layouts(ctx.device);
+        self.ensure_internal_buffers(ctx.device, ctx.queue);
+        self.ensure_pipelines(ctx);
     }
 
     // =========================================================================
@@ -291,7 +264,7 @@ impl RdgBloomPass {
         self.karis_off_buffer = Some(Tracked::new(buf_off));
     }
 
-    fn ensure_pipelines(&mut self, ctx: &mut PassPrepareContext) {
+    fn ensure_pipelines(&mut self, ctx: &mut ExtractContext) {
         if self.downsample_pipeline.is_some() {
             return;
         }
@@ -434,6 +407,137 @@ impl RdgBloomPass {
     }
 
     // =========================================================================
+    // Graph Integration
+    // =========================================================================
+
+    /// Create an ephemeral [`BloomPassNode`] and add it to the render graph.
+    ///
+    /// Returns the [`TextureNodeId`] of the `"Bloom_Out"` resource created
+    /// by the node during setup.
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        karis_average: bool,
+        max_mip_levels: u32,
+        upsample_uniforms_cpu_id: u64,
+        composite_uniforms_cpu_id: u64,
+    ) -> TextureNodeId {
+        let node = BloomPassNode {
+            input_tex: TextureNodeId(0),
+            output_tex: TextureNodeId(0),
+            bloom_texture: TextureNodeId(0),
+
+            karis_average,
+            max_mip_levels,
+            upsample_uniforms_cpu_id,
+            composite_uniforms_cpu_id,
+
+            downsample_pipeline: self
+                .downsample_pipeline
+                .expect("BloomFeature: downsample pipeline not initialised"),
+            upsample_pipeline: self
+                .upsample_pipeline
+                .expect("BloomFeature: upsample pipeline not initialised"),
+            composite_pipeline: self
+                .composite_pipeline
+                .expect("BloomFeature: composite pipeline not initialised"),
+
+            downsample_layout: self
+                .downsample_layout
+                .clone()
+                .expect("BloomFeature: downsample layout not initialised"),
+            upsample_layout: self
+                .upsample_layout
+                .clone()
+                .expect("BloomFeature: upsample layout not initialised"),
+            composite_layout: self
+                .composite_layout
+                .clone()
+                .expect("BloomFeature: composite layout not initialised"),
+
+            karis_on_buffer: self
+                .karis_on_buffer
+                .clone()
+                .expect("BloomFeature: karis_on buffer not initialised"),
+            karis_off_buffer: self
+                .karis_off_buffer
+                .clone()
+                .expect("BloomFeature: karis_off buffer not initialised"),
+
+            mip_views: Vec::new(),
+            cached_size: (0, 0),
+            downsample_bind_groups: Vec::new(),
+            upsample_bind_groups: Vec::new(),
+            composite_bind_group: None,
+            last_input_view_id: 0,
+        };
+
+        rdg.add_pass(Box::new(node));
+        rdg.find_resource("Bloom_Out")
+            .expect("Bloom_Out must be registered by BloomPassNode::setup")
+    }
+}
+
+// =============================================================================
+// BloomPassNode — ephemeral per-frame render graph node
+// =============================================================================
+
+/// Ephemeral bloom pass node inserted into the RDG each frame.
+///
+/// All persistent GPU handles are **cloned** from [`BloomFeature`] at
+/// creation time; transient mip-chain views and bind groups are built
+/// during [`prepare`](PassNode::prepare).
+pub struct BloomPassNode {
+    // ─── RDG Resource Slots (filled in setup) ──────────────────────
+    input_tex: TextureNodeId,
+    output_tex: TextureNodeId,
+    bloom_texture: TextureNodeId,
+
+    // ─── Push Parameters (from Composer) ───────────────────────────
+    karis_average: bool,
+    max_mip_levels: u32,
+    /// CPU-side buffer ID for `CpuBuffer<UpsampleUniforms>`.
+    upsample_uniforms_cpu_id: u64,
+    /// CPU-side buffer ID for `CpuBuffer<CompositeUniforms>`.
+    composite_uniforms_cpu_id: u64,
+
+    // ─── Pipeline IDs (cloned from Feature, non-Option) ────────────
+    downsample_pipeline: RenderPipelineId,
+    upsample_pipeline: RenderPipelineId,
+    composite_pipeline: RenderPipelineId,
+
+    // ─── Bind Group Layout Clones ──────────────────────────────────
+    downsample_layout: Tracked<wgpu::BindGroupLayout>,
+    upsample_layout: Tracked<wgpu::BindGroupLayout>,
+    composite_layout: Tracked<wgpu::BindGroupLayout>,
+
+    // ─── Karis Buffer Clones ───────────────────────────────────────
+    /// GPU buffer with `use_karis_average = 1`.
+    karis_on_buffer: Tracked<wgpu::Buffer>,
+    /// GPU buffer with `use_karis_average = 0`.
+    karis_off_buffer: Tracked<wgpu::Buffer>,
+
+    // ─── Internal Mip Chain (views from RDG-allocated texture) ─────
+    /// Per-mip views into the RDG-allocated bloom texture.
+    mip_views: Vec<Tracked<wgpu::TextureView>>,
+    /// Cached bloom texture size for invalidation detection.
+    cached_size: (u32, u32),
+
+    // ─── Cached BindGroups ─────────────────────────────────────────
+    /// `downsample_bind_groups[i]` binds mip_views[i] → mip_views[i+1].
+    /// Index 0 binds the scene color input → mip_views[0].
+    downsample_bind_groups: Vec<wgpu::BindGroup>,
+    /// `upsample_bind_groups[i]` binds mip_views[i+1] → mip_views[i].
+    upsample_bind_groups: Vec<wgpu::BindGroup>,
+    /// Composite BindGroup: original + bloom mip0 → output.
+    composite_bind_group: Option<wgpu::BindGroup>,
+
+    /// Tracked ID of the input texture view; when it changes, first DS BG must rebuild.
+    last_input_view_id: u64,
+}
+
+impl BloomPassNode {
+    // =========================================================================
     // Mip Chain Management
     // =========================================================================
 
@@ -472,16 +576,15 @@ impl RdgBloomPass {
     fn get_first_mip_bind_group(&self, ctx: &mut RdgPrepareContext) -> wgpu::BindGroup {
         // Select the appropriate static Karis buffer for the first downsample
         let karis_buf = if self.karis_average {
-            self.karis_on_buffer.as_ref().unwrap()
+            &self.karis_on_buffer
         } else {
-            self.karis_off_buffer.as_ref().unwrap()
+            &self.karis_off_buffer
         };
 
-        // let input_view = ctx.get_resource_view(GraphResource::SceneColorInput);
         let input_view = ctx.views.get_texture_view(self.input_tex);
 
         // 1. Prepare Cache Key IDs (GPU buffer IDs from resource manager)
-        let downsample_layout = self.downsample_layout.as_ref().unwrap();
+        let downsample_layout = &self.downsample_layout;
         let input_view_id = input_view.id();
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
 
@@ -525,7 +628,7 @@ impl RdgBloomPass {
         let bloom_view = &self.mip_views[0];
 
         // 1. Prepare Cache Key IDs
-        let layout_id = self.composite_layout.as_ref().unwrap().id();
+        let layout_id = self.composite_layout.id();
         let input_view_id = input_view.id();
         let bloom_view_id = bloom_view.id();
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
@@ -547,7 +650,7 @@ impl RdgBloomPass {
                 .get(&self.composite_uniforms_cpu_id)
                 .expect("Bloom composite GPU buffer must exist");
 
-            let comp_layout = self.composite_layout.as_ref().unwrap();
+            let comp_layout = &self.composite_layout;
 
             let new_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Bloom Composite BG"),
@@ -586,8 +689,8 @@ impl RdgBloomPass {
         let bloom_texture = ctx.views.get_texture_view(self.bloom_texture).texture();
         let mip_count = bloom_texture.mip_level_count();
 
-        let ds_layout = self.downsample_layout.as_ref().unwrap();
-        let us_layout = self.upsample_layout.as_ref().unwrap();
+        let ds_layout = &self.downsample_layout;
+        let us_layout = &self.upsample_layout;
 
         // Check if the input view or mip0 changed
         let needs_full_rebuild = self.downsample_bind_groups.len() != mip_count as usize
@@ -601,7 +704,7 @@ impl RdgBloomPass {
             self.downsample_bind_groups.clear();
             self.downsample_bind_groups.push(first_ds_bg);
 
-            let karis_off_buf = self.karis_off_buffer.as_ref().unwrap();
+            let karis_off_buf = &self.karis_off_buffer;
             let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
 
             // Remaining downsample BGs: mip[i] → mip[i+1]
@@ -674,7 +777,11 @@ impl RdgBloomPass {
     }
 }
 
-impl PassNode for RdgBloomPass {
+// =============================================================================
+// PassNode implementation
+// =============================================================================
+
+impl PassNode for BloomPassNode {
     fn name(&self) -> &'static str {
         "RDG_Bloom_Pass"
     }
@@ -715,13 +822,6 @@ impl PassNode for RdgBloomPass {
         self.input_tex = builder.read_blackboard("Scene_Color_HDR");
     }
 
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
-        // Persistent GPU resources: layouts, static uniform buffers, pipelines.
-        self.ensure_layouts(ctx.device);
-        self.ensure_internal_buffers(ctx.device, ctx.queue);
-        self.ensure_pipelines(ctx);
-    }
-
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         // Transient work only: mip-chain views + bind groups that
         // reference the RDG-allocated bloom texture and scene color input.
@@ -734,22 +834,13 @@ impl PassNode for RdgBloomPass {
             return;
         }
 
-        let Some(ds_pipeline_id) = self.downsample_pipeline else {
-            return;
-        };
-        let Some(us_pipeline_id) = self.upsample_pipeline else {
-            return;
-        };
-        let Some(comp_pipeline_id) = self.composite_pipeline else {
-            return;
-        };
         let Some(comp_bg) = &self.composite_bind_group else {
             return;
         };
 
-        let ds_pipeline = ctx.pipeline_cache.get_render_pipeline(ds_pipeline_id);
-        let us_pipeline = ctx.pipeline_cache.get_render_pipeline(us_pipeline_id);
-        let comp_pipeline = ctx.pipeline_cache.get_render_pipeline(comp_pipeline_id);
+        let ds_pipeline = ctx.pipeline_cache.get_render_pipeline(self.downsample_pipeline);
+        let us_pipeline = ctx.pipeline_cache.get_render_pipeline(self.upsample_pipeline);
+        let comp_pipeline = ctx.pipeline_cache.get_render_pipeline(self.composite_pipeline);
 
         // =====================================================================
         // Phase 1: Downsample — Scene HDR → Bloom Mip Chain

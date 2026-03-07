@@ -110,26 +110,26 @@ struct RendererState {
     pub(crate) rdg_pool: RdgTransientPool,
 
     // Post-processing passes
-    pub(crate) rdg_fxaa_pass: crate::renderer::graph::rdg::fxaa::RdgFxaaPass,
-    pub(crate) rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass,
-    pub(crate) rdg_bloom_pass: crate::renderer::graph::rdg::bloom::RdgBloomPass,
-    pub(crate) rdg_ssao_pass: crate::renderer::graph::rdg::ssao::RdgSsaoPass,
+    pub(crate) rdg_fxaa_pass: crate::renderer::graph::rdg::fxaa::FxaaFeature,
+    pub(crate) rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::ToneMapFeature,
+    pub(crate) rdg_bloom_pass: crate::renderer::graph::rdg::bloom::BloomFeature,
+    pub(crate) rdg_ssao_pass: crate::renderer::graph::rdg::ssao::SsaoFeature,
 
     // Scene rendering passes
-    pub(crate) rdg_prepass: crate::renderer::graph::rdg::prepass::RdgPrepass,
-    pub(crate) rdg_opaque_pass: crate::renderer::graph::rdg::opaque::RdgOpaquePass,
-    pub(crate) rdg_skybox_pass: crate::renderer::graph::rdg::skybox::RdgSkyboxPass,
-    pub(crate) rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass,
+    pub(crate) rdg_prepass: crate::renderer::graph::rdg::prepass::PrepassFeature,
+    pub(crate) rdg_opaque_pass: crate::renderer::graph::rdg::opaque::OpaqueFeature,
+    pub(crate) rdg_skybox_pass: crate::renderer::graph::rdg::skybox::SkyboxFeature,
+    pub(crate) rdg_transparent_pass: crate::renderer::graph::rdg::transparent::TransparentFeature,
     pub(crate) rdg_transmission_copy_pass:
-        crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass,
+        crate::renderer::graph::rdg::transmission_copy::TransmissionCopyFeature,
     pub(crate) rdg_simple_forward_pass:
-        crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass,
-    pub(crate) rdg_sssss_pass: crate::renderer::graph::rdg::sssss::RdgSssssPass,
+        crate::renderer::graph::rdg::simple_forward::SimpleForwardFeature,
+    pub(crate) rdg_sssss_pass: crate::renderer::graph::rdg::sssss::SssssFeature,
 
     // Shadow + Compute passes (migrated from old system)
-    pub(crate) rdg_shadow_pass: crate::renderer::graph::rdg::shadow::RdgShadowPass,
-    pub(crate) rdg_brdf_pass: crate::renderer::graph::rdg::compute::RdgBrdfLutPass,
-    pub(crate) rdg_ibl_pass: crate::renderer::graph::rdg::compute::RdgIblComputePass,
+    pub(crate) rdg_shadow_pass: crate::renderer::graph::rdg::shadow::ShadowFeature,
+    pub(crate) rdg_brdf_pass: crate::renderer::graph::rdg::compute::BrdfLutFeature,
+    pub(crate) rdg_ibl_pass: crate::renderer::graph::rdg::compute::IblComputeFeature,
 }
 
 impl Renderer {
@@ -187,11 +187,11 @@ impl Renderer {
 
         // Shadow + compute passes (need device ref before wgpu_ctx moves)
         let rdg_shadow_pass =
-            crate::renderer::graph::rdg::shadow::RdgShadowPass::new(&wgpu_ctx.device);
+            crate::renderer::graph::rdg::shadow::ShadowFeature::new(&wgpu_ctx.device);
         let rdg_brdf_pass =
-            crate::renderer::graph::rdg::compute::RdgBrdfLutPass::new(&wgpu_ctx.device);
+            crate::renderer::graph::rdg::compute::BrdfLutFeature::new(&wgpu_ctx.device);
         let rdg_ibl_pass =
-            crate::renderer::graph::rdg::compute::RdgIblComputePass::new(&wgpu_ctx.device);
+            crate::renderer::graph::rdg::compute::IblComputeFeature::new(&wgpu_ctx.device);
 
         // 6. Assemble state
         self.context = Some(RendererState {
@@ -209,22 +209,21 @@ impl Renderer {
             rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph::new(),
             sampler_registry,
             rdg_pool: RdgTransientPool::new(),
-            rdg_fxaa_pass: crate::renderer::graph::rdg::fxaa::RdgFxaaPass::new(),
-            rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass::new(),
-            rdg_bloom_pass: crate::renderer::graph::rdg::bloom::RdgBloomPass::new(),
-            rdg_ssao_pass: crate::renderer::graph::rdg::ssao::RdgSsaoPass::new(),
+            rdg_fxaa_pass: crate::renderer::graph::rdg::fxaa::FxaaFeature::new(),
+            rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::ToneMapFeature::new(),
+            rdg_bloom_pass: crate::renderer::graph::rdg::bloom::BloomFeature::new(),
+            rdg_ssao_pass: crate::renderer::graph::rdg::ssao::SsaoFeature::new(),
 
             // RDG Scene Passes
-            rdg_prepass: crate::renderer::graph::rdg::prepass::RdgPrepass::new(),
-            rdg_opaque_pass: crate::renderer::graph::rdg::opaque::RdgOpaquePass::new(),
-            rdg_skybox_pass: crate::renderer::graph::rdg::skybox::RdgSkyboxPass::new(),
-            rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass::new(
-            ),
+            rdg_prepass: crate::renderer::graph::rdg::prepass::PrepassFeature::new(),
+            rdg_opaque_pass: crate::renderer::graph::rdg::opaque::OpaqueFeature::new(),
+            rdg_skybox_pass: crate::renderer::graph::rdg::skybox::SkyboxFeature::new(),
+            rdg_transparent_pass: crate::renderer::graph::rdg::transparent::TransparentFeature::new(),
             rdg_transmission_copy_pass:
-                crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass::new(),
+                crate::renderer::graph::rdg::transmission_copy::TransmissionCopyFeature::new(),
             rdg_simple_forward_pass:
-                crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass::new(),
-            rdg_sssss_pass: crate::renderer::graph::rdg::sssss::RdgSssssPass::new(),
+                crate::renderer::graph::rdg::simple_forward::SimpleForwardFeature::new(),
+            rdg_sssss_pass: crate::renderer::graph::rdg::sssss::SssssFeature::new(),
 
             // Shadow + Compute passes (migrated from old system)
             rdg_shadow_pass,
@@ -308,6 +307,119 @@ impl Renderer {
             camera,
             assets,
         );
+
+        // ── Phase 2.5: Feature extract & prepare ────────────────────────
+        //
+        // Resolve persistent GPU resources (pipelines, layouts, bind groups)
+        // BEFORE the render graph is built. This ensures all Features are
+        // fully prepared when their ephemeral PassNodes are created.
+        {
+            use crate::renderer::graph::rdg::context::ExtractContext;
+            use crate::renderer::HDR_TEXTURE_FORMAT;
+
+            let view_format = state.wgpu_ctx.surface_view_format;
+            let depth_format = state.wgpu_ctx.depth_format;
+            let is_hf = state.wgpu_ctx.render_path.supports_post_processing();
+            let scene_id_val = scene.id();
+            let render_state_id = state.render_frame.render_state.id;
+            let global_state_key = (render_state_id, scene_id_val);
+
+            let ssao_enabled = scene.ssao.enabled && is_hf;
+            let needs_feature_id =
+                is_hf && (scene.screen_space.enable_sss || scene.screen_space.enable_ssr);
+            let needs_normal = ssao_enabled || needs_feature_id;
+            let needs_skybox = scene.background.needs_skybox_pass();
+            let bloom_enabled = scene.bloom.enabled && is_hf;
+            let fxaa_enabled = scene.fxaa.enabled && is_hf;
+
+            // GPU buffer uploads (before resource_manager enters ExtractContext)
+            let bg_uniforms_gpu_id =
+                state.resource_manager.ensure_buffer_id(&scene.background.uniforms);
+            let bg_uniforms_cpu_id = scene.background.uniforms.id();
+            let bg_mode = scene.background.mode.clone();
+
+            if bloom_enabled {
+                state
+                    .resource_manager
+                    .ensure_buffer(&scene.bloom.upsample_uniforms);
+                state
+                    .resource_manager
+                    .ensure_buffer(&scene.bloom.composite_uniforms);
+            }
+            if ssao_enabled {
+                state.resource_manager.ensure_buffer(&scene.ssao.uniforms);
+            }
+            state
+                .resource_manager
+                .ensure_buffer(&scene.tone_mapping.uniforms);
+            if let Some(lut_handle) = scene.tone_mapping.lut_texture {
+                state.resource_manager.prepare_texture(assets, lut_handle);
+            }
+
+            let mut extract_ctx = ExtractContext {
+                device: &state.wgpu_ctx.device,
+                queue: &state.wgpu_ctx.queue,
+                pipeline_cache: &mut state.pipeline_cache,
+                shader_manager: &mut state.shader_manager,
+                sampler_registry: &mut state.sampler_registry,
+                global_bind_group_cache: &mut state.global_bind_group_cache,
+                resource_manager: &mut state.resource_manager,
+                wgpu_ctx: &state.wgpu_ctx,
+                render_lists: &mut state.render_lists,
+                extracted_scene: &state.render_frame.extracted_scene,
+                render_state: &state.render_frame.render_state,
+                assets,
+            };
+
+            // Always: compute + shadow
+            state.rdg_brdf_pass.extract_and_prepare(&mut extract_ctx);
+            state.rdg_ibl_pass.extract_and_prepare(&mut extract_ctx);
+            state.rdg_shadow_pass.extract_and_prepare(&mut extract_ctx);
+
+            // Skybox (both pipelines)
+            if needs_skybox {
+                let color_format = if is_hf { HDR_TEXTURE_FORMAT } else { view_format };
+                state.rdg_skybox_pass.extract_and_prepare(
+                    &mut extract_ctx,
+                    bg_mode,
+                    bg_uniforms_cpu_id,
+                    bg_uniforms_gpu_id,
+                    scene_id_val,
+                    color_format,
+                    depth_format,
+                );
+            }
+
+            if is_hf {
+                state
+                    .rdg_prepass
+                    .extract_and_prepare(&mut extract_ctx, needs_normal, needs_feature_id);
+
+                if ssao_enabled {
+                    state.rdg_ssao_pass.extract_and_prepare(&mut extract_ctx);
+                }
+
+                state.rdg_sssss_pass.extract_and_prepare(&mut extract_ctx);
+
+                if bloom_enabled {
+                    state.rdg_bloom_pass.extract_and_prepare(&mut extract_ctx);
+                }
+
+                state.rdg_tone_map_pass.extract_and_prepare(
+                    &mut extract_ctx,
+                    scene.tone_mapping.mode,
+                    view_format,
+                    scene.tone_mapping.lut_texture.is_some(),
+                    global_state_key,
+                );
+
+                if fxaa_enabled {
+                    state
+                        .rdg_fxaa_pass
+                        .extract_and_prepare(&mut extract_ctx, view_format);
+                }
+            }
+        }
 
         // ── Phase 3: Build ComposerContext ──────────────────────────────
         let ctx = ComposerContext {

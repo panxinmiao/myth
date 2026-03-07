@@ -566,7 +566,7 @@ impl AppHandler for GltfViewer {
             composer
                 .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
                     ui_pass.target_tex = bb.surface_out;
-                    rdg.add_pass(ui_pass);
+                    rdg.add_pass_ref(ui_pass);
                 })
                 .render();
         } else {

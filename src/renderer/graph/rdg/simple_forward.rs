@@ -29,6 +29,25 @@ use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext}
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 
+use super::graph::RenderGraph;
+
+// ─── Feature ───────────────────────────────────────────────────────────
+
+pub struct SimpleForwardFeature;
+
+impl SimpleForwardFeature {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph, clear_color: wgpu::Color) {
+        let node = SimpleForwardPassNode::new(clear_color);
+        rdg.add_pass(Box::new(node));
+    }
+}
+
+// ─── Pass Node ─────────────────────────────────────────────────────────
+
 /// RDG Simple Forward Render Pass.
 ///
 /// Draws the entire scene in a single LDR render pass with optional MSAA,
@@ -36,8 +55,8 @@ use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 /// directly to the swap-chain surface via `surface_out`.
 ///
 /// [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
-pub struct RdgSimpleForwardPass {
-    // ─── RDG Resource Slots (set by Composer) ────────────────────────
+pub struct SimpleForwardPassNode {
+    // ─── RDG Resource Slots (set during setup) ───────────────────────
     pub surface_out: TextureNodeId,
     pub scene_depth: TextureNodeId,
     pub msaa_view: Option<TextureNodeId>,
@@ -51,13 +70,13 @@ pub struct RdgSimpleForwardPass {
     screen_bind_group_id: u64,
 }
 
-impl RdgSimpleForwardPass {
+impl SimpleForwardPassNode {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(clear_color: wgpu::Color) -> Self {
         Self {
             surface_out: TextureNodeId(0),
             scene_depth: TextureNodeId(0),
-            clear_color: wgpu::Color::BLACK,
+            clear_color,
             msaa_view: None,
             screen_bind_group: None,
             screen_bind_group_id: 0,
@@ -116,7 +135,7 @@ impl RdgSimpleForwardPass {
     }
 }
 
-impl PassNode for RdgSimpleForwardPass {
+impl PassNode for SimpleForwardPassNode {
     fn name(&self) -> &'static str {
         "RDG_SimpleForward_Pass"
     }

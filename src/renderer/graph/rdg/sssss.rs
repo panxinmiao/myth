@@ -1,4 +1,10 @@
-//! RDG Screen-Space Sub-Surface Scattering (SSSSS) Post-Processing Pass
+//! SSSSS Feature + Ephemeral PassNode
+//!
+//! - **`SssssFeature`** (long-lived): owns pipeline cache, bind group layout,
+//!   profiles storage buffer.  `extract_and_prepare()` compiles pipelines and
+//!   uploads SSS profile data.
+//! - **`SssssPassNode`** (ephemeral per-frame): carries lightweight IDs and
+//!   transient bind-group slots.  Created by `SssssFeature::add_to_graph()`.
 //!
 //! Implements a separable Gaussian blur for SSS materials identified via the
 //! **Thin G-Buffer** stencil channel.  Two sequential render passes are
@@ -7,7 +13,7 @@
 //! # Data Flow (SSA-Compliant)
 //!
 //! ```text
-//!  Opaque / Transparent             RdgSssssPass
+//!  Opaque / Transparent             SssssPassNode
 //!       |                 +-----------------------------------+
 //! color_in  ------------>|  H Sub-Pass: Horizontal blur      |---> temp_blur
 //! normal_in ----+------->|                                   |         |
@@ -26,7 +32,8 @@
 //! # Integration
 //!
 //! Must come **after** `TransparentPass` and **before** `BloomPass` in the
-//! `HighFidelity` render path.  Zero cost when disabled (`enabled == false`).
+//! `HighFidelity` render path.  The Feature only calls `add_to_graph` when
+//! SSS is enabled — zero cost when disabled.
 //!
 //! # GPU Resources
 //!
@@ -39,7 +46,8 @@ use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::allocator::SubViewKey;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
@@ -49,31 +57,15 @@ use crate::renderer::pipeline::{
 use crate::resources::screen_space::{STENCIL_FEATURE_SSS, SssProfileData};
 use std::mem::size_of;
 
-/// RDG Screen-Space Sub-Surface Scattering pass (SSA-compliant).
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// Feature (long-lived, stored in RenderFeatures)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+/// Long-lived SSSSS feature — owns persistent GPU resources (pipelines,
+/// bind group layout, profiles buffer).
 ///
-/// Performs a two-pass separable Gaussian blur on pixels marked as SSS in
-/// the stencil buffer.  Reads from `color_in`, writes a distinct `color_out`.
-pub struct RdgSssssPass {
-    // --- RDG Resource Slots (set by Composer) ----------------------
-    /// HDR scene colour
-    pub scene_color: TextureNodeId,
-    // /// HDR scene colour output (write only -- V sub-pass destination)
-    // pub color_out: TextureNodeId,
-    /// Intermediate blur target (write H, read V)
-    pub temp_blur: TextureNodeId,
-    /// Scene depth buffer (stencil for culling + depth-aware blur)
-    pub depth_in: TextureNodeId,
-    /// Scene normals (for normal-aware kernel weighting)
-    pub normal_in: TextureNodeId,
-    /// Feature ID texture (SSS material identification)
-    pub feature_id: TextureNodeId,
-    /// Specular MRT texture
-    pub specular_tex: TextureNodeId,
-
-    // --- Push Parameters (set by Composer) -------------------------
-    /// Whether SSS is enabled this frame.
-    pub enabled: bool,
-
+/// Produces an ephemeral [`SssssPassNode`] each frame via [`Self::add_to_graph`].
+pub struct SssssFeature {
     // --- Pipelines -------------------------------------------------
     horizontal_pipeline: Option<RenderPipelineId>,
     vertical_pipeline: Option<RenderPipelineId>,
@@ -82,70 +74,23 @@ pub struct RdgSssssPass {
     // --- Persistent GPU Resources ----------------------------------
     profiles_buffer: Option<Tracked<wgpu::Buffer>>,
     last_registry_version: u64,
-
-    // --- Per-Frame BindGroups --------------------------------------
-    horizontal_bind_group: Option<wgpu::BindGroup>,
-    vertical_bind_group: Option<wgpu::BindGroup>,
 }
 
-impl RdgSssssPass {
+impl SssssFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            scene_color: TextureNodeId(0),
-            // color_out: TextureNodeId(0),
-            temp_blur: TextureNodeId(0),
-            depth_in: TextureNodeId(0),
-            normal_in: TextureNodeId(0),
-            feature_id: TextureNodeId(0),
-            specular_tex: TextureNodeId(0),
-            enabled: false,
             horizontal_pipeline: None,
             vertical_pipeline: None,
             bind_group_layout: None,
             profiles_buffer: None,
             last_registry_version: 0,
-            horizontal_bind_group: None,
-            vertical_bind_group: None,
         }
     }
-}
 
-impl PassNode for RdgSssssPass {
-    fn name(&self) -> &'static str {
-        "RDG SSSSS Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        if !self.enabled {
-            return;
-        }
-
-        // Producer: create the temporary blur texture.
-        let (w, h) = builder.global_resolution();
-        let hdr_format = builder.frame_config().hdr_format;
-        let desc = RdgTextureDesc::new_2d(
-            w,
-            h,
-            hdr_format,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        self.temp_blur = builder.create_texture("SSSSS_Temp", desc);
-
-        // Consumer: wire upstream resources.
-        self.scene_color = builder.write_blackboard("Scene_Color_HDR");
-        builder.read_texture(self.scene_color);
-        self.depth_in = builder.read_blackboard("Scene_Depth");
-        self.normal_in = builder.read_blackboard("Scene_Normals");
-        self.feature_id = builder.read_blackboard("Feature_ID");
-        self.specular_tex = builder.read_blackboard("Specular_MRT");
-    }
-
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
-        if !self.enabled {
-            return;
-        }
-
+    /// Pre-RDG resource preparation: create layout, compile pipelines,
+    /// upload SSS profile data.
+    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext) {
         let device = ctx.device;
 
         // -- 1. Lazy-create profiles storage buffer ---------------------
@@ -339,18 +284,80 @@ impl PassNode for RdgSssssPass {
         }
     }
 
+    /// Build the ephemeral pass node and insert it into the graph.
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
+        let node = SssssPassNode {
+            scene_color: TextureNodeId(0),
+            temp_blur: TextureNodeId(0),
+            depth_in: TextureNodeId(0),
+            normal_in: TextureNodeId(0),
+            feature_id: TextureNodeId(0),
+            specular_tex: TextureNodeId(0),
+            horizontal_pipeline: self
+                .horizontal_pipeline
+                .expect("SssssFeature not prepared"),
+            vertical_pipeline: self.vertical_pipeline.expect("SssssFeature not prepared"),
+            bind_group_layout: self.bind_group_layout.clone().unwrap(),
+            profiles_buffer: self.profiles_buffer.clone().unwrap(),
+            horizontal_bind_group: None,
+            vertical_bind_group: None,
+        };
+        rdg.add_pass(Box::new(node));
+    }
+}
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+// PassNode (ephemeral, created per frame)
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+struct SssssPassNode {
+    // --- RDG Resource Slots (filled in setup) ----------------------
+    scene_color: TextureNodeId,
+    temp_blur: TextureNodeId,
+    depth_in: TextureNodeId,
+    normal_in: TextureNodeId,
+    feature_id: TextureNodeId,
+    specular_tex: TextureNodeId,
+
+    // --- Cloned from Feature (lightweight IDs / Tracked clones) ----
+    horizontal_pipeline: RenderPipelineId,
+    vertical_pipeline: RenderPipelineId,
+    bind_group_layout: Tracked<wgpu::BindGroupLayout>,
+    profiles_buffer: Tracked<wgpu::Buffer>,
+
+    // --- Per-Frame BindGroups --------------------------------------
+    horizontal_bind_group: Option<wgpu::BindGroup>,
+    vertical_bind_group: Option<wgpu::BindGroup>,
+}
+
+impl PassNode for SssssPassNode {
+    fn name(&self) -> &'static str {
+        "RDG SSSSS Pass"
+    }
+
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        // Producer: create the temporary blur texture.
+        let (w, h) = builder.global_resolution();
+        let hdr_format = builder.frame_config().hdr_format;
+        let desc = RdgTextureDesc::new_2d(
+            w,
+            h,
+            hdr_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        self.temp_blur = builder.create_texture("SSSSS_Temp", desc);
+
+        // Consumer: wire upstream resources.
+        self.scene_color = builder.write_blackboard("Scene_Color_HDR");
+        builder.read_texture(self.scene_color);
+        self.depth_in = builder.read_blackboard("Scene_Depth");
+        self.normal_in = builder.read_blackboard("Scene_Normals");
+        self.feature_id = builder.read_blackboard("Feature_ID");
+        self.specular_tex = builder.read_blackboard("Specular_MRT");
+    }
+
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        if !self.enabled {
-            return;
-        }
-
-        // -- 4. Gather input views (RDG-managed) -----------------------
-        // Extract IDs and raw pointers upfront to avoid holding the immutable
-        // borrow on `ctx` across mutable cache operations (same pattern as SSAO).
-
-        // let color_in_view_id = ctx.get_texture_view(self.scene_color).id();
-        // let color_in_view_ptr =
-        //     ctx.get_texture_view(self.scene_color) as *const Tracked<wgpu::TextureView>;
+        // -- Gather input views (RDG-managed) ---------------------------
 
         // Depth: need a DepthOnly sub-view for sampling
         let depth_sub_key = SubViewKey {
@@ -373,10 +380,10 @@ impl PassNode for RdgSssssPass {
         let temp_blur_view = ctx.views.get_texture_view(self.temp_blur);
         let specular_view = ctx.views.get_texture_view(self.specular_tex);
 
-        // -- 5. Build bind groups (H: read color_in, V: read temp_blur)
-        let layout = self.bind_group_layout.as_ref().unwrap();
+        // -- Build bind groups (H: read color_in, V: read temp_blur) ----
+        let layout = &self.bind_group_layout;
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
-        let profiles_buffer = self.profiles_buffer.as_ref().unwrap();
+        let profiles_buffer = &self.profiles_buffer;
 
         // Horizontal: color_in -> temp_blur
         let horizontal_key = BindGroupKey::new(layout.id())
@@ -479,10 +486,6 @@ impl PassNode for RdgSssssPass {
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        if !self.enabled {
-            return;
-        }
-
         let depth_stencil_view = ctx.get_texture_view(self.depth_in);
         let temp_blur_view = ctx.get_texture_view(self.temp_blur);
         let color_out_view = ctx.get_texture_view(self.scene_color);
@@ -490,10 +493,10 @@ impl PassNode for RdgSssssPass {
         // Resolve pipeline handles -> actual GPU pipeline references (O(1))
         let hor_pipeline = ctx
             .pipeline_cache
-            .get_render_pipeline(self.horizontal_pipeline.unwrap());
+            .get_render_pipeline(self.horizontal_pipeline);
         let vert_pipeline = ctx
             .pipeline_cache
-            .get_render_pipeline(self.vertical_pipeline.unwrap());
+            .get_render_pipeline(self.vertical_pipeline);
 
         // -- H Sub-Pass: color_in -> temp_blur --------------------------
         {

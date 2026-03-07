@@ -24,13 +24,38 @@ use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext}
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 
+use super::graph::RenderGraph;
+
+// ─── Feature ───────────────────────────────────────────────────────────
+
+pub struct OpaqueFeature;
+
+impl OpaqueFeature {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        has_prepass: bool,
+        clear_color: wgpu::Color,
+        needs_specular: bool,
+    ) {
+        let node = OpaquePassNode::new(has_prepass, clear_color, needs_specular);
+        rdg.add_pass(Box::new(node));
+    }
+}
+
+// ─── Pass Node ─────────────────────────────────────────────────────────
+
 /// RDG Opaque Render Pass.
 ///
 /// Draws `render_lists.opaque` to the HDR scene color buffer. Builds a
 /// dynamic screen bind group (group 3) containing SSAO + transmission dummy
 /// textures.
-pub struct RdgOpaquePass {
-    // ─── RDG Resource Slots (set by Composer) ──────────────────────
+pub struct OpaquePassNode {
+    // ─── RDG Resource Slots (set during setup) ─────────────────────
     pub scene_color: TextureNodeId,
     pub scene_depth: TextureNodeId,
     pub ssao_tex: TextureNodeId,
@@ -47,17 +72,17 @@ pub struct RdgOpaquePass {
     screen_bind_group_id: u64,
 }
 
-impl RdgOpaquePass {
+impl OpaquePassNode {
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(has_prepass: bool, clear_color: wgpu::Color, needs_specular: bool) -> Self {
         Self {
             scene_color: TextureNodeId(0),
             scene_depth: TextureNodeId(0),
             ssao_tex: TextureNodeId(0),
             specular_tex: TextureNodeId(0),
-            has_prepass: false,
-            clear_color: wgpu::Color::BLACK,
-            needs_specular: false,
+            has_prepass,
+            clear_color,
+            needs_specular,
             ssao_enabled: false,
             screen_bind_group: None,
             screen_bind_group_id: 0,
@@ -116,7 +141,7 @@ impl RdgOpaquePass {
     }
 }
 
-impl PassNode for RdgOpaquePass {
+impl PassNode for OpaquePassNode {
     fn name(&self) -> &'static str {
         "RDG_Opaque_Pass"
     }

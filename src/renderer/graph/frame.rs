@@ -77,6 +77,7 @@ pub struct ShadowRenderCommand {
     pub dynamic_offset: u32,
 }
 
+#[derive(Clone, Copy)]
 pub struct ShadowLightInstance {
     pub light_id: u64,
     pub layer_index: u32,

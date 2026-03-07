@@ -19,11 +19,34 @@ use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext}
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 
+use super::graph::RenderGraph;
+
+// ─── Feature ───────────────────────────────────────────────────────────
+
+pub struct TransmissionCopyFeature;
+
+impl TransmissionCopyFeature {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph, active: bool) {
+        let node = TransmissionCopyPassNode {
+            scene_color: TextureNodeId(0),
+            transmission_tex: TextureNodeId(0),
+            active,
+        };
+        rdg.add_pass(Box::new(node));
+    }
+}
+
+// ─── Pass Node ─────────────────────────────────────────────────────────
+
 /// RDG Transmission Copy Pass.
 ///
 /// Copies scene color to the transmission texture and generates mipmaps.
 /// Conditionally skipped if no materials use Transmission this frame.
-pub struct RdgTransmissionCopyPass {
+pub struct TransmissionCopyPassNode {
     // ─── RDG Resource Slots ────────────────────────────────────────
     pub scene_color: TextureNodeId,
     pub transmission_tex: TextureNodeId,
@@ -33,7 +56,7 @@ pub struct RdgTransmissionCopyPass {
     pub active: bool,
 }
 
-impl RdgTransmissionCopyPass {
+impl TransmissionCopyPassNode {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -44,7 +67,7 @@ impl RdgTransmissionCopyPass {
     }
 }
 
-impl PassNode for RdgTransmissionCopyPass {
+impl PassNode for TransmissionCopyPassNode {
     fn name(&self) -> &'static str {
         "RDG_TransmissionCopy_Pass"
     }
