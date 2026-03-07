@@ -17,7 +17,7 @@
 use crate::renderer::core::resources::SamplerKey;
 use crate::renderer::core::resources::{BRDF_LUT_SIZE, CubeSourceType};
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::pipeline::{
     ColorTargetKey, ComputePipelineId, ComputePipelineKey, FullscreenPipelineKey, RenderPipelineId,
@@ -71,7 +71,7 @@ impl RdgBrdfLutPass {
     }
 
     /// Lazily create the compute pipeline via the global [`PipelineCache`].
-    fn ensure_pipeline(&mut self, ctx: &mut RdgPrepareContext) {
+    fn ensure_pipeline(&mut self, ctx: &mut PassPrepareContext) {
         if self.pipeline_id.is_some() {
             return;
         }
@@ -109,7 +109,7 @@ impl PassNode for RdgBrdfLutPass {
         builder.mark_side_effect();
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
         if !ctx.resource_manager.needs_brdf_compute {
             self.active = false;
             return;
@@ -136,6 +136,11 @@ impl PassNode for RdgBrdfLutPass {
 
         self.active = true;
         ctx.resource_manager.needs_brdf_compute = false;
+    }
+
+    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
+        // All work done in prepare_resources() — BRDF LUT uses
+        // shader_manager + pipeline_cache + mutable resource_manager.
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -327,7 +332,7 @@ impl RdgIblComputePass {
     }
 
     /// Lazily create all three pipelines via the global [`PipelineCache`].
-    fn ensure_pipelines(&mut self, ctx: &mut RdgPrepareContext) {
+    fn ensure_pipelines(&mut self, ctx: &mut PassPrepareContext) {
         if self.pmrem_pipeline_id.is_some() {
             return;
         }
@@ -497,12 +502,12 @@ impl PassNode for RdgIblComputePass {
         builder.mark_side_effect();
     }
 
-    /// All IBL compute work is performed during prepare with a dedicated
-    /// command encoder. The multi-phase nature of the task (equirect → cube,
-    /// mipmap generation via render passes, PMREM compute dispatches) requires
-    /// its own submission boundary.
+    /// All IBL compute work is performed during prepare_resources with a
+    /// dedicated command encoder. The multi-phase nature of the task
+    /// (equirect → cube, mipmap generation via render passes, PMREM compute
+    /// dispatches) requires its own submission boundary.
     #[allow(clippy::too_many_lines)]
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
         let Some(source) = ctx.resource_manager.pending_ibl_source.take() else {
             return;
         };
@@ -782,7 +787,12 @@ impl PassNode for RdgIblComputePass {
         log::info!("RDG IBL PMREM generated. Source type: {source_type:?}");
     }
 
+    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
+        // All IBL work done in prepare_resources() — uses queue, shader_manager,
+        // pipeline_cache, mutable resource_manager and sampler_registry.
+    }
+
     fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {
-        // All IBL compute work is completed during prepare().
+        // All IBL compute work is completed during prepare_resources().
     }
 }

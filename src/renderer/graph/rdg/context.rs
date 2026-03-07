@@ -13,50 +13,58 @@ use super::allocator::{RdgTransientPool, SubViewKey};
 use super::graph::RenderGraph;
 use super::types::TextureNodeId;
 
-// ─── Prepare Context ──────────────────────────────────────────────────────────
+// ─── Pass Prepare Context (Pre-RDG) ──────────────────────────────────────────
 
-/// Mutable context available during the RDG **prepare** phase.
+/// Rich context available during the **pre-RDG resource preparation** phase.
 ///
-/// Provides low-level rendering infrastructure (Device, Queue, PipelineCache,
-/// ShaderManager, etc.) and extracted scene data needed by rendering passes.
+/// The Composer calls [`PassNode::prepare_resources`] with this context for
+/// every active pass **before** the render graph is built. It provides full
+/// access to GPU infrastructure, scene data, and the asset server so that
+/// passes can:
 ///
-/// # Push Model
+/// - Create / cache `wgpu::BindGroupLayout`s
+/// - Compile pipelines via [`PipelineCache`]
+/// - Upload non-transient GPU data (uniform buffers, noise textures, etc.)
 ///
-/// Pass-specific parameters (TextureNodeId slots, configuration flags, uniform
-/// buffer IDs) are pushed into [`PassNode`](super::node::PassNode) fields by
-/// the Composer **before** the prepare loop. The context provides only shared,
-/// read-only infrastructure. `Scene` is **not** available here — all scene
-/// data must be pre-extracted into [`ExtractedScene`] or pushed via parameters.
-pub struct RdgPrepareContext<'a> {
-    // pub graph: &'a RenderGraph,
-    pub views: RdgViewResolver<'a>,
-    // pub pool: &'a mut RdgTransientPool,
+/// After this phase the pass holds only lightweight IDs and the scene borrow
+/// can be fully released.
+pub struct PassPrepareContext<'a> {
     pub device: &'a wgpu::Device,
     pub queue: &'a wgpu::Queue,
     pub pipeline_cache: &'a mut PipelineCache,
+    pub shader_manager: &'a mut ShaderManager,
     pub sampler_registry: &'a mut SamplerRegistry,
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
-    pub shader_manager: &'a mut ShaderManager,
-    // pub external_resources: &'a FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
-    /// GPU resource manager — provides `CpuBuffer → GpuBuffer` resolution,
-    /// texture upload, and global state access (layouts, bind groups).
     pub resource_manager: &'a mut ResourceManager,
-
-    // ─── Scene Data ──────────────────────────────────────────────────
-    /// Full wgpu context — depth format, MSAA samples, render path, etc.
     pub wgpu_ctx: &'a WgpuContext,
-
-    /// Render lists populated by SceneCullPass (read-only during RDG prepare).
     pub render_lists: &'a mut RenderLists,
-
-    /// Extracted scene data (render items, scene defines, etc.).
     pub extracted_scene: &'a ExtractedScene,
-
-    /// Render state (camera matrices, time, render_state_id, etc.).
     pub render_state: &'a RenderState,
-
-    /// Asset server for geometry/material lookups.
     pub assets: &'a AssetServer,
+}
+
+// ─── Prepare Context (Transient-Only) ─────────────────────────────────────────
+
+/// Minimal context available during the RDG **prepare** phase.
+///
+/// After the render graph has been compiled and transient resources allocated,
+/// each pass's [`PassNode::prepare`] receives this context to assemble
+/// `wgpu::BindGroup`s that reference RDG-managed transient textures.
+///
+/// Heavy infrastructure (`ShaderManager`, `AssetServer`, mutable
+/// `ResourceManager`, `ExtractedScene`, etc.) is deliberately excluded —
+/// all non-transient GPU work must be completed in the earlier
+/// [`PassNode::prepare_resources`] phase.
+pub struct RdgPrepareContext<'a> {
+    pub views: RdgViewResolver<'a>,
+    pub device: &'a wgpu::Device,
+    pub pipeline_cache: &'a PipelineCache,
+    pub sampler_registry: &'a SamplerRegistry,
+    pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
+    /// Read-only access for GPU buffer lookups during BindGroup assembly.
+    pub resource_manager: &'a ResourceManager,
+    /// Read-only access to render lists (draw commands, global bind group).
+    pub render_lists: &'a RenderLists,
 }
 
 pub struct RdgViewResolver<'a> {

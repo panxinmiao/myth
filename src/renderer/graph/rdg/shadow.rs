@@ -32,7 +32,7 @@ use glam::Mat4;
 use crate::renderer::core::view::ViewTarget;
 use crate::renderer::graph::frame::ShadowLightInstance;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 
 /// RDG Shadow Render Pass.
@@ -155,7 +155,7 @@ impl PassNode for RdgShadowPass {
     }
 
     /// Upload per-layer VP matrices and build the shadow light instance list.
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
         self.shadow_lights.clear();
 
         let total_layers = ctx
@@ -199,6 +199,11 @@ impl PassNode for RdgShadowPass {
 
         ctx.queue
             .write_buffer(&self.uniform_buffer, 0, &uniform_data);
+    }
+
+    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
+        // All work done in prepare_resources() — shadow pass uses queue for
+        // VP upload which is not available in the slim RDG prepare context.
     }
 
     /// Render shadow depth maps — one render pass per shadow layer.

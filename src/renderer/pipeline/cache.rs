@@ -25,10 +25,11 @@
 //! [`ShaderManager`]: super::shader_manager::ShaderManager
 
 use rustc_hash::FxHashMap;
+use smallvec::SmallVec;
 
 use crate::assets::{GeometryHandle, MaterialHandle};
 use crate::renderer::core::BindGroupContext;
-use crate::renderer::core::resources::{GpuGlobalState, GpuMaterial};
+use crate::renderer::core::resources::{GpuGlobalState, GpuMaterial, Tracked};
 use crate::renderer::graph::extracted::SceneFeatures;
 use crate::renderer::pipeline::pipeline_id::{ComputePipelineId, RenderPipelineId};
 use crate::renderer::pipeline::pipeline_key::{
@@ -68,10 +69,22 @@ pub struct FastShadowPipelineKey {
 // ─── Pipeline Cache ──────────────────────────────────────────────────────────
 
 /// Central pipeline storage and deduplication cache.
+///
+/// Alongside every compiled pipeline, the cache can optionally store the
+/// pipeline's [`Tracked<wgpu::BindGroupLayout>`] array.  This allows
+/// downstream code (e.g. RDG pass nodes) to look up layouts by pipeline
+/// ID without holding onto layout objects themselves, enabling stateless
+/// pass-node designs.
 pub struct PipelineCache {
     // ---- Storage (contiguous, indexed by Id) ----
     render_pipelines: Vec<wgpu::RenderPipeline>,
     compute_pipelines: Vec<wgpu::ComputePipeline>,
+
+    /// Per-render-pipeline tracked bind-group layouts (parallel to `render_pipelines`).
+    /// An entry is `None` if the caller did not register layouts for that pipeline.
+    render_layouts: Vec<Option<SmallVec<[Tracked<wgpu::BindGroupLayout>; 4]>>>,
+    /// Per-compute-pipeline tracked bind-group layouts.
+    compute_layouts: Vec<Option<SmallVec<[Tracked<wgpu::BindGroupLayout>; 4]>>>,
 
     // ---- L2 canonical lookups (full-state hash → Id) ----
     graphics_lookup: FxHashMap<u64, RenderPipelineId>,
@@ -96,6 +109,8 @@ impl PipelineCache {
         Self {
             render_pipelines: Vec::with_capacity(64),
             compute_pipelines: Vec::with_capacity(8),
+            render_layouts: Vec::with_capacity(64),
+            compute_layouts: Vec::with_capacity(8),
             graphics_lookup: FxHashMap::default(),
             fullscreen_lookup: FxHashMap::default(),
             simple_geometry_lookup: FxHashMap::default(),
@@ -119,6 +134,71 @@ impl PipelineCache {
     #[must_use]
     pub fn get_compute_pipeline(&self, id: ComputePipelineId) -> &wgpu::ComputePipeline {
         &self.compute_pipelines[id.index()]
+    }
+
+    // ── Layout Registration & Retrieval ──────────────────────────────────────
+
+    /// Associate tracked bind-group layouts with an existing render pipeline.
+    ///
+    /// Call this immediately after `get_or_create_*` to enable downstream code
+    /// to retrieve layouts via [`get_tracked_layout`](Self::get_tracked_layout)
+    /// using only the [`RenderPipelineId`].
+    pub fn register_render_layouts(
+        &mut self,
+        id: RenderPipelineId,
+        layouts: SmallVec<[Tracked<wgpu::BindGroupLayout>; 4]>,
+    ) {
+        let idx = id.index();
+        if idx >= self.render_layouts.len() {
+            self.render_layouts.resize_with(idx + 1, || None);
+        }
+        self.render_layouts[idx] = Some(layouts);
+    }
+
+    /// Associate tracked bind-group layouts with an existing compute pipeline.
+    pub fn register_compute_layouts(
+        &mut self,
+        id: ComputePipelineId,
+        layouts: SmallVec<[Tracked<wgpu::BindGroupLayout>; 4]>,
+    ) {
+        let idx = id.index();
+        if idx >= self.compute_layouts.len() {
+            self.compute_layouts.resize_with(idx + 1, || None);
+        }
+        self.compute_layouts[idx] = Some(layouts);
+    }
+
+    /// Retrieve a tracked bind-group layout for a render pipeline.
+    ///
+    /// **Panics** if no layouts were registered for `id`, or if `group_index`
+    /// is out of range.
+    #[inline]
+    #[must_use]
+    pub fn get_tracked_layout(
+        &self,
+        id: RenderPipelineId,
+        group_index: usize,
+    ) -> &Tracked<wgpu::BindGroupLayout> {
+        self.render_layouts[id.index()]
+            .as_ref()
+            .expect("No layouts registered for this pipeline")
+            .get(group_index)
+            .expect("group_index out of range")
+    }
+
+    /// Retrieve a tracked bind-group layout for a compute pipeline.
+    #[inline]
+    #[must_use]
+    pub fn get_tracked_compute_layout(
+        &self,
+        id: ComputePipelineId,
+        group_index: usize,
+    ) -> &Tracked<wgpu::BindGroupLayout> {
+        self.compute_layouts[id.index()]
+            .as_ref()
+            .expect("No layouts registered for this compute pipeline")
+            .get(group_index)
+            .expect("group_index out of range")
     }
 
     // ── Cache Invalidation ───────────────────────────────────────────────────
@@ -567,12 +647,14 @@ impl PipelineCache {
     fn push_render_pipeline(&mut self, pipeline: wgpu::RenderPipeline) -> RenderPipelineId {
         let id = RenderPipelineId(self.render_pipelines.len() as u32);
         self.render_pipelines.push(pipeline);
+        self.render_layouts.push(None);
         id
     }
 
     fn push_compute_pipeline(&mut self, pipeline: wgpu::ComputePipeline) -> ComputePipelineId {
         let id = ComputePipelineId(self.compute_pipelines.len() as u32);
         self.compute_pipelines.push(pipeline);
+        self.compute_layouts.push(None);
         id
     }
 }

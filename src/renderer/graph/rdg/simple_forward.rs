@@ -148,8 +148,6 @@ impl PassNode for RdgSimpleForwardPass {
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        self.clear_color = ctx.extracted_scene.background.clear_color();
-
         // Build screen bind group (group 3) with dummy textures (LDR path
         // has no SSAO or transmission).
         let (bg, bg_id) = ctx.resource_manager.build_screen_bind_group(

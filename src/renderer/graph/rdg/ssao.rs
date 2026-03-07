@@ -26,7 +26,7 @@ use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::allocator::SubViewKey;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
@@ -283,7 +283,7 @@ impl RdgSsaoPass {
         self.noise_texture_view = Some(Tracked::new(view));
     }
 
-    fn ensure_pipelines(&mut self, ctx: &mut RdgPrepareContext) {
+    fn ensure_pipelines(&mut self, ctx: &mut PassPrepareContext) {
         if self.raw_pipeline.is_some() {
             return;
         }
@@ -548,17 +548,15 @@ impl PassNode for RdgSsaoPass {
         self.normal_tex = builder.read_blackboard("Scene_Normals");
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        // 1. Lazy initialization
+    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
+        // Persistent GPU resources: layouts, noise texture, pipelines.
         self.ensure_layouts(ctx.device);
         self.ensure_noise_texture(ctx.device, ctx.queue);
         self.ensure_pipelines(ctx);
+    }
 
-        // 2. Internal raw AO texture
-        // let output_desc = &ctx.graph.resources[self.output_tex.0 as usize].desc;
-        // self.ensure_raw_texture(ctx.device, output_desc.size.width, output_desc.size.height);
-
-        // 3. Bind groups
+    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+        // Transient-only: bind groups referencing RDG-allocated depth/normal views.
         self.build_bind_groups(ctx);
     }
 

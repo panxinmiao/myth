@@ -5,7 +5,7 @@ use super::types::TextureNodeId;
 use crate::FxaaQuality;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
-use crate::renderer::graph::rdg::context::RdgPrepareContext;
+use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgPrepareContext};
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
@@ -14,12 +14,18 @@ use wgpu::CommandEncoder;
 type FxaaL1CacheKey = (FxaaQuality, wgpu::TextureFormat);
 
 pub struct RdgFxaaPass {
-    // 瞬态/外部驱动数据
+    // ─── RDG Slots (set by Composer) ───────────────────────────────
     pub input_tex: TextureNodeId,
     pub output_tex: TextureNodeId,
-    pub target_quality: FxaaQuality,
 
-    // 持久化内部缓存
+    // ─── Push Parameters ───────────────────────────────────────────
+    pub target_quality: FxaaQuality,
+    /// Output texture format — pushed by the Composer before
+    /// `prepare_resources()` so the pipeline can be compiled without
+    /// access to the render graph.
+    pub output_format: wgpu::TextureFormat,
+
+    // ─── Persistent Cache (populated in prepare_resources) ─────────
     l1_cache_key: Option<FxaaL1CacheKey>,
     pipeline_id: Option<RenderPipelineId>,
     bind_group_layout: Option<Tracked<wgpu::BindGroupLayout>>,
@@ -28,16 +34,13 @@ pub struct RdgFxaaPass {
 }
 
 impl RdgFxaaPass {
-    /// Creates a new FXAA pass.
-    ///
-    /// Only allocates the bind group layout and sampler. Pipelines are
-    /// lazily created on first use (or when quality changes).
     #[must_use]
     pub fn new() -> Self {
         Self {
             input_tex: TextureNodeId(0),
             output_tex: TextureNodeId(0),
             target_quality: FxaaQuality::High,
+            output_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             l1_cache_key: None,
             pipeline_id: None,
             bind_group_layout: None,
@@ -51,15 +54,8 @@ impl PassNode for RdgFxaaPass {
         "RDG_FXAA_Pass"
     }
 
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        self.input_tex = builder.read_blackboard("LDR_Intermediate");
-        self.output_tex = builder.write_blackboard("Surface_Out");
-    }
-
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        // --------------------------------------------------------
-        // 1. 惰性初始化 BindGroupLayout (仅发生一次)
-        // --------------------------------------------------------
+    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
+        // ── 1. Lazy-create BindGroupLayout (once) ──────────────────
         if self.bind_group_layout.is_none() {
             let layout = ctx
                 .device
@@ -87,19 +83,11 @@ impl PassNode for RdgFxaaPass {
             self.bind_group_layout = Some(Tracked::new(layout));
         }
 
-        // --------------------------------------------------------
-        // 2. L1 Cache Diffing：极速拦截管线变更
-        // --------------------------------------------------------
-        let output_desc = &ctx.views.graph.resources[self.output_tex.0 as usize].desc;
-        let output_format = output_desc.format;
-        let current_key = (self.target_quality, output_format);
+        // ── 2. L1 Cache: compile pipeline on quality/format change ─
+        let current_key = (self.target_quality, self.output_format);
 
         if self.l1_cache_key != Some(current_key) {
-            // L1 Miss: 目标画质或输出屏幕格式发生了改变，向 L2 请求新管线
-
             let mut options = ShaderCompilationOptions::default();
-
-            // Only Low and High need explicit defines; Medium is the default in the shader
             if self.target_quality != FxaaQuality::Medium {
                 options.add_define(self.target_quality.define_key(), "1");
             }
@@ -113,7 +101,7 @@ impl PassNode for RdgFxaaPass {
             );
 
             let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
-                format: output_format,
+                format: self.output_format,
                 blend: Some(wgpu::BlendState::REPLACE),
                 write_mask: wgpu::ColorWrites::ALL,
             });
@@ -132,7 +120,6 @@ impl PassNode for RdgFxaaPass {
                         immediate_size: 0,
                     });
 
-            // 向全局 PipelineCache 索取管线 ID
             let id = ctx.pipeline_cache.get_or_create_fullscreen(
                 ctx.device,
                 shader_module,
@@ -141,18 +128,20 @@ impl PassNode for RdgFxaaPass {
                 &format!("FXAA Pipeline {:?}", self.target_quality),
             );
             self.pipeline_id = Some(id);
-
-            // 更新 L1 Cache
             self.l1_cache_key = Some(current_key);
 
-            // 管线/格式变了，强制使当前绑定的 BindGroup 失效
+            // Pipeline changed — invalidate cached BindGroup key
             self.current_bind_group_key = None;
         }
+    }
 
-        // --------------------------------------------------------
-        // 3. 物理别名感知与全局 BindGroup 去重缓存
-        // --------------------------------------------------------
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        self.input_tex = builder.read_blackboard("LDR_Intermediate");
+        self.output_tex = builder.write_blackboard("Surface_Out");
+    }
 
+    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+        // Assemble transient BindGroup (references RDG-allocated input view)
         let input_view = ctx.views.get_texture_view(self.input_tex);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
         let bind_group_layout = self.bind_group_layout.as_ref().unwrap();
@@ -162,11 +151,9 @@ impl PassNode for RdgFxaaPass {
             .with_resource(sampler.id());
 
         if self.current_bind_group_key.as_ref() != Some(&current_key) {
-            // 只确保 Cache 中存在，不保留实体引用
             if ctx.global_bind_group_cache.get(&current_key).is_none() {
                 let new_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("FXAA BindGroup"),
-                    // 🌟 修正：解引用 Tracked
                     layout: &**bind_group_layout,
                     entries: &[
                         wgpu::BindGroupEntry {
@@ -182,16 +169,13 @@ impl PassNode for RdgFxaaPass {
                 ctx.global_bind_group_cache
                     .insert(current_key.clone(), new_bg);
             }
-
             self.current_bind_group_key = Some(current_key);
         }
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut CommandEncoder) {
-        // 1. 从 RDG 上下文中获取真实的 wgpu::TextureView
         let output_view = ctx.get_texture_view(self.output_tex);
 
-        // 2.我们确信 prepare 阶段已经装填好了所需资源
         let pipeline = ctx
             .pipeline_cache
             .get_render_pipeline(self.pipeline_id.expect("Pipeline not initialized!"));
@@ -205,7 +189,6 @@ impl PassNode for RdgFxaaPass {
             .get(&bind_group_key)
             .expect("BindGroup should have been prepared!");
 
-        // 3. 录制原生的 WGPU 渲染指令
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("RDG FXAA Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
