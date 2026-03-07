@@ -3,7 +3,7 @@ use crate::renderer::core::ResourceManager;
 use crate::renderer::core::WgpuContext;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::{SamplerRegistry, Tracked};
-use crate::renderer::graph::frame::RenderLists;
+use crate::renderer::graph::frame::{BakedRenderLists, RenderLists};
 use crate::renderer::graph::{ExtractedScene, RenderState};
 use crate::renderer::pipeline::{PipelineCache, ShaderManager};
 use rustc_hash::FxHashMap;
@@ -159,11 +159,19 @@ pub struct RdgExecuteContext<'a> {
     pub global_bind_group: Option<&'a wgpu::BindGroup>,
 
     // ─── Scene Data (Phase 3: full RDG integration) ──────────────────
-    /// GPU resource manager (read-only) — material/geometry lookups during draw.
+    /// GPU resource manager (read-only) — used by compute, post-processing,
+    /// and skybox passes that have not yet been migrated to baked commands.
     pub resource_manager: &'a ResourceManager,
 
     /// Render lists populated by SceneCullPass — opaque/transparent draw commands.
     pub render_lists: &'a RenderLists,
+
+    /// Pre-baked draw command lists with all GPU handles resolved.
+    ///
+    /// Scene-drawing passes (opaque, transparent, shadow, prepass,
+    /// simple-forward) consume these instead of performing per-command
+    /// handle lookups via `resource_manager`.
+    pub baked_lists: &'a BakedRenderLists<'a>,
 
     /// Full wgpu context — depth format, render path, etc.
     pub wgpu_ctx: &'a WgpuContext,

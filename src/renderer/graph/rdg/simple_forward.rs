@@ -23,10 +23,9 @@
 //! [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
 
 use crate::renderer::core::resources::ScreenBindGroupInfo;
-use crate::renderer::graph::TrackedRenderPass;
-use crate::renderer::graph::frame::RenderCommand;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::draw::submit_draw_commands;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 
@@ -80,7 +79,7 @@ pub struct SimpleForwardPassNode {
 
     // ─── Internal Cache ──────────────────────────────────────────
     screen_bind_group: Option<wgpu::BindGroup>,
-    screen_bind_group_id: u64,
+
 }
 
 impl SimpleForwardPassNode {
@@ -93,58 +92,6 @@ impl SimpleForwardPassNode {
             msaa_view: None,
             screen_info,
             screen_bind_group: None,
-            screen_bind_group_id: 0,
-        }
-    }
-
-    /// Draws a batch of render commands using [`TrackedRenderPass`] state tracking.
-    fn draw_list<'pass>(
-        ctx: &'pass RdgExecuteContext,
-        pass: &mut TrackedRenderPass<'pass>,
-        cmds: &'pass [RenderCommand],
-        screen_bind_group: &'pass wgpu::BindGroup,
-        screen_bind_group_id: u64,
-    ) {
-        if cmds.is_empty() {
-            return;
-        }
-
-        for cmd in cmds {
-            let pipeline = ctx.pipeline_cache.get_render_pipeline(cmd.pipeline_id);
-            pass.set_pipeline(cmd.pipeline_id.0, pipeline);
-
-            if let Some(gpu_material) = ctx.resource_manager.get_material(cmd.material_handle) {
-                pass.set_bind_group(1, gpu_material.bind_group_id, &gpu_material.bind_group, &[]);
-            }
-
-            pass.set_bind_group(
-                2,
-                cmd.object_bind_group.bind_group_id,
-                &cmd.object_bind_group.bind_group,
-                &[cmd.dynamic_offset],
-            );
-
-            pass.set_bind_group(3, screen_bind_group_id, screen_bind_group, &[]);
-
-            if let Some(gpu_geometry) = ctx.resource_manager.get_geometry(cmd.geometry_handle) {
-                for (slot, buffer) in gpu_geometry.vertex_buffers.iter().enumerate() {
-                    pass.set_vertex_buffer(
-                        slot as u32,
-                        gpu_geometry.vertex_buffer_ids[slot],
-                        buffer.slice(..),
-                    );
-                }
-
-                if let Some((index_buffer, index_format, count, id)) = &gpu_geometry.index_buffer {
-                    pass.set_index_buffer(*id, index_buffer.slice(..), *index_format);
-                    pass.draw_indexed(0..*count, 0, gpu_geometry.instance_range.clone());
-                } else {
-                    pass.draw(
-                        gpu_geometry.draw_range.clone(),
-                        gpu_geometry.instance_range.clone(),
-                    );
-                }
-            }
         }
     }
 }
@@ -183,14 +130,13 @@ impl PassNode for SimpleForwardPassNode {
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         // Build screen bind group (group 3) with dummy textures (LDR path
         // has no SSAO or transmission).
-        let (bg, bg_id) = self.screen_info.build_screen_bind_group(
+        let (bg, _) = self.screen_info.build_screen_bind_group(
             ctx.device,
             ctx.global_bind_group_cache,
             &self.screen_info.dummy_transmission_view.clone(),
             &self.screen_info.ssao_dummy_view.clone(),
         );
         self.screen_bind_group = Some(bg);
-        self.screen_bind_group_id = bg_id;
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -254,52 +200,30 @@ impl PassNode for SimpleForwardPassNode {
         };
 
         let raw_pass = encoder.begin_render_pass(&pass_desc);
-        let mut tracked_pass = TrackedRenderPass::new(raw_pass);
+        let mut pass = raw_pass;
 
         // Set global bind group (group 0: camera, lights, etc.)
-        tracked_pass.set_bind_group(
-            0,
-            render_lists.gpu_global_bind_group_id,
-            gpu_global_bind_group,
-            &[],
-        );
+        pass.set_bind_group(0, gpu_global_bind_group, &[]);
+
+        // Set screen bind group (Group 3) at the pass level.
+        let screen_bg = self.screen_bind_group.as_ref().unwrap();
+        pass.set_bind_group(3, screen_bg, &[]);
 
         // 1. Opaque (front-to-back)
-        let screen_bg = self.screen_bind_group.as_ref().unwrap();
-        Self::draw_list(
-            ctx,
-            &mut tracked_pass,
-            &render_lists.opaque,
-            screen_bg,
-            self.screen_bind_group_id,
-        );
+        submit_draw_commands(&mut pass, &ctx.baked_lists.opaque);
 
         // 2. Skybox (between opaque and transparent)
         if let Some(skybox) = &render_lists.prepared_skybox {
-            let raw = tracked_pass.raw_pass();
-            skybox.draw(raw, gpu_global_bind_group, ctx.pipeline_cache);
+            skybox.draw(&mut pass, gpu_global_bind_group, ctx.pipeline_cache);
 
-            // Invalidate tracked state — skybox uses a different pipeline and
-            // bind group layout at slot 0.
-            tracked_pass.invalidate_state();
-
-            // Re-set global bind group for subsequent transparent draws.
-            tracked_pass.set_bind_group(
-                0,
-                render_lists.gpu_global_bind_group_id,
-                gpu_global_bind_group,
-                &[],
-            );
+            // Re-set global and screen bind groups for subsequent transparent
+            // draws — skybox uses a different pipeline and bind group layout.
+            pass.set_bind_group(0, gpu_global_bind_group, &[]);
+            pass.set_bind_group(3, screen_bg, &[]);
         }
 
         // 3. Transparent (back-to-front)
-        Self::draw_list(
-            ctx,
-            &mut tracked_pass,
-            &render_lists.transparent,
-            screen_bg,
-            self.screen_bind_group_id,
-        );
+        submit_draw_commands(&mut pass, &ctx.baked_lists.transparent);
 
         // RenderPass automatically resolves MSAA on drop if resolve_target is set.
     }
