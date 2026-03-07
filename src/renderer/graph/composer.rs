@@ -52,6 +52,7 @@ use crate::renderer::graph::ExtractedScene;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::rdg::blackboard::{GraphBlackboard, HookStage};
 use crate::renderer::graph::rdg::context::RdgViewResolver;
+use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::types::TextureNodeId;
 use crate::renderer::pipeline::PipelineCache;
 use crate::renderer::pipeline::ShaderManager;
@@ -130,7 +131,7 @@ pub struct FrameComposer<'a> {
         [(
             HookStage,
             Box<
-                dyn FnMut(&mut crate::renderer::graph::rdg::graph::RenderGraph, &GraphBlackboard)
+                dyn FnMut(&mut RenderGraph, &mut GraphBlackboard)
                     + 'a,
             >,
         ); 4],
@@ -172,7 +173,7 @@ impl<'a> FrameComposer<'a> {
     #[must_use]
     pub fn add_custom_pass<F>(mut self, stage: HookStage, hook: F) -> Self
     where
-        F: FnMut(&mut crate::renderer::graph::rdg::graph::RenderGraph, &GraphBlackboard) + 'a,
+        F: FnMut(&mut RenderGraph, &mut GraphBlackboard) + 'a,
     {
         self.hooks.push((stage, Box::new(hook)));
         self
@@ -286,7 +287,7 @@ impl<'a> FrameComposer<'a> {
         // ── 2d. Wire Scene Rendering Passes ────────────────────────────
 
         // Build blackboard for hooks
-        let blackboard = GraphBlackboard {
+        let mut blackboard = GraphBlackboard {
             scene_color,
             scene_depth,
             surface_out,
@@ -342,7 +343,7 @@ impl<'a> FrameComposer<'a> {
             // ── Before-Post-Process Hooks ──────────────────────────────
             for (stage, hook) in &mut self.hooks {
                 if *stage == HookStage::BeforePostProcess {
-                    hook(rdg, &blackboard);
+                    hook(rdg, &mut blackboard);
                 }
             }
 
@@ -402,7 +403,7 @@ impl<'a> FrameComposer<'a> {
         // ── After-Post-Process Hooks (UI, debug overlays) ──────────────
         for (stage, hook) in &mut self.hooks {
             if *stage == HookStage::AfterPostProcess {
-                hook(rdg, &blackboard);
+                hook(rdg, &mut blackboard);
             }
         }
 

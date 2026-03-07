@@ -12,13 +12,6 @@
 //! 2. **Compose**: Chain render nodes via [`FrameComposer`]
 //! 3. **Execute**: `FrameComposer::render()` — acquire the surface and submit GPU commands
 //!
-//! # Example
-//!
-//! ```ignore
-//! renderer.begin_frame(scene, &camera, assets, time)?
-//!     .add_node(RenderStage::UI, &ui_pass)
-//!     .render();
-//! ```
 
 use glam::Mat4;
 use rustc_hash::FxHashMap;

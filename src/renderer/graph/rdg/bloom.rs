@@ -544,7 +544,7 @@ impl BloomPassNode {
     /// Allocate the bloom mip chain texture and rebuild internal bind groups
     /// when the resolution or input view changes.
     fn ensure_mip_chain(&mut self, ctx: &mut RdgPrepareContext) {
-        let texture = ctx.views.get_texture_view(self.bloom_texture).texture();
+        let texture = ctx.views.get_texture(self.bloom_texture);
         let current_size = (texture.width(), texture.height());
 
         if self.cached_size != current_size || self.mip_views.is_empty() {
