@@ -67,11 +67,11 @@ pub struct SsaoFeature {
     // ─── Persistent Resources ──────────────────────────────────────
     noise_texture_view: Option<Tracked<wgpu::TextureView>>,
 
-    // ─── Resolved GPU Buffer (populated per-frame in extract_and_prepare) ──
-    /// Resolved GPU buffer for SSAO uniforms.
-    uniforms_gpu_buffer: Option<wgpu::Buffer>,
-    /// Stable resource ID for the SSAO uniforms GPU buffer.
-    uniforms_gpu_buffer_id: u64,
+    // ─── Pre-Built Static BindGroup (Group 2: uniforms) ────────────
+    /// Feature-owned uniform bind group — eliminates GPU buffer leak to PassNode.
+    uniforms_static_bg: Option<wgpu::BindGroup>,
+    /// Tracked buffer identity for staleness detection.
+    last_uniforms_buffer_id: u64,
 }
 
 impl SsaoFeature {
@@ -87,8 +87,8 @@ impl SsaoFeature {
 
             noise_texture_view: None,
 
-            uniforms_gpu_buffer: None,
-            uniforms_gpu_buffer_id: 0,
+            uniforms_static_bg: None,
+            last_uniforms_buffer_id: 0,
         }
     }
 
@@ -361,22 +361,29 @@ impl SsaoFeature {
     }
 
     /// Pre-RDG resource preparation: create layouts, noise texture, compile pipelines,
-    /// resolve the SSAO uniforms GPU buffer.
+    /// build the static uniforms bind group (Group 2).
     pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext, uniforms_cpu_id: u64) {
         // Persistent GPU resources: layouts, noise texture, pipelines.
         self.ensure_layouts(ctx.device);
         self.ensure_noise_texture(ctx.device, ctx.queue);
         self.ensure_pipelines(ctx);
 
-        // Pre-resolve GPU buffer so the PassNode does not need ResourceManager.
-        self.uniforms_gpu_buffer = ctx
-            .resource_manager
-            .gpu_buffers
-            .get(&uniforms_cpu_id)
-            .map(|g| {
-                self.uniforms_gpu_buffer_id = g.id;
-                g.buffer.clone()
-            });
+        // Build Group 2 static BG (uniforms only) — rebuild on buffer identity change.
+        if let Some(g) = ctx.resource_manager.gpu_buffers.get(&uniforms_cpu_id) {
+            if self.uniforms_static_bg.is_none() || self.last_uniforms_buffer_id != g.id {
+                let layout = self.raw_uniforms_layout.as_ref().unwrap();
+                self.uniforms_static_bg =
+                    Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("SSAO Uniforms G2 (static)"),
+                        layout,
+                        entries: &[wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: g.buffer.as_entire_binding(),
+                        }],
+                    }));
+                self.last_uniforms_buffer_id = g.id;
+            }
+        }
     }
 
     /// Build the ephemeral pass node and insert it into the graph.
@@ -390,21 +397,18 @@ impl SsaoFeature {
             output_tex: TextureNodeId(0),
             internal_raw_tex: TextureNodeId(0),
 
-            uniforms_gpu_buffer: self
-                .uniforms_gpu_buffer
+            uniforms_static_bg: self
+                .uniforms_static_bg
                 .clone()
-                .expect("SsaoFeature: uniforms GPU buffer not resolved"),
-            uniforms_gpu_buffer_id: self.uniforms_gpu_buffer_id,
+                .expect("SsaoFeature: uniforms static BG not built"),
 
             raw_pipeline: self.raw_pipeline.expect("SsaoFeature not prepared"),
             blur_pipeline: self.blur_pipeline.expect("SsaoFeature not prepared"),
             raw_layout: self.raw_layout.clone().unwrap(),
-            raw_uniforms_layout: self.raw_uniforms_layout.clone().unwrap(),
             blur_layout: self.blur_layout.clone().unwrap(),
             noise_texture_view: self.noise_texture_view.clone().unwrap(),
 
             raw_bind_group_key: None,
-            raw_uniforms_bind_group_key: None,
             blur_bind_group_key: None,
         };
         rdg.add_pass(Box::new(node));
@@ -417,8 +421,10 @@ impl SsaoFeature {
 
 /// Ephemeral per-frame SSAO render pass node.
 ///
-/// Carries cloned persistent resources from [SsaoFeature] (lightweight
-/// Tracked clones) plus push parameters from the Composer.
+/// Receives the pre-built **Group 2** (uniforms) bind group from
+/// [`SsaoFeature`] — no GPU buffer references on the PassNode.
+/// Only assembles Group 1 (raw textures) and Group 0 (blur textures)
+/// transient bind groups during [`prepare`](PassNode::prepare).
 struct SsaoPassNode {
     // ─── RDG Resource Slots (filled in setup via blackboard) ───────
     depth_tex: TextureNodeId,
@@ -426,35 +432,29 @@ struct SsaoPassNode {
     output_tex: TextureNodeId,
     internal_raw_tex: TextureNodeId,
 
-    // ─── Resolved GPU Buffer (from Feature, no ResourceManager needed) ──
-    /// Resolved GPU buffer for `SsaoUniforms`.
-    uniforms_gpu_buffer: wgpu::Buffer,
-    /// Stable resource ID for the SSAO uniforms GPU buffer.
-    uniforms_gpu_buffer_id: u64,
+    // ─── Static BindGroup (Group 2, from Feature) ──────────────────
+    /// Pre-built uniforms bind group — Feature-owned, cheap Arc clone.
+    uniforms_static_bg: wgpu::BindGroup,
 
     // ─── Cloned from Feature (lightweight IDs / Tracked clones) ────
     raw_pipeline: RenderPipelineId,
     blur_pipeline: RenderPipelineId,
     raw_layout: Tracked<wgpu::BindGroupLayout>,
-    raw_uniforms_layout: Tracked<wgpu::BindGroupLayout>,
     blur_layout: Tracked<wgpu::BindGroupLayout>,
     noise_texture_view: Tracked<wgpu::TextureView>,
 
-    // ─── Per-Frame BindGroup Keys ──────────────────────────────────
+    // ─── Per-Frame BindGroup Keys (transient) ──────────────────────
     raw_bind_group_key: Option<BindGroupKey>,
-    raw_uniforms_bind_group_key: Option<BindGroupKey>,
     blur_bind_group_key: Option<BindGroupKey>,
 }
 
 impl SsaoPassNode {
     // =========================================================================
-    // BindGroup Construction
+    // Transient BindGroup Construction (Groups 0 and 1 only)
     // =========================================================================
 
     fn build_bind_groups(&mut self, ctx: &mut RdgPrepareContext) {
         let device = ctx.device;
-
-        // Extract physical texture view IDs and raw pointers up front
 
         let depth_key = SubViewKey {
             aspect: wgpu::TextureAspect::DepthOnly,
@@ -478,10 +478,9 @@ impl SsaoPassNode {
         let point_sampler = ctx.sampler_registry.get_common(CommonSampler::NearestClamp);
 
         let raw_layout = &self.raw_layout;
-        let uniforms_layout = &self.raw_uniforms_layout;
         let blur_layout = &self.blur_layout;
 
-        // ─── Raw SSAO BindGroup (Group 1) ──────────────────────────
+        // ─── Raw SSAO BindGroup (Group 1: transient) ───────────────
         {
             let key = BindGroupKey::new(raw_layout.id())
                 .with_resource(depth_only_view.id())
@@ -494,7 +493,7 @@ impl SsaoPassNode {
             if self.raw_bind_group_key.as_ref() != Some(&key) {
                 if ctx.global_bind_group_cache.get(&key).is_none() {
                     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("RDG SSAO Raw BG"),
+                        label: Some("SSAO Raw BG (G1)"),
                         layout: raw_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
@@ -529,28 +528,7 @@ impl SsaoPassNode {
             }
         }
 
-        // ─── Raw SSAO Uniforms BindGroup (Group 2) ─────────────────
-        {
-            let key = BindGroupKey::new(uniforms_layout.id())
-                .with_resource(self.uniforms_gpu_buffer_id);
-
-            if self.raw_uniforms_bind_group_key.as_ref() != Some(&key) {
-                if ctx.global_bind_group_cache.get(&key).is_none() {
-                    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("RDG SSAO Uniforms BG"),
-                        layout: uniforms_layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: self.uniforms_gpu_buffer.as_entire_binding(),
-                        }],
-                    });
-                    ctx.global_bind_group_cache.insert(key.clone(), bg);
-                }
-                self.raw_uniforms_bind_group_key = Some(key);
-            }
-        }
-
-        // ─── Blur BindGroup (Group 0) ──────────────────────────────
+        // ─── Blur BindGroup (Group 0: transient) ──────────────────
         {
             let raw_view = ctx.views.get_texture_view(self.internal_raw_tex);
 
@@ -564,7 +542,7 @@ impl SsaoPassNode {
             if self.blur_bind_group_key.as_ref() != Some(&key) {
                 if ctx.global_bind_group_cache.get(&key).is_none() {
                     let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("RDG SSAO Blur BG"),
+                        label: Some("SSAO Blur BG (G0)"),
                         layout: blur_layout,
                         entries: &[
                             wgpu::BindGroupEntry {
@@ -629,9 +607,6 @@ impl PassNode for SsaoPassNode {
         let Some(raw_bg_key) = &self.raw_bind_group_key else {
             return;
         };
-        let Some(uniforms_bg_key) = &self.raw_uniforms_bind_group_key else {
-            return;
-        };
         let Some(blur_bg_key) = &self.blur_bind_group_key else {
             return;
         };
@@ -644,14 +619,6 @@ impl PassNode for SsaoPassNode {
             .global_bind_group_cache
             .get(raw_bg_key)
             .expect("SSAO raw BG should exist");
-        let uniforms_bg = ctx
-            .global_bind_group_cache
-            .get(uniforms_bg_key)
-            .expect("SSAO uniforms BG should exist");
-        let blur_bg = ctx
-            .global_bind_group_cache
-            .get(blur_bg_key)
-            .expect("SSAO blur BG should exist");
 
         let raw_pipeline = ctx.pipeline_cache.get_render_pipeline(self.raw_pipeline);
         let blur_pipeline = ctx.pipeline_cache.get_render_pipeline(self.blur_pipeline);
@@ -663,7 +630,7 @@ impl PassNode for SsaoPassNode {
         // =====================================================================
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("RDG SSAO Raw Pass"),
+                label: Some("SSAO Raw Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: raw_view,
                     resolve_target: None,
@@ -682,7 +649,7 @@ impl PassNode for SsaoPassNode {
             pass.set_pipeline(raw_pipeline);
             pass.set_bind_group(0, global_bg, &[]);
             pass.set_bind_group(1, raw_bg, &[]);
-            pass.set_bind_group(2, uniforms_bg, &[]);
+            pass.set_bind_group(2, &self.uniforms_static_bg, &[]);
             pass.draw(0..3, 0..1);
         }
 
@@ -690,10 +657,15 @@ impl PassNode for SsaoPassNode {
         // Sub-Pass 2: Cross-Bilateral Blur
         // =====================================================================
         {
+            let blur_bg = ctx
+                .global_bind_group_cache
+                .get(blur_bg_key)
+                .expect("SSAO blur BG should exist");
+
             let output_view = ctx.get_texture_view(self.output_tex);
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("RDG SSAO Blur Pass"),
+                label: Some("SSAO Blur Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: output_view,
                     resolve_target: None,

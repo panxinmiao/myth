@@ -8,10 +8,13 @@
 
 {{ struct_definitions }}
 
-@group(0) @binding(0) var original_texture: texture_2d<f32>;
-@group(0) @binding(1) var bloom_texture: texture_2d<f32>;
-@group(0) @binding(2) var tex_sampler: sampler;
-@group(0) @binding(3) var<uniform> u_bloom: CompositeUniforms;
+// Group 0: Persistent feature resources (Feature-owned, long-lived)
+@group(0) @binding(0) var tex_sampler: sampler;
+@group(0) @binding(1) var<uniform> u_bloom: CompositeUniforms;
+
+// Group 1: Transient RDG textures (PassNode-owned, per-frame)
+@group(1) @binding(0) var original_texture: texture_2d<f32>;
+@group(1) @binding(1) var bloom_texture: texture_2d<f32>;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {

@@ -8,9 +8,12 @@
 
 {{ struct_definitions }}
 
-@group(0) @binding(0) var src_texture: texture_2d<f32>;
-@group(0) @binding(1) var src_sampler: sampler;
-@group(0) @binding(2) var<uniform> u_bloom: DownsampleUniforms;
+// Group 0: Persistent feature resources (Feature-owned, long-lived)
+@group(0) @binding(0) var src_sampler: sampler;
+@group(0) @binding(1) var<uniform> u_bloom: DownsampleUniforms;
+
+// Group 1: Transient RDG textures (PassNode-owned, per-frame)
+@group(1) @binding(0) var src_texture: texture_2d<f32>;
 
 fn rgb_to_luminance(color: vec3<f32>) -> f32 {
     return dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));

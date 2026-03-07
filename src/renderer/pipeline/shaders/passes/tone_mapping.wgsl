@@ -7,20 +7,22 @@
 // Auto-injected binding code for global resources (e.g. frame-level uniforms, scene-level data, etc.)
 {{ binding_code }}
 
-// bindings
+// Group 1: Persistent feature resources (Feature-owned, long-lived)
 @group(1) @binding(0)
-var color_tex: texture_2d<f32>;
-@group(1) @binding(1)
 var tex_sampler: sampler;
-@group(1) @binding(2)
+@group(1) @binding(1)
 var<uniform> u_effect: Uniforms;
 
 $$ if USE_LUT is defined
-@group(1) @binding(3)
+@group(1) @binding(2)
 var lut_texture: texture_3d<f32>;
-@group(1) @binding(4)
+@group(1) @binding(3)
 var lut_sampler: sampler;
 $$ endif
+
+// Group 2: Transient RDG textures (PassNode-owned, per-frame)
+@group(2) @binding(0)
+var color_tex: texture_2d<f32>;
 
 
 @fragment
