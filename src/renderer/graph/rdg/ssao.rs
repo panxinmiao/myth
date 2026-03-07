@@ -1,32 +1,26 @@
-//! RDG Screen Space Ambient Occlusion (SSAO) Pass
+//! SSAO Feature & Transient Pass Node
 //!
-//! Implements production-grade SSAO within the RDG framework.
-//! The pass **creates** its own half-resolution AO output texture
-//! via `create_and_export("SSAO_Output")` during `setup()`, and reads
-//! the depth and normal textures produced by the upstream Prepass.
+//! Production-grade Screen Space Ambient Occlusion split into the modern
+//! **Feature + transient PassNode** architecture:
 //!
-//! # RDG Slots
-//!
-//! - `depth_tex`: Scene depth buffer (read, from Prepass)
-//! - `normal_tex`: Scene normal buffer (read, from Prepass)
-//! - `output_tex`: Blurred AO texture (created, half-res R8Unorm)
+//! - [`SsaoFeature`] (persistent): owns layouts, noise texture, pipelines.
+//!   Stored in `RendererState` and survives across frames.
+//! - [`RdgSsaoPassNode`] (transient): lightweight per-frame data carrier
+//!   holding texture node IDs and cached bind-group keys. Created by
+//!   [`SsaoFeature::add_to_graph`] and destroyed after execution.
 //!
 //! # Internal Sub-Passes
 //!
-//! 1. **Raw SSAO**: Hemisphere sampling with kernel, produces noisy R8Unorm
-//! 2. **Cross-Bilateral Blur**: Depth/normal-aware spatial filter
-//!
-//! # Push Model
-//!
-//! All parameters (enabled flag, uniform buffer ID, noise scale) are pushed
-//! by the Composer. The pass never accesses Scene directly.
-//! Samplers are obtained from the global [`SamplerRegistry`].
+//! 1. **Raw SSAO**: Hemisphere sampling with kernel → noisy R8Unorm
+//! 2. **Cross-Bilateral Blur**: Depth/normal-aware spatial filter → clean AO
 
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::allocator::SubViewKey;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::feature::{ExtractContext, PrepassOutput};
+use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
@@ -35,72 +29,96 @@ use crate::renderer::pipeline::{
 use crate::resources::ssao::{SsaoUniforms, generate_ssao_noise};
 use crate::resources::uniforms::WgslStruct;
 
-/// The SSAO output texture format: single-channel unsigned normalized.
 const SSAO_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 
-/// RDG Screen Space Ambient Occlusion pass.
+// =============================================================================
+// Persistent Feature
+// =============================================================================
+
+/// Persistent SSAO Feature — owns GPU resources that survive across frames.
 ///
-/// Produces a single-channel AO texture from depth and normal inputs.
-/// The output can be consumed by downstream passes (e.g. composited
-/// during tone mapping or bound as a screen-space resource).
-pub struct RdgSsaoPass {
-    // ─── RDG Resource Slots (set by Composer) ──────────────────────
-    pub depth_tex: TextureNodeId,
-    pub normal_tex: TextureNodeId,
-    pub output_tex: TextureNodeId,
-
-    internal_raw_tex: TextureNodeId,
-
-    // ─── Push Parameters (set by Composer from Scene) ──────────────
-    /// CPU buffer ID for `CpuBuffer<SsaoUniforms>`.
-    pub uniforms_cpu_id: u64,
-    /// Global state key (render_state_id, scene_id).
-    pub global_state_key: (u32, u32),
-
-    // ─── Pipelines ─────────────────────────────────────────────────
+/// Stored in `RendererState`. The Composer calls [`extract_and_prepare`] before
+/// graph assembly, then [`add_to_graph`] to inject a transient pass node.
+pub struct SsaoFeature {
     raw_pipeline: Option<RenderPipelineId>,
     blur_pipeline: Option<RenderPipelineId>,
-
-    // ─── Bind Group Layouts ────────────────────────────────────────
     raw_layout: Option<Tracked<wgpu::BindGroupLayout>>,
     raw_uniforms_layout: Option<Tracked<wgpu::BindGroupLayout>>,
     blur_layout: Option<Tracked<wgpu::BindGroupLayout>>,
-
-    // ─── Persistent Resources ──────────────────────────────────────
     noise_texture_view: Option<Tracked<wgpu::TextureView>>,
-
-    // ─── Cached BindGroups ─────────────────────────────────────────
-    raw_bind_group_key: Option<BindGroupKey>,
-    raw_uniforms_bind_group_key: Option<BindGroupKey>,
-    blur_bind_group_key: Option<BindGroupKey>,
 }
 
-impl RdgSsaoPass {
+impl SsaoFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            depth_tex: TextureNodeId(0),
-            normal_tex: TextureNodeId(0),
-            output_tex: TextureNodeId(0),
-
-            internal_raw_tex: TextureNodeId(0),
-
-            uniforms_cpu_id: 0,
-            global_state_key: (0, 0),
-
             raw_pipeline: None,
             blur_pipeline: None,
-
             raw_layout: None,
             raw_uniforms_layout: None,
             blur_layout: None,
-
             noise_texture_view: None,
+        }
+    }
 
+    /// Prepare persistent GPU resources before graph assembly.
+    pub fn extract_and_prepare(
+        &mut self,
+        ctx: &mut ExtractContext,
+        _uniforms_cpu_id: u64,
+        global_state_key: (u32, u32),
+    ) {
+        self.ensure_layouts(ctx.device);
+        self.ensure_noise_texture(ctx.device, ctx.queue);
+        self.ensure_pipelines(ctx, global_state_key);
+    }
+
+    /// Build and inject a transient SSAO pass node into the render graph.
+    ///
+    /// Returns the `TextureNodeId` of the blurred AO output (half-res R8Unorm).
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        prepass_out: &PrepassOutput,
+        uniforms_cpu_id: u64,
+    ) -> TextureNodeId {
+        let normal = match prepass_out.normal {
+            Some(n) => n,
+            None => {
+                log::warn!("SSAO requires Normal Prepass! Bypassing SSAO.");
+                return prepass_out.depth;
+            }
+        };
+
+        let config = rdg.frame_config();
+        let half_desc = RdgTextureDesc::new_2d(
+            config.width / 2,
+            config.height / 2,
+            SSAO_TEXTURE_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+
+        let output_tex = rdg.register_resource("SSAO_Output", half_desc.clone(), false);
+        let internal_raw_tex = rdg.register_resource("SSAO_Raw_Internal", half_desc, false);
+
+        let node = Box::new(RdgSsaoPassNode {
+            depth_tex: prepass_out.depth,
+            normal_tex: normal,
+            output_tex,
+            internal_raw_tex,
+            uniforms_cpu_id,
+            raw_pipeline: self.raw_pipeline.unwrap(),
+            blur_pipeline: self.blur_pipeline.unwrap(),
+            raw_layout: self.raw_layout.clone().unwrap(),
+            raw_uniforms_layout: self.raw_uniforms_layout.clone().unwrap(),
+            blur_layout: self.blur_layout.clone().unwrap(),
+            noise_texture_view: self.noise_texture_view.clone().unwrap(),
             raw_bind_group_key: None,
             raw_uniforms_bind_group_key: None,
             blur_bind_group_key: None,
-        }
+        });
+        rdg.add_pass_owned(node);
+        output_tex
     }
 
     // =========================================================================
@@ -112,7 +130,6 @@ impl RdgSsaoPass {
             return;
         }
 
-        // ─── Raw SSAO Layout (Group 1): depth, normal, noise + samplers ───
         let raw_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("RDG SSAO Raw Layout"),
             entries: &[
@@ -167,7 +184,6 @@ impl RdgSsaoPass {
             ],
         });
 
-        // ─── Uniforms Layout (Group 2) ─────────────────────────────
         let raw_uniforms_layout =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some("RDG SSAO Uniforms Layout"),
@@ -183,7 +199,6 @@ impl RdgSsaoPass {
                 }],
             });
 
-        // ─── Blur Layout (Group 0): raw AO + depth + normal + samplers ────
         let blur_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("RDG SSAO Blur Layout"),
             entries: &[
@@ -283,7 +298,7 @@ impl RdgSsaoPass {
         self.noise_texture_view = Some(Tracked::new(view));
     }
 
-    fn ensure_pipelines(&mut self, ctx: &mut PassPrepareContext) {
+    fn ensure_pipelines(&mut self, ctx: &mut ExtractContext, global_state_key: (u32, u32)) {
         if self.raw_pipeline.is_some() {
             return;
         }
@@ -295,7 +310,7 @@ impl RdgSsaoPass {
 
         let gpu_world = ctx
             .resource_manager
-            .get_global_state(self.global_state_key.0, self.global_state_key.1)
+            .get_global_state(global_state_key.0, global_state_key.1)
             .expect("RDG SSAO: GpuGlobalState must exist");
 
         let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
@@ -369,15 +384,35 @@ impl RdgSsaoPass {
             ));
         }
     }
+}
 
-    // =========================================================================
-    // BindGroup Construction
-    // =========================================================================
+// =============================================================================
+// Transient Pass Node
+// =============================================================================
 
+/// Per-frame SSAO pass node — created and discarded every frame.
+struct RdgSsaoPassNode {
+    depth_tex: TextureNodeId,
+    normal_tex: TextureNodeId,
+    output_tex: TextureNodeId,
+    internal_raw_tex: TextureNodeId,
+
+    uniforms_cpu_id: u64,
+    raw_pipeline: RenderPipelineId,
+    blur_pipeline: RenderPipelineId,
+    raw_layout: Tracked<wgpu::BindGroupLayout>,
+    raw_uniforms_layout: Tracked<wgpu::BindGroupLayout>,
+    blur_layout: Tracked<wgpu::BindGroupLayout>,
+    noise_texture_view: Tracked<wgpu::TextureView>,
+
+    raw_bind_group_key: Option<BindGroupKey>,
+    raw_uniforms_bind_group_key: Option<BindGroupKey>,
+    blur_bind_group_key: Option<BindGroupKey>,
+}
+
+impl RdgSsaoPassNode {
     fn build_bind_groups(&mut self, ctx: &mut RdgPrepareContext) {
         let device = ctx.device;
-
-        // Extract physical texture view IDs and raw pointers up front
 
         let depth_key = SubViewKey {
             aspect: wgpu::TextureAspect::DepthOnly,
@@ -391,8 +426,7 @@ impl RdgSsaoPass {
             .expect("RDG SSAO: depth-only view must exist");
 
         let normal_view = ctx.views.get_texture_view(self.normal_tex);
-
-        let noise_view = self.noise_texture_view.as_ref().unwrap();
+        let noise_view = &self.noise_texture_view;
 
         let linear_sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
         let noise_sampler = ctx
@@ -400,13 +434,9 @@ impl RdgSsaoPass {
             .get_common(CommonSampler::NearestRepeat);
         let point_sampler = ctx.sampler_registry.get_common(CommonSampler::NearestClamp);
 
-        let raw_layout = self.raw_layout.as_ref().unwrap();
-        let uniforms_layout = self.raw_uniforms_layout.as_ref().unwrap();
-        let blur_layout = self.blur_layout.as_ref().unwrap();
-
-        // ─── Raw SSAO BindGroup (Group 1) ──────────────────────────
+        // Raw SSAO BindGroup (Group 1)
         {
-            let key = BindGroupKey::new(raw_layout.id())
+            let key = BindGroupKey::new(self.raw_layout.id())
                 .with_resource(depth_only_view.id())
                 .with_resource(normal_view.id())
                 .with_resource(noise_view.id())
@@ -414,45 +444,43 @@ impl RdgSsaoPass {
                 .with_resource(noise_sampler.id())
                 .with_resource(point_sampler.id());
 
-            if self.raw_bind_group_key.as_ref() != Some(&key) {
-                if ctx.global_bind_group_cache.get(&key).is_none() {
-                    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("RDG SSAO Raw BG"),
-                        layout: raw_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(depth_only_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(normal_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::TextureView(noise_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::Sampler(linear_sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 4,
-                                resource: wgpu::BindingResource::Sampler(noise_sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 5,
-                                resource: wgpu::BindingResource::Sampler(point_sampler),
-                            },
-                        ],
-                    });
-                    ctx.global_bind_group_cache.insert(key.clone(), bg);
-                }
-                self.raw_bind_group_key = Some(key);
+            if ctx.global_bind_group_cache.get(&key).is_none() {
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("RDG SSAO Raw BG"),
+                    layout: &self.raw_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(depth_only_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(normal_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(noise_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::Sampler(linear_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::Sampler(noise_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 5,
+                            resource: wgpu::BindingResource::Sampler(point_sampler),
+                        },
+                    ],
+                });
+                ctx.global_bind_group_cache.insert(key.clone(), bg);
             }
+            self.raw_bind_group_key = Some(key);
         }
 
-        // ─── Raw SSAO Uniforms BindGroup (Group 2) ─────────────────
+        // Uniforms BindGroup (Group 2)
         {
             let gpu_buffer = ctx
                 .resource_manager
@@ -460,113 +488,85 @@ impl RdgSsaoPass {
                 .get(&self.uniforms_cpu_id)
                 .expect("RDG SSAO: uniforms GPU buffer must exist");
 
-            let key = BindGroupKey::new(uniforms_layout.id()).with_resource(gpu_buffer.id);
+            let key =
+                BindGroupKey::new(self.raw_uniforms_layout.id()).with_resource(gpu_buffer.id);
 
-            if self.raw_uniforms_bind_group_key.as_ref() != Some(&key) {
-                if ctx.global_bind_group_cache.get(&key).is_none() {
-                    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("RDG SSAO Uniforms BG"),
-                        layout: uniforms_layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: gpu_buffer.buffer.as_entire_binding(),
-                        }],
-                    });
-                    ctx.global_bind_group_cache.insert(key.clone(), bg);
-                }
-                self.raw_uniforms_bind_group_key = Some(key);
+            if ctx.global_bind_group_cache.get(&key).is_none() {
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("RDG SSAO Uniforms BG"),
+                    layout: &self.raw_uniforms_layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: gpu_buffer.buffer.as_entire_binding(),
+                    }],
+                });
+                ctx.global_bind_group_cache.insert(key.clone(), bg);
             }
+            self.raw_uniforms_bind_group_key = Some(key);
         }
 
-        // ─── Blur BindGroup (Group 0) ──────────────────────────────
+        // Blur BindGroup (Group 0)
         {
             let raw_view = ctx.views.get_texture_view(self.internal_raw_tex);
 
-            let key = BindGroupKey::new(blur_layout.id())
+            let key = BindGroupKey::new(self.blur_layout.id())
                 .with_resource(raw_view.id())
                 .with_resource(depth_only_view.id())
                 .with_resource(normal_view.id())
                 .with_resource(linear_sampler.id())
                 .with_resource(point_sampler.id());
 
-            if self.blur_bind_group_key.as_ref() != Some(&key) {
-                if ctx.global_bind_group_cache.get(&key).is_none() {
-                    let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("RDG SSAO Blur BG"),
-                        layout: blur_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(raw_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(depth_only_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 2,
-                                resource: wgpu::BindingResource::TextureView(normal_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 3,
-                                resource: wgpu::BindingResource::Sampler(linear_sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 4,
-                                resource: wgpu::BindingResource::Sampler(point_sampler),
-                            },
-                        ],
-                    });
-                    ctx.global_bind_group_cache.insert(key.clone(), bg);
-                }
-                self.blur_bind_group_key = Some(key);
+            if ctx.global_bind_group_cache.get(&key).is_none() {
+                let bg = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("RDG SSAO Blur BG"),
+                    layout: &self.blur_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(raw_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::TextureView(depth_only_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 2,
+                            resource: wgpu::BindingResource::TextureView(normal_view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 3,
+                            resource: wgpu::BindingResource::Sampler(linear_sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 4,
+                            resource: wgpu::BindingResource::Sampler(point_sampler),
+                        },
+                    ],
+                });
+                ctx.global_bind_group_cache.insert(key.clone(), bg);
             }
+            self.blur_bind_group_key = Some(key);
         }
     }
 }
 
-impl PassNode for RdgSsaoPass {
+impl PassNode for RdgSsaoPassNode {
     fn name(&self) -> &'static str {
         "RDG_SSAO_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Producer: create half-resolution AO output.
-        let (w, h) = builder.global_resolution();
-        let desc = RdgTextureDesc::new_2d(
-            w / 2,
-            h / 2,
-            wgpu::TextureFormat::R8Unorm,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        self.output_tex = builder.create_texture("SSAO_Output", desc.clone());
-
-        self.internal_raw_tex = builder.create_texture("SSAO_Raw_Internal", desc);
-
-        // Consumer: read depth and normals from upstream passes.
-        self.depth_tex = builder.read_blackboard("Scene_Depth");
-        self.normal_tex = builder.read_blackboard("Scene_Normals");
-    }
-
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
-        // Persistent GPU resources: layouts, noise texture, pipelines.
-        self.ensure_layouts(ctx.device);
-        self.ensure_noise_texture(ctx.device, ctx.queue);
-        self.ensure_pipelines(ctx);
+        builder.read_texture(self.depth_tex);
+        builder.read_texture(self.normal_tex);
+        builder.write_texture(self.output_tex);
+        builder.write_texture(self.internal_raw_tex);
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        // Transient-only: bind groups referencing RDG-allocated depth/normal views.
         self.build_bind_groups(ctx);
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let Some(raw_pipeline_id) = self.raw_pipeline else {
-            return;
-        };
-        let Some(blur_pipeline_id) = self.blur_pipeline else {
-            return;
-        };
         let Some(raw_bg_key) = &self.raw_bind_group_key else {
             return;
         };
@@ -594,14 +594,11 @@ impl PassNode for RdgSsaoPass {
             .get(blur_bg_key)
             .expect("SSAO blur BG should exist");
 
-        let raw_pipeline = ctx.pipeline_cache.get_render_pipeline(raw_pipeline_id);
-        let blur_pipeline = ctx.pipeline_cache.get_render_pipeline(blur_pipeline_id);
-
+        let raw_pipeline = ctx.pipeline_cache.get_render_pipeline(self.raw_pipeline);
+        let blur_pipeline = ctx.pipeline_cache.get_render_pipeline(self.blur_pipeline);
         let raw_view = ctx.get_texture_view(self.internal_raw_tex);
 
-        // =====================================================================
         // Sub-Pass 1: Raw SSAO
-        // =====================================================================
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("RDG SSAO Raw Pass"),
@@ -627,9 +624,7 @@ impl PassNode for RdgSsaoPass {
             pass.draw(0..3, 0..1);
         }
 
-        // =====================================================================
         // Sub-Pass 2: Cross-Bilateral Blur
-        // =====================================================================
         {
             let output_view = ctx.get_texture_view(self.output_tex);
 

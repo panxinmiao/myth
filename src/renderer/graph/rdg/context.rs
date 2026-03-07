@@ -1,47 +1,15 @@
-use crate::assets::AssetServer;
 use crate::renderer::core::ResourceManager;
 use crate::renderer::core::WgpuContext;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::{SamplerRegistry, Tracked};
 use crate::renderer::graph::frame::RenderLists;
-use crate::renderer::graph::{ExtractedScene, RenderState};
-use crate::renderer::pipeline::{PipelineCache, ShaderManager};
+use crate::renderer::pipeline::PipelineCache;
 use rustc_hash::FxHashMap;
 use wgpu::{Device, Queue, TextureView};
 
 use super::allocator::{RdgTransientPool, SubViewKey};
 use super::graph::RenderGraph;
 use super::types::TextureNodeId;
-
-// ─── Pass Prepare Context (Pre-RDG) ──────────────────────────────────────────
-
-/// Rich context available during the **pre-RDG resource preparation** phase.
-///
-/// The Composer calls [`PassNode::prepare_resources`] with this context for
-/// every active pass **before** the render graph is built. It provides full
-/// access to GPU infrastructure, scene data, and the asset server so that
-/// passes can:
-///
-/// - Create / cache `wgpu::BindGroupLayout`s
-/// - Compile pipelines via [`PipelineCache`]
-/// - Upload non-transient GPU data (uniform buffers, noise textures, etc.)
-///
-/// After this phase the pass holds only lightweight IDs and the scene borrow
-/// can be fully released.
-pub struct PassPrepareContext<'a> {
-    pub device: &'a wgpu::Device,
-    pub queue: &'a wgpu::Queue,
-    pub pipeline_cache: &'a mut PipelineCache,
-    pub shader_manager: &'a mut ShaderManager,
-    pub sampler_registry: &'a mut SamplerRegistry,
-    pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
-    pub resource_manager: &'a mut ResourceManager,
-    pub wgpu_ctx: &'a WgpuContext,
-    pub render_lists: &'a mut RenderLists,
-    pub extracted_scene: &'a ExtractedScene,
-    pub render_state: &'a RenderState,
-    pub assets: &'a AssetServer,
-}
 
 // ─── Prepare Context (Transient-Only) ─────────────────────────────────────────
 
@@ -58,6 +26,7 @@ pub struct PassPrepareContext<'a> {
 pub struct RdgPrepareContext<'a> {
     pub views: RdgViewResolver<'a>,
     pub device: &'a wgpu::Device,
+    pub queue: &'a wgpu::Queue,
     pub pipeline_cache: &'a PipelineCache,
     pub sampler_registry: &'a SamplerRegistry,
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,

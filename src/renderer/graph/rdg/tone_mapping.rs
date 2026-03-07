@@ -1,20 +1,15 @@
-//! RDG Tone Mapping Post-Processing Pass
+//! Tone Mapping Feature & Transient Pass Node
 //!
-//! Converts HDR scene color to LDR for display. Operates in Push mode:
-//! all scene-level parameters (mode, uniforms, LUT) are set externally
-//! by the Composer before the RDG prepare loop.
+//! Converts HDR scene color to LDR for display, split into Feature +
+//! transient PassNode architecture:
 //!
-//! # RDG Slots
+//! - [`ToneMapFeature`] (persistent): layouts, pipeline cache (by mode/format/lut).
+//! - [`RdgToneMapPassNode`] (transient): per-frame bind group assembly and execution.
 //!
-//! - `input_tex`: HDR scene color (after Bloom, if enabled)
-//! - `output_tex`: LDR output (fed to FXAA or directly to surface)
+//! # Algorithms
 //!
-//! # Features
-//!
-//! - Multiple tone mapping algorithms (Linear, Neutral, Reinhard, Cineon, ACES, AgX)
-//! - Vignette, color grading (3D LUT), film grain, chromatic aberration
-//! - Version-tracked uniform buffer via `CpuBuffer<ToneMappingUniforms>`
-//! - L1 pipeline cache with (mode, format, has_lut) key
+//! Linear, Neutral, Reinhard, Cineon, ACES, AgX — selectable per-frame.
+//! Optional vignette, color grading (3D LUT), film grain, chromatic aberration.
 
 use rustc_hash::FxHashMap;
 
@@ -23,7 +18,9 @@ use crate::assets::TextureHandle;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::feature::ExtractContext;
+use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::TextureNodeId;
 use crate::renderer::pipeline::{
@@ -36,87 +33,95 @@ use crate::resources::uniforms::WgslStruct;
 /// Pipeline cache key: (mode, output_format, has_lut).
 type PipelineCacheKey = (ToneMappingMode, wgpu::TextureFormat, bool);
 
-/// RDG Tone Mapping pass.
-///
-/// All scene-level configuration is pushed into the public fields by the
-/// Composer/Renderer before the RDG prepare loop. The pass itself never
-/// accesses `Scene` directly.
-///
-/// # GPU Resource Lifecycle
-///
-/// - `BindGroupLayout`s and samplers are created lazily on first use.
-/// - Pipelines are cached by `(mode, format, has_lut)`.
-/// - `BindGroup`s are cached via `GlobalBindGroupCache` with content-addressed keys.
-pub struct RdgToneMapPass {
-    // ─── RDG Resource Slots (set by Composer) ──────────────────────
-    pub input_tex: TextureNodeId,
-    pub output_tex: TextureNodeId,
+// =============================================================================
+// Configuration
+// =============================================================================
 
-    // ─── Push Parameters (set by Composer from Scene) ──────────────
-    /// Current tone mapping algorithm.
+/// Parameters passed to [`ToneMapFeature::add_to_graph`] each frame.
+pub struct ToneMapParams {
     pub mode: ToneMappingMode,
-    /// Whether a 3D LUT texture is active.
     pub has_lut: bool,
-    /// CPU-side buffer ID for `ToneMappingUniforms`.
     pub uniforms_cpu_id: u64,
-    /// Optional LUT texture handle.
     pub lut_handle: Option<TextureHandle>,
-    /// Global state key (render_state_id, scene_id) for `GpuGlobalState`.
     pub global_state_key: (u32, u32),
-    /// Output texture format — pushed by the Composer before
-    /// `prepare_resources()` so the pipeline can be compiled without
-    /// access to the render graph.
     pub output_format: wgpu::TextureFormat,
-
-    // ─── Internal Stateful Cache ───────────────────────────────────
-    /// Base bind group layout (without LUT bindings).
-    layout_base: Option<Tracked<wgpu::BindGroupLayout>>,
-    /// Extended bind group layout (with LUT bindings).
-    layout_with_lut: Option<Tracked<wgpu::BindGroupLayout>>,
-
-    /// Cached pipeline IDs by (mode, output_format, has_lut).
-    local_cache: FxHashMap<PipelineCacheKey, RenderPipelineId>,
-    /// Pipeline ID for the current frame.
-    current_pipeline: Option<RenderPipelineId>,
-    /// Content-addressed key of the current BindGroup.
-    current_bind_group_key: Option<BindGroupKey>,
 }
 
-impl RdgToneMapPass {
-    /// Creates a new tone mapping pass.
-    ///
-    /// All GPU resources are lazily initialized on first `prepare()` call.
+// =============================================================================
+// Persistent Feature
+// =============================================================================
+
+/// Persistent tone mapping Feature — owns layouts and a local pipeline cache
+/// keyed by `(mode, format, has_lut)`.
+pub struct ToneMapFeature {
+    layout_base: Option<Tracked<wgpu::BindGroupLayout>>,
+    layout_with_lut: Option<Tracked<wgpu::BindGroupLayout>>,
+    local_cache: FxHashMap<PipelineCacheKey, RenderPipelineId>,
+}
+
+impl ToneMapFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            input_tex: TextureNodeId(0),
-            output_tex: TextureNodeId(0),
-
-            mode: ToneMappingMode::default(),
-            has_lut: false,
-            uniforms_cpu_id: 0,
-            lut_handle: None,
-            global_state_key: (0, 0),
-
             layout_base: None,
             layout_with_lut: None,
-            // sampler: None,
-            // lut_sampler: None,
             local_cache: FxHashMap::default(),
-            current_pipeline: None,
-            current_bind_group_key: None,
-            output_format: wgpu::TextureFormat::Bgra8UnormSrgb,
         }
     }
 
-    // ─── Lazy Initialization ───────────────────────────────────────
+    /// Prepare persistent GPU resources and compile the pipeline for the
+    /// current frame's configuration.
+    pub fn extract_and_prepare(
+        &mut self,
+        ctx: &mut ExtractContext,
+        params: &ToneMapParams,
+    ) -> RenderPipelineId {
+        self.ensure_layouts(ctx.device);
+
+        if let Some(lut_handle) = params.lut_handle {
+            ctx.resource_manager.prepare_texture(ctx.assets, lut_handle);
+        }
+
+        self.get_or_create_pipeline(ctx, params)
+    }
+
+    /// Build and inject a transient tone-mapping node into the render graph.
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        input_tex: TextureNodeId,
+        output_tex: TextureNodeId,
+        pipeline_id: RenderPipelineId,
+        params: &ToneMapParams,
+    ) {
+        let layout = if params.has_lut {
+            self.layout_with_lut.clone().unwrap()
+        } else {
+            self.layout_base.clone().unwrap()
+        };
+
+        let node = Box::new(RdgToneMapPassNode {
+            input_tex,
+            output_tex,
+            has_lut: params.has_lut,
+            uniforms_cpu_id: params.uniforms_cpu_id,
+            lut_handle: params.lut_handle,
+            pipeline_id,
+            layout,
+            current_bind_group_key: None,
+        });
+        rdg.add_pass_owned(node);
+    }
+
+    // =========================================================================
+    // Lazy Initialization
+    // =========================================================================
 
     fn ensure_layouts(&mut self, device: &wgpu::Device) {
         if self.layout_base.is_some() {
             return;
         }
 
-        // Base entries: input texture + sampler + uniforms
         let base_entries = [
             wgpu::BindGroupLayoutEntry {
                 binding: 0,
@@ -153,7 +158,6 @@ impl RdgToneMapPass {
             },
         )));
 
-        // Extended layout: base + LUT 3D texture + LUT sampler
         let mut lut_entries = base_entries.to_vec();
         lut_entries.push(wgpu::BindGroupLayoutEntry {
             binding: 3,
@@ -180,21 +184,12 @@ impl RdgToneMapPass {
         )));
     }
 
-    // ─── Helpers ───────────────────────────────────────────────────
-
-    #[inline]
-    fn current_layout(&self) -> &Tracked<wgpu::BindGroupLayout> {
-        if self.has_lut {
-            self.layout_with_lut.as_ref().unwrap()
-        } else {
-            self.layout_base.as_ref().unwrap()
-        }
-    }
-
-    /// Gets or creates a pipeline for the current (mode, format, has_lut) triple.
-    fn get_or_create_pipeline(&mut self, ctx: &mut PassPrepareContext) -> RenderPipelineId {
-        let output_format = self.output_format;
-        let cache_key = (self.mode, output_format, self.has_lut);
+    fn get_or_create_pipeline(
+        &mut self,
+        ctx: &mut ExtractContext,
+        params: &ToneMapParams,
+    ) -> RenderPipelineId {
+        let cache_key = (params.mode, params.output_format, params.has_lut);
 
         if let Some(&id) = self.local_cache.get(&cache_key) {
             return id;
@@ -202,23 +197,21 @@ impl RdgToneMapPass {
 
         log::debug!(
             "RDG ToneMap: compiling pipeline for {:?}, fmt={:?}, lut={}",
-            self.mode,
-            output_format,
-            self.has_lut,
+            params.mode,
+            params.output_format,
+            params.has_lut,
         );
 
         let device = ctx.device;
-
-        // Shader defines
         let mut defines = ShaderDefines::new();
-        self.mode.apply_to_defines(&mut defines);
-        if self.has_lut {
+        params.mode.apply_to_defines(&mut defines);
+        if params.has_lut {
             defines.set("USE_LUT", "1");
         }
 
         let gpu_world = ctx
             .resource_manager
-            .get_global_state(self.global_state_key.0, self.global_state_key.1)
+            .get_global_state(params.global_state_key.0, params.global_state_key.1)
             .expect("RDG ToneMap: GpuGlobalState must exist");
 
         let mut options = ShaderCompilationOptions { defines };
@@ -235,7 +228,12 @@ impl RdgToneMapPass {
             &gpu_world.binding_wgsl,
         );
 
-        let layout = self.current_layout();
+        let layout = if params.has_lut {
+            self.layout_with_lut.as_ref().unwrap()
+        } else {
+            self.layout_base.as_ref().unwrap()
+        };
+
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("RDG ToneMap Pipeline Layout"),
             bind_group_layouts: &[&gpu_world.layout, layout],
@@ -243,7 +241,7 @@ impl RdgToneMapPass {
         });
 
         let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
-            format: output_format,
+            format: params.output_format,
             blend: Some(wgpu::BlendState::REPLACE),
             write_mask: wgpu::ColorWrites::ALL,
         });
@@ -256,7 +254,10 @@ impl RdgToneMapPass {
             shader_module,
             &pipeline_layout,
             &key,
-            &format!("RDG ToneMap Pipeline {:?} lut={}", self.mode, self.has_lut),
+            &format!(
+                "RDG ToneMap Pipeline {:?} lut={}",
+                params.mode, params.has_lut
+            ),
         );
 
         self.local_cache.insert(cache_key, id);
@@ -264,23 +265,27 @@ impl RdgToneMapPass {
     }
 }
 
-impl PassNode for RdgToneMapPass {
+// =============================================================================
+// Transient Pass Node
+// =============================================================================
+
+/// Per-frame tone mapping pass node.
+struct RdgToneMapPassNode {
+    input_tex: TextureNodeId,
+    output_tex: TextureNodeId,
+
+    has_lut: bool,
+    uniforms_cpu_id: u64,
+    lut_handle: Option<TextureHandle>,
+    pipeline_id: RenderPipelineId,
+    layout: Tracked<wgpu::BindGroupLayout>,
+
+    current_bind_group_key: Option<BindGroupKey>,
+}
+
+impl PassNode for RdgToneMapPassNode {
     fn name(&self) -> &'static str {
         "RDG_ToneMap_Pass"
-    }
-
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
-        // ─── 1. Lazy initialization ────────────────────────────────
-        self.ensure_layouts(ctx.device);
-
-        // ─── 2. Pipeline (re)creation ──────────────────────────────
-        let cache_key = (self.mode, self.output_format, self.has_lut);
-
-        if self.current_pipeline.is_none() || !self.local_cache.contains_key(&cache_key) {
-            self.current_pipeline = Some(self.get_or_create_pipeline(ctx));
-        } else {
-            self.current_pipeline = self.local_cache.get(&cache_key).copied();
-        }
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
@@ -289,37 +294,31 @@ impl PassNode for RdgToneMapPass {
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        // ─── Transient BindGroup assembly ──────────────────────────
         let input_view = ctx.views.get_texture_view(self.input_tex);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
-        let layout = self.current_layout();
 
-        // Look up GPU buffer for uniforms
         let gpu_buffer = ctx
             .resource_manager
             .gpu_buffers
             .get(&self.uniforms_cpu_id)
             .expect("RDG ToneMap: GPU buffer for ToneMappingUniforms must exist");
 
-        let mut key = BindGroupKey::new(layout.id())
+        let mut key = BindGroupKey::new(self.layout.id())
             .with_resource(input_view.id())
             .with_resource(sampler.id())
             .with_resource(gpu_buffer.id);
 
-        // LUT resources
         let lut_view_id = if self.has_lut {
-            if let Some(lut_handle) = self.lut_handle {
-                let binding = ctx.resource_manager.get_texture_binding(lut_handle);
-                binding.map(|b| b.view_id)
-            } else {
-                None
-            }
+            self.lut_handle.and_then(|h| {
+                ctx.resource_manager
+                    .get_texture_binding(h)
+                    .map(|b| b.view_id)
+            })
         } else {
             None
         };
 
         if let Some(lut_id) = lut_view_id {
-            // let lut_sampler = self.lut_sampler.as_ref().unwrap();
             key = key.with_resource(lut_id).with_resource(sampler.id());
         }
 
@@ -345,8 +344,6 @@ impl PassNode for RdgToneMapPass {
                         let lut_view = ctx
                             .resource_manager
                             .get_texture_view(&TextureSource::Asset(lut_handle));
-                        // let lut_sampler = self.lut_sampler.as_ref().unwrap();
-
                         entries.push(wgpu::BindGroupEntry {
                             binding: 3,
                             resource: wgpu::BindingResource::TextureView(lut_view),
@@ -360,13 +357,11 @@ impl PassNode for RdgToneMapPass {
 
                 let new_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("RDG ToneMap BindGroup"),
-                    layout: &**layout,
+                    layout: &*self.layout,
                     entries: &entries,
                 });
-
                 ctx.global_bind_group_cache.insert(key.clone(), new_bg);
             }
-
             self.current_bind_group_key = Some(key);
         }
     }
@@ -378,11 +373,9 @@ impl PassNode for RdgToneMapPass {
         };
 
         let output_view = ctx.get_texture_view(self.output_tex);
-
         let pipeline = ctx
             .pipeline_cache
-            .get_render_pipeline(self.current_pipeline.expect("Pipeline not initialized!"));
-
+            .get_render_pipeline(self.pipeline_id);
         let bind_group_key = self
             .current_bind_group_key
             .as_ref()

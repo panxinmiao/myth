@@ -4,6 +4,7 @@ pub mod bloom;
 pub mod builder;
 pub mod compute;
 pub mod context;
+pub mod feature;
 pub mod fxaa;
 pub mod graph;
 pub mod node;

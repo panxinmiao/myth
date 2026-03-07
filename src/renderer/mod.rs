@@ -109,27 +109,25 @@ struct RendererState {
     pub(crate) sampler_registry: SamplerRegistry,
     pub(crate) rdg_pool: RdgTransientPool,
 
-    // Post-processing passes
-    pub(crate) rdg_fxaa_pass: crate::renderer::graph::rdg::fxaa::RdgFxaaPass,
-    pub(crate) rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass,
-    pub(crate) rdg_bloom_pass: crate::renderer::graph::rdg::bloom::RdgBloomPass,
-    pub(crate) rdg_ssao_pass: crate::renderer::graph::rdg::ssao::RdgSsaoPass,
+    // Feature-based passes (persistent, cross-frame)
+    pub(crate) fxaa_feature: crate::renderer::graph::rdg::fxaa::FxaaFeature,
+    pub(crate) tone_map_feature: crate::renderer::graph::rdg::tone_mapping::ToneMapFeature,
+    pub(crate) bloom_feature: crate::renderer::graph::rdg::bloom::BloomFeature,
+    pub(crate) ssao_feature: crate::renderer::graph::rdg::ssao::SsaoFeature,
+    pub(crate) prepass_feature: crate::renderer::graph::rdg::prepass::PrepassFeature,
+    pub(crate) skybox_feature: crate::renderer::graph::rdg::skybox::SkyboxFeature,
+    pub(crate) sssss_feature: crate::renderer::graph::rdg::sssss::SssssFeature,
+    pub(crate) shadow_feature: crate::renderer::graph::rdg::shadow::ShadowFeature,
+    pub(crate) brdf_feature: crate::renderer::graph::rdg::compute::BrdfLutFeature,
+    pub(crate) ibl_feature: crate::renderer::graph::rdg::compute::IblFeature,
 
-    // Scene rendering passes
-    pub(crate) rdg_prepass: crate::renderer::graph::rdg::prepass::RdgPrepass,
+    // Plain PassNode passes (no persistent state)
     pub(crate) rdg_opaque_pass: crate::renderer::graph::rdg::opaque::RdgOpaquePass,
-    pub(crate) rdg_skybox_pass: crate::renderer::graph::rdg::skybox::RdgSkyboxPass,
     pub(crate) rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass,
     pub(crate) rdg_transmission_copy_pass:
         crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass,
     pub(crate) rdg_simple_forward_pass:
         crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass,
-    pub(crate) rdg_sssss_pass: crate::renderer::graph::rdg::sssss::RdgSssssPass,
-
-    // Shadow + Compute passes (migrated from old system)
-    pub(crate) rdg_shadow_pass: crate::renderer::graph::rdg::shadow::RdgShadowPass,
-    pub(crate) rdg_brdf_pass: crate::renderer::graph::rdg::compute::RdgBrdfLutPass,
-    pub(crate) rdg_ibl_pass: crate::renderer::graph::rdg::compute::RdgIblComputePass,
 }
 
 impl Renderer {
@@ -185,13 +183,13 @@ impl Renderer {
 
         let sampler_registry = SamplerRegistry::new(&wgpu_ctx.device);
 
-        // Shadow + compute passes (need device ref before wgpu_ctx moves)
-        let rdg_shadow_pass =
-            crate::renderer::graph::rdg::shadow::RdgShadowPass::new(&wgpu_ctx.device);
-        let rdg_brdf_pass =
-            crate::renderer::graph::rdg::compute::RdgBrdfLutPass::new(&wgpu_ctx.device);
-        let rdg_ibl_pass =
-            crate::renderer::graph::rdg::compute::RdgIblComputePass::new(&wgpu_ctx.device);
+        // Feature-based passes (need device ref before wgpu_ctx moves)
+        let shadow_feature =
+            crate::renderer::graph::rdg::shadow::ShadowFeature::new(&wgpu_ctx.device);
+        let brdf_feature =
+            crate::renderer::graph::rdg::compute::BrdfLutFeature::new(&wgpu_ctx.device);
+        let ibl_feature =
+            crate::renderer::graph::rdg::compute::IblFeature::new(&wgpu_ctx.device);
 
         // 6. Assemble state
         self.context = Some(RendererState {
@@ -209,27 +207,26 @@ impl Renderer {
             rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph::new(),
             sampler_registry,
             rdg_pool: RdgTransientPool::new(),
-            rdg_fxaa_pass: crate::renderer::graph::rdg::fxaa::RdgFxaaPass::new(),
-            rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::RdgToneMapPass::new(),
-            rdg_bloom_pass: crate::renderer::graph::rdg::bloom::RdgBloomPass::new(),
-            rdg_ssao_pass: crate::renderer::graph::rdg::ssao::RdgSsaoPass::new(),
+            // Feature-based passes
+            fxaa_feature: crate::renderer::graph::rdg::fxaa::FxaaFeature::new(),
+            tone_map_feature: crate::renderer::graph::rdg::tone_mapping::ToneMapFeature::new(),
+            bloom_feature: crate::renderer::graph::rdg::bloom::BloomFeature::new(),
+            ssao_feature: crate::renderer::graph::rdg::ssao::SsaoFeature::new(),
+            prepass_feature: crate::renderer::graph::rdg::prepass::PrepassFeature::new(),
+            skybox_feature: crate::renderer::graph::rdg::skybox::SkyboxFeature::new(),
+            sssss_feature: crate::renderer::graph::rdg::sssss::SssssFeature::new(),
+            shadow_feature,
+            brdf_feature,
+            ibl_feature,
 
-            // RDG Scene Passes
-            rdg_prepass: crate::renderer::graph::rdg::prepass::RdgPrepass::new(),
+            // Plain PassNode passes
             rdg_opaque_pass: crate::renderer::graph::rdg::opaque::RdgOpaquePass::new(),
-            rdg_skybox_pass: crate::renderer::graph::rdg::skybox::RdgSkyboxPass::new(),
             rdg_transparent_pass: crate::renderer::graph::rdg::transparent::RdgTransparentPass::new(
             ),
             rdg_transmission_copy_pass:
                 crate::renderer::graph::rdg::transmission_copy::RdgTransmissionCopyPass::new(),
             rdg_simple_forward_pass:
                 crate::renderer::graph::rdg::simple_forward::RdgSimpleForwardPass::new(),
-            rdg_sssss_pass: crate::renderer::graph::rdg::sssss::RdgSssssPass::new(),
-
-            // Shadow + Compute passes (migrated from old system)
-            rdg_shadow_pass,
-            rdg_brdf_pass,
-            rdg_ibl_pass,
         });
 
         log::info!("Renderer Initialized");
@@ -332,22 +329,23 @@ impl Renderer {
             rdg_graph: &mut state.rdg_graph,
             rdg_pool: &mut state.rdg_pool,
             sampler_registry: &mut state.sampler_registry,
-            rdg_fxaa_pass: &mut state.rdg_fxaa_pass,
-            rdg_tone_map_pass: &mut state.rdg_tone_map_pass,
-            rdg_bloom_pass: &mut state.rdg_bloom_pass,
-            rdg_ssao_pass: &mut state.rdg_ssao_pass,
+            // Feature-based passes
+            fxaa_feature: &mut state.fxaa_feature,
+            tone_map_feature: &mut state.tone_map_feature,
+            bloom_feature: &mut state.bloom_feature,
+            ssao_feature: &mut state.ssao_feature,
+            prepass_feature: &mut state.prepass_feature,
+            skybox_feature: &mut state.skybox_feature,
+            sssss_feature: &mut state.sssss_feature,
+            shadow_feature: &mut state.shadow_feature,
+            brdf_feature: &mut state.brdf_feature,
+            ibl_feature: &mut state.ibl_feature,
 
-            rdg_prepass: &mut state.rdg_prepass,
+            // Plain PassNode passes
             rdg_opaque_pass: &mut state.rdg_opaque_pass,
-            rdg_skybox_pass: &mut state.rdg_skybox_pass,
             rdg_transparent_pass: &mut state.rdg_transparent_pass,
             rdg_transmission_copy_pass: &mut state.rdg_transmission_copy_pass,
             rdg_simple_forward_pass: &mut state.rdg_simple_forward_pass,
-            rdg_sssss_pass: &mut state.rdg_sssss_pass,
-
-            rdg_shadow_pass: &mut state.rdg_shadow_pass,
-            rdg_brdf_pass: &mut state.rdg_brdf_pass,
-            rdg_ibl_pass: &mut state.rdg_ibl_pass,
         };
 
         // Return FrameComposer, defer Surface acquisition to render() call

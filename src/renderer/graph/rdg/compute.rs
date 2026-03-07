@@ -1,23 +1,30 @@
-//! RDG Compute Passes (BRDF LUT & IBL)
+//! Compute Features & Transient Pass Nodes (BRDF LUT & IBL)
 //!
 //! # BRDF LUT
 //!
 //! Precomputes the Cook-Torrance BRDF integration lookup table into a 2D
-//! storage texture. This is a one-shot task that runs once when the engine
-//! initialises the environment. The compute dispatch is recorded into the
-//! shared RDG encoder during the execute phase.
+//! storage texture. One-shot task that runs once when the engine initialises
+//! the environment.
+//!
+//! - [`BrdfLutFeature`] (persistent): pipeline, layout, bind group, active flag.
+//! - [`RdgBrdfLutPassNode`] (transient): compute dispatch execution.
 //!
 //! # IBL (Image-Based Lighting)
 //!
 //! Converts an equirectangular / cube-map source into a mipmapped PMREM
-//! cube-map used for specular environment reflections. Due to its multi-phase
-//! nature (equirect → cube, mipmap generation, PMREM prefiltering) the work
-//! is performed during the prepare phase with a dedicated command encoder.
+//! cube-map for specular environment reflections. The multi-phase work
+//! (equirect → cube, mipmap generation, PMREM prefiltering) is performed
+//! during [`extract_and_prepare`] with a dedicated command encoder.
+//!
+//! - [`IblFeature`] (persistent): compute/render pipelines, layouts.
+//! - [`RdgIblPassNode`] (transient): no-op side-effect sentinel.
 
 use crate::renderer::core::resources::SamplerKey;
 use crate::renderer::core::resources::{BRDF_LUT_SIZE, CubeSourceType};
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::RdgExecuteContext;
+use crate::renderer::graph::rdg::feature::ExtractContext;
+use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::pipeline::{
     ColorTargetKey, ComputePipelineId, ComputePipelineKey, FullscreenPipelineKey, RenderPipelineId,
@@ -26,26 +33,22 @@ use crate::resources::texture::TextureSource;
 use wgpu::TextureViewDimension;
 
 // ============================================================================
-// BRDF LUT Compute Pass
+// BRDF LUT Feature
 // ============================================================================
 
-/// RDG BRDF LUT compute pass.
+/// Persistent BRDF LUT Feature — owns the compute pipeline and bind group.
 ///
-/// Dispatches a single compute shader that fills a 128×128 `Rgba16Float`
-/// storage texture with pre-integrated BRDF data. The texture is managed
-/// by [`ResourceManager`] and referenced through the global bind group.
-///
-/// The pass marks itself as a side-effect node so it is never culled, and
-/// has no RDG resource dependencies so it naturally sorts before all scene
-/// rendering passes in the topological order.
-pub struct RdgBrdfLutPass {
+/// The compute dispatch fills a 128×128 `Rgba16Float` storage texture with
+/// pre-integrated BRDF data. The texture is managed by [`ResourceManager`]
+/// and referenced through the global bind group.
+pub struct BrdfLutFeature {
     pipeline_id: Option<ComputePipelineId>,
     bind_group_layout: wgpu::BindGroupLayout,
     bind_group: Option<wgpu::BindGroup>,
     active: bool,
 }
 
-impl RdgBrdfLutPass {
+impl BrdfLutFeature {
     #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -70,46 +73,9 @@ impl RdgBrdfLutPass {
         }
     }
 
-    /// Lazily create the compute pipeline via the global [`PipelineCache`].
-    fn ensure_pipeline(&mut self, ctx: &mut PassPrepareContext) {
-        if self.pipeline_id.is_some() {
-            return;
-        }
-
-        let source = include_str!("../../pipeline/shaders/program/brdf_lut.wgsl");
-        let (module, shader_hash) =
-            ctx.shader_manager
-                .get_or_compile_raw(ctx.device, "BRDF LUT Shader", source);
-
-        let layout = ctx
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("RDG BRDF LUT Pipeline Layout"),
-                bind_group_layouts: &[&self.bind_group_layout],
-                immediate_size: 0,
-            });
-
-        let key = ComputePipelineKey { shader_hash };
-        self.pipeline_id = Some(ctx.pipeline_cache.get_or_create_compute(
-            ctx.device,
-            module,
-            &layout,
-            &key,
-            "RDG BRDF LUT Pipeline",
-        ));
-    }
-}
-
-impl PassNode for RdgBrdfLutPass {
-    fn name(&self) -> &'static str {
-        "RDG_BRDF_LUT"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.mark_side_effect();
-    }
-
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
+    /// Check if BRDF LUT needs computing; compile pipeline and create bind
+    /// group if so.
+    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext) {
         if !ctx.resource_manager.needs_brdf_compute {
             self.active = false;
             return;
@@ -138,9 +104,60 @@ impl PassNode for RdgBrdfLutPass {
         ctx.resource_manager.needs_brdf_compute = false;
     }
 
-    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
-        // All work done in prepare_resources() — BRDF LUT uses
-        // shader_manager + pipeline_cache + mutable resource_manager.
+    /// Build and inject a transient BRDF LUT node into the render graph.
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
+        let node = Box::new(RdgBrdfLutPassNode {
+            pipeline_id: self.pipeline_id,
+            bind_group: self.bind_group.clone(),
+            active: self.active,
+        });
+        rdg.add_pass_owned(node);
+    }
+
+    fn ensure_pipeline(&mut self, ctx: &mut ExtractContext) {
+        if self.pipeline_id.is_some() {
+            return;
+        }
+
+        let source = include_str!("../../pipeline/shaders/program/brdf_lut.wgsl");
+        let (module, shader_hash) =
+            ctx.shader_manager
+                .get_or_compile_raw(ctx.device, "BRDF LUT Shader", source);
+
+        let layout = ctx
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("RDG BRDF LUT Pipeline Layout"),
+                bind_group_layouts: &[&self.bind_group_layout],
+                immediate_size: 0,
+            });
+
+        let key = ComputePipelineKey { shader_hash };
+        self.pipeline_id = Some(ctx.pipeline_cache.get_or_create_compute(
+            ctx.device,
+            module,
+            &layout,
+            &key,
+            "RDG BRDF LUT Pipeline",
+        ));
+    }
+}
+
+// ─── BRDF LUT Transient Node ─────────────────────────────────────────────────
+
+struct RdgBrdfLutPassNode {
+    pipeline_id: Option<ComputePipelineId>,
+    bind_group: Option<wgpu::BindGroup>,
+    active: bool,
+}
+
+impl PassNode for RdgBrdfLutPassNode {
+    fn name(&self) -> &'static str {
+        "RDG_BRDF_LUT"
+    }
+
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        builder.mark_side_effect();
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -167,15 +184,14 @@ impl PassNode for RdgBrdfLutPass {
 }
 
 // ============================================================================
-// IBL Compute Pass
+// IBL Feature
 // ============================================================================
 
 /// Trilinear filtering, all-axes clamped. Used for the face blit sub-pass.
 const IBL_BLIT_SAMPLER_KEY: SamplerKey = SamplerKey::LINEAR_CLAMP;
 
 /// Linear filtering with horizontal repeat (seamless equirectangular wrap)
-/// and vertical/depth clamp. Mipmap filtering is not needed for the single-mip
-/// equirect source.
+/// and vertical/depth clamp.
 const IBL_EQUIRECT_SAMPLER_KEY: SamplerKey = SamplerKey {
     address_mode_u: wgpu::AddressMode::Repeat,
     address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -190,14 +206,13 @@ const IBL_EQUIRECT_SAMPLER_KEY: SamplerKey = SamplerKey {
     border_color: None,
 };
 
-/// RDG IBL (Image-Based Lighting) compute pass.
+/// Persistent IBL Feature — owns compute/render pipelines and layouts for
+/// equirectangular → cube, mipmap, and PMREM prefiltering.
 ///
-/// Performs equirectangular → cube conversion, mipmap generation, and PMREM
-/// pre-filtering for specular environment reflections. Due to the multi-phase
-/// nature of the work (render passes for blit + mipmap, compute for PMREM),
-/// all GPU commands are submitted during the **prepare** phase with a
-/// dedicated command encoder. The execute phase is a no-op.
-pub struct RdgIblComputePass {
+/// All multi-phase GPU work is performed during [`extract_and_prepare`] with
+/// a dedicated command encoder (submitted immediately). The transient node
+/// is a no-op side-effect sentinel that preserves topological ordering.
+pub struct IblFeature {
     // PMREM prefilter
     pmrem_pipeline_id: Option<ComputePipelineId>,
     pmrem_layout_source: wgpu::BindGroupLayout,
@@ -212,7 +227,7 @@ pub struct RdgIblComputePass {
     blit_layout: wgpu::BindGroupLayout,
 }
 
-impl RdgIblComputePass {
+impl IblFeature {
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn new(device: &wgpu::Device) -> Self {
@@ -264,7 +279,7 @@ impl RdgIblComputePass {
             }],
         });
 
-        // ====== Equirectangular → Cube layouts ======
+        // ====== Equirectangular → Cube layout ======
         let equirect_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("RDG Equirect BGL"),
             entries: &[
@@ -297,7 +312,7 @@ impl RdgIblComputePass {
             ],
         });
 
-        // ====== Blit layout + sampler ======
+        // ====== Blit layout ======
         let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("RDG IBL Blit BGL"),
             entries: &[
@@ -331,191 +346,17 @@ impl RdgIblComputePass {
         }
     }
 
-    /// Lazily create all three pipelines via the global [`PipelineCache`].
-    fn ensure_pipelines(&mut self, ctx: &mut PassPrepareContext) {
-        if self.pmrem_pipeline_id.is_some() {
-            return;
-        }
-
-        let device = ctx.device;
-
-        // --- PMREM compute pipeline ---
-        {
-            let source = include_str!("../../pipeline/shaders/program/ibl.wgsl");
-            let (module, hash) =
-                ctx.shader_manager
-                    .get_or_compile_raw(device, "IBL Prefilter Shader", source);
-
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("RDG IBL Pipeline Layout"),
-                bind_group_layouts: &[&self.pmrem_layout_source, &self.pmrem_layout_dest],
-                immediate_size: 0,
-            });
-
-            let key = ComputePipelineKey { shader_hash: hash };
-            self.pmrem_pipeline_id = Some(ctx.pipeline_cache.get_or_create_compute(
-                device,
-                module,
-                &layout,
-                &key,
-                "RDG IBL Compute Pipeline",
-            ));
-        }
-
-        // --- Equirectangular → Cube compute pipeline ---
-        {
-            let source = include_str!("../../pipeline/shaders/program/equirect_to_cube.wgsl");
-            let (module, hash) =
-                ctx.shader_manager
-                    .get_or_compile_raw(device, "Equirect to Cube Shader", source);
-
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("RDG Equirect Pipeline Layout"),
-                bind_group_layouts: &[&self.equirect_layout],
-                immediate_size: 0,
-            });
-
-            let key = ComputePipelineKey { shader_hash: hash };
-            self.equirect_pipeline_id = Some(ctx.pipeline_cache.get_or_create_compute(
-                device,
-                module,
-                &layout,
-                &key,
-                "RDG Equirect to Cube Pipeline",
-            ));
-        }
-
-        // --- Blit render pipeline ---
-        {
-            let source = include_str!("../../pipeline/shaders/program/blit.wgsl");
-            let (module, hash) =
-                ctx.shader_manager
-                    .get_or_compile_raw(device, "IBL Blit Shader", source);
-
-            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("RDG IBL Blit Pipeline Layout"),
-                bind_group_layouts: &[&self.blit_layout],
-                immediate_size: 0,
-            });
-
-            let key = FullscreenPipelineKey::fullscreen(
-                hash,
-                smallvec::smallvec![ColorTargetKey::from(wgpu::ColorTargetState {
-                    format: wgpu::TextureFormat::Rgba16Float,
-                    blend: None,
-                    write_mask: wgpu::ColorWrites::ALL,
-                })],
-                None,
-            );
-
-            self.blit_pipeline_id = Some(ctx.pipeline_cache.get_or_create_fullscreen(
-                device,
-                module,
-                &layout,
-                &key,
-                "RDG IBL Blit Pipeline",
-            ));
-        }
-    }
-
-    /// Blit individual cube faces from `src_texture` to `dst_texture` mip 0.
-    fn blit_cube_faces(
-        &self,
-        device: &wgpu::Device,
-        encoder: &mut wgpu::CommandEncoder,
-        src_texture: &wgpu::Texture,
-        dst_texture: &wgpu::Texture,
-        blit_pipeline: &wgpu::RenderPipeline,
-        blit_sampler: &wgpu::Sampler,
-    ) {
-        let layer_count = src_texture
-            .depth_or_array_layers()
-            .min(dst_texture.depth_or_array_layers());
-
-        for layer in 0..layer_count {
-            let src_view = src_texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("Blit Src Face"),
-                dimension: Some(TextureViewDimension::D2),
-                base_array_layer: layer,
-                array_layer_count: Some(1),
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
-                ..Default::default()
-            });
-
-            let dst_view = dst_texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("Blit Dst Face"),
-                dimension: Some(TextureViewDimension::D2),
-                base_array_layer: layer,
-                array_layer_count: Some(1),
-                base_mip_level: 0,
-                mip_level_count: Some(1),
-                usage: Some(wgpu::TextureUsages::RENDER_ATTACHMENT),
-                ..Default::default()
-            });
-
-            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("Blit BG"),
-                layout: &self.blit_layout,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(&src_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(blit_sampler),
-                    },
-                ],
-            });
-
-            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Blit Cube Face"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &dst_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            rpass.set_pipeline(blit_pipeline);
-            rpass.set_bind_group(0, &bind_group, &[]);
-            rpass.draw(0..3, 0..1);
-        }
-    }
-}
-
-impl PassNode for RdgIblComputePass {
-    fn name(&self) -> &'static str {
-        "RDG_IBL_Compute"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.mark_side_effect();
-    }
-
-    /// All IBL compute work is performed during prepare_resources with a
-    /// dedicated command encoder. The multi-phase nature of the task
-    /// (equirect → cube, mipmap generation via render passes, PMREM compute
-    /// dispatches) requires its own submission boundary.
+    /// Perform all IBL compute work (equirect→cube, mipmap, PMREM) if a
+    /// pending source exists. Submits a dedicated command encoder immediately.
     #[allow(clippy::too_many_lines)]
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
+    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext) {
         let Some(source) = ctx.resource_manager.pending_ibl_source.take() else {
             return;
         };
 
         self.ensure_pipelines(ctx);
 
-        // Ensure custom samplers exist in the registry. The mutable borrows
-        // are released immediately; later code uses get_custom_ref() (shared).
+        // Ensure custom samplers exist.
         ctx.sampler_registry
             .get_custom(ctx.device, IBL_BLIT_SAMPLER_KEY);
         ctx.sampler_registry
@@ -787,12 +628,197 @@ impl PassNode for RdgIblComputePass {
         log::info!("RDG IBL PMREM generated. Source type: {source_type:?}");
     }
 
-    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
-        // All IBL work done in prepare_resources() — uses queue, shader_manager,
-        // pipeline_cache, mutable resource_manager and sampler_registry.
+    /// Build and inject a transient IBL node into the render graph.
+    ///
+    /// The node is a no-op side-effect sentinel — all GPU work was already
+    /// submitted during [`extract_and_prepare`]. The node ensures topological
+    /// ordering consistency.
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
+        let node = Box::new(RdgIblPassNode);
+        rdg.add_pass_owned(node);
+    }
+
+    // =========================================================================
+    // Internals
+    // =========================================================================
+
+    fn ensure_pipelines(&mut self, ctx: &mut ExtractContext) {
+        if self.pmrem_pipeline_id.is_some() {
+            return;
+        }
+
+        let device = ctx.device;
+
+        // --- PMREM compute pipeline ---
+        {
+            let source = include_str!("../../pipeline/shaders/program/ibl.wgsl");
+            let (module, hash) =
+                ctx.shader_manager
+                    .get_or_compile_raw(device, "IBL Prefilter Shader", source);
+
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("RDG IBL Pipeline Layout"),
+                bind_group_layouts: &[&self.pmrem_layout_source, &self.pmrem_layout_dest],
+                immediate_size: 0,
+            });
+
+            let key = ComputePipelineKey { shader_hash: hash };
+            self.pmrem_pipeline_id = Some(ctx.pipeline_cache.get_or_create_compute(
+                device,
+                module,
+                &layout,
+                &key,
+                "RDG IBL Compute Pipeline",
+            ));
+        }
+
+        // --- Equirectangular → Cube compute pipeline ---
+        {
+            let source = include_str!("../../pipeline/shaders/program/equirect_to_cube.wgsl");
+            let (module, hash) =
+                ctx.shader_manager
+                    .get_or_compile_raw(device, "Equirect to Cube Shader", source);
+
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("RDG Equirect Pipeline Layout"),
+                bind_group_layouts: &[&self.equirect_layout],
+                immediate_size: 0,
+            });
+
+            let key = ComputePipelineKey { shader_hash: hash };
+            self.equirect_pipeline_id = Some(ctx.pipeline_cache.get_or_create_compute(
+                device,
+                module,
+                &layout,
+                &key,
+                "RDG Equirect to Cube Pipeline",
+            ));
+        }
+
+        // --- Blit render pipeline ---
+        {
+            let source = include_str!("../../pipeline/shaders/program/blit.wgsl");
+            let (module, hash) =
+                ctx.shader_manager
+                    .get_or_compile_raw(device, "IBL Blit Shader", source);
+
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("RDG IBL Blit Pipeline Layout"),
+                bind_group_layouts: &[&self.blit_layout],
+                immediate_size: 0,
+            });
+
+            let key = FullscreenPipelineKey::fullscreen(
+                hash,
+                smallvec::smallvec![ColorTargetKey::from(wgpu::ColorTargetState {
+                    format: wgpu::TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
+                None,
+            );
+
+            self.blit_pipeline_id = Some(ctx.pipeline_cache.get_or_create_fullscreen(
+                device,
+                module,
+                &layout,
+                &key,
+                "RDG IBL Blit Pipeline",
+            ));
+        }
+    }
+
+    /// Blit individual cube faces from `src_texture` to `dst_texture` mip 0.
+    fn blit_cube_faces(
+        &self,
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        src_texture: &wgpu::Texture,
+        dst_texture: &wgpu::Texture,
+        blit_pipeline: &wgpu::RenderPipeline,
+        blit_sampler: &wgpu::Sampler,
+    ) {
+        let layer_count = src_texture
+            .depth_or_array_layers()
+            .min(dst_texture.depth_or_array_layers());
+
+        for layer in 0..layer_count {
+            let src_view = src_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("Blit Src Face"),
+                dimension: Some(TextureViewDimension::D2),
+                base_array_layer: layer,
+                array_layer_count: Some(1),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                usage: Some(wgpu::TextureUsages::TEXTURE_BINDING),
+                ..Default::default()
+            });
+
+            let dst_view = dst_texture.create_view(&wgpu::TextureViewDescriptor {
+                label: Some("Blit Dst Face"),
+                dimension: Some(TextureViewDimension::D2),
+                base_array_layer: layer,
+                array_layer_count: Some(1),
+                base_mip_level: 0,
+                mip_level_count: Some(1),
+                usage: Some(wgpu::TextureUsages::RENDER_ATTACHMENT),
+                ..Default::default()
+            });
+
+            let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Blit BG"),
+                layout: &self.blit_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(&src_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(blit_sampler),
+                    },
+                ],
+            });
+
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Blit Cube Face"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &dst_view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        store: wgpu::StoreOp::Store,
+                    },
+                    depth_slice: None,
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            rpass.set_pipeline(blit_pipeline);
+            rpass.set_bind_group(0, &bind_group, &[]);
+            rpass.draw(0..3, 0..1);
+        }
+    }
+}
+
+// ─── IBL Transient Node ──────────────────────────────────────────────────────
+
+/// No-op side-effect node. All IBL work is performed in
+/// [`IblFeature::extract_and_prepare`].
+struct RdgIblPassNode;
+
+impl PassNode for RdgIblPassNode {
+    fn name(&self) -> &'static str {
+        "RDG_IBL_Compute"
+    }
+
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        builder.mark_side_effect();
     }
 
     fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {
-        // All IBL compute work is completed during prepare_resources().
+        // All IBL compute work submitted during extract_and_prepare.
     }
 }

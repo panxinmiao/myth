@@ -55,6 +55,13 @@ pub struct RenderGraph {
     /// Per-frame rendering configuration (resolution, formats, MSAA).
     frame_config: FrameConfig,
 
+    /// Owned storage for transient pass nodes.
+    ///
+    /// Feature builders create boxed [`PassNode`]s via [`add_pass_owned`]
+    /// during graph assembly. The graph keeps them alive until
+    /// [`begin_frame`] clears per-frame state.
+    owned_nodes: Vec<Box<dyn PassNode>>,
+
     // --- Compile-time scratch buffers (zero-alloc across frames) ---
     compile_stack: Vec<usize>,
     compile_in_degrees: Vec<usize>,
@@ -80,6 +87,7 @@ impl RenderGraph {
                 surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
                 hdr_format: wgpu::TextureFormat::Rgba16Float,
             },
+            owned_nodes: Vec::new(),
             compile_stack: Vec::new(),
             compile_in_degrees: Vec::new(),
             compile_queue: Vec::new(),
@@ -100,6 +108,7 @@ impl RenderGraph {
         self.resources.clear();
         self.execution_queue.clear();
         self.resource_registry.clear();
+        self.owned_nodes.clear();
         self.frame_config = config;
     }
 
@@ -157,6 +166,28 @@ impl RenderGraph {
         };
 
         unsafe { (*static_ptr).setup(&mut builder) };
+    }
+
+    /// Adds a **transient** (owned) pass node to the graph.
+    ///
+    /// The graph takes ownership of the boxed node and keeps it alive until
+    /// [`begin_frame`] clears per-frame state. This is the primary entry
+    /// point used by Feature builders when constructing the imperative
+    /// pipeline.
+    ///
+    /// # Safety
+    ///
+    /// The raw pointer stored in [`PassRecord`] is valid for as long as
+    /// `owned_nodes` retains the box — i.e. until the next `begin_frame`.
+    pub fn add_pass_owned(&mut self, node: Box<dyn PassNode>) {
+        self.owned_nodes.push(node);
+        // SAFETY: The box is stored in `owned_nodes`, keeping the heap
+        // allocation alive. The raw pointer we extract points into that
+        // heap allocation, which does not move even if the Vec reallocates
+        // (Vec stores Box handles, not the pointee data).
+        let node_ptr: *mut dyn PassNode = &mut **self.owned_nodes.last_mut().unwrap();
+        let node_ref = unsafe { &mut *node_ptr };
+        self.add_pass(node_ref);
     }
 
     pub fn compile_topology(&mut self) {

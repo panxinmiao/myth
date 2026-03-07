@@ -1,24 +1,19 @@
-//! RDG Skybox / Background Render Pass
+//! Skybox Feature & Transient Pass Node
 //!
-//! Renders the scene background (gradient, cubemap, equirectangular, or planar
-//! texture) as a fullscreen triangle at the far depth plane. Uses Reverse-Z
-//! depth testing (`GreaterEqual`) so opaque geometry masks the background.
+//! Renders the scene background (gradient, cubemap, equirectangular, or
+//! planar texture) as a fullscreen triangle at the far depth plane.
 //!
-//! # RDG Slots
+//! - [`SkyboxFeature`] (persistent): layouts, pipeline cache, bind groups
+//!   (reference only persistent asset textures / uniform buffers).
+//! - [`RdgSkyboxPassNode`] (transient): holds scene_color / scene_depth
+//!   node IDs and the resolved pipeline + bind group for execution.
 //!
-//! - `scene_color`: HDR color buffer (read + write, LoadOp::Load)
-//! - `scene_depth`: Depth buffer (read, LoadOp::Load)
+//! # Special Case
 //!
-//! # Push Parameters (set by Composer)
-//!
-//! All scene-level configuration is pushed into the public fields by the
-//! Composer before the RDG prepare loop. The pass itself never accesses
-//! `Scene` directly.
-//!
-//! - `background_mode`: Background rendering mode (gradient, texture, etc.)
-//! - `bg_uniforms_cpu_id`: CPU buffer ID for `CpuBuffer<SkyboxParamsUniforms>`
-//! - `bg_uniforms_gpu_id`: GPU buffer ID (from `ensure_buffer_id`)
-//! - `scene_id`: Scene unique ID for global state lookup
+//! The skybox bind group references **only** persistent resources (uniform
+//! buffer + asset texture + sampler), so it is created in
+//! [`extract_and_prepare`] rather than the transient prepare phase. The
+//! [`PreparedSkyboxDraw`] is stored for BasicForward inline rendering.
 
 use rustc_hash::FxHashMap;
 
@@ -27,7 +22,9 @@ use crate::renderer::core::resources::SamplerKey;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::RdgExecuteContext;
+use crate::renderer::graph::rdg::feature::{ExtractContext, SkyboxConfig};
+use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::TextureNodeId;
 use crate::renderer::pipeline::{
@@ -39,8 +36,6 @@ use crate::resources::texture::TextureSource;
 use crate::resources::uniforms::WgslStruct;
 use crate::scene::background::{BackgroundMapping, BackgroundMode, SkyboxParamsUniforms};
 
-/// Sampler key for the skybox environment map: trilinear filtering with
-/// horizontal repeat (seamless panorama wrap) and vertical/depth clamp.
 const SKYBOX_SAMPLER_KEY: SamplerKey = SamplerKey {
     address_mode_u: wgpu::AddressMode::Repeat,
     address_mode_v: wgpu::AddressMode::ClampToEdge,
@@ -155,57 +150,28 @@ fn create_texture_layout(
     })
 }
 
-// ─── RDG Skybox Pass ──────────────────────────────────────────────────────────
+// =============================================================================
+// Persistent Feature
+// =============================================================================
 
-/// RDG Skybox / Background render pass.
-///
-/// Renders the scene background using the global bind group (group 0) for
-/// camera data and its own bind group (group 1) for skybox-specific params.
-pub struct RdgSkyboxPass {
-    // ─── RDG Resource Slots ────────────────────────────────────────
-    pub scene_color: TextureNodeId,
-    pub scene_depth: TextureNodeId,
-
-    // ─── Push Parameters (set by Composer) ─────────────────────────
-    /// Background rendering mode (gradient, texture, etc.).
-    pub background_mode: BackgroundMode,
-    /// CPU buffer ID for `CpuBuffer<SkyboxParamsUniforms>`.
-    pub bg_uniforms_cpu_id: u64,
-    /// GPU buffer ID for the skybox params uniform buffer.
-    pub bg_uniforms_gpu_id: u64,
-    /// Scene unique ID for global state lookup.
-    pub scene_id: u32,
-    /// Color buffer format — pushed by the Composer so pipeline creation
-    /// can happen before the render graph is built.
-    pub color_format: wgpu::TextureFormat,
-    /// Depth buffer format (from `WgpuContext`).
-    pub depth_format: wgpu::TextureFormat,
-
-    // ─── Bind Group Layouts (Group 1) ──────────────────────────────
+/// Persistent skybox Feature — owns layouts, pipeline cache, and creates
+/// bind groups that reference only persistent resources (asset textures,
+/// uniform buffers).
+pub struct SkyboxFeature {
     layout_gradient: Option<Tracked<wgpu::BindGroupLayout>>,
     layout_cube: Option<Tracked<wgpu::BindGroupLayout>>,
     layout_2d: Option<Tracked<wgpu::BindGroupLayout>>,
-
-    // ─── Pipeline Cache ────────────────────────────────────────────
     local_cache: FxHashMap<SkyboxPipelineKey, RenderPipelineId>,
 
-    // ─── Runtime State ─────────────────────────────────────────────
+    // Resolved at extract_and_prepare() time:
     current_bind_group: Option<wgpu::BindGroup>,
     current_pipeline: Option<RenderPipelineId>,
 }
 
-impl RdgSkyboxPass {
+impl SkyboxFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            scene_color: TextureNodeId(0),
-            scene_depth: TextureNodeId(0),
-            background_mode: BackgroundMode::default(),
-            bg_uniforms_cpu_id: 0,
-            bg_uniforms_gpu_id: 0,
-            scene_id: 0,
-            color_format: wgpu::TextureFormat::Rgba16Float,
-            depth_format: wgpu::TextureFormat::Depth24PlusStencil8,
             layout_gradient: None,
             layout_cube: None,
             layout_2d: None,
@@ -215,180 +181,42 @@ impl RdgSkyboxPass {
         }
     }
 
-    fn ensure_layouts(&mut self, device: &wgpu::Device) {
-        if self.layout_gradient.is_some() {
-            return;
-        }
-
-        self.layout_gradient = Some(Tracked::new(create_uniform_layout(device)));
-        self.layout_cube = Some(Tracked::new(create_texture_layout(
-            device,
-            wgpu::TextureViewDimension::Cube,
-            "RDG Skybox Layout (Cube)",
-        )));
-        self.layout_2d = Some(Tracked::new(create_texture_layout(
-            device,
-            wgpu::TextureViewDimension::D2,
-            "RDG Skybox Layout (2D)",
-        )));
-    }
-
-    fn layout_for_variant(&self, variant: SkyboxVariant) -> &Tracked<wgpu::BindGroupLayout> {
-        match variant {
-            SkyboxVariant::Gradient => self.layout_gradient.as_ref().unwrap(),
-            SkyboxVariant::Cube => self.layout_cube.as_ref().unwrap(),
-            SkyboxVariant::Equirectangular | SkyboxVariant::Planar => {
-                self.layout_2d.as_ref().unwrap()
-            }
-        }
-    }
-
-    fn get_or_create_pipeline(
-        &mut self,
-        ctx: &mut PassPrepareContext,
-        key: SkyboxPipelineKey,
-    ) -> RenderPipelineId {
-        if let Some(&pipeline_id) = self.local_cache.get(&key) {
-            return pipeline_id;
-        }
-
-        let gpu_world = ctx
-            .resource_manager
-            .get_global_state(ctx.render_state.id, self.scene_id)
-            .expect("Global state must exist");
-
-        let mut defines = ShaderDefines::new();
-        defines.set(key.variant.shader_define_key(), "1");
-
-        let mut options = ShaderCompilationOptions { defines };
-        options.add_define(
-            "struct_definitions",
-            SkyboxParamsUniforms::wgsl_struct_def("SkyboxParams").as_str(),
-        );
-
-        let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
-            ctx.device,
-            "passes/skybox",
-            &options,
-            "",
-            &gpu_world.binding_wgsl,
-        );
-
-        let layout = self.layout_for_variant(key.variant);
-        let pipeline_layout = ctx
-            .device
-            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("RDG Skybox Pipeline Layout"),
-                bind_group_layouts: &[&gpu_world.layout, layout],
-                immediate_size: 0,
-            });
-
-        let fullscreen_key = FullscreenPipelineKey {
-            shader_hash,
-            color_targets: smallvec::smallvec![ColorTargetKey::from(wgpu::ColorTargetState {
-                format: key.color_format,
-                blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            depth_stencil: Some(DepthStencilKey::from(wgpu::DepthStencilState {
-                format: key.depth_format,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::GreaterEqual,
-                stencil: wgpu::StencilState::default(),
-                bias: wgpu::DepthBiasState::default(),
-            })),
-            multisample: MultisampleKey::from(wgpu::MultisampleState {
-                count: 1, // HighFidelity always sample_count = 1
-                mask: !0,
-                alpha_to_coverage_enabled: false,
-            }),
-        };
-
-        let pipeline_id = ctx.pipeline_cache.get_or_create_fullscreen(
-            ctx.device,
-            shader_module,
-            &pipeline_layout,
-            &fullscreen_key,
-            "RDG Skybox Pipeline",
-        );
-
-        self.local_cache.insert(key, pipeline_id);
-        pipeline_id
-    }
-
-    fn resolve_texture_view<'a>(
-        resource_manager: &'a crate::renderer::core::ResourceManager,
-        source: &TextureSource,
-        mapping: BackgroundMapping,
-    ) -> Option<&'a wgpu::TextureView> {
-        match source {
-            TextureSource::Asset(handle) => {
-                if let Some(binding) = resource_manager.texture_bindings.get(*handle)
-                    && let Some(img) = resource_manager.gpu_images.get(&binding.cpu_image_id)
-                {
-                    match mapping {
-                        BackgroundMapping::Cube => {
-                            if img.default_view_dimension == wgpu::TextureViewDimension::Cube {
-                                return Some(&img.default_view);
-                            }
-                        }
-                        BackgroundMapping::Equirectangular | BackgroundMapping::Planar => {
-                            if img.default_view_dimension == wgpu::TextureViewDimension::D2 {
-                                return Some(&img.default_view);
-                            }
-                        }
-                    }
-                }
-                None
-            }
-            TextureSource::Attachment(id, _) => resource_manager.internal_resources.get(id),
-        }
-    }
-}
-
-impl PassNode for RdgSkyboxPass {
-    fn name(&self) -> &'static str {
-        "RDG_Skybox_Pass"
-    }
-
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
+    /// Prepare persistent GPU resources, compile pipeline, build bind group.
+    ///
+    /// The skybox bind group references only persistent resources (uniform
+    /// buffer + asset texture + sampler), so it is safe to build here.
+    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext, config: &SkyboxConfig) {
         self.ensure_layouts(ctx.device);
 
-        let Some(variant) = SkyboxVariant::from_background(&self.background_mode) else {
+        let Some(variant) = SkyboxVariant::from_background(&config.background_mode) else {
             self.current_bind_group = None;
             self.current_pipeline = None;
             return;
         };
 
-        // GPU buffer was already ensured by the Composer; use pushed IDs.
-        let params_gpu_id = self.bg_uniforms_gpu_id;
-        let params_cpu_id = self.bg_uniforms_cpu_id;
+        let params_gpu_id = config.bg_uniforms_gpu_id;
+        let params_cpu_id = config.bg_uniforms_cpu_id;
 
         if let BackgroundMode::Texture {
             source: TextureSource::Asset(handle),
             ..
-        } = &self.background_mode
+        } = &config.background_mode
         {
             ctx.resource_manager.prepare_texture(ctx.assets, *handle);
         }
 
-        // Ensure the custom sampler is created (first frame only; subsequent
-        // frames are a no-op HashMap lookup). The mutable borrow is released
-        // before we resolve the texture view below.
         ctx.sampler_registry
             .get_custom(ctx.device, SKYBOX_SAMPLER_KEY);
 
-        // Resolve texture view
         let texture_view = if let BackgroundMode::Texture {
             source, mapping, ..
-        } = &self.background_mode
+        } = &config.background_mode
         {
             Self::resolve_texture_view(ctx.resource_manager, source, *mapping)
         } else {
             None
         };
 
-        // Build bind group (group 1)
         let layout = self.layout_for_variant(variant);
         let layout_id = layout.id();
         let sampler = ctx.sampler_registry.get_custom_ref(&SKYBOX_SAMPLER_KEY);
@@ -463,15 +291,14 @@ impl PassNode for RdgSkyboxPass {
 
         self.current_bind_group = Some(bind_group.clone());
 
-        // Pipeline — uses pushed format fields instead of reading from the graph.
         let pipeline_key = SkyboxPipelineKey {
             variant,
-            color_format: self.color_format,
-            depth_format: self.depth_format,
+            color_format: config.color_format,
+            depth_format: config.depth_format,
         };
         self.current_pipeline = Some(self.get_or_create_pipeline(ctx, pipeline_key));
 
-        // Store prepared draw state for LDR path inline rendering
+        // Store for BasicForward inline rendering.
         if let (Some(pipeline_id), Some(bg)) = (self.current_pipeline, &self.current_bind_group) {
             ctx.render_lists.prepared_skybox = Some(PreparedSkyboxDraw {
                 pipeline_id,
@@ -480,20 +307,180 @@ impl PassNode for RdgSkyboxPass {
         }
     }
 
+    /// Build and inject a transient skybox node into the render graph.
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        scene_color: TextureNodeId,
+        scene_depth: TextureNodeId,
+    ) {
+        let node = Box::new(RdgSkyboxPassNode {
+            scene_color,
+            scene_depth,
+            bind_group: self.current_bind_group.clone(),
+            pipeline_id: self.current_pipeline,
+        });
+        rdg.add_pass_owned(node);
+    }
+
+    // =========================================================================
+    // Internals
+    // =========================================================================
+
+    fn ensure_layouts(&mut self, device: &wgpu::Device) {
+        if self.layout_gradient.is_some() {
+            return;
+        }
+        self.layout_gradient = Some(Tracked::new(create_uniform_layout(device)));
+        self.layout_cube = Some(Tracked::new(create_texture_layout(
+            device,
+            wgpu::TextureViewDimension::Cube,
+            "RDG Skybox Layout (Cube)",
+        )));
+        self.layout_2d = Some(Tracked::new(create_texture_layout(
+            device,
+            wgpu::TextureViewDimension::D2,
+            "RDG Skybox Layout (2D)",
+        )));
+    }
+
+    fn layout_for_variant(&self, variant: SkyboxVariant) -> &Tracked<wgpu::BindGroupLayout> {
+        match variant {
+            SkyboxVariant::Gradient => self.layout_gradient.as_ref().unwrap(),
+            SkyboxVariant::Cube => self.layout_cube.as_ref().unwrap(),
+            SkyboxVariant::Equirectangular | SkyboxVariant::Planar => {
+                self.layout_2d.as_ref().unwrap()
+            }
+        }
+    }
+
+    fn get_or_create_pipeline(
+        &mut self,
+        ctx: &mut ExtractContext,
+        key: SkyboxPipelineKey,
+    ) -> RenderPipelineId {
+        if let Some(&pipeline_id) = self.local_cache.get(&key) {
+            return pipeline_id;
+        }
+
+        let gpu_world = ctx
+            .resource_manager
+            .get_global_state(ctx.render_state.id, ctx.extracted_scene.scene_id)
+            .expect("Global state must exist");
+
+        let mut defines = ShaderDefines::new();
+        defines.set(key.variant.shader_define_key(), "1");
+
+        let mut options = ShaderCompilationOptions { defines };
+        options.add_define(
+            "struct_definitions",
+            SkyboxParamsUniforms::wgsl_struct_def("SkyboxParams").as_str(),
+        );
+
+        let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
+            ctx.device,
+            "passes/skybox",
+            &options,
+            "",
+            &gpu_world.binding_wgsl,
+        );
+
+        let layout = self.layout_for_variant(key.variant);
+        let pipeline_layout = ctx
+            .device
+            .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("RDG Skybox Pipeline Layout"),
+                bind_group_layouts: &[&gpu_world.layout, layout],
+                immediate_size: 0,
+            });
+
+        let fullscreen_key = FullscreenPipelineKey {
+            shader_hash,
+            color_targets: smallvec::smallvec![ColorTargetKey::from(wgpu::ColorTargetState {
+                format: key.color_format,
+                blend: Some(wgpu::BlendState::REPLACE),
+                write_mask: wgpu::ColorWrites::ALL,
+            })],
+            depth_stencil: Some(DepthStencilKey::from(wgpu::DepthStencilState {
+                format: key.depth_format,
+                depth_write_enabled: false,
+                depth_compare: wgpu::CompareFunction::GreaterEqual,
+                stencil: wgpu::StencilState::default(),
+                bias: wgpu::DepthBiasState::default(),
+            })),
+            multisample: MultisampleKey::from(wgpu::MultisampleState {
+                count: 1,
+                mask: !0,
+                alpha_to_coverage_enabled: false,
+            }),
+        };
+
+        let pipeline_id = ctx.pipeline_cache.get_or_create_fullscreen(
+            ctx.device,
+            shader_module,
+            &pipeline_layout,
+            &fullscreen_key,
+            "RDG Skybox Pipeline",
+        );
+
+        self.local_cache.insert(key, pipeline_id);
+        pipeline_id
+    }
+
+    fn resolve_texture_view<'a>(
+        resource_manager: &'a crate::renderer::core::ResourceManager,
+        source: &TextureSource,
+        mapping: BackgroundMapping,
+    ) -> Option<&'a wgpu::TextureView> {
+        match source {
+            TextureSource::Asset(handle) => {
+                if let Some(binding) = resource_manager.texture_bindings.get(*handle)
+                    && let Some(img) = resource_manager.gpu_images.get(&binding.cpu_image_id)
+                {
+                    match mapping {
+                        BackgroundMapping::Cube => {
+                            if img.default_view_dimension == wgpu::TextureViewDimension::Cube {
+                                return Some(&img.default_view);
+                            }
+                        }
+                        BackgroundMapping::Equirectangular | BackgroundMapping::Planar => {
+                            if img.default_view_dimension == wgpu::TextureViewDimension::D2 {
+                                return Some(&img.default_view);
+                            }
+                        }
+                    }
+                }
+                None
+            }
+            TextureSource::Attachment(id, _) => resource_manager.internal_resources.get(id),
+        }
+    }
+}
+
+// =============================================================================
+// Transient Pass Node
+// =============================================================================
+
+struct RdgSkyboxPassNode {
+    scene_color: TextureNodeId,
+    scene_depth: TextureNodeId,
+    bind_group: Option<wgpu::BindGroup>,
+    pipeline_id: Option<RenderPipelineId>,
+}
+
+impl PassNode for RdgSkyboxPassNode {
+    fn name(&self) -> &'static str {
+        "RDG_Skybox_Pass"
+    }
+
     fn setup(&mut self, builder: &mut PassBuilder) {
         builder.write_texture(self.scene_color);
         builder.read_texture(self.scene_depth);
     }
 
-    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
-        // All work is done in `prepare_resources()` since the skybox bind
-        // group references only persistent resources (uniform buffer +
-        // asset textures), not transient RDG allocations.
-    }
-
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let (Some(pipeline_id), Some(bind_group)) =
-            (self.current_pipeline, &self.current_bind_group)
+            (self.pipeline_id, &self.bind_group)
         else {
             return;
         };
@@ -506,7 +493,7 @@ impl PassNode for RdgSkyboxPass {
         let color_view = ctx.get_texture_view(self.scene_color);
         let depth_view = ctx.get_texture_view(self.scene_depth);
 
-        let pass_desc = wgpu::RenderPassDescriptor {
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("RDG Skybox Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                 view: color_view,
@@ -528,9 +515,7 @@ impl PassNode for RdgSkyboxPass {
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,
-        };
-
-        let mut pass = encoder.begin_render_pass(&pass_desc);
+        });
 
         let pipeline = ctx.pipeline_cache.get_render_pipeline(pipeline_id);
         pass.set_pipeline(pipeline);

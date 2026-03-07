@@ -1,25 +1,18 @@
-//! RDG Depth-Normal Pre Pass
+//! Prepass Feature & Transient Pass Node
 //!
 //! Writes depth and optional view-space normals before the main opaque pass.
-//! Enables Z-Prepass optimisation (zero overdraw) and provides a mini G-Buffer
-//! for SSAO and other screen-space effects.
 //!
-//! # RDG Slots
-//!
-//! - `scene_depth`: Scene depth buffer (write via blackboard)
-//! - `scene_normals`: Optional normal buffer (created via `create_and_export`)
-//! - `feature_id`: Optional feature-ID buffer (created via `create_and_export`)
-//!
-//! # Push Parameters
-//!
-//! - `needs_normal`: Whether to create and output view-space normals (for SSAO)
-//! - `needs_feature_id`: Whether to create and output feature IDs (for SSS/SSR)
+//! - [`PrepassFeature`] (persistent): pipeline cache keyed by
+//!   `(main_pipeline_id, needs_normal, needs_feature_id)`.
+//! - [`RdgPrepassNode`] (transient): per-frame geometry execution.
 
 use rustc_hash::FxHashMap;
 
 use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::RdgExecuteContext;
+use crate::renderer::graph::rdg::feature::{ExtractContext, PrepassOutput};
+use crate::renderer::graph::rdg::graph::RenderGraph;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
@@ -29,48 +22,34 @@ use crate::renderer::pipeline::{
 use crate::resources::material::{AlphaMode, Side};
 use crate::resources::screen_space::STENCIL_WRITE_MASK;
 
-/// Normal texture format — Rgba8Unorm ([-1,1] → [0,1] mapping).
 const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
-
-/// Feature ID texture format — Rg8Uint.
 const FEATURE_ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Uint;
 
-/// RDG Depth-Normal Pre Pass.
-///
-/// Writes scene depth (reverse-Z, Clear(0.0)) and optional normals to RDG
-/// transient textures. Subsequent passes (Opaque, SSAO) read the depth via
-/// `LoadOp::Load`.
-pub struct RdgPrepass {
-    // ─── RDG Resource Slots (set by Composer) ──────────────────────
-    pub scene_depth: TextureNodeId,
-    pub scene_normals: TextureNodeId,
-    pub feature_id: TextureNodeId,
+// =============================================================================
+// Persistent Feature
+// =============================================================================
 
-    // ─── Push Parameters ───────────────────────────────────────────
-    pub needs_normal: bool,
-    pub needs_feature_id: bool,
-
-    // ─── Internal Cache ────────────────────────────────────────────
-    /// Pipeline cache: (main_pipeline_id, needs_normal, needs_feature_id) → prepass pipeline.
+/// Persistent prepass Feature — owns a pipeline cache keyed by
+/// `(opaque_pipeline_id, needs_normal, needs_feature_id)`.
+pub struct PrepassFeature {
     local_cache: FxHashMap<(RenderPipelineId, bool, bool), RenderPipelineId>,
 }
 
-impl RdgPrepass {
+impl PrepassFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            scene_depth: TextureNodeId(0),
-            scene_normals: TextureNodeId(0),
-            feature_id: TextureNodeId(0),
-            needs_normal: false,
-            needs_feature_id: false,
             local_cache: FxHashMap::default(),
         }
     }
 
-    /// Build prepass pipelines for every unique `pipeline_id` in the opaque
-    /// command list.
-    fn prepare_pipelines(&mut self, ctx: &mut PassPrepareContext) {
+    /// Compile prepass pipeline variants for all opaque draw commands.
+    pub fn extract_and_prepare(
+        &mut self,
+        ctx: &mut ExtractContext,
+        needs_normal: bool,
+        needs_feature_id: bool,
+    ) {
         let render_state_id = ctx.render_state.id;
         let scene_id = ctx.extracted_scene.scene_id;
 
@@ -89,11 +68,10 @@ impl RdgPrepass {
         let mat_guard = ctx.assets.materials.read_lock();
 
         for cmd in ctx.render_lists.opaque.iter() {
-            if self.local_cache.contains_key(&(
-                cmd.pipeline_id,
-                self.needs_normal,
-                self.needs_feature_id,
-            )) {
+            if self
+                .local_cache
+                .contains_key(&(cmd.pipeline_id, needs_normal, needs_feature_id))
+            {
                 continue;
             }
 
@@ -124,10 +102,8 @@ impl RdgPrepass {
                 None => (0, None),
             };
 
-            // ── Shader defines ─────────────────────────────────────────
             let geo_defines = geometry.shader_defines();
             let mat_defines = material.shader_defines();
-
             let empty_defines = crate::resources::shader_defines::ShaderDefines::new();
             let item_def = item_shader_defines.unwrap_or(&empty_defines);
 
@@ -139,11 +115,10 @@ impl RdgPrepass {
             );
 
             options.add_define("IS_PREPASS", "1");
-            if self.needs_normal {
+            if needs_normal {
                 options.add_define("OUTPUT_NORMAL", "1");
             }
 
-            // ── Shader generation ──────────────────────────────────────
             let binding_code = format!(
                 "{}\n{}\n{}",
                 &gpu_world_binding_wgsl,
@@ -159,7 +134,6 @@ impl RdgPrepass {
                 &binding_code,
             );
 
-            // ── Pipeline layout ────────────────────────────────────────
             let layout = ctx
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -191,7 +165,7 @@ impl RdgPrepass {
                 wgpu::FrontFace::Ccw
             };
 
-            let stencil_state = if self.needs_feature_id {
+            let stencil_state = if needs_feature_id {
                 Some(wgpu::StencilFaceState {
                     compare: wgpu::CompareFunction::Always,
                     fail_op: wgpu::StencilOperation::Keep,
@@ -202,8 +176,7 @@ impl RdgPrepass {
                 None
             };
 
-            // ── Color targets ──────────────────────────────────────────
-            let color_targets: smallvec::SmallVec<[ColorTargetKey; 2]> = if self.needs_feature_id {
+            let color_targets: smallvec::SmallVec<[ColorTargetKey; 2]> = if needs_feature_id {
                 smallvec::smallvec![
                     ColorTargetKey::from(wgpu::ColorTargetState {
                         format: NORMAL_FORMAT,
@@ -216,7 +189,7 @@ impl RdgPrepass {
                         write_mask: wgpu::ColorWrites::ALL,
                     }),
                 ]
-            } else if self.needs_normal {
+            } else if needs_normal {
                 smallvec::smallvec![ColorTargetKey::from(wgpu::ColorTargetState {
                     format: NORMAL_FORMAT,
                     blend: None,
@@ -245,7 +218,7 @@ impl RdgPrepass {
                 topology: geometry.topology,
                 cull_mode,
                 front_face,
-                sample_count: 1, // HighFidelity path always uses sample_count = 1
+                sample_count: 1,
             };
 
             let pipeline_id = ctx.pipeline_cache.get_or_create_simple_geometry(
@@ -257,57 +230,92 @@ impl RdgPrepass {
                 &vertex_buffers_layout,
             );
 
-            self.local_cache.insert(
-                (cmd.pipeline_id, self.needs_normal, self.needs_feature_id),
-                pipeline_id,
-            );
+            self.local_cache
+                .insert((cmd.pipeline_id, needs_normal, needs_feature_id), pipeline_id);
         }
     }
-}
 
-impl PassNode for RdgPrepass {
-    fn name(&self) -> &'static str {
-        "RDG_Prepass"
-    }
+    /// Build and inject a transient prepass node into the render graph.
+    ///
+    /// Returns [`PrepassOutput`] with depth + optional normal / feature-ID.
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        scene_depth: TextureNodeId,
+        needs_normal: bool,
+        needs_feature_id: bool,
+    ) -> PrepassOutput {
+        let config = rdg.frame_config();
+        let (w, h) = (config.width, config.height);
 
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        // Consumer: write the shared depth buffer.
-        self.scene_depth = builder.write_blackboard("Scene_Depth");
-
-        // Producer: conditionally create normals and feature-ID textures.
-        // The Composer sets `needs_normal` / `needs_feature_id` push params
-        // before `add_pass`, so downstream passes discover them via
-        // `find_resource` / `try_read_blackboard`.
-        let (w, h) = builder.global_resolution();
-
-        if self.needs_normal {
+        let scene_normals = if needs_normal {
             let desc = RdgTextureDesc::new_2d(
                 w,
                 h,
                 NORMAL_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            self.scene_normals = builder.create_texture("Scene_Normals", desc);
-        }
+            Some(rdg.register_resource("Scene_Normals", desc, false))
+        } else {
+            None
+        };
 
-        if self.needs_feature_id {
+        let feature_id = if needs_feature_id {
             let desc = RdgTextureDesc::new_2d(
                 w,
                 h,
                 FEATURE_ID_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            self.feature_id = builder.create_texture("Feature_ID", desc);
+            Some(rdg.register_resource("Feature_ID", desc, false))
+        } else {
+            None
+        };
+
+        let node = Box::new(RdgPrepassNode {
+            scene_depth,
+            scene_normals,
+            feature_id,
+            needs_normal,
+            needs_feature_id,
+            local_cache: self.local_cache.clone(),
+        });
+        rdg.add_pass_owned(node);
+
+        PrepassOutput {
+            depth: scene_depth,
+            normal: scene_normals,
+            feature_id,
         }
     }
+}
 
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
-        self.prepare_pipelines(ctx);
+// =============================================================================
+// Transient Pass Node
+// =============================================================================
+
+struct RdgPrepassNode {
+    scene_depth: TextureNodeId,
+    scene_normals: Option<TextureNodeId>,
+    feature_id: Option<TextureNodeId>,
+    needs_normal: bool,
+    needs_feature_id: bool,
+    local_cache: FxHashMap<(RenderPipelineId, bool, bool), RenderPipelineId>,
+}
+
+impl PassNode for RdgPrepassNode {
+    fn name(&self) -> &'static str {
+        "RDG_Prepass"
     }
 
-    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
-        // All pipeline work is done in `prepare_resources()`; no transient
-        // bind groups are needed for the prepass.
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        builder.write_texture(self.scene_depth);
+        if let Some(normals) = self.scene_normals {
+            builder.write_texture(normals);
+        }
+        if let Some(fid) = self.feature_id {
+            builder.write_texture(fid);
+        }
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -318,11 +326,10 @@ impl PassNode for RdgPrepass {
 
         let depth_view = ctx.get_texture_view(self.scene_depth);
 
-        // Build color attachments based on normal/feature_id needs
         let mut color_attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = Vec::new();
 
-        if self.needs_normal {
-            let normal_view = ctx.get_texture_view(self.scene_normals);
+        if let Some(normals) = self.scene_normals {
+            let normal_view = ctx.get_texture_view(normals);
             color_attachments.push(Some(wgpu::RenderPassColorAttachment {
                 view: normal_view,
                 resolve_target: None,
@@ -339,8 +346,8 @@ impl PassNode for RdgPrepass {
             }));
         }
 
-        if self.needs_feature_id {
-            let feature_view = ctx.get_texture_view(self.feature_id);
+        if let Some(fid) = self.feature_id {
+            let feature_view = ctx.get_texture_view(fid);
             color_attachments.push(Some(wgpu::RenderPassColorAttachment {
                 view: feature_view,
                 resolve_target: None,
@@ -358,7 +365,7 @@ impl PassNode for RdgPrepass {
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0.0), // Reverse-Z: 0.0 = far
+                    load: wgpu::LoadOp::Clear(0.0),
                     store: wgpu::StoreOp::Store,
                 }),
                 stencil_ops: if self.needs_feature_id {
@@ -376,7 +383,6 @@ impl PassNode for RdgPrepass {
         });
 
         let mut tracked_pass = TrackedRenderPass::new(pass);
-
         tracked_pass.set_bind_group(
             0,
             render_lists.gpu_global_bind_group_id,
@@ -385,10 +391,11 @@ impl PassNode for RdgPrepass {
         );
 
         for cmd in &render_lists.opaque {
-            let Some(&prepass_pipeline_id) =
-                self.local_cache
-                    .get(&(cmd.pipeline_id, self.needs_normal, self.needs_feature_id))
-            else {
+            let Some(&prepass_pipeline_id) = self.local_cache.get(&(
+                cmd.pipeline_id,
+                self.needs_normal,
+                self.needs_feature_id,
+            )) else {
                 continue;
             };
 

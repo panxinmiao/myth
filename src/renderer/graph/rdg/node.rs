@@ -1,4 +1,4 @@
-use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::RdgPrepareContext;
 
 use super::builder::PassBuilder;
 use super::context::RdgExecuteContext;
@@ -8,34 +8,32 @@ use wgpu::CommandEncoder;
 
 /// A single render or compute pass in the declarative render graph.
 ///
+/// Pass nodes are **transient**: created per frame by their owning
+/// [`Feature`](super::feature) during graph assembly and destroyed after
+/// execution. They carry only lightweight data (texture node IDs, pipeline
+/// IDs, cached bind-group keys) — no persistent GPU resources.
+///
 /// # Lifecycle
 ///
-/// 1. **`prepare_resources`** — called by the Composer *before* the graph is
-///    built.  Full GPU infrastructure is available.  Create layouts, compile
-///    pipelines, upload non-transient buffers here.
-/// 2. **`setup`** — declare resource read/write topology for the graph.
-/// 3. **`prepare`** — called *after* graph compilation and transient memory
-///    allocation.  Only assemble `BindGroup`s that reference RDG-managed
-///    transient textures.  Context is intentionally minimal.
-/// 4. **`execute`** — record GPU commands into the shared encoder.
+/// 1. **`setup`** — declare resource read/write topology for the graph.
+/// 2. **`prepare`** — called *after* graph compilation and transient memory
+///    allocation. Assemble `BindGroup`s that reference RDG-managed
+///    transient textures. Context is intentionally minimal.
+/// 3. **`execute`** — record GPU commands into the shared encoder.
 pub trait PassNode {
+    /// Human-readable debug name for this pass.
     fn name(&self) -> &'static str;
 
-    /// Pre-RDG resource preparation.
-    ///
-    /// Create `BindGroupLayout`s, compile pipelines, upload persistent GPU
-    /// data.  Called once per frame for each active pass, **before** the
-    /// render graph is constructed.
-    #[allow(unused_variables)]
-    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {}
-
     /// Declare resource dependencies for the graph topology.
+    ///
+    /// Called immediately when the node is added to the graph. Must declare
+    /// all texture reads and writes so the compiler can build the DAG.
     fn setup(&mut self, builder: &mut PassBuilder);
 
     /// Assemble transient `BindGroup`s after physical resource allocation.
     ///
     /// Only `BindGroup`s that reference RDG-managed transient textures
-    /// should be created here.  The context deliberately excludes heavy
+    /// should be created here. The context deliberately excludes heavy
     /// infrastructure (shader compiler, asset server, etc.).
     #[allow(unused_variables)]
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {}
