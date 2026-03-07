@@ -19,7 +19,7 @@ use rustc_hash::FxHashMap;
 
 use crate::renderer::graph::TrackedRenderPass;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
@@ -70,7 +70,7 @@ impl RdgPrepass {
 
     /// Build prepass pipelines for every unique `pipeline_id` in the opaque
     /// command list.
-    fn prepare_pipelines(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare_pipelines(&mut self, ctx: &mut PassPrepareContext) {
         let render_state_id = ctx.render_state.id;
         let scene_id = ctx.extracted_scene.scene_id;
 
@@ -301,9 +301,13 @@ impl PassNode for RdgPrepass {
         }
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        // feature_id is now an RDG transient resource — no old pool allocation needed.
+    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
         self.prepare_pipelines(ctx);
+    }
+
+    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
+        // All pipeline work is done in `prepare_resources()`; no transient
+        // bind groups are needed for the prepass.
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {

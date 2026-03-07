@@ -159,9 +159,6 @@ impl PassNode for RdgOpaquePass {
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        // Extract clear color from scene
-        self.clear_color = ctx.extracted_scene.background.clear_color();
-
         // Build screen bind group (group 3): SSAO + transmission dummy + sampler
         let ssao_view: &Tracked<wgpu::TextureView> = if self.ssao_enabled {
             ctx.views.get_texture_view(self.ssao_tex)

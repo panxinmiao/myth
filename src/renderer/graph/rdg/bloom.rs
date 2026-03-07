@@ -28,7 +28,7 @@ use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
@@ -291,7 +291,7 @@ impl RdgBloomPass {
         self.karis_off_buffer = Some(Tracked::new(buf_off));
     }
 
-    fn ensure_pipelines(&mut self, ctx: &mut RdgPrepareContext) {
+    fn ensure_pipelines(&mut self, ctx: &mut PassPrepareContext) {
         if self.downsample_pipeline.is_some() {
             return;
         }
@@ -715,16 +715,17 @@ impl PassNode for RdgBloomPass {
         self.input_tex = builder.read_blackboard("Scene_Color_HDR");
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        // 1. Lazy init
+    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
+        // Persistent GPU resources: layouts, static uniform buffers, pipelines.
         self.ensure_layouts(ctx.device);
         self.ensure_internal_buffers(ctx.device, ctx.queue);
         self.ensure_pipelines(ctx);
+    }
 
-        // 2. Mip chain
+    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+        // Transient work only: mip-chain views + bind groups that
+        // reference the RDG-allocated bloom texture and scene color input.
         self.ensure_mip_chain(ctx);
-
-        // 3. Bind groups
         self.rebuild_bind_groups(ctx);
     }
 

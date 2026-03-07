@@ -27,7 +27,7 @@ use crate::renderer::core::resources::SamplerKey;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::TextureNodeId;
 use crate::renderer::pipeline::{
@@ -175,6 +175,11 @@ pub struct RdgSkyboxPass {
     pub bg_uniforms_gpu_id: u64,
     /// Scene unique ID for global state lookup.
     pub scene_id: u32,
+    /// Color buffer format — pushed by the Composer so pipeline creation
+    /// can happen before the render graph is built.
+    pub color_format: wgpu::TextureFormat,
+    /// Depth buffer format (from `WgpuContext`).
+    pub depth_format: wgpu::TextureFormat,
 
     // ─── Bind Group Layouts (Group 1) ──────────────────────────────
     layout_gradient: Option<Tracked<wgpu::BindGroupLayout>>,
@@ -199,6 +204,8 @@ impl RdgSkyboxPass {
             bg_uniforms_cpu_id: 0,
             bg_uniforms_gpu_id: 0,
             scene_id: 0,
+            color_format: wgpu::TextureFormat::Rgba16Float,
+            depth_format: wgpu::TextureFormat::Depth24PlusStencil8,
             layout_gradient: None,
             layout_cube: None,
             layout_2d: None,
@@ -238,7 +245,7 @@ impl RdgSkyboxPass {
 
     fn get_or_create_pipeline(
         &mut self,
-        ctx: &mut RdgPrepareContext,
+        ctx: &mut PassPrepareContext,
         key: SkyboxPipelineKey,
     ) -> RenderPipelineId {
         if let Some(&pipeline_id) = self.local_cache.get(&key) {
@@ -310,14 +317,14 @@ impl RdgSkyboxPass {
     }
 
     fn resolve_texture_view<'a>(
-        ctx: &'a RdgPrepareContext,
+        resource_manager: &'a crate::renderer::core::ResourceManager,
         source: &TextureSource,
         mapping: BackgroundMapping,
     ) -> Option<&'a wgpu::TextureView> {
         match source {
             TextureSource::Asset(handle) => {
-                if let Some(binding) = ctx.resource_manager.texture_bindings.get(*handle)
-                    && let Some(img) = ctx.resource_manager.gpu_images.get(&binding.cpu_image_id)
+                if let Some(binding) = resource_manager.texture_bindings.get(*handle)
+                    && let Some(img) = resource_manager.gpu_images.get(&binding.cpu_image_id)
                 {
                     match mapping {
                         BackgroundMapping::Cube => {
@@ -334,7 +341,7 @@ impl RdgSkyboxPass {
                 }
                 None
             }
-            TextureSource::Attachment(id, _) => ctx.resource_manager.internal_resources.get(id),
+            TextureSource::Attachment(id, _) => resource_manager.internal_resources.get(id),
         }
     }
 }
@@ -344,12 +351,7 @@ impl PassNode for RdgSkyboxPass {
         "RDG_Skybox_Pass"
     }
 
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.write_texture(self.scene_color);
-        builder.read_texture(self.scene_depth);
-    }
-
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
         self.ensure_layouts(ctx.device);
 
         let Some(variant) = SkyboxVariant::from_background(&self.background_mode) else {
@@ -381,7 +383,7 @@ impl PassNode for RdgSkyboxPass {
             source, mapping, ..
         } = &self.background_mode
         {
-            Self::resolve_texture_view(ctx, source, *mapping)
+            Self::resolve_texture_view(ctx.resource_manager, source, *mapping)
         } else {
             None
         };
@@ -461,14 +463,11 @@ impl PassNode for RdgSkyboxPass {
 
         self.current_bind_group = Some(bind_group.clone());
 
-        // Pipeline
-        let color_format = ctx.views.graph.resources[self.scene_color.0 as usize]
-            .desc
-            .format;
+        // Pipeline — uses pushed format fields instead of reading from the graph.
         let pipeline_key = SkyboxPipelineKey {
             variant,
-            color_format,
-            depth_format: ctx.wgpu_ctx.depth_format,
+            color_format: self.color_format,
+            depth_format: self.depth_format,
         };
         self.current_pipeline = Some(self.get_or_create_pipeline(ctx, pipeline_key));
 
@@ -479,6 +478,17 @@ impl PassNode for RdgSkyboxPass {
                 bind_group: bg.clone(),
             });
         }
+    }
+
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        builder.write_texture(self.scene_color);
+        builder.read_texture(self.scene_depth);
+    }
+
+    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
+        // All work is done in `prepare_resources()` since the skybox bind
+        // group references only persistent resources (uniform buffer +
+        // asset textures), not transient RDG allocations.
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {

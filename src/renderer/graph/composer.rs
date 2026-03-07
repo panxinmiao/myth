@@ -325,6 +325,8 @@ impl<'a> FrameComposer<'a> {
             // conditionally creates Specular_MRT.
             self.ctx.rdg_opaque_pass.has_prepass = true;
             self.ctx.rdg_opaque_pass.needs_specular = needs_specular;
+            self.ctx.rdg_opaque_pass.clear_color =
+                self.ctx.extracted_scene.background.clear_color();
             rdg.add_pass(self.ctx.rdg_opaque_pass);
 
             // SSSSS — creates SSSSS_Temp; reads Scene_Color_HDR, depth,
@@ -343,6 +345,8 @@ impl<'a> FrameComposer<'a> {
                 skybox.bg_uniforms_cpu_id = bg_uniforms_cpu_id;
                 skybox.bg_uniforms_gpu_id = bg_uniforms_gpu_id;
                 skybox.scene_id = scene_id_val;
+                skybox.color_format = HDR_TEXTURE_FORMAT;
+                skybox.depth_format = self.ctx.wgpu_ctx.depth_format;
                 rdg.add_pass(skybox);
             }
 
@@ -411,11 +415,13 @@ impl<'a> FrameComposer<'a> {
                     tone_map.lut_handle = None;
                 }
                 tone_map.global_state_key = (self.ctx.render_state.id, scene_id_val);
+                tone_map.output_format = view_format;
                 rdg.add_pass(tone_map);
             }
 
             // FXAA — reads LDR_Intermediate, writes Surface_Out via blackboard
             if fxaa_enabled {
+                self.ctx.rdg_fxaa_pass.output_format = view_format;
                 rdg.add_pass(self.ctx.rdg_fxaa_pass);
             }
         } else {
@@ -434,11 +440,15 @@ impl<'a> FrameComposer<'a> {
                 skybox.bg_uniforms_cpu_id = bg_uniforms_cpu_id;
                 skybox.bg_uniforms_gpu_id = bg_uniforms_gpu_id;
                 skybox.scene_id = scene_id_val;
+                skybox.color_format = view_format;
+                skybox.depth_format = self.ctx.wgpu_ctx.depth_format;
                 rdg.add_pass(skybox);
             }
 
             // SimpleForward — creates Scene_Msaa if MSAA > 1; writes
             // Surface_Out, Scene_Depth.
+            self.ctx.rdg_simple_forward_pass.clear_color =
+                self.ctx.extracted_scene.background.clear_color();
             rdg.add_pass(self.ctx.rdg_simple_forward_pass);
         }
 
@@ -453,9 +463,39 @@ impl<'a> FrameComposer<'a> {
 
         rdg.compile(self.ctx.rdg_pool, &self.ctx.wgpu_ctx.device);
 
+        // ─── 3a. Pre-RDG Prepare: persistent GPU resource sync ─────────
+        //
+        // Create/warm layouts, compile pipelines, upload uniform buffers.
+        // This runs *before* the transient-resource prepare loop so the
+        // slim `RdgPrepareContext` doesn't need shader_manager, queue, etc.
+        {
+            use crate::renderer::graph::rdg::context::PassPrepareContext;
+
+            let mut pass_ctx = PassPrepareContext {
+                device: &self.ctx.wgpu_ctx.device,
+                queue: &self.ctx.wgpu_ctx.queue,
+                pipeline_cache: self.ctx.pipeline_cache,
+                shader_manager: self.ctx.shader_manager,
+                sampler_registry: self.ctx.sampler_registry,
+                global_bind_group_cache: self.ctx.global_bind_group_cache,
+                resource_manager: self.ctx.resource_manager,
+                wgpu_ctx: &*self.ctx.wgpu_ctx,
+                render_lists: self.ctx.render_lists,
+                extracted_scene: self.ctx.extracted_scene,
+                render_state: self.ctx.render_state,
+                assets: self.ctx.assets,
+            };
+
+            for &pass_idx in &rdg.execution_queue {
+                let pass = rdg.passes[pass_idx].get_pass_mut();
+                pass.prepare_resources(&mut pass_ctx);
+            }
+        }
+
+        // ─── 3b. RDG Prepare: transient-only BindGroup assembly ────────
+        //
         // Only the swapchain surface is truly external — all other textures
         // (scene_color, scene_depth, etc.) are RDG transient resources.
-        // let ext_res: FxHashMap<_, _> = FxHashMap::default();
         self.external_res.clear();
 
         let mut rdg_prepare_ctx = RdgPrepareContext {
@@ -465,17 +505,11 @@ impl<'a> FrameComposer<'a> {
                 external_resources: &self.external_res,
             },
             device: &self.ctx.wgpu_ctx.device,
-            queue: &self.ctx.wgpu_ctx.queue,
             pipeline_cache: self.ctx.pipeline_cache,
             sampler_registry: self.ctx.sampler_registry,
             global_bind_group_cache: self.ctx.global_bind_group_cache,
-            shader_manager: self.ctx.shader_manager,
             resource_manager: self.ctx.resource_manager,
-            wgpu_ctx: &*self.ctx.wgpu_ctx,
             render_lists: self.ctx.render_lists,
-            extracted_scene: self.ctx.extracted_scene,
-            render_state: self.ctx.render_state,
-            assets: self.ctx.assets,
         };
 
         for &pass_idx in &rdg.execution_queue {

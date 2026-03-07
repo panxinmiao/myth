@@ -23,7 +23,7 @@ use crate::assets::TextureHandle;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::TextureNodeId;
 use crate::renderer::pipeline::{
@@ -58,15 +58,15 @@ pub struct RdgToneMapPass {
     /// Whether a 3D LUT texture is active.
     pub has_lut: bool,
     /// CPU-side buffer ID for `ToneMappingUniforms`.
-    /// The Composer must call `resource_manager.ensure_buffer_id()` before
-    /// the RDG prepare loop so the GPU buffer is ready.
     pub uniforms_cpu_id: u64,
-    /// Optional LUT texture handle. If `Some`, the Composer must have called
-    /// `resource_manager.prepare_texture()` beforehand.
+    /// Optional LUT texture handle.
     pub lut_handle: Option<TextureHandle>,
-    /// Global state key (render_state_id, scene_id) for looking up
-    /// `GpuGlobalState` in `ResourceManager`.
+    /// Global state key (render_state_id, scene_id) for `GpuGlobalState`.
     pub global_state_key: (u32, u32),
+    /// Output texture format — pushed by the Composer before
+    /// `prepare_resources()` so the pipeline can be compiled without
+    /// access to the render graph.
+    pub output_format: wgpu::TextureFormat,
 
     // ─── Internal Stateful Cache ───────────────────────────────────
     /// Base bind group layout (without LUT bindings).
@@ -105,6 +105,7 @@ impl RdgToneMapPass {
             local_cache: FxHashMap::default(),
             current_pipeline: None,
             current_bind_group_key: None,
+            output_format: wgpu::TextureFormat::Bgra8UnormSrgb,
         }
     }
 
@@ -191,10 +192,8 @@ impl RdgToneMapPass {
     }
 
     /// Gets or creates a pipeline for the current (mode, format, has_lut) triple.
-    fn get_or_create_pipeline(&mut self, ctx: &mut RdgPrepareContext) -> RenderPipelineId {
-        let output_format = ctx.views.graph.resources[self.output_tex.0 as usize]
-            .desc
-            .format;
+    fn get_or_create_pipeline(&mut self, ctx: &mut PassPrepareContext) -> RenderPipelineId {
+        let output_format = self.output_format;
         let cache_key = (self.mode, output_format, self.has_lut);
 
         if let Some(&id) = self.local_cache.get(&cache_key) {
@@ -270,31 +269,27 @@ impl PassNode for RdgToneMapPass {
         "RDG_ToneMap_Pass"
     }
 
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.read_texture(self.input_tex);
-        builder.write_texture(self.output_tex);
-    }
-
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
         // ─── 1. Lazy initialization ────────────────────────────────
         self.ensure_layouts(ctx.device);
-        // self.ensure_samplers(ctx.device);
 
         // ─── 2. Pipeline (re)creation ──────────────────────────────
-        //
-        // Check if mode/format/lut changed since last frame.
-        let output_format = ctx.views.graph.resources[self.output_tex.0 as usize]
-            .desc
-            .format;
-        let cache_key = (self.mode, output_format, self.has_lut);
+        let cache_key = (self.mode, self.output_format, self.has_lut);
 
         if self.current_pipeline.is_none() || !self.local_cache.contains_key(&cache_key) {
             self.current_pipeline = Some(self.get_or_create_pipeline(ctx));
         } else {
             self.current_pipeline = self.local_cache.get(&cache_key).copied();
         }
+    }
 
-        // ─── 3. BindGroup construction ─────────────────────────────
+    fn setup(&mut self, builder: &mut PassBuilder) {
+        builder.read_texture(self.input_tex);
+        builder.write_texture(self.output_tex);
+    }
+
+    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+        // ─── Transient BindGroup assembly ──────────────────────────
         let input_view = ctx.views.get_texture_view(self.input_tex);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
         let layout = self.current_layout();

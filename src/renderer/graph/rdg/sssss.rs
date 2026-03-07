@@ -39,7 +39,7 @@ use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
 use crate::renderer::graph::rdg::allocator::SubViewKey;
 use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
+use crate::renderer::graph::rdg::context::{PassPrepareContext, RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
@@ -141,7 +141,7 @@ impl PassNode for RdgSssssPass {
         self.specular_tex = builder.read_blackboard("Specular_MRT");
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare_resources(&mut self, ctx: &mut PassPrepareContext) {
         if !self.enabled {
             return;
         }
@@ -336,6 +336,12 @@ impl PassNode for RdgSssssPass {
             ));
 
             self.bind_group_layout = Some(Tracked::new(bind_group_layout));
+        }
+    }
+
+    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+        if !self.enabled {
+            return;
         }
 
         // -- 4. Gather input views (RDG-managed) -----------------------
