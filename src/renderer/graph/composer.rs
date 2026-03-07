@@ -384,7 +384,6 @@ impl<'a> FrameComposer<'a> {
                 rdg,
                 tonemap_input,
                 tonemap_output,
-                self.ctx.scene.tone_mapping.lut_texture.is_some(),
             );
 
             // FXAA — reads LDR_Intermediate, writes Surface_Out

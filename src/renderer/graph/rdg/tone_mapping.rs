@@ -47,17 +47,19 @@ type PipelineCacheKey = (ToneMappingMode, wgpu::TextureFormat, bool);
 /// Owns bind group layouts and pipeline cache. Scene-level parameters
 /// are passed in via `extract_and_prepare()` and `add_to_graph()`.
 ///
-/// # GPU Resource Lifecycle
+/// # Dual-Layer BindGroup Model
 ///
-/// - `BindGroupLayout`s and samplers are created lazily on first use.
-/// - Pipelines are cached by `(mode, format, has_lut)`.
-/// - `BindGroup`s are cached via `GlobalBindGroupCache` with content-addressed keys.
+/// - Group 0: global scene (from Composer)
+/// - Group 1 (static): sampler + uniforms + optional LUT — Feature-owned
+/// - Group 2 (transient): input scene color texture — PassNode-owned
 pub struct ToneMapFeature {
     // ─── Persistent Cache ──────────────────────────────────────────
-    /// Base bind group layout (without LUT bindings).
-    layout_base: Option<Tracked<wgpu::BindGroupLayout>>,
-    /// Extended bind group layout (with LUT bindings).
-    layout_with_lut: Option<Tracked<wgpu::BindGroupLayout>>,
+    /// Group 1 static layout (base): sampler + uniforms.
+    static_layout_base: Option<Tracked<wgpu::BindGroupLayout>>,
+    /// Group 1 static layout (LUT): sampler + uniforms + LUT texture + LUT sampler.
+    static_layout_lut: Option<Tracked<wgpu::BindGroupLayout>>,
+    /// Group 2 transient layout: single input texture.
+    transient_layout: Option<Tracked<wgpu::BindGroupLayout>>,
 
     /// Cached pipeline IDs by (mode, output_format, has_lut).
     local_cache: FxHashMap<PipelineCacheKey, RenderPipelineId>,
@@ -65,15 +67,17 @@ pub struct ToneMapFeature {
     current_pipeline: Option<RenderPipelineId>,
     /// Output texture format — set during `extract_and_prepare()`.
     pub output_format: wgpu::TextureFormat,
-    // ─── Resolved GPU Resources (populated per-frame) ───────────────
-    /// Resolved GPU buffer for `ToneMappingUniforms`.
-    uniforms_gpu_buffer: Option<wgpu::Buffer>,
-    /// Stable resource ID for the uniforms GPU buffer.
-    uniforms_gpu_buffer_id: u64,
-    /// Resolved LUT texture view (if LUT is enabled).
-    lut_texture_view: Option<wgpu::TextureView>,
-    /// Tracked ID of the LUT view (for bind-group cache key).
-    lut_view_id: Option<u64>,}
+
+    // ─── Pre-Built Static BindGroup (Group 1) ──────────────────────
+    /// Feature-owned static bind group (sampler + uniforms + LUT if present).
+    static_bg: Option<wgpu::BindGroup>,
+    /// Whether the current static BG was built with LUT.
+    static_bg_has_lut: bool,
+    /// Staleness tracking for uniforms buffer identity.
+    last_uniforms_buffer_id: u64,
+    /// Staleness tracking for LUT view identity.
+    last_lut_view_id: u64,
+}
 
 impl ToneMapFeature {
     /// Creates a new tone mapping feature.
@@ -82,103 +86,113 @@ impl ToneMapFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            layout_base: None,
-            layout_with_lut: None,
+            static_layout_base: None,
+            static_layout_lut: None,
+            transient_layout: None,
             local_cache: FxHashMap::default(),
             current_pipeline: None,
             output_format: wgpu::TextureFormat::Bgra8UnormSrgb,
 
-            uniforms_gpu_buffer: None,
-            uniforms_gpu_buffer_id: 0,
-            lut_texture_view: None,
-            lut_view_id: None,
+            static_bg: None,
+            static_bg_has_lut: false,
+            last_uniforms_buffer_id: 0,
+            last_lut_view_id: 0,
         }
     }
 
     // ─── Lazy Initialization ───────────────────────────────────────
 
     fn ensure_layouts(&mut self, device: &wgpu::Device) {
-        if self.layout_base.is_some() {
+        if self.static_layout_base.is_some() {
             return;
         }
 
-        // Base entries: input texture + sampler + uniforms
-        let base_entries = [
+        let sampler_entry = wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+            count: None,
+        };
+        let uniform_entry = wgpu::BindGroupLayoutEntry {
+            binding: 1,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Uniform,
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+
+        // Base static layout (Group 1): sampler + uniforms
+        self.static_layout_base = Some(Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("ToneMap Static Layout (base, G1)"),
+                entries: &[sampler_entry, uniform_entry],
+            },
+        )));
+
+        // LUT static layout (Group 1): sampler + uniforms + LUT texture + LUT sampler
+        let lut_entries = [
+            sampler_entry,
+            uniform_entry,
             wgpu::BindGroupLayoutEntry {
-                binding: 0,
+                binding: 2,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Texture {
                     sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                    view_dimension: wgpu::TextureViewDimension::D2,
+                    view_dimension: wgpu::TextureViewDimension::D3,
                     multisampled: false,
                 },
                 count: None,
             },
             wgpu::BindGroupLayoutEntry {
-                binding: 1,
+                binding: 3,
                 visibility: wgpu::ShaderStages::FRAGMENT,
                 ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
                 count: None,
             },
-            wgpu::BindGroupLayoutEntry {
-                binding: 2,
-                visibility: wgpu::ShaderStages::FRAGMENT,
-                ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
-                },
-                count: None,
-            },
         ];
 
-        self.layout_base = Some(Tracked::new(device.create_bind_group_layout(
+        self.static_layout_lut = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("RDG ToneMap Layout (base)"),
-                entries: &base_entries,
+                label: Some("ToneMap Static Layout (LUT, G1)"),
+                entries: &lut_entries,
             },
         )));
 
-        // Extended layout: base + LUT 3D texture + LUT sampler
-        let mut lut_entries = base_entries.to_vec();
-        lut_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 3,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Texture {
-                sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                view_dimension: wgpu::TextureViewDimension::D3,
-                multisampled: false,
-            },
-            count: None,
-        });
-        lut_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: 4,
-            visibility: wgpu::ShaderStages::FRAGMENT,
-            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-            count: None,
-        });
-
-        self.layout_with_lut = Some(Tracked::new(device.create_bind_group_layout(
+        // Transient layout (Group 2): single input texture
+        self.transient_layout = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("RDG ToneMap Layout (LUT)"),
-                entries: &lut_entries,
+                label: Some("ToneMap Transient Layout (G2)"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                }],
             },
         )));
     }
 
     // ─── Helpers ───────────────────────────────────────────────────
 
+    /// Returns the static layout matching the current LUT mode.
     #[inline]
-    fn current_layout(&self, has_lut: bool) -> &Tracked<wgpu::BindGroupLayout> {
+    fn current_static_layout(&self, has_lut: bool) -> &Tracked<wgpu::BindGroupLayout> {
         if has_lut {
-            self.layout_with_lut.as_ref().unwrap()
+            self.static_layout_lut.as_ref().unwrap()
         } else {
-            self.layout_base.as_ref().unwrap()
+            self.static_layout_base.as_ref().unwrap()
         }
     }
 
     /// Pre-RDG resource preparation: create layouts, compile pipeline,
-    /// resolve GPU buffer and optional LUT texture view.
+    /// build static bind group (Group 1) with sampler + uniforms + optional LUT.
     pub fn extract_and_prepare(
         &mut self,
         ctx: &mut ExtractContext,
@@ -203,34 +217,90 @@ impl ToneMapFeature {
             self.current_pipeline = self.local_cache.get(&cache_key).copied();
         }
 
-        // ─── 3. Resolve GPU resources for the PassNode ─────────────
-        self.uniforms_gpu_buffer = ctx
+        // ─── 3. Build static bind group (Group 1) ─────────────────
+        // Resolve GPU buffer for uniforms
+        let gpu_buf = ctx
             .resource_manager
             .gpu_buffers
-            .get(&uniforms_cpu_id)
-            .map(|g| {
-                self.uniforms_gpu_buffer_id = g.id;
-                g.buffer.clone()
-            });
+            .get(&uniforms_cpu_id);
+        let gpu_buf = match gpu_buf {
+            Some(g) => g,
+            None => return,
+        };
+        let buf_id = gpu_buf.id;
 
-        // Resolve LUT texture view if present
-        self.lut_texture_view = None;
-        self.lut_view_id = None;
-        if has_lut {
+        // Resolve LUT view if present
+        let (lut_view, lut_view_id) = if has_lut {
             if let Some(handle) = lut_handle {
                 let binding = ctx.resource_manager.get_texture_binding(handle);
                 if let Some(b) = binding {
-                    self.lut_view_id = Some(b.view_id);
                     let view = ctx
                         .resource_manager
                         .get_texture_view(&TextureSource::Asset(handle));
-                    self.lut_texture_view = Some(view.clone());
+                    (Some(view.clone()), b.view_id)
+                } else {
+                    (None, 0)
+                }
+            } else {
+                (None, 0)
+            }
+        } else {
+            (None, 0)
+        };
+
+        // Check staleness — rebuild only when buffer or LUT identity changes
+        let needs_rebuild = self.static_bg.is_none()
+            || buf_id != self.last_uniforms_buffer_id
+            || has_lut != self.static_bg_has_lut
+            || (has_lut && lut_view_id != self.last_lut_view_id);
+
+        if needs_rebuild {
+            let sampler = ctx
+                .sampler_registry
+                .get_common(CommonSampler::LinearClamp);
+            let layout = self.current_static_layout(has_lut);
+
+            let mut entries = vec![
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: gpu_buf.buffer.as_entire_binding(),
+                },
+            ];
+
+            if has_lut {
+                if let Some(ref view) = lut_view {
+                    entries.push(wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::TextureView(view),
+                    });
+                    entries.push(wgpu::BindGroupEntry {
+                        binding: 3,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    });
                 }
             }
+
+            self.static_bg = Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ToneMap Static BG (G1)"),
+                layout: &**layout,
+                entries: &entries,
+            }));
+            self.static_bg_has_lut = has_lut;
+            self.last_uniforms_buffer_id = buf_id;
+            self.last_lut_view_id = lut_view_id;
         }
     }
 
     /// Gets or creates a pipeline for the given (mode, format, has_lut) triple.
+    ///
+    /// Pipeline layout uses 3 bind-group layouts:
+    /// - Group 0: global scene
+    /// - Group 1: static (sampler + uniforms + optional LUT)
+    /// - Group 2: transient (input texture)
     fn get_or_create_pipeline(
         &mut self,
         ctx: &mut ExtractContext,
@@ -280,10 +350,11 @@ impl ToneMapFeature {
             &gpu_world.binding_wgsl,
         );
 
-        let layout = self.current_layout(has_lut);
+        let static_layout = self.current_static_layout(has_lut);
+        let transient_layout = self.transient_layout.as_ref().unwrap();
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("RDG ToneMap Pipeline Layout"),
-            bind_group_layouts: &[&gpu_world.layout, layout],
+            bind_group_layouts: &[&gpu_world.layout, static_layout, transient_layout],
             immediate_size: 0,
         });
 
@@ -309,32 +380,24 @@ impl ToneMapFeature {
     }
 
     /// Build the ephemeral pass node and insert it into the graph.
+    ///
+    /// PassNode carries only pipeline ID, pre-built static BG (Arc clone),
+    /// and transient layout — no GPU buffers or raw texture views.
     pub fn add_to_graph(
         &self,
         rdg: &mut RenderGraph,
         input_tex: TextureNodeId,
         output_tex: TextureNodeId,
-        has_lut: bool,
     ) {
-        let layout = if has_lut {
-            self.layout_with_lut.clone().unwrap()
-        } else {
-            self.layout_base.clone().unwrap()
-        };
-
         let node = ToneMapPassNode {
             input_tex,
             output_tex,
             pipeline_id: self.current_pipeline.expect("ToneMapFeature not prepared"),
-            layout,
-            has_lut,
-            uniforms_gpu_buffer: self
-                .uniforms_gpu_buffer
+            static_bg: self
+                .static_bg
                 .clone()
-                .expect("ToneMapFeature: uniforms GPU buffer not resolved"),
-            uniforms_gpu_buffer_id: self.uniforms_gpu_buffer_id,
-            lut_view: self.lut_texture_view.clone(),
-            lut_view_id: self.lut_view_id,
+                .expect("ToneMapFeature: static BG not built"),
+            transient_layout: self.transient_layout.clone().unwrap(),
             current_bind_group_key: None,
         };
         rdg.add_pass(Box::new(node));
@@ -345,26 +408,23 @@ impl ToneMapFeature {
 // PassNode (ephemeral, created per frame)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
+/// Ephemeral tone mapping pass node.
+///
+/// Carries only:
+/// - Pipeline ID (from Feature's L1 cache)
+/// - Pre-built static BG (Group 1, Arc clone from Feature)
+/// - Transient layout for building Group 2 with the RDG input texture
 struct ToneMapPassNode {
     input_tex: TextureNodeId,
     output_tex: TextureNodeId,
     pipeline_id: RenderPipelineId,
-    layout: Tracked<wgpu::BindGroupLayout>,
 
-    // ─── Push Parameters ───────────────────────────────────────────
-    has_lut: bool,
+    /// Feature-owned static bind group (Group 1): sampler + uniforms + optional LUT.
+    static_bg: wgpu::BindGroup,
+    /// Layout for transient bind group (Group 2).
+    transient_layout: Tracked<wgpu::BindGroupLayout>,
 
-    // ─── Resolved GPU Resources (from Feature, no ResourceManager needed) ──
-    /// Resolved GPU buffer for `ToneMappingUniforms`.
-    uniforms_gpu_buffer: wgpu::Buffer,
-    /// Stable resource ID for the uniforms GPU buffer.
-    uniforms_gpu_buffer_id: u64,
-    /// Resolved LUT texture view (if LUT is enabled).
-    lut_view: Option<wgpu::TextureView>,
-    /// Tracked ID of the LUT view (for bind-group cache key).
-    lut_view_id: Option<u64>,
-
-    // ─── Transient State ───────────────────────────────────────────
+    /// Cache key for the transient bind group built in `prepare()`.
     current_bind_group_key: Option<BindGroupKey>,
 }
 
@@ -379,62 +439,24 @@ impl PassNode for ToneMapPassNode {
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
-        // ─── Transient BindGroup assembly ──────────────────────────
+        // ─── Transient BindGroup (Group 2): input texture only ─────
         let input_view = ctx.views.get_texture_view(self.input_tex);
-        let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
-        let layout = &self.layout;
+        let layout = &self.transient_layout;
 
-        let mut key = BindGroupKey::new(layout.id())
-            .with_resource(input_view.id())
-            .with_resource(sampler.id())
-            .with_resource(self.uniforms_gpu_buffer_id);
-
-        // LUT resources
-        if self.has_lut {
-            if let Some(lut_id) = self.lut_view_id {
-                key = key.with_resource(lut_id).with_resource(sampler.id());
-            }
-        }
+        let key = BindGroupKey::new(layout.id()).with_resource(input_view.id());
 
         if self.current_bind_group_key.as_ref() != Some(&key) {
             if ctx.global_bind_group_cache.get(&key).is_none() {
-                let mut entries = vec![
-                    wgpu::BindGroupEntry {
+                let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("ToneMap Transient BG (G2)"),
+                    layout: &**layout,
+                    entries: &[wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::TextureView(input_view),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.uniforms_gpu_buffer.as_entire_binding(),
-                    },
-                ];
-
-                if self.has_lut {
-                    if let Some(lut_view) = &self.lut_view {
-                        entries.push(wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::TextureView(lut_view),
-                        });
-                        entries.push(wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        });
-                    }
-                }
-
-                let new_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("RDG ToneMap BindGroup"),
-                    layout: &**layout,
-                    entries: &entries,
+                    }],
                 });
-
-                ctx.global_bind_group_cache.insert(key.clone(), new_bg);
+                ctx.global_bind_group_cache.insert(key.clone(), bg);
             }
-
             self.current_bind_group_key = Some(key);
         }
     }
@@ -451,14 +473,14 @@ impl PassNode for ToneMapPassNode {
             .pipeline_cache
             .get_render_pipeline(self.pipeline_id);
 
-        let bind_group_key = self
+        let transient_bg_key = self
             .current_bind_group_key
             .as_ref()
             .expect("BindGroupKey should have been set in prepare!");
-        let bind_group = ctx
+        let transient_bg = ctx
             .global_bind_group_cache
-            .get(bind_group_key)
-            .expect("BindGroup should have been prepared!");
+            .get(transient_bg_key)
+            .expect("Transient BindGroup should have been prepared!");
 
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("RDG ToneMap Pass"),
@@ -479,7 +501,8 @@ impl PassNode for ToneMapPassNode {
 
         rpass.set_pipeline(pipeline);
         rpass.set_bind_group(0, global_bind_group, &[]);
-        rpass.set_bind_group(1, bind_group, &[]);
+        rpass.set_bind_group(1, &self.static_bg, &[]);
+        rpass.set_bind_group(2, transient_bg, &[]);
         rpass.draw(0..3, 0..1);
     }
 }
