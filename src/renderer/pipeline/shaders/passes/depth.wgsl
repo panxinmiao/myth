@@ -16,10 +16,10 @@ struct VertexOutput {
 fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var out: VertexOutput;
 
-    var local_position = in.position;
+    var local_position = in.position.xyz;
 
     $$ if OUTPUT_NORMAL and HAS_NORMAL
-    var local_normal = in.normal;
+    var local_normal = in.normal.xyz;
     $$ endif
 
     {$ include 'morph_vertex' $}
