@@ -164,12 +164,7 @@ impl PassNode for OpaquePassNode {
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let render_lists = &ctx.render_lists;
-
-        let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {
-            log::warn!("RDG OpaquePass: gpu_global_bind_group missing, skipping");
-            return;
-        };
+        let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
         let color_view = ctx.get_texture_view(self.scene_color);
         let depth_view = ctx.get_texture_view(self.scene_depth);

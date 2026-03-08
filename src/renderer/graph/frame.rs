@@ -154,6 +154,8 @@ pub struct BakedRenderLists<'a> {
     /// Per-shadow-view baked draw commands, keyed by
     /// `(light_id, layer_index)`.
     pub shadow_queues: FxHashMap<(u64, u32), Vec<DrawCommand<'a>>>,
+
+    pub global_bind_group: &'a wgpu::BindGroup,
 }
 
 #[derive(Clone, Copy)]

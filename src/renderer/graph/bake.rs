@@ -73,11 +73,14 @@ pub fn bake_render_lists<'a>(
         pipeline_cache,
     );
 
+    let global_bind_group = &render_lists.gpu_global_bind_group.as_ref().expect("Global bind group not built!");
+
     BakedRenderLists {
         opaque,
         transparent,
         prepass,
         shadow_queues,
+        global_bind_group
     }
 }
 

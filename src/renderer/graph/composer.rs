@@ -49,7 +49,7 @@ use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::Tracked;
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::ExtractedScene;
-use crate::renderer::graph::frame::RenderLists;
+use crate::renderer::graph::frame::{PreparedSkyboxDraw, RenderLists};
 use crate::renderer::graph::rdg::blackboard::{GraphBlackboard, HookStage};
 use crate::renderer::graph::rdg::context::RdgViewResolver;
 use crate::renderer::graph::rdg::graph::RenderGraph;
@@ -396,16 +396,28 @@ impl<'a> FrameComposer<'a> {
             // BasicForward pipeline: single-pass LDR rendering.
 
             // Skybox prepare (inline rendering in SimpleForward)
-            if needs_skybox {
-                self.ctx
-                    .rdg_skybox_pass
-                    .add_to_graph(rdg, surface_out, scene_depth);
-            }
 
+            let prepared_skybox = if needs_skybox {
+                let skybox_pipeline = self.ctx.rdg_skybox_pass.current_pipeline;
+                let skybox_bind_group = &self.ctx.rdg_skybox_pass.current_bind_group;
+
+                if let (Some(pipeline_id), Some(bg)) = (skybox_pipeline, skybox_bind_group) {
+                    Some(PreparedSkyboxDraw {
+                        pipeline_id,
+                        bind_group: bg.clone(),
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+    
             // SimpleForward — writes Surface_Out, Scene_Depth
             self.ctx.rdg_simple_forward_pass.add_to_graph(
                 rdg,
                 self.ctx.extracted_scene.background.clear_color(),
+                prepared_skybox,
             );
         }
 
@@ -476,8 +488,6 @@ impl<'a> FrameComposer<'a> {
         let mut ext_views: FxHashMap<_, &wgpu::TextureView> = FxHashMap::default();
         ext_views.insert(surface_out, &surface_view);
 
-        let global_bg_ref = self.ctx.render_lists.gpu_global_bind_group.as_ref();
-
         let rdg_execute_ctx = RdgExecuteContext {
             resources: &rdg.resources,
             pool: self.ctx.rdg_pool,
@@ -486,9 +496,7 @@ impl<'a> FrameComposer<'a> {
             pipeline_cache: self.ctx.pipeline_cache,
             global_bind_group_cache: self.ctx.global_bind_group_cache,
             external_views: &ext_views,
-            global_bind_group: global_bg_ref,
             mipmap_generator: &self.ctx.resource_manager.mipmap_generator,
-            render_lists: self.ctx.render_lists,
             baked_lists: &baked_lists,
             wgpu_ctx: &*self.ctx.wgpu_ctx,
         };
