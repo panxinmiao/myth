@@ -2,6 +2,7 @@ use crate::assets::AssetServer;
 use crate::renderer::core::ResourceManager;
 use crate::renderer::core::WgpuContext;
 use crate::renderer::core::binding::GlobalBindGroupCache;
+use crate::renderer::core::resources::MipmapGenerator;
 use crate::renderer::core::resources::{SamplerRegistry, Tracked};
 use crate::renderer::graph::frame::{BakedRenderLists, RenderLists};
 use crate::renderer::graph::{ExtractedScene, RenderState};
@@ -161,7 +162,7 @@ pub struct RdgExecuteContext<'a> {
     // ─── Scene Data (Phase 3: full RDG integration) ──────────────────
     /// GPU resource manager (read-only) — used by compute, post-processing,
     /// and skybox passes that have not yet been migrated to baked commands.
-    pub resource_manager: &'a ResourceManager,
+    pub mipmap_generator: &'a MipmapGenerator,
 
     /// Render lists populated by SceneCullPass — opaque/transparent draw commands.
     pub render_lists: &'a RenderLists,
