@@ -462,10 +462,7 @@ impl PassNode for ToneMapPassNode {
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let Some(global_bind_group) = ctx.global_bind_group else {
-            log::warn!("RDG ToneMap: global_bind_group missing, skipping");
-            return;
-        };
+        let global_bind_group = ctx.baked_lists.global_bind_group;
 
         let output_view = ctx.get_texture_view(self.output_tex);
 

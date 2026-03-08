@@ -362,10 +362,7 @@ impl PassNode for PrepassPassNode {
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let render_lists = &ctx.render_lists;
-        let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {
-            return;
-        };
+        let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
         let depth_view = ctx.get_texture_view(self.scene_depth);
 

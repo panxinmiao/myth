@@ -25,7 +25,6 @@ use rustc_hash::FxHashMap;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::SamplerKey;
 use crate::renderer::core::resources::Tracked;
-use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext};
 use crate::renderer::graph::rdg::graph::RenderGraph;
@@ -191,8 +190,8 @@ pub struct SkyboxFeature {
     local_cache: FxHashMap<SkyboxPipelineKey, RenderPipelineId>,
 
     // ─── Runtime State ─────────────────────────────────────────────
-    current_bind_group: Option<wgpu::BindGroup>,
-    current_pipeline: Option<RenderPipelineId>,
+    pub(crate) current_bind_group: Option<wgpu::BindGroup>,
+    pub(crate) current_pipeline: Option<RenderPipelineId>,
 }
 
 impl SkyboxFeature {
@@ -485,14 +484,6 @@ impl SkyboxFeature {
             depth_format: self.depth_format,
         };
         self.current_pipeline = Some(self.get_or_create_pipeline(ctx, pipeline_key));
-
-        // Store prepared draw state for LDR path inline rendering
-        if let (Some(pipeline_id), Some(bg)) = (self.current_pipeline, &self.current_bind_group) {
-            ctx.render_lists.prepared_skybox = Some(PreparedSkyboxDraw {
-                pipeline_id,
-                bind_group: bg.clone(),
-            });
-        }
     }
 
     /// Create an ephemeral [`SkyboxPassNode`] and add it to the render graph.
@@ -539,10 +530,7 @@ impl PassNode for SkyboxPassNode {
             return;
         };
 
-        let render_lists = &ctx.render_lists;
-        let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {
-            return;
-        };
+        let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
         let color_view = ctx.get_texture_view(self.scene_color);
         let depth_view = ctx.get_texture_view(self.scene_depth);

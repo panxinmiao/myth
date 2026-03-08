@@ -155,17 +155,10 @@ pub struct RdgExecuteContext<'a> {
     pub global_bind_group_cache: &'a GlobalBindGroupCache,
     /// External views (e.g. swapchain backbuffer) injected before the execute loop.
     pub external_views: &'a FxHashMap<TextureNodeId, &'a TextureView>,
-    /// Per-frame global bind group (group 0 in most shaders).
-    /// Built by SceneCullPass; consumed by all scene and post-processing passes.
-    pub global_bind_group: Option<&'a wgpu::BindGroup>,
-
     // ─── Scene Data (Phase 3: full RDG integration) ──────────────────
     /// GPU resource manager (read-only) — used by compute, post-processing,
     /// and skybox passes that have not yet been migrated to baked commands.
     pub mipmap_generator: &'a MipmapGenerator,
-
-    /// Render lists populated by SceneCullPass — opaque/transparent draw commands.
-    pub render_lists: &'a RenderLists,
 
     /// Pre-baked draw command lists with all GPU handles resolved.
     ///
@@ -176,8 +169,6 @@ pub struct RdgExecuteContext<'a> {
 
     /// Full wgpu context — depth format, render path, etc.
     pub wgpu_ctx: &'a WgpuContext,
-    // /// Frame blackboard for cross-pass transient data (read-only during execute).
-    // pub blackboard: &'a FrameBlackboard,
 }
 
 impl<'a> RdgExecuteContext<'a> {

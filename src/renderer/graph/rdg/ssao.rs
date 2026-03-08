@@ -610,10 +610,8 @@ impl PassNode for SsaoPassNode {
         let Some(blur_bg_key) = &self.blur_bind_group_key else {
             return;
         };
-        let Some(global_bg) = ctx.global_bind_group else {
-            log::warn!("RDG SSAO: global_bind_group missing, skipping");
-            return;
-        };
+
+        let global_bg = ctx.baked_lists.global_bind_group;
 
         let raw_bg = ctx
             .global_bind_group_cache

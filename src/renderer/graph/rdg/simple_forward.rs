@@ -23,6 +23,7 @@
 //! [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
 
 use crate::renderer::core::resources::ScreenBindGroupInfo;
+use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::draw::submit_draw_commands;
@@ -47,10 +48,11 @@ impl SimpleForwardFeature {
         self.screen_info = Some(info);
     }
 
-    pub fn add_to_graph(&self, rdg: &mut RenderGraph, clear_color: wgpu::Color) {
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph, clear_color: wgpu::Color, prepared_skybox: Option<PreparedSkyboxDraw>) {
         let node = SimpleForwardPassNode::new(
             clear_color,
             self.screen_info.clone().expect("SimpleForwardFeature: screen_info not set"),
+            prepared_skybox,
         );
         rdg.add_pass(Box::new(node));
     }
@@ -73,6 +75,7 @@ pub struct SimpleForwardPassNode {
 
     // ─── Push Parameters ─────────────────────────────────────────────
     pub clear_color: wgpu::Color,
+    pub prepared_skybox: Option<PreparedSkyboxDraw>,
 
     // ─── Screen Bind Group Infrastructure ──────────────────────────
     screen_info: ScreenBindGroupInfo,
@@ -84,11 +87,12 @@ pub struct SimpleForwardPassNode {
 
 impl SimpleForwardPassNode {
     #[must_use]
-    pub fn new(clear_color: wgpu::Color, screen_info: ScreenBindGroupInfo) -> Self {
+    pub fn new(clear_color: wgpu::Color, screen_info: ScreenBindGroupInfo, prepared_skybox: Option<PreparedSkyboxDraw>) -> Self {
         Self {
             surface_out: TextureNodeId(0),
             scene_depth: TextureNodeId(0),
             clear_color,
+            prepared_skybox,
             msaa_view: None,
             screen_info,
             screen_bind_group: None,
@@ -140,12 +144,7 @@ impl PassNode for SimpleForwardPassNode {
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let render_lists = &ctx.render_lists;
-
-        let Some(gpu_global_bind_group) = &render_lists.gpu_global_bind_group else {
-            log::warn!("RDG SimpleForwardPass: gpu_global_bind_group missing, skipping");
-            return;
-        };
+        let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
         let target_view = ctx.get_texture_view(self.surface_out);
         let depth_view = ctx.get_texture_view(self.scene_depth);
@@ -213,7 +212,7 @@ impl PassNode for SimpleForwardPassNode {
         submit_draw_commands(&mut pass, &ctx.baked_lists.opaque);
 
         // 2. Skybox (between opaque and transparent)
-        if let Some(skybox) = &render_lists.prepared_skybox {
+        if let Some(skybox) = &self.prepared_skybox {
             skybox.draw(&mut pass, gpu_global_bind_group, ctx.pipeline_cache);
 
             // Re-set global and screen bind groups for subsequent transparent
