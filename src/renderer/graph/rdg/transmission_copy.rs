@@ -127,8 +127,7 @@ impl PassNode for TransmissionCopyPassNode {
         );
 
         // Generate mipmaps for LOD-based transmission blur
-        ctx.resource_manager
-            .mipmap_generator
+        ctx.mipmap_generator
             .generate(ctx.device, encoder, dst_texture);
     }
 }

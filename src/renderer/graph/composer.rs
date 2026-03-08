@@ -487,7 +487,7 @@ impl<'a> FrameComposer<'a> {
             global_bind_group_cache: self.ctx.global_bind_group_cache,
             external_views: &ext_views,
             global_bind_group: global_bg_ref,
-            resource_manager: self.ctx.resource_manager,
+            mipmap_generator: &self.ctx.resource_manager.mipmap_generator,
             render_lists: self.ctx.render_lists,
             baked_lists: &baked_lists,
             wgpu_ctx: &*self.ctx.wgpu_ctx,
