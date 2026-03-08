@@ -23,14 +23,14 @@ $$ endif
 fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var out: VertexOutput;
 
-    var local_position = in.position;
+    var local_position = vec3<f32>(in.position.xyz);
 
     $$ if HAS_NORMAL is defined
-    var local_normal = in.normal;
+    var local_normal = vec3<f32>(in.normal.xyz);
     $$ endif
 
     $$ if HAS_TANGENT is defined
-    var object_tangent = in.tangent.xyz;
+    var object_tangent = vec3<f32>(in.tangent.xyz);
     $$ endif
 
     {$ include 'morph_vertex' $}

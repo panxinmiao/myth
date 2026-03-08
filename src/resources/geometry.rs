@@ -55,6 +55,37 @@ impl Attribute {
         }
     }
 
+    /// Creates a Planar attribute from pre-built raw bytes and a known stride.
+    ///
+    /// Used by the quantised geometry pipeline where vertex data is already in its
+    /// final GPU-ready byte layout (e.g. `Snorm16x4`) and no further CPU-side
+    /// conversion is needed.
+    pub fn new_from_owned_bytes(
+        data: Vec<u8>,
+        format: VertexFormat,
+        stride: usize,
+        count: u32,
+    ) -> Self {
+        let size = data.len();
+
+        let buffer_ref = BufferRef::new(
+            size,
+            BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            Some("GeometryVertexAttr"),
+        );
+
+        Self {
+            buffer: buffer_ref,
+            data: Some(Arc::new(data)),
+            version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
+            format,
+            offset: 0,
+            count,
+            stride: stride as u64,
+            step_mode: VertexStepMode::Vertex,
+        }
+    }
+
     /// Creates an Instance attribute
     pub fn new_instanced<T: bytemuck::Pod>(data: &[T], format: VertexFormat) -> Self {
         let raw_data = bytemuck::cast_slice(data).to_vec();
@@ -835,6 +866,22 @@ impl Geometry {
         self.bounding_sphere = BoundingSphere {
             center: aabb_center,
             radius: max_dist_sq.sqrt(),
+        };
+    }
+
+    /// Sets the bounding volume directly from pre-computed AABB bounds.
+    ///
+    /// Used by the quantised geometry pipeline where the position data is not in
+    /// `Float32x3` format. The glTF specification guarantees that accessor `min`/`max`
+    /// are always real-valued floating-point world-space coordinates, so we can use
+    /// them directly without decoding the quantised vertex data on the CPU.
+    pub fn set_bounding_volume(&mut self, bbox: BoundingBox) {
+        self.bounding_box = bbox;
+        let center = bbox.center();
+        let half_extent = bbox.size() * 0.5;
+        self.bounding_sphere = BoundingSphere {
+            center,
+            radius: half_extent.length(),
         };
     }
 

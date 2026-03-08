@@ -3,7 +3,7 @@
 {$ include 'morph_pars' $}
 
 struct VertexOutput {
-    @builtin(position) position: vec4<f32>,
+    @builtin(position) @invariant position: vec4<f32>,
     $$ if HAS_UV
     @location({{ loc.next() }}) uv: vec2<f32>,
     $$ endif
@@ -16,10 +16,10 @@ struct VertexOutput {
 fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
     var out: VertexOutput;
 
-    var local_position = in.position;
+    var local_position = vec3<f32>(in.position.xyz);
 
     $$ if OUTPUT_NORMAL and HAS_NORMAL
-    var local_normal = in.normal;
+    var local_normal = vec3<f32>(in.normal.xyz);
     $$ endif
 
     {$ include 'morph_vertex' $}
