@@ -46,9 +46,12 @@ gltf = {git = "https://github.com/panxinmiao/gltf.git", features = [
     "extensions", "KHR_materials_pbrSpecularGlossiness", 
     "KHR_materials_specular", "KHR_materials_emissive_strength", "EXT_texture_webp",
     "KHR_materials_ior", "KHR_texture_transform", "allow_empty_animation_target_node",
-    "KHR_mesh_quantization",
+    "EXT_meshopt_compression", "KHR_mesh_quantization",
 ], optional = true }
 base64 = "0.22"
+
+# Meshopt Compression (for glTF EXT_meshopt_compression)
+meshopt = { version = "0.6", optional = true }
 
 # Networking (HTTP)
 reqwest = { version = "0.13.2", default-features = false, optional = true }
@@ -155,7 +158,7 @@ features = ["links"]
 [features]
 default = ["winit", "gltf", "http"]
 winit = ["dep:winit"]
-gltf = ["dep:gltf"]
+gltf = ["dep:gltf", "dep:meshopt"]
 http = ["dep:reqwest", "dep:url"]
 
 [lints.rust]

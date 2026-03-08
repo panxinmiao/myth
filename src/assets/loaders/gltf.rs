@@ -7,7 +7,7 @@ use crate::assets::prefab::{Prefab, PrefabNode, PrefabSkeleton};
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
 use crate::errors::{AssetError, Error, Result};
 use crate::resources::buffer::BufferRef;
-use crate::resources::geometry::{Attribute, Geometry};
+use crate::resources::geometry::{Attribute, BoundingBox, Geometry};
 use crate::resources::material::AlphaMode;
 use crate::resources::texture::Texture;
 use crate::resources::{
@@ -15,6 +15,8 @@ use crate::resources::{
 };
 use futures::future::try_join_all;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
+use gltf::accessor::{DataType, Dimensions};
+use gltf::json::extensions::buffer::{MeshoptCompressionFilter, MeshoptCompressionMode};
 use serde_json::Value;
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -207,6 +209,320 @@ fn patch_json_value(root: &mut Value) -> bool {
     }
 
     changed
+}
+
+/// Builds logical buffers by decompressing `EXT_meshopt_compression` data in-place.
+///
+/// Scans all buffer views for the meshopt extension, decodes compressed vertex/index
+/// data using the meshopt C FFI, applies post-decode filters (Octahedral, Quaternion,
+/// Exponential), and writes the results to the correct logical offsets. The returned
+/// buffers can be consumed by both the raw-byte geometry pipeline and the `gltf::Reader`
+/// animation pipeline transparently.
+fn build_logical_buffers(gltf: &gltf::Gltf, raw_buffers: &[Vec<u8>]) -> Vec<Vec<u8>> {
+    let mut logical = raw_buffers.to_vec();
+
+    for view in gltf.views() {
+        let Some(ext) = view.meshopt_compression() else {
+            continue;
+        };
+
+        let src_buffer_idx = ext.buffer.value();
+        let src_offset = ext.byte_offset.map_or(0, |v| v.0 as usize);
+        let src_length = ext.byte_length.0 as usize;
+        let stride = ext.byte_stride as usize;
+        let count = ext.count as usize;
+
+        let Some(src_buf) = raw_buffers.get(src_buffer_idx) else {
+            log::error!(
+                "meshopt: buffer view {} references invalid source buffer {}",
+                view.index(),
+                src_buffer_idx
+            );
+            continue;
+        };
+
+        let src_end = src_offset + src_length;
+        if src_end > src_buf.len() {
+            log::error!(
+                "meshopt: buffer view {} source range {}..{} exceeds buffer length {}",
+                view.index(),
+                src_offset,
+                src_end,
+                src_buf.len()
+            );
+            continue;
+        }
+        let encoded = &src_buf[src_offset..src_end];
+
+        let decoded_size = count * stride;
+        let mut decoded = vec![0u8; decoded_size];
+
+        let ok = match ext.mode {
+            MeshoptCompressionMode::Attributes => {
+                let rc = unsafe {
+                    meshopt::ffi::meshopt_decodeVertexBuffer(
+                        decoded.as_mut_ptr().cast(),
+                        count,
+                        stride,
+                        encoded.as_ptr(),
+                        encoded.len(),
+                    )
+                };
+                rc == 0
+            }
+            MeshoptCompressionMode::Triangles => {
+                let rc = unsafe {
+                    meshopt::ffi::meshopt_decodeIndexBuffer(
+                        decoded.as_mut_ptr().cast(),
+                        count,
+                        stride,
+                        encoded.as_ptr(),
+                        encoded.len(),
+                    )
+                };
+                rc == 0
+            }
+            MeshoptCompressionMode::Indices => {
+                let rc = unsafe {
+                    meshopt::ffi::meshopt_decodeIndexSequence(
+                        decoded.as_mut_ptr().cast(),
+                        count,
+                        stride,
+                        encoded.as_ptr(),
+                        encoded.len(),
+                    )
+                };
+                rc == 0
+            }
+        };
+
+        if !ok {
+            log::error!(
+                "meshopt: failed to decode buffer view {} (mode={:?}, count={}, stride={})",
+                view.index(),
+                ext.mode,
+                count,
+                stride
+            );
+            continue;
+        }
+
+        // Apply post-decode filter (in-place on the decoded buffer).
+        if let Some(filter) = ext.filter {
+            match filter {
+                MeshoptCompressionFilter::None => {}
+                MeshoptCompressionFilter::Octahedral => unsafe {
+                    meshopt::ffi::meshopt_decodeFilterOct(
+                        decoded.as_mut_ptr().cast(),
+                        count,
+                        stride,
+                    );
+                },
+                MeshoptCompressionFilter::Quaternion => unsafe {
+                    meshopt::ffi::meshopt_decodeFilterQuat(
+                        decoded.as_mut_ptr().cast(),
+                        count,
+                        stride,
+                    );
+                },
+                MeshoptCompressionFilter::Exponential => unsafe {
+                    meshopt::ffi::meshopt_decodeFilterExp(
+                        decoded.as_mut_ptr().cast(),
+                        count,
+                        stride,
+                    );
+                },
+            }
+        }
+
+        // Write decompressed data at the logical offset described by the buffer view.
+        let dst_buffer_idx = view.buffer().index();
+        let dst_offset = view.offset();
+        let dst_end = dst_offset + decoded_size;
+
+        if dst_buffer_idx >= logical.len() {
+            logical.resize_with(dst_buffer_idx + 1, Vec::new);
+        }
+
+        let dst = &mut logical[dst_buffer_idx];
+        if dst_end > dst.len() {
+            dst.resize(dst_end, 0);
+        }
+        dst[dst_offset..dst_end].copy_from_slice(&decoded);
+
+        log::trace!(
+            "meshopt: decoded view {} -> buffer[{}][{}..{}] (mode={:?}, count={}, stride={})",
+            view.index(),
+            dst_buffer_idx,
+            dst_offset,
+            dst_end,
+            ext.mode,
+            count,
+            stride
+        );
+    }
+
+    logical
+}
+
+/// Pads vertex data from an arbitrary stride to a 4-byte-aligned stride.
+///
+/// WebGPU requires `array_stride` to be a multiple of 4. When the source data has
+/// a non-aligned stride (e.g. `vec3<i16>` = 6 bytes), this function inserts zero
+/// padding bytes after each vertex element to reach the next multiple of 4.
+fn pad_to_4_byte_alignment(raw: &[u8], count: usize, src_stride: usize) -> Vec<u8> {
+    let dst_stride = (src_stride + 3) & !3;
+    if dst_stride == src_stride {
+        return raw.to_vec();
+    }
+
+    let mut out = vec![0u8; count * dst_stride];
+    for i in 0..count {
+        let src_start = i * src_stride;
+        let dst_start = i * dst_stride;
+        let copy_len = src_stride.min(raw.len() - src_start);
+        out[dst_start..dst_start + copy_len].copy_from_slice(&raw[src_start..src_start + copy_len]);
+    }
+    out
+}
+
+/// Maps a glTF accessor's component type and dimension to the best matching `VertexFormat`.
+///
+/// For quantized data (`KHR_mesh_quantization` / `EXT_meshopt_compression`), returns
+/// a compact GPU-native format (e.g. `Snorm16x4`) instead of converting to `f32`,
+/// cutting vertex bandwidth in half. The format is always 4-byte-aligned by promoting
+/// 3-component types to 4-component equivalents.
+fn map_quantized_vertex_format(
+    data_type: DataType,
+    dimensions: Dimensions,
+    normalized: bool,
+) -> VertexFormat {
+    match (data_type, dimensions, normalized) {
+        // --- Float passthrough (standard, non-quantized) ---
+        (DataType::F32, Dimensions::Scalar, _) => VertexFormat::Float32,
+        (DataType::F32, Dimensions::Vec2, _) => VertexFormat::Float32x2,
+        (DataType::F32, Dimensions::Vec3, _) => VertexFormat::Float32x3,
+
+        // --- Signed 16-bit (quantized positions / normals) ---
+        (DataType::I16, Dimensions::Vec2, true) => VertexFormat::Snorm16x2,
+        (DataType::I16, Dimensions::Vec3 | Dimensions::Vec4, true) => VertexFormat::Snorm16x4,
+        (DataType::I16, Dimensions::Vec2, false) => VertexFormat::Sint16x2,
+        (DataType::I16, Dimensions::Vec3 | Dimensions::Vec4, false) => VertexFormat::Sint16x4,
+
+        // --- Unsigned 16-bit (quantized UVs) ---
+        (DataType::U16, Dimensions::Vec2, true) => VertexFormat::Unorm16x2,
+        (DataType::U16, Dimensions::Vec3 | Dimensions::Vec4, true) => VertexFormat::Unorm16x4,
+        (DataType::U16, Dimensions::Vec2, false) => VertexFormat::Uint16x2,
+        (DataType::U16, Dimensions::Vec3 | Dimensions::Vec4, false) => VertexFormat::Uint16x4,
+
+        // --- Signed 8-bit (quantized normals / tangents) ---
+        (DataType::I8, Dimensions::Vec2, true) => VertexFormat::Snorm8x2,
+        (DataType::I8, Dimensions::Vec3 | Dimensions::Vec4, true) => VertexFormat::Snorm8x4,
+        (DataType::I8, Dimensions::Vec2, false) => VertexFormat::Sint8x2,
+        (DataType::I8, Dimensions::Vec3 | Dimensions::Vec4, false) => VertexFormat::Sint8x4,
+
+        // --- Unsigned 8-bit ---
+        (DataType::U8, Dimensions::Vec2, true) => VertexFormat::Unorm8x2,
+        (DataType::U8, Dimensions::Vec3 | Dimensions::Vec4, true) => VertexFormat::Unorm8x4,
+        (DataType::U8, Dimensions::Vec2, false) => VertexFormat::Uint8x2,
+        (DataType::U8, Dimensions::Vec3 | Dimensions::Vec4, false) => VertexFormat::Uint8x4,
+
+        // --- Fallback ---
+        _ => VertexFormat::Float32x4,
+    }
+}
+
+/// Determines the effective byte stride for a buffer view / accessor pair.
+///
+/// If the buffer view declares an explicit stride it is used directly; otherwise the
+/// stride is inferred from the accessor's component size × dimension count.
+fn effective_stride(accessor: &gltf::Accessor) -> usize {
+    accessor
+        .view()
+        .and_then(|v| v.stride())
+        .unwrap_or_else(|| accessor.size())
+}
+
+/// Returns `true` when the accessor uses a non-float component type, indicating
+/// that `KHR_mesh_quantization` or `EXT_meshopt_compression` quantised encoding
+/// is active and the data should be sent to the GPU as raw bytes.
+fn is_quantized(accessor: &gltf::Accessor) -> bool {
+    !matches!(accessor.data_type(), DataType::F32)
+}
+
+/// Extracts a raw byte slice from a logical buffer for the given accessor.
+///
+/// Returns the byte slice, the per-vertex stride (already 4-byte-aligned when
+/// necessary), and the `VertexFormat` ready for GPU consumption.
+fn extract_raw_attribute(
+    accessor: &gltf::Accessor,
+    logical_buffers: &[Vec<u8>],
+) -> Option<(Vec<u8>, usize, VertexFormat)> {
+    let view = accessor.view()?;
+    let buffer_idx = view.buffer().index();
+    let stride = effective_stride(accessor);
+    let count = accessor.count();
+
+    let base_offset = view.offset() + accessor.offset();
+    let total_len = if count > 0 {
+        (count - 1) * stride + accessor.size()
+    } else {
+        0
+    };
+
+    let buf = logical_buffers.get(buffer_idx)?;
+    let end = base_offset + total_len;
+    if end > buf.len() {
+        log::error!(
+            "Accessor byte range {}..{} exceeds buffer[{}] length {}",
+            base_offset,
+            end,
+            buffer_idx,
+            buf.len()
+        );
+        return None;
+    }
+
+    let raw = &buf[base_offset..end];
+    let format = map_quantized_vertex_format(
+        accessor.data_type(),
+        accessor.dimensions(),
+        accessor.normalized(),
+    );
+
+    // Ensure 4-byte aligned stride for WebGPU.
+    let aligned_stride = (stride + 3) & !3;
+    let bytes = if aligned_stride == stride {
+        raw.to_vec()
+    } else {
+        pad_to_4_byte_alignment(raw, count, stride)
+    };
+
+    Some((bytes, aligned_stride, format))
+}
+
+/// Parses the `min`/`max` JSON values from a glTF accessor into a `Vec3`.
+///
+/// The glTF specification guarantees that position accessor min/max are stored as
+/// true floating-point world-space coordinates, even when the underlying data uses
+/// quantised integer types.
+fn parse_accessor_bounds(accessor: &gltf::Accessor) -> Option<(Vec3, Vec3)> {
+    let parse_vec3 = |val: serde_json::Value| -> Option<Vec3> {
+        let arr = val.as_array()?;
+        if arr.len() >= 3 {
+            Some(Vec3::new(
+                arr[0].as_f64()? as f32,
+                arr[1].as_f64()? as f32,
+                arr[2].as_f64()? as f32,
+            ))
+        } else {
+            None
+        }
+    };
+
+    let min = parse_vec3(accessor.min()?)?;
+    let max = parse_vec3(accessor.max()?)?;
+    Some((min, max))
 }
 
 struct IntermediateTexture {
@@ -402,6 +718,8 @@ impl GltfLoader {
             "KHR_materials_ior".to_string(),
             "KHR_materials_specular".to_string(),
             "KHR_texture_transform".to_string(),
+            "EXT_meshopt_compression".to_string(),
+            "KHR_mesh_quantization".to_string(),
         ]);
 
         let require_not_supported: Vec<_> = gltf
@@ -432,9 +750,14 @@ impl GltfLoader {
     }
 
     async fn load_inner(mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> Result<Arc<Prefab>> {
-        self.load_textures_async(gltf, buffers).await?;
+        // Pre-process: decompress all EXT_meshopt_compression buffer views and
+        // reconstruct logical buffers that both geometry and animation pipelines
+        // can consume transparently.
+        let logical_buffers = build_logical_buffers(gltf, buffers);
+
+        self.load_textures_async(gltf, &logical_buffers).await?;
         self.load_materials(gltf)?;
-        let prefab = self.build_prefab(gltf, buffers);
+        let prefab = self.build_prefab(gltf, &logical_buffers);
         Ok(Arc::new(prefab))
     }
 
@@ -1217,6 +1540,15 @@ impl GltfLoader {
         Some((buffer, attributes))
     }
 
+    /// Loads a single primitive's geometry using a hybrid pipeline.
+    ///
+    /// **Quantised path** (raw bytes → GPU): When the position accessor uses a non-float
+    /// type (`KHR_mesh_quantization` / `EXT_meshopt_compression`), the vertex data is
+    /// extracted as raw bytes, 4-byte-aligned, and uploaded directly. The bounding volume
+    /// is read from the JSON `min`/`max` fields.
+    ///
+    /// **Classic path** (f32 → GPU): For standard `Float32` accessors, the `gltf::Reader`
+    /// is used to decode all attributes.
     #[allow(clippy::too_many_lines)]
     fn load_primitive_geometry(
         &mut self,
@@ -1224,84 +1556,238 @@ impl GltfLoader {
         buffers: &[Vec<u8>],
     ) -> GeometryHandle {
         let mut geometry = Geometry::new();
-        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
-        let positions: Vec<[f32; 3]> = reader
-            .read_positions()
-            .map(std::iter::Iterator::collect)
-            .unwrap_or_default();
+        let Some(pos_accessor) = primitive.get(&gltf::Semantic::Positions) else {
+            return self.assets.geometries.add(geometry);
+        };
 
-        let vertex_count = positions.len();
+        let vertex_count = pos_accessor.count();
         if vertex_count == 0 {
             return self.assets.geometries.add(geometry);
         }
 
-        geometry.set_attribute(
-            "position",
-            Attribute::new_planar(&positions, VertexFormat::Float32x3),
-        );
+        let quantized_positions = is_quantized(&pos_accessor);
 
-        if let Some(iter) = reader.read_indices() {
-            let indices: Vec<u32> = iter.into_u32().collect();
-            geometry.set_indices_u32(&indices);
+        // --- Position attribute ---
+        if quantized_positions {
+            if let Some((bytes, stride, format)) = extract_raw_attribute(&pos_accessor, buffers) {
+                geometry.set_attribute(
+                    "position",
+                    Attribute::new_from_owned_bytes(bytes, format, stride, vertex_count as u32),
+                );
+            }
+            // AABB from JSON min/max (required for quantised data).
+            if let Some((min, max)) = parse_accessor_bounds(&pos_accessor) {
+                geometry.set_bounding_volume(BoundingBox { min, max });
+            } else {
+                log::warn!(
+                    "Quantised position accessor is missing min/max; bounding volume will be zero"
+                );
+            }
+        } else {
+            let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+            let positions: Vec<[f32; 3]> = reader
+                .read_positions()
+                .map(std::iter::Iterator::collect)
+                .unwrap_or_default();
+            geometry.set_attribute(
+                "position",
+                Attribute::new_planar(&positions, VertexFormat::Float32x3),
+            );
         }
 
-        let mut surface_channels = Vec::new();
+        // --- Indices ---
+        {
+            let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+            if let Some(iter) = reader.read_indices() {
+                let indices: Vec<u32> = iter.into_u32().collect();
+                geometry.set_indices_u32(&indices);
+            }
+        }
 
-        if let Some(iter) = reader.read_normals() {
-            surface_channels.push(InterleaveChannel::from_iter(
-                "normal",
-                iter,
-                VertexFormat::Float32x3,
-            ));
+        // --- Surface attributes (normal, tangent, uv, color) ---
+        self.load_surface_attributes(
+            primitive,
+            buffers,
+            &mut geometry,
+            vertex_count,
+            quantized_positions,
+        );
+
+        // --- Skinning attributes (joints, weights) ---
+        self.load_skinning_attributes(primitive, buffers, &mut geometry, vertex_count);
+
+        // --- Morph targets (always f32) ---
+        self.load_morph_targets(primitive, buffers, &mut geometry);
+
+        geometry.topology = match primitive.mode() {
+            gltf::mesh::Mode::Points => PrimitiveTopology::PointList,
+            gltf::mesh::Mode::Lines | gltf::mesh::Mode::LineLoop => PrimitiveTopology::LineList,
+            gltf::mesh::Mode::LineStrip => PrimitiveTopology::LineStrip,
+            gltf::mesh::Mode::Triangles | gltf::mesh::Mode::TriangleFan => {
+                PrimitiveTopology::TriangleList
+            }
+            gltf::mesh::Mode::TriangleStrip => PrimitiveTopology::TriangleStrip,
+        };
+
+        geometry.build_morph_storage_buffers();
+
+        // Only compute bounding volume from positions if we used the classic f32 path.
+        if !quantized_positions {
+            geometry.compute_bounding_volume();
+        }
+
+        self.assets.geometries.add(geometry)
+    }
+
+    /// Loads normal, tangent, UV, and color attributes for a primitive.
+    ///
+    /// When the geometry uses quantised positions, non-position surface attributes are
+    /// also loaded via raw-byte extraction when they are quantised; otherwise the
+    /// `gltf::Reader` f32 path is used. When normals are absent and quantised data is
+    /// in use, the loader emits a warning instead of auto-computing them (since CPU
+    /// normal computation is not possible on quantised vertex data).
+    #[allow(clippy::unused_self)]
+    fn load_surface_attributes(
+        &self,
+        primitive: &gltf::Primitive,
+        buffers: &[Vec<u8>],
+        geometry: &mut Geometry,
+        vertex_count: usize,
+        quantized_positions: bool,
+    ) {
+        // Normal
+        if let Some(normal_accessor) = primitive.get(&gltf::Semantic::Normals) {
+            if is_quantized(&normal_accessor) {
+                if let Some((bytes, stride, format)) =
+                    extract_raw_attribute(&normal_accessor, buffers)
+                {
+                    geometry.set_attribute(
+                        "normal",
+                        Attribute::new_from_owned_bytes(bytes, format, stride, vertex_count as u32),
+                    );
+                }
+            } else {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                if let Some(iter) = reader.read_normals() {
+                    let data: Vec<[f32; 3]> = iter.collect();
+                    geometry.set_attribute(
+                        "normal",
+                        Attribute::new_planar(&data, VertexFormat::Float32x3),
+                    );
+                }
+            }
+        } else if quantized_positions {
+            log::warn!(
+                "Quantised geometry is missing normals. Auto-computation is not supported \
+                 for non-float vertex data. Please ensure the model includes normal data."
+            );
         } else {
             geometry.compute_vertex_normals();
         }
 
-        if let Some(iter) = reader.read_tangents() {
-            surface_channels.push(InterleaveChannel::from_iter(
-                "tangent",
-                iter,
-                VertexFormat::Float32x4,
-            ));
+        // Tangent
+        if let Some(tangent_accessor) = primitive.get(&gltf::Semantic::Tangents) {
+            if is_quantized(&tangent_accessor) {
+                if let Some((bytes, stride, format)) =
+                    extract_raw_attribute(&tangent_accessor, buffers)
+                {
+                    geometry.set_attribute(
+                        "tangent",
+                        Attribute::new_from_owned_bytes(bytes, format, stride, vertex_count as u32),
+                    );
+                }
+            } else {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                if let Some(iter) = reader.read_tangents() {
+                    let data: Vec<[f32; 4]> = iter.collect();
+                    geometry.set_attribute(
+                        "tangent",
+                        Attribute::new_planar(&data, VertexFormat::Float32x4),
+                    );
+                }
+            }
         }
 
-        for i in 0..4 {
-            if let Some(iter) = reader
-                .read_tex_coords(i)
-                .map(gltf::mesh::util::ReadTexCoords::into_f32)
-            {
+        // UV channels
+        for i in 0..4u32 {
+            if let Some(uv_accessor) = primitive.get(&gltf::Semantic::TexCoords(i)) {
                 let name = if i == 0 {
                     "uv".to_string()
                 } else {
                     format!("uv{i}")
                 };
-                surface_channels.push(InterleaveChannel::from_iter(
-                    &name,
-                    iter,
-                    VertexFormat::Float32x2,
-                ));
+                if is_quantized(&uv_accessor) {
+                    if let Some((bytes, stride, format)) =
+                        extract_raw_attribute(&uv_accessor, buffers)
+                    {
+                        geometry.set_attribute(
+                            &name,
+                            Attribute::new_from_owned_bytes(
+                                bytes,
+                                format,
+                                stride,
+                                vertex_count as u32,
+                            ),
+                        );
+                    }
+                } else {
+                    let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                    if let Some(iter) = reader
+                        .read_tex_coords(i)
+                        .map(gltf::mesh::util::ReadTexCoords::into_f32)
+                    {
+                        let data: Vec<[f32; 2]> = iter.collect();
+                        geometry.set_attribute(
+                            &name,
+                            Attribute::new_planar(&data, VertexFormat::Float32x2),
+                        );
+                    }
+                }
             }
         }
 
-        if let Some(iter) = reader
-            .read_colors(0)
-            .map(gltf::mesh::util::ReadColors::into_rgba_f32)
-        {
-            surface_channels.push(InterleaveChannel::from_iter(
-                "color",
-                iter,
-                VertexFormat::Float32x4,
-            ));
-        }
-
-        if let Some((_, attrs)) =
-            Self::build_interleaved_buffer("SurfaceBuffer", surface_channels, vertex_count)
-        {
-            for (name, attr) in attrs {
-                geometry.set_attribute(&name, attr);
+        // Vertex color
+        if let Some(color_accessor) = primitive.get(&gltf::Semantic::Colors(0)) {
+            if is_quantized(&color_accessor) {
+                if let Some((bytes, stride, format)) =
+                    extract_raw_attribute(&color_accessor, buffers)
+                {
+                    geometry.set_attribute(
+                        "color",
+                        Attribute::new_from_owned_bytes(bytes, format, stride, vertex_count as u32),
+                    );
+                }
+            } else {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                if let Some(iter) = reader
+                    .read_colors(0)
+                    .map(gltf::mesh::util::ReadColors::into_rgba_f32)
+                {
+                    let data: Vec<[f32; 4]> = iter.collect();
+                    geometry.set_attribute(
+                        "color",
+                        Attribute::new_planar(&data, VertexFormat::Float32x4),
+                    );
+                }
             }
         }
+    }
+
+    /// Loads joint indices and weights for GPU skinning.
+    ///
+    /// Skinning attributes always go through the `gltf::Reader` path since the
+    /// animation system expects standard u16/f32 data and the skinning shader
+    /// consumes them at known formats.
+    #[allow(clippy::unused_self)]
+    fn load_skinning_attributes(
+        &self,
+        primitive: &gltf::Primitive,
+        buffers: &[Vec<u8>],
+        geometry: &mut Geometry,
+        vertex_count: usize,
+    ) {
+        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
 
         let mut skin_channels = Vec::new();
 
@@ -1334,7 +1820,19 @@ impl GltfLoader {
                 geometry.set_attribute(&name, attr);
             }
         }
+    }
 
+    /// Loads morph target displacement data via the `gltf::Reader` (always f32).
+    ///
+    /// Morph targets are always decoded to `Float32x3` because the CPU animation
+    /// mixer performs arithmetic on them directly.
+    #[allow(clippy::unused_self)]
+    fn load_morph_targets(
+        &self,
+        primitive: &gltf::Primitive,
+        buffers: &[Vec<u8>],
+        geometry: &mut Geometry,
+    ) {
         let get_buffer_data = |buffer: gltf::Buffer| -> Option<&[u8]> {
             buffers.get(buffer.index()).map(std::vec::Vec::as_slice)
         };
@@ -1376,20 +1874,6 @@ impl GltfLoader {
                     .push(attr);
             }
         }
-
-        geometry.topology = match primitive.mode() {
-            gltf::mesh::Mode::Points => PrimitiveTopology::PointList,
-            gltf::mesh::Mode::Lines | gltf::mesh::Mode::LineLoop => PrimitiveTopology::LineList,
-            gltf::mesh::Mode::LineStrip => PrimitiveTopology::LineStrip,
-            gltf::mesh::Mode::Triangles | gltf::mesh::Mode::TriangleFan => {
-                PrimitiveTopology::TriangleList
-            }
-            gltf::mesh::Mode::TriangleStrip => PrimitiveTopology::TriangleStrip,
-        };
-        geometry.build_morph_storage_buffers();
-        geometry.compute_bounding_volume();
-
-        self.assets.geometries.add(geometry)
     }
 
     #[allow(clippy::too_many_lines)]
