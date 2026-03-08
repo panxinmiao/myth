@@ -25,15 +25,18 @@ jobs:
         with:
           version: 0.2.108
 
+      - name: Install LLVM Toolchain
+        run: sudo apt-get update && sudo apt-get install -y llvm clang
+
       - name: Build WASM Examples
         run: |
           chmod +x scripts/build_wasm.sh
           
           echo "🚀 Building Showcase (Main Page)..."
-          ./scripts/build_wasm.sh showcase release
+          ./scripts/build_wasm.sh showcase release --features gltf-meshopt
           
           echo "🚀 Building glTF Viewer (Sub Page)..."
-          ./scripts/build_wasm.sh gltf_viewer release
+          ./scripts/build_wasm.sh gltf_viewer release --features gltf-meshopt
 
       - name: Organize Deployment Files
         run: |

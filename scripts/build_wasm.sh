@@ -10,11 +10,23 @@ if [ ! -f "Cargo.toml" ]; then
 fi
 
 EXAMPLE_NAME=$1
-MODE=${2:-release}
 
 if [ -z "$EXAMPLE_NAME" ]; then
     echo "❌ Error: Example name required."
+    echo "Usage: ./scripts/build_wasm.sh <example_name> [debug|release] [additional cargo flags...]"
     exit 1
+fi
+
+# remove first argument (example name)
+shift
+
+MODE="release"
+if [ "$1" == "debug" ]; then
+    MODE="debug"
+    shift
+elif [ "$1" == "release" ]; then
+    MODE="release"
+    shift
 fi
 
 # 2. Define Paths
@@ -31,7 +43,7 @@ BUILD_FLAGS="--target wasm32-unknown-unknown --example $EXAMPLE_NAME"
 if [ "$MODE" == "release" ]; then
     BUILD_FLAGS="$BUILD_FLAGS --release"
 fi
-cargo build $BUILD_FLAGS
+cargo build $BUILD_FLAGS "$@"
 
 # 4. Generate js Bindings
 echo "📦 Generating JS bindings..."
