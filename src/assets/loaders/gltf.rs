@@ -380,6 +380,12 @@ fn pad_to_4_byte_alignment(raw: &[u8], count: usize, src_stride: usize) -> Vec<u
     for i in 0..count {
         let src_start = i * src_stride;
         let dst_start = i * dst_stride;
+
+        let remaining_bytes = raw.len().saturating_sub(src_start);
+        if remaining_bytes == 0 {
+            break;
+        }
+
         let copy_len = src_stride.min(raw.len() - src_start);
         out[dst_start..dst_start + copy_len].copy_from_slice(&raw[src_start..src_start + copy_len]);
     }
@@ -718,8 +724,9 @@ impl GltfLoader {
             "KHR_materials_ior".to_string(),
             "KHR_materials_specular".to_string(),
             "KHR_texture_transform".to_string(),
-            "EXT_meshopt_compression".to_string(),
             "KHR_mesh_quantization".to_string(),
+            "EXT_meshopt_compression".to_string(),
+            "EXT_texture_webp".to_string(),
         ]);
 
         let require_not_supported: Vec<_> = gltf
