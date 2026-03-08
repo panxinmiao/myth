@@ -650,6 +650,26 @@ For WASM, use async loading:
 let prefab = GltfLoader::load_async(url, engine.assets.clone()).await?;
 ```
 
+### Meshopt Compression (`EXT_meshopt_compression`)
+
+Some glTF models use the `EXT_meshopt_compression` extension to dramatically reduce file size.
+Loading these models requires the **`gltf-meshopt`** feature, which links the meshopt C library
+for decompression.
+
+```toml
+# Cargo.toml
+[dependencies]
+myth-engine = { version = "*", features = ["gltf-meshopt"] }
+```
+
+> **WASM Note:** The meshopt C library requires an **LLVM / Clang** toolchain to compile for
+> `wasm32-unknown-unknown`. If you do not need meshopt-compressed models, you can omit this
+> feature and avoid the extra toolchain dependency entirely.
+
+When the feature is **not** enabled and a meshopt-compressed model is loaded, the engine will
+**not** crash. Instead it logs an error with clear instructions and returns an `AssetError`,
+allowing your application to continue running.
+
 ---
 
 ## Animation
