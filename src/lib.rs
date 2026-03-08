@@ -90,9 +90,12 @@
 //!
 //! ## Feature Flags
 //!
-//! - `winit` (default) - Window management via winit
-//! - `gltf` (default) - glTF 2.0 model loading
-//! - `http` (default) - HTTP asset loading (native only)
+//! | Feature | Default | Description |
+//! |---------|---------|-------------|
+//! | `winit` | **yes** | Window management via winit |
+//! | `gltf` | **yes** | glTF 2.0 model loading |
+//! | `http` | **yes** | HTTP asset loading (native only) |
+//! | `gltf-meshopt` | no | Meshopt decompression for `EXT_meshopt_compression` glTF models. Requires LLVM/Clang for WASM builds. |
 //!
 //! ## Design Principles
 //!
