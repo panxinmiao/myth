@@ -2748,12 +2748,12 @@ fn execute_future<F: std::future::Future<Output = ()> + 'static>(f: F) {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> myth::Result<()> {
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("warn")).init();
 
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .expect("无法创建 Tokio Runtime");
+        .expect("Failed to create Tokio Runtime");
 
     let _enter = rt.enter();
 
