@@ -30,24 +30,28 @@ crate-type = ["cdylib", "rlib"]
 [dependencies]
 # Graphics and Math
 wgpu = { version = "28.0", features = ["wgsl"] } #
-glam = { version = "0.32", features = ["bytemuck", "scalar-math"] }
+glam = { version = "0.32.1", features = ["bytemuck", "scalar-math"] }
 bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
 rand = "0.10.0"
 
 # Windowing and Input
-winit = { version = "0.30", optional = true }
+winit = { version = "0.30.13", optional = true }
 raw-window-handle = "0.6"
 
 # Resources and Serialization
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "hdr", "exr", "webp"] }
-gltf = {git = "https://github.com/panxinmiao/gltf.git", rev = "077dd0af4fccd6bd441b210dc7f2cc1f2c5f1b9f", features = [
+gltf = {git = "https://github.com/panxinmiao/gltf.git", features = [
     "extensions", "KHR_materials_pbrSpecularGlossiness", 
     "KHR_materials_specular", "KHR_materials_emissive_strength", "EXT_texture_webp",
-    "KHR_materials_ior", "KHR_texture_transform", "allow_empty_animation_target_node"
+    "KHR_materials_ior", "KHR_texture_transform", "allow_empty_animation_target_node",
+    "EXT_meshopt_compression", "KHR_mesh_quantization",
 ], optional = true }
 base64 = "0.22"
+
+# Meshopt Compression (for glTF EXT_meshopt_compression)
+meshopt = { version = "0.6", optional = true }
 
 # Networking (HTTP)
 reqwest = { version = "0.13.2", default-features = false, optional = true }
@@ -59,7 +63,7 @@ log = "0.4"
 env_logger = "0.11.9"
 pollster = "0.4"
 paste = "1.0"
-uuid = { version = "1.21.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
+uuid = { version = "1.22.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 slotmap = { version = "1.1.1", features = ["serde"] } 
 smallvec = "1.15"
@@ -71,14 +75,14 @@ futures = "0.3.32"
 bitflags = "2.11.0"
 
 # Templating
-minijinja = { version = "2.15", features = ["loader", "custom_syntax"] }
+minijinja = { version = "2.17.1", features = ["loader", "custom_syntax"] }
 rust-embed = "8.11.0"
 
 # =================================================================
 # Native Platform (Windows, Linux, macOS)
 # =================================================================
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1.49", features = ["fs", "rt-multi-thread", "macros"] }
+tokio = { version = "1.50.0", features = ["fs", "rt-multi-thread", "macros"] }
 reqwest = { version = "0.13", features = ["default-tls", "stream"]} 
 
 # =================================================================
@@ -86,22 +90,22 @@ reqwest = { version = "0.13", features = ["default-tls", "stream"]}
 # =================================================================
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 # Web Specific Libraries
-wasm-bindgen = "0.2.108"
-wasm-bindgen-futures = "0.4.58"
-web-sys = { version = "0.3.85", features = [
+wasm-bindgen = "0.2.114"
+wasm-bindgen-futures = "0.4.64"
+web-sys = { version = "0.3.91", features = [
     "Document", "Window", "Element", "DomTokenList", "HtmlCanvasElement", "HtmlInputElement",
     "Location", "Request", "RequestInit", "RequestMode", "Response", "Headers",
     "File", "FileList", "FileReader", "Blob", "ProgressEvent", "console",
     "UrlSearchParams"
 ]}
-js-sys = "0.3.85"
+js-sys = "0.3.91"
 web-time = "1.1"
 
 # Logging and Panic Handling
 console_error_panic_hook = "0.1.7"
 console_log = "1.0"
 
-getrandom = { version = "0.4.1", features = ["wasm_js"] }
+getrandom = { version = "0.4.2", features = ["wasm_js"] }
 
 rust-embed = { version = "8.11", features = ["debug-embed"] }
 wgpu = { version = "28.0", features = ["webgpu"] }
@@ -113,7 +117,7 @@ lasso = { version = "0.7", features = [] }
 # Development Dependencies & Egui
 # =================================================================
 [dev-dependencies]
-anyhow = "1.0.101"
+anyhow = "1.0.102"
 rfd = { version = "0.17.2" }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
@@ -154,7 +158,7 @@ features = ["links"]
 [features]
 default = ["winit", "gltf", "http"]
 winit = ["dep:winit"]
-gltf = ["dep:gltf"]
+gltf = ["dep:gltf", "dep:meshopt"]
 http = ["dep:reqwest", "dep:url"]
 
 [lints.rust]
