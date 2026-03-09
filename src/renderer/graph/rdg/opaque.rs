@@ -72,7 +72,9 @@ impl OpaqueFeature {
             clear_color,
             needs_specular,
             resolve_target,
-            self.screen_info.clone().expect("OpaqueFeature: screen_info not set"),
+            self.screen_info
+                .clone()
+                .expect("OpaqueFeature: screen_info not set"),
         );
         rdg.add_pass(Box::new(node));
     }
@@ -197,7 +199,6 @@ impl PassNode for OpaquePassNode {
             } else {
                 self.specular_tex = specular_tex;
             }
-            
         }
     }
 
@@ -226,9 +227,11 @@ impl PassNode for OpaquePassNode {
         // ── Color attachments (auto-deduced LoadOp / StoreOp) ───────────
         let mut color_attachments: smallvec::SmallVec<
             [Option<wgpu::RenderPassColorAttachment>; 2],
-        > = smallvec::smallvec![
-            ctx.get_color_attachment(self.color_target, Some(self.clear_color), self.resolve_target)
-        ];
+        > = smallvec::smallvec![ctx.get_color_attachment(
+            self.color_target,
+            Some(self.clear_color),
+            self.resolve_target
+        )];
 
         // Specular MRT — may have been culled if no downstream consumer
         // (e.g. SSSSS disabled).  `get_color_attachment` returns `None`
@@ -260,11 +263,7 @@ impl PassNode for OpaquePassNode {
         let raw_pass = encoder.begin_render_pass(&pass_desc);
         let mut pass = raw_pass;
 
-        pass.set_bind_group(
-            0,
-            gpu_global_bind_group,
-            &[],
-        );
+        pass.set_bind_group(0, gpu_global_bind_group, &[]);
 
         let screen_bg = self.screen_bind_group.as_ref().unwrap();
         pass.set_bind_group(3, screen_bg, &[]);

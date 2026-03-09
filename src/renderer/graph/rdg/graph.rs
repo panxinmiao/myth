@@ -119,32 +119,11 @@ impl RenderGraph {
         desc: RdgTextureDesc,
         is_external: bool,
     ) -> TextureNodeId {
-        self.register_resource_raw(name, desc, is_external, false)
-    }
-
-    pub fn register_inner_transient_resource(
-        &mut self,
-        name: &'static str,
-        desc: RdgTextureDesc,
-        is_external: bool,
-    ) -> TextureNodeId {
-        self.register_resource_raw(name, desc, is_external, true)
-    }
-
-    #[inline]
-    fn register_resource_raw(
-        &mut self,
-        name: &'static str,
-        desc: RdgTextureDesc,
-        is_external: bool,
-        is_inner_transient: bool,
-    ) -> TextureNodeId {
         let id = TextureNodeId(self.resources.len() as u32);
         self.resources.push(ResourceRecord {
             name,
             desc,
             is_external,
-            is_inner_transient,
             producers: smallvec::SmallVec::new(),
             consumers: smallvec::SmallVec::new(),
             first_use: usize::MAX,
@@ -414,17 +393,6 @@ impl RenderGraph {
                 continue;
             }
 
-            // Fine-grained resource culling: a transient resource with no
-            // consumers is a dead resource — skip physical allocation to
-            // save VRAM and tile-memory bandwidth.
-            if res.consumers.is_empty() {
-                log::trace!(
-                    "RDG: resource '{}' culled (no consumers), skipping allocation.",
-                    res.name
-                );
-                continue;
-            }
-
             res.physical_index = Some(pool.acquire(device, &res.desc, res.first_use, res.last_use));
         }
     }
@@ -624,10 +592,7 @@ mod tests {
             fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
         }
 
-        graph.add_pass(Box::new(MockGBufferPass {
-            color,
-            motion,
-        }));
+        graph.add_pass(Box::new(MockGBufferPass { color, motion }));
         graph.add_pass(Box::new(MockToneMap {
             color,
             out: backbuffer,
@@ -710,11 +675,23 @@ mod tests {
 
         // Timeline: [0]=Opaque, [1]=Bloom, [2]=ToneMapping
         let color_res = &graph.resources[color.0 as usize];
-        assert_eq!(color_res.first_use, 0, "Color first written by Opaque at timeline 0");
-        assert_eq!(color_res.last_use, 2, "Color last read by ToneMapping at timeline 2");
+        assert_eq!(
+            color_res.first_use, 0,
+            "Color first written by Opaque at timeline 0"
+        );
+        assert_eq!(
+            color_res.last_use, 2,
+            "Color last read by ToneMapping at timeline 2"
+        );
 
         let bloom_res = &graph.resources[bloom.0 as usize];
-        assert_eq!(bloom_res.first_use, 1, "Bloom first written by BloomPass at timeline 1");
-        assert_eq!(bloom_res.last_use, 2, "Bloom last read by ToneMapping at timeline 2");
+        assert_eq!(
+            bloom_res.first_use, 1,
+            "Bloom first written by BloomPass at timeline 1"
+        );
+        assert_eq!(
+            bloom_res.last_use, 2,
+            "Bloom last read by ToneMapping at timeline 2"
+        );
     }
 }

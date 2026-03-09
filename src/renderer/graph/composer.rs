@@ -131,10 +131,7 @@ pub struct FrameComposer<'a> {
     hooks: smallvec::SmallVec<
         [(
             HookStage,
-            Box<
-                dyn FnMut(&mut RenderGraph, &mut GraphBlackboard)
-                    + 'a,
-            >,
+            Box<dyn FnMut(&mut RenderGraph, &mut GraphBlackboard) + 'a>,
         ); 4],
     >,
 }
@@ -296,13 +293,21 @@ impl<'a> FrameComposer<'a> {
         // screen-space effects (SSAO, SSSSS) and post-processing.
         let (mut active_color, active_depth, opaque_resolve, transparent_resolve) = if is_msaa {
             let msaa_color_desc = RdgTextureDesc::new(
-                width, height, 1, 1, msaa_samples,
+                width,
+                height,
+                1,
+                1,
+                msaa_samples,
                 wgpu::TextureDimension::D2,
                 HDR_TEXTURE_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT,
             );
             let msaa_depth_desc = RdgTextureDesc::new(
-                width, height, 1, 1, msaa_samples,
+                width,
+                height,
+                1,
+                1,
+                msaa_samples,
                 wgpu::TextureDimension::D2,
                 self.ctx.wgpu_ctx.depth_format,
                 wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -399,10 +404,7 @@ impl<'a> FrameComposer<'a> {
                 // SSSSS contributions.  Depth is intentionally not bound
                 // to preserve the per-sample geometry depth.
                 if is_msaa {
-                    active_color = self.ctx.rdg_msaa_sync_pass.add_to_graph(
-                        rdg,
-                        scene_color,
-                    );
+                    active_color = self.ctx.rdg_msaa_sync_pass.add_to_graph(rdg, scene_color);
                 }
             }
 
@@ -415,9 +417,7 @@ impl<'a> FrameComposer<'a> {
 
             // Transmission Copy — reads single-sample Scene_Color_HDR.
             if has_transmission {
-                self.ctx
-                    .rdg_transmission_copy_pass
-                    .add_to_graph(rdg, true);
+                self.ctx.rdg_transmission_copy_pass.add_to_graph(rdg, true);
             }
 
             // Transparent — final scene-drawing pass in the MSAA context.
@@ -457,11 +457,9 @@ impl<'a> FrameComposer<'a> {
             };
 
             // ToneMap
-            self.ctx.rdg_tone_map_pass.add_to_graph(
-                rdg,
-                tonemap_input,
-                tonemap_output,
-            );
+            self.ctx
+                .rdg_tone_map_pass
+                .add_to_graph(rdg, tonemap_input, tonemap_output);
 
             // FXAA — reads LDR_Intermediate, writes Surface_Out
             if fxaa_enabled {
@@ -489,7 +487,7 @@ impl<'a> FrameComposer<'a> {
             } else {
                 None
             };
-    
+
             // SimpleForward — writes Surface_Out, Scene_Depth
             self.ctx.rdg_simple_forward_pass.add_to_graph(
                 rdg,

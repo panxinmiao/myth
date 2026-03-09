@@ -200,9 +200,7 @@ impl PassNode for FxaaPassNode {
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut CommandEncoder) {
-        let pipeline = ctx
-            .pipeline_cache
-            .get_render_pipeline(self.pipeline_id);
+        let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
 
         let bind_group_key = self
             .current_bind_group_key

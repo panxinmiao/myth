@@ -187,7 +187,9 @@ impl GlobalBindGroupCache {
     #[must_use]
     pub fn get(&self, key: &BindGroupKey) -> Option<&wgpu::BindGroup> {
         if let Some(entry) = self.cache.get(key) {
-            entry.last_accessed_frame.store(self.current_frame, Ordering::Relaxed);
+            entry
+                .last_accessed_frame
+                .store(self.current_frame, Ordering::Relaxed);
             Some(&entry.bg)
         } else {
             None
@@ -236,7 +238,9 @@ impl GlobalBindGroupCache {
     /// transient pool's own idle-eviction policy, preventing VRAM leaks
     /// from orphaned bind groups.
     pub fn garbage_collect(&mut self) {
-        let threshold = self.current_frame.saturating_sub(BIND_GROUP_EVICTION_THRESHOLD);
+        let threshold = self
+            .current_frame
+            .saturating_sub(BIND_GROUP_EVICTION_THRESHOLD);
         let before = self.cache.len();
         self.cache
             .retain(|_, entry| entry.last_accessed_frame.load(Ordering::Relaxed) >= threshold);

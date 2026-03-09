@@ -204,52 +204,46 @@ impl BloomFeature {
         };
 
         // ─── Downsample ───────────────────────────────────────────
-        self.ds_static_layout =
-            Some(Tracked::new(device.create_bind_group_layout(
-                &wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Bloom DS Static Layout (G0)"),
-                    entries: &[sampler_entry, uniform_entry],
-                },
-            )));
-        self.ds_transient_layout =
-            Some(Tracked::new(device.create_bind_group_layout(
-                &wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Bloom DS Transient Layout (G1)"),
-                    entries: &[texture_entry(0)],
-                },
-            )));
+        self.ds_static_layout = Some(Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Bloom DS Static Layout (G0)"),
+                entries: &[sampler_entry, uniform_entry],
+            },
+        )));
+        self.ds_transient_layout = Some(Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Bloom DS Transient Layout (G1)"),
+                entries: &[texture_entry(0)],
+            },
+        )));
 
         // ─── Upsample ────────────────────────────────────────────
-        self.us_static_layout =
-            Some(Tracked::new(device.create_bind_group_layout(
-                &wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Bloom US Static Layout (G0)"),
-                    entries: &[sampler_entry, uniform_entry],
-                },
-            )));
-        self.us_transient_layout =
-            Some(Tracked::new(device.create_bind_group_layout(
-                &wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Bloom US Transient Layout (G1)"),
-                    entries: &[texture_entry(0)],
-                },
-            )));
+        self.us_static_layout = Some(Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Bloom US Static Layout (G0)"),
+                entries: &[sampler_entry, uniform_entry],
+            },
+        )));
+        self.us_transient_layout = Some(Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Bloom US Transient Layout (G1)"),
+                entries: &[texture_entry(0)],
+            },
+        )));
 
         // ─── Composite ───────────────────────────────────────────
-        self.comp_static_layout =
-            Some(Tracked::new(device.create_bind_group_layout(
-                &wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Bloom Comp Static Layout (G0)"),
-                    entries: &[sampler_entry, uniform_entry],
-                },
-            )));
-        self.comp_transient_layout =
-            Some(Tracked::new(device.create_bind_group_layout(
-                &wgpu::BindGroupLayoutDescriptor {
-                    label: Some("Bloom Comp Transient Layout (G1)"),
-                    entries: &[texture_entry(0), texture_entry(1)],
-                },
-            )));
+        self.comp_static_layout = Some(Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Bloom Comp Static Layout (G0)"),
+                entries: &[sampler_entry, uniform_entry],
+            },
+        )));
+        self.comp_transient_layout = Some(Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Bloom Comp Transient Layout (G1)"),
+                entries: &[texture_entry(0), texture_entry(1)],
+            },
+        )));
     }
 
     fn ensure_internal_buffers(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
@@ -681,12 +675,12 @@ impl BloomPassNode {
         let input_view_id = input_view.id();
         let mip_count = self.mip_render_views.len();
 
-        let needs_full_rebuild = self.ds_transient_bgs.len() != mip_count
-            || self.last_input_view_id != input_view_id;
+        let needs_full_rebuild =
+            self.ds_transient_bgs.len() != mip_count || self.last_input_view_id != input_view_id;
 
         // ─── First DS transient BG (scene → mip 0) ────────────────
-        let first_ds_key = BindGroupKey::new(self.ds_transient_layout.id())
-            .with_resource(input_view_id);
+        let first_ds_key =
+            BindGroupKey::new(self.ds_transient_layout.id()).with_resource(input_view_id);
 
         let first_ds_bg = ctx
             .global_bind_group_cache
@@ -780,9 +774,7 @@ impl BloomPassNode {
                             },
                             wgpu::BindGroupEntry {
                                 binding: 1,
-                                resource: wgpu::BindingResource::TextureView(
-                                    bloom_view,
-                                ),
+                                resource: wgpu::BindingResource::TextureView(bloom_view),
                             },
                         ],
                     })
@@ -833,10 +825,6 @@ impl PassNode for BloomPassNode {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
         self.bloom_texture = builder.create_texture("Bloom_MipChain", bloom_chain_desc);
-        // Self-read: the bloom mip chain is produced and consumed within
-        // this macro node (downsample → upsample).  The read declaration
-        // prevents the resource-level culler from treating it as dead.
-        builder.read_texture(self.bloom_texture);
 
         self.input_tex = builder.read_blackboard("Scene_Color_HDR");
     }
@@ -855,9 +843,15 @@ impl PassNode for BloomPassNode {
             return;
         };
 
-        let ds_pipeline = ctx.pipeline_cache.get_render_pipeline(self.downsample_pipeline);
-        let us_pipeline = ctx.pipeline_cache.get_render_pipeline(self.upsample_pipeline);
-        let comp_pipeline = ctx.pipeline_cache.get_render_pipeline(self.composite_pipeline);
+        let ds_pipeline = ctx
+            .pipeline_cache
+            .get_render_pipeline(self.downsample_pipeline);
+        let us_pipeline = ctx
+            .pipeline_cache
+            .get_render_pipeline(self.upsample_pipeline);
+        let comp_pipeline = ctx
+            .pipeline_cache
+            .get_render_pipeline(self.composite_pipeline);
 
         // =====================================================================
         // Phase 1: Downsample — Scene HDR → Bloom Mip Chain

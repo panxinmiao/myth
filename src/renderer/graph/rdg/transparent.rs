@@ -62,7 +62,9 @@ impl TransparentFeature {
             color_target,
             depth_target,
             resolve_target,
-            self.screen_info.clone().expect("TransparentFeature: screen_info not set"),
+            self.screen_info
+                .clone()
+                .expect("TransparentFeature: screen_info not set"),
         );
         rdg.add_pass(Box::new(node));
     }
@@ -186,11 +188,7 @@ impl PassNode for TransparentPassNode {
         // and is Discarded on last use or Stored for downstream; depth is
         // read-only here.  The optional resolve_target receives the MSAA
         // resolve at the end of the render pass.
-        let color_att = ctx.get_color_attachment(
-            self.color_target,
-            None,
-            self.resolve_target,
-        );
+        let color_att = ctx.get_color_attachment(self.color_target, None, self.resolve_target);
         let depth_att = ctx.get_depth_stencil_attachment(self.depth_target, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {
@@ -205,11 +203,7 @@ impl PassNode for TransparentPassNode {
         let raw_pass = encoder.begin_render_pass(&pass_desc);
         let mut pass = raw_pass;
 
-        pass.set_bind_group(
-            0,
-            gpu_global_bind_group,
-            &[],
-        );
+        pass.set_bind_group(0, gpu_global_bind_group, &[]);
 
         if !ctx.baked_lists.transparent.is_empty() {
             let screen_bg = self.screen_bind_group.as_ref().unwrap();

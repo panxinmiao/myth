@@ -219,7 +219,8 @@ impl Renderer {
             rdg_prepass: crate::renderer::graph::rdg::prepass::PrepassFeature::new(),
             rdg_opaque_pass: crate::renderer::graph::rdg::opaque::OpaqueFeature::new(),
             rdg_skybox_pass: crate::renderer::graph::rdg::skybox::SkyboxFeature::new(),
-            rdg_transparent_pass: crate::renderer::graph::rdg::transparent::TransparentFeature::new(),
+            rdg_transparent_pass: crate::renderer::graph::rdg::transparent::TransparentFeature::new(
+            ),
             rdg_transmission_copy_pass:
                 crate::renderer::graph::rdg::transmission_copy::TransmissionCopyFeature::new(),
             rdg_simple_forward_pass:
@@ -235,9 +236,14 @@ impl Renderer {
 
         // Propagate screen bind group info to features that need it.
         if let Some(ref mut state) = self.context {
-            let screen_info = crate::renderer::core::resources::ScreenBindGroupInfo::from_resource_manager(&state.resource_manager);
+            let screen_info =
+                crate::renderer::core::resources::ScreenBindGroupInfo::from_resource_manager(
+                    &state.resource_manager,
+                );
             state.rdg_opaque_pass.set_screen_info(screen_info.clone());
-            state.rdg_transparent_pass.set_screen_info(screen_info.clone());
+            state
+                .rdg_transparent_pass
+                .set_screen_info(screen_info.clone());
             state.rdg_simple_forward_pass.set_screen_info(screen_info);
         }
 
@@ -329,8 +335,8 @@ impl Renderer {
         // BEFORE the render graph is built. This ensures all Features are
         // fully prepared when their ephemeral PassNodes are created.
         {
-            use crate::renderer::graph::rdg::context::ExtractContext;
             use crate::renderer::HDR_TEXTURE_FORMAT;
+            use crate::renderer::graph::rdg::context::ExtractContext;
 
             let view_format = state.wgpu_ctx.surface_view_format;
             let is_hf = state.wgpu_ctx.render_path.supports_post_processing();
@@ -345,7 +351,6 @@ impl Renderer {
             let needs_skybox = scene.background.needs_skybox_pass();
             let bloom_enabled = scene.bloom.enabled && is_hf;
             let fxaa_enabled = scene.fxaa.enabled && is_hf;
-
 
             let mut extract_ctx = ExtractContext {
                 device: &state.wgpu_ctx.device,
@@ -369,7 +374,11 @@ impl Renderer {
 
             // Skybox (both pipelines)
             if needs_skybox {
-                let color_format = if is_hf { HDR_TEXTURE_FORMAT } else { view_format };
+                let color_format = if is_hf {
+                    HDR_TEXTURE_FORMAT
+                } else {
+                    view_format
+                };
                 state.rdg_skybox_pass.extract_and_prepare(
                     &mut extract_ctx,
                     &scene.background.mode,
@@ -380,15 +389,16 @@ impl Renderer {
             }
 
             if is_hf {
-                state
-                    .rdg_prepass
-                    .extract_and_prepare(&mut extract_ctx, needs_normal, needs_feature_id);
+                state.rdg_prepass.extract_and_prepare(
+                    &mut extract_ctx,
+                    needs_normal,
+                    needs_feature_id,
+                );
 
                 if ssao_enabled {
-                    state.rdg_ssao_pass.extract_and_prepare(
-                        &mut extract_ctx,
-                        &scene.ssao.uniforms,
-                    );
+                    state
+                        .rdg_ssao_pass
+                        .extract_and_prepare(&mut extract_ctx, &scene.ssao.uniforms);
                 }
 
                 state.rdg_sssss_pass.extract_and_prepare(&mut extract_ctx);
@@ -398,7 +408,9 @@ impl Renderer {
                 let msaa = state.wgpu_ctx.msaa_samples;
                 let needs_specular = scene.screen_space.enable_sss;
                 if msaa > 1 && needs_specular {
-                    state.rdg_msaa_sync_pass.extract_and_prepare(&mut extract_ctx, msaa);
+                    state
+                        .rdg_msaa_sync_pass
+                        .extract_and_prepare(&mut extract_ctx, msaa);
                 }
 
                 if bloom_enabled {

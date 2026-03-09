@@ -48,10 +48,17 @@ impl SimpleForwardFeature {
         self.screen_info = Some(info);
     }
 
-    pub fn add_to_graph(&self, rdg: &mut RenderGraph, clear_color: wgpu::Color, prepared_skybox: Option<PreparedSkyboxDraw>) {
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        clear_color: wgpu::Color,
+        prepared_skybox: Option<PreparedSkyboxDraw>,
+    ) {
         let node = SimpleForwardPassNode::new(
             clear_color,
-            self.screen_info.clone().expect("SimpleForwardFeature: screen_info not set"),
+            self.screen_info
+                .clone()
+                .expect("SimpleForwardFeature: screen_info not set"),
             prepared_skybox,
         );
         rdg.add_pass(Box::new(node));
@@ -82,12 +89,15 @@ pub struct SimpleForwardPassNode {
 
     // ─── Internal Cache ──────────────────────────────────────────
     screen_bind_group: Option<wgpu::BindGroup>,
-
 }
 
 impl SimpleForwardPassNode {
     #[must_use]
-    pub fn new(clear_color: wgpu::Color, screen_info: ScreenBindGroupInfo, prepared_skybox: Option<PreparedSkyboxDraw>) -> Self {
+    pub fn new(
+        clear_color: wgpu::Color,
+        screen_info: ScreenBindGroupInfo,
+        prepared_skybox: Option<PreparedSkyboxDraw>,
+    ) -> Self {
         Self {
             surface_out: TextureNodeId(0),
             scene_depth: TextureNodeId(0),
@@ -110,9 +120,6 @@ impl PassNode for SimpleForwardPassNode {
         self.surface_out = builder.write_blackboard("Surface_Out");
         self.scene_depth = builder.write_blackboard("Scene_Depth");
 
-        // Self-read: the depth buffer is written by this pass and read by
-        builder.read_texture(self.scene_depth);
-
         // Producer: conditionally create MSAA intermediate.
         let msaa_samples = builder.frame_config().msaa_samples;
         if msaa_samples > 1 {
@@ -129,11 +136,7 @@ impl PassNode for SimpleForwardPassNode {
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
             let msaa_id = builder.create_texture("Scene_Msaa", desc);
-            // Self-read: the MSAA intermediate is resolved to surface_out
-            // within this pass via wgpu's resolve_target mechanism.  The
-            // read declaration prevents the resource-level culler from
-            // treating it as a dead resource.
-            builder.read_texture(msaa_id);
+
             self.msaa_view = Some(msaa_id);
         } else {
             self.msaa_view = None;
@@ -162,8 +165,9 @@ impl PassNode for SimpleForwardPassNode {
         };
 
         let depth_att = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
-        let color_att = ctx.get_color_attachment(color_view, Some(self.clear_color), resolve_target);
-        
+        let color_att =
+            ctx.get_color_attachment(color_view, Some(self.clear_color), resolve_target);
+
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("RDG Simple Forward Pass"),
             color_attachments: &[color_att],

@@ -26,5 +26,7 @@ pub mod shadow_utils;
 
 pub use composer::FrameComposer;
 pub use extracted::{ExtractedRenderItem, ExtractedScene, ExtractedSkeleton};
-pub use frame::{BakedRenderLists, DrawCommand, RenderCommand, RenderFrame, RenderKey, RenderLists};
+pub use frame::{
+    BakedRenderLists, DrawCommand, RenderCommand, RenderFrame, RenderKey, RenderLists,
+};
 pub use render_state::RenderState;
