@@ -20,7 +20,7 @@ use wgpu::CommandEncoder;
 ///    allocation.  Only assemble `BindGroup`s that reference RDG-managed
 ///    transient textures.  Context is intentionally minimal.
 /// 3. **`execute`** — record GPU commands into the shared encoder.
-pub trait PassNode: 'static {
+pub trait PassNode: Send + Sync + 'static {
     fn name(&self) -> &'static str;
 
     /// Declare resource dependencies for the graph topology.

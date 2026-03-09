@@ -139,6 +139,8 @@ fn prepare_main_camera_commands(
     let camera_frustum = camera.frustum;
     let camera_pos = camera.position;
 
+    let use_depth_pre = sample_count == 1 && wgpu_ctx.render_path.requires_z_prepass();
+
     // blackboard.clear();
     {
         let Some(gpu_world) = resource_manager.get_global_state(render_state_id, scene_id) else {
@@ -243,6 +245,22 @@ fn prepare_main_camera_commands(
                     RenderPath::BasicForward { .. } => false,
                 };
 
+                let depth_write = if is_opaque_item && use_depth_pre {
+                    false
+                } else {
+                    material.depth_write()
+                };
+
+                let depth_compare = if material.depth_test() {
+                    if is_opaque_item && use_depth_pre {
+                        wgpu::CompareFunction::Equal
+                    } else {
+                        wgpu::CompareFunction::Greater
+                    }
+                } else {
+                    wgpu::CompareFunction::Always
+                };
+
                 let canonical_key = GraphicsPipelineKey {
                     shader_hash,
                     vertex_layout_id: gpu_geometry.layout_id,
@@ -258,21 +276,8 @@ fn prepare_main_camera_commands(
                         Side::Back => Some(wgpu::Face::Front),
                         Side::Double => None,
                     },
-                    depth_write: if is_opaque_item && wgpu_ctx.render_path.requires_z_prepass() {
-                        false
-                    } else {
-                        material.depth_write()
-                    },
-                    depth_compare: if is_opaque_item
-                        && wgpu_ctx.render_path.requires_z_prepass()
-                        && material.depth_test()
-                    {
-                        wgpu::CompareFunction::Equal
-                    } else if material.depth_test() {
-                        wgpu::CompareFunction::Greater
-                    } else {
-                        wgpu::CompareFunction::Always
-                    },
+                    depth_write,
+                    depth_compare,
                     blend_state: if material.alpha_mode() == AlphaMode::Blend {
                         Some(BlendStateKey::from(wgpu::BlendState::ALPHA_BLENDING))
                     } else {

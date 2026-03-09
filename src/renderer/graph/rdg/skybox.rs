@@ -34,6 +34,7 @@ use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
     ShaderCompilationOptions,
 };
+use crate::resources::buffer::CpuBuffer;
 use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::texture::TextureSource;
 use crate::resources::uniforms::WgslStruct;
@@ -62,6 +63,7 @@ struct SkyboxPipelineKey {
     variant: SkyboxVariant,
     color_format: wgpu::TextureFormat,
     depth_format: wgpu::TextureFormat,
+    msaa_samples: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -166,21 +168,6 @@ pub struct SkyboxFeature {
     pub scene_color: TextureNodeId,
     pub scene_depth: TextureNodeId,
 
-    // ─── Push Parameters (set by Composer) ─────────────────────────
-    /// Background rendering mode (gradient, texture, etc.).
-    pub background_mode: BackgroundMode,
-    /// CPU buffer ID for `CpuBuffer<SkyboxParamsUniforms>`.
-    pub bg_uniforms_cpu_id: u64,
-    /// GPU buffer ID for the skybox params uniform buffer.
-    pub bg_uniforms_gpu_id: u64,
-    /// Scene unique ID for global state lookup.
-    pub scene_id: u32,
-    /// Color buffer format — pushed by the Composer so pipeline creation
-    /// can happen before the render graph is built.
-    pub color_format: wgpu::TextureFormat,
-    /// Depth buffer format (from `WgpuContext`).
-    pub depth_format: wgpu::TextureFormat,
-
     // ─── Bind Group Layouts (Group 1) ──────────────────────────────
     layout_gradient: Option<Tracked<wgpu::BindGroupLayout>>,
     layout_cube: Option<Tracked<wgpu::BindGroupLayout>>,
@@ -200,12 +187,6 @@ impl SkyboxFeature {
         Self {
             scene_color: TextureNodeId(0),
             scene_depth: TextureNodeId(0),
-            background_mode: BackgroundMode::default(),
-            bg_uniforms_cpu_id: 0,
-            bg_uniforms_gpu_id: 0,
-            scene_id: 0,
-            color_format: wgpu::TextureFormat::Rgba16Float,
-            depth_format: wgpu::TextureFormat::Depth24PlusStencil8,
             layout_gradient: None,
             layout_cube: None,
             layout_2d: None,
@@ -247,6 +228,7 @@ impl SkyboxFeature {
         &mut self,
         ctx: &mut ExtractContext,
         key: SkyboxPipelineKey,
+        global_state_key: (u32, u32),
     ) -> RenderPipelineId {
         if let Some(&pipeline_id) = self.local_cache.get(&key) {
             return pipeline_id;
@@ -254,7 +236,7 @@ impl SkyboxFeature {
 
         let gpu_world = ctx
             .resource_manager
-            .get_global_state(ctx.render_state.id, self.scene_id)
+            .get_global_state(global_state_key.0, global_state_key.1)
             .expect("Global state must exist");
 
         let mut defines = ShaderDefines::new();
@@ -298,7 +280,7 @@ impl SkyboxFeature {
                 bias: wgpu::DepthBiasState::default(),
             })),
             multisample: MultisampleKey::from(wgpu::MultisampleState {
-                count: 1, // HighFidelity always sample_count = 1
+                count: key.msaa_samples,
                 mask: !0,
                 alpha_to_coverage_enabled: false,
             }),
@@ -352,36 +334,28 @@ impl SkyboxFeature {
     pub fn extract_and_prepare(
         &mut self,
         ctx: &mut ExtractContext,
-        background_mode: BackgroundMode,
-        bg_uniforms_cpu_id: u64,
-        bg_uniforms_gpu_id: u64,
-        scene_id: u32,
+        background_mode: &BackgroundMode,
+        bg_uniforms: &CpuBuffer<SkyboxParamsUniforms>,
+        global_state_key: (u32, u32),
         color_format: wgpu::TextureFormat,
-        depth_format: wgpu::TextureFormat,
     ) {
-        self.background_mode = background_mode;
-        self.bg_uniforms_cpu_id = bg_uniforms_cpu_id;
-        self.bg_uniforms_gpu_id = bg_uniforms_gpu_id;
-        self.scene_id = scene_id;
-        self.color_format = color_format;
-        self.depth_format = depth_format;
 
         self.ensure_layouts(ctx.device);
 
-        let Some(variant) = SkyboxVariant::from_background(&self.background_mode) else {
+        let Some(variant) = SkyboxVariant::from_background(background_mode) else {
             self.current_bind_group = None;
             self.current_pipeline = None;
             return;
         };
 
         // GPU buffer was already ensured by the Composer; use pushed IDs.
-        let params_gpu_id = self.bg_uniforms_gpu_id;
-        let params_cpu_id = self.bg_uniforms_cpu_id;
+        let params_gpu_id = ctx.resource_manager.ensure_buffer_id(bg_uniforms);
+        let params_cpu_id = bg_uniforms.id();
 
         if let BackgroundMode::Texture {
             source: TextureSource::Asset(handle),
             ..
-        } = &self.background_mode
+        } = background_mode
         {
             ctx.resource_manager.prepare_texture(ctx.assets, *handle);
         }
@@ -395,7 +369,7 @@ impl SkyboxFeature {
         // Resolve texture view
         let texture_view = if let BackgroundMode::Texture {
             source, mapping, ..
-        } = &self.background_mode
+        } = background_mode
         {
             Self::resolve_texture_view(ctx.resource_manager, source, *mapping)
         } else {
@@ -480,10 +454,11 @@ impl SkyboxFeature {
         // Pipeline — uses pushed format fields instead of reading from the graph.
         let pipeline_key = SkyboxPipelineKey {
             variant,
-            color_format: self.color_format,
-            depth_format: self.depth_format,
+            color_format: color_format,
+            depth_format: ctx.wgpu_ctx.depth_format,
+            msaa_samples: ctx.wgpu_ctx.msaa_samples,
         };
-        self.current_pipeline = Some(self.get_or_create_pipeline(ctx, pipeline_key));
+        self.current_pipeline = Some(self.get_or_create_pipeline(ctx, pipeline_key, global_state_key));
     }
 
     /// Create an ephemeral [`SkyboxPassNode`] and add it to the render graph.

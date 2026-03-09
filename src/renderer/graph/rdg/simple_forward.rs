@@ -149,22 +149,11 @@ impl PassNode for SimpleForwardPassNode {
         let target_view = ctx.get_texture_view(self.surface_out);
         let depth_view = ctx.get_texture_view(self.scene_depth);
 
-        // let msaa_view = self
-        //     .msaa_view
-        //     .as_ref()
-        //     .map(|id| ctx.get_texture_view(*id));
-
         let (color_view, resolve_target) = if let Some(msaa_view) = self.msaa_view {
             (ctx.get_texture_view(msaa_view), Some(target_view))
         } else {
             (target_view, None)
         };
-
-        // let (color_view, resolve_target) = if let Some(msaa_view) = msaa_view {
-        //     (msaa_view, Some(target_view))
-        // } else {
-        //     (target_view, None)
-        // };
 
         let store_op = if resolve_target.is_some() {
             wgpu::StoreOp::Discard

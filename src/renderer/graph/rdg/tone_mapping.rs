@@ -31,6 +31,7 @@ use crate::renderer::graph::rdg::types::TextureNodeId;
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
+use crate::resources::buffer::CpuBuffer;
 use crate::resources::texture::TextureSource;
 use crate::resources::tone_mapping::{ToneMappingMode, ToneMappingUniforms};
 use crate::resources::uniforms::WgslStruct;
@@ -198,15 +199,15 @@ impl ToneMapFeature {
         ctx: &mut ExtractContext,
         mode: ToneMappingMode,
         output_format: wgpu::TextureFormat,
-        has_lut: bool,
         global_state_key: (u32, u32),
-        uniforms_cpu_id: u64,
+        uniforms: &CpuBuffer<ToneMappingUniforms>,
         lut_handle: Option<TextureHandle>,
     ) {
         // ─── 1. Lazy initialization ────────────────────────────────
         self.ensure_layouts(ctx.device);
         self.output_format = output_format;
 
+        let has_lut = lut_handle.is_some();
         // ─── 2. Pipeline (re)creation ──────────────────────────────
         let cache_key = (mode, output_format, has_lut);
 
@@ -219,10 +220,20 @@ impl ToneMapFeature {
 
         // ─── 3. Build static bind group (Group 1) ─────────────────
         // Resolve GPU buffer for uniforms
+
+        ctx.resource_manager.ensure_buffer(uniforms);
+
+        if has_lut {
+            if let Some(handle) = lut_handle {
+                ctx.resource_manager.prepare_texture(ctx.assets, handle);
+            }
+        }
+
         let gpu_buf = ctx
             .resource_manager
             .gpu_buffers
-            .get(&uniforms_cpu_id);
+            .get(&uniforms.id());
+
         let gpu_buf = match gpu_buf {
             Some(g) => g,
             None => return,

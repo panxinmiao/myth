@@ -40,6 +40,7 @@ use crate::renderer::pipeline::{
 };
 use crate::resources::WgslType;
 use crate::resources::bloom::{CompositeUniforms, UpsampleUniforms};
+use crate::resources::buffer::CpuBuffer;
 use crate::resources::uniforms::{UniformArray, WgslStruct};
 
 use super::graph::RenderGraph;
@@ -147,18 +148,22 @@ impl BloomFeature {
     /// are initialised. Build or rebuild static bind groups (Group 0) when the
     /// underlying GPU buffer identity changes.
     ///
-    /// `upsample_cpu_id` and `composite_cpu_id` are the CpuBuffer IDs
+    /// `upsample_uniform` and `composite_uniform` are the CpuBuffer IDs
     /// whose GPU mirrors have already been uploaded via `ensure_buffer()`.
     pub fn extract_and_prepare(
         &mut self,
         ctx: &mut ExtractContext,
-        upsample_cpu_id: u64,
-        composite_cpu_id: u64,
+        upsample_uniform: &CpuBuffer<UpsampleUniforms>,
+        composite_uniform: &CpuBuffer<CompositeUniforms>,
     ) {
         self.ensure_layouts(ctx.device);
         self.ensure_internal_buffers(ctx.device, ctx.queue);
         self.ensure_pipelines(ctx);
-        self.build_static_bind_groups(ctx, upsample_cpu_id, composite_cpu_id);
+
+        ctx.resource_manager.ensure_buffer(upsample_uniform);
+        ctx.resource_manager.ensure_buffer(composite_uniform);
+
+        self.build_static_bind_groups(ctx, upsample_uniform.id(), composite_uniform.id());
     }
 
     // =========================================================================
