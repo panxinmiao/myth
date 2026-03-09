@@ -20,10 +20,10 @@
 //!   pre-built Group 0 bind groups and only assembles Group 1 (transient
 //!   texture) bind groups during `prepare`.
 //!
-//! # RDG Slots
+//! # RDG Slots (explicit wiring)
 //!
-//! - `input_tex`     – HDR scene color (read via blackboard)
-//! - `output_tex`    – HDR scene color with bloom composited
+//! - `input_tex`     – HDR scene color (input)
+//! - `output_tex`    – HDR scene color with bloom composited (output)
 //! - `bloom_texture` – internal mip chain
 
 use crate::define_gpu_data_struct;
@@ -526,18 +526,32 @@ impl BloomFeature {
 
     /// Create an ephemeral [`BloomPassNode`] and add it to the render graph.
     ///
-    /// The node receives pre-built Group 0 static bind groups from the Feature
-    /// and only needs to assemble Group 1 (transient texture) bind groups
+    /// The output texture (`Bloom_Out`) is registered here and returned as
+    /// a [`TextureNodeId`] for explicit downstream wiring (ToneMap).
+    /// The PassNode receives pre-built Group 0 static bind groups from the
+    /// Feature and only assembles Group 1 (transient texture) bind groups
     /// during its prepare phase.
     pub fn add_to_graph(
         &self,
         rdg: &mut RenderGraph,
+        input_color: TextureNodeId,
         karis_average: bool,
         max_mip_levels: u32,
     ) -> TextureNodeId {
+        let fc = *rdg.frame_config();
+        let output_desc = RdgTextureDesc::new_2d(
+            fc.width,
+            fc.height,
+            fc.hdr_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+        );
+        let output_tex = rdg.register_resource("Bloom_Out", output_desc, false);
+
         let node = BloomPassNode {
-            input_tex: TextureNodeId(0),
-            output_tex: TextureNodeId(0),
+            input_tex: input_color,
+            output_tex,
             bloom_texture: TextureNodeId(0),
 
             karis_average,
@@ -582,8 +596,7 @@ impl BloomFeature {
         };
 
         rdg.add_pass(Box::new(node));
-        rdg.find_resource("Bloom_Out")
-            .expect("Bloom_Out must be registered by BloomPassNode::setup")
+        output_tex
     }
 }
 
@@ -798,17 +811,11 @@ impl PassNode for BloomPassNode {
     fn setup(&mut self, builder: &mut PassBuilder) {
         let (w, h) = builder.global_resolution();
         let hdr_format = builder.frame_config().hdr_format;
-        let hdr_desc = RdgTextureDesc::new_2d(
-            w,
-            h,
-            hdr_format,
-            wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-        );
 
-        self.output_tex = builder.create_texture("Bloom_Out", hdr_desc);
+        // Output (pre-registered in add_to_graph).
+        builder.write_texture(self.output_tex);
 
+        // Internal mip chain.
         let bloom_w = (w / 2).max(1);
         let bloom_h = (h / 2).max(1);
         let max_possible = ((bloom_w.max(bloom_h) as f32).log2().floor() as u32) + 1;
@@ -826,7 +833,8 @@ impl PassNode for BloomPassNode {
         );
         self.bloom_texture = builder.create_texture("Bloom_MipChain", bloom_chain_desc);
 
-        self.input_tex = builder.read_blackboard("Scene_Color_HDR");
+        // Input: scene color (explicit wiring).
+        builder.read_texture(self.input_tex);
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {

@@ -4,10 +4,10 @@
 //! skybox, and transparent drawing into one `wgpu::RenderPass` with optional
 //! hardware MSAA.
 //!
-//! # RDG Slots
+//! # RDG Slots (explicit wiring)
 //!
-//! - `surface_out`: LDR colour output (write, Clear)
-//! - `scene_depth`: Depth buffer (write, Clear)
+//! - `surface_out`: LDR colour output (input, from Composer)
+//! - `scene_depth`: Depth buffer (created internally)
 //!
 //! # Push Parameters
 //!
@@ -51,10 +51,26 @@ impl SimpleForwardFeature {
     pub fn add_to_graph(
         &self,
         rdg: &mut RenderGraph,
+        surface_out: TextureNodeId,
         clear_color: wgpu::Color,
         prepared_skybox: Option<PreparedSkyboxDraw>,
     ) {
+        let fc = *rdg.frame_config();
+        let depth_desc = RdgTextureDesc::new(
+            fc.width,
+            fc.height,
+            1,
+            1,
+            fc.msaa_samples,
+            wgpu::TextureDimension::D2,
+            fc.depth_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let scene_depth = rdg.register_resource("Scene_Depth", depth_desc, false);
+
         let node = SimpleForwardPassNode::new(
+            surface_out,
+            scene_depth,
             clear_color,
             self.screen_info
                 .clone()
@@ -75,7 +91,7 @@ impl SimpleForwardFeature {
 ///
 /// [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
 pub struct SimpleForwardPassNode {
-    // ─── RDG Resource Slots (set during setup) ───────────────────────
+    // ─── RDG Resource Slots (explicit wiring from add_to_graph) ───
     pub surface_out: TextureNodeId,
     pub scene_depth: TextureNodeId,
     pub msaa_view: Option<TextureNodeId>,
@@ -94,13 +110,15 @@ pub struct SimpleForwardPassNode {
 impl SimpleForwardPassNode {
     #[must_use]
     pub fn new(
+        surface_out: TextureNodeId,
+        scene_depth: TextureNodeId,
         clear_color: wgpu::Color,
         screen_info: ScreenBindGroupInfo,
         prepared_skybox: Option<PreparedSkyboxDraw>,
     ) -> Self {
         Self {
-            surface_out: TextureNodeId(0),
-            scene_depth: TextureNodeId(0),
+            surface_out,
+            scene_depth,
             clear_color,
             prepared_skybox,
             msaa_view: None,
@@ -116,11 +134,11 @@ impl PassNode for SimpleForwardPassNode {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Consumer: wire backbone resources.
-        self.surface_out = builder.write_blackboard("Surface_Out");
-        self.scene_depth = builder.write_blackboard("Scene_Depth");
+        // Outputs (pre-registered in add_to_graph).
+        builder.write_texture(self.surface_out);
+        builder.write_texture(self.scene_depth);
 
-        // Producer: conditionally create MSAA intermediate.
+        // MSAA intermediate (internal, conditionally created).
         let msaa_samples = builder.frame_config().msaa_samples;
         if msaa_samples > 1 {
             let (w, h) = builder.global_resolution();
@@ -136,7 +154,6 @@ impl PassNode for SimpleForwardPassNode {
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
             let msaa_id = builder.create_texture("Scene_Msaa", desc);
-
             self.msaa_view = Some(msaa_id);
         } else {
             self.msaa_view = None;

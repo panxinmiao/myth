@@ -6,22 +6,19 @@
 //!
 //! # MSAA Support
 //!
-//! When hardware MSAA is active in the HighFidelity path, the Composer
-//! passes multi-sampled `color_target` / `depth_target` IDs and an optional
-//! `resolve_target`.  The pass renders into the MSAA surfaces and the GPU
-//! hardware resolves the result into the single-sample HDR buffer at the
-//! end of the render pass.  The RDG lifetime system keeps the MSAA surface
-//! alive (`StoreOp::Store`) as long as downstream passes (Skybox,
+//! When hardware MSAA is active in the HighFidelity path, the pass creates
+//! multi-sampled color/depth targets and an HDR resolve target internally.
+//! The GPU hardware resolves the result into the single-sample HDR buffer
+//! at the end of the render pass.  The RDG lifetime system keeps the MSAA
+//! surface alive (`StoreOp::Store`) as long as downstream passes (Skybox,
 //! Transparent) still reference it.
 //!
-//! # RDG Slots
+//! # RDG Slots (explicit wiring)
 //!
-//! - `color_target`: Scene color output — `Scene_Color_HDR` or
-//!   `Scene_Color_MSAA` (write, Clear)
-//! - `depth_target`: Scene depth — `Scene_Depth` or `Scene_Depth_MSAA`
-//!   (read if prepass, write if no prepass)
+//! - `color_target`: Scene color output — created internally
+//! - `depth_target`: Scene depth — created or reused
 //! - `resolve_target`: Optional single-sample HDR to receive MSAA resolve
-//! - `ssao_tex`: Optional SSAO texture (read, for screen bind group)
+//! - `ssao_tex`: Optional SSAO texture (explicit input)
 //!
 //! # Push Parameters
 //!
@@ -35,8 +32,27 @@ use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext}
 use crate::renderer::graph::rdg::draw::submit_draw_commands;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
+use crate::renderer::HDR_TEXTURE_FORMAT;
 
 use super::graph::RenderGraph;
+
+/// Outputs produced by the Opaque pass, returned to the Composer for
+/// explicit downstream wiring.
+pub struct OpaqueOutputs {
+    /// Drawing surface for subsequent MSAA passes (Skybox, Transparent).
+    /// In non-MSAA mode this IS `scene_color_hdr`.
+    pub active_color: TextureNodeId,
+    /// Depth surface for subsequent draws.  In MSAA mode this is a
+    /// multi-sampled depth; in non-MSAA mode this is the Prepass's depth.
+    pub active_depth: TextureNodeId,
+    /// Single-sample HDR scene color (resolve target in MSAA, direct
+    /// color target in non-MSAA).  Used by screen-space effects and
+    /// the post-processing chain.
+    pub scene_color_hdr: TextureNodeId,
+    /// Resolved specular texture for SSSSS (`None` when specular is
+    /// not enabled).
+    pub specular_mrt: Option<TextureNodeId>,
+}
 
 // ─── Feature ───────────────────────────────────────────────────────────
 
@@ -58,13 +74,95 @@ impl OpaqueFeature {
     pub fn add_to_graph(
         &self,
         rdg: &mut RenderGraph,
-        color_target: TextureNodeId,
-        depth_target: TextureNodeId,
+        scene_depth_ss: TextureNodeId,
         has_prepass: bool,
         clear_color: wgpu::Color,
         needs_specular: bool,
-        resolve_target: Option<TextureNodeId>,
-    ) {
+        ssao_tex: Option<TextureNodeId>,
+    ) -> OpaqueOutputs {
+        let fc = *rdg.frame_config();
+        let is_msaa = fc.msaa_samples > 1;
+
+        // ── Create color / depth / resolve targets ─────────────────
+        let hdr_desc = RdgTextureDesc::new_2d(
+            fc.width,
+            fc.height,
+            HDR_TEXTURE_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+        );
+
+        let (color_target, depth_target, resolve_target, scene_color_hdr) = if is_msaa {
+            let msaa_color_desc = RdgTextureDesc::new(
+                fc.width,
+                fc.height,
+                1,
+                1,
+                fc.msaa_samples,
+                wgpu::TextureDimension::D2,
+                HDR_TEXTURE_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT,
+            );
+            let msaa_depth_desc = RdgTextureDesc::new(
+                fc.width,
+                fc.height,
+                1,
+                1,
+                fc.msaa_samples,
+                wgpu::TextureDimension::D2,
+                fc.depth_format,
+                wgpu::TextureUsages::RENDER_ATTACHMENT,
+            );
+
+            let msaa_color =
+                rdg.register_resource("Scene_Color_MSAA", msaa_color_desc, false);
+            let msaa_depth =
+                rdg.register_resource("Scene_Depth_MSAA", msaa_depth_desc, false);
+            let scene_hdr =
+                rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
+
+            (msaa_color, msaa_depth, Some(scene_hdr), scene_hdr)
+        } else {
+            let scene_hdr =
+                rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
+            (scene_hdr, scene_depth_ss, None, scene_hdr)
+        };
+
+        // ── Specular MRT (conditionally created) ───────────────────
+        let (specular_tex, specular_resolve, specular_resolved) = if needs_specular {
+            let spec_desc = RdgTextureDesc::new_2d(
+                fc.width,
+                fc.height,
+                HDR_TEXTURE_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
+            );
+            let specular_single = rdg.register_resource("Specular_MRT", spec_desc, false);
+
+            if is_msaa {
+                let msaa_spec_desc = RdgTextureDesc::new(
+                    fc.width,
+                    fc.height,
+                    1,
+                    1,
+                    fc.msaa_samples,
+                    wgpu::TextureDimension::D2,
+                    HDR_TEXTURE_FORMAT,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                );
+                let specular_msaa =
+                    rdg.register_resource("Specular_MRT_MSAA", msaa_spec_desc, false);
+                (specular_msaa, Some(specular_single), Some(specular_single))
+            } else {
+                (specular_single, None, Some(specular_single))
+            }
+        } else {
+            (TextureNodeId(0), None, None)
+        };
+
         let node = OpaquePassNode::new(
             color_target,
             depth_target,
@@ -72,11 +170,21 @@ impl OpaqueFeature {
             clear_color,
             needs_specular,
             resolve_target,
+            ssao_tex,
+            specular_tex,
+            specular_resolve,
             self.screen_info
                 .clone()
                 .expect("OpaqueFeature: screen_info not set"),
         );
         rdg.add_pass(Box::new(node));
+
+        OpaqueOutputs {
+            active_color: color_target,
+            active_depth: depth_target,
+            scene_color_hdr,
+            specular_mrt: specular_resolved,
+        }
     }
 }
 
@@ -104,8 +212,8 @@ pub struct OpaquePassNode {
     pub has_prepass: bool,
     pub clear_color: wgpu::Color,
     pub needs_specular: bool,
-    pub ssao_enabled: bool,
-    // ─── Screen Bind Group Infrastructure ──────────────────────────
+    pub ssao_enabled: bool,    /// Explicit SSAO input (`None` when SSAO is disabled).
+    pub ssao_input: Option<TextureNodeId>,    // ─── Screen Bind Group Infrastructure ──────────────────────────
     screen_info: ScreenBindGroupInfo,
     // ─── Internal Cache ────────────────────────────────────────────
     screen_bind_group: Option<wgpu::BindGroup>,
@@ -120,6 +228,9 @@ impl OpaquePassNode {
         clear_color: wgpu::Color,
         needs_specular: bool,
         resolve_target: Option<TextureNodeId>,
+        ssao_input: Option<TextureNodeId>,
+        specular_tex: TextureNodeId,
+        specular_resolve_target: Option<TextureNodeId>,
         screen_info: ScreenBindGroupInfo,
     ) -> Self {
         Self {
@@ -127,12 +238,13 @@ impl OpaquePassNode {
             depth_target,
             resolve_target,
             ssao_tex: TextureNodeId(0),
-            specular_tex: TextureNodeId(0),
-            specular_resolve_target: None,
+            specular_tex,
+            specular_resolve_target,
             has_prepass,
             clear_color,
             needs_specular,
-            ssao_enabled: false,
+            ssao_enabled: ssao_input.is_some(),
+            ssao_input,
             screen_info,
             screen_bind_group: None,
         }
@@ -158,46 +270,21 @@ impl PassNode for OpaquePassNode {
             builder.write_texture(rt);
         }
 
-        // Detect optional SSAO resource.
-        if let Some(ssao) = builder.try_read_blackboard("SSAO_Output") {
+        // SSAO — explicit input wiring.
+        if let Some(ssao) = self.ssao_input {
+            builder.read_texture(ssao);
             self.ssao_tex = ssao;
-            self.ssao_enabled = true;
-        } else {
-            self.ssao_enabled = false;
         }
 
-        // Producer: conditionally create specular MRT.
+        // Specular MRT (pre-registered in add_to_graph).
         if self.needs_specular {
-            let (w, h) = builder.global_resolution();
-            let hdr_format = builder.frame_config().hdr_format;
-            let desc = RdgTextureDesc::new_2d(
-                w,
-                h,
-                hdr_format,
-                wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_SRC,
-            );
-            let specular_tex = builder.create_texture("Specular_MRT", desc);
-
-            if builder.frame_config().msaa_samples > 1 {
-                let msaa_desc = RdgTextureDesc::new(
-                    w,
-                    h,
-                    1,
-                    1,
-                    builder.frame_config().msaa_samples,
-                    wgpu::TextureDimension::D2,
-                    hdr_format,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-                );
-                self.specular_tex = builder.create_texture("Specular_MRT_MSAA", msaa_desc);
-                // Self-resolve: declare read on the MSAA specular texture so the graph compiler keeps it alive for the duration of this pass.
+            builder.write_texture(self.specular_tex);
+            if self.specular_resolve_target.is_some() {
+                // Self-read keeps the MSAA specular alive for the resolve.
                 builder.read_texture(self.specular_tex);
-
-                self.specular_resolve_target = Some(specular_tex);
-            } else {
-                self.specular_tex = specular_tex;
+            }
+            if let Some(resolve) = self.specular_resolve_target {
+                builder.write_texture(resolve);
             }
         }
     }

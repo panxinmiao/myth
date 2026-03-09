@@ -10,30 +10,24 @@
 //! **Thin G-Buffer** stencil channel.  Two sequential render passes are
 //! executed (H then V) to reconstruct a 2-D scatter kernel.
 //!
-//! # Data Flow (SSA-Compliant)
+//! # Data Flow (explicit wiring)
 //!
 //! ```text
-//!  Opaque / Transparent             SssssPassNode
+//!  Opaque                            SssssPassNode
 //!       |                 +-----------------------------------+
 //! color_in  ------------>|  H Sub-Pass: Horizontal blur      |---> temp_blur
 //! normal_in ----+------->|                                   |         |
 //! depth_in  ----|        |  V Sub-Pass: Vertical blur        |<--------+
-//! feature_id ---|        |  (writes NEW color_out, not       |
-//! specular_tex -+        |   back to color_in)               |---> color_out
+//! feature_id ---|        |  (writes back to color_in         |
+//! specular_tex -+        |   in-place)                       |---> color_in
 //!                        +-----------------------------------+
 //! ```
 //!
-//! # SSA Principle
-//!
-//! The pass reads `color_in` but writes to a distinct `color_out` node.
-//! The intermediate `temp_blur` is also a separate RDG transient resource.
-//! No resource node is both read and written -- the DAG remains acyclic.
-//!
 //! # Integration
 //!
-//! Must come **after** `TransparentPass` and **before** `BloomPass` in the
-//! `HighFidelity` render path.  The Feature only calls `add_to_graph` when
-//! SSS is enabled — zero cost when disabled.
+//! Must come **after** `OpaquePass` and **before** the Skybox/MSAA-Sync
+//! stage in the `HighFidelity` render path.  The Feature only calls
+//! `add_to_graph` when SSS is enabled — zero cost when disabled.
 //!
 //! # GPU Resources
 //!
@@ -285,14 +279,25 @@ impl SssssFeature {
     }
 
     /// Build the ephemeral pass node and insert it into the graph.
-    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
+    ///
+    /// All inputs are explicitly wired — no blackboard lookups.
+    /// The pass modifies `scene_color` in-place (read + write).
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        scene_color: TextureNodeId,
+        scene_depth: TextureNodeId,
+        scene_normals: TextureNodeId,
+        feature_id: TextureNodeId,
+        specular_tex: TextureNodeId,
+    ) {
         let node = SssssPassNode {
-            scene_color: TextureNodeId(0),
+            scene_color,
             temp_blur: TextureNodeId(0),
-            depth_in: TextureNodeId(0),
-            normal_in: TextureNodeId(0),
-            feature_id: TextureNodeId(0),
-            specular_tex: TextureNodeId(0),
+            depth_in: scene_depth,
+            normal_in: scene_normals,
+            feature_id,
+            specular_tex,
             horizontal_pipeline: self.horizontal_pipeline.expect("SssssFeature not prepared"),
             vertical_pipeline: self.vertical_pipeline.expect("SssssFeature not prepared"),
             bind_group_layout: self.bind_group_layout.clone().unwrap(),
@@ -309,7 +314,7 @@ impl SssssFeature {
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 struct SssssPassNode {
-    // --- RDG Resource Slots (filled in setup) ----------------------
+    // ─── RDG Resource Slots (explicit wiring from add_to_graph) ───────
     scene_color: TextureNodeId,
     temp_blur: TextureNodeId,
     depth_in: TextureNodeId,
@@ -334,7 +339,7 @@ impl PassNode for SssssPassNode {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Producer: create the temporary blur texture.
+        // Internal scratch texture for the horizontal blur.
         let (w, h) = builder.global_resolution();
         let hdr_format = builder.frame_config().hdr_format;
         let desc = RdgTextureDesc::new_2d(
@@ -345,13 +350,15 @@ impl PassNode for SssssPassNode {
         );
         self.temp_blur = builder.create_texture("SSSSS_Temp", desc);
 
-        // Consumer: wire upstream resources.
-        self.scene_color = builder.write_blackboard("Scene_Color_HDR");
+        // In-place read + write on scene color.
+        builder.write_texture(self.scene_color);
         builder.read_texture(self.scene_color);
-        self.depth_in = builder.read_blackboard("Scene_Depth");
-        self.normal_in = builder.read_blackboard("Scene_Normals");
-        self.feature_id = builder.read_blackboard("Feature_ID");
-        self.specular_tex = builder.read_blackboard("Specular_MRT");
+
+        // Upstream inputs.
+        builder.read_texture(self.depth_in);
+        builder.read_texture(self.normal_in);
+        builder.read_texture(self.feature_id);
+        builder.read_texture(self.specular_tex);
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
