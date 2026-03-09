@@ -37,6 +37,7 @@ use super::types::TextureNodeId;
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
+use crate::renderer::graph::rdg::types::RdgTextureDesc;
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
 };
@@ -154,8 +155,24 @@ impl MsaaSyncFeature {
         &self,
         rdg: &mut RenderGraph,
         src_hdr: TextureNodeId,
-        dst_msaa: TextureNodeId,
-    ) {
+    ) -> TextureNodeId {
+        let msaa_color_desc = RdgTextureDesc::new(
+            rdg.frame_config().width, 
+            rdg.frame_config().height, 
+            1, 
+            1, 
+            rdg.frame_config().msaa_samples,
+            wgpu::TextureDimension::D2,
+            HDR_TEXTURE_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT,
+        );
+
+        let dst_msaa = rdg.register_resource(
+            "Scene_Color_MSAA_Sync", 
+            msaa_color_desc, 
+            false
+        );
+
         let node = MsaaSyncPassNode {
             src_hdr,
             dst_msaa,
@@ -164,6 +181,7 @@ impl MsaaSyncFeature {
             bind_group_key: None,
         };
         rdg.add_pass(Box::new(node));
+        dst_msaa
     }
 }
 

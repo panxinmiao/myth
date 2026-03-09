@@ -294,7 +294,7 @@ impl<'a> FrameComposer<'a> {
         // Transparent) render into dedicated multi-sampled surfaces.  The
         // single-sample Scene_Color_HDR / Scene_Depth remain untouched for
         // screen-space effects (SSAO, SSSSS) and post-processing.
-        let (active_color, active_depth, opaque_resolve, transparent_resolve) = if is_msaa {
+        let (mut active_color, active_depth, opaque_resolve, transparent_resolve) = if is_msaa {
             let msaa_color_desc = RdgTextureDesc::new(
                 width, height, 1, 1, msaa_samples,
                 wgpu::TextureDimension::D2,
@@ -399,10 +399,9 @@ impl<'a> FrameComposer<'a> {
                 // SSSSS contributions.  Depth is intentionally not bound
                 // to preserve the per-sample geometry depth.
                 if is_msaa {
-                    self.ctx.rdg_msaa_sync_pass.add_to_graph(
+                    active_color = self.ctx.rdg_msaa_sync_pass.add_to_graph(
                         rdg,
                         scene_color,
-                        active_color,
                     );
                 }
             }
