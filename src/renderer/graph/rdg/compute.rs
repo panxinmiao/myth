@@ -800,8 +800,11 @@ impl IblComputeFeature {
     }
 
     /// Create an ephemeral [`IblPassNode`] and add it to the render graph.
-    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
-        rdg.add_pass(Box::new(IblPassNode));
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph, source: TextureSource) {
+        let node = IblPassNode {
+            _source: source
+        };
+        rdg.add_pass(Box::new(node));
     }
 }
 
@@ -811,7 +814,12 @@ impl IblComputeFeature {
 ///
 /// All IBL work is completed during [`IblComputeFeature::extract_and_prepare`];
 /// this node is a no-op placeholder so the graph stays consistent.
-pub struct IblPassNode;
+pub struct IblPassNode{
+    // todo: move logic from extract_and_prepare here and make this a real pass node that executes the compute work. 
+    // This would allow better integration with the graph (e.g. explicit dependencies) and remove the need for a separate command encoder and submission in extract_and_prepare.
+    // for now, ibl compute is a one-off special case, so it's not worth the refactor yet.
+    _source: TextureSource,
+}
 
 impl PassNode for IblPassNode {
     fn name(&self) -> &'static str {

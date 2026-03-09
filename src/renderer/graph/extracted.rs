@@ -232,6 +232,10 @@ impl ExtractedScene {
         }
     }
 
+    pub fn has_shadow_casters(&self) -> bool {
+        self.scene_variants.contains(SceneFeatures::HAS_SHADOWS)
+    }
+
     /// Extract all active render items (no frustum culling).
     ///
     /// Only performs lightweight validity checks:
