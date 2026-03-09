@@ -1463,6 +1463,7 @@ Automatic `From` conversions: `image::ImageError`, `gltf::Error`, `io::Error`, `
 |---------|---------|-------------|
 | `winit` | ✅ | Window management via winit |
 | `gltf` | ✅ | glTF 2.0 model loading |
+| `gltf-meshopt` | | Meshopt decompression for glTF `EXT_meshopt_compression`. Implicitly enables `gltf`. **Note:** requires LLVM/Clang toolchain when targeting WASM. |
 | `http` | ✅ | HTTP/network asset loading |
 
 ```toml

@@ -20,10 +20,16 @@ jobs:
       # Install Rust Toolchain
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
         
       # Cache dependencies to speed up build
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
+
+      # Install LLVM Toolchain
+      - name: Install LLVM Toolchain
+        run: sudo apt-get update && sudo apt-get install -y llvm clang
 
       # 1. Check if code compiles
       - name: Check
@@ -40,3 +46,7 @@ jobs:
       # 4. Check if documentation can be generated
       - name: Doc Check
         run: cargo doc --no-deps
+
+      # 5. Check WASM with Meshopt Feature
+      - name: Check WASM with Meshopt Feature
+        run: cargo check --target wasm32-unknown-unknown --features gltf-meshopt

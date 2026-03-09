@@ -9,15 +9,31 @@ if not exist "Cargo.toml" (
 )
 
 set EXAMPLE_NAME=%1
+
 if "%EXAMPLE_NAME%"=="" (
     echo Error: Example name required.
+    echo Usage: build_wasm.bat ^<example_name^> [debug^|release] [additional cargo flags...]
     exit /b 1
 )
 
-set MODE=%2
-if "%MODE%"=="" set MODE=release
+shift
 
-echo Building example '%EXAMPLE_NAME%' in %MODE% mode...
+set MODE=release
+if /I "%~1"=="debug" (
+    set MODE=debug
+    shift
+) else if /I "%~1"=="release" (
+    set MODE=release
+    shift
+)
+
+set "CARGO_ARGS="
+:loop
+if "%~1"=="" goto after_loop
+set "CARGO_ARGS=!CARGO_ARGS! %1"
+shift
+goto loop
+:after_loop
 
 REM 2. Define Paths
 set WASM_PATH=target\wasm32-unknown-unknown\%MODE%\examples\%EXAMPLE_NAME%.wasm
@@ -26,11 +42,14 @@ set OUTPUT_PKG_DIR=%WEB_ROOT%\pkg
 set OUTPUT_ASSETS_DIR=%WEB_ROOT%\assets
 set SOURCE_ASSETS_DIR=examples\assets
 
-REM 3. Cargo Build
-set CARGO_FLAGS=--target wasm32-unknown-unknown --example %EXAMPLE_NAME%
-if "%MODE%"=="release" set CARGO_FLAGS=%CARGO_FLAGS% --release
+echo Building example '%EXAMPLE_NAME%' in %MODE% mode...
 
-cargo build %CARGO_FLAGS%
+REM 3. Cargo Build
+set BUILD_FLAGS=--target wasm32-unknown-unknown --example %EXAMPLE_NAME%
+if "%MODE%"=="release" set BUILD_FLAGS=%BUILD_FLAGS% --release
+
+cargo build %BUILD_FLAGS% %CARGO_ARGS%
+
 if %ERRORLEVEL% neq 0 exit /b %ERRORLEVEL%
 
 REM 4. Generate js Bindings
