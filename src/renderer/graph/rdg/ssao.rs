@@ -40,6 +40,7 @@ use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
+use crate::resources::buffer::CpuBuffer;
 use crate::resources::ssao::{SsaoUniforms, generate_ssao_noise};
 use crate::resources::uniforms::WgslStruct;
 
@@ -362,14 +363,16 @@ impl SsaoFeature {
 
     /// Pre-RDG resource preparation: create layouts, noise texture, compile pipelines,
     /// build the static uniforms bind group (Group 2).
-    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext, uniforms_cpu_id: u64) {
+    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext, ssao_uniforms: &CpuBuffer<SsaoUniforms>) {
         // Persistent GPU resources: layouts, noise texture, pipelines.
         self.ensure_layouts(ctx.device);
         self.ensure_noise_texture(ctx.device, ctx.queue);
         self.ensure_pipelines(ctx);
 
+        ctx.resource_manager.ensure_buffer(ssao_uniforms);
+
         // Build Group 2 static BG (uniforms only) — rebuild on buffer identity change.
-        if let Some(g) = ctx.resource_manager.gpu_buffers.get(&uniforms_cpu_id) {
+        if let Some(g) = ctx.resource_manager.gpu_buffers.get(&ssao_uniforms.id()) {
             if self.uniforms_static_bg.is_none() || self.last_uniforms_buffer_id != g.id {
                 let layout = self.raw_uniforms_layout.as_ref().unwrap();
                 self.uniforms_static_bg =

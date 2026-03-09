@@ -331,7 +331,6 @@ impl Renderer {
             use crate::renderer::HDR_TEXTURE_FORMAT;
 
             let view_format = state.wgpu_ctx.surface_view_format;
-            let depth_format = state.wgpu_ctx.depth_format;
             let is_hf = state.wgpu_ctx.render_path.supports_post_processing();
             let scene_id_val = scene.id();
             let render_state_id = state.render_frame.render_state.id;
@@ -345,29 +344,6 @@ impl Renderer {
             let bloom_enabled = scene.bloom.enabled && is_hf;
             let fxaa_enabled = scene.fxaa.enabled && is_hf;
 
-            // GPU buffer uploads (before resource_manager enters ExtractContext)
-            let bg_uniforms_gpu_id =
-                state.resource_manager.ensure_buffer_id(&scene.background.uniforms);
-            let bg_uniforms_cpu_id = scene.background.uniforms.id();
-            let bg_mode = scene.background.mode.clone();
-
-            if bloom_enabled {
-                state
-                    .resource_manager
-                    .ensure_buffer(&scene.bloom.upsample_uniforms);
-                state
-                    .resource_manager
-                    .ensure_buffer(&scene.bloom.composite_uniforms);
-            }
-            if ssao_enabled {
-                state.resource_manager.ensure_buffer(&scene.ssao.uniforms);
-            }
-            state
-                .resource_manager
-                .ensure_buffer(&scene.tone_mapping.uniforms);
-            if let Some(lut_handle) = scene.tone_mapping.lut_texture {
-                state.resource_manager.prepare_texture(assets, lut_handle);
-            }
 
             let mut extract_ctx = ExtractContext {
                 device: &state.wgpu_ctx.device,
@@ -394,12 +370,10 @@ impl Renderer {
                 let color_format = if is_hf { HDR_TEXTURE_FORMAT } else { view_format };
                 state.rdg_skybox_pass.extract_and_prepare(
                     &mut extract_ctx,
-                    bg_mode,
-                    bg_uniforms_cpu_id,
-                    bg_uniforms_gpu_id,
-                    scene_id_val,
+                    &scene.background.mode,
+                    &scene.background.uniforms,
+                    global_state_key,
                     color_format,
-                    depth_format,
                 );
             }
 
@@ -411,7 +385,7 @@ impl Renderer {
                 if ssao_enabled {
                     state.rdg_ssao_pass.extract_and_prepare(
                         &mut extract_ctx,
-                        scene.ssao.uniforms.id(),
+                        &scene.ssao.uniforms,
                     );
                 }
 
@@ -420,8 +394,8 @@ impl Renderer {
                 if bloom_enabled {
                     state.rdg_bloom_pass.extract_and_prepare(
                         &mut extract_ctx,
-                        scene.bloom.upsample_uniforms.id(),
-                        scene.bloom.composite_uniforms.id(),
+                        &scene.bloom.upsample_uniforms,
+                        &scene.bloom.composite_uniforms,
                     );
                 }
 
@@ -429,9 +403,8 @@ impl Renderer {
                     &mut extract_ctx,
                     scene.tone_mapping.mode,
                     view_format,
-                    scene.tone_mapping.lut_texture.is_some(),
                     global_state_key,
-                    scene.tone_mapping.uniforms.id(),
+                    &scene.tone_mapping.uniforms,
                     scene.tone_mapping.lut_texture,
                 );
 

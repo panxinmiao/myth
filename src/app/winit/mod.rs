@@ -473,12 +473,12 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
                         let w = size.width.max(1);
                         let h = size.height.max(1);
                         engine.resize(w, h, scale_factor);
-                        log::info!("Resized to {}x{} after init", w, h);
+                        log::trace!("Resized to {}x{} after init", w, h);
                     }
 
                     self.engine = Some(engine);
                     self.user_state = Some(user_state);
-                    log::info!("Engine initialization completed, starting render loop");
+                    log::trace!("Engine initialization completed, starting render loop");
                 } else {
                     return;
                 }

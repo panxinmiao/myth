@@ -2,9 +2,10 @@
 //!
 //! Defines `BindGroup` resource types and the binding Trait
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
-use std::cell::Cell;
 
 use crate::renderer::core::builder::ResourceBuilder;
 use crate::renderer::graph::RenderState;
@@ -136,7 +137,7 @@ const BIND_GROUP_EVICTION_THRESHOLD: u64 = 10;
 /// textures are released by the transient pool.
 struct CachedBindGroup {
     bg: wgpu::BindGroup,
-    last_accessed_frame: Cell<u64>,
+    last_accessed_frame: AtomicU64,
 }
 
 /// Global bind group cache with frame-based TTL eviction.
@@ -186,7 +187,7 @@ impl GlobalBindGroupCache {
     #[must_use]
     pub fn get(&self, key: &BindGroupKey) -> Option<&wgpu::BindGroup> {
         if let Some(entry) = self.cache.get(key) {
-            entry.last_accessed_frame.set(self.current_frame);
+            entry.last_accessed_frame.store(self.current_frame, Ordering::Relaxed);
             Some(&entry.bg)
         } else {
             None
@@ -199,7 +200,7 @@ impl GlobalBindGroupCache {
             key,
             CachedBindGroup {
                 bg: bind_group,
-                last_accessed_frame: Cell::new(self.current_frame),
+                last_accessed_frame: AtomicU64::new(self.current_frame),
             },
         );
     }
@@ -213,9 +214,9 @@ impl GlobalBindGroupCache {
         let frame = self.current_frame;
         let entry = self.cache.entry(key).or_insert_with(|| CachedBindGroup {
             bg: factory(),
-            last_accessed_frame: Cell::new(frame),
+            last_accessed_frame: AtomicU64::new(frame),
         });
-        entry.last_accessed_frame.set(frame);
+        entry.last_accessed_frame.store(frame, Ordering::Relaxed);
         &entry.bg
     }
 
@@ -238,7 +239,7 @@ impl GlobalBindGroupCache {
         let threshold = self.current_frame.saturating_sub(BIND_GROUP_EVICTION_THRESHOLD);
         let before = self.cache.len();
         self.cache
-            .retain(|_, entry| entry.last_accessed_frame.get() >= threshold);
+            .retain(|_, entry| entry.last_accessed_frame.load(Ordering::Relaxed) >= threshold);
         let evicted = before - self.cache.len();
         if evicted > 0 {
             log::debug!(
