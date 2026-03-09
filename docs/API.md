@@ -1137,17 +1137,18 @@ let settings = RendererSettings {
 | Path | Features | Use Case |
 |------|----------|----------|
 | `HighFidelity` | HDR RT, Bloom, ToneMapping, FXAA, SSAO, SSSSS | Full-quality rendering (default) |
-| `BasicForward { msaa_samples }` | Hardware MSAA, no post-processing | Lightweight / mobile / simple scenes |
+| `BasicForward` | Hardware MSAA, no post-processing | Lightweight / mobile / simple scenes |
 
 ```rust
 // Switch at runtime
 engine.renderer.set_render_path(RenderPath::HighFidelity);
-engine.renderer.set_render_path(RenderPath::BasicForward { msaa_samples: 4 });
+engine.renderer.set_render_path(RenderPath::BasicForward);
+engine.renderer.set_msaa_samples(4);
 
 // Query capabilities
 path.supports_post_processing();  // true for HighFidelity
 path.requires_z_prepass();        // true for HighFidelity
-path.msaa_samples();              // 1 for HighFidelity, configurable for BasicForward
+renderer.msaa_samples();          // independent of path
 ```
 
 #### Built-in Render Passes (15 total)

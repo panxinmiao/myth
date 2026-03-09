@@ -7,6 +7,7 @@ pub mod context;
 pub mod draw;
 pub mod fxaa;
 pub mod graph;
+pub mod msaa_sync;
 pub mod node;
 pub mod opaque;
 pub mod prepass;
