@@ -59,6 +59,18 @@ impl<'a> PassBuilder<'a> {
         self.write_texture(id)
     }
 
+    pub fn create_inner_transient_texture(
+        &mut self,
+        name: &'static str,
+        desc: super::types::RdgTextureDesc,
+    ) -> TextureNodeId {
+        let id = self.graph.register_inner_transient_resource(name, desc, false);
+        self.graph.resources[id.0 as usize].is_inner_transient = true;
+        self.graph.passes[self.pass_index].creates.push(id);
+        self.read_texture(id);
+        self.write_texture(id)
+    }
+
     /// Declares that this pass reads from the given texture resource.
     pub fn read_texture(&mut self, id: TextureNodeId) {
         self.graph.passes[self.pass_index].reads.push(id);

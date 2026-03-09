@@ -236,7 +236,7 @@ fn prepare_main_camera_commands(
                     material.alpha_mode() != AlphaMode::Blend && !material.use_transmission();
 
                 let is_specular_split = match wgpu_ctx.render_path {
-                    RenderPath::HighFidelity => {
+                    RenderPath::HighFidelity { .. } => {
                         is_opaque_item
                             && extracted_scene
                                 .scene_variants

@@ -201,7 +201,7 @@ impl AppHandler for SkyboxDemo {
             self.render_path = if self.render_path.supports_post_processing() {
                 RenderPath::BasicForward { msaa_samples: 1 }
             } else {
-                RenderPath::HighFidelity
+                RenderPath::HighFidelity { msaa_samples: 1 }
             };
             engine.renderer.set_render_path(self.render_path.clone());
             let path = if self.render_path.supports_post_processing() {

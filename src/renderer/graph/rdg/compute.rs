@@ -494,7 +494,7 @@ impl IblComputeFeature {
                     view: &dst_view,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,

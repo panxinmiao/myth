@@ -1,12 +1,25 @@
 //! RDG Transparent Render Pass
 //!
-//! Draws transparent objects to the HDR scene color buffer. Inherits both
+//! Draws transparent objects to the scene color buffer. Inherits both
 //! color and depth from prior passes (Opaque, Skybox) via `LoadOp::Load`.
+//!
+//! # MSAA Support
+//!
+//! When hardware MSAA is active in the HighFidelity path, the Composer
+//! passes multi-sampled `color_target` / `depth_target` IDs and an optional
+//! `resolve_target`.  This pass continues rendering into the same MSAA
+//! surface used by Opaque and Skybox, then resolves to the single-sample
+//! HDR buffer.  If this pass is the last user of the MSAA surface, the
+//! RDG lifetime system automatically deduces `StoreOp::Discard`, releasing
+//! the large multi-sampled allocation with zero VRAM bandwidth waste.
 //!
 //! # RDG Slots
 //!
-//! - `scene_color`: HDR color buffer (read + write, LoadOp::Load)
-//! - `scene_depth`: Depth buffer (read, LoadOp::Load)
+//! - `color_target`: Scene color buffer — `Scene_Color_HDR` or
+//!   `Scene_Color_MSAA` (read + write, LoadOp::Load)
+//! - `depth_target`: Scene depth buffer — `Scene_Depth` or
+//!   `Scene_Depth_MSAA` (read, LoadOp::Load)
+//! - `resolve_target`: Optional single-sample HDR to receive MSAA resolve
 //! - `transmission_tex`: Optional transmission texture (read, for screen bind group)
 //!
 //! # Draw Order
@@ -38,8 +51,17 @@ impl TransparentFeature {
         self.screen_info = Some(info);
     }
 
-    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        color_target: TextureNodeId,
+        depth_target: TextureNodeId,
+        resolve_target: Option<TextureNodeId>,
+    ) {
         let node = TransparentPassNode::new(
+            color_target,
+            depth_target,
+            resolve_target,
             self.screen_info.clone().expect("TransparentFeature: screen_info not set"),
         );
         rdg.add_pass(Box::new(node));
@@ -52,11 +74,17 @@ impl TransparentFeature {
 ///
 /// Draws `render_lists.transparent` with back-to-front sorting. Builds a
 /// screen bind group (group 3) containing the real transmission texture
-/// (if available) and SSAO view.
+/// (if available) and SSAO view.  When MSAA is active, this pass is
+/// typically the last user of `Scene_Color_MSAA` / `Scene_Depth_MSAA`,
+/// triggering automatic `StoreOp::Discard` via the RDG lifetime system.
 pub struct TransparentPassNode {
-    // ─── RDG Resource Slots (set by Composer) ──────────────────────
-    pub scene_color: TextureNodeId,
-    pub scene_depth: TextureNodeId,
+    // ─── RDG Resource Slots ────────────────────────────────────────
+    /// Primary color target (`Scene_Color_HDR` or `Scene_Color_MSAA`).
+    pub color_target: TextureNodeId,
+    /// Primary depth target (`Scene_Depth` or `Scene_Depth_MSAA`).
+    pub depth_target: TextureNodeId,
+    /// Optional single-sample HDR texture for MSAA resolve.
+    pub resolve_target: Option<TextureNodeId>,
     pub transmission_tex: TextureNodeId,
     pub ssao_tex: TextureNodeId,
 
@@ -71,10 +99,16 @@ pub struct TransparentPassNode {
 
 impl TransparentPassNode {
     #[must_use]
-    pub fn new(screen_info: ScreenBindGroupInfo) -> Self {
+    pub fn new(
+        color_target: TextureNodeId,
+        depth_target: TextureNodeId,
+        resolve_target: Option<TextureNodeId>,
+        screen_info: ScreenBindGroupInfo,
+    ) -> Self {
         Self {
-            scene_color: TextureNodeId(0),
-            scene_depth: TextureNodeId(0),
+            color_target,
+            depth_target,
+            resolve_target,
             transmission_tex: TextureNodeId(0),
             ssao_tex: TextureNodeId(0),
             has_transmission: false,
@@ -91,10 +125,18 @@ impl PassNode for TransparentPassNode {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        self.scene_color = builder.read_blackboard("Scene_Color_HDR");
+        // Primary color target — read + write (Load, then blend transparent).
+        builder.read_texture(self.color_target);
+        builder.write_texture(self.color_target);
 
-        builder.write_texture(self.scene_color);
-        self.scene_depth = builder.read_blackboard("Scene_Depth");
+        // Depth target — read-only for depth testing.
+        builder.read_texture(self.depth_target);
+
+        // Resolve target — declare write so the graph compiler allocates
+        // physical memory and tracks dependencies for downstream consumers.
+        if let Some(rt) = self.resolve_target {
+            builder.write_texture(rt);
+        }
 
         // Detect optional transmission resource.
         if let Some(tx) = builder.try_read_blackboard("Transmission_Tex") {
@@ -140,11 +182,16 @@ impl PassNode for TransparentPassNode {
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
-        // Auto-deduced ops: scene_color inherits from prior passes (Load),
-        // and is Stored if consumed downstream; scene_depth is read-only
-        // here and may be Discarded if this is its last use.
-        let color_att = ctx.get_color_attachment(self.scene_color, wgpu::Color::BLACK);
-        let depth_att = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
+        // Auto-deduced ops: color_target inherits from prior passes (Load),
+        // and is Discarded on last use or Stored for downstream; depth is
+        // read-only here.  The optional resolve_target receives the MSAA
+        // resolve at the end of the render pass.
+        let color_att = ctx.get_color_attachment(
+            self.color_target,
+            None,
+            self.resolve_target,
+        );
+        let depth_att = ctx.get_depth_stencil_attachment(self.depth_target, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("RDG Transparent Pass"),

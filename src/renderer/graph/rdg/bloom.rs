@@ -581,7 +581,6 @@ impl BloomFeature {
             comp_transient_layout: self.comp_transient_layout.clone().unwrap(),
 
             mip_render_views: Vec::new(),
-            mip_view_ids: Vec::new(),
             ds_transient_bgs: Vec::new(),
             us_transient_bgs: Vec::new(),
             comp_transient_bg: None,
@@ -635,8 +634,7 @@ pub struct BloomPassNode {
     comp_transient_layout: Tracked<wgpu::BindGroupLayout>,
 
     // ─── Per-Mip Render Views (resolved in prepare) ────────────────
-    mip_render_views: Vec<wgpu::TextureView>,
-    mip_view_ids: Vec<u64>,
+    mip_render_views: Vec<Tracked<wgpu::TextureView>>,
 
     // ─── Transient BindGroups (Group 1, built in prepare) ──────────
     /// `ds_transient_bgs[i]` binds the input view for downsample step i.
@@ -660,7 +658,7 @@ impl BloomPassNode {
         let mip_count = ctx.views.get_texture(self.bloom_texture).mip_level_count();
 
         self.mip_render_views.clear();
-        self.mip_view_ids.clear();
+        // self.mip_view_ids.clear();
 
         for mip in 0..mip_count {
             let key = SubViewKey {
@@ -669,8 +667,8 @@ impl BloomPassNode {
                 ..Default::default()
             };
             let tracked = ctx.views.get_or_create_sub_view(self.bloom_texture, key);
-            self.mip_view_ids.push(tracked.id());
-            self.mip_render_views.push((**tracked).clone());
+            // self.mip_view_ids.push(tracked.id());
+            self.mip_render_views.push(tracked.clone());
         }
     }
 
@@ -710,11 +708,10 @@ impl BloomPassNode {
             self.ds_transient_bgs.push(first_ds_bg);
 
             for i in 0..(mip_count - 1) {
-                let mip_id = self.mip_view_ids[i];
                 let mip_view = &self.mip_render_views[i];
                 let layout = &self.ds_transient_layout;
 
-                let key = BindGroupKey::new(layout.id()).with_resource(mip_id);
+                let key = BindGroupKey::new(layout.id()).with_resource(mip_view.id());
                 let bg = ctx
                     .global_bind_group_cache
                     .get_or_create(key, || {
@@ -735,11 +732,10 @@ impl BloomPassNode {
             self.us_transient_bgs.clear();
             for i in 0..(mip_count - 1) {
                 let source_mip = i + 1;
-                let mip_id = self.mip_view_ids[source_mip];
                 let mip_view = &self.mip_render_views[source_mip];
                 let layout = &self.us_transient_layout;
 
-                let key = BindGroupKey::new(layout.id()).with_resource(mip_id);
+                let key = BindGroupKey::new(layout.id()).with_resource(mip_view.id());
                 let bg = ctx
                     .global_bind_group_cache
                     .get_or_create(key, || {
@@ -764,12 +760,12 @@ impl BloomPassNode {
 
         // ─── Composite transient BG ───────────────────────────────
         if needs_full_rebuild || self.comp_transient_bg.is_none() {
-            let bloom_view_id = self.mip_view_ids[0];
+            let bloom_view = &self.mip_render_views[0];
             let layout = &self.comp_transient_layout;
 
             let key = BindGroupKey::new(layout.id())
                 .with_resource(input_view_id)
-                .with_resource(bloom_view_id);
+                .with_resource(bloom_view.id());
 
             let bg = ctx
                 .global_bind_group_cache
@@ -785,7 +781,7 @@ impl BloomPassNode {
                             wgpu::BindGroupEntry {
                                 binding: 1,
                                 resource: wgpu::BindingResource::TextureView(
-                                    &self.mip_render_views[0],
+                                    bloom_view,
                                 ),
                             },
                         ],
@@ -880,7 +876,7 @@ impl PassNode for BloomPassNode {
                     view: &self.mip_render_views[i],
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
+                        load: wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),
                         store: wgpu::StoreOp::Store,
                     },
                     depth_slice: None,
@@ -927,19 +923,13 @@ impl PassNode for BloomPassNode {
         // =====================================================================
         // Phase 3: Composite — Original HDR + Bloom → Output
         // =====================================================================
-        let output_view = ctx.get_texture_view(self.output_tex);
+        // let output_view = ctx.get_texture_view(self.output_tex);
+
+        let rtt = ctx.get_color_attachment(self.output_tex, None, None);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Bloom Composite"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: output_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::BLACK),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
+            color_attachments: &[rtt],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,

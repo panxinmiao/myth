@@ -507,7 +507,7 @@ impl PassNode for SkyboxPassNode {
 
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
-        let color_att = ctx.get_color_attachment(self.scene_color, wgpu::Color::BLACK);
+        let color_att = ctx.get_color_attachment(self.scene_color, None, None);
         let depth_att = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {

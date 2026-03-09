@@ -247,6 +247,10 @@ impl<'a> FrameComposer<'a> {
         // Only the swapchain surface is truly external.
         // Scene colour and depth are transient — owned and aliased by the RDG.
 
+        let is_high_fidelity = self.ctx.wgpu_ctx.render_path.supports_post_processing();
+        let msaa_samples = self.ctx.wgpu_ctx.msaa_samples;
+        let is_msaa = msaa_samples > 1 && is_high_fidelity;
+
         let hdr_desc = RdgTextureDesc::new_2d(
             width,
             height,
@@ -256,12 +260,16 @@ impl<'a> FrameComposer<'a> {
                 | wgpu::TextureUsages::COPY_SRC,
         );
 
+        // Scene_Depth is always single-sample in HighFidelity (Prepass +
+        // SSAO + SSSSS all require a single-sample depth).  BasicForward
+        // uses the configured sample count directly.
+        let depth_sample_count = if is_high_fidelity { 1 } else { msaa_samples };
         let depth_desc = RdgTextureDesc::new(
             width,
             height,
             1,
             1,
-            self.ctx.wgpu_ctx.msaa_samples,
+            depth_sample_count,
             wgpu::TextureDimension::D2,
             self.ctx.wgpu_ctx.depth_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
@@ -280,9 +288,41 @@ impl<'a> FrameComposer<'a> {
         let scene_color = rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
         let scene_depth = rdg.register_resource("Scene_Depth", depth_desc, false);
 
+        // ── 2a-bis. MSAA intermediates (HighFidelity only) ──────────────
+        // When hardware MSAA is active, scene-drawing passes (Opaque, Skybox,
+        // Transparent) render into dedicated multi-sampled surfaces.  The
+        // single-sample Scene_Color_HDR / Scene_Depth remain untouched for
+        // screen-space effects (SSAO, SSSSS) and post-processing.
+        let (active_color, active_depth, opaque_resolve, transparent_resolve) = if is_msaa {
+            let msaa_color_desc = RdgTextureDesc::new(
+                width, height, 1, 1, msaa_samples,
+                wgpu::TextureDimension::D2,
+                HDR_TEXTURE_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT,
+            );
+            let msaa_depth_desc = RdgTextureDesc::new(
+                width, height, 1, 1, msaa_samples,
+                wgpu::TextureDimension::D2,
+                self.ctx.wgpu_ctx.depth_format,
+                wgpu::TextureUsages::RENDER_ATTACHMENT,
+            );
+
+            let msaa_color = rdg.register_resource("Scene_Color_MSAA", msaa_color_desc, false);
+            let msaa_depth = rdg.register_resource("Scene_Depth_MSAA", msaa_depth_desc, false);
+
+            // Opaque resolves to Scene_Color_HDR for downstream reads
+            // (SSSSS, TransmissionCopy).  Transparent performs the final
+            // resolve; the RDG lifetime system will Discard the MSAA
+            // surfaces at that point.
+            (msaa_color, msaa_depth, Some(scene_color), Some(scene_color))
+        } else {
+            // No MSAA — scene passes write directly to Scene_Color_HDR and
+            // Scene_Depth.
+            (scene_color, scene_depth, None, None)
+        };
+
         // ── 2b. Scene Configuration ────────────────────────────────────
 
-        let is_high_fidelity = self.ctx.wgpu_ctx.render_path.supports_post_processing();
         let ssao_enabled = self.ctx.scene.ssao.enabled && is_high_fidelity;
         let needs_feature_id = is_high_fidelity
             && (self.ctx.scene.screen_space.enable_sss || self.ctx.scene.screen_space.enable_ssr);
@@ -312,47 +352,64 @@ impl<'a> FrameComposer<'a> {
             // HighFidelity pipeline: separate passes for opaque, skybox,
             // transparent with HDR targets and post-processing chain.
 
-            // Prepass — creates Scene_Depth (write), Scene_Normals, Feature_ID
+            // Prepass — writes Scene_Depth (single-sample), Scene_Normals,
+            // Feature_ID.  When MSAA is active the prepass still runs at
+            // single-sample resolution to feed SSAO and SSSSS; Opaque will
+            // re-draw depth into Scene_Depth_MSAA.  When no screen-space
+            // effects need the prepass, the RDG dead-pass culler will
+            // automatically remove it.
             self.ctx
                 .rdg_prepass
                 .add_to_graph(rdg, needs_normal, needs_feature_id);
 
-            // SSAO
+            // SSAO — reads single-sample Scene_Depth from the prepass.
             if ssao_enabled {
-                self.ctx.rdg_ssao_pass.add_to_graph(
-                    rdg,
-                );
+                self.ctx.rdg_ssao_pass.add_to_graph(rdg);
             }
 
-            // Opaque — writes Scene_Color_HDR, Scene_Depth; reads SSAO
+            // Opaque — writes active_color + active_depth; reads SSAO.
+            // When MSAA is active: has_prepass = false (Early-Z from the
+            // single-sample prepass does not apply to the MSAA depth).
+            let opaque_has_prepass = !is_msaa;
             self.ctx.rdg_opaque_pass.add_to_graph(
                 rdg,
-                true, // has_prepass in HighFidelity
+                active_color,
+                active_depth,
+                opaque_has_prepass,
                 self.ctx.extracted_scene.background.clear_color(),
                 needs_specular,
+                opaque_resolve,
             );
 
-            // SSSSS — screen-space subsurface scattering
+            // SSSSS — reads single-sample Scene_Color_HDR (post-resolve).
             if needs_specular {
                 self.ctx.rdg_sssss_pass.add_to_graph(rdg);
             }
 
-            // Skybox (conditional)
+            // Skybox — continues in the same MSAA (or non-MSAA) context.
             if needs_skybox {
                 self.ctx
                     .rdg_skybox_pass
-                    .add_to_graph(rdg, scene_color, scene_depth);
+                    .add_to_graph(rdg, active_color, active_depth);
             }
 
-            // Transmission Copy — creates Transmission_Tex
+            // Transmission Copy — reads single-sample Scene_Color_HDR.
             if has_transmission {
                 self.ctx
                     .rdg_transmission_copy_pass
                     .add_to_graph(rdg, true);
             }
 
-            // Transparent — reads color, depth, transmission, ssao via blackboard
-            self.ctx.rdg_transparent_pass.add_to_graph(rdg);
+            // Transparent — final scene-drawing pass in the MSAA context.
+            // If MSAA, this resolve produces the definitive Scene_Color_HDR
+            // for the post-processing chain.  The RDG lifetime system will
+            // Discard the MSAA surfaces at this point.
+            self.ctx.rdg_transparent_pass.add_to_graph(
+                rdg,
+                active_color,
+                active_depth,
+                transparent_resolve,
+            );
 
             // ── Before-Post-Process Hooks ──────────────────────────────
             for (stage, hook) in &mut self.hooks {

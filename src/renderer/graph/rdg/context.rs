@@ -251,19 +251,33 @@ impl<'a> RdgExecuteContext<'a> {
     /// - **`StoreOp`**: `Discard` when this pass is the last consumer
     ///   **and** the resource is not external; `Store` otherwise.
     ///
-    /// Returns `None` if the resource was culled (no physical allocation),
-    /// enabling dynamic MRT construction without panics.
+    /// The optional `resolve_target` specifies a single-sample texture that
+    /// receives the hardware MSAA resolve at the end of the render pass.
+    /// When provided, the target's physical view is resolved via the graph;
+    /// if the target was culled (no allocation), `resolve_target` is silently
+    /// ignored.  Crucially, the primary attachment's `StoreOp` is **not**
+    /// altered by the presence of a resolve target — it remains governed
+    /// purely by the resource's lifetime (`last_use`), ensuring that
+    /// multi-pass MSAA pipelines can keep the multi-sampled surface alive
+    /// across passes (Store) or discard it at the final use (Discard).
+    ///
+    /// Returns `None` if the primary resource was culled (no physical
+    /// allocation), enabling dynamic MRT construction without panics.
     pub fn get_color_attachment(
         &self,
         id: TextureNodeId,
-        clear_color: wgpu::Color,
+        clear_color: Option<wgpu::Color>,
+        resolve_target: Option<TextureNodeId>,
     ) -> Option<wgpu::RenderPassColorAttachment<'_>> {
         let view = self.try_get_texture_view(id)?;
         let res = &self.resources[id.0 as usize];
         let ti = self.current_timeline_index;
 
-        let load = if res.first_use == ti {
-            wgpu::LoadOp::Clear(clear_color)
+        let load = if res.first_use == ti && !res.is_external {
+            match clear_color {
+                Some(color) => wgpu::LoadOp::Clear(color),
+                None => wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),
+            }
         } else {
             wgpu::LoadOp::Load
         };
@@ -274,9 +288,11 @@ impl<'a> RdgExecuteContext<'a> {
             wgpu::StoreOp::Store
         };
 
+        let resolve_view = resolve_target.and_then(|rt| self.try_get_texture_view(rt));
+
         Some(wgpu::RenderPassColorAttachment {
             view,
-            resolve_target: None,
+            resolve_target: resolve_view,
             ops: wgpu::Operations { load, store },
             depth_slice: None,
         })

@@ -505,8 +505,6 @@ impl Renderer {
     }
 
     /// Returns the effective MSAA sample count.
-    ///
-    /// Always returns **1** in [`RenderPath::HighFidelity`] mode.
     #[inline]
     pub fn msaa_samples(&self) -> u32 {
         self.settings.msaa_samples()
@@ -514,19 +512,18 @@ impl Renderer {
 
     /// Sets the MSAA sample count at runtime.
     ///
-    /// This is only meaningful in [`RenderPath::BasicForward`] mode. In
-    /// [`RenderPath::HighFidelity`] mode the call is ignored and a warning
-    /// is logged — use FXAA (or future TAA) for anti-aliasing instead.
+    /// Works for both [`RenderPath::BasicForward`] and
+    /// [`RenderPath::HighFidelity`].  In HighFidelity mode, setting
+    /// `msaa_samples > 1` trades Depth-Prepass Early-Z savings for
+    /// hardware multi-sample edge quality.
     ///
     /// Common values: 1 (disabled), 4, 8.
     pub fn set_msaa_samples(&mut self, samples: u32) {
-        match &self.settings.path {
+        let samples = samples.clamp(1, 8);
+        match &mut self.settings.path {
             RenderPath::BasicForward { msaa_samples } => {
                 if *msaa_samples != samples {
-                    let samples = samples.clamp(1, 8);
-                    self.settings.path = RenderPath::BasicForward {
-                        msaa_samples: samples,
-                    };
+                    *msaa_samples = samples;
                     if let Some(state) = &mut self.context {
                         state.wgpu_ctx.msaa_samples = samples;
                         state.wgpu_ctx.render_path = self.settings.path;
@@ -534,12 +531,14 @@ impl Renderer {
                     }
                 }
             }
-            RenderPath::HighFidelity => {
-                if samples != 1 {
-                    log::warn!(
-                        "set_msaa_samples({samples}) ignored: hardware MSAA is disabled in \
-                         HighFidelity mode. Use FXAA for anti-aliasing."
-                    );
+            RenderPath::HighFidelity { msaa_samples } => {
+                if *msaa_samples != samples {
+                    *msaa_samples = samples;
+                    if let Some(state) = &mut self.context {
+                        state.wgpu_ctx.msaa_samples = samples;
+                        state.wgpu_ctx.render_path = self.settings.path;
+                        state.wgpu_ctx.pipeline_settings_version += 1;
+                    }
                 }
             }
         }
