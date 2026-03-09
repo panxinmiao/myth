@@ -158,7 +158,11 @@ features = ["links"]
 [features]
 default = ["winit", "gltf", "http"]
 winit = ["dep:winit"]
-gltf = ["dep:gltf", "dep:meshopt"]
+gltf = ["dep:gltf"]
+# Enable meshopt decompression for glTF models using EXT_meshopt_compression.
+# Note: This pulls in the meshopt C library, which requires an LLVM/Clang
+# toolchain when compiling for WASM targets.
+gltf-meshopt = ["gltf", "dep:meshopt"]
 http = ["dep:reqwest", "dep:url"]
 
 [lints.rust]

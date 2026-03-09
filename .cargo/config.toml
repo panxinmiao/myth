@@ -1,0 +1,10 @@
+# Only applies when compiling for the WASM target
+[target.wasm32-unknown-unknown]
+# Use clang as the C/C++ compiler for the wasm32 target
+ar = "llvm-ar"
+linker = "rust-lld"
+
+[env]
+# Forces the C/C++ compiler for the WASM target to be clang (requires LLVM installed)
+CC_wasm32_unknown_unknown = "clang"
+CXX_wasm32_unknown_unknown = "clang++"

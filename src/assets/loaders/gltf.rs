@@ -16,6 +16,7 @@ use crate::resources::{
 use futures::future::try_join_all;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
 use gltf::accessor::{DataType, Dimensions};
+#[cfg(feature = "gltf-meshopt")]
 use gltf::json::extensions::buffer::{MeshoptCompressionFilter, MeshoptCompressionMode};
 use serde_json::Value;
 use smallvec::SmallVec;
@@ -211,14 +212,29 @@ fn patch_json_value(root: &mut Value) -> bool {
     changed
 }
 
-/// Builds logical buffers by decompressing `EXT_meshopt_compression` data in-place.
+/// Builds logical buffers by decompressing `EXT_meshopt_compression` data in-place
+/// (when the `gltf-meshopt` feature is enabled).
 ///
-/// Scans all buffer views for the meshopt extension, decodes compressed vertex/index
-/// data using the meshopt C FFI, applies post-decode filters (Octahedral, Quaternion,
-/// Exponential), and writes the results to the correct logical offsets. The returned
-/// buffers can be consumed by both the raw-byte geometry pipeline and the `gltf::Reader`
-/// animation pipeline transparently.
-fn build_logical_buffers(gltf: &gltf::Gltf, raw_buffers: &[Vec<u8>]) -> Vec<Vec<u8>> {
+/// Scans all buffer views for the meshopt extension. When the `gltf-meshopt` feature
+/// is active, decodes compressed vertex/index data using the meshopt C FFI, applies
+/// post-decode filters (Octahedral, Quaternion, Exponential), and writes the results
+/// to the correct logical offsets.
+///
+/// # Graceful Degradation
+///
+/// If the `gltf-meshopt` feature is **not** enabled and a buffer view with meshopt
+/// compression is encountered, the function returns an [`AssetError::Format`] error
+/// with a user-friendly message explaining how to enable the feature. The engine
+/// remains running — only the current model load is aborted.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - A meshopt-compressed buffer view is found but the `gltf-meshopt` feature is
+///   disabled (graceful degradation).
+/// - A meshopt-compressed buffer view references an out-of-range source buffer.
+fn build_logical_buffers(gltf: &gltf::Gltf, raw_buffers: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
+    #[allow(unused_mut)] // mut is only needed when gltf-meshopt feature is enabled
     let mut logical = raw_buffers.to_vec();
 
     for view in gltf.views() {
@@ -226,143 +242,168 @@ fn build_logical_buffers(gltf: &gltf::Gltf, raw_buffers: &[Vec<u8>]) -> Vec<Vec<
             continue;
         };
 
-        let src_buffer_idx = ext.buffer.value();
-        let src_offset = ext.byte_offset.map_or(0, |v| v.0 as usize);
-        let src_length = ext.byte_length.0 as usize;
-        let stride = ext.byte_stride as usize;
-        let count = ext.count as usize;
-
-        let Some(src_buf) = raw_buffers.get(src_buffer_idx) else {
+        // ── Feature not enabled: graceful degradation ──────────────────
+        #[cfg(not(feature = "gltf-meshopt"))]
+        {
+            let _ = &ext; // suppress unused-variable warning
             log::error!(
-                "meshopt: buffer view {} references invalid source buffer {}",
-                view.index(),
-                src_buffer_idx
+                "Myth Engine: Attempted to load a model with EXT_meshopt_compression, \
+                 but the 'gltf-meshopt' feature is not enabled.\n\
+                 To fix this, enable the feature in your Cargo.toml:\n\
+                 \n\
+                 myth-engine = {{ version = \"*\", features = [\"gltf-meshopt\"] }}\n\
+                 \n\
+                 Note: Enabling this feature requires an LLVM/Clang toolchain for WASM builds."
             );
-            continue;
-        };
-
-        let src_end = src_offset + src_length;
-        if src_end > src_buf.len() {
-            log::error!(
-                "meshopt: buffer view {} source range {}..{} exceeds buffer length {}",
-                view.index(),
-                src_offset,
-                src_end,
-                src_buf.len()
-            );
-            continue;
+            return Err(crate::errors::AssetError::Format(
+                "Model requires EXT_meshopt_compression but the 'gltf-meshopt' feature is \
+                     not enabled. Enable it with: myth-engine = { features = [\"gltf-meshopt\"] }"
+                    .into(),
+            )
+            .into());
         }
-        let encoded = &src_buf[src_offset..src_end];
 
-        let decoded_size = count * stride;
-        let mut decoded = vec![0u8; decoded_size];
+        // ── Feature enabled: full meshopt decompression ────────────────
+        #[cfg(feature = "gltf-meshopt")]
+        {
+            let src_buffer_idx = ext.buffer.value();
+            let src_offset = ext.byte_offset.map_or(0, |v| v.0 as usize);
+            let src_length = ext.byte_length.0 as usize;
+            let stride = ext.byte_stride as usize;
+            let count = ext.count as usize;
 
-        let ok = match ext.mode {
-            MeshoptCompressionMode::Attributes => {
-                let rc = unsafe {
-                    meshopt::ffi::meshopt_decodeVertexBuffer(
-                        decoded.as_mut_ptr().cast(),
-                        count,
-                        stride,
-                        encoded.as_ptr(),
-                        encoded.len(),
-                    )
-                };
-                rc == 0
-            }
-            MeshoptCompressionMode::Triangles => {
-                let rc = unsafe {
-                    meshopt::ffi::meshopt_decodeIndexBuffer(
-                        decoded.as_mut_ptr().cast(),
-                        count,
-                        stride,
-                        encoded.as_ptr(),
-                        encoded.len(),
-                    )
-                };
-                rc == 0
-            }
-            MeshoptCompressionMode::Indices => {
-                let rc = unsafe {
-                    meshopt::ffi::meshopt_decodeIndexSequence(
-                        decoded.as_mut_ptr().cast(),
-                        count,
-                        stride,
-                        encoded.as_ptr(),
-                        encoded.len(),
-                    )
-                };
-                rc == 0
-            }
-        };
+            let Some(src_buf) = raw_buffers.get(src_buffer_idx) else {
+                log::error!(
+                    "meshopt: buffer view {} references invalid source buffer {}",
+                    view.index(),
+                    src_buffer_idx
+                );
+                continue;
+            };
 
-        if !ok {
-            log::error!(
-                "meshopt: failed to decode buffer view {} (mode={:?}, count={}, stride={})",
+            let src_end = src_offset + src_length;
+            if src_end > src_buf.len() {
+                log::error!(
+                    "meshopt: buffer view {} source range {}..{} exceeds buffer length {}",
+                    view.index(),
+                    src_offset,
+                    src_end,
+                    src_buf.len()
+                );
+                continue;
+            }
+            let encoded = &src_buf[src_offset..src_end];
+
+            let decoded_size = count * stride;
+            let mut decoded = vec![0u8; decoded_size];
+
+            let ok = match ext.mode {
+                MeshoptCompressionMode::Attributes => {
+                    let rc = unsafe {
+                        meshopt::ffi::meshopt_decodeVertexBuffer(
+                            decoded.as_mut_ptr().cast(),
+                            count,
+                            stride,
+                            encoded.as_ptr(),
+                            encoded.len(),
+                        )
+                    };
+                    rc == 0
+                }
+                MeshoptCompressionMode::Triangles => {
+                    let rc = unsafe {
+                        meshopt::ffi::meshopt_decodeIndexBuffer(
+                            decoded.as_mut_ptr().cast(),
+                            count,
+                            stride,
+                            encoded.as_ptr(),
+                            encoded.len(),
+                        )
+                    };
+                    rc == 0
+                }
+                MeshoptCompressionMode::Indices => {
+                    let rc = unsafe {
+                        meshopt::ffi::meshopt_decodeIndexSequence(
+                            decoded.as_mut_ptr().cast(),
+                            count,
+                            stride,
+                            encoded.as_ptr(),
+                            encoded.len(),
+                        )
+                    };
+                    rc == 0
+                }
+            };
+
+            if !ok {
+                log::error!(
+                    "meshopt: failed to decode buffer view {} (mode={:?}, count={}, stride={})",
+                    view.index(),
+                    ext.mode,
+                    count,
+                    stride
+                );
+                continue;
+            }
+
+            // Apply post-decode filter (in-place on the decoded buffer).
+            if let Some(filter) = ext.filter {
+                match filter {
+                    MeshoptCompressionFilter::None => {}
+                    MeshoptCompressionFilter::Octahedral => unsafe {
+                        meshopt::ffi::meshopt_decodeFilterOct(
+                            decoded.as_mut_ptr().cast(),
+                            count,
+                            stride,
+                        );
+                    },
+                    MeshoptCompressionFilter::Quaternion => unsafe {
+                        meshopt::ffi::meshopt_decodeFilterQuat(
+                            decoded.as_mut_ptr().cast(),
+                            count,
+                            stride,
+                        );
+                    },
+                    MeshoptCompressionFilter::Exponential => unsafe {
+                        meshopt::ffi::meshopt_decodeFilterExp(
+                            decoded.as_mut_ptr().cast(),
+                            count,
+                            stride,
+                        );
+                    },
+                }
+            }
+
+            // Write decompressed data at the logical offset described by the buffer view.
+            let dst_buffer_idx = view.buffer().index();
+            let dst_offset = view.offset();
+            let dst_end = dst_offset + decoded_size;
+
+            if dst_buffer_idx >= logical.len() {
+                logical.resize_with(dst_buffer_idx + 1, Vec::new);
+            }
+
+            let dst = &mut logical[dst_buffer_idx];
+            if dst_end > dst.len() {
+                dst.resize(dst_end, 0);
+            }
+            dst[dst_offset..dst_end].copy_from_slice(&decoded);
+
+            log::trace!(
+                "meshopt: decoded view {} -> buffer[{}][{}..{}] (mode={:?}, count={}, stride={})",
                 view.index(),
+                dst_buffer_idx,
+                dst_offset,
+                dst_end,
                 ext.mode,
                 count,
                 stride
             );
-            continue;
         }
-
-        // Apply post-decode filter (in-place on the decoded buffer).
-        if let Some(filter) = ext.filter {
-            match filter {
-                MeshoptCompressionFilter::None => {}
-                MeshoptCompressionFilter::Octahedral => unsafe {
-                    meshopt::ffi::meshopt_decodeFilterOct(
-                        decoded.as_mut_ptr().cast(),
-                        count,
-                        stride,
-                    );
-                },
-                MeshoptCompressionFilter::Quaternion => unsafe {
-                    meshopt::ffi::meshopt_decodeFilterQuat(
-                        decoded.as_mut_ptr().cast(),
-                        count,
-                        stride,
-                    );
-                },
-                MeshoptCompressionFilter::Exponential => unsafe {
-                    meshopt::ffi::meshopt_decodeFilterExp(
-                        decoded.as_mut_ptr().cast(),
-                        count,
-                        stride,
-                    );
-                },
-            }
-        }
-
-        // Write decompressed data at the logical offset described by the buffer view.
-        let dst_buffer_idx = view.buffer().index();
-        let dst_offset = view.offset();
-        let dst_end = dst_offset + decoded_size;
-
-        if dst_buffer_idx >= logical.len() {
-            logical.resize_with(dst_buffer_idx + 1, Vec::new);
-        }
-
-        let dst = &mut logical[dst_buffer_idx];
-        if dst_end > dst.len() {
-            dst.resize(dst_end, 0);
-        }
-        dst[dst_offset..dst_end].copy_from_slice(&decoded);
-
-        log::trace!(
-            "meshopt: decoded view {} -> buffer[{}][{}..{}] (mode={:?}, count={}, stride={})",
-            view.index(),
-            dst_buffer_idx,
-            dst_offset,
-            dst_end,
-            ext.mode,
-            count,
-            stride
-        );
     }
 
-    logical
+    Ok(logical)
 }
 
 /// Pads vertex data from an arbitrary stride to a 4-byte-aligned stride.
@@ -760,7 +801,7 @@ impl GltfLoader {
         // Pre-process: decompress all EXT_meshopt_compression buffer views and
         // reconstruct logical buffers that both geometry and animation pipelines
         // can consume transparently.
-        let logical_buffers = build_logical_buffers(gltf, buffers);
+        let logical_buffers = build_logical_buffers(gltf, buffers)?;
 
         self.load_textures_async(gltf, &logical_buffers).await?;
         self.load_materials(gltf)?;
