@@ -4,20 +4,19 @@ use super::types::TextureNodeId;
 /// Builder for declaring a pass's resource dependencies.
 ///
 /// Provides ergonomic APIs for creating, reading, and writing texture
-/// resources within the graph, as well as looking up shared resources
-/// by name via the graph's resource registry.
+/// resources within the graph.
 ///
-/// # Blackboard API
+/// # Explicit Wiring
 ///
-/// The "blackboard" is the graph's named resource registry.  Well-known
-/// resources (e.g. `"Scene_Color_HDR"`, `"Scene_Depth"`) are registered
-/// there by either the Composer or by producer passes.
+/// All cross-pass resource dependencies are expressed via explicit
+/// `TextureNodeId` parameters passed from `add_to_graph()` into the
+/// `PassNode` struct.  There is no longer a name-based blackboard
+/// lookup for mutable resources.
 ///
-/// - [`read_blackboard`](Self::read_blackboard) — read a required resource.
-/// - [`write_blackboard`](Self::write_blackboard) — write a required resource.
-/// - [`try_read_blackboard`](Self::try_read_blackboard) — read an optional resource.
-/// - [`create_and_export`](Self::create_and_export) — create a resource and
-///   publish it to the blackboard for downstream consumers.
+/// - [`create_texture`](Self::create_texture) — create an internal
+///   transient texture (e.g. scratch buffers) owned by this pass.
+/// - [`read_texture`](Self::read_texture) — declare a read dependency.
+/// - [`write_texture`](Self::write_texture) — declare a write dependency.
 ///
 /// # Frame Configuration
 ///
@@ -84,44 +83,4 @@ impl<'a> PassBuilder<'a> {
         self.graph.passes[self.pass_index].has_side_effect = true;
     }
 
-    // ─── Blackboard API (Semantic Resource Wiring) ───────────────────
-
-    /// Reads a **required** resource from the blackboard.
-    ///
-    /// Convenience for `find_resource(name).unwrap()` + `read_texture()`.
-    /// Panics if the resource has not been registered.
-    #[inline]
-    pub fn read_blackboard(&mut self, name: &str) -> TextureNodeId {
-        let id = self
-            .graph
-            .find_resource(name)
-            .unwrap_or_else(|| panic!("{name} must be registered before this pass"));
-        self.read_texture(id);
-        id
-    }
-
-    /// Writes a **required** resource from the blackboard.
-    ///
-    /// Convenience for `find_resource(name).unwrap()` + `write_texture()`.
-    /// Panics if the resource has not been registered.
-    #[inline]
-    pub fn write_blackboard(&mut self, name: &str) -> TextureNodeId {
-        let id = self
-            .graph
-            .find_resource(name)
-            .unwrap_or_else(|| panic!("{name} must be registered before this pass"));
-        self.write_texture(id);
-        id
-    }
-
-    /// Reads an **optional** resource from the blackboard.
-    ///
-    /// Returns `None` if the resource has not been registered.
-    /// If present, registers a read-dependency automatically.
-    #[inline]
-    pub fn try_read_blackboard(&mut self, name: &str) -> Option<TextureNodeId> {
-        let id = self.graph.find_resource(name)?;
-        self.read_texture(id);
-        Some(id)
-    }
 }

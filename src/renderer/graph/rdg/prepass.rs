@@ -7,11 +7,11 @@
 //!   cache and lightweight resource IDs.  Created by
 //!   `PrepassFeature::add_to_graph()`.
 //!
-//! # RDG Slots
+//! # RDG Slots (explicit wiring)
 //!
-//! - `scene_depth`: Scene depth buffer (write via blackboard)
-//! - `scene_normals`: Optional normal buffer (created via `create_and_export`)
-//! - `feature_id`: Optional feature-ID buffer (created via `create_and_export`)
+//! - `scene_depth`: Scene depth buffer (created & returned by `add_to_graph`)
+//! - `scene_normals`: Optional normal buffer (created & returned by `add_to_graph`)
+//! - `feature_id`: Optional feature-ID buffer (created & returned by `add_to_graph`)
 
 use rustc_hash::FxHashMap;
 
@@ -29,10 +29,21 @@ use crate::resources::material::{AlphaMode, Side};
 use crate::resources::screen_space::STENCIL_WRITE_MASK;
 
 /// Normal texture format — Rgba8Unorm ([-1,1] → [0,1] mapping).
-const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+pub(crate) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 
 /// Feature ID texture format — Rg8Uint.
-const FEATURE_ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Uint;
+pub(crate) const FEATURE_ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Uint;
+
+/// Outputs produced by the Prepass, returned to the Composer for
+/// explicit downstream wiring.
+pub struct PrepassOutputs {
+    /// Single-sample scene depth (written by the prepass).
+    pub scene_depth: TextureNodeId,
+    /// View-space normals (if screen-space effects require them).
+    pub scene_normals: Option<TextureNodeId>,
+    /// Feature-ID stencil mask (if SSS/SSR require it).
+    pub feature_id: Option<TextureNodeId>,
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Feature (long-lived, stored in RenderFeatures)
@@ -290,16 +301,71 @@ impl PrepassFeature {
         }
     }
 
-    /// Build the ephemeral pass node and insert it into the graph.
-    pub fn add_to_graph(&self, rdg: &mut RenderGraph, needs_normal: bool, needs_feature_id: bool) {
+    /// Build the ephemeral pass node, register resources, and insert it
+    /// into the graph.
+    ///
+    /// All shared resources (`Scene_Depth`, `Scene_Normals`, `Feature_ID`)
+    /// are created here so the Composer can wire them to downstream passes
+    /// via explicit [`TextureNodeId`] connections.
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        needs_normal: bool,
+        needs_feature_id: bool,
+    ) -> PrepassOutputs {
+        let fc = *rdg.frame_config();
+
+        // Single-sample scene depth (always created).
+        let depth_desc = RdgTextureDesc::new(
+            fc.width,
+            fc.height,
+            1,
+            1,
+            1,
+            wgpu::TextureDimension::D2,
+            fc.depth_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let scene_depth = rdg.register_resource("Scene_Depth", depth_desc, false);
+
+        let scene_normals = if needs_normal {
+            let desc = RdgTextureDesc::new_2d(
+                fc.width,
+                fc.height,
+                NORMAL_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            Some(rdg.register_resource("Scene_Normals", desc, false))
+        } else {
+            None
+        };
+
+        let feature_id = if needs_feature_id {
+            let desc = RdgTextureDesc::new_2d(
+                fc.width,
+                fc.height,
+                FEATURE_ID_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            Some(rdg.register_resource("Feature_ID", desc, false))
+        } else {
+            None
+        };
+
         let node = PrepassPassNode {
-            scene_depth: TextureNodeId(0),
-            scene_normals: TextureNodeId(0),
-            feature_id: TextureNodeId(0),
+            scene_depth,
+            scene_normals: scene_normals.unwrap_or(TextureNodeId(0)),
+            feature_id: feature_id.unwrap_or(TextureNodeId(0)),
             needs_normal,
             needs_feature_id,
         };
         rdg.add_pass(Box::new(node));
+
+        PrepassOutputs {
+            scene_depth,
+            scene_normals,
+            feature_id,
+        }
     }
 }
 
@@ -329,30 +395,17 @@ impl PassNode for PrepassPassNode {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Consumer: write the shared depth buffer.
-        self.scene_depth = builder.write_blackboard("Scene_Depth");
+        // Depth — always written.
+        builder.write_texture(self.scene_depth);
 
-        // Producer: conditionally create normals and feature-ID textures.
-        let (w, h) = builder.global_resolution();
-
+        // Normals — conditionally written.
         if self.needs_normal {
-            let desc = RdgTextureDesc::new_2d(
-                w,
-                h,
-                NORMAL_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            );
-            self.scene_normals = builder.create_texture("Scene_Normals", desc);
+            builder.write_texture(self.scene_normals);
         }
 
+        // Feature-ID — conditionally written.
         if self.needs_feature_id {
-            let desc = RdgTextureDesc::new_2d(
-                w,
-                h,
-                FEATURE_ID_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            );
-            self.feature_id = builder.create_texture("Feature_ID", desc);
+            builder.write_texture(self.feature_id);
         }
     }
 

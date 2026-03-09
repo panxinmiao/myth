@@ -8,15 +8,14 @@
 //!   Created by `SsaoFeature::add_to_graph()`.
 //!
 //! Implements production-grade SSAO within the RDG framework.
-//! The pass **creates** its own half-resolution AO output texture
-//! via `create_texture("SSAO_Output")` during `setup()`, and reads
-//! the depth and normal textures produced by the upstream Prepass.
+//! The output texture is registered by `add_to_graph()` and returned
+//! as a [`TextureNodeId`] for explicit downstream wiring.
 //!
-//! # RDG Slots
+//! # RDG Slots (explicit wiring)
 //!
-//! - `depth_tex`: Scene depth buffer (read, from Prepass)
-//! - `normal_tex`: Scene normal buffer (read, from Prepass)
-//! - `output_tex`: Blurred AO texture (created, half-res R8Unorm)
+//! - `depth_tex`: Scene depth buffer (input, from Prepass)
+//! - `normal_tex`: Scene normal buffer (input, from Prepass)
+//! - `output_tex`: Blurred AO texture (output, half-res R8Unorm)
 //!
 //! # Internal Sub-Passes
 //!
@@ -393,12 +392,30 @@ impl SsaoFeature {
         }
     }
 
-    /// Build the ephemeral pass node and insert it into the graph.
-    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
+    /// Build the ephemeral pass node, register the output resource, and
+    /// insert it into the graph.
+    ///
+    /// Returns the [`TextureNodeId`] of the half-resolution AO output for
+    /// explicit downstream wiring (Opaque, Transparent).
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        scene_depth: TextureNodeId,
+        scene_normals: TextureNodeId,
+    ) -> TextureNodeId {
+        let fc = *rdg.frame_config();
+        let output_desc = RdgTextureDesc::new_2d(
+            fc.width / 2,
+            fc.height / 2,
+            SSAO_TEXTURE_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+        let output_tex = rdg.register_resource("SSAO_Output", output_desc, false);
+
         let node = SsaoPassNode {
-            depth_tex: TextureNodeId(0),
-            normal_tex: TextureNodeId(0),
-            output_tex: TextureNodeId(0),
+            depth_tex: scene_depth,
+            normal_tex: scene_normals,
+            output_tex,
             internal_raw_tex: TextureNodeId(0),
 
             uniforms_static_bg: self
@@ -416,6 +433,7 @@ impl SsaoFeature {
             blur_bind_group_key: None,
         };
         rdg.add_pass(Box::new(node));
+        output_tex
     }
 }
 
@@ -430,7 +448,7 @@ impl SsaoFeature {
 /// Only assembles Group 1 (raw textures) and Group 0 (blur textures)
 /// transient bind groups during [`prepare`](PassNode::prepare).
 struct SsaoPassNode {
-    // ─── RDG Resource Slots (filled in setup via blackboard) ───────
+    // ─── RDG Resource Slots (explicit wiring from add_to_graph) ─────
     depth_tex: TextureNodeId,
     normal_tex: TextureNodeId,
     output_tex: TextureNodeId,
@@ -585,7 +603,10 @@ impl PassNode for SsaoPassNode {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Producer: create half-resolution AO output.
+        // Output: half-resolution AO (pre-registered in add_to_graph).
+        builder.write_texture(self.output_tex);
+
+        // Internal scratch texture for the raw SSAO pass.
         let (w, h) = builder.global_resolution();
         let desc = RdgTextureDesc::new_2d(
             w / 2,
@@ -593,13 +614,11 @@ impl PassNode for SsaoPassNode {
             wgpu::TextureFormat::R8Unorm,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        self.output_tex = builder.create_texture("SSAO_Output", desc.clone());
-
         self.internal_raw_tex = builder.create_texture("SSAO_Raw_Internal", desc);
 
-        // Consumer: read depth and normals from upstream passes.
-        self.depth_tex = builder.read_blackboard("Scene_Depth");
-        self.normal_tex = builder.read_blackboard("Scene_Normals");
+        // Inputs: depth and normals from the upstream Prepass.
+        builder.read_texture(self.depth_tex);
+        builder.read_texture(self.normal_tex);
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {

@@ -5,22 +5,20 @@
 //!
 //! # MSAA Support
 //!
-//! When hardware MSAA is active in the HighFidelity path, the Composer
-//! passes multi-sampled `color_target` / `depth_target` IDs and an optional
-//! `resolve_target`.  This pass continues rendering into the same MSAA
-//! surface used by Opaque and Skybox, then resolves to the single-sample
-//! HDR buffer.  If this pass is the last user of the MSAA surface, the
-//! RDG lifetime system automatically deduces `StoreOp::Discard`, releasing
-//! the large multi-sampled allocation with zero VRAM bandwidth waste.
+//! When hardware MSAA is active in the HighFidelity path, this pass
+//! continues rendering into the same MSAA surface used by Opaque and
+//! Skybox, then resolves to the single-sample HDR buffer.  If this pass
+//! is the last user of the MSAA surface, the RDG lifetime system
+//! automatically deduces `StoreOp::Discard`, releasing the large
+//! multi-sampled allocation with zero VRAM bandwidth waste.
 //!
-//! # RDG Slots
+//! # RDG Slots (explicit wiring)
 //!
-//! - `color_target`: Scene color buffer — `Scene_Color_HDR` or
-//!   `Scene_Color_MSAA` (read + write, LoadOp::Load)
-//! - `depth_target`: Scene depth buffer — `Scene_Depth` or
-//!   `Scene_Depth_MSAA` (read, LoadOp::Load)
+//! - `color_target`: Scene color buffer (read + write, LoadOp::Load)
+//! - `depth_target`: Scene depth buffer (read, LoadOp::Load)
 //! - `resolve_target`: Optional single-sample HDR to receive MSAA resolve
-//! - `transmission_tex`: Optional transmission texture (read, for screen bind group)
+//! - `transmission_tex`: Optional transmission texture (explicit input)
+//! - `ssao_tex`: Optional SSAO texture (explicit input)
 //!
 //! # Draw Order
 //!
@@ -57,11 +55,15 @@ impl TransparentFeature {
         color_target: TextureNodeId,
         depth_target: TextureNodeId,
         resolve_target: Option<TextureNodeId>,
+        transmission_tex: Option<TextureNodeId>,
+        ssao_tex: Option<TextureNodeId>,
     ) {
         let node = TransparentPassNode::new(
             color_target,
             depth_target,
             resolve_target,
+            transmission_tex,
+            ssao_tex,
             self.screen_info
                 .clone()
                 .expect("TransparentFeature: screen_info not set"),
@@ -80,7 +82,7 @@ impl TransparentFeature {
 /// typically the last user of `Scene_Color_MSAA` / `Scene_Depth_MSAA`,
 /// triggering automatic `StoreOp::Discard` via the RDG lifetime system.
 pub struct TransparentPassNode {
-    // ─── RDG Resource Slots ────────────────────────────────────────
+    // ─── RDG Resource Slots (explicit wiring from add_to_graph) ────
     /// Primary color target (`Scene_Color_HDR` or `Scene_Color_MSAA`).
     pub color_target: TextureNodeId,
     /// Primary depth target (`Scene_Depth` or `Scene_Depth_MSAA`).
@@ -90,9 +92,13 @@ pub struct TransparentPassNode {
     pub transmission_tex: TextureNodeId,
     pub ssao_tex: TextureNodeId,
 
-    // ─── Push Parameters ───────────────────────────────────────────
+    // ─── Push Parameters ─────────────────────────────────────────
     pub has_transmission: bool,
     pub ssao_enabled: bool,
+    /// Explicit SSAO input.
+    ssao_input: Option<TextureNodeId>,
+    /// Explicit transmission input.
+    transmission_input: Option<TextureNodeId>,
     // ─── Screen Bind Group Infrastructure ──────────────────────────
     screen_info: ScreenBindGroupInfo,
     // ─── Internal Cache ────────────────────────────────────────────
@@ -105,6 +111,8 @@ impl TransparentPassNode {
         color_target: TextureNodeId,
         depth_target: TextureNodeId,
         resolve_target: Option<TextureNodeId>,
+        transmission_tex: Option<TextureNodeId>,
+        ssao_tex: Option<TextureNodeId>,
         screen_info: ScreenBindGroupInfo,
     ) -> Self {
         Self {
@@ -113,8 +121,10 @@ impl TransparentPassNode {
             resolve_target,
             transmission_tex: TextureNodeId(0),
             ssao_tex: TextureNodeId(0),
-            has_transmission: false,
-            ssao_enabled: false,
+            has_transmission: transmission_tex.is_some(),
+            ssao_enabled: ssao_tex.is_some(),
+            ssao_input: ssao_tex,
+            transmission_input: transmission_tex,
             screen_info,
             screen_bind_group: None,
         }
@@ -140,20 +150,16 @@ impl PassNode for TransparentPassNode {
             builder.write_texture(rt);
         }
 
-        // Detect optional transmission resource.
-        if let Some(tx) = builder.try_read_blackboard("Transmission_Tex") {
+        // Transmission — explicit input wiring.
+        if let Some(tx) = self.transmission_input {
+            builder.read_texture(tx);
             self.transmission_tex = tx;
-            self.has_transmission = true;
-        } else {
-            self.has_transmission = false;
         }
 
-        // Detect optional SSAO resource.
-        if let Some(ssao) = builder.try_read_blackboard("SSAO_Output") {
+        // SSAO — explicit input wiring.
+        if let Some(ssao) = self.ssao_input {
+            builder.read_texture(ssao);
             self.ssao_tex = ssao;
-            self.ssao_enabled = true;
-        } else {
-            self.ssao_enabled = false;
         }
     }
 

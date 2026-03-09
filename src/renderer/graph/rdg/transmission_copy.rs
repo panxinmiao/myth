@@ -3,10 +3,10 @@
 //! Copies the current scene color to a transmission texture for use by
 //! transparent objects with refraction/transmission effects.
 //!
-//! # RDG Slots
+//! # RDG Slots (explicit wiring)
 //!
-//! - `scene_color`: HDR scene color (read via blackboard)
-//! - `transmission_tex`: Transmission output (created via `create_and_export`)
+//! - `scene_color`: HDR scene color (input)
+//! - `transmission_tex`: Transmission output (created & returned by `add_to_graph`)
 //!
 //! # Notes
 //!
@@ -30,13 +30,30 @@ impl TransmissionCopyFeature {
         Self
     }
 
-    pub fn add_to_graph(&self, rdg: &mut RenderGraph, active: bool) {
+    pub fn add_to_graph(
+        &self,
+        rdg: &mut RenderGraph,
+        scene_color: TextureNodeId,
+        active: bool,
+    ) -> TextureNodeId {
+        let fc = *rdg.frame_config();
+        let desc = RdgTextureDesc::new_2d(
+            fc.width,
+            fc.height,
+            fc.hdr_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_DST,
+        );
+        let transmission_tex = rdg.register_resource("Transmission_Tex", desc, false);
+
         let node = TransmissionCopyPassNode {
-            scene_color: TextureNodeId(0),
-            transmission_tex: TextureNodeId(0),
+            scene_color,
+            transmission_tex,
             active,
         };
         rdg.add_pass(Box::new(node));
+        transmission_tex
     }
 }
 
@@ -47,7 +64,7 @@ impl TransmissionCopyFeature {
 /// Copies scene color to the transmission texture and generates mipmaps.
 /// Conditionally skipped if no materials use Transmission this frame.
 pub struct TransmissionCopyPassNode {
-    // ─── RDG Resource Slots ────────────────────────────────────────
+    // ─── RDG Resource Slots (explicit wiring from add_to_graph) ────
     pub scene_color: TextureNodeId,
     pub transmission_tex: TextureNodeId,
 
@@ -56,38 +73,17 @@ pub struct TransmissionCopyPassNode {
     pub active: bool,
 }
 
-impl TransmissionCopyPassNode {
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            scene_color: TextureNodeId(0),
-            transmission_tex: TextureNodeId(0),
-            active: false,
-        }
-    }
-}
-
 impl PassNode for TransmissionCopyPassNode {
     fn name(&self) -> &'static str {
         "RDG_TransmissionCopy_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Producer: create the transmission copy destination texture.
-        let (w, h) = builder.global_resolution();
-        let hdr_format = builder.frame_config().hdr_format;
-        let desc = RdgTextureDesc::new_2d(
-            w,
-            h,
-            hdr_format,
-            wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_DST,
-        );
-        self.transmission_tex = builder.create_texture("Transmission_Tex", desc);
+        // Output: transmission texture (pre-registered in add_to_graph).
+        builder.write_texture(self.transmission_tex);
 
-        // Consumer: read the scene colour as copy source.
-        self.scene_color = builder.read_blackboard("Scene_Color_HDR");
+        // Input: scene colour as copy source.
+        builder.read_texture(self.scene_color);
     }
 
     fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
