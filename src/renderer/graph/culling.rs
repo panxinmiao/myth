@@ -100,7 +100,6 @@ pub fn cull_and_sort(
     );
 
     resource_manager.upload_model_buffer();
-    
 }
 
 // ============================================================================
@@ -167,7 +166,8 @@ fn prepare_main_camera_commands(
                 continue;
             }
 
-            let Some(gpu_world) = resource_manager.get_global_state(render_state_id, scene_id) else {
+            let Some(gpu_world) = resource_manager.get_global_state(render_state_id, scene_id)
+            else {
                 error!("CRITICAL: GpuWorld missing during iteration");
                 continue;
             };

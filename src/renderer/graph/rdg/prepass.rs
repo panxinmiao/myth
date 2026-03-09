@@ -291,12 +291,7 @@ impl PrepassFeature {
     }
 
     /// Build the ephemeral pass node and insert it into the graph.
-    pub fn add_to_graph(
-        &self,
-        rdg: &mut RenderGraph,
-        needs_normal: bool,
-        needs_feature_id: bool,
-    ) {
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph, needs_normal: bool, needs_feature_id: bool) {
         let node = PrepassPassNode {
             scene_depth: TextureNodeId(0),
             scene_normals: TextureNodeId(0),
@@ -370,23 +365,32 @@ impl PassNode for PrepassPassNode {
         // return None, naturally shrinking the MRT.
         let mut color_attachments: smallvec::SmallVec<
             [Option<wgpu::RenderPassColorAttachment>; 2],
-        > =  smallvec::SmallVec::with_capacity(2);
+        > = smallvec::SmallVec::with_capacity(2);
 
-        let normal_clear = wgpu::Color { r: 0.5, g: 0.5, b: 1.0, a: 0.0 };
+        let normal_clear = wgpu::Color {
+            r: 0.5,
+            g: 0.5,
+            b: 1.0,
+            a: 0.0,
+        };
         if self.needs_normal {
-            if let Some(att) = ctx.get_color_attachment(self.scene_normals, Some(normal_clear), None) {
+            if let Some(att) =
+                ctx.get_color_attachment(self.scene_normals, Some(normal_clear), None)
+            {
                 color_attachments.push(Some(att));
             }
         }
         if self.needs_feature_id {
-            if let Some(att) = ctx.get_color_attachment(self.feature_id, Some(wgpu::Color::TRANSPARENT), None) {
+            if let Some(att) =
+                ctx.get_color_attachment(self.feature_id, Some(wgpu::Color::TRANSPARENT), None)
+            {
                 color_attachments.push(Some(att));
             }
         }
 
         // ── Depth/stencil: manual construction for stencil-op support ───
         let dtt = if let Some(mut dtt) = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0) {
-             dtt.stencil_ops = if self.needs_feature_id {
+            dtt.stencil_ops = if self.needs_feature_id {
                 Some(wgpu::Operations {
                     load: wgpu::LoadOp::Clear(0),
                     store: wgpu::StoreOp::Store,
@@ -395,7 +399,7 @@ impl PassNode for PrepassPassNode {
                 None
             };
             Some(dtt)
-        }else{
+        } else {
             None
         };
 
@@ -408,12 +412,8 @@ impl PassNode for PrepassPassNode {
             multiview_mask: None,
         });
 
-        pass.set_bind_group(
-            0,
-            gpu_global_bind_group,
-            &[],
-        );
+        pass.set_bind_group(0, gpu_global_bind_group, &[]);
 
         submit_draw_commands(&mut pass, &ctx.baked_lists.prepass);
-        }
+    }
 }

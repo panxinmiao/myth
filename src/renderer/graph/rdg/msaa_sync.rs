@@ -120,13 +120,11 @@ impl MsaaSyncFeature {
 
             let key = FullscreenPipelineKey {
                 shader_hash,
-                color_targets: smallvec::smallvec![ColorTargetKey::from(
-                    wgpu::ColorTargetState {
-                        format: HDR_TEXTURE_FORMAT,
-                        blend: Some(wgpu::BlendState::REPLACE),
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }
-                )],
+                color_targets: smallvec::smallvec![ColorTargetKey::from(wgpu::ColorTargetState {
+                    format: HDR_TEXTURE_FORMAT,
+                    blend: Some(wgpu::BlendState::REPLACE),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })],
                 depth_stencil: None,
                 multisample: MultisampleKey::from(wgpu::MultisampleState {
                     count: msaa_samples,
@@ -151,27 +149,19 @@ impl MsaaSyncFeature {
     ///
     /// - `src_hdr`: single-sample `Scene_Color_HDR` (read).
     /// - `dst_msaa`: multi-sampled `Scene_Color_MSAA` (write).
-    pub fn add_to_graph(
-        &self,
-        rdg: &mut RenderGraph,
-        src_hdr: TextureNodeId,
-    ) -> TextureNodeId {
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph, src_hdr: TextureNodeId) -> TextureNodeId {
         let msaa_color_desc = RdgTextureDesc::new(
-            rdg.frame_config().width, 
-            rdg.frame_config().height, 
-            1, 
-            1, 
+            rdg.frame_config().width,
+            rdg.frame_config().height,
+            1,
+            1,
             rdg.frame_config().msaa_samples,
             wgpu::TextureDimension::D2,
             HDR_TEXTURE_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
 
-        let dst_msaa = rdg.register_resource(
-            "Scene_Color_MSAA_Sync", 
-            msaa_color_desc, 
-            false
-        );
+        let dst_msaa = rdg.register_resource("Scene_Color_MSAA_Sync", msaa_color_desc, false);
 
         let node = MsaaSyncPassNode {
             src_hdr,

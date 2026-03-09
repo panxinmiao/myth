@@ -1,4 +1,4 @@
-﻿//! SSAO Feature + Ephemeral PassNode
+//! SSAO Feature + Ephemeral PassNode
 //!
 //! - **`SsaoFeature`** (long-lived): owns pipelines, bind group layouts,
 //!   noise texture.  `extract_and_prepare()` compiles pipelines and uploads
@@ -363,7 +363,11 @@ impl SsaoFeature {
 
     /// Pre-RDG resource preparation: create layouts, noise texture, compile pipelines,
     /// build the static uniforms bind group (Group 2).
-    pub fn extract_and_prepare(&mut self, ctx: &mut ExtractContext, ssao_uniforms: &CpuBuffer<SsaoUniforms>) {
+    pub fn extract_and_prepare(
+        &mut self,
+        ctx: &mut ExtractContext,
+        ssao_uniforms: &CpuBuffer<SsaoUniforms>,
+    ) {
         // Persistent GPU resources: layouts, noise texture, pipelines.
         self.ensure_layouts(ctx.device);
         self.ensure_noise_texture(ctx.device, ctx.queue);
@@ -390,10 +394,7 @@ impl SsaoFeature {
     }
 
     /// Build the ephemeral pass node and insert it into the graph.
-    pub fn add_to_graph(
-        &self,
-        rdg: &mut RenderGraph,
-    ) {
+    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
         let node = SsaoPassNode {
             depth_tex: TextureNodeId(0),
             normal_tex: TextureNodeId(0),
@@ -595,9 +596,6 @@ impl PassNode for SsaoPassNode {
         self.output_tex = builder.create_texture("SSAO_Output", desc.clone());
 
         self.internal_raw_tex = builder.create_texture("SSAO_Raw_Internal", desc);
-        // Self-read: the raw AO texture is produced by sub-pass 1 and
-        // consumed by the blur sub-pass within this macro node.
-        builder.read_texture(self.internal_raw_tex);
 
         // Consumer: read depth and normals from upstream passes.
         self.depth_tex = builder.read_blackboard("Scene_Depth");
@@ -631,10 +629,9 @@ impl PassNode for SsaoPassNode {
         // Sub-Pass 1: Raw SSAO
         // =====================================================================
         {
-            
             // let rtt = ctx.get_color_attachment(self.internal_raw_tex, None, None);
             let raw_view = ctx.get_texture_view(self.internal_raw_tex);
-            
+
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SSAO Raw Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {

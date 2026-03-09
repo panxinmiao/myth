@@ -339,7 +339,6 @@ impl SkyboxFeature {
         global_state_key: (u32, u32),
         color_format: wgpu::TextureFormat,
     ) {
-
         self.ensure_layouts(ctx.device);
 
         let Some(variant) = SkyboxVariant::from_background(background_mode) else {
@@ -458,7 +457,8 @@ impl SkyboxFeature {
             depth_format: ctx.wgpu_ctx.depth_format,
             msaa_samples: ctx.wgpu_ctx.msaa_samples,
         };
-        self.current_pipeline = Some(self.get_or_create_pipeline(ctx, pipeline_key, global_state_key));
+        self.current_pipeline =
+            Some(self.get_or_create_pipeline(ctx, pipeline_key, global_state_key));
     }
 
     /// Create an ephemeral [`SkyboxPassNode`] and add it to the render graph.
@@ -500,9 +500,7 @@ impl PassNode for SkyboxPassNode {
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let (Some(pipeline_id), Some(bind_group)) =
-            (self.pipeline_id, &self.bind_group)
-        else {
+        let (Some(pipeline_id), Some(bind_group)) = (self.pipeline_id, &self.bind_group) else {
             return;
         };
 

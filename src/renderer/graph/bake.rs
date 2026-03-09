@@ -57,12 +57,7 @@ pub fn bake_render_lists<'a>(
         bake_main_commands(&render_lists.transparent, resource_manager, pipeline_cache);
 
     let prepass = if let Some(cfg) = &prepass_config {
-        bake_prepass_commands(
-            &render_lists.opaque,
-            resource_manager,
-            pipeline_cache,
-            cfg,
-        )
+        bake_prepass_commands(&render_lists.opaque, resource_manager, pipeline_cache, cfg)
     } else {
         Vec::new()
     };
@@ -73,14 +68,17 @@ pub fn bake_render_lists<'a>(
         pipeline_cache,
     );
 
-    let global_bind_group = &render_lists.gpu_global_bind_group.as_ref().expect("Global bind group not built!");
+    let global_bind_group = &render_lists
+        .gpu_global_bind_group
+        .as_ref()
+        .expect("Global bind group not built!");
 
     BakedRenderLists {
         opaque,
         transparent,
         prepass,
         shadow_queues,
-        global_bind_group
+        global_bind_group,
     }
 }
 
@@ -109,10 +107,7 @@ fn bake_main_commands<'a>(
             continue;
         };
 
-        let vertex_buffers: Vec<&wgpu::Buffer> = gpu_geom
-            .vertex_buffers
-            .iter()
-            .collect();
+        let vertex_buffers: Vec<&wgpu::Buffer> = gpu_geom.vertex_buffers.iter().collect();
 
         let index_buffer = gpu_geom
             .index_buffer
@@ -125,10 +120,7 @@ fn bake_main_commands<'a>(
             vertex_buffers,
             index_buffer,
             bind_group_1: Some(&gpu_mat.bind_group),
-            bind_group_2: (
-                &cmd.object_bind_group.bind_group,
-                cmd.dynamic_offset,
-            ),
+            bind_group_2: (&cmd.object_bind_group.bind_group, cmd.dynamic_offset),
             bind_group_3: None, // Set at the pass level
             stencil_reference: None,
             vertex_range: gpu_geom.draw_range.clone(),
@@ -154,11 +146,10 @@ fn bake_prepass_commands<'a>(
     let mut out = Vec::with_capacity(opaque_commands.len());
 
     for cmd in opaque_commands {
-        let Some(&prepass_pipeline_id) = cfg.local_cache.get(&(
-            cmd.pipeline_id,
-            cfg.needs_normal,
-            cfg.needs_feature_id,
-        )) else {
+        let Some(&prepass_pipeline_id) =
+            cfg.local_cache
+                .get(&(cmd.pipeline_id, cfg.needs_normal, cfg.needs_feature_id))
+        else {
             continue;
         };
 
@@ -171,10 +162,7 @@ fn bake_prepass_commands<'a>(
             continue;
         };
 
-        let vertex_buffers: Vec<&wgpu::Buffer> = gpu_geom
-            .vertex_buffers
-            .iter()
-            .collect();
+        let vertex_buffers: Vec<&wgpu::Buffer> = gpu_geom.vertex_buffers.iter().collect();
 
         let index_buffer = gpu_geom
             .index_buffer
@@ -193,10 +181,7 @@ fn bake_prepass_commands<'a>(
             vertex_buffers,
             index_buffer,
             bind_group_1: Some(&gpu_mat.bind_group),
-            bind_group_2: (
-                &cmd.object_bind_group.bind_group,
-                cmd.dynamic_offset,
-            ),
+            bind_group_2: (&cmd.object_bind_group.bind_group, cmd.dynamic_offset),
             bind_group_3: None,
             stencil_reference,
             vertex_range: gpu_geom.draw_range.clone(),
@@ -228,10 +213,7 @@ fn bake_shadow_queues<'a>(
                 continue;
             };
 
-            let vertex_buffers: Vec<&wgpu::Buffer> = gpu_geom
-                .vertex_buffers
-                .iter()
-                .collect();
+            let vertex_buffers: Vec<&wgpu::Buffer> = gpu_geom.vertex_buffers.iter().collect();
 
             let index_buffer = gpu_geom
                 .index_buffer
@@ -240,8 +222,7 @@ fn bake_shadow_queues<'a>(
 
             // Shadow sort key: pipeline ID in high bits, material bind group
             // in low bits — minimises both pipeline and bind-group switches.
-            let sort_key = (cmd.pipeline_id.0 as u64) << 32
-                | (gpu_mat.bind_group_id & 0xFFFF_FFFF);
+            let sort_key = (cmd.pipeline_id.0 as u64) << 32 | (gpu_mat.bind_group_id & 0xFFFF_FFFF);
 
             baked.push(DrawCommand {
                 sort_key,
@@ -249,10 +230,7 @@ fn bake_shadow_queues<'a>(
                 vertex_buffers,
                 index_buffer,
                 bind_group_1: Some(&gpu_mat.bind_group),
-                bind_group_2: (
-                    &cmd.object_bind_group.bind_group,
-                    cmd.dynamic_offset,
-                ),
+                bind_group_2: (&cmd.object_bind_group.bind_group, cmd.dynamic_offset),
                 bind_group_3: None,
                 stencil_reference: None,
                 vertex_range: gpu_geom.draw_range.clone(),

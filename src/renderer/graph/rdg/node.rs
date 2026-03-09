@@ -83,6 +83,9 @@ impl PassRecord {
     /// outside of the `add_pass` two-phase window).
     #[inline]
     pub fn get_pass_mut(&mut self) -> &mut dyn PassNode {
-        self.node.as_mut().expect("PassRecord node not set").as_mut()
+        self.node
+            .as_mut()
+            .expect("PassRecord node not set")
+            .as_mut()
     }
 }

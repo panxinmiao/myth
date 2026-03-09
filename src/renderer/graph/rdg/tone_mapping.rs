@@ -229,10 +229,7 @@ impl ToneMapFeature {
             }
         }
 
-        let gpu_buf = ctx
-            .resource_manager
-            .gpu_buffers
-            .get(&uniforms.id());
+        let gpu_buf = ctx.resource_manager.gpu_buffers.get(&uniforms.id());
 
         let gpu_buf = match gpu_buf {
             Some(g) => g,
@@ -266,9 +263,7 @@ impl ToneMapFeature {
             || (has_lut && lut_view_id != self.last_lut_view_id);
 
         if needs_rebuild {
-            let sampler = ctx
-                .sampler_registry
-                .get_common(CommonSampler::LinearClamp);
+            let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
             let layout = self.current_static_layout(has_lut);
 
             let mut entries = vec![
@@ -477,9 +472,7 @@ impl PassNode for ToneMapPassNode {
 
         // let output_view = ctx.get_texture_view(self.output_tex);
 
-        let pipeline = ctx
-            .pipeline_cache
-            .get_render_pipeline(self.pipeline_id);
+        let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
 
         let transient_bg_key = self
             .current_bind_group_key
