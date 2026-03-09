@@ -199,11 +199,11 @@ impl AppHandler for SkyboxDemo {
         // --- HighFidelity / BasicForward toggle ---
         if engine.input.get_key_down(Key::H) {
             self.render_path = if self.render_path.supports_post_processing() {
-                RenderPath::BasicForward { msaa_samples: 1 }
+                RenderPath::BasicForward
             } else {
-                RenderPath::HighFidelity { msaa_samples: 1 }
+                RenderPath::HighFidelity
             };
-            engine.renderer.set_render_path(self.render_path.clone());
+            engine.renderer.set_render_path(self.render_path);
             let path = if self.render_path.supports_post_processing() {
                 "HighFidelity"
             } else {
@@ -238,7 +238,8 @@ fn main() -> myth::Result<()> {
     env_logger::init();
     App::new()
         .with_settings(RendererSettings {
-            path: RenderPath::BasicForward { msaa_samples: 1 },
+            path: RenderPath::BasicForward,
+            msaa_samples: 1,
             vsync: false,
             ..Default::default()
         })

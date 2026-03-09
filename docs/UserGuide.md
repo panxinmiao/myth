@@ -763,7 +763,8 @@ App::new()
     .run::<MyApp>()?;
 
 // Switch at runtime
-engine.renderer.set_render_path(RenderPath::BasicForward { msaa_samples: 4 });
+engine.renderer.set_render_path(RenderPath::BasicForward);
+engine.renderer.set_msaa_samples(4);
 ```
 
 Post-processing is only available in `HighFidelity` mode.
@@ -826,7 +827,8 @@ scene.fxaa.set_quality(FxaaQuality::High);
 // BasicForward: Hardware MSAA
 App::new()
     .with_settings(RendererSettings {
-        path: RenderPath::BasicForward { msaa_samples: 4 },
+        path: RenderPath::BasicForward,
+        msaa_samples: 4,
         ..Default::default()
     })
     .run::<MyApp>()?;

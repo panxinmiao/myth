@@ -1566,55 +1566,53 @@ impl GltfViewer {
                                         if ui.selectable_label(is_hf, "High Fidelity").clicked()
                                             && !is_hf
                                         {
-                                            self.render_path = RenderPath::HighFidelity { msaa_samples: 1 };
-                                            renderer.set_render_path(self.render_path.clone());
+                                            self.render_path = RenderPath::HighFidelity;
+                                            renderer.set_render_path(self.render_path);
                                         }
                                         if ui.selectable_label(!is_hf, "Basic Forward").clicked()
                                             && is_hf
                                         {
-                                            self.render_path = RenderPath::BasicForward {
-                                                msaa_samples: self.msaa_samples,
-                                            };
-                                            renderer.set_render_path(self.render_path.clone());
+                                            self.render_path = RenderPath::BasicForward;
+                                            renderer.set_render_path(self.render_path);
                                         }
                                     });
                             });
 
                             ui.separator();
 
-                            if !is_hf {
-                                // --- MSAA 抗锯齿 ---
-                                ui.horizontal(|ui| {
-                                    ui.label("MSAA:");
-                                    let msaa_options = [1u32, 4];
-                                    egui::ComboBox::from_id_salt("msaa_selector")
-                                        .width(60.0)
-                                        .selected_text(if self.msaa_samples == 1 {
-                                            "Off".to_string()
-                                        } else {
-                                            format!("{}x", self.msaa_samples)
-                                        })
-                                        .show_ui(ui, |ui| {
-                                            for &samples in &msaa_options {
-                                                let label = if samples == 1 {
-                                                    "Off".to_string()
-                                                } else {
-                                                    format!("{}x", samples)
-                                                };
-                                                if ui
-                                                    .selectable_value(
-                                                        &mut self.msaa_samples,
-                                                        samples,
-                                                        label,
-                                                    )
-                                                    .changed()
-                                                {
-                                                    renderer.set_msaa_samples(self.msaa_samples);
-                                                }
+                            // --- MSAA 抗锯齿 (available for both paths) ---
+                            ui.horizontal(|ui| {
+                                ui.label("MSAA:");
+                                let msaa_options = [1u32, 4];
+                                egui::ComboBox::from_id_salt("msaa_selector")
+                                    .width(60.0)
+                                    .selected_text(if self.msaa_samples == 1 {
+                                        "Off".to_string()
+                                    } else {
+                                        format!("{}x", self.msaa_samples)
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        for &samples in &msaa_options {
+                                            let label = if samples == 1 {
+                                                "Off".to_string()
+                                            } else {
+                                                format!("{}x", samples)
+                                            };
+                                            if ui
+                                                .selectable_value(
+                                                    &mut self.msaa_samples,
+                                                    samples,
+                                                    label,
+                                                )
+                                                .changed()
+                                            {
+                                                renderer.set_msaa_samples(self.msaa_samples);
                                             }
-                                        });
-                                });
-                            } else {
+                                        }
+                                    });
+                            });
+
+                            if is_hf {
                                 // ===== FXAA 抗锯齿 =====
                                 ui.horizontal(|ui| {
                                     let mut fxaa_enabled = scene.fxaa.enabled;

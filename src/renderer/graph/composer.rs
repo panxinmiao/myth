@@ -102,6 +102,7 @@ pub struct ComposerContext<'a> {
     pub rdg_simple_forward_pass:
         &'a mut crate::renderer::graph::rdg::simple_forward::SimpleForwardFeature,
     pub rdg_sssss_pass: &'a mut crate::renderer::graph::rdg::sssss::SssssFeature,
+    pub rdg_msaa_sync_pass: &'a mut crate::renderer::graph::rdg::msaa_sync::MsaaSyncFeature,
 
     // Shadow + Compute
     pub rdg_shadow_pass: &'a mut crate::renderer::graph::rdg::shadow::ShadowFeature,
@@ -391,6 +392,19 @@ impl<'a> FrameComposer<'a> {
             // SSSSS — reads single-sample Scene_Color_HDR (post-resolve).
             if needs_specular {
                 self.ctx.rdg_sssss_pass.add_to_graph(rdg);
+
+                // MSAA Sync — broadcast the corrected single-sample HDR
+                // result back into the multi-sampled color target so that
+                // subsequent MSAA draws (Skybox, Transparent) see the
+                // SSSSS contributions.  Depth is intentionally not bound
+                // to preserve the per-sample geometry depth.
+                if is_msaa {
+                    self.ctx.rdg_msaa_sync_pass.add_to_graph(
+                        rdg,
+                        scene_color,
+                        active_color,
+                    );
+                }
             }
 
             // Skybox — continues in the same MSAA (or non-MSAA) context.

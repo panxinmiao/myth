@@ -125,6 +125,7 @@ struct RendererState {
     pub(crate) rdg_simple_forward_pass:
         crate::renderer::graph::rdg::simple_forward::SimpleForwardFeature,
     pub(crate) rdg_sssss_pass: crate::renderer::graph::rdg::sssss::SssssFeature,
+    pub(crate) rdg_msaa_sync_pass: crate::renderer::graph::rdg::msaa_sync::MsaaSyncFeature,
 
     // Shadow + Compute passes (migrated from old system)
     pub(crate) rdg_shadow_pass: crate::renderer::graph::rdg::shadow::ShadowFeature,
@@ -224,6 +225,7 @@ impl Renderer {
             rdg_simple_forward_pass:
                 crate::renderer::graph::rdg::simple_forward::SimpleForwardFeature::new(),
             rdg_sssss_pass: crate::renderer::graph::rdg::sssss::SssssFeature::new(),
+            rdg_msaa_sync_pass: crate::renderer::graph::rdg::msaa_sync::MsaaSyncFeature::new(),
 
             // Shadow + Compute passes (migrated from old system)
             rdg_shadow_pass,
@@ -391,6 +393,14 @@ impl Renderer {
 
                 state.rdg_sssss_pass.extract_and_prepare(&mut extract_ctx);
 
+                // MSAA Sync — needed when SSSSS modifies the resolved HDR
+                // buffer and subsequent passes re-enter the MSAA context.
+                let msaa = state.wgpu_ctx.msaa_samples;
+                let needs_specular = scene.screen_space.enable_sss;
+                if msaa > 1 && needs_specular {
+                    state.rdg_msaa_sync_pass.extract_and_prepare(&mut extract_ctx, msaa);
+                }
+
                 if bloom_enabled {
                     state.rdg_bloom_pass.extract_and_prepare(
                         &mut extract_ctx,
@@ -451,6 +461,7 @@ impl Renderer {
             rdg_transmission_copy_pass: &mut state.rdg_transmission_copy_pass,
             rdg_simple_forward_pass: &mut state.rdg_simple_forward_pass,
             rdg_sssss_pass: &mut state.rdg_sssss_pass,
+            rdg_msaa_sync_pass: &mut state.rdg_msaa_sync_pass,
 
             rdg_shadow_pass: &mut state.rdg_shadow_pass,
             rdg_brdf_pass: &mut state.rdg_brdf_pass,
@@ -483,21 +494,18 @@ impl Renderer {
 
     /// Switches the active render path at runtime.
     ///
-    /// This is the canonical way to transition between [`RenderPath::BasicForward`]
-    /// and [`RenderPath::HighFidelity`] after initialization. The change takes
-    /// effect on the **next frame**.
+    /// Changes the pipeline topology between [`RenderPath::BasicForward`]
+    /// and [`RenderPath::HighFidelity`].  The MSAA sample count is
+    /// unaffected — use [`set_msaa_samples`](Self::set_msaa_samples) to
+    /// change it independently.  The change takes effect on the **next frame**.
     ///
     /// Internally this:
-    /// 1. Updates the stored settings and derived `WgpuContext` state
-    ///    (`msaa_samples`, `render_path`).
+    /// 1. Updates the stored settings and derived `WgpuContext` state.
     /// 2. Increments the pipeline settings version (invalidates the L1 cache).
-    /// 3. Forces recreation of frame resources (render targets change format/sample count).
-    /// 4. Clears the L2 pipeline cache.
     pub fn set_render_path(&mut self, path: RenderPath) {
         if self.settings.path != path {
             self.settings.path = path;
             if let Some(state) = &mut self.context {
-                state.wgpu_ctx.msaa_samples = self.settings.msaa_samples();
                 state.wgpu_ctx.render_path = path;
                 state.wgpu_ctx.pipeline_settings_version += 1;
             }
@@ -520,26 +528,11 @@ impl Renderer {
     /// Common values: 1 (disabled), 4, 8.
     pub fn set_msaa_samples(&mut self, samples: u32) {
         let samples = samples.clamp(1, 8);
-        match &mut self.settings.path {
-            RenderPath::BasicForward { msaa_samples } => {
-                if *msaa_samples != samples {
-                    *msaa_samples = samples;
-                    if let Some(state) = &mut self.context {
-                        state.wgpu_ctx.msaa_samples = samples;
-                        state.wgpu_ctx.render_path = self.settings.path;
-                        state.wgpu_ctx.pipeline_settings_version += 1;
-                    }
-                }
-            }
-            RenderPath::HighFidelity { msaa_samples } => {
-                if *msaa_samples != samples {
-                    *msaa_samples = samples;
-                    if let Some(state) = &mut self.context {
-                        state.wgpu_ctx.msaa_samples = samples;
-                        state.wgpu_ctx.render_path = self.settings.path;
-                        state.wgpu_ctx.pipeline_settings_version += 1;
-                    }
-                }
+        if self.settings.msaa_samples != samples {
+            self.settings.msaa_samples = samples;
+            if let Some(state) = &mut self.context {
+                state.wgpu_ctx.msaa_samples = samples;
+                state.wgpu_ctx.pipeline_settings_version += 1;
             }
         }
     }

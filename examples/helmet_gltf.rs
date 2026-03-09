@@ -63,7 +63,8 @@ fn main() -> myth::Result<()> {
     env_logger::init();
     App::new()
         .with_settings(RendererSettings {
-            path: RenderPath::BasicForward { msaa_samples: 1 },
+            path: RenderPath::BasicForward,
+            msaa_samples: 1,
             vsync: false,
             clear_color: wgpu::Color {
                 r: 0.03,
