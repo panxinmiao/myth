@@ -334,10 +334,17 @@ impl<'a> FrameComposer<'a> {
         let fxaa_enabled = self.ctx.scene.fxaa.enabled && is_high_fidelity;
 
         // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
+        if self.ctx.resource_manager.needs_brdf_compute {
+            self.ctx.rdg_brdf_pass.add_to_graph(rdg);
+        }
 
-        self.ctx.rdg_brdf_pass.add_to_graph(rdg);
-        self.ctx.rdg_ibl_pass.add_to_graph(rdg);
-        self.ctx.rdg_shadow_pass.add_to_graph(rdg);
+        if let Some(source) = self.ctx.resource_manager.pending_ibl_source.take() {
+            self.ctx.rdg_ibl_pass.add_to_graph(rdg, source);
+        }
+
+        if self.ctx.extracted_scene.has_shadow_casters() {
+            self.ctx.rdg_shadow_pass.add_to_graph(rdg);
+        }
 
         // ── 2d. Wire Scene Rendering Passes ────────────────────────────
 

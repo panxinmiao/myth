@@ -109,7 +109,7 @@ impl Default for RenderPath {
     #[inline]
     fn default() -> Self {
         // Modern engines default to the high-fidelity pipeline.
-        Self::HighFidelity { msaa_samples: 4 }
+        Self::HighFidelity { msaa_samples: 1 }
     }
 }
 

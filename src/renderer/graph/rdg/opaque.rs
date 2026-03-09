@@ -146,11 +146,9 @@ impl PassNode for OpaquePassNode {
         // Primary color target — may be single-sample HDR or MSAA.
         builder.write_texture(self.color_target);
 
-        // Depth target — write always; read only when a prepass provided depth.
+        // Depth target.
         builder.write_texture(self.depth_target);
-        if self.has_prepass {
-            builder.read_texture(self.depth_target);
-        }
+        builder.read_texture(self.depth_target);
 
         // Resolve target — declare write so the graph compiler allocates
         // physical memory and tracks dependencies for downstream consumers.
@@ -194,6 +192,7 @@ impl PassNode for OpaquePassNode {
                 self.specular_tex = builder.create_texture("Specular_MRT_MSAA", msaa_desc);
                 // Self-resolve: declare read on the MSAA specular texture so the graph compiler keeps it alive for the duration of this pass.
                 builder.read_texture(self.specular_tex);
+
                 self.specular_resolve_target = Some(specular_tex);
             } else {
                 self.specular_tex = specular_tex;
