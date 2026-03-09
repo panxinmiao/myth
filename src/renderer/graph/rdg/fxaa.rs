@@ -200,8 +200,6 @@ impl PassNode for FxaaPassNode {
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut CommandEncoder) {
-        let output_view = ctx.get_texture_view(self.output_tex);
-
         let pipeline = ctx
             .pipeline_cache
             .get_render_pipeline(self.pipeline_id);
@@ -215,17 +213,11 @@ impl PassNode for FxaaPassNode {
             .get(bind_group_key)
             .expect("BindGroup should have been prepared!");
 
+        let rtt = ctx.get_color_attachment(self.output_tex, None, None);
+
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("RDG FXAA Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: output_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
+            color_attachments: &[rtt],
             depth_stencil_attachment: None,
             timestamp_writes: None,
             occlusion_query_set: None,

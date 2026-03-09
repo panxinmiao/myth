@@ -40,12 +40,12 @@
 ///
 /// | Capability              | `BasicForward`    | `HighFidelity`          |
 /// |-------------------------|-------------------|-------------------------|
-/// | Hardware MSAA           | ✅ (configurable) | ❌ (forced to 1)        |
+/// | Hardware MSAA           | ✅ (configurable) | ✅ (opt-in, see below)  |
 /// | HDR render targets      | ❌                | ✅                      |
 /// | Bloom                   | ❌                | ✅                      |
 /// | Tone Mapping            | ❌                | ✅                      |
 /// | FXAA (post-process AA)  | ❌                | ✅                      |
-/// | Depth-Normal Prepass    | ❌                | ✅                      |
+/// | Depth-Normal Prepass    | ❌                | ✅ (auto-skipped w/ MSAA)|
 /// | SSAO                    | ❌                | ✅                      |
 /// | SSSSS                   | ❌                | ✅                      |
 ///
@@ -78,24 +78,38 @@ pub enum RenderPath {
     /// High-fidelity hybrid rendering pipeline.
     ///
     /// Uses HDR floating-point render targets and a full post-processing chain
-    /// (Bloom → Tone Mapping → FXAA). Hardware MSAA is **forced to 1** in this
-    /// mode; anti-aliasing should be achieved through screen-space techniques
-    /// such as FXAA (or TAA in the future).
+    /// (Bloom → Tone Mapping → FXAA). Optionally supports hardware MSAA for
+    /// superior edge quality when `msaa_samples > 1`.
     ///
-    /// This path includes a Depth-Normal Prepass, SSAO, and SSSSS support.
+    /// When MSAA is enabled, the Depth-Normal Prepass's Early-Z benefit is
+    /// sacrificed (opaque objects write to a separate multi-sampled depth
+    /// buffer), but the prepass may still run at single-sample resolution
+    /// to provide depth/normals for SSAO and SSSSS.
+    ///
+    /// This path includes a Depth-Normal Prepass (auto-managed), SSAO, and
+    /// SSSSS support.
     ///
     /// Best suited for:
     /// - Desktop / high-end mobile with modern GPUs
     /// - PBR scenes requiring physically-correct lighting and effects
     /// - Any application that benefits from bloom, tone mapping, or SSAO
-    HighFidelity,
+    HighFidelity {
+        /// MSAA sample count. 1 = disabled (default), common values: 2, 4, 8.
+        ///
+        /// When enabled (> 1), scene-drawing passes (Opaque, Skybox,
+        /// Transparent) render into multi-sampled intermediates that are
+        /// resolved to the single-sample HDR buffer at the appropriate
+        /// pipeline stages.  The RDG lifetime system automatically manages
+        /// `StoreOp` / `Discard` transitions for zero-waste VRAM bandwidth.
+        msaa_samples: u32,
+    },
 }
 
 impl Default for RenderPath {
     #[inline]
     fn default() -> Self {
         // Modern engines default to the high-fidelity pipeline.
-        Self::HighFidelity
+        Self::HighFidelity { msaa_samples: 4 }
     }
 }
 
@@ -107,17 +121,20 @@ impl RenderPath {
     #[inline]
     #[must_use]
     pub fn supports_post_processing(&self) -> bool {
-        matches!(self, Self::HighFidelity)
+        matches!(self, Self::HighFidelity { .. })
     }
 
-    /// Returns `true` when this path will use a depth-normal prepass.
+    /// Returns `true` when this path supports a depth-normal prepass.
     ///
     /// Returns `false` for [`BasicForward`](Self::BasicForward) and `true` for
-    /// [`HighFidelity`](Self::HighFidelity).
+    /// [`HighFidelity`](Self::HighFidelity).  Note that when hardware MSAA is
+    /// enabled, the prepass Early-Z benefit is lost for the main scene draw;
+    /// the prepass may still be scheduled to supply depth/normals to SSAO
+    /// and SSSSS.
     #[inline]
     #[must_use]
     pub fn requires_z_prepass(&self) -> bool {
-        matches!(self, Self::HighFidelity)
+        matches!(self, Self::HighFidelity { .. })
     }
 
     /// Returns the main color attachment format for scene rendering.
@@ -128,20 +145,18 @@ impl RenderPath {
     #[must_use]
     pub fn main_color_format(&self, surface_format: wgpu::TextureFormat) -> wgpu::TextureFormat {
         match self {
-            Self::HighFidelity => crate::renderer::HDR_TEXTURE_FORMAT,
+            Self::HighFidelity { .. } => crate::renderer::HDR_TEXTURE_FORMAT,
             Self::BasicForward { .. } => surface_format,
         }
     }
 
     /// Returns the effective MSAA sample count for this path.
-    ///
-    /// [`HighFidelity`](Self::HighFidelity) always returns **1**.
     #[inline]
     #[must_use]
     pub fn msaa_samples(&self) -> u32 {
         match self {
-            Self::BasicForward { msaa_samples } => *msaa_samples,
-            Self::HighFidelity => 1,
+            Self::BasicForward { msaa_samples }
+            | Self::HighFidelity { msaa_samples } => *msaa_samples,
         }
     }
 }
@@ -176,7 +191,7 @@ impl RenderPath {
 ///
 /// // High-performance gaming setup
 /// let game = RendererSettings {
-///     path: RenderPath::HighFidelity,
+///     path: RenderPath::HighFidelity { msaa_samples: 1 },
 ///     vsync: false,
 ///     ..Default::default()
 /// };
@@ -268,8 +283,9 @@ impl RendererSettings {
     /// Returns the effective MSAA sample count for the current render path.
     ///
     /// - [`BasicForward`](RenderPath::BasicForward): returns the configured `msaa_samples`.
-    /// - [`HighFidelity`](RenderPath::HighFidelity): always returns **1** (hardware MSAA
-    ///   is disabled; use post-process AA such as FXAA instead).
+    /// - [`BasicForward`](RenderPath::BasicForward): returns the configured `msaa_samples`.
+    /// - [`HighFidelity`](RenderPath::HighFidelity): returns the configured `msaa_samples`
+    ///   (defaults to 1; set > 1 to opt into hardware MSAA).
     #[inline]
     #[must_use]
     pub fn msaa_samples(&self) -> u32 {

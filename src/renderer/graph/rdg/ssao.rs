@@ -627,12 +627,14 @@ impl PassNode for SsaoPassNode {
         let raw_pipeline = ctx.pipeline_cache.get_render_pipeline(self.raw_pipeline);
         let blur_pipeline = ctx.pipeline_cache.get_render_pipeline(self.blur_pipeline);
 
-        let raw_view = ctx.get_texture_view(self.internal_raw_tex);
-
         // =====================================================================
         // Sub-Pass 1: Raw SSAO
         // =====================================================================
         {
+            
+            // let rtt = ctx.get_color_attachment(self.internal_raw_tex, None, None);
+            let raw_view = ctx.get_texture_view(self.internal_raw_tex);
+            
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SSAO Raw Pass"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -666,19 +668,11 @@ impl PassNode for SsaoPassNode {
                 .get(blur_bg_key)
                 .expect("SSAO blur BG should exist");
 
-            let output_view = ctx.get_texture_view(self.output_tex);
+            let rtt = ctx.get_color_attachment(self.output_tex, None, None);
 
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SSAO Blur Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: output_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
+                color_attachments: &[rtt],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,

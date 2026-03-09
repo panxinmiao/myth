@@ -1566,7 +1566,7 @@ impl GltfViewer {
                                         if ui.selectable_label(is_hf, "High Fidelity").clicked()
                                             && !is_hf
                                         {
-                                            self.render_path = RenderPath::HighFidelity;
+                                            self.render_path = RenderPath::HighFidelity { msaa_samples: 1 };
                                             renderer.set_render_path(self.render_path.clone());
                                         }
                                         if ui.selectable_label(!is_hf, "Basic Forward").clicked()

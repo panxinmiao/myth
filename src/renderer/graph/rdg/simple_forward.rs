@@ -110,6 +110,9 @@ impl PassNode for SimpleForwardPassNode {
         self.surface_out = builder.write_blackboard("Surface_Out");
         self.scene_depth = builder.write_blackboard("Scene_Depth");
 
+        // Self-read: the depth buffer is written by this pass and read by
+        builder.read_texture(self.scene_depth);
+
         // Producer: conditionally create MSAA intermediate.
         let msaa_samples = builder.frame_config().msaa_samples;
         if msaa_samples > 1 {
@@ -152,35 +155,18 @@ impl PassNode for SimpleForwardPassNode {
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
-        let target_view = ctx.get_texture_view(self.surface_out);
-
         let (color_view, resolve_target) = if let Some(msaa_view) = self.msaa_view {
-            (ctx.get_texture_view(msaa_view), Some(target_view))
+            (msaa_view, Some(self.surface_out))
         } else {
-            (target_view, None)
-        };
-
-        // MSAA intermediates are discarded after resolve; non-MSAA targets
-        // use auto-deduced StoreOp from the resource lifetime.
-        let store_op = if resolve_target.is_some() {
-            wgpu::StoreOp::Discard
-        } else {
-            wgpu::StoreOp::Store
+            (self.surface_out, None)
         };
 
         let depth_att = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
-
+        let color_att = ctx.get_color_attachment(color_view, Some(self.clear_color), resolve_target);
+        
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("RDG Simple Forward Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: color_view,
-                resolve_target,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(self.clear_color),
-                    store: store_op,
-                },
-                depth_slice: None,
-            })],
+            color_attachments: &[color_att],
             depth_stencil_attachment: depth_att,
             timestamp_writes: None,
             occlusion_query_set: None,

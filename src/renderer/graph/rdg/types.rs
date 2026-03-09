@@ -63,6 +63,10 @@ pub struct ResourceRecord {
     pub name: &'static str,
     pub desc: RdgTextureDesc,
     pub is_external: bool,
+    // Transient resources are short-lived textures that exist only within a single pass execution.
+    // They are allocated from a shared pool and must be explicitly declared by passes.
+    // Mostly, this is used for intermediate render targets
+    pub is_inner_transient: bool,
 
     pub producers: SmallVec<[usize; 4]>,
     pub consumers: SmallVec<[usize; 8]>,

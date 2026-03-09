@@ -1,13 +1,26 @@
 //! RDG Opaque Render Pass
 //!
-//! Draws opaque objects to the HDR scene color buffer. Clears color to the
+//! Draws opaque objects to the scene color buffer. Clears color to the
 //! scene background color and conditionally clears or loads depth depending
 //! on whether a Z-prepass has already written depth data.
 //!
+//! # MSAA Support
+//!
+//! When hardware MSAA is active in the HighFidelity path, the Composer
+//! passes multi-sampled `color_target` / `depth_target` IDs and an optional
+//! `resolve_target`.  The pass renders into the MSAA surfaces and the GPU
+//! hardware resolves the result into the single-sample HDR buffer at the
+//! end of the render pass.  The RDG lifetime system keeps the MSAA surface
+//! alive (`StoreOp::Store`) as long as downstream passes (Skybox,
+//! Transparent) still reference it.
+//!
 //! # RDG Slots
 //!
-//! - `scene_color`: HDR color output (write, Clear)
-//! - `scene_depth`: Depth buffer (read if prepass, write if no prepass)
+//! - `color_target`: Scene color output — `Scene_Color_HDR` or
+//!   `Scene_Color_MSAA` (write, Clear)
+//! - `depth_target`: Scene depth — `Scene_Depth` or `Scene_Depth_MSAA`
+//!   (read if prepass, write if no prepass)
+//! - `resolve_target`: Optional single-sample HDR to receive MSAA resolve
 //! - `ssao_tex`: Optional SSAO texture (read, for screen bind group)
 //!
 //! # Push Parameters
@@ -45,14 +58,20 @@ impl OpaqueFeature {
     pub fn add_to_graph(
         &self,
         rdg: &mut RenderGraph,
+        color_target: TextureNodeId,
+        depth_target: TextureNodeId,
         has_prepass: bool,
         clear_color: wgpu::Color,
         needs_specular: bool,
+        resolve_target: Option<TextureNodeId>,
     ) {
         let node = OpaquePassNode::new(
+            color_target,
+            depth_target,
             has_prepass,
             clear_color,
             needs_specular,
+            resolve_target,
             self.screen_info.clone().expect("OpaqueFeature: screen_info not set"),
         );
         rdg.add_pass(Box::new(node));
@@ -63,15 +82,21 @@ impl OpaqueFeature {
 
 /// RDG Opaque Render Pass.
 ///
-/// Draws `render_lists.opaque` to the HDR scene color buffer. Builds a
+/// Draws `render_lists.opaque` to the scene color buffer. Builds a
 /// dynamic screen bind group (group 3) containing SSAO + transmission dummy
-/// textures.
+/// textures.  When MSAA is active, the pass writes to a multi-sampled
+/// color target and optionally resolves to a single-sample HDR texture.
 pub struct OpaquePassNode {
-    // ─── RDG Resource Slots (set during setup) ─────────────────────
-    pub scene_color: TextureNodeId,
-    pub scene_depth: TextureNodeId,
+    // ─── RDG Resource Slots ────────────────────────────────────────
+    /// Primary color target (`Scene_Color_HDR` or `Scene_Color_MSAA`).
+    pub color_target: TextureNodeId,
+    /// Primary depth target (`Scene_Depth` or `Scene_Depth_MSAA`).
+    pub depth_target: TextureNodeId,
+    /// Optional single-sample HDR texture for MSAA resolve.
+    pub resolve_target: Option<TextureNodeId>,
     pub ssao_tex: TextureNodeId,
     pub specular_tex: TextureNodeId,
+    pub specular_resolve_target: Option<TextureNodeId>,
 
     // ─── Push Parameters ───────────────────────────────────────────
     pub has_prepass: bool,
@@ -86,12 +111,22 @@ pub struct OpaquePassNode {
 
 impl OpaquePassNode {
     #[must_use]
-    pub fn new(has_prepass: bool, clear_color: wgpu::Color, needs_specular: bool, screen_info: ScreenBindGroupInfo) -> Self {
+    pub fn new(
+        color_target: TextureNodeId,
+        depth_target: TextureNodeId,
+        has_prepass: bool,
+        clear_color: wgpu::Color,
+        needs_specular: bool,
+        resolve_target: Option<TextureNodeId>,
+        screen_info: ScreenBindGroupInfo,
+    ) -> Self {
         Self {
-            scene_color: TextureNodeId(0),
-            scene_depth: TextureNodeId(0),
+            color_target,
+            depth_target,
+            resolve_target,
             ssao_tex: TextureNodeId(0),
             specular_tex: TextureNodeId(0),
+            specular_resolve_target: None,
             has_prepass,
             clear_color,
             needs_specular,
@@ -108,16 +143,20 @@ impl PassNode for OpaquePassNode {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        // Consumer: wire backbone resources.
-        self.scene_color = builder.write_blackboard("Scene_Color_HDR");
+        // Primary color target — may be single-sample HDR or MSAA.
+        builder.write_texture(self.color_target);
 
-        self.scene_depth = builder.write_blackboard("Scene_Depth");
-
+        // Depth target — write always; read only when a prepass provided depth.
+        builder.write_texture(self.depth_target);
         if self.has_prepass {
-            builder.read_texture(self.scene_depth);
+            builder.read_texture(self.depth_target);
         }
 
-        // self.ssao_tex = builder.try_read_blackboard("SSAO_Output");
+        // Resolve target — declare write so the graph compiler allocates
+        // physical memory and tracks dependencies for downstream consumers.
+        if let Some(rt) = self.resolve_target {
+            builder.write_texture(rt);
+        }
 
         // Detect optional SSAO resource.
         if let Some(ssao) = builder.try_read_blackboard("SSAO_Output") {
@@ -128,7 +167,6 @@ impl PassNode for OpaquePassNode {
         }
 
         // Producer: conditionally create specular MRT.
-        // The Composer sets `needs_specular` before `add_pass`.
         if self.needs_specular {
             let (w, h) = builder.global_resolution();
             let hdr_format = builder.frame_config().hdr_format;
@@ -140,7 +178,27 @@ impl PassNode for OpaquePassNode {
                     | wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::COPY_SRC,
             );
-            self.specular_tex = builder.create_texture("Specular_MRT", desc);
+            let specular_tex = builder.create_texture("Specular_MRT", desc);
+
+            if builder.frame_config().msaa_samples > 1 {
+                let msaa_desc = RdgTextureDesc::new(
+                    w,
+                    h,
+                    1,
+                    1,
+                    builder.frame_config().msaa_samples,
+                    wgpu::TextureDimension::D2,
+                    hdr_format,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                );
+                self.specular_tex = builder.create_texture("Specular_MRT_MSAA", msaa_desc);
+                // Self-resolve: declare read on the MSAA specular texture so the graph compiler keeps it alive for the duration of this pass.
+                builder.read_texture(self.specular_tex);
+                self.specular_resolve_target = Some(specular_tex);
+            } else {
+                self.specular_tex = specular_tex;
+            }
+            
         }
     }
 
@@ -170,7 +228,7 @@ impl PassNode for OpaquePassNode {
         let mut color_attachments: smallvec::SmallVec<
             [Option<wgpu::RenderPassColorAttachment>; 2],
         > = smallvec::smallvec![
-            ctx.get_color_attachment(self.scene_color, self.clear_color)
+            ctx.get_color_attachment(self.color_target, Some(self.clear_color), self.resolve_target)
         ];
 
         // Specular MRT — may have been culled if no downstream consumer
@@ -179,7 +237,8 @@ impl PassNode for OpaquePassNode {
         if self.needs_specular {
             if let Some(att) = ctx.get_color_attachment(
                 self.specular_tex,
-                wgpu::Color::TRANSPARENT,
+                Some(wgpu::Color::TRANSPARENT),
+                self.specular_resolve_target,
             ) {
                 color_attachments.push(Some(att));
             }
@@ -188,7 +247,7 @@ impl PassNode for OpaquePassNode {
         // ── Depth/stencil attachment (auto-deduced ops) ─────────────────
         // Reverse-Z: clear to 0.0 (far plane) when this is the first use,
         // otherwise load the depth written by the prepass.
-        let depth_stencil = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
+        let depth_stencil = ctx.get_depth_stencil_attachment(self.depth_target, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("RDG Opaque Pass"),

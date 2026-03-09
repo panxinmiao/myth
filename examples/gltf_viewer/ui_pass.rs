@@ -341,21 +341,11 @@ impl PassNode for UiPass {
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         // Resolve the final swap-chain surface view from the RDG.
-        let target_view = ctx.get_texture_view(self.target_tex);
-
+        let rtt = ctx.get_color_attachment(self.target_tex, None, None);
         let mut rpass = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("egui Pass"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: target_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        // Load — preserve 3D content rendered by preceding passes.
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
+                color_attachments: &[rtt],
                 depth_stencil_attachment: None,
                 timestamp_writes: None,
                 occlusion_query_set: None,

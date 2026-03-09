@@ -119,11 +119,32 @@ impl RenderGraph {
         desc: RdgTextureDesc,
         is_external: bool,
     ) -> TextureNodeId {
+        self.register_resource_raw(name, desc, is_external, false)
+    }
+
+    pub fn register_inner_transient_resource(
+        &mut self,
+        name: &'static str,
+        desc: RdgTextureDesc,
+        is_external: bool,
+    ) -> TextureNodeId {
+        self.register_resource_raw(name, desc, is_external, true)
+    }
+
+    #[inline]
+    fn register_resource_raw(
+        &mut self,
+        name: &'static str,
+        desc: RdgTextureDesc,
+        is_external: bool,
+        is_inner_transient: bool,
+    ) -> TextureNodeId {
         let id = TextureNodeId(self.resources.len() as u32);
         self.resources.push(ResourceRecord {
             name,
             desc,
             is_external,
+            is_inner_transient,
             producers: smallvec::SmallVec::new(),
             consumers: smallvec::SmallVec::new(),
             first_use: usize::MAX,

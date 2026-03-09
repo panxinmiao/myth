@@ -492,7 +492,6 @@ impl PassNode for SssssPassNode {
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let depth_stencil_view = ctx.get_texture_view(self.depth_in);
         let temp_blur_view = ctx.get_texture_view(self.temp_blur);
-        let color_out_view = ctx.get_texture_view(self.scene_color);
 
         // Resolve pipeline handles -> actual GPU pipeline references (O(1))
         let hor_pipeline = ctx
@@ -504,6 +503,8 @@ impl PassNode for SssssPassNode {
 
         // -- H Sub-Pass: color_in -> temp_blur --------------------------
         {
+            // let rtt = ctx.get_color_attachment(self.temp_blur, Some(wgpu::Color::TRANSPARENT), None);
+            // we use StoreOp::Store here. Todo: improve resource lifetime tracking.
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SSSSS Horizontal"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -531,17 +532,11 @@ impl PassNode for SssssPassNode {
 
         // -- V Sub-Pass: temp_blur -> color_out -------------------------
         {
+            let rtt = ctx.get_color_attachment(self.scene_color, None, None);
+
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SSSSS Vertical"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: color_out_view,
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
+                color_attachments: &[rtt],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth_stencil_view,
                     depth_ops: None,
