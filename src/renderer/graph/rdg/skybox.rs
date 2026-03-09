@@ -507,28 +507,13 @@ impl PassNode for SkyboxPassNode {
 
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
-        let color_view = ctx.get_texture_view(self.scene_color);
-        let depth_view = ctx.get_texture_view(self.scene_depth);
+        let color_att = ctx.get_color_attachment(self.scene_color, wgpu::Color::BLACK);
+        let depth_att = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("RDG Skybox Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: color_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
+            color_attachments: &[color_att],
+            depth_stencil_attachment: depth_att,
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,

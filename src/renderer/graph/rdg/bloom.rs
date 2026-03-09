@@ -837,6 +837,10 @@ impl PassNode for BloomPassNode {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
         self.bloom_texture = builder.create_texture("Bloom_MipChain", bloom_chain_desc);
+        // Self-read: the bloom mip chain is produced and consumed within
+        // this macro node (downsample → upsample).  The read declaration
+        // prevents the resource-level culler from treating it as dead.
+        builder.read_texture(self.bloom_texture);
 
         self.input_tex = builder.read_blackboard("Scene_Color_HDR");
     }

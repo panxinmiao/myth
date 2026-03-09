@@ -364,41 +364,39 @@ impl PassNode for PrepassPassNode {
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
-        let depth_view = ctx.get_texture_view(self.scene_depth);
-
-        // Build color attachments based on normal/feature_id needs
+        // ── Color attachments: auto-deduced ops for normals / feature-ID ──
+        // Resources that survive the graph compiler get Clear on first use
+        // and Discard on last use (if non-external).  Culled resources
+        // return None, naturally shrinking the MRT.
         let mut color_attachments: Vec<Option<wgpu::RenderPassColorAttachment>> = Vec::new();
 
+        let normal_clear = wgpu::Color { r: 0.5, g: 0.5, b: 1.0, a: 0.0 };
         if self.needs_normal {
-            let normal_view = ctx.get_texture_view(self.scene_normals);
-            color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                view: normal_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color {
-                        r: 0.5,
-                        g: 0.5,
-                        b: 1.0,
-                        a: 0.0,
-                    }),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            }));
+            if let Some(att) = ctx.get_color_attachment(self.scene_normals, normal_clear) {
+                color_attachments.push(Some(att));
+            }
+        }
+        if self.needs_feature_id {
+            if let Some(att) = ctx.get_color_attachment(self.feature_id, wgpu::Color::TRANSPARENT) {
+                color_attachments.push(Some(att));
+            }
         }
 
-        if self.needs_feature_id {
-            let feature_view = ctx.get_texture_view(self.feature_id);
-            color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                view: feature_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            }));
-        }
+        // ── Depth/stencil: manual construction for stencil-op support ───
+        let depth_view = ctx.get_texture_view(self.scene_depth);
+        let res = &ctx.resources[self.scene_depth.0 as usize];
+        let ti = ctx.current_timeline_index;
+
+        let depth_load = if res.first_use == ti {
+            wgpu::LoadOp::Clear(0.0) // Reverse-Z: 0.0 = far
+        } else {
+            wgpu::LoadOp::Load
+        };
+        let depth_store = if res.last_use == ti && !res.is_external {
+            wgpu::StoreOp::Discard
+        } else {
+            wgpu::StoreOp::Store
+        };
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("RDG Depth-Normal Prepass"),
@@ -406,8 +404,8 @@ impl PassNode for PrepassPassNode {
             depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0.0), // Reverse-Z: 0.0 = far
-                    store: wgpu::StoreOp::Store,
+                    load: depth_load,
+                    store: depth_store,
                 }),
                 stencil_ops: if self.needs_feature_id {
                     Some(wgpu::Operations {

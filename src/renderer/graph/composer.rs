@@ -488,7 +488,7 @@ impl<'a> FrameComposer<'a> {
         let mut ext_views: FxHashMap<_, &wgpu::TextureView> = FxHashMap::default();
         ext_views.insert(surface_out, &surface_view);
 
-        let rdg_execute_ctx = RdgExecuteContext {
+        let mut rdg_execute_ctx = RdgExecuteContext {
             resources: &rdg.resources,
             pool: self.ctx.rdg_pool,
             device: &self.ctx.wgpu_ctx.device,
@@ -499,6 +499,7 @@ impl<'a> FrameComposer<'a> {
             mipmap_generator: &self.ctx.resource_manager.mipmap_generator,
             baked_lists: &baked_lists,
             wgpu_ctx: &*self.ctx.wgpu_ctx,
+            current_timeline_index: 0,
         };
 
         let mut rdg_encoder =
@@ -509,7 +510,8 @@ impl<'a> FrameComposer<'a> {
                     label: Some("RDG Unified Encoder"),
                 });
 
-        for &pass_idx in &rdg.execution_queue {
+        for (timeline_index, &pass_idx) in rdg.execution_queue.iter().enumerate() {
+            rdg_execute_ctx.current_timeline_index = timeline_index;
             let pass = rdg.passes[pass_idx].get_pass_mut();
             #[cfg(debug_assertions)]
             rdg_encoder.push_debug_group(pass.name());

@@ -373,11 +373,34 @@ impl RenderGraph {
         }
     }
 
+    /// Allocates physical GPU textures for transient resources that survived
+    /// dead-pass culling **and** have at least one downstream consumer.
+    ///
+    /// Resources that are written but never read (dead resources) are skipped,
+    /// saving VRAM.  External resources are never allocated here — they are
+    /// provided by the caller (e.g. swapchain surface).
     fn allocate_physical_resources(&mut self, pool: &mut RdgTransientPool, device: &Device) {
         pool.begin_frame();
 
         for res in &mut self.resources {
-            if res.is_external || res.first_use == usize::MAX {
+            // External resources are managed outside the RDG.
+            if res.is_external {
+                continue;
+            }
+
+            // Resource was never touched by any surviving pass.
+            if res.first_use == usize::MAX {
+                continue;
+            }
+
+            // Fine-grained resource culling: a transient resource with no
+            // consumers is a dead resource — skip physical allocation to
+            // save VRAM and tile-memory bandwidth.
+            if res.consumers.is_empty() {
+                log::trace!(
+                    "RDG: resource '{}' culled (no consumers), skipping allocation.",
+                    res.name
+                );
                 continue;
             }
 
@@ -534,5 +557,143 @@ mod tests {
                     .collect::<Vec<_>>()
             );
         }
+    }
+
+    /// Verifies that transient resources with no consumers are treated as
+    /// dead resources and skip physical allocation, while the producing
+    /// pass itself remains alive (because it has other consumed outputs).
+    #[test]
+    fn test_dead_resource_culling() {
+        let mut graph = RenderGraph::new();
+        graph.begin_frame(dummy_config());
+
+        let color = graph.register_resource("Color", dummy_desc(), false);
+        let motion = graph.register_resource("MotionVec", dummy_desc(), false);
+        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+
+        // GBuffer writes both Color and MotionVector.
+        struct MockGBufferPass {
+            color: TextureNodeId,
+            motion: TextureNodeId,
+        }
+        impl PassNode for MockGBufferPass {
+            fn name(&self) -> &'static str {
+                "GBuffer"
+            }
+            fn setup(&mut self, builder: &mut PassBuilder) {
+                builder.write_texture(self.color);
+                builder.write_texture(self.motion);
+            }
+            fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
+        }
+
+        // ToneMap reads only Color, ignoring MotionVector.
+        struct MockToneMap {
+            color: TextureNodeId,
+            out: TextureNodeId,
+        }
+        impl PassNode for MockToneMap {
+            fn name(&self) -> &'static str {
+                "ToneMap"
+            }
+            fn setup(&mut self, builder: &mut PassBuilder) {
+                builder.read_texture(self.color);
+                builder.write_texture(self.out);
+            }
+            fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
+        }
+
+        graph.add_pass(Box::new(MockGBufferPass {
+            color,
+            motion,
+        }));
+        graph.add_pass(Box::new(MockToneMap {
+            color,
+            out: backbuffer,
+        }));
+
+        graph.compile_topology();
+
+        // GBuffer stays alive because Color is consumed.
+        assert_eq!(graph.execution_queue.len(), 2);
+
+        // Color has a consumer (ToneMap) → should be allocated.
+        assert!(!graph.resources[color.0 as usize].consumers.is_empty());
+
+        // MotionVector has no consumer → dead resource, skip allocation.
+        assert!(graph.resources[motion.0 as usize].consumers.is_empty());
+        // first_use is still valid because the producing pass is alive.
+        assert_ne!(graph.resources[motion.0 as usize].first_use, usize::MAX);
+    }
+
+    /// Verifies that a self-read (write + read by the same pass) protects
+    /// an internal resource from being culled.
+    #[test]
+    fn test_self_read_prevents_culling() {
+        let mut graph = RenderGraph::new();
+        graph.begin_frame(dummy_config());
+
+        let internal = graph.register_resource("Internal", dummy_desc(), false);
+        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+
+        struct MockMacroNode {
+            internal: TextureNodeId,
+            output: TextureNodeId,
+        }
+        impl PassNode for MockMacroNode {
+            fn name(&self) -> &'static str {
+                "MacroNode"
+            }
+            fn setup(&mut self, builder: &mut PassBuilder) {
+                builder.write_texture(self.internal);
+                builder.read_texture(self.internal); // self-read
+                builder.write_texture(self.output);
+            }
+            fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
+        }
+
+        graph.add_pass(Box::new(MockMacroNode {
+            internal,
+            output: backbuffer,
+        }));
+
+        graph.compile_topology();
+
+        // Internal resource has a consumer (self-read) → survives culling.
+        assert!(!graph.resources[internal.0 as usize].consumers.is_empty());
+    }
+
+    /// Verifies auto-deduced resource lifetimes: first_use and last_use
+    /// correctly reflect the compiled execution timeline.
+    #[test]
+    fn test_resource_lifetime_deduction() {
+        let mut graph = RenderGraph::new();
+        graph.begin_frame(dummy_config());
+
+        let color = graph.register_resource("Color", dummy_desc(), false);
+        let bloom = graph.register_resource("Bloom", dummy_desc(), false);
+        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+
+        graph.add_pass(Box::new(MockOpaquePass { out_color: color }));
+        graph.add_pass(Box::new(MockBloomPass {
+            in_color: color,
+            out_bloom: bloom,
+        }));
+        graph.add_pass(Box::new(MockToneMappingPass {
+            in_color: color,
+            in_bloom: bloom,
+            out_target: backbuffer,
+        }));
+
+        graph.compile_topology();
+
+        // Timeline: [0]=Opaque, [1]=Bloom, [2]=ToneMapping
+        let color_res = &graph.resources[color.0 as usize];
+        assert_eq!(color_res.first_use, 0, "Color first written by Opaque at timeline 0");
+        assert_eq!(color_res.last_use, 2, "Color last read by ToneMapping at timeline 2");
+
+        let bloom_res = &graph.resources[bloom.0 as usize];
+        assert_eq!(bloom_res.first_use, 1, "Bloom first written by BloomPass at timeline 1");
+        assert_eq!(bloom_res.last_use, 2, "Bloom last read by ToneMapping at timeline 2");
     }
 }

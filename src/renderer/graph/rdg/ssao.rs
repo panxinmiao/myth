@@ -595,6 +595,9 @@ impl PassNode for SsaoPassNode {
         self.output_tex = builder.create_texture("SSAO_Output", desc.clone());
 
         self.internal_raw_tex = builder.create_texture("SSAO_Raw_Internal", desc);
+        // Self-read: the raw AO texture is produced by sub-pass 1 and
+        // consumed by the blur sub-pass within this macro node.
+        builder.read_texture(self.internal_raw_tex);
 
         // Consumer: read depth and normals from upstream passes.
         self.depth_tex = builder.read_blackboard("Scene_Depth");
