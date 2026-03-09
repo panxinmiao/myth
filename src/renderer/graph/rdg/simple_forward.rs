@@ -125,7 +125,13 @@ impl PassNode for SimpleForwardPassNode {
                 surface_format,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            self.msaa_view = Some(builder.create_texture("Scene_Msaa", desc));
+            let msaa_id = builder.create_texture("Scene_Msaa", desc);
+            // Self-read: the MSAA intermediate is resolved to surface_out
+            // within this pass via wgpu's resolve_target mechanism.  The
+            // read declaration prevents the resource-level culler from
+            // treating it as a dead resource.
+            builder.read_texture(msaa_id);
+            self.msaa_view = Some(msaa_id);
         } else {
             self.msaa_view = None;
         }
@@ -147,7 +153,6 @@ impl PassNode for SimpleForwardPassNode {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
         let target_view = ctx.get_texture_view(self.surface_out);
-        let depth_view = ctx.get_texture_view(self.scene_depth);
 
         let (color_view, resolve_target) = if let Some(msaa_view) = self.msaa_view {
             (ctx.get_texture_view(msaa_view), Some(target_view))
@@ -155,13 +160,16 @@ impl PassNode for SimpleForwardPassNode {
             (target_view, None)
         };
 
+        // MSAA intermediates are discarded after resolve; non-MSAA targets
+        // use auto-deduced StoreOp from the resource lifetime.
         let store_op = if resolve_target.is_some() {
             wgpu::StoreOp::Discard
         } else {
             wgpu::StoreOp::Store
         };
 
-        // Single RenderPass: Clear → Opaque → Skybox → Transparent → Resolve
+        let depth_att = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
+
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("RDG Simple Forward Pass"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -173,15 +181,7 @@ impl PassNode for SimpleForwardPassNode {
                 },
                 depth_slice: None,
             })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    // Reverse-Z: far plane is 0.0
-                    load: wgpu::LoadOp::Clear(0.0),
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
+            depth_stencil_attachment: depth_att,
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,

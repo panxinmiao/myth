@@ -138,31 +138,18 @@ impl PassNode for TransparentPassNode {
     }
 
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
-        let color_view = ctx.get_texture_view(self.scene_color);
-        let depth_view = ctx.get_texture_view(self.scene_depth);
+        // Auto-deduced ops: scene_color inherits from prior passes (Load),
+        // and is Stored if consumed downstream; scene_depth is read-only
+        // here and may be Discarded if this is its last use.
+        let color_att = ctx.get_color_attachment(self.scene_color, wgpu::Color::BLACK);
+        let depth_att = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("RDG Transparent Pass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: color_view,
-                resolve_target: None, // No MSAA in HighFidelity path
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Discard,
-                }),
-                stencil_ops: None,
-            }),
+            color_attachments: &[color_att],
+            depth_stencil_attachment: depth_att,
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,
@@ -178,7 +165,6 @@ impl PassNode for TransparentPassNode {
         );
 
         if !ctx.baked_lists.transparent.is_empty() {
-            // Set screen bind group (Group 3) at the pass level.
             let screen_bg = self.screen_bind_group.as_ref().unwrap();
             pass.set_bind_group(3, screen_bg, &[]);
 

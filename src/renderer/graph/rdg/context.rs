@@ -137,6 +137,19 @@ impl<'a> RdgViewResolver<'a> {
         let physical_index = res.physical_index.expect("No physical memory!");
         self.pool.get_sub_view(physical_index, key)
     }
+
+    /// Returns `true` if the resource has a physical GPU allocation.
+    ///
+    /// A resource is considered allocated if it is external (always backed by
+    /// caller-provided memory) or if the graph compiler assigned a physical
+    /// pool slot.  Dead resources — those written but never read — will
+    /// return `false`, allowing passes to skip bind-group creation and
+    /// select leaner pipeline variants in [`PassNode::prepare`].
+    #[inline]
+    pub fn is_resource_allocated(&self, id: TextureNodeId) -> bool {
+        let res = &self.resources[id.0 as usize];
+        res.is_external || res.physical_index.is_some()
+    }
 }
 
 // ─── Execute Context ──────────────────────────────────────────────────────────
@@ -169,6 +182,11 @@ pub struct RdgExecuteContext<'a> {
 
     /// Full wgpu context — depth format, render path, etc.
     pub wgpu_ctx: &'a WgpuContext,
+
+    /// Index of the currently executing pass within the compiled execution
+    /// queue timeline.  Used by [`get_color_attachment`] and
+    /// [`get_depth_stencil_attachment`] to auto-deduce `LoadOp` / `StoreOp`.
+    pub current_timeline_index: usize,
 }
 
 impl<'a> RdgExecuteContext<'a> {
@@ -197,5 +215,105 @@ impl<'a> RdgExecuteContext<'a> {
             .physical_index
             .expect("Resource has no physical memory!");
         self.pool.get_tracked_view(physical_index)
+    }
+
+    /// Safely resolve a [`TextureNodeId`] to its physical [`TextureView`].
+    ///
+    /// Returns `None` if the resource was culled by the graph compiler
+    /// (i.e. it has no consumers and no physical allocation).  Passes
+    /// should use this for optional MRT targets that may have been
+    /// optimized out.
+    pub fn try_get_texture_view(&self, id: TextureNodeId) -> Option<&TextureView> {
+        let res = &self.resources[id.0 as usize];
+        if res.is_external {
+            self.external_views.get(&id).copied()
+        } else {
+            res.physical_index.map(|idx| self.pool.get_view(idx))
+        }
+    }
+
+    /// Returns `true` if the resource is backed by physical GPU memory.
+    ///
+    /// Equivalent to [`RdgViewResolver::is_resource_allocated`] but
+    /// available during the execute phase.
+    #[inline]
+    pub fn is_resource_allocated(&self, id: TextureNodeId) -> bool {
+        let res = &self.resources[id.0 as usize];
+        res.is_external || res.physical_index.is_some()
+    }
+
+    /// Auto-deduce `LoadOp` and `StoreOp` for a color attachment based on
+    /// the resource's lifetime within the compiled execution timeline.
+    ///
+    /// - **`LoadOp`**: `Clear(clear_color)` when this pass is the first to
+    ///   touch the resource (`first_use == current_timeline_index`);
+    ///   `Load` otherwise.
+    /// - **`StoreOp`**: `Discard` when this pass is the last consumer
+    ///   **and** the resource is not external; `Store` otherwise.
+    ///
+    /// Returns `None` if the resource was culled (no physical allocation),
+    /// enabling dynamic MRT construction without panics.
+    pub fn get_color_attachment(
+        &self,
+        id: TextureNodeId,
+        clear_color: wgpu::Color,
+    ) -> Option<wgpu::RenderPassColorAttachment<'_>> {
+        let view = self.try_get_texture_view(id)?;
+        let res = &self.resources[id.0 as usize];
+        let ti = self.current_timeline_index;
+
+        let load = if res.first_use == ti {
+            wgpu::LoadOp::Clear(clear_color)
+        } else {
+            wgpu::LoadOp::Load
+        };
+
+        let store = if res.last_use == ti && !res.is_external {
+            wgpu::StoreOp::Discard
+        } else {
+            wgpu::StoreOp::Store
+        };
+
+        Some(wgpu::RenderPassColorAttachment {
+            view,
+            resolve_target: None,
+            ops: wgpu::Operations { load, store },
+            depth_slice: None,
+        })
+    }
+
+    /// Auto-deduce `LoadOp` and `StoreOp` for a depth-stencil attachment.
+    ///
+    /// Rules mirror [`get_color_attachment`]:
+    /// - First use → `Clear(clear_depth)`, otherwise `Load`.
+    /// - Last use on a non-external resource → `Discard`, otherwise `Store`.
+    ///
+    /// Returns `None` if the resource was culled.
+    pub fn get_depth_stencil_attachment(
+        &self,
+        id: TextureNodeId,
+        clear_depth: f32,
+    ) -> Option<wgpu::RenderPassDepthStencilAttachment<'_>> {
+        let view = self.try_get_texture_view(id)?;
+        let res = &self.resources[id.0 as usize];
+        let ti = self.current_timeline_index;
+
+        let load = if res.first_use == ti {
+            wgpu::LoadOp::Clear(clear_depth)
+        } else {
+            wgpu::LoadOp::Load
+        };
+
+        let store = if res.last_use == ti && !res.is_external {
+            wgpu::StoreOp::Discard
+        } else {
+            wgpu::StoreOp::Store
+        };
+
+        Some(wgpu::RenderPassDepthStencilAttachment {
+            view,
+            depth_ops: Some(wgpu::Operations { load, store }),
+            stencil_ops: None,
+        })
     }
 }

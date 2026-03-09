@@ -346,6 +346,10 @@ impl PassNode for SssssPassNode {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
         self.temp_blur = builder.create_texture("SSSSS_Temp", desc);
+        // Self-read: temp_blur is written by the H sub-pass and consumed
+        // by the V sub-pass within this macro node.  The read declaration
+        // prevents the resource-level culler from treating it as dead.
+        builder.read_texture(self.temp_blur);
 
         // Consumer: wire upstream resources.
         self.scene_color = builder.write_blackboard("Scene_Color_HDR");

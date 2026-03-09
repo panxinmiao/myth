@@ -166,50 +166,34 @@ impl PassNode for OpaquePassNode {
     fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
-        let color_view = ctx.get_texture_view(self.scene_color);
-        let depth_view = ctx.get_texture_view(self.scene_depth);
-
+        // ── Color attachments (auto-deduced LoadOp / StoreOp) ───────────
         let mut color_attachments: smallvec::SmallVec<
             [Option<wgpu::RenderPassColorAttachment>; 2],
-        > = smallvec::smallvec![Some(wgpu::RenderPassColorAttachment {
-            view: color_view,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(self.clear_color),
-                store: wgpu::StoreOp::Store,
-            },
-            depth_slice: None,
-        })];
+        > = smallvec::smallvec![
+            ctx.get_color_attachment(self.scene_color, self.clear_color)
+        ];
 
-        // Optional specular MRT
+        // Specular MRT — may have been culled if no downstream consumer
+        // (e.g. SSSSS disabled).  `get_color_attachment` returns `None`
+        // for dead resources, naturally shrinking the MRT footprint.
         if self.needs_specular {
-            let specular_view = ctx.get_texture_view(self.specular_tex);
-            color_attachments.push(Some(wgpu::RenderPassColorAttachment {
-                view: specular_view,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
-                    store: wgpu::StoreOp::Store,
-                },
-                depth_slice: None,
-            }));
+            if let Some(att) = ctx.get_color_attachment(
+                self.specular_tex,
+                wgpu::Color::TRANSPARENT,
+            ) {
+                color_attachments.push(Some(att));
+            }
         }
+
+        // ── Depth/stencil attachment (auto-deduced ops) ─────────────────
+        // Reverse-Z: clear to 0.0 (far plane) when this is the first use,
+        // otherwise load the depth written by the prepass.
+        let depth_stencil = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("RDG Opaque Pass"),
             color_attachments: &color_attachments,
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_view,
-                depth_ops: Some(wgpu::Operations {
-                    load: if self.has_prepass {
-                        wgpu::LoadOp::Load
-                    } else {
-                        wgpu::LoadOp::Clear(0.0) // Reverse-Z: 0.0 = far
-                    },
-                    store: wgpu::StoreOp::Store,
-                }),
-                stencil_ops: None,
-            }),
+            depth_stencil_attachment: depth_stencil,
             timestamp_writes: None,
             occlusion_query_set: None,
             multiview_mask: None,
@@ -224,7 +208,6 @@ impl PassNode for OpaquePassNode {
             &[],
         );
 
-        // Set screen bind group (Group 3) at the pass level.
         let screen_bg = self.screen_bind_group.as_ref().unwrap();
         pass.set_bind_group(3, screen_bg, &[]);
 
