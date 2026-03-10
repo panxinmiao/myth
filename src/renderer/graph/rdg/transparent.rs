@@ -54,10 +54,22 @@ impl TransparentFeature {
         rdg: &mut RenderGraph,
         color_target: TextureNodeId,
         depth_target: TextureNodeId,
-        resolve_target: Option<TextureNodeId>,
         transmission_tex: Option<TextureNodeId>,
         ssao_tex: Option<TextureNodeId>,
     ) {
+        let resolve_target = if rdg.frame_config().msaa_samples > 1 {
+            // register an explicit resolve target for the Transparent pass to write into,
+            Some(rdg.register_resource(
+                "Scene_Color_HDR_Final",
+                rdg.frame_config().create_render_target_desc(
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+                ),
+                false,
+            ))
+        } else {
+            None
+        };
+
         let node = TransparentPassNode::new(
             color_target,
             depth_target,

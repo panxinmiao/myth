@@ -82,5 +82,4 @@ impl<'a> PassBuilder<'a> {
     pub fn mark_side_effect(&mut self) {
         self.graph.passes[self.pass_index].has_side_effect = true;
     }
-
 }

@@ -30,6 +30,37 @@ pub struct FrameConfig {
     pub hdr_format: wgpu::TextureFormat,
 }
 
+impl FrameConfig {
+    /// Returns a `RdgTextureDesc` for a 2D render target matching the frame
+    /// configuration's resolution and HDR format, with the given usage flags.
+    pub fn create_render_target_desc(&self, usage: wgpu::TextureUsages) -> RdgTextureDesc {
+        RdgTextureDesc::new_2d(
+            self.width,
+            self.height,
+            self.hdr_format,
+            usage | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        )
+    }
+
+    pub fn create_surface_desc(&self, usage: wgpu::TextureUsages) -> RdgTextureDesc {
+        RdgTextureDesc::new_2d(
+            self.width,
+            self.height,
+            self.surface_format,
+            usage | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        )
+    }
+
+    pub fn create_depth_desc(&self, usage: wgpu::TextureUsages) -> RdgTextureDesc {
+        RdgTextureDesc::new_2d(
+            self.width,
+            self.height,
+            self.depth_format,
+            usage | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        )
+    }
+}
+
 /// Declarative Render Graph.
 ///
 /// Stores pass and resource records, performs dependency analysis,

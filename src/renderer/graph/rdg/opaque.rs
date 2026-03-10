@@ -26,13 +26,13 @@
 //! - `clear_color`: Background clear color
 //! - `needs_specular`: Whether to output a specular MRT attachment
 
+use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::resources::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::rdg::builder::PassBuilder;
 use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
 use crate::renderer::graph::rdg::draw::submit_draw_commands;
 use crate::renderer::graph::rdg::node::PassNode;
 use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
-use crate::renderer::HDR_TEXTURE_FORMAT;
 
 use super::graph::RenderGraph;
 
@@ -115,17 +115,13 @@ impl OpaqueFeature {
                 wgpu::TextureUsages::RENDER_ATTACHMENT,
             );
 
-            let msaa_color =
-                rdg.register_resource("Scene_Color_MSAA", msaa_color_desc, false);
-            let msaa_depth =
-                rdg.register_resource("Scene_Depth_MSAA", msaa_depth_desc, false);
-            let scene_hdr =
-                rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
+            let msaa_color = rdg.register_resource("Scene_Color_MSAA", msaa_color_desc, false);
+            let msaa_depth = rdg.register_resource("Scene_Depth_MSAA", msaa_depth_desc, false);
+            let scene_hdr = rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
 
             (msaa_color, msaa_depth, Some(scene_hdr), scene_hdr)
         } else {
-            let scene_hdr =
-                rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
+            let scene_hdr = rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
             (scene_hdr, scene_depth_ss, None, scene_hdr)
         };
 
@@ -150,8 +146,7 @@ impl OpaqueFeature {
                     fc.msaa_samples,
                     wgpu::TextureDimension::D2,
                     HDR_TEXTURE_FORMAT,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 );
                 let specular_msaa =
                     rdg.register_resource("Specular_MRT_MSAA", msaa_spec_desc, false);
@@ -212,8 +207,9 @@ pub struct OpaquePassNode {
     pub has_prepass: bool,
     pub clear_color: wgpu::Color,
     pub needs_specular: bool,
-    pub ssao_enabled: bool,    /// Explicit SSAO input (`None` when SSAO is disabled).
-    pub ssao_input: Option<TextureNodeId>,    // ─── Screen Bind Group Infrastructure ──────────────────────────
+    pub ssao_enabled: bool,
+    /// Explicit SSAO input (`None` when SSAO is disabled).
+    pub ssao_input: Option<TextureNodeId>, // ─── Screen Bind Group Infrastructure ──────────────────────────
     screen_info: ScreenBindGroupInfo,
     // ─── Internal Cache ────────────────────────────────────────────
     screen_bind_group: Option<wgpu::BindGroup>,
