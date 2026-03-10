@@ -365,6 +365,8 @@ impl<'a> FrameComposer<'a> {
                         .ctx
                         .rdg_msaa_sync_pass
                         .add_to_graph(rdg, scene_color_hdr);
+                }else{
+                    active_color = scene_color_hdr;
                 }
             }
 

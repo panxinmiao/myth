@@ -205,10 +205,12 @@ impl<'a> RdgExecuteContext<'a> {
     /// For external resources, the view is looked up in `external_views`.
     /// For transient resources, the view is obtained from the physical pool.
     pub fn get_texture_view(&self, id: TextureNodeId) -> &TextureView {
-        let res = &self.resources[id.0 as usize];
+        let root_id = resolve_root_id(self.resources, id);
+        let res = &self.resources[root_id.0 as usize];
+
         if res.is_external {
             self.external_views
-                .get(&id)
+                .get(&root_id)
                 .expect("External view was not provided to RdgExecuteContext!")
         } else {
             let physical_index = res
@@ -220,7 +222,9 @@ impl<'a> RdgExecuteContext<'a> {
 
     /// Returns the [`Tracked<TextureView>`] for cache-key use during execute.
     pub fn get_tracked_texture_view(&self, id: TextureNodeId) -> &Tracked<wgpu::TextureView> {
-        let res = &self.resources[id.0 as usize];
+        let root_id = resolve_root_id(self.resources, id);
+        let res = &self.resources[root_id.0 as usize];
+
         let physical_index = res
             .physical_index
             .expect("Resource has no physical memory!");
@@ -234,9 +238,11 @@ impl<'a> RdgExecuteContext<'a> {
     /// should use this for optional MRT targets that may have been
     /// optimized out.
     pub fn try_get_texture_view(&self, id: TextureNodeId) -> Option<&TextureView> {
-        let res = &self.resources[id.0 as usize];
+        let root_id = resolve_root_id(self.resources, id);
+        let res = &self.resources[root_id.0 as usize];
+
         if res.is_external {
-            self.external_views.get(&id).copied()
+            self.external_views.get(&root_id).copied()
         } else {
             res.physical_index.map(|idx| self.pool.get_view(idx))
         }
