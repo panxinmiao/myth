@@ -63,6 +63,7 @@ impl PassRecord {
     ///
     /// Used by `RenderGraph::add_pass` during the two-phase insertion:
     /// the record is pushed first, then setup is called, then the node is stored.
+    #[must_use]
     pub fn new_empty(name: &'static str) -> Self {
         Self {
             name,

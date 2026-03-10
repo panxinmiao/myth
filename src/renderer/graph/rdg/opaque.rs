@@ -38,7 +38,7 @@ use super::graph::RenderGraph;
 
 /// Outputs produced by the Opaque pass, returned to the Composer for
 /// explicit downstream wiring.
-#[must_use]
+#[must_use = "SSA Graph: You must use the outputs of opaque pass to wire downstream passes!"]
 pub struct OpaqueOutputs {
     /// Drawing surface for subsequent MSAA passes (Skybox, Transparent).
     /// In non-MSAA mode this IS `scene_color_hdr`.
@@ -61,7 +61,14 @@ pub struct OpaqueFeature {
     screen_info: Option<ScreenBindGroupInfo>,
 }
 
+impl Default for OpaqueFeature {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpaqueFeature {
+    #[must_use]
     pub fn new() -> Self {
         Self { screen_info: None }
     }
@@ -124,7 +131,13 @@ impl OpaqueFeature {
         } else {
             let scene_hdr = rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
             let depth_alias = rdg.create_alias(scene_depth_ss, "Scene_Depth_Opaque");
-            (scene_hdr, depth_alias, None, scene_hdr, Some(scene_depth_ss))
+            (
+                scene_hdr,
+                depth_alias,
+                None,
+                scene_hdr,
+                Some(scene_depth_ss),
+            )
         };
 
         // ── Specular MRT (conditionally created) ───────────────────
@@ -323,14 +336,14 @@ impl PassNode for OpaquePassNode {
         // Specular MRT — may have been culled if no downstream consumer
         // (e.g. SSSSS disabled).  `get_color_attachment` returns `None`
         // for dead resources, naturally shrinking the MRT footprint.
-        if self.needs_specular {
-            if let Some(att) = ctx.get_color_attachment(
+        if self.needs_specular
+            && let Some(att) = ctx.get_color_attachment(
                 self.specular_tex,
                 Some(wgpu::Color::TRANSPARENT),
                 self.specular_resolve_target,
-            ) {
-                color_attachments.push(Some(att));
-            }
+            )
+        {
+            color_attachments.push(Some(att));
         }
 
         // ── Depth/stencil attachment (auto-deduced ops) ─────────────────

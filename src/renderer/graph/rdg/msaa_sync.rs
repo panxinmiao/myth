@@ -59,6 +59,12 @@ pub struct MsaaSyncFeature {
     bind_group_layout: Option<Tracked<wgpu::BindGroupLayout>>,
 }
 
+impl Default for MsaaSyncFeature {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl MsaaSyncFeature {
     #[must_use]
     pub fn new() -> Self {

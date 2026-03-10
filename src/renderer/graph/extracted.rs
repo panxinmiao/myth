@@ -232,6 +232,7 @@ impl ExtractedScene {
         }
     }
 
+    #[must_use]
     pub fn has_shadow_casters(&self) -> bool {
         self.scene_variants.contains(SceneFeatures::HAS_SHADOWS)
     }

@@ -179,6 +179,7 @@ impl GlobalBindGroupCache {
 
     /// Returns the current frame number.
     #[inline]
+    #[must_use]
     pub fn current_frame(&self) -> u64 {
         self.current_frame
     }

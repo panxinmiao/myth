@@ -77,6 +77,7 @@ pub struct RdgViewResolver<'a> {
     pub external_resources: &'a FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
 }
 
+#[must_use]
 pub fn resolve_root_id(resources: &[ResourceRecord], mut id: TextureNodeId) -> TextureNodeId {
     while let Some(parent) = resources[id.0 as usize].alias_of {
         id = parent;
@@ -84,12 +85,12 @@ pub fn resolve_root_id(resources: &[ResourceRecord], mut id: TextureNodeId) -> T
     id
 }
 
-impl<'a> RdgViewResolver<'a> {
-
+impl RdgViewResolver<'_> {
     /// Resolve a virtual [`TextureNodeId`] to its physical [`Tracked<TextureView>`].
     ///
     /// For external resources, the view is looked up in `external_resources`.
     /// For transient resources, the **default** view is obtained from the pool.
+    #[must_use]
     pub fn get_texture_view(&self, id: TextureNodeId) -> &Tracked<wgpu::TextureView> {
         let root_id = resolve_root_id(self.resources, id);
         let res = &self.resources[root_id.0 as usize];
@@ -97,7 +98,7 @@ impl<'a> RdgViewResolver<'a> {
         if res.is_external {
             self.external_resources
                 .get(&root_id)
-                .expect(&format!("External {} resource missing!", res.name))
+                .unwrap_or_else(|| panic!("External {} resource missing!", res.name))
         } else {
             let physical_index = res.physical_index.expect("No physical memory!");
             &self.pool.resources[physical_index].default_view
@@ -109,6 +110,7 @@ impl<'a> RdgViewResolver<'a> {
     ///
     /// Useful for dirty-checking: if the UID hasn't changed between frames,
     /// the physical texture is the same and derived state can be reused.
+    #[must_use]
     pub fn get_physical_texture_uid(&self, id: TextureNodeId) -> u64 {
         let res = &self.resources[id.0 as usize];
         let physical_index = res.physical_index.expect("No physical memory!");
@@ -118,6 +120,7 @@ impl<'a> RdgViewResolver<'a> {
     /// Returns the raw `wgpu::Texture` handle for the given node.
     ///
     /// Useful for passes that need to create custom views (e.g. Bloom mip chain).
+    #[must_use]
     pub fn get_texture(&self, id: TextureNodeId) -> &wgpu::Texture {
         let res = &self.resources[id.0 as usize];
         let physical_index = res.physical_index.expect("No physical memory!");
@@ -131,13 +134,14 @@ impl<'a> RdgViewResolver<'a> {
     pub fn get_or_create_sub_view(
         &mut self,
         id: TextureNodeId,
-        key: SubViewKey,
+        key: &SubViewKey,
     ) -> &Tracked<wgpu::TextureView> {
         let res = &self.resources[id.0 as usize];
         let physical_index = res.physical_index.expect("No physical memory!");
         self.pool.get_or_create_sub_view(physical_index, key)
     }
 
+    #[must_use]
     pub fn get_sub_view(
         &self,
         id: TextureNodeId,
@@ -156,6 +160,7 @@ impl<'a> RdgViewResolver<'a> {
     /// return `false`, allowing passes to skip bind-group creation and
     /// select leaner pipeline variants in [`PassNode::prepare`].
     #[inline]
+    #[must_use]
     pub fn is_resource_allocated(&self, id: TextureNodeId) -> bool {
         let res = &self.resources[id.0 as usize];
         res.is_external || res.physical_index.is_some()
@@ -199,11 +204,12 @@ pub struct RdgExecuteContext<'a> {
     pub current_timeline_index: usize,
 }
 
-impl<'a> RdgExecuteContext<'a> {
+impl RdgExecuteContext<'_> {
     /// Resolve a virtual [`TextureNodeId`] to its physical [`TextureView`].
     ///
     /// For external resources, the view is looked up in `external_views`.
     /// For transient resources, the view is obtained from the physical pool.
+    #[must_use]
     pub fn get_texture_view(&self, id: TextureNodeId) -> &TextureView {
         let root_id = resolve_root_id(self.resources, id);
         let res = &self.resources[root_id.0 as usize];
@@ -221,6 +227,7 @@ impl<'a> RdgExecuteContext<'a> {
     }
 
     /// Returns the [`Tracked<TextureView>`] for cache-key use during execute.
+    #[must_use]
     pub fn get_tracked_texture_view(&self, id: TextureNodeId) -> &Tracked<wgpu::TextureView> {
         let root_id = resolve_root_id(self.resources, id);
         let res = &self.resources[root_id.0 as usize];
@@ -237,6 +244,7 @@ impl<'a> RdgExecuteContext<'a> {
     /// (i.e. it has no consumers and no physical allocation).  Passes
     /// should use this for optional MRT targets that may have been
     /// optimized out.
+    #[must_use]
     pub fn try_get_texture_view(&self, id: TextureNodeId) -> Option<&TextureView> {
         let root_id = resolve_root_id(self.resources, id);
         let res = &self.resources[root_id.0 as usize];
@@ -253,6 +261,7 @@ impl<'a> RdgExecuteContext<'a> {
     /// Equivalent to [`RdgViewResolver::is_resource_allocated`] but
     /// available during the execute phase.
     #[inline]
+    #[must_use]
     pub fn is_resource_allocated(&self, id: TextureNodeId) -> bool {
         let res = &self.resources[id.0 as usize];
         res.is_external || res.physical_index.is_some()
@@ -282,6 +291,7 @@ impl<'a> RdgExecuteContext<'a> {
     ///
     /// Returns `None` if the primary resource was culled (no physical
     /// allocation), enabling dynamic MRT construction without panics.
+    #[must_use]
     pub fn get_color_attachment(
         &self,
         id: TextureNodeId,
@@ -327,6 +337,7 @@ impl<'a> RdgExecuteContext<'a> {
     /// - Last use on a non-external resource → `Discard`, otherwise `Store`.
     ///
     /// Returns `None` if the resource was culled.
+    #[must_use]
     pub fn get_depth_stencil_attachment(
         &self,
         id: TextureNodeId,

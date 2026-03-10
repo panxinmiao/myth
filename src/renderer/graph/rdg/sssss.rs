@@ -70,6 +70,12 @@ pub struct SssssFeature {
     last_registry_version: u64,
 }
 
+impl Default for SssssFeature {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SssssFeature {
     #[must_use]
     pub fn new() -> Self {
@@ -319,7 +325,7 @@ impl SssssFeature {
 
 struct SssssPassNode {
     // ─── RDG Resource Slots (explicit wiring from add_to_graph) ───────
-    scene_color_in: TextureNodeId, 
+    scene_color_in: TextureNodeId,
     scene_color_out: TextureNodeId,
     temp_blur: TextureNodeId,
     depth_in: TextureNodeId,
@@ -376,7 +382,7 @@ impl PassNode for SssssPassNode {
         };
 
         ctx.views
-            .get_or_create_sub_view(self.depth_in, depth_sub_key.clone());
+            .get_or_create_sub_view(self.depth_in, &depth_sub_key);
 
         let depth_only_view = ctx
             .views

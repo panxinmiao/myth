@@ -49,8 +49,8 @@ pub fn submit_draw_commands<'pass, 'cmd: 'pass>(
     let mut cur_bg1: *const wgpu::BindGroup = std::ptr::null();
     let mut cur_bg2: *const wgpu::BindGroup = std::ptr::null();
     let mut cur_bg3: *const wgpu::BindGroup = std::ptr::null();
-    let mut cur_vb: [*const wgpu::Buffer; 8] = [std::ptr::null(); 8];
-    let mut cur_ib: *const wgpu::Buffer = std::ptr::null();
+    let mut cur_vertex_b: [*const wgpu::Buffer; 8] = [std::ptr::null(); 8];
+    let mut cur_index_b: *const wgpu::Buffer = std::ptr::null();
     let mut cur_stencil: Option<u32> = None;
 
     for cmd in commands {
@@ -103,18 +103,18 @@ pub fn submit_draw_commands<'pass, 'cmd: 'pass>(
         // ── Vertex Buffers ──────────────────────────────────────────
         for (slot, buf) in cmd.vertex_buffers.iter().enumerate() {
             let p = *buf as *const wgpu::Buffer;
-            if cur_vb[slot] != p {
+            if cur_vertex_b[slot] != p {
                 pass.set_vertex_buffer(slot as u32, buf.slice(..));
-                cur_vb[slot] = p;
+                cur_vertex_b[slot] = p;
             }
         }
 
         // ── Index Buffer + Draw ─────────────────────────────────────
         if let Some((buf, fmt, count)) = cmd.index_buffer {
             let p = buf as *const wgpu::Buffer;
-            if p != cur_ib {
+            if p != cur_index_b {
                 pass.set_index_buffer(buf.slice(..), fmt);
-                cur_ib = p;
+                cur_index_b = p;
             }
             pass.draw_indexed(0..count, 0, cmd.instance_range.clone());
         } else {

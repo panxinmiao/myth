@@ -181,6 +181,12 @@ pub struct SkyboxFeature {
     pub(crate) current_pipeline: Option<RenderPipelineId>,
 }
 
+impl Default for SkyboxFeature {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SkyboxFeature {
     #[must_use]
     pub fn new() -> Self {
@@ -348,8 +354,7 @@ impl SkyboxFeature {
         };
 
         // GPU buffer was already ensured by the Composer; use pushed IDs.
-        let params_gpu_id = ctx.resource_manager.ensure_buffer_id(bg_uniforms);
-        let params_cpu_id = bg_uniforms.id();
+        let bg_uniforms_id = ctx.resource_manager.ensure_buffer_id(bg_uniforms);
 
         if let BackgroundMode::Texture {
             source: TextureSource::Asset(handle),
@@ -389,7 +394,7 @@ impl SkyboxFeature {
 
             let tex_view_key = std::ptr::from_ref::<wgpu::TextureView>(tex_view) as u64;
             let key = BindGroupKey::new(layout_id)
-                .with_resource(params_gpu_id)
+                .with_resource(bg_uniforms_id)
                 .with_resource(tex_view_key)
                 .with_resource(sampler.id());
 
@@ -399,7 +404,7 @@ impl SkyboxFeature {
                 let params_gpu = ctx
                     .resource_manager
                     .gpu_buffers
-                    .get(&params_cpu_id)
+                    .get(&bg_uniforms.id())
                     .expect("Skybox params GPU buffer must exist");
 
                 let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -424,7 +429,7 @@ impl SkyboxFeature {
                 bg
             }
         } else {
-            let key = BindGroupKey::new(layout_id).with_resource(params_gpu_id);
+            let key = BindGroupKey::new(layout_id).with_resource(bg_uniforms_id);
 
             if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
                 cached.clone()
@@ -432,7 +437,7 @@ impl SkyboxFeature {
                 let params_gpu = ctx
                     .resource_manager
                     .gpu_buffers
-                    .get(&params_cpu_id)
+                    .get(&bg_uniforms.id())
                     .expect("Skybox params GPU buffer must exist");
 
                 let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -453,7 +458,7 @@ impl SkyboxFeature {
         // Pipeline — uses pushed format fields instead of reading from the graph.
         let pipeline_key = SkyboxPipelineKey {
             variant,
-            color_format: color_format,
+            color_format,
             depth_format: ctx.wgpu_ctx.depth_format,
             msaa_samples: ctx.wgpu_ctx.msaa_samples,
         };

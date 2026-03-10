@@ -34,6 +34,12 @@ pub struct FxaaFeature {
     bind_group_layout: Option<Tracked<wgpu::BindGroupLayout>>,
 }
 
+impl Default for FxaaFeature {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl FxaaFeature {
     #[must_use]
     pub fn new() -> Self {
@@ -112,7 +118,7 @@ impl FxaaFeature {
                 ctx.device
                     .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                         label: Some("FXAA Pipeline Layout"),
-                        bind_group_layouts: &[&self.bind_group_layout.as_ref().unwrap()],
+                        bind_group_layouts: &[self.bind_group_layout.as_ref().unwrap()],
                         immediate_size: 0,
                     });
 
@@ -180,15 +186,15 @@ impl PassNode for FxaaPassNode {
             if ctx.global_bind_group_cache.get(&current_key).is_none() {
                 let new_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("FXAA BindGroup"),
-                    layout: &*self.layout,
+                    layout: &self.layout,
                     entries: &[
                         wgpu::BindGroupEntry {
                             binding: 0,
-                            resource: wgpu::BindingResource::TextureView(&**input_view),
+                            resource: wgpu::BindingResource::TextureView(input_view),
                         },
                         wgpu::BindGroupEntry {
                             binding: 1,
-                            resource: wgpu::BindingResource::Sampler(&**sampler),
+                            resource: wgpu::BindingResource::Sampler(sampler),
                         },
                     ],
                 });
