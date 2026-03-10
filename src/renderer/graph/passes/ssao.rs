@@ -1,4 +1,4 @@
-﻿//! SSAO Feature + Ephemeral PassNode
+//! SSAO Feature + Ephemeral PassNode
 //!
 //! - **`SsaoFeature`** (long-lived): owns pipelines, bind group layouts,
 //!   noise texture.  `extract_and_prepare()` compiles pipelines and uploads
@@ -30,7 +30,10 @@
 
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
-use crate::renderer::graph::core::*;
+use crate::renderer::graph::core::{
+    ExecuteContext, ExtractContext, PassBuilder, PassNode, PrepareContext, RenderGraph, SubViewKey,
+    TextureDesc, TextureNodeId,
+};
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };

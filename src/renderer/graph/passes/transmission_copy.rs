@@ -14,7 +14,9 @@
 //! - Only active when materials with Transmission exist in the scene
 //! - Generates mipmaps after the copy for LOD-based blur
 
-use crate::renderer::graph::core::*;
+use crate::renderer::graph::core::{
+    ExecuteContext, PassBuilder, PassNode, PrepareContext, RenderGraph, TextureDesc, TextureNodeId,
+};
 
 // ─── Feature ───────────────────────────────────────────────────────────
 

@@ -228,7 +228,7 @@ impl TransientPool {
         let index = self.resources.len();
         self.resources.push(PhysicalTexture {
             uid: self.uid_counter,
-            desc: desc.clone(),
+            desc: *desc,
             texture,
             default_view: Tracked::new(view),
             sub_views: FxHashMap::default(),

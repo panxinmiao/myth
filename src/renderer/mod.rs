@@ -57,7 +57,11 @@ use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::core::allocator::TransientPool;
 use crate::renderer::graph::core::graph::RenderGraph;
 use crate::renderer::graph::frame::RenderLists;
-use crate::renderer::graph::passes::*;
+use crate::renderer::graph::passes::{
+    BloomFeature, BrdfLutFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
+    PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
+    ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+};
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 

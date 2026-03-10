@@ -204,7 +204,7 @@ impl RenderGraph {
         let root_id = TextureNodeId(root_idx as u32);
 
         let root_res = &self.resources[root_idx];
-        let desc = root_res.desc.clone();
+        let desc = root_res.desc;
         let is_external = root_res.is_external;
 
         let new_id = self.register_resource(name, desc, is_external);
@@ -459,13 +459,13 @@ impl RenderGraph {
     /// **Phase 1** — Calculate the unified lifetime for each alias group by propagating the
     /// lifetimes from aliases to their root resources.This ensures that the root resource's lifetime encompasses all of its aliases, preventing premature deallocation of shared physical resources.
     ///
-    /// **Phase 2** — Propagate the root's unified lifetime back to every alias.  
+    /// **Phase 2** — Propagate the root's unified lifetime back to every alias.\
     /// This ensures that the execute-phase `StoreOp` deduction sees the correct final lifetime and never discards data prematurely for intermediate versions.
     ///
     /// **Phase 3** — Request physical allocations from the pool for root resources.
     /// Aliases will be skipped since they share the same physical memory.
     ///
-    /// **Phase 4** — Propagate the root's unified `last_use` back to every alias.  
+    /// **Phase 4** — Propagate the root's unified `last_use` back to every alias.\
     /// This ensures that the execute-phase `LoadOp` deduction sees the correct lifetime and keeps the physical memory alive for the entire duration of all aliases.    
     fn allocate_physical_resources(&mut self, pool: &mut TransientPool, device: &Device) {
         pool.begin_frame();
@@ -529,7 +529,8 @@ impl RenderGraph {
 
             println!("🌈 RDG Topology Changed! New Execution Order: {current_names:?}");
 
-            self.dump_mermaid();
+            let dump = self.dump_mermaid();
+            println!("\n🌈 RDG Topology Mermaid Dump:\n{dump}");
             self.prev_execution_names = current_names;
         }
     }
@@ -537,6 +538,7 @@ impl RenderGraph {
     /// Dumps the current Render Graph topology as a Markdown Mermaid chart.
     /// This is an incredibly powerful tool for debugging SSA data flows,
     /// missing connections, and dead-pass elimination.
+    #[must_use]
     pub fn dump_mermaid(&self) -> String {
         use std::fmt::Write;
         let mut out = String::new();
@@ -623,8 +625,8 @@ impl RenderGraph {
 
         writeln!(&mut out, "```").unwrap();
 
-        println!("\n🌈 RDG Topology Mermaid Dump:\n{}", out);
-        log::info!("\n🌈 RDG Topology Mermaid Dump:\n{}", out);
+        // println!("\n🌈 RDG Topology Mermaid Dump:\n{out}");
+        log::info!("\n🌈 RDG Topology Mermaid Dump:\n{out}");
         out
     }
 }
