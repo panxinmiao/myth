@@ -249,7 +249,7 @@ impl<'a> FrameComposer<'a> {
 
         let is_high_fidelity = self.ctx.wgpu_ctx.render_path.supports_post_processing();
         let msaa_samples = self.ctx.wgpu_ctx.msaa_samples;
-        let is_msaa = msaa_samples > 1 && is_high_fidelity;
+        let is_msaa = msaa_samples > 1;
 
         let surface_desc = RdgTextureDesc::new_2d(
             width,
@@ -303,19 +303,22 @@ impl<'a> FrameComposer<'a> {
 
             // 1. Prepass — creates single-sample Scene_Depth, optionally
             //    Scene_Normals and Feature_ID.
-            let prepass_out = self.ctx
-                .rdg_prepass
-                .add_to_graph(rdg, needs_normal, needs_feature_id);
+            let prepass_out =
+                self.ctx
+                    .rdg_prepass
+                    .add_to_graph(rdg, needs_normal, needs_feature_id);
 
             // 2. SSAO — reads Prepass depth + normals, produces half-res AO.
             let ssao_output = if ssao_enabled {
-                Some(self.ctx.rdg_ssao_pass.add_to_graph(
-                    rdg,
-                    prepass_out.scene_depth,
-                    prepass_out
-                        .scene_normals
-                        .expect("SSAO requires scene normals from Prepass"),
-                ))
+                Some(
+                    self.ctx.rdg_ssao_pass.add_to_graph(
+                        rdg,
+                        prepass_out.scene_depth,
+                        prepass_out
+                            .scene_normals
+                            .expect("SSAO requires scene normals from Prepass"),
+                    ),
+                )
             } else {
                 None
             };
@@ -357,8 +360,10 @@ impl<'a> FrameComposer<'a> {
                 // MSAA draws (Skybox, Transparent) see the SSSSS
                 // contributions.
                 if is_msaa {
-                    active_color =
-                        self.ctx.rdg_msaa_sync_pass.add_to_graph(rdg, scene_color_hdr);
+                    active_color = self
+                        .ctx
+                        .rdg_msaa_sync_pass
+                        .add_to_graph(rdg, scene_color_hdr);
                 }
             }
 
@@ -382,17 +387,10 @@ impl<'a> FrameComposer<'a> {
             };
 
             // 7. Transparent — final scene draw in the MSAA context.
-            //    Resolves back to Scene_Color_HDR for the post chain.
-            let transparent_resolve = if is_msaa {
-                Some(scene_color_hdr)
-            } else {
-                None
-            };
             self.ctx.rdg_transparent_pass.add_to_graph(
                 rdg,
                 active_color,
                 active_depth,
-                transparent_resolve,
                 transmission_tex,
                 ssao_output,
             );
