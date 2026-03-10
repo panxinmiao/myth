@@ -77,21 +77,31 @@ pub struct RdgViewResolver<'a> {
     pub external_resources: &'a FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
 }
 
+pub fn resolve_root_id(resources: &[ResourceRecord], mut id: TextureNodeId) -> TextureNodeId {
+    while let Some(parent) = resources[id.0 as usize].alias_of {
+        id = parent;
+    }
+    id
+}
+
 impl<'a> RdgViewResolver<'a> {
+
     /// Resolve a virtual [`TextureNodeId`] to its physical [`Tracked<TextureView>`].
     ///
     /// For external resources, the view is looked up in `external_resources`.
     /// For transient resources, the **default** view is obtained from the pool.
     pub fn get_texture_view(&self, id: TextureNodeId) -> &Tracked<wgpu::TextureView> {
-        let res = &self.resources[id.0 as usize];
+        let root_id = resolve_root_id(self.resources, id);
+        let res = &self.resources[root_id.0 as usize];
 
         if res.is_external {
             self.external_resources
-                .get(&id)
+                .get(&root_id)
                 .expect(&format!("External {} resource missing!", res.name))
         } else {
             let physical_index = res.physical_index.expect("No physical memory!");
             &self.pool.resources[physical_index].default_view
+            // self.pool.get_tracked_view(res.physical_index.unwrap())
         }
     }
 

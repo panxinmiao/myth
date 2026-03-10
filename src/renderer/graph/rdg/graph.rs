@@ -155,7 +155,7 @@ impl RenderGraph {
             name,
             desc,
             is_external,
-            producers: smallvec::SmallVec::new(),
+            producer: None,
             consumers: smallvec::SmallVec::new(),
             first_use: usize::MAX,
             last_use: 0,
@@ -191,8 +191,11 @@ impl RenderGraph {
         input_id: TextureNodeId,
         name: &'static str,
     ) -> TextureNodeId {
-        let desc = self.resources[input_id.0 as usize].desc.clone();
-        let new_id = self.register_resource(name, desc, false);
+        let root_res = &self.resources[input_id.0 as usize];
+        let desc = root_res.desc.clone();
+        let is_external = root_res.is_external;
+
+        let new_id = self.register_resource(name, desc, is_external);
         self.resources[new_id.0 as usize].alias_of = Some(input_id);
         new_id
     }
@@ -303,10 +306,10 @@ impl RenderGraph {
             let num_reads = self.passes[pass_idx].reads.len();
             for read_i in 0..num_reads {
                 let res_id = self.passes[pass_idx].reads[read_i];
-                let num_producers = self.resources[res_id.0 as usize].producers.len();
-                for prod_i in 0..num_producers {
-                    let producer_idx = self.resources[res_id.0 as usize].producers[prod_i];
-                    if producer_idx != pass_idx
+
+                // ✅ 直接获取唯一的生产者（如果有的话）
+                if let Some(producer_idx) = self.resources[res_id.0 as usize].producer {
+                    if producer_idx < pass_idx
                         && !self.passes[pass_idx]
                             .physical_dependencies
                             .contains(&producer_idx)
@@ -456,30 +459,41 @@ impl RenderGraph {
     fn allocate_physical_resources(&mut self, pool: &mut RdgTransientPool, device: &Device) {
         pool.begin_frame();
 
-        // Phase 1: allocate root (non-alias) transient resources.
-        for res in &mut self.resources {
+        // ✅ Phase 1: 在分配物理显存前，必须先合并所有 Alias 的生命周期到 Root
+        for i in 0..self.resources.len() {
+            if self.resources[i].alias_of.is_some() {
+                let root_idx = self.resolve_alias_root(i);
+                let alias_first = self.resources[i].first_use;
+                let alias_last = self.resources[i].last_use;
+                self.resources[root_idx].first_use = self.resources[root_idx].first_use.min(alias_first);
+                self.resources[root_idx].last_use = self.resources[root_idx].last_use.max(alias_last);
+            }
+        }
+
+        // ✅ Phase 2: 将 Root 统一后的真实生命周期反向传播给所有 Alias
+        // （这步对执行期自动推导 LoadOp / StoreOp 非常重要）
+        for i in 0..self.resources.len() {
+            if self.resources[i].alias_of.is_some() {
+                let root_idx = self.resolve_alias_root(i);
+                self.resources[i].first_use = self.resources[root_idx].first_use;
+                self.resources[i].last_use = self.resources[root_idx].last_use;
+            }
+        }
+
+        // ✅ Phase 3: 现在，带着完全准确、最长跨度的生命周期去向 Pool 申请显存
+        for i in 0..self.resources.len() {
+            let res = &mut self.resources[i];
             if res.is_external || res.first_use == usize::MAX || res.alias_of.is_some() {
-                continue;
+                continue; // 跳过死资源和别名资源
             }
             res.physical_index = Some(pool.acquire(device, &res.desc, res.first_use, res.last_use));
         }
 
-        // Phase 2: resolve aliases — share physical memory, extend root lifetimes.
+        // ✅ Phase 4: 别名资源共享 Root 分配到的物理显存 ID
         for i in 0..self.resources.len() {
             if self.resources[i].alias_of.is_some() {
                 let root_idx = self.resolve_alias_root(i);
                 self.resources[i].physical_index = self.resources[root_idx].physical_index;
-                let alias_last = self.resources[i].last_use;
-                self.resources[root_idx].last_use =
-                    self.resources[root_idx].last_use.max(alias_last);
-            }
-        }
-
-        // Phase 3: propagate unified lifetime to all aliases.
-        for i in 0..self.resources.len() {
-            if self.resources[i].alias_of.is_some() {
-                let root_idx = self.resolve_alias_root(i);
-                self.resources[i].last_use = self.resources[root_idx].last_use;
             }
         }
     }
@@ -547,7 +561,7 @@ mod tests {
             "Opaque"
         }
         fn setup(&mut self, builder: &mut PassBuilder) {
-            builder.write_texture(self.out_color);
+            builder.declare_output(self.out_color);
         }
         fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
@@ -562,7 +576,7 @@ mod tests {
         }
         fn setup(&mut self, builder: &mut PassBuilder) {
             builder.read_texture(self.in_color);
-            builder.write_texture(self.out_bloom);
+            builder.declare_output(self.out_bloom);
         }
         fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
@@ -579,7 +593,7 @@ mod tests {
         fn setup(&mut self, builder: &mut PassBuilder) {
             builder.read_texture(self.in_color);
             builder.read_texture(self.in_bloom);
-            builder.write_texture(self.out_target);
+            builder.declare_output(self.out_target);
         }
         fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
@@ -657,8 +671,8 @@ mod tests {
                 "GBuffer"
             }
             fn setup(&mut self, builder: &mut PassBuilder) {
-                builder.write_texture(self.color);
-                builder.write_texture(self.motion);
+                builder.declare_output(self.color);
+                builder.declare_output(self.motion);
             }
             fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
         }
@@ -674,7 +688,7 @@ mod tests {
             }
             fn setup(&mut self, builder: &mut PassBuilder) {
                 builder.read_texture(self.color);
-                builder.write_texture(self.out);
+                builder.declare_output(self.out);
             }
             fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
         }
@@ -718,9 +732,9 @@ mod tests {
                 "MacroNode"
             }
             fn setup(&mut self, builder: &mut PassBuilder) {
-                builder.write_texture(self.internal);
+                builder.declare_output(self.internal);
                 builder.read_texture(self.internal); // self-read
-                builder.write_texture(self.output);
+                builder.declare_output(self.output);
             }
             fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
         }
@@ -825,7 +839,7 @@ mod tests {
         struct MockOpaque { out: TextureNodeId }
         impl PassNode for MockOpaque {
             fn name(&self) -> &'static str { "Opaque" }
-            fn setup(&mut self, b: &mut PassBuilder) { b.write_texture(self.out); }
+            fn setup(&mut self, b: &mut PassBuilder) { b.declare_output(self.out); }
             fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
@@ -834,7 +848,7 @@ mod tests {
             fn name(&self) -> &'static str { "Skybox" }
             fn setup(&mut self, b: &mut PassBuilder) {
                 b.read_texture(self.r);
-                b.write_texture(self.w);
+                b.declare_output(self.w);
             }
             fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
@@ -844,7 +858,7 @@ mod tests {
             fn name(&self) -> &'static str { "Transparent" }
             fn setup(&mut self, b: &mut PassBuilder) {
                 b.read_texture(self.r);
-                b.write_texture(self.w);
+                b.declare_output(self.w);
             }
             fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
@@ -854,7 +868,7 @@ mod tests {
             fn name(&self) -> &'static str { "ToneMap" }
             fn setup(&mut self, b: &mut PassBuilder) {
                 b.read_texture(self.r);
-                b.write_texture(self.out);
+                b.declare_output(self.out);
             }
             fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
@@ -894,7 +908,7 @@ mod tests {
         struct Writer { out: TextureNodeId }
         impl PassNode for Writer {
             fn name(&self) -> &'static str { "Writer" }
-            fn setup(&mut self, b: &mut PassBuilder) { b.write_texture(self.out); }
+            fn setup(&mut self, b: &mut PassBuilder) { b.declare_output(self.out); }
             fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
@@ -915,7 +929,7 @@ mod tests {
             fn name(&self) -> &'static str { "Reader" }
             fn setup(&mut self, b: &mut PassBuilder) {
                 b.read_texture(self.r);
-                b.write_texture(self.out);
+                b.declare_output(self.out);
             }
             fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }

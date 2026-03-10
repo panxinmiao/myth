@@ -441,7 +441,7 @@ impl PassNode for ToneMapPassNode {
 
     fn setup(&mut self, builder: &mut PassBuilder) {
         builder.read_texture(self.input_tex);
-        builder.write_texture(self.output_tex);
+        builder.declare_output(self.output_tex);
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {

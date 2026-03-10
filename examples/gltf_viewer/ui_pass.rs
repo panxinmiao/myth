@@ -299,8 +299,9 @@ impl PassNode for UiPass {
     fn setup(&mut self, builder: &mut PassBuilder) {
         // UI writes (overlays) to the surface output. Topological sort
         // ensures it runs after all post-processing passes.
-        builder.read_texture(self.target_tex);
-        builder.write_texture(self.target_tex);
+        // builder.read_texture(self.target_tex);
+        // builder.declare_output(self.target_tex);
+        self.target_tex = builder.mutate_texture(self.target_tex, "Surface_With_UI");
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {

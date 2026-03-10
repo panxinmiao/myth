@@ -1,4 +1,4 @@
-//! SSAO Feature + Ephemeral PassNode
+﻿//! SSAO Feature + Ephemeral PassNode
 //!
 //! - **`SsaoFeature`** (long-lived): owns pipelines, bind group layouts,
 //!   noise texture.  `extract_and_prepare()` compiles pipelines and uploads
@@ -604,7 +604,7 @@ impl PassNode for SsaoPassNode {
 
     fn setup(&mut self, builder: &mut PassBuilder) {
         // Output: half-resolution AO (pre-registered in add_to_graph).
-        builder.write_texture(self.output_tex);
+        builder.declare_output(self.output_tex);
 
         // Internal scratch texture for the raw SSAO pass.
         let (w, h) = builder.global_resolution();

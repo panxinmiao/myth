@@ -296,6 +296,8 @@ impl<'a> FrameComposer<'a> {
         let mut bb_scene_color = surface_out;
         let mut bb_scene_depth = surface_out;
 
+        let mut current_surface = surface_out;
+
         if is_high_fidelity {
             // ────────────────────────────────────────────────────────────
             // HighFidelity pipeline: separate passes, explicit wiring.
@@ -435,7 +437,8 @@ impl<'a> FrameComposer<'a> {
             let tonemap_output = if fxaa_enabled {
                 rdg.register_resource("LDR_Intermediate", surface_desc.clone(), false)
             } else {
-                surface_out
+                current_surface = rdg.create_alias(current_surface, "Surface_After_ToneMap");
+                current_surface
             };
 
             // ToneMap
@@ -445,9 +448,10 @@ impl<'a> FrameComposer<'a> {
 
             // FXAA — reads LDR_Intermediate, writes Surface_Out
             if fxaa_enabled {
+                current_surface = rdg.create_alias(current_surface, "Surface_After_FXAA");
                 self.ctx
                     .rdg_fxaa_pass
-                    .add_to_graph(rdg, tonemap_output, surface_out);
+                    .add_to_graph(rdg, tonemap_output, current_surface);
             }
         } else {
             // BasicForward pipeline: single-pass LDR rendering.
@@ -483,7 +487,7 @@ impl<'a> FrameComposer<'a> {
             let mut blackboard = GraphBlackboard {
                 scene_color: bb_scene_color,
                 scene_depth: bb_scene_depth,
-                surface_out,
+                surface_out: current_surface,
             };
             for (stage, hook) in &mut self.hooks {
                 if *stage == HookStage::AfterPostProcess {

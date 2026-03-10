@@ -36,6 +36,7 @@ pub(crate) const FEATURE_ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R
 
 /// Outputs produced by the Prepass, returned to the Composer for
 /// explicit downstream wiring.
+#[must_use]
 pub struct PrepassOutputs {
     /// Single-sample scene depth (written by the prepass).
     pub scene_depth: TextureNodeId,
@@ -396,16 +397,16 @@ impl PassNode for PrepassPassNode {
 
     fn setup(&mut self, builder: &mut PassBuilder) {
         // Depth — always written.
-        builder.write_texture(self.scene_depth);
+        builder.declare_output(self.scene_depth);
 
         // Normals — conditionally written.
         if self.needs_normal {
-            builder.write_texture(self.scene_normals);
+            builder.declare_output(self.scene_normals);
         }
 
         // Feature-ID — conditionally written.
         if self.needs_feature_id {
-            builder.write_texture(self.feature_id);
+            builder.declare_output(self.feature_id);
         }
     }
 

@@ -351,7 +351,7 @@ impl PassNode for SssssPassNode {
         self.temp_blur = builder.create_texture("SSSSS_Temp", desc);
 
         // In-place read + write on scene color.
-        builder.write_texture(self.scene_color);
+        builder.declare_output(self.scene_color);
         builder.read_texture(self.scene_color);
 
         // Upstream inputs.
