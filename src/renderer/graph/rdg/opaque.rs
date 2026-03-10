@@ -141,7 +141,7 @@ impl OpaqueFeature {
         };
 
         // ── Specular MRT (conditionally created) ───────────────────
-        let (specular_tex, specular_resolve, specular_resolved) = if needs_specular {
+        let (specular_tex, specular_resolved) = if needs_specular {
             let spec_desc = RdgTextureDesc::new_2d(
                 fc.width,
                 fc.height,
@@ -165,12 +165,12 @@ impl OpaqueFeature {
                 );
                 let specular_msaa =
                     rdg.register_resource("Specular_MRT_MSAA", msaa_spec_desc, false);
-                (specular_msaa, Some(specular_single), Some(specular_single))
+                (specular_msaa, Some(specular_single))
             } else {
-                (specular_single, None, Some(specular_single))
+                (specular_single, None)
             }
         } else {
-            (TextureNodeId(0), None, None)
+            (TextureNodeId(0), None)
         };
 
         let node = OpaquePassNode::new(
@@ -183,18 +183,24 @@ impl OpaqueFeature {
             resolve_target,
             ssao_tex,
             specular_tex,
-            specular_resolve,
+            specular_resolved,
             self.screen_info
                 .clone()
                 .expect("OpaqueFeature: screen_info not set"),
         );
         rdg.add_pass(Box::new(node));
 
+        let specular_mrt = if needs_specular {
+            Some(specular_resolved.unwrap_or(specular_tex))
+        } else {
+            None
+        };
+
         OpaqueOutputs {
             active_color: color_target,
             active_depth: depth_target,
             scene_color_hdr,
-            specular_mrt: specular_resolved,
+            specular_mrt,
         }
     }
 }
@@ -293,10 +299,6 @@ impl PassNode for OpaquePassNode {
         // Specular MRT (pre-registered in add_to_graph).
         if self.needs_specular {
             builder.declare_output(self.specular_tex);
-            if self.specular_resolve_target.is_some() {
-                // Self-read keeps the MSAA specular alive for the resolve.
-                builder.read_texture(self.specular_tex);
-            }
             if let Some(resolve) = self.specular_resolve_target {
                 builder.declare_output(resolve);
             }

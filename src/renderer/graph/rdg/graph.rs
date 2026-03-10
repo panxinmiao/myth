@@ -459,21 +459,21 @@ impl RenderGraph {
     /// Allocates physical GPU textures for transient resources, with
     /// alias-aware sharing.
     ///
-    /// **Phase 1** — Allocate pool slots for independent (root) transient
-    /// resources.  External, dead, and alias resources are skipped.
+    /// **Phase 1** — Calculate the unified lifetime for each alias group by propagating the
+    /// lifetimes from aliases to their root resources.This ensures that the root resource's lifetime encompasses all of its aliases, preventing premature deallocation of shared physical resources.
     ///
-    /// **Phase 2** — Resolve each alias to its root resource and share the
-    /// same physical pool slot.  The root's `last_use` is extended to cover
-    /// all aliases so the pool keeps the allocation alive.
+    /// **Phase 2** — Propagate the root's unified lifetime back to every alias.  
+    /// This ensures that the execute-phase `StoreOp` deduction sees the correct final lifetime and never discards data prematurely for intermediate versions.
     ///
-    /// **Phase 3** — Propagate the root's unified `last_use` back to every
-    /// alias.  This ensures that the execute-phase `StoreOp` deduction
-    /// sees the correct final lifetime and never discards data prematurely
-    /// for intermediate versions.
+    /// **Phase 3** — Request physical allocations from the pool for root resources.
+    /// Aliases will be skipped since they share the same physical memory.
+    ///
+    /// **Phase 4** — Propagate the root's unified `last_use` back to every alias.  
+    /// This ensures that the execute-phase `LoadOp` deduction sees the correct lifetime and keeps the physical memory alive for the entire duration of all aliases.    
     fn allocate_physical_resources(&mut self, pool: &mut RdgTransientPool, device: &Device) {
         pool.begin_frame();
 
-        // ✅ Phase 1: 在分配物理显存前，必须先合并所有 Alias 的生命周期到 Root
+        // ✅ Phase 1: Before allocating physical memory, merge the lifetimes of all aliases into their root
         for i in 0..self.resources.len() {
             if self.resources[i].alias_of.is_some() {
                 let root_idx = self.resolve_alias_root(i);
@@ -486,8 +486,8 @@ impl RenderGraph {
             }
         }
 
-        // ✅ Phase 2: 将 Root 统一后的真实生命周期反向传播给所有 Alias
-        // （这步对执行期自动推导 LoadOp / StoreOp 非常重要）
+        // ✅ Phase 2: Propagate the root's unified lifetime back to every alias
+        // (This step is crucial for accurate LoadOp / StoreOp deduction during execution)
         for i in 0..self.resources.len() {
             if self.resources[i].alias_of.is_some() {
                 let root_idx = self.resolve_alias_root(i);
@@ -496,16 +496,17 @@ impl RenderGraph {
             }
         }
 
-        // ✅ Phase 3: 现在，带着完全准确、最长跨度的生命周期去向 Pool 申请显存
+        // ✅ Phase 3: Request physical allocations from the pool for root resources. Aliases will be skipped since they share the same physical memory.
         for i in 0..self.resources.len() {
             let res = &mut self.resources[i];
             if res.is_external || res.first_use == usize::MAX || res.alias_of.is_some() {
-                continue; // 跳过死资源和别名资源
+                continue; // skip external resources, unused resources, and aliases (they share the root's physical memory)
             }
             res.physical_index = Some(pool.acquire(device, &res.desc, res.first_use, res.last_use));
         }
 
-        // ✅ Phase 4: 别名资源共享 Root 分配到的物理显存 ID
+        // ✅ Phase 4: Aliases share the same physical memory as their root, so propagate the root's unified `last_use` back to every alias.
+        // This ensures that the execute-phase `LoadOp` deduction sees the correct lifetime and keeps the physical memory alive for the entire duration of all aliases.
         for i in 0..self.resources.len() {
             if self.resources[i].alias_of.is_some() {
                 let root_idx = self.resolve_alias_root(i);
@@ -516,16 +517,13 @@ impl RenderGraph {
 
     #[cfg(debug_assertions)]
     fn debug_print_topology_changes(&mut self) {
-        // 将当前帧的 execution_queue 映射为可读的 Pass 名字列表
         let current_names: Vec<&'static str> = self
             .execution_queue
             .iter()
             .map(|&idx| self.passes[idx].name)
             .collect();
 
-        // 比较当前顺序和上一帧的顺序是否一致
         if current_names != self.prev_execution_names {
-            // 如果发生了变化，打印出日志。
             log::info!(
                 "🌈 RDG Topology Changed! New Execution Order ({} passes): \n{:#?}",
                 current_names.len(),
@@ -534,9 +532,103 @@ impl RenderGraph {
 
             println!("🌈 RDG Topology Changed! New Execution Order: {current_names:?}");
 
-            // 更新缓存，以便下一帧对比
+            self.dump_mermaid();
             self.prev_execution_names = current_names;
         }
+    }
+
+    /// Dumps the current Render Graph topology as a Markdown Mermaid chart.
+    /// This is an incredibly powerful tool for debugging SSA data flows,
+    /// missing connections, and dead-pass elimination.
+    #[cfg(debug_assertions)]
+    pub fn dump_mermaid(&self) {
+        use std::fmt::Write;
+        let mut out = String::new();
+
+        writeln!(&mut out, "```mermaid").unwrap();
+
+        writeln!(&mut out, "flowchart").unwrap();
+
+        writeln!(
+            &mut out,
+            "    classDef alive fill:#2b3c5a,stroke:#4a6f9f,stroke-width:2px,color:#fff,rx:5,ry:5;"
+        )
+        .unwrap();
+        writeln!(
+            &mut out,
+            "    classDef dead fill:#222,stroke:#555,stroke-width:2px,stroke-dasharray: 5 5,color:#777,rx:5,ry:5;"
+        )
+        .unwrap();
+        writeln!(
+            &mut out,
+            "    classDef external fill:#5a2b3c,stroke:#9f4a6f,stroke-width:2px,color:#fff;"
+        )
+        .unwrap();
+
+        writeln!(&mut out, "\n    %% --- Passes (Nodes) ---").unwrap();
+        for (i, pass) in self.passes.iter().enumerate() {
+            // 使用圆角矩形表示 Pass
+            let shape_open = "([";
+            let shape_close = "])";
+            let class = if pass.reference_count > 0 {
+                "alive"
+            } else {
+                "dead"
+            };
+
+            writeln!(
+                &mut out,
+                "    P{}{}\"{}\"{}:::{}",
+                i, shape_open, pass.name, shape_close, class
+            )
+            .unwrap();
+        }
+
+        writeln!(&mut out, "\n    %% --- Data Flow (Edges) ---").unwrap();
+        for (pass_idx, pass) in self.passes.iter().enumerate() {
+            for &write_id in &pass.writes {
+                let res = &self.resources[write_id.0 as usize];
+
+                // 1. Draw edges to subsequent Consumers
+                for &consumer_idx in &res.consumers {
+                    let edge_style = if res.alias_of.is_some() {
+                        "==>" // Bold line indicates an alias relationship (same physical resource) 
+                    } else {
+                        "-->" // Thin line indicates a normal data dependency
+                    };
+
+                    writeln!(
+                        &mut out,
+                        "    P{} {}|\"{}\"| P{};",
+                        pass_idx, edge_style, res.name, consumer_idx
+                    )
+                    .unwrap();
+                }
+
+                // 2. If this is a resource with no subsequent consumers but it is an external output (e.g., Surface)
+                // Draw a special endpoint to indicate the data flows out of the RDG pipeline
+                if res.consumers.is_empty() && res.is_external {
+                    writeln!(
+                        &mut out,
+                        "    OUT_{id}[/\"{name}\"/]:::external",
+                        id = write_id.0,
+                        name = res.name
+                    )
+                    .unwrap();
+                    writeln!(
+                        &mut out,
+                        "    P{} -->|\"{}\"| OUT_{};",
+                        pass_idx, res.name, write_id.0
+                    )
+                    .unwrap();
+                }
+            }
+        }
+
+        writeln!(&mut out, "```").unwrap();
+
+        println!("\n🌈 RDG Topology Mermaid Dump:\n{}", out);
+        log::info!("\n🌈 RDG Topology Mermaid Dump:\n{}", out);
     }
 }
 
