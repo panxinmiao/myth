@@ -111,6 +111,12 @@ pub struct BloomFeature {
     last_composite_buffer_id: u64,
 }
 
+impl Default for BloomFeature {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BloomFeature {
     /// Creates a new bloom feature. All GPU resources are lazily allocated.
     #[must_use]
@@ -474,49 +480,49 @@ impl BloomFeature {
         }
 
         // ─── Upsample static BG (rebuild on buffer identity change) ──
-        if let Some(g) = ctx.resource_manager.gpu_buffers.get(&upsample_cpu_id) {
-            if self.upsample_static_bg.is_none() || self.last_upsample_buffer_id != g.id {
-                let us_layout = self.us_static_layout.as_ref().unwrap();
-                self.upsample_static_bg =
-                    Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Bloom US G0"),
-                        layout: us_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::Sampler(sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: g.buffer.as_entire_binding(),
-                            },
-                        ],
-                    }));
-                self.last_upsample_buffer_id = g.id;
-            }
+        if let Some(g) = ctx.resource_manager.gpu_buffers.get(&upsample_cpu_id)
+            && (self.upsample_static_bg.is_none() || self.last_upsample_buffer_id != g.id)
+        {
+            let us_layout = self.us_static_layout.as_ref().unwrap();
+            self.upsample_static_bg =
+                Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Bloom US G0"),
+                    layout: us_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: g.buffer.as_entire_binding(),
+                        },
+                    ],
+                }));
+            self.last_upsample_buffer_id = g.id;
         }
 
         // ─── Composite static BG (rebuild on buffer identity change) ──
-        if let Some(g) = ctx.resource_manager.gpu_buffers.get(&composite_cpu_id) {
-            if self.composite_static_bg.is_none() || self.last_composite_buffer_id != g.id {
-                let comp_layout = self.comp_static_layout.as_ref().unwrap();
-                self.composite_static_bg =
-                    Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Bloom Comp G0"),
-                        layout: comp_layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::Sampler(sampler),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: g.buffer.as_entire_binding(),
-                            },
-                        ],
-                    }));
-                self.last_composite_buffer_id = g.id;
-            }
+        if let Some(g) = ctx.resource_manager.gpu_buffers.get(&composite_cpu_id)
+            && (self.composite_static_bg.is_none() || self.last_composite_buffer_id != g.id)
+        {
+            let comp_layout = self.comp_static_layout.as_ref().unwrap();
+            self.composite_static_bg =
+                Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("Bloom Comp G0"),
+                    layout: comp_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::Sampler(sampler),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: g.buffer.as_entire_binding(),
+                        },
+                    ],
+                }));
+            self.last_composite_buffer_id = g.id;
         }
     }
 
@@ -673,7 +679,7 @@ impl BloomPassNode {
                 mip_count: Some(1),
                 ..Default::default()
             };
-            let tracked = ctx.views.get_or_create_sub_view(self.bloom_texture, key);
+            let tracked = ctx.views.get_or_create_sub_view(self.bloom_texture, &key);
             // self.mip_view_ids.push(tracked.id());
             self.mip_render_views.push(tracked.clone());
         }

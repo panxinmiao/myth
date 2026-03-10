@@ -100,6 +100,7 @@ pub struct SamplerRegistry {
 }
 
 impl SamplerRegistry {
+    #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
         // 在引擎初始化时，一次性把最常用的几个建好
         let common_samplers = [
@@ -149,6 +150,7 @@ impl SamplerRegistry {
 
     /// 获取常用采样器。
     /// 🌟 注意签名：只需要 `&self`，没有任何锁或 Hash，极其极速！
+    #[must_use]
     pub fn get_common(&self, typ: CommonSampler) -> &Tracked<wgpu::Sampler> {
         &self.common_samplers[typ as usize]
     }
@@ -185,6 +187,7 @@ impl SamplerRegistry {
     /// # Panics
     ///
     /// 如果指定 key 的采样器尚未通过 [`get_custom`] 创建，则 panic。
+    #[must_use]
     pub fn get_custom_ref(&self, key: &SamplerKey) -> &Tracked<wgpu::Sampler> {
         self.custom_samplers
             .get(key)

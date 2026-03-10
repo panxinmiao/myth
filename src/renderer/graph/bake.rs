@@ -50,13 +50,13 @@ pub fn bake_render_lists<'a>(
     render_lists: &'a RenderLists,
     resource_manager: &'a ResourceManager,
     pipeline_cache: &'a PipelineCache,
-    prepass_config: Option<PrepassBakeConfig<'_>>,
+    prepass_config: &Option<PrepassBakeConfig<'_>>,
 ) -> BakedRenderLists<'a> {
     let opaque = bake_main_commands(&render_lists.opaque, resource_manager, pipeline_cache);
     let transparent =
         bake_main_commands(&render_lists.transparent, resource_manager, pipeline_cache);
 
-    let prepass = if let Some(cfg) = &prepass_config {
+    let prepass = if let Some(cfg) = prepass_config {
         bake_prepass_commands(&render_lists.opaque, resource_manager, pipeline_cache, cfg)
     } else {
         Vec::new()
@@ -222,7 +222,8 @@ fn bake_shadow_queues<'a>(
 
             // Shadow sort key: pipeline ID in high bits, material bind group
             // in low bits — minimises both pipeline and bind-group switches.
-            let sort_key = (cmd.pipeline_id.0 as u64) << 32 | (gpu_mat.bind_group_id & 0xFFFF_FFFF);
+            let sort_key =
+                u64::from(cmd.pipeline_id.0) << 32 | (gpu_mat.bind_group_id & 0xFFFF_FFFF);
 
             baked.push(DrawCommand {
                 sort_key,

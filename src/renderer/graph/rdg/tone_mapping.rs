@@ -80,6 +80,12 @@ pub struct ToneMapFeature {
     last_lut_view_id: u64,
 }
 
+impl Default for ToneMapFeature {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ToneMapFeature {
     /// Creates a new tone mapping feature.
     ///
@@ -223,18 +229,13 @@ impl ToneMapFeature {
 
         ctx.resource_manager.ensure_buffer(uniforms);
 
-        if has_lut {
-            if let Some(handle) = lut_handle {
-                ctx.resource_manager.prepare_texture(ctx.assets, handle);
-            }
+        if has_lut && let Some(handle) = lut_handle {
+            ctx.resource_manager.prepare_texture(ctx.assets, handle);
         }
 
         let gpu_buf = ctx.resource_manager.gpu_buffers.get(&uniforms.id());
 
-        let gpu_buf = match gpu_buf {
-            Some(g) => g,
-            None => return,
-        };
+        let Some(gpu_buf) = gpu_buf else { return };
         let buf_id = gpu_buf.id;
 
         // Resolve LUT view if present
@@ -277,22 +278,20 @@ impl ToneMapFeature {
                 },
             ];
 
-            if has_lut {
-                if let Some(ref view) = lut_view {
-                    entries.push(wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: wgpu::BindingResource::TextureView(view),
-                    });
-                    entries.push(wgpu::BindGroupEntry {
-                        binding: 3,
-                        resource: wgpu::BindingResource::Sampler(sampler),
-                    });
-                }
+            if has_lut && let Some(ref view) = lut_view {
+                entries.push(wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(view),
+                });
+                entries.push(wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                });
             }
 
             self.static_bg = Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("ToneMap Static BG (G1)"),
-                layout: &**layout,
+                layout,
                 entries: &entries,
             }));
             self.static_bg_has_lut = has_lut;
@@ -322,10 +321,7 @@ impl ToneMapFeature {
         }
 
         log::debug!(
-            "RDG ToneMap: compiling pipeline for {:?}, fmt={:?}, lut={}",
-            mode,
-            output_format,
-            has_lut,
+            "RDG ToneMap: compiling pipeline for {mode:?}, fmt={output_format:?}, lut={has_lut}",
         );
 
         let device = ctx.device;
@@ -378,7 +374,7 @@ impl ToneMapFeature {
             shader_module,
             &pipeline_layout,
             &key,
-            &format!("RDG ToneMap Pipeline {:?} lut={}", mode, has_lut),
+            &format!("RDG ToneMap Pipeline {mode:?} lut={has_lut}"),
         );
 
         self.local_cache.insert(cache_key, id);
@@ -455,7 +451,7 @@ impl PassNode for ToneMapPassNode {
             if ctx.global_bind_group_cache.get(&key).is_none() {
                 let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                     label: Some("ToneMap Transient BG (G2)"),
-                    layout: &**layout,
+                    layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
                         resource: wgpu::BindingResource::TextureView(input_view),

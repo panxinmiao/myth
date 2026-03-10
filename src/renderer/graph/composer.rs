@@ -130,6 +130,7 @@ pub struct ComposerContext<'a> {
 pub struct FrameComposer<'a> {
     ctx: ComposerContext<'a>,
     external_res: FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
+    #[allow(clippy::type_complexity)]
     hooks: smallvec::SmallVec<
         [(
             HookStage,
@@ -150,6 +151,7 @@ impl<'a> FrameComposer<'a> {
 
     /// Returns a reference to the wgpu device.
     #[inline]
+    #[must_use]
     pub fn device(&self) -> &wgpu::Device {
         &self.ctx.wgpu_ctx.device
     }
@@ -159,6 +161,7 @@ impl<'a> FrameComposer<'a> {
     /// Useful for user-land passes that need to resolve engine resources
     /// (e.g. texture handles) before the RDG prepare phase.
     #[inline]
+    #[must_use]
     pub fn resource_manager(&self) -> &ResourceManager {
         self.ctx.resource_manager
     }
@@ -365,7 +368,7 @@ impl<'a> FrameComposer<'a> {
                         .ctx
                         .rdg_msaa_sync_pass
                         .add_to_graph(rdg, scene_color_hdr);
-                }else{
+                } else {
                     active_color = scene_color_hdr;
                 }
             }
@@ -373,17 +376,21 @@ impl<'a> FrameComposer<'a> {
             // 5. Skybox — continues in the MSAA (or non-MSAA) context.
             //    Returns the new colour version (SSA alias) for downstream.
             if needs_skybox {
-                active_color = self
-                    .ctx
-                    .rdg_skybox_pass
-                    .add_to_graph(rdg, active_color, active_depth);
+                active_color =
+                    self.ctx
+                        .rdg_skybox_pass
+                        .add_to_graph(rdg, active_color, active_depth);
             }
 
             // 6. Transmission Copy — snapshot scene colour for refraction.
             //    MSAA: reads Opaque's single-sample resolve (pre-Skybox).
             //    Non-MSAA: reads the latest colour version (post-Skybox).
             let transmission_tex = if has_transmission {
-                let tx_source = if is_msaa { scene_color_hdr } else { active_color };
+                let tx_source = if is_msaa {
+                    scene_color_hdr
+                } else {
+                    active_color
+                };
                 Some(
                     self.ctx
                         .rdg_transmission_copy_pass
@@ -551,7 +558,7 @@ impl<'a> FrameComposer<'a> {
             self.ctx.render_lists,
             self.ctx.resource_manager,
             self.ctx.pipeline_cache,
-            prepass_config,
+            &prepass_config,
         );
 
         // ─── 3d. Execute ───────────────────────────────────────────────

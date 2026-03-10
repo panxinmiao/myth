@@ -45,7 +45,14 @@ pub struct TransparentFeature {
     screen_info: Option<ScreenBindGroupInfo>,
 }
 
+impl Default for TransparentFeature {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TransparentFeature {
+    #[must_use]
     pub fn new() -> Self {
         Self { screen_info: None }
     }

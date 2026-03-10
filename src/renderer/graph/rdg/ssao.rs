@@ -1,4 +1,4 @@
-﻿//! SSAO Feature + Ephemeral PassNode
+//! SSAO Feature + Ephemeral PassNode
 //!
 //! - **`SsaoFeature`** (long-lived): owns pipelines, bind group layouts,
 //!   noise texture.  `extract_and_prepare()` compiles pipelines and uploads
@@ -54,6 +54,7 @@ const SSAO_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 /// bind group layouts, noise texture).
 ///
 /// Produces an ephemeral [`SsaoPassNode`] each frame via [`Self::add_to_graph`].
+#[derive(Default)]
 pub struct SsaoFeature {
     // ─── Pipelines ─────────────────────────────────────────────────
     raw_pipeline: Option<RenderPipelineId>,
@@ -375,20 +376,20 @@ impl SsaoFeature {
         ctx.resource_manager.ensure_buffer(ssao_uniforms);
 
         // Build Group 2 static BG (uniforms only) — rebuild on buffer identity change.
-        if let Some(g) = ctx.resource_manager.gpu_buffers.get(&ssao_uniforms.id()) {
-            if self.uniforms_static_bg.is_none() || self.last_uniforms_buffer_id != g.id {
-                let layout = self.raw_uniforms_layout.as_ref().unwrap();
-                self.uniforms_static_bg =
-                    Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("SSAO Uniforms G2 (static)"),
-                        layout,
-                        entries: &[wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: g.buffer.as_entire_binding(),
-                        }],
-                    }));
-                self.last_uniforms_buffer_id = g.id;
-            }
+        if let Some(g) = ctx.resource_manager.gpu_buffers.get(&ssao_uniforms.id())
+            && (self.uniforms_static_bg.is_none() || self.last_uniforms_buffer_id != g.id)
+        {
+            let layout = self.raw_uniforms_layout.as_ref().unwrap();
+            self.uniforms_static_bg =
+                Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("SSAO Uniforms G2 (static)"),
+                    layout,
+                    entries: &[wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: g.buffer.as_entire_binding(),
+                    }],
+                }));
+            self.last_uniforms_buffer_id = g.id;
         }
     }
 
@@ -482,8 +483,7 @@ impl SsaoPassNode {
             aspect: wgpu::TextureAspect::DepthOnly,
             ..Default::default()
         };
-        ctx.views
-            .get_or_create_sub_view(self.depth_tex, depth_key.clone());
+        ctx.views.get_or_create_sub_view(self.depth_tex, &depth_key);
         let depth_only_view = ctx
             .views
             .get_sub_view(self.depth_tex, &depth_key)

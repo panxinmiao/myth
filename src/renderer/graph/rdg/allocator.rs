@@ -104,7 +104,14 @@ pub struct RdgTransientPool {
     buckets: FxHashMap<BucketKey, Vec<usize>>,
 }
 
+impl Default for RdgTransientPool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RdgTransientPool {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             resources: Vec::new(),
@@ -241,24 +248,28 @@ impl RdgTransientPool {
 
     /// Returns the default full-texture view for the given pool index.
     #[inline]
+    #[must_use]
     pub fn get_view(&self, index: usize) -> &TextureView {
         &self.resources[index].default_view
     }
 
     /// Returns the tracked default view (carries a unique ID for state dedup).
     #[inline]
+    #[must_use]
     pub fn get_tracked_view(&self, index: usize) -> &Tracked<wgpu::TextureView> {
         &self.resources[index].default_view
     }
 
     /// Returns the raw `wgpu::Texture` handle.
     #[inline]
+    #[must_use]
     pub fn get_texture(&self, index: usize) -> &wgpu::Texture {
         &self.resources[index].texture
     }
 
     /// Returns the allocation UID (monotonically increasing, unique per texture).
     #[inline]
+    #[must_use]
     pub fn get_uid(&self, index: usize) -> u64 {
         self.resources[index].uid
     }
@@ -270,7 +281,7 @@ impl RdgTransientPool {
     pub fn get_or_create_sub_view(
         &mut self,
         physical_index: usize,
-        key: SubViewKey,
+        key: &SubViewKey,
     ) -> &Tracked<wgpu::TextureView> {
         let res = &mut self.resources[physical_index];
         res.sub_views.entry(key.clone()).or_insert_with(|| {
@@ -284,12 +295,12 @@ impl RdgTransientPool {
                 mip_level_count: key.mip_count,
                 base_array_layer: key.base_layer,
                 array_layer_count: key.layer_count,
-                ..Default::default()
             });
             Tracked::new(view)
         })
     }
 
+    #[must_use]
     pub fn get_sub_view(
         &self,
         physical_index: usize,

@@ -36,7 +36,7 @@ pub(crate) const FEATURE_ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R
 
 /// Outputs produced by the Prepass, returned to the Composer for
 /// explicit downstream wiring.
-#[must_use]
+#[must_use = "SSA Graph: You must use the outputs of prepass to wire downstream passes!"]
 pub struct PrepassOutputs {
     /// Single-sample scene depth (written by the prepass).
     pub scene_depth: TextureNodeId,
@@ -65,6 +65,12 @@ pub struct PrepassFeature {
     local_cache: FxHashMap<(RenderPipelineId, bool, bool), RenderPipelineId>,
 }
 
+impl Default for PrepassFeature {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PrepassFeature {
     #[must_use]
     pub fn new() -> Self {
@@ -77,18 +83,21 @@ impl PrepassFeature {
 
     /// Returns the prepass pipeline cache (for baking prepass draw commands).
     #[inline]
+    #[must_use]
     pub fn local_cache(&self) -> &FxHashMap<(RenderPipelineId, bool, bool), RenderPipelineId> {
         &self.local_cache
     }
 
     /// Whether the prepass outputs view-space normals.
     #[inline]
+    #[must_use]
     pub fn needs_normal(&self) -> bool {
         self.needs_normal
     }
 
     /// Whether the prepass outputs a feature-ID stencil mask.
     #[inline]
+    #[must_use]
     pub fn needs_feature_id(&self) -> bool {
         self.needs_feature_id
     }
@@ -126,7 +135,7 @@ impl PrepassFeature {
         let geo_guard = ctx.assets.geometries.read_lock();
         let mat_guard = ctx.assets.materials.read_lock();
 
-        for cmd in ctx.render_lists.opaque.iter() {
+        for cmd in &ctx.render_lists.opaque {
             if self.local_cache.contains_key(&(
                 cmd.pipeline_id,
                 self.needs_normal,
@@ -427,19 +436,17 @@ impl PassNode for PrepassPassNode {
             b: 1.0,
             a: 0.0,
         };
-        if self.needs_normal {
-            if let Some(att) =
+        if self.needs_normal
+            && let Some(att) =
                 ctx.get_color_attachment(self.scene_normals, Some(normal_clear), None)
-            {
-                color_attachments.push(Some(att));
-            }
+        {
+            color_attachments.push(Some(att));
         }
-        if self.needs_feature_id {
-            if let Some(att) =
+        if self.needs_feature_id
+            && let Some(att) =
                 ctx.get_color_attachment(self.feature_id, Some(wgpu::Color::TRANSPARENT), None)
-            {
-                color_attachments.push(Some(att));
-            }
+        {
+            color_attachments.push(Some(att));
         }
 
         // ── Depth/stencil: manual construction for stencil-op support ───

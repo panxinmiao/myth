@@ -28,18 +28,20 @@ pub struct PassBuilder<'a> {
     pub(crate) pass_index: usize,
 }
 
-impl<'a> PassBuilder<'a> {
+impl PassBuilder<'_> {
     // ─── Frame Configuration ─────────────────────────────────────────
 
     /// Returns the current frame's rendering configuration (resolution,
     /// depth format, MSAA samples, surface/HDR formats).
     #[inline]
+    #[must_use]
     pub fn frame_config(&self) -> &FrameConfig {
         self.graph.frame_config()
     }
 
     /// Shorthand for `(config.width, config.height)`.
     #[inline]
+    #[must_use]
     pub fn global_resolution(&self) -> (u32, u32) {
         let c = self.graph.frame_config();
         (c.width, c.height)
@@ -70,7 +72,7 @@ impl<'a> PassBuilder<'a> {
     ///
     /// # Panics (Strict SSA Enforcement)
     /// Panics if the resource already has a producer. In a strict SSA Render Graph,
-    /// a logical resource can only be written to ONCE. 
+    /// a logical resource can only be written to ONCE.
     /// To append/modify an existing resource, use [`mutate_texture`](Self::mutate_texture) instead.
     pub fn declare_output(&mut self, id: TextureNodeId) -> TextureNodeId {
         let res = &mut self.graph.resources[id.0 as usize];

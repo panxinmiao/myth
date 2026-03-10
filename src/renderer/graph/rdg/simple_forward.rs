@@ -38,7 +38,14 @@ pub struct SimpleForwardFeature {
     screen_info: Option<ScreenBindGroupInfo>,
 }
 
+impl Default for SimpleForwardFeature {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SimpleForwardFeature {
+    #[must_use]
     pub fn new() -> Self {
         Self { screen_info: None }
     }

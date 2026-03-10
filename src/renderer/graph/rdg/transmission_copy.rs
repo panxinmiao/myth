@@ -25,7 +25,14 @@ use super::graph::RenderGraph;
 
 pub struct TransmissionCopyFeature;
 
+impl Default for TransmissionCopyFeature {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TransmissionCopyFeature {
+    #[must_use]
     pub fn new() -> Self {
         Self
     }

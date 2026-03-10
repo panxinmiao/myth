@@ -33,6 +33,7 @@ pub struct FrameConfig {
 impl FrameConfig {
     /// Returns a `RdgTextureDesc` for a 2D render target matching the frame
     /// configuration's resolution and HDR format, with the given usage flags.
+    #[must_use]
     pub fn create_render_target_desc(&self, usage: wgpu::TextureUsages) -> RdgTextureDesc {
         RdgTextureDesc::new_2d(
             self.width,
@@ -42,6 +43,7 @@ impl FrameConfig {
         )
     }
 
+    #[must_use]
     pub fn create_surface_desc(&self, usage: wgpu::TextureUsages) -> RdgTextureDesc {
         RdgTextureDesc::new_2d(
             self.width,
@@ -51,6 +53,7 @@ impl FrameConfig {
         )
     }
 
+    #[must_use]
     pub fn create_depth_desc(&self, usage: wgpu::TextureUsages) -> RdgTextureDesc {
         RdgTextureDesc::new_2d(
             self.width,
@@ -96,7 +99,14 @@ pub struct RenderGraph {
     prev_execution_names: Vec<&'static str>,
 }
 
+impl Default for RenderGraph {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl RenderGraph {
+    #[must_use]
     pub fn new() -> Self {
         Self {
             passes: Vec::new(),
@@ -136,6 +146,7 @@ impl RenderGraph {
 
     /// Returns the current frame's rendering configuration.
     #[inline]
+    #[must_use]
     pub fn frame_config(&self) -> &FrameConfig {
         &self.frame_config
     }
@@ -169,6 +180,7 @@ impl RenderGraph {
     /// Looks up a resource by name. Returns `None` if the name has not been
     /// registered in the current frame.
     #[inline]
+    #[must_use]
     pub fn find_resource(&self, name: &str) -> Option<TextureNodeId> {
         self.resource_registry.get(name).copied()
     }
@@ -186,26 +198,27 @@ impl RenderGraph {
     /// Used by `Feature::add_to_graph()` when the output ID must be known
     /// before the pass is inserted.  For self-contained passes, prefer
     /// [`PassBuilder::mutate_texture`] which calls this internally.
-    pub fn create_alias(
-        &mut self,
-        input_id: TextureNodeId,
-        name: &'static str,
-    ) -> TextureNodeId {
-        let root_res = &self.resources[input_id.0 as usize];
+    pub fn create_alias(&mut self, input_id: TextureNodeId, name: &'static str) -> TextureNodeId {
+        let root_idx = self.resolve_alias_root(input_id.0 as usize);
+        let root_id = TextureNodeId(root_idx as u32);
+
+        let root_res = &self.resources[root_idx];
         let desc = root_res.desc.clone();
         let is_external = root_res.is_external;
 
         let new_id = self.register_resource(name, desc, is_external);
-        self.resources[new_id.0 as usize].alias_of = Some(input_id);
+        self.resources[new_id.0 as usize].alias_of = Some(root_id);
         new_id
     }
 
     /// Chases the `alias_of` chain to find the root (non-alias) resource.
-    fn resolve_alias_root(&self, mut idx: usize) -> usize {
-        while let Some(parent) = self.resources[idx].alias_of {
-            idx = parent.0 as usize;
+    #[inline]
+    fn resolve_alias_root(&self, idx: usize) -> usize {
+        if let Some(root_id) = self.resources[idx].alias_of {
+            root_id.0 as usize
+        } else {
+            idx
         }
-        idx
     }
 
     /// Adds an ephemeral pass node to the graph, transferring ownership.
@@ -261,21 +274,23 @@ impl RenderGraph {
                 unsafe { &*self.0 }.name()
             }
             fn setup(&mut self, builder: &mut super::builder::PassBuilder) {
-                unsafe { &mut *self.0 }.setup(builder)
+                unsafe { &mut *self.0 }.setup(builder);
             }
             fn prepare(&mut self, ctx: &mut super::context::RdgPrepareContext) {
-                unsafe { &mut *self.0 }.prepare(ctx)
+                unsafe { &mut *self.0 }.prepare(ctx);
             }
             fn execute(
                 &self,
                 ctx: &super::context::RdgExecuteContext,
                 encoder: &mut wgpu::CommandEncoder,
             ) {
-                unsafe { &*self.0 }.execute(ctx, encoder)
+                unsafe { &*self.0 }.execute(ctx, encoder);
             }
         }
 
-        self.add_pass(Box::new(BorrowedPass(pass as *mut dyn PassNode)));
+        self.add_pass(Box::new(BorrowedPass(std::ptr::from_mut::<dyn PassNode>(
+            pass,
+        ))));
     }
 
     pub fn compile_topology(&mut self) {
@@ -308,16 +323,15 @@ impl RenderGraph {
                 let res_id = self.passes[pass_idx].reads[read_i];
 
                 // ✅ 直接获取唯一的生产者（如果有的话）
-                if let Some(producer_idx) = self.resources[res_id.0 as usize].producer {
-                    if producer_idx < pass_idx
-                        && !self.passes[pass_idx]
-                            .physical_dependencies
-                            .contains(&producer_idx)
-                    {
-                        self.passes[pass_idx]
-                            .physical_dependencies
-                            .push(producer_idx);
-                    }
+                if let Some(producer_idx) = self.resources[res_id.0 as usize].producer
+                    && producer_idx < pass_idx
+                    && !self.passes[pass_idx]
+                        .physical_dependencies
+                        .contains(&producer_idx)
+                {
+                    self.passes[pass_idx]
+                        .physical_dependencies
+                        .push(producer_idx);
                 }
             }
         }
@@ -465,8 +479,10 @@ impl RenderGraph {
                 let root_idx = self.resolve_alias_root(i);
                 let alias_first = self.resources[i].first_use;
                 let alias_last = self.resources[i].last_use;
-                self.resources[root_idx].first_use = self.resources[root_idx].first_use.min(alias_first);
-                self.resources[root_idx].last_use = self.resources[root_idx].last_use.max(alias_last);
+                self.resources[root_idx].first_use =
+                    self.resources[root_idx].first_use.min(alias_first);
+                self.resources[root_idx].last_use =
+                    self.resources[root_idx].last_use.max(alias_last);
             }
         }
 
@@ -516,10 +532,7 @@ impl RenderGraph {
                 current_names
             );
 
-            println!(
-                "🌈 RDG Topology Changed! New Execution Order: {:?}",
-                current_names
-            );
+            println!("🌈 RDG Topology Changed! New Execution Order: {current_names:?}");
 
             // 更新缓存，以便下一帧对比
             self.prev_execution_names = current_names;
@@ -828,7 +841,7 @@ mod tests {
         );
         assert_eq!(
             graph.resources[color_v2.0 as usize].alias_of,
-            Some(color_v1),
+            Some(color_v0),
             "v2 aliases v1"
         );
 
@@ -836,16 +849,27 @@ mod tests {
         //    Note: passes are added in FORWARD order here, but the
         //    ordering is determined by edges, not insertion order.
 
-        struct MockOpaque { out: TextureNodeId }
+        struct MockOpaque {
+            out: TextureNodeId,
+        }
         impl PassNode for MockOpaque {
-            fn name(&self) -> &'static str { "Opaque" }
-            fn setup(&mut self, b: &mut PassBuilder) { b.declare_output(self.out); }
+            fn name(&self) -> &'static str {
+                "Opaque"
+            }
+            fn setup(&mut self, b: &mut PassBuilder) {
+                b.declare_output(self.out);
+            }
             fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
-        struct MockSkybox { r: TextureNodeId, w: TextureNodeId }
+        struct MockSkybox {
+            r: TextureNodeId,
+            w: TextureNodeId,
+        }
         impl PassNode for MockSkybox {
-            fn name(&self) -> &'static str { "Skybox" }
+            fn name(&self) -> &'static str {
+                "Skybox"
+            }
             fn setup(&mut self, b: &mut PassBuilder) {
                 b.read_texture(self.r);
                 b.declare_output(self.w);
@@ -853,9 +877,14 @@ mod tests {
             fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
-        struct MockTransparent { r: TextureNodeId, w: TextureNodeId }
+        struct MockTransparent {
+            r: TextureNodeId,
+            w: TextureNodeId,
+        }
         impl PassNode for MockTransparent {
-            fn name(&self) -> &'static str { "Transparent" }
+            fn name(&self) -> &'static str {
+                "Transparent"
+            }
             fn setup(&mut self, b: &mut PassBuilder) {
                 b.read_texture(self.r);
                 b.declare_output(self.w);
@@ -863,9 +892,14 @@ mod tests {
             fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
-        struct MockPost { r: TextureNodeId, out: TextureNodeId }
+        struct MockPost {
+            r: TextureNodeId,
+            out: TextureNodeId,
+        }
         impl PassNode for MockPost {
-            fn name(&self) -> &'static str { "ToneMap" }
+            fn name(&self) -> &'static str {
+                "ToneMap"
+            }
             fn setup(&mut self, b: &mut PassBuilder) {
                 b.read_texture(self.r);
                 b.declare_output(self.out);
@@ -874,9 +908,18 @@ mod tests {
         }
 
         graph.add_pass(Box::new(MockOpaque { out: color_v0 }));
-        graph.add_pass(Box::new(MockSkybox { r: color_v0, w: color_v1 }));
-        graph.add_pass(Box::new(MockTransparent { r: color_v1, w: color_v2 }));
-        graph.add_pass(Box::new(MockPost { r: color_v2, out: backbuffer }));
+        graph.add_pass(Box::new(MockSkybox {
+            r: color_v0,
+            w: color_v1,
+        }));
+        graph.add_pass(Box::new(MockTransparent {
+            r: color_v1,
+            w: color_v2,
+        }));
+        graph.add_pass(Box::new(MockPost {
+            r: color_v2,
+            out: backbuffer,
+        }));
 
         graph.compile_topology();
 
@@ -890,9 +933,18 @@ mod tests {
         assert_eq!(names, vec!["Opaque", "Skybox", "Transparent", "ToneMap"]);
 
         // 5. Verify alias chain resolves to root: v2 → v1 → v0.
-        assert_eq!(graph.resolve_alias_root(color_v2.0 as usize), color_v0.0 as usize);
-        assert_eq!(graph.resolve_alias_root(color_v1.0 as usize), color_v0.0 as usize);
-        assert_eq!(graph.resolve_alias_root(color_v0.0 as usize), color_v0.0 as usize);
+        assert_eq!(
+            graph.resolve_alias_root(color_v2.0 as usize),
+            color_v0.0 as usize
+        );
+        assert_eq!(
+            graph.resolve_alias_root(color_v1.0 as usize),
+            color_v0.0 as usize
+        );
+        assert_eq!(
+            graph.resolve_alias_root(color_v0.0 as usize),
+            color_v0.0 as usize
+        );
     }
 
     /// Verifies that `mutate_texture` on the PassBuilder correctly
@@ -905,10 +957,16 @@ mod tests {
         let color = graph.register_resource("Color", dummy_desc(), false);
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-        struct Writer { out: TextureNodeId }
+        struct Writer {
+            out: TextureNodeId,
+        }
         impl PassNode for Writer {
-            fn name(&self) -> &'static str { "Writer" }
-            fn setup(&mut self, b: &mut PassBuilder) { b.declare_output(self.out); }
+            fn name(&self) -> &'static str {
+                "Writer"
+            }
+            fn setup(&mut self, b: &mut PassBuilder) {
+                b.declare_output(self.out);
+            }
             fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
@@ -917,16 +975,23 @@ mod tests {
             output: TextureNodeId,
         }
         impl PassNode for Mutator {
-            fn name(&self) -> &'static str { "Mutator" }
+            fn name(&self) -> &'static str {
+                "Mutator"
+            }
             fn setup(&mut self, b: &mut PassBuilder) {
                 self.output = b.mutate_texture(self.input, "Color_Mutated");
             }
             fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
-        struct Reader { r: TextureNodeId, out: TextureNodeId }
+        struct Reader {
+            r: TextureNodeId,
+            out: TextureNodeId,
+        }
         impl PassNode for Reader {
-            fn name(&self) -> &'static str { "Reader" }
+            fn name(&self) -> &'static str {
+                "Reader"
+            }
             fn setup(&mut self, b: &mut PassBuilder) {
                 b.read_texture(self.r);
                 b.declare_output(self.out);
@@ -935,15 +1000,22 @@ mod tests {
         }
 
         graph.add_pass(Box::new(Writer { out: color }));
-        graph.add_pass(Box::new(Mutator { input: color, output: TextureNodeId(0) }));
+        graph.add_pass(Box::new(Mutator {
+            input: color,
+            output: TextureNodeId(0),
+        }));
 
         // After Mutator's setup, the graph has a new resource "Color_Mutated".
-        let mutated_id = graph.find_resource("Color_Mutated")
+        let mutated_id = graph
+            .find_resource("Color_Mutated")
             .expect("mutate_texture should register the new resource");
         assert!(graph.resources[mutated_id.0 as usize].alias_of.is_some());
 
         // Reader consumes the mutated version.
-        graph.add_pass(Box::new(Reader { r: mutated_id, out: backbuffer }));
+        graph.add_pass(Box::new(Reader {
+            r: mutated_id,
+            out: backbuffer,
+        }));
 
         graph.compile_topology();
 
