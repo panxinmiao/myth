@@ -64,7 +64,8 @@ pub struct ResourceRecord {
     pub desc: RdgTextureDesc,
     pub is_external: bool,
 
-    pub producers: SmallVec<[usize; 4]>,
+    // 在严格 SSA 下，一个资源最多只能有一个生产者
+    pub producer: Option<usize>,
     pub consumers: SmallVec<[usize; 8]>,
 
     pub first_use: usize,

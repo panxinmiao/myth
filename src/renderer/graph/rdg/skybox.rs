@@ -506,7 +506,7 @@ impl PassNode for SkyboxPassNode {
 
     fn setup(&mut self, builder: &mut PassBuilder) {
         builder.read_texture(self.in_color);
-        builder.write_texture(self.out_color);
+        builder.declare_output(self.out_color);
         builder.read_texture(self.scene_depth);
     }
 

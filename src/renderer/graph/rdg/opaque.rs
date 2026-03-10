@@ -38,6 +38,7 @@ use super::graph::RenderGraph;
 
 /// Outputs produced by the Opaque pass, returned to the Composer for
 /// explicit downstream wiring.
+#[must_use]
 pub struct OpaqueOutputs {
     /// Drawing surface for subsequent MSAA passes (Skybox, Transparent).
     /// In non-MSAA mode this IS `scene_color_hdr`.
@@ -93,7 +94,7 @@ impl OpaqueFeature {
                 | wgpu::TextureUsages::COPY_SRC,
         );
 
-        let (color_target, depth_target, resolve_target, scene_color_hdr) = if is_msaa {
+        let (color_target, depth_target, resolve_target, scene_color_hdr, in_depth) = if is_msaa {
             let msaa_color_desc = RdgTextureDesc::new(
                 fc.width,
                 fc.height,
@@ -119,10 +120,11 @@ impl OpaqueFeature {
             let msaa_depth = rdg.register_resource("Scene_Depth_MSAA", msaa_depth_desc, false);
             let scene_hdr = rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
 
-            (msaa_color, msaa_depth, Some(scene_hdr), scene_hdr)
+            (msaa_color, msaa_depth, Some(scene_hdr), scene_hdr, None)
         } else {
             let scene_hdr = rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
-            (scene_hdr, scene_depth_ss, None, scene_hdr)
+            let depth_alias = rdg.create_alias(scene_depth_ss, "Scene_Depth_Opaque");
+            (scene_hdr, depth_alias, None, scene_hdr, Some(scene_depth_ss))
         };
 
         // ── Specular MRT (conditionally created) ───────────────────
@@ -161,6 +163,7 @@ impl OpaqueFeature {
         let node = OpaquePassNode::new(
             color_target,
             depth_target,
+            in_depth,
             has_prepass,
             clear_color,
             needs_specular,
@@ -197,6 +200,7 @@ pub struct OpaquePassNode {
     pub color_target: TextureNodeId,
     /// Primary depth target (`Scene_Depth` or `Scene_Depth_MSAA`).
     pub depth_target: TextureNodeId,
+    pub in_depth: Option<TextureNodeId>,
     /// Optional single-sample HDR texture for MSAA resolve.
     pub resolve_target: Option<TextureNodeId>,
     pub specular_tex: TextureNodeId,
@@ -218,6 +222,7 @@ impl OpaquePassNode {
     pub fn new(
         color_target: TextureNodeId,
         depth_target: TextureNodeId,
+        in_depth: Option<TextureNodeId>,
         has_prepass: bool,
         clear_color: wgpu::Color,
         needs_specular: bool,
@@ -230,6 +235,7 @@ impl OpaquePassNode {
         Self {
             color_target,
             depth_target,
+            in_depth,
             resolve_target,
             specular_tex,
             specular_resolve_target,
@@ -250,16 +256,20 @@ impl PassNode for OpaquePassNode {
 
     fn setup(&mut self, builder: &mut PassBuilder) {
         // Primary color target — may be single-sample HDR or MSAA.
-        builder.write_texture(self.color_target);
+        builder.declare_output(self.color_target);
+
+        if let Some(in_depth) = self.in_depth {
+            builder.read_texture(in_depth);
+        }
 
         // Depth target.
-        builder.write_texture(self.depth_target);
-        builder.read_texture(self.depth_target);
+        builder.declare_output(self.depth_target);
+        // builder.read_texture(self.depth_target);
 
         // Resolve target — declare write so the graph compiler allocates
         // physical memory and tracks dependencies for downstream consumers.
         if let Some(rt) = self.resolve_target {
-            builder.write_texture(rt);
+            builder.declare_output(rt);
         }
 
         // SSAO — explicit input wiring.
@@ -269,13 +279,13 @@ impl PassNode for OpaquePassNode {
 
         // Specular MRT (pre-registered in add_to_graph).
         if self.needs_specular {
-            builder.write_texture(self.specular_tex);
+            builder.declare_output(self.specular_tex);
             if self.specular_resolve_target.is_some() {
                 // Self-read keeps the MSAA specular alive for the resolve.
                 builder.read_texture(self.specular_tex);
             }
             if let Some(resolve) = self.specular_resolve_target {
-                builder.write_texture(resolve);
+                builder.declare_output(resolve);
             }
         }
     }

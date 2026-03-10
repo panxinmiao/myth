@@ -194,7 +194,7 @@ impl PassNode for MsaaSyncPassNode {
 
     fn setup(&mut self, builder: &mut PassBuilder) {
         builder.read_texture(self.src_hdr);
-        builder.write_texture(self.dst_msaa);
+        builder.declare_output(self.dst_msaa);
     }
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {

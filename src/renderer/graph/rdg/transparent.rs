@@ -168,7 +168,7 @@ impl PassNode for TransparentPassNode {
     fn setup(&mut self, builder: &mut PassBuilder) {
         // SSA colour relay: read the incoming version, write the new alias.
         builder.read_texture(self.in_color);
-        builder.write_texture(self.out_color);
+        builder.declare_output(self.out_color);
 
         // Depth — read-only for depth testing.
         builder.read_texture(self.depth_target);
@@ -176,7 +176,7 @@ impl PassNode for TransparentPassNode {
         // Resolve target — write dependency for MSAA resolve and
         // downstream consumer tracking.
         if let Some(rt) = self.resolve_target {
-            builder.write_texture(rt);
+            builder.declare_output(rt);
         }
 
         // Optional texture inputs.

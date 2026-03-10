@@ -813,7 +813,7 @@ impl PassNode for BloomPassNode {
         let hdr_format = builder.frame_config().hdr_format;
 
         // Output (pre-registered in add_to_graph).
-        builder.write_texture(self.output_tex);
+        builder.declare_output(self.output_tex);
 
         // Internal mip chain.
         let bloom_w = (w / 2).max(1);

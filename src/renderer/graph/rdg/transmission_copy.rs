@@ -80,7 +80,7 @@ impl PassNode for TransmissionCopyPassNode {
 
     fn setup(&mut self, builder: &mut PassBuilder) {
         // Output: transmission texture (pre-registered in add_to_graph).
-        builder.write_texture(self.transmission_tex);
+        builder.declare_output(self.transmission_tex);
 
         // Input: scene colour as copy source.
         builder.read_texture(self.scene_color);

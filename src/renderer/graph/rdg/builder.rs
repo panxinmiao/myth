@@ -55,7 +55,7 @@ impl<'a> PassBuilder<'a> {
     ) -> TextureNodeId {
         let id = self.graph.register_resource(name, desc, false);
         self.graph.passes[self.pass_index].creates.push(id);
-        self.write_texture(id)
+        self.declare_output(id)
     }
 
     /// Declares that this pass reads from the given texture resource.
@@ -67,11 +67,28 @@ impl<'a> PassBuilder<'a> {
     }
 
     /// Declares that this pass writes to the given texture resource.
-    pub fn write_texture(&mut self, id: TextureNodeId) -> TextureNodeId {
+    ///
+    /// # Panics (Strict SSA Enforcement)
+    /// Panics if the resource already has a producer. In a strict SSA Render Graph,
+    /// a logical resource can only be written to ONCE. 
+    /// To append/modify an existing resource, use [`mutate_texture`](Self::mutate_texture) instead.
+    pub fn declare_output(&mut self, id: TextureNodeId) -> TextureNodeId {
+        let res = &mut self.graph.resources[id.0 as usize];
+
+        // 🚨 检查是否已经存在生产者
+        if let Some(existing_producer) = res.producer {
+            panic!(
+                "SSA Violation in Pass '{}': Texture '{}' already has a producer (Pass '{}'). \
+                 You cannot write to an existing resource. Use `builder.mutate_texture()` \
+                 to create a new version (alias) of this resource.",
+                self.graph.passes[self.pass_index].name,
+                res.name,
+                self.graph.passes[existing_producer].name
+            );
+        }
+
         self.graph.passes[self.pass_index].writes.push(id);
-        self.graph.resources[id.0 as usize]
-            .producers
-            .push(self.pass_index);
+        res.producer = Some(self.pass_index);
         id
     }
 
@@ -95,6 +112,7 @@ impl<'a> PassBuilder<'a> {
     /// into the same physical render target in sequence (e.g. Opaque →
     /// Skybox → Transparent).  Each pass "mutates" the previous version,
     /// producing a clean DAG with no read-write ambiguity.
+    #[must_use = "You must store and use the new mutated TextureNodeId for downstream passes"]
     pub fn mutate_texture(
         &mut self,
         input_id: TextureNodeId,
@@ -102,7 +120,7 @@ impl<'a> PassBuilder<'a> {
     ) -> TextureNodeId {
         self.read_texture(input_id);
         let new_id = self.graph.create_alias(input_id, new_name);
-        self.write_texture(new_id)
+        self.declare_output(new_id)
     }
 
     /// Marks this pass as having an externally-visible side effect.

@@ -135,8 +135,8 @@ impl PassNode for SimpleForwardPassNode {
 
     fn setup(&mut self, builder: &mut PassBuilder) {
         // Outputs (pre-registered in add_to_graph).
-        builder.write_texture(self.surface_out);
-        builder.write_texture(self.scene_depth);
+        builder.declare_output(self.surface_out);
+        builder.declare_output(self.scene_depth);
 
         // MSAA intermediate (internal, conditionally created).
         let msaa_samples = builder.frame_config().msaa_samples;
