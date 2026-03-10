@@ -267,8 +267,8 @@ impl<'a> FrameComposer<'a> {
             && (self.ctx.scene.screen_space.enable_sss || self.ctx.scene.screen_space.enable_ssr);
         let needs_normal = ssao_enabled || needs_feature_id;
         let needs_skybox = self.ctx.scene.background.needs_skybox_pass();
-        let needs_specular = self.ctx.scene.screen_space.enable_sss && is_high_fidelity;
-        let has_transmission = self.ctx.render_lists.use_transmission && is_high_fidelity;
+        let ssss_enabled = self.ctx.scene.screen_space.enable_sss;
+        let has_transmission = self.ctx.render_lists.use_transmission;
         let bloom_enabled = self.ctx.scene.bloom.enabled && is_high_fidelity;
         let fxaa_enabled = self.ctx.scene.fxaa.enabled && is_high_fidelity;
 
@@ -334,20 +334,20 @@ impl<'a> FrameComposer<'a> {
                 prepass_out.scene_depth,
                 opaque_has_prepass,
                 self.ctx.extracted_scene.background.clear_color(),
-                needs_specular,
+                ssss_enabled,
                 ssao_output,
             );
 
             let mut active_color = opaque_out.active_color;
             let active_depth = opaque_out.active_depth;
-            let scene_color_hdr = opaque_out.scene_color_hdr;
+            let mut scene_color_hdr = opaque_out.scene_color_hdr;
 
             // Populate blackboard fields for hooks.
             bb_scene_depth = prepass_out.scene_depth;
 
             // 4. SSSSS — operates on single-sample HDR (post-resolve).
-            if needs_specular {
-                self.ctx.rdg_sssss_pass.add_to_graph(
+            if ssss_enabled {
+                scene_color_hdr = self.ctx.rdg_sssss_pass.add_to_graph(
                     rdg,
                     scene_color_hdr,
                     prepass_out.scene_depth,
