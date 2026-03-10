@@ -51,9 +51,16 @@ use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::{SamplerRegistry, Tracked};
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::ExtractedScene;
-use crate::renderer::graph::core::*;
+use crate::renderer::graph::core::{
+    ExecuteContext, GraphBlackboard, HookStage, PrepareContext, RenderGraph, TextureDesc,
+    TextureNodeId, TransientPool, ViewResolver,
+};
 use crate::renderer::graph::frame::{PreparedSkyboxDraw, RenderLists};
-use crate::renderer::graph::passes::*;
+use crate::renderer::graph::passes::{
+    BloomFeature, BrdfLutFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
+    PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
+    ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+};
 use crate::renderer::pipeline::PipelineCache;
 use crate::renderer::pipeline::ShaderManager;
 use crate::scene::Scene;
@@ -432,7 +439,7 @@ impl<'a> FrameComposer<'a> {
             };
 
             let tonemap_output = if fxaa_enabled {
-                graph.register_resource("LDR_Intermediate", surface_desc.clone(), false)
+                graph.register_resource("LDR_Intermediate", surface_desc, false)
             } else {
                 current_surface = graph.create_alias(current_surface, "Surface_After_ToneMap");
                 current_surface
