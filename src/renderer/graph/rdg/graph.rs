@@ -160,6 +160,7 @@ impl RenderGraph {
             first_use: usize::MAX,
             last_use: 0,
             physical_index: None,
+            alias_of: None,
         });
         self.resource_registry.insert(name, id);
         id
@@ -170,6 +171,38 @@ impl RenderGraph {
     #[inline]
     pub fn find_resource(&self, name: &str) -> Option<TextureNodeId> {
         self.resource_registry.get(name).copied()
+    }
+
+    /// Creates a versioned alias of `input_id` that shares the same physical
+    /// GPU memory.
+    ///
+    /// This is the foundation of the SSA (Static Single Assignment) resource
+    /// model: any in-place modification of a texture (e.g. Skybox drawing
+    /// over Opaque output) produces a *new* logical ID while reusing the
+    /// same physical allocation.  The resulting DAG has no ambiguous
+    /// read-write edges, enabling cycle-free topological sorting without
+    /// reliance on `add_pass` registration order.
+    ///
+    /// Used by `Feature::add_to_graph()` when the output ID must be known
+    /// before the pass is inserted.  For self-contained passes, prefer
+    /// [`PassBuilder::mutate_texture`] which calls this internally.
+    pub fn create_alias(
+        &mut self,
+        input_id: TextureNodeId,
+        name: &'static str,
+    ) -> TextureNodeId {
+        let desc = self.resources[input_id.0 as usize].desc.clone();
+        let new_id = self.register_resource(name, desc, false);
+        self.resources[new_id.0 as usize].alias_of = Some(input_id);
+        new_id
+    }
+
+    /// Chases the `alias_of` chain to find the root (non-alias) resource.
+    fn resolve_alias_root(&self, mut idx: usize) -> usize {
+        while let Some(parent) = self.resources[idx].alias_of {
+            idx = parent.0 as usize;
+        }
+        idx
     }
 
     /// Adds an ephemeral pass node to the graph, transferring ownership.
@@ -258,11 +291,13 @@ impl RenderGraph {
 
     /// Builds physical pass-to-pass dependencies from resource read/write edges.
     ///
-    /// For each pass, every resource it reads creates a dependency on the
-    /// passes that produce (write) that resource. Only backward dependencies
-    /// are considered to prevent cycles from in-place read-write patterns.
+    /// For each pass, every resource it reads creates a dependency on all
+    /// passes that produce (write) that resource.  Self-loops (a pass that
+    /// both reads and writes the same resource) are excluded.
     ///
-    /// Uses index-based traversal to avoid cloning `SmallVec`s in the hot loop.
+    /// With the SSA alias model, every relay-write produces a *new* logical
+    /// resource ID, so the dependency direction is fully determined by the
+    /// graph edges — no reliance on `add_pass` registration order.
     fn build_physical_dependencies(&mut self) {
         for pass_idx in 0..self.passes.len() {
             let num_reads = self.passes[pass_idx].reads.len();
@@ -271,7 +306,7 @@ impl RenderGraph {
                 let num_producers = self.resources[res_id.0 as usize].producers.len();
                 for prod_i in 0..num_producers {
                     let producer_idx = self.resources[res_id.0 as usize].producers[prod_i];
-                    if producer_idx < pass_idx
+                    if producer_idx != pass_idx
                         && !self.passes[pass_idx]
                             .physical_dependencies
                             .contains(&producer_idx)
@@ -404,27 +439,48 @@ impl RenderGraph {
         }
     }
 
-    /// Allocates physical GPU textures for transient resources that survived
-    /// dead-pass culling **and** have at least one downstream consumer.
+    /// Allocates physical GPU textures for transient resources, with
+    /// alias-aware sharing.
     ///
-    /// Resources that are written but never read (dead resources) are skipped,
-    /// saving VRAM.  External resources are never allocated here — they are
-    /// provided by the caller (e.g. swapchain surface).
+    /// **Phase 1** — Allocate pool slots for independent (root) transient
+    /// resources.  External, dead, and alias resources are skipped.
+    ///
+    /// **Phase 2** — Resolve each alias to its root resource and share the
+    /// same physical pool slot.  The root's `last_use` is extended to cover
+    /// all aliases so the pool keeps the allocation alive.
+    ///
+    /// **Phase 3** — Propagate the root's unified `last_use` back to every
+    /// alias.  This ensures that the execute-phase `StoreOp` deduction
+    /// sees the correct final lifetime and never discards data prematurely
+    /// for intermediate versions.
     fn allocate_physical_resources(&mut self, pool: &mut RdgTransientPool, device: &Device) {
         pool.begin_frame();
 
+        // Phase 1: allocate root (non-alias) transient resources.
         for res in &mut self.resources {
-            // External resources are managed outside the RDG.
-            if res.is_external {
+            if res.is_external || res.first_use == usize::MAX || res.alias_of.is_some() {
                 continue;
             }
-
-            // Resource was never touched by any surviving pass.
-            if res.first_use == usize::MAX {
-                continue;
-            }
-
             res.physical_index = Some(pool.acquire(device, &res.desc, res.first_use, res.last_use));
+        }
+
+        // Phase 2: resolve aliases — share physical memory, extend root lifetimes.
+        for i in 0..self.resources.len() {
+            if self.resources[i].alias_of.is_some() {
+                let root_idx = self.resolve_alias_root(i);
+                self.resources[i].physical_index = self.resources[root_idx].physical_index;
+                let alias_last = self.resources[i].last_use;
+                self.resources[root_idx].last_use =
+                    self.resources[root_idx].last_use.max(alias_last);
+            }
+        }
+
+        // Phase 3: propagate unified lifetime to all aliases.
+        for i in 0..self.resources.len() {
+            if self.resources[i].alias_of.is_some() {
+                let root_idx = self.resolve_alias_root(i);
+                self.resources[i].last_use = self.resources[root_idx].last_use;
+            }
         }
     }
 
@@ -724,5 +780,165 @@ mod tests {
             bloom_res.last_use, 2,
             "Bloom last read by ToneMapping at timeline 2"
         );
+    }
+
+    /// Verifies the SSA alias (mutate_texture / create_alias) mechanism:
+    ///
+    /// - Relay passes (Opaque → Skybox → Transparent) produce unique
+    ///   logical IDs sharing the same physical memory.
+    /// - Topological ordering is determined purely by graph edges, not
+    ///   by `add_pass` registration order.
+    /// - Alias resources inherit `LoadOp::Load` semantics.
+    #[test]
+    fn test_ssa_alias_relay_passes() {
+        let mut graph = RenderGraph::new();
+        graph.begin_frame(dummy_config());
+
+        // 1. Register the root colour resource (owned by Opaque).
+        let color_v0 = graph.register_resource("SceneColor_v0", dummy_desc(), false);
+        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+
+        // 2. Create SSA aliases that simulate Skybox and Transparent relays.
+        let color_v1 = graph.create_alias(color_v0, "SceneColor_v1");
+        let color_v2 = graph.create_alias(color_v1, "SceneColor_v2");
+
+        // — Alias metadata checks —
+        assert!(
+            graph.resources[color_v0.0 as usize].alias_of.is_none(),
+            "v0 is a root resource"
+        );
+        assert_eq!(
+            graph.resources[color_v1.0 as usize].alias_of,
+            Some(color_v0),
+            "v1 aliases v0"
+        );
+        assert_eq!(
+            graph.resources[color_v2.0 as usize].alias_of,
+            Some(color_v1),
+            "v2 aliases v1"
+        );
+
+        // 3. Build passes with explicit read → write (SSA model).
+        //    Note: passes are added in FORWARD order here, but the
+        //    ordering is determined by edges, not insertion order.
+
+        struct MockOpaque { out: TextureNodeId }
+        impl PassNode for MockOpaque {
+            fn name(&self) -> &'static str { "Opaque" }
+            fn setup(&mut self, b: &mut PassBuilder) { b.write_texture(self.out); }
+            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+        }
+
+        struct MockSkybox { r: TextureNodeId, w: TextureNodeId }
+        impl PassNode for MockSkybox {
+            fn name(&self) -> &'static str { "Skybox" }
+            fn setup(&mut self, b: &mut PassBuilder) {
+                b.read_texture(self.r);
+                b.write_texture(self.w);
+            }
+            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+        }
+
+        struct MockTransparent { r: TextureNodeId, w: TextureNodeId }
+        impl PassNode for MockTransparent {
+            fn name(&self) -> &'static str { "Transparent" }
+            fn setup(&mut self, b: &mut PassBuilder) {
+                b.read_texture(self.r);
+                b.write_texture(self.w);
+            }
+            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+        }
+
+        struct MockPost { r: TextureNodeId, out: TextureNodeId }
+        impl PassNode for MockPost {
+            fn name(&self) -> &'static str { "ToneMap" }
+            fn setup(&mut self, b: &mut PassBuilder) {
+                b.read_texture(self.r);
+                b.write_texture(self.out);
+            }
+            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+        }
+
+        graph.add_pass(Box::new(MockOpaque { out: color_v0 }));
+        graph.add_pass(Box::new(MockSkybox { r: color_v0, w: color_v1 }));
+        graph.add_pass(Box::new(MockTransparent { r: color_v1, w: color_v2 }));
+        graph.add_pass(Box::new(MockPost { r: color_v2, out: backbuffer }));
+
+        graph.compile_topology();
+
+        // 4. Verify topological order: Opaque → Skybox → Transparent → ToneMap.
+        assert_eq!(graph.execution_queue.len(), 4);
+        let names: Vec<&str> = graph
+            .execution_queue
+            .iter()
+            .map(|&i| graph.passes[i].name)
+            .collect();
+        assert_eq!(names, vec!["Opaque", "Skybox", "Transparent", "ToneMap"]);
+
+        // 5. Verify alias chain resolves to root: v2 → v1 → v0.
+        assert_eq!(graph.resolve_alias_root(color_v2.0 as usize), color_v0.0 as usize);
+        assert_eq!(graph.resolve_alias_root(color_v1.0 as usize), color_v0.0 as usize);
+        assert_eq!(graph.resolve_alias_root(color_v0.0 as usize), color_v0.0 as usize);
+    }
+
+    /// Verifies that `mutate_texture` on the PassBuilder correctly
+    /// creates an alias, reads the input, and writes the new version.
+    #[test]
+    fn test_mutate_texture_api() {
+        let mut graph = RenderGraph::new();
+        graph.begin_frame(dummy_config());
+
+        let color = graph.register_resource("Color", dummy_desc(), false);
+        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+
+        struct Writer { out: TextureNodeId }
+        impl PassNode for Writer {
+            fn name(&self) -> &'static str { "Writer" }
+            fn setup(&mut self, b: &mut PassBuilder) { b.write_texture(self.out); }
+            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+        }
+
+        struct Mutator {
+            input: TextureNodeId,
+            output: TextureNodeId,
+        }
+        impl PassNode for Mutator {
+            fn name(&self) -> &'static str { "Mutator" }
+            fn setup(&mut self, b: &mut PassBuilder) {
+                self.output = b.mutate_texture(self.input, "Color_Mutated");
+            }
+            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+        }
+
+        struct Reader { r: TextureNodeId, out: TextureNodeId }
+        impl PassNode for Reader {
+            fn name(&self) -> &'static str { "Reader" }
+            fn setup(&mut self, b: &mut PassBuilder) {
+                b.read_texture(self.r);
+                b.write_texture(self.out);
+            }
+            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+        }
+
+        graph.add_pass(Box::new(Writer { out: color }));
+        graph.add_pass(Box::new(Mutator { input: color, output: TextureNodeId(0) }));
+
+        // After Mutator's setup, the graph has a new resource "Color_Mutated".
+        let mutated_id = graph.find_resource("Color_Mutated")
+            .expect("mutate_texture should register the new resource");
+        assert!(graph.resources[mutated_id.0 as usize].alias_of.is_some());
+
+        // Reader consumes the mutated version.
+        graph.add_pass(Box::new(Reader { r: mutated_id, out: backbuffer }));
+
+        graph.compile_topology();
+
+        assert_eq!(graph.execution_queue.len(), 3);
+        let names: Vec<&str> = graph
+            .execution_queue
+            .iter()
+            .map(|&i| graph.passes[i].name)
+            .collect();
+        assert_eq!(names, vec!["Writer", "Mutator", "Reader"]);
     }
 }

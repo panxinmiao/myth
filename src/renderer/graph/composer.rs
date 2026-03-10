@@ -341,7 +341,6 @@ impl<'a> FrameComposer<'a> {
             let scene_color_hdr = opaque_out.scene_color_hdr;
 
             // Populate blackboard fields for hooks.
-            bb_scene_color = scene_color_hdr;
             bb_scene_depth = prepass_out.scene_depth;
 
             // 4. SSSSS — operates on single-sample HDR (post-resolve).
@@ -368,26 +367,33 @@ impl<'a> FrameComposer<'a> {
             }
 
             // 5. Skybox — continues in the MSAA (or non-MSAA) context.
+            //    Returns the new colour version (SSA alias) for downstream.
             if needs_skybox {
-                self.ctx
+                active_color = self
+                    .ctx
                     .rdg_skybox_pass
                     .add_to_graph(rdg, active_color, active_depth);
             }
 
-            // 6. Transmission Copy — snapshot single-sample HDR for
-            //    refraction during transparent rendering.
+            // 6. Transmission Copy — snapshot scene colour for refraction.
+            //    MSAA: reads Opaque's single-sample resolve (pre-Skybox).
+            //    Non-MSAA: reads the latest colour version (post-Skybox).
             let transmission_tex = if has_transmission {
+                let tx_source = if is_msaa { scene_color_hdr } else { active_color };
                 Some(
                     self.ctx
                         .rdg_transmission_copy_pass
-                        .add_to_graph(rdg, scene_color_hdr, true),
+                        .add_to_graph(rdg, tx_source, true),
                 )
             } else {
                 None
             };
 
-            // 7. Transparent — final scene draw in the MSAA context.
-            self.ctx.rdg_transparent_pass.add_to_graph(
+            // 7. Transparent — final scene draw.  Returns the texture
+            //    that downstream consumers should read:
+            //    MSAA  → `Scene_Color_HDR_Final` (resolve target)
+            //    Other → mutated colour alias (same physical memory)
+            let post_transparent_color = self.ctx.rdg_transparent_pass.add_to_graph(
                 rdg,
                 active_color,
                 active_depth,
@@ -395,10 +401,14 @@ impl<'a> FrameComposer<'a> {
                 ssao_output,
             );
 
+            // Update the blackboard pointer so hooks and post-processing
+            // consume the latest scene colour (including transparent).
+            bb_scene_color = post_transparent_color;
+
             // ── Before-Post-Process Hooks ──────────────────────────────
             {
                 let mut blackboard = GraphBlackboard {
-                    scene_color: scene_color_hdr,
+                    scene_color: post_transparent_color,
                     scene_depth: prepass_out.scene_depth,
                     surface_out,
                 };
@@ -414,12 +424,12 @@ impl<'a> FrameComposer<'a> {
             let tonemap_input = if bloom_enabled {
                 self.ctx.rdg_bloom_pass.add_to_graph(
                     rdg,
-                    scene_color_hdr,
+                    post_transparent_color,
                     self.ctx.scene.bloom.karis_average,
                     self.ctx.scene.bloom.max_mip_levels(),
                 )
             } else {
-                scene_color_hdr
+                post_transparent_color
             };
 
             let tonemap_output = if fxaa_enabled {
