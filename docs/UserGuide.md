@@ -919,10 +919,10 @@ For advanced rendering, implement the `PassNode` trait and inject it via
 the hook-based `FrameComposer` API:
 
 ```rust
-use myth::renderer::graph::rdg::node::PassNode;
-use myth::renderer::graph::rdg::builder::PassBuilder;
-use myth::renderer::graph::rdg::context::{RdgPrepareContext, RdgExecuteContext};
-use myth::renderer::graph::rdg::blackboard::HookStage;
+use myth::renderer::graph::core::node::PassNode;
+use myth::renderer::graph::core::builder::PassBuilder;
+use myth::renderer::graph::core::context::{PrepareContext, ExecuteContext};
+use myth::renderer::graph::core::blackboard::HookStage;
 use myth::render::FrameComposer;
 
 struct UiOverlay {
@@ -939,11 +939,11 @@ impl PassNode for UiOverlay {
         builder.write_texture(self.target_tex);
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         // Phase 1: Allocate GPU resources, compile shaders, etc.
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         // Phase 2: Record GPU commands
         let view = ctx.get_texture_view(self.target_tex);
     }

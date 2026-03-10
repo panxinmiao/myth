@@ -16,10 +16,10 @@
 
 use crate::renderer::core::resources::SamplerKey;
 use crate::renderer::core::resources::{BRDF_LUT_SIZE, CubeSourceType};
-use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext};
-use crate::renderer::graph::rdg::graph::RenderGraph;
-use crate::renderer::graph::rdg::node::PassNode;
+use crate::renderer::graph::core::builder::PassBuilder;
+use crate::renderer::graph::core::context::{ExecuteContext, ExtractContext};
+use crate::renderer::graph::core::graph::RenderGraph;
+use crate::renderer::graph::core::node::PassNode;
 use crate::renderer::pipeline::{
     ColorTargetKey, ComputePipelineId, ComputePipelineKey, FullscreenPipelineKey, RenderPipelineId,
 };
@@ -48,7 +48,7 @@ impl BrdfLutFeature {
     #[must_use]
     pub fn new(device: &wgpu::Device) -> Self {
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("RDG BRDF LUT BGL"),
+            label: Some("BRDF LUT BGL"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -83,7 +83,7 @@ impl BrdfLutFeature {
         let layout = ctx
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("RDG BRDF LUT Pipeline Layout"),
+                label: Some("BRDF LUT Pipeline Layout"),
                 bind_group_layouts: &[&self.bind_group_layout],
                 immediate_size: 0,
             });
@@ -94,7 +94,7 @@ impl BrdfLutFeature {
             module,
             &layout,
             &key,
-            "RDG BRDF LUT Pipeline",
+            "BRDF LUT Pipeline",
         ));
     }
 }
@@ -113,12 +113,12 @@ impl BrdfLutFeature {
             .resource_manager
             .brdf_lut_texture
             .as_ref()
-            .expect("BRDF LUT texture must be created by ensure_brdf_lut");
+            .expect("LUT texture must be created by ensure_brdf_lut");
 
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
 
         self.bind_group = Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("RDG BRDF LUT BG"),
+            label: Some("BRDF LUT BG"),
             layout: &self.bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -131,20 +131,20 @@ impl BrdfLutFeature {
     }
 
     /// Create an ephemeral [`BrdfLutPassNode`] and add it to the render graph.
-    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
+    pub fn add_to_graph(&self, graph: &mut RenderGraph) {
         let node = BrdfLutPassNode {
             pipeline_id: self.pipeline_id,
             bind_group: self.bind_group.clone(),
             active: self.active,
         };
-        rdg.add_pass(Box::new(node));
+        graph.add_pass(Box::new(node));
     }
 }
 
 // ─── BRDF LUT Pass Node ──────────────────────────────────────────────────────
 
 /// Ephemeral per-frame BRDF LUT compute pass node.
-pub struct BrdfLutPassNode {
+struct BrdfLutPassNode {
     pipeline_id: Option<ComputePipelineId>,
     bind_group: Option<wgpu::BindGroup>,
     active: bool,
@@ -152,14 +152,14 @@ pub struct BrdfLutPassNode {
 
 impl PassNode for BrdfLutPassNode {
     fn name(&self) -> &'static str {
-        "RDG_BRDF_LUT"
+        "BRDF_LUT"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
         builder.mark_side_effect();
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if !self.active {
             return;
         }
@@ -173,7 +173,7 @@ impl PassNode for BrdfLutPassNode {
             .get_compute_pipeline(self.pipeline_id.expect("Pipeline must exist"));
 
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-            label: Some("RDG BRDF LUT"),
+            label: Some("BRDF LUT"),
             timestamp_writes: None,
         });
         cpass.set_pipeline(pipeline);
@@ -237,7 +237,7 @@ impl IblComputeFeature {
         // ====== PMREM prefilter layouts ======
         let pmrem_layout_source =
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                label: Some("RDG IBL Source BGL"),
+                label: Some("IBL Source BGL"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
@@ -269,7 +269,7 @@ impl IblComputeFeature {
             });
 
         let pmrem_layout_dest = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("RDG IBL Dest BGL"),
+            label: Some("IBL Dest BGL"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::COMPUTE,
@@ -284,7 +284,7 @@ impl IblComputeFeature {
 
         // ====== Equirectangular → Cube layouts ======
         let equirect_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("RDG Equirect BGL"),
+            label: Some("Equirect BGL"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -317,7 +317,7 @@ impl IblComputeFeature {
 
         // ====== Blit layout + sampler ======
         let blit_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("RDG IBL Blit BGL"),
+            label: Some("IBL Blit BGL"),
             entries: &[
                 wgpu::BindGroupLayoutEntry {
                     binding: 0,
@@ -365,7 +365,7 @@ impl IblComputeFeature {
                     .get_or_compile_raw(device, "IBL Prefilter Shader", source);
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("RDG IBL Pipeline Layout"),
+                label: Some("IBL Pipeline Layout"),
                 bind_group_layouts: &[&self.pmrem_layout_source, &self.pmrem_layout_dest],
                 immediate_size: 0,
             });
@@ -376,7 +376,7 @@ impl IblComputeFeature {
                 module,
                 &layout,
                 &key,
-                "RDG IBL Compute Pipeline",
+                "IBL Compute Pipeline",
             ));
         }
 
@@ -388,7 +388,7 @@ impl IblComputeFeature {
                     .get_or_compile_raw(device, "Equirect to Cube Shader", source);
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("RDG Equirect Pipeline Layout"),
+                label: Some("Equirect Pipeline Layout"),
                 bind_group_layouts: &[&self.equirect_layout],
                 immediate_size: 0,
             });
@@ -399,7 +399,7 @@ impl IblComputeFeature {
                 module,
                 &layout,
                 &key,
-                "RDG Equirect to Cube Pipeline",
+                "Equirect to Cube Pipeline",
             ));
         }
 
@@ -411,7 +411,7 @@ impl IblComputeFeature {
                     .get_or_compile_raw(device, "IBL Blit Shader", source);
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("RDG IBL Blit Pipeline Layout"),
+                label: Some("IBL Blit Pipeline Layout"),
                 bind_group_layouts: &[&self.blit_layout],
                 immediate_size: 0,
             });
@@ -431,7 +431,7 @@ impl IblComputeFeature {
                 module,
                 &layout,
                 &key,
-                "RDG IBL Blit Pipeline",
+                "IBL Blit Pipeline",
             ));
         }
     }
@@ -560,7 +560,7 @@ impl IblComputeFeature {
         let mut encoder = ctx
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("RDG IBL Compute Encoder"),
+                label: Some("IBL Compute Encoder"),
             });
 
         // ── Phase 1: Prepare mipmapped cube source for PMREM ───────────
@@ -796,13 +796,13 @@ impl IblComputeFeature {
             .environment_map_cache
             .insert(source, gpu_env);
 
-        log::info!("RDG IBL PMREM generated. Source type: {source_type:?}");
+        log::info!("IBL PMREM generated. Source type: {source_type:?}");
     }
 
     /// Create an ephemeral [`IblPassNode`] and add it to the render graph.
-    pub fn add_to_graph(&self, rdg: &mut RenderGraph, source: TextureSource) {
+    pub fn add_to_graph(&self, graph: &mut RenderGraph, source: TextureSource) {
         let node = IblPassNode { _source: source };
-        rdg.add_pass(Box::new(node));
+        graph.add_pass(Box::new(node));
     }
 }
 
@@ -812,7 +812,7 @@ impl IblComputeFeature {
 ///
 /// All IBL work is completed during [`IblComputeFeature::extract_and_prepare`];
 /// this node is a no-op placeholder so the graph stays consistent.
-pub struct IblPassNode {
+struct IblPassNode {
     // todo: move logic from extract_and_prepare here and make this a real pass node that executes the compute work.
     // This would allow better integration with the graph (e.g. explicit dependencies) and remove the need for a separate command encoder and submission in extract_and_prepare.
     // for now, ibl compute is a one-off special case, so it's not worth the refactor yet.
@@ -821,14 +821,14 @@ pub struct IblPassNode {
 
 impl PassNode for IblPassNode {
     fn name(&self) -> &'static str {
-        "RDG_IBL_Compute"
+        "IBL_Compute"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
         builder.mark_side_effect();
     }
 
-    fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {
         // All IBL compute work is completed during extract_and_prepare.
     }
 }

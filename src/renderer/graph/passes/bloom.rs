@@ -30,11 +30,7 @@ use crate::define_gpu_data_struct;
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
-use crate::renderer::graph::rdg::allocator::SubViewKey;
-use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext, RdgPrepareContext};
-use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
+use crate::renderer::graph::core::*;
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
@@ -42,8 +38,6 @@ use crate::resources::WgslType;
 use crate::resources::bloom::{CompositeUniforms, UpsampleUniforms};
 use crate::resources::buffer::CpuBuffer;
 use crate::resources::uniforms::{UniformArray, WgslStruct};
-
-use super::graph::RenderGraph;
 
 define_gpu_data_struct!(
     /// Internal GPU uniform for the downsample shader (karis on/off flag).
@@ -264,7 +258,7 @@ impl BloomFeature {
         let karis_off_data = DownsampleUniforms::default();
 
         let buf_on = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("RDG Bloom Karis On"),
+            label: Some("Bloom Karis On"),
             size: std::mem::size_of::<DownsampleUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -272,7 +266,7 @@ impl BloomFeature {
         queue.write_buffer(&buf_on, 0, bytemuck::bytes_of(&karis_on_data));
 
         let buf_off = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("RDG Bloom Karis Off"),
+            label: Some("Bloom Karis Off"),
             size: std::mem::size_of::<DownsampleUniforms>() as u64,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -539,13 +533,13 @@ impl BloomFeature {
     /// during its prepare phase.
     pub fn add_to_graph(
         &self,
-        rdg: &mut RenderGraph,
+        graph: &mut RenderGraph,
         input_color: TextureNodeId,
         karis_average: bool,
         max_mip_levels: u32,
     ) -> TextureNodeId {
-        let fc = *rdg.frame_config();
-        let output_desc = RdgTextureDesc::new_2d(
+        let fc = *graph.frame_config();
+        let output_desc = TextureDesc::new_2d(
             fc.width,
             fc.height,
             fc.hdr_format,
@@ -553,7 +547,7 @@ impl BloomFeature {
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
         );
-        let output_tex = rdg.register_resource("Bloom_Out", output_desc, false);
+        let output_tex = graph.register_resource("Bloom_Out", output_desc, false);
 
         let node = BloomPassNode {
             input_tex: input_color,
@@ -601,7 +595,7 @@ impl BloomFeature {
             last_input_view_id: 0,
         };
 
-        rdg.add_pass(Box::new(node));
+        graph.add_pass(Box::new(node));
         output_tex
     }
 }
@@ -667,7 +661,7 @@ impl BloomPassNode {
     // =========================================================================
 
     /// Populate per-mip render views from the pool's sub-view cache.
-    fn resolve_mip_views(&mut self, ctx: &mut RdgPrepareContext) {
+    fn resolve_mip_views(&mut self, ctx: &mut PrepareContext) {
         let mip_count = ctx.views.get_texture(self.bloom_texture).mip_level_count();
 
         self.mip_render_views.clear();
@@ -689,7 +683,7 @@ impl BloomPassNode {
     ///
     /// Group 1 only contains RDG texture views — no samplers or uniform
     /// buffers. Cache keys are trivially small, yielding high hit rates.
-    fn rebuild_transient_bind_groups(&mut self, ctx: &mut RdgPrepareContext) {
+    fn rebuild_transient_bind_groups(&mut self, ctx: &mut PrepareContext) {
         let input_view = ctx.views.get_texture_view(self.input_tex);
         let input_view_id = input_view.id();
         let mip_count = self.mip_render_views.len();
@@ -811,7 +805,7 @@ impl BloomPassNode {
 
 impl PassNode for BloomPassNode {
     fn name(&self) -> &'static str {
-        "RDG_Bloom_Pass"
+        "Bloom_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
@@ -827,7 +821,7 @@ impl PassNode for BloomPassNode {
         let max_possible = ((bloom_w.max(bloom_h) as f32).log2().floor() as u32) + 1;
         let mip_count = self.max_mip_levels.min(max_possible).max(1);
 
-        let bloom_chain_desc = RdgTextureDesc::new(
+        let bloom_chain_desc = TextureDesc::new(
             bloom_w,
             bloom_h,
             1,
@@ -843,12 +837,12 @@ impl PassNode for BloomPassNode {
         builder.read_texture(self.input_tex);
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         self.resolve_mip_views(ctx);
         self.rebuild_transient_bind_groups(ctx);
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if self.mip_render_views.is_empty() {
             return;
         }

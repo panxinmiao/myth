@@ -1,5 +1,6 @@
-use crate::renderer::graph::rdg::allocator::RdgTransientPool;
-use crate::renderer::graph::rdg::types::RdgTextureDesc;
+use crate::renderer::graph::core::allocator::TransientPool;
+use crate::renderer::graph::core::context::{ExecuteContext, PrepareContext};
+use crate::renderer::graph::core::types::TextureDesc;
 
 use super::builder::PassBuilder;
 use super::node::{PassNode, PassRecord};
@@ -13,7 +14,7 @@ use wgpu::Device;
 /// Set once per frame via [`RenderGraph::begin_frame`] and read by passes
 /// during [`PassNode::setup`] through [`PassBuilder`] accessors.  This
 /// eliminates the need for passes to receive screen-size or format information
-/// through push parameters — they can derive `RdgTextureDesc`s directly.
+/// through push parameters — they can derive `TextureDesc`s directly.
 #[derive(Debug, Clone, Copy)]
 pub struct FrameConfig {
     /// Framebuffer width in pixels.
@@ -34,8 +35,8 @@ impl FrameConfig {
     /// Returns a `RdgTextureDesc` for a 2D render target matching the frame
     /// configuration's resolution and HDR format, with the given usage flags.
     #[must_use]
-    pub fn create_render_target_desc(&self, usage: wgpu::TextureUsages) -> RdgTextureDesc {
-        RdgTextureDesc::new_2d(
+    pub fn create_render_target_desc(&self, usage: wgpu::TextureUsages) -> TextureDesc {
+        TextureDesc::new_2d(
             self.width,
             self.height,
             self.hdr_format,
@@ -44,8 +45,8 @@ impl FrameConfig {
     }
 
     #[must_use]
-    pub fn create_surface_desc(&self, usage: wgpu::TextureUsages) -> RdgTextureDesc {
-        RdgTextureDesc::new_2d(
+    pub fn create_surface_desc(&self, usage: wgpu::TextureUsages) -> TextureDesc {
+        TextureDesc::new_2d(
             self.width,
             self.height,
             self.surface_format,
@@ -54,8 +55,8 @@ impl FrameConfig {
     }
 
     #[must_use]
-    pub fn create_depth_desc(&self, usage: wgpu::TextureUsages) -> RdgTextureDesc {
-        RdgTextureDesc::new_2d(
+    pub fn create_depth_desc(&self, usage: wgpu::TextureUsages) -> TextureDesc {
+        TextureDesc::new_2d(
             self.width,
             self.height,
             self.depth_format,
@@ -158,7 +159,7 @@ impl RenderGraph {
     pub fn register_resource(
         &mut self,
         name: &'static str,
-        desc: RdgTextureDesc,
+        desc: TextureDesc,
         is_external: bool,
     ) -> TextureNodeId {
         let id = TextureNodeId(self.resources.len() as u32);
@@ -273,17 +274,13 @@ impl RenderGraph {
             fn name(&self) -> &'static str {
                 unsafe { &*self.0 }.name()
             }
-            fn setup(&mut self, builder: &mut super::builder::PassBuilder) {
+            fn setup(&mut self, builder: &mut PassBuilder) {
                 unsafe { &mut *self.0 }.setup(builder);
             }
-            fn prepare(&mut self, ctx: &mut super::context::RdgPrepareContext) {
+            fn prepare(&mut self, ctx: &mut PrepareContext) {
                 unsafe { &mut *self.0 }.prepare(ctx);
             }
-            fn execute(
-                &self,
-                ctx: &super::context::RdgExecuteContext,
-                encoder: &mut wgpu::CommandEncoder,
-            ) {
+            fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
                 unsafe { &*self.0 }.execute(ctx, encoder);
             }
         }
@@ -301,7 +298,7 @@ impl RenderGraph {
         self.compute_resource_lifetimes();
     }
 
-    pub fn compile(&mut self, pool: &mut RdgTransientPool, device: &Device) {
+    pub fn compile(&mut self, pool: &mut TransientPool, device: &Device) {
         self.compile_topology();
 
         self.allocate_physical_resources(pool, device);
@@ -470,7 +467,7 @@ impl RenderGraph {
     ///
     /// **Phase 4** — Propagate the root's unified `last_use` back to every alias.  
     /// This ensures that the execute-phase `LoadOp` deduction sees the correct lifetime and keeps the physical memory alive for the entire duration of all aliases.    
-    fn allocate_physical_resources(&mut self, pool: &mut RdgTransientPool, device: &Device) {
+    fn allocate_physical_resources(&mut self, pool: &mut TransientPool, device: &Device) {
         pool.begin_frame();
 
         // ✅ Phase 1: Before allocating physical memory, merge the lifetimes of all aliases into their root
@@ -540,8 +537,7 @@ impl RenderGraph {
     /// Dumps the current Render Graph topology as a Markdown Mermaid chart.
     /// This is an incredibly powerful tool for debugging SSA data flows,
     /// missing connections, and dead-pass elimination.
-    #[cfg(debug_assertions)]
-    pub fn dump_mermaid(&self) {
+    pub fn dump_mermaid(&self) -> String {
         use std::fmt::Write;
         let mut out = String::new();
 
@@ -629,13 +625,12 @@ impl RenderGraph {
 
         println!("\n🌈 RDG Topology Mermaid Dump:\n{}", out);
         log::info!("\n🌈 RDG Topology Mermaid Dump:\n{}", out);
+        out
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::context::RdgExecuteContext;
-    use super::super::types::RdgTextureDesc;
     use super::*;
 
     fn dummy_config() -> FrameConfig {
@@ -649,8 +644,8 @@ mod tests {
         }
     }
 
-    fn dummy_desc() -> RdgTextureDesc {
-        RdgTextureDesc::new_2d(
+    fn dummy_desc() -> TextureDesc {
+        TextureDesc::new_2d(
             1,
             1,
             wgpu::TextureFormat::Rgba8Unorm,
@@ -668,7 +663,7 @@ mod tests {
         fn setup(&mut self, builder: &mut PassBuilder) {
             builder.declare_output(self.out_color);
         }
-        fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
+        fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
 
     struct MockBloomPass {
@@ -683,7 +678,7 @@ mod tests {
             builder.read_texture(self.in_color);
             builder.declare_output(self.out_bloom);
         }
-        fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
+        fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
 
     struct MockToneMappingPass {
@@ -700,7 +695,7 @@ mod tests {
             builder.read_texture(self.in_bloom);
             builder.declare_output(self.out_target);
         }
-        fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
+        fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
 
     #[test]
@@ -779,7 +774,7 @@ mod tests {
                 builder.declare_output(self.color);
                 builder.declare_output(self.motion);
             }
-            fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
+            fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
         }
 
         // ToneMap reads only Color, ignoring MotionVector.
@@ -795,7 +790,7 @@ mod tests {
                 builder.read_texture(self.color);
                 builder.declare_output(self.out);
             }
-            fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
+            fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
         }
 
         graph.add_pass(Box::new(MockGBufferPass { color, motion }));
@@ -841,7 +836,7 @@ mod tests {
                 builder.read_texture(self.internal); // self-read
                 builder.declare_output(self.output);
             }
-            fn execute(&self, _ctx: &RdgExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
+            fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
         }
 
         graph.add_pass(Box::new(MockMacroNode {
@@ -951,7 +946,7 @@ mod tests {
             fn setup(&mut self, b: &mut PassBuilder) {
                 b.declare_output(self.out);
             }
-            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
         struct MockSkybox {
@@ -966,7 +961,7 @@ mod tests {
                 b.read_texture(self.r);
                 b.declare_output(self.w);
             }
-            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
         struct MockTransparent {
@@ -981,7 +976,7 @@ mod tests {
                 b.read_texture(self.r);
                 b.declare_output(self.w);
             }
-            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
         struct MockPost {
@@ -996,7 +991,7 @@ mod tests {
                 b.read_texture(self.r);
                 b.declare_output(self.out);
             }
-            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
         graph.add_pass(Box::new(MockOpaque { out: color_v0 }));
@@ -1059,7 +1054,7 @@ mod tests {
             fn setup(&mut self, b: &mut PassBuilder) {
                 b.declare_output(self.out);
             }
-            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
         struct Mutator {
@@ -1073,7 +1068,7 @@ mod tests {
             fn setup(&mut self, b: &mut PassBuilder) {
                 self.output = b.mutate_texture(self.input, "Color_Mutated");
             }
-            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
         struct Reader {
@@ -1088,7 +1083,7 @@ mod tests {
                 b.read_texture(self.r);
                 b.declare_output(self.out);
             }
-            fn execute(&self, _: &RdgExecuteContext, _: &mut wgpu::CommandEncoder) {}
+            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
         }
 
         graph.add_pass(Box::new(Writer { out: color }));

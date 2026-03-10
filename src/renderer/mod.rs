@@ -54,8 +54,10 @@ use crate::errors::Result;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::resources::SamplerRegistry;
 use crate::renderer::graph::composer::ComposerContext;
+use crate::renderer::graph::core::allocator::TransientPool;
+use crate::renderer::graph::core::graph::RenderGraph;
 use crate::renderer::graph::frame::RenderLists;
-use crate::renderer::graph::rdg::allocator::RdgTransientPool;
+use crate::renderer::graph::passes::*;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
@@ -105,32 +107,30 @@ struct RendererState {
     global_bind_group_cache: GlobalBindGroupCache,
 
     // ===== RDG (Declarative Render Graph) =====
-    pub(crate) rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph,
+    pub(crate) graph: RenderGraph,
     pub(crate) sampler_registry: SamplerRegistry,
-    pub(crate) rdg_pool: RdgTransientPool,
+    pub(crate) transient_pool: TransientPool,
 
     // Post-processing passes
-    pub(crate) rdg_fxaa_pass: crate::renderer::graph::rdg::fxaa::FxaaFeature,
-    pub(crate) rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::ToneMapFeature,
-    pub(crate) rdg_bloom_pass: crate::renderer::graph::rdg::bloom::BloomFeature,
-    pub(crate) rdg_ssao_pass: crate::renderer::graph::rdg::ssao::SsaoFeature,
+    pub(crate) fxaa_pass: FxaaFeature,
+    pub(crate) tone_map_pass: ToneMappingFeature,
+    pub(crate) bloom_pass: BloomFeature,
+    pub(crate) ssao_pass: SsaoFeature,
 
     // Scene rendering passes
-    pub(crate) rdg_prepass: crate::renderer::graph::rdg::prepass::PrepassFeature,
-    pub(crate) rdg_opaque_pass: crate::renderer::graph::rdg::opaque::OpaqueFeature,
-    pub(crate) rdg_skybox_pass: crate::renderer::graph::rdg::skybox::SkyboxFeature,
-    pub(crate) rdg_transparent_pass: crate::renderer::graph::rdg::transparent::TransparentFeature,
-    pub(crate) rdg_transmission_copy_pass:
-        crate::renderer::graph::rdg::transmission_copy::TransmissionCopyFeature,
-    pub(crate) rdg_simple_forward_pass:
-        crate::renderer::graph::rdg::simple_forward::SimpleForwardFeature,
-    pub(crate) rdg_sssss_pass: crate::renderer::graph::rdg::sssss::SssssFeature,
-    pub(crate) rdg_msaa_sync_pass: crate::renderer::graph::rdg::msaa_sync::MsaaSyncFeature,
+    pub(crate) prepass: PrepassFeature,
+    pub(crate) opaque_pass: OpaqueFeature,
+    pub(crate) skybox_pass: SkyboxFeature,
+    pub(crate) transparent_pass: TransparentFeature,
+    pub(crate) transmission_copy_pass: TransmissionCopyFeature,
+    pub(crate) simple_forward_pass: SimpleForwardFeature,
+    pub(crate) ssss_pass: SsssFeature,
+    pub(crate) msaa_sync_pass: MsaaSyncFeature,
 
     // Shadow + Compute passes (migrated from old system)
-    pub(crate) rdg_shadow_pass: crate::renderer::graph::rdg::shadow::ShadowFeature,
-    pub(crate) rdg_brdf_pass: crate::renderer::graph::rdg::compute::BrdfLutFeature,
-    pub(crate) rdg_ibl_pass: crate::renderer::graph::rdg::compute::IblComputeFeature,
+    pub(crate) shadow_pass: ShadowFeature,
+    pub(crate) brdf_pass: BrdfLutFeature,
+    pub(crate) ibl_pass: IblComputeFeature,
 }
 
 impl Renderer {
@@ -187,12 +187,9 @@ impl Renderer {
         let sampler_registry = SamplerRegistry::new(&wgpu_ctx.device);
 
         // Shadow + compute passes (need device ref before wgpu_ctx moves)
-        let rdg_shadow_pass =
-            crate::renderer::graph::rdg::shadow::ShadowFeature::new(&wgpu_ctx.device);
-        let rdg_brdf_pass =
-            crate::renderer::graph::rdg::compute::BrdfLutFeature::new(&wgpu_ctx.device);
-        let rdg_ibl_pass =
-            crate::renderer::graph::rdg::compute::IblComputeFeature::new(&wgpu_ctx.device);
+        let shadow_pass = ShadowFeature::new(&wgpu_ctx.device);
+        let brdf_pass = BrdfLutFeature::new(&wgpu_ctx.device);
+        let ibl_pass = IblComputeFeature::new(&wgpu_ctx.device);
 
         // 6. Assemble state
         self.context = Some(RendererState {
@@ -203,35 +200,31 @@ impl Renderer {
 
             render_frame,
             render_lists: RenderLists::new(),
-            // blackboard: FrameBlackboard::new(),
             global_bind_group_cache,
 
             // RDG
-            rdg_graph: crate::renderer::graph::rdg::graph::RenderGraph::new(),
+            graph: RenderGraph::new(),
             sampler_registry,
-            rdg_pool: RdgTransientPool::new(),
-            rdg_fxaa_pass: crate::renderer::graph::rdg::fxaa::FxaaFeature::new(),
-            rdg_tone_map_pass: crate::renderer::graph::rdg::tone_mapping::ToneMapFeature::new(),
-            rdg_bloom_pass: crate::renderer::graph::rdg::bloom::BloomFeature::new(),
-            rdg_ssao_pass: crate::renderer::graph::rdg::ssao::SsaoFeature::new(),
+            transient_pool: TransientPool::new(),
+            fxaa_pass: FxaaFeature::new(),
+            tone_map_pass: ToneMappingFeature::new(),
+            bloom_pass: BloomFeature::new(),
+            ssao_pass: SsaoFeature::new(),
 
             // RDG Scene Passes
-            rdg_prepass: crate::renderer::graph::rdg::prepass::PrepassFeature::new(),
-            rdg_opaque_pass: crate::renderer::graph::rdg::opaque::OpaqueFeature::new(),
-            rdg_skybox_pass: crate::renderer::graph::rdg::skybox::SkyboxFeature::new(),
-            rdg_transparent_pass: crate::renderer::graph::rdg::transparent::TransparentFeature::new(
-            ),
-            rdg_transmission_copy_pass:
-                crate::renderer::graph::rdg::transmission_copy::TransmissionCopyFeature::new(),
-            rdg_simple_forward_pass:
-                crate::renderer::graph::rdg::simple_forward::SimpleForwardFeature::new(),
-            rdg_sssss_pass: crate::renderer::graph::rdg::sssss::SssssFeature::new(),
-            rdg_msaa_sync_pass: crate::renderer::graph::rdg::msaa_sync::MsaaSyncFeature::new(),
+            prepass: PrepassFeature::new(),
+            opaque_pass: OpaqueFeature::new(),
+            skybox_pass: SkyboxFeature::new(),
+            transparent_pass: TransparentFeature::new(),
+            transmission_copy_pass: TransmissionCopyFeature::new(),
+            simple_forward_pass: SimpleForwardFeature::new(),
+            ssss_pass: SsssFeature::new(),
+            msaa_sync_pass: MsaaSyncFeature::new(),
 
             // Shadow + Compute passes (migrated from old system)
-            rdg_shadow_pass,
-            rdg_brdf_pass,
-            rdg_ibl_pass,
+            shadow_pass,
+            brdf_pass,
+            ibl_pass,
         });
 
         // Propagate screen bind group info to features that need it.
@@ -240,11 +233,9 @@ impl Renderer {
                 crate::renderer::core::resources::ScreenBindGroupInfo::from_resource_manager(
                     &state.resource_manager,
                 );
-            state.rdg_opaque_pass.set_screen_info(screen_info.clone());
-            state
-                .rdg_transparent_pass
-                .set_screen_info(screen_info.clone());
-            state.rdg_simple_forward_pass.set_screen_info(screen_info);
+            state.opaque_pass.set_screen_info(screen_info.clone());
+            state.transparent_pass.set_screen_info(screen_info.clone());
+            state.simple_forward_pass.set_screen_info(screen_info);
         }
 
         log::info!("Renderer Initialized");
@@ -276,9 +267,9 @@ impl Renderer {
     /// // Method 2: With custom hooks (e.g., UI overlay)
     /// if let Some(composer) = renderer.begin_frame(scene, camera, assets, time) {
     ///     composer
-    ///         .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
+    ///         .add_custom_pass(HookStage::AfterPostProcess, |graph, bb| {
     ///             ui_pass.target_tex = bb.surface_out;
-    ///             rdg.add_pass(&mut ui_pass);
+    ///             graph.add_pass(&mut ui_pass);
     ///         })
     ///         .render();
     /// }
@@ -336,7 +327,7 @@ impl Renderer {
         // fully prepared when their ephemeral PassNodes are created.
         {
             use crate::renderer::HDR_TEXTURE_FORMAT;
-            use crate::renderer::graph::rdg::context::ExtractContext;
+            use crate::renderer::graph::core::context::ExtractContext;
 
             let view_format = state.wgpu_ctx.surface_view_format;
             let is_hf = state.wgpu_ctx.render_path.supports_post_processing();
@@ -368,9 +359,9 @@ impl Renderer {
             };
 
             // Always: compute + shadow
-            state.rdg_brdf_pass.extract_and_prepare(&mut extract_ctx);
-            state.rdg_ibl_pass.extract_and_prepare(&mut extract_ctx);
-            state.rdg_shadow_pass.extract_and_prepare(&mut extract_ctx);
+            state.brdf_pass.extract_and_prepare(&mut extract_ctx);
+            state.ibl_pass.extract_and_prepare(&mut extract_ctx);
+            state.shadow_pass.extract_and_prepare(&mut extract_ctx);
 
             // Skybox (both pipelines)
             if needs_skybox {
@@ -379,7 +370,7 @@ impl Renderer {
                 } else {
                     view_format
                 };
-                state.rdg_skybox_pass.extract_and_prepare(
+                state.skybox_pass.extract_and_prepare(
                     &mut extract_ctx,
                     &scene.background.mode,
                     &scene.background.uniforms,
@@ -389,39 +380,37 @@ impl Renderer {
             }
 
             if is_hf {
-                state.rdg_prepass.extract_and_prepare(
-                    &mut extract_ctx,
-                    needs_normal,
-                    needs_feature_id,
-                );
+                state
+                    .prepass
+                    .extract_and_prepare(&mut extract_ctx, needs_normal, needs_feature_id);
 
                 if ssao_enabled {
                     state
-                        .rdg_ssao_pass
+                        .ssao_pass
                         .extract_and_prepare(&mut extract_ctx, &scene.ssao.uniforms);
                 }
 
-                state.rdg_sssss_pass.extract_and_prepare(&mut extract_ctx);
+                state.ssss_pass.extract_and_prepare(&mut extract_ctx);
 
-                // MSAA Sync — needed when SSSSS modifies the resolved HDR
+                // MSAA Sync — needed when SSSS modifies the resolved HDR
                 // buffer and subsequent passes re-enter the MSAA context.
                 let msaa = state.wgpu_ctx.msaa_samples;
                 let needs_specular = scene.screen_space.enable_sss;
                 if msaa > 1 && needs_specular {
                     state
-                        .rdg_msaa_sync_pass
+                        .msaa_sync_pass
                         .extract_and_prepare(&mut extract_ctx, msaa);
                 }
 
                 if bloom_enabled {
-                    state.rdg_bloom_pass.extract_and_prepare(
+                    state.bloom_pass.extract_and_prepare(
                         &mut extract_ctx,
                         &scene.bloom.upsample_uniforms,
                         &scene.bloom.composite_uniforms,
                     );
                 }
 
-                state.rdg_tone_map_pass.extract_and_prepare(
+                state.tone_map_pass.extract_and_prepare(
                     &mut extract_ctx,
                     scene.tone_mapping.mode,
                     view_format,
@@ -432,7 +421,7 @@ impl Renderer {
 
                 if fxaa_enabled {
                     state
-                        .rdg_fxaa_pass
+                        .fxaa_pass
                         .extract_and_prepare(&mut extract_ctx, view_format);
                 }
             }
@@ -458,26 +447,26 @@ impl Renderer {
             assets,
             time,
 
-            rdg_graph: &mut state.rdg_graph,
-            rdg_pool: &mut state.rdg_pool,
+            graph: &mut state.graph,
+            transient_pool: &mut state.transient_pool,
             sampler_registry: &mut state.sampler_registry,
-            rdg_fxaa_pass: &mut state.rdg_fxaa_pass,
-            rdg_tone_map_pass: &mut state.rdg_tone_map_pass,
-            rdg_bloom_pass: &mut state.rdg_bloom_pass,
-            rdg_ssao_pass: &mut state.rdg_ssao_pass,
+            fxaa_pass: &mut state.fxaa_pass,
+            tone_map_pass: &mut state.tone_map_pass,
+            bloom_pass: &mut state.bloom_pass,
+            ssao_pass: &mut state.ssao_pass,
 
-            rdg_prepass: &mut state.rdg_prepass,
-            rdg_opaque_pass: &mut state.rdg_opaque_pass,
-            rdg_skybox_pass: &mut state.rdg_skybox_pass,
-            rdg_transparent_pass: &mut state.rdg_transparent_pass,
-            rdg_transmission_copy_pass: &mut state.rdg_transmission_copy_pass,
-            rdg_simple_forward_pass: &mut state.rdg_simple_forward_pass,
-            rdg_sssss_pass: &mut state.rdg_sssss_pass,
-            rdg_msaa_sync_pass: &mut state.rdg_msaa_sync_pass,
+            prepass: &mut state.prepass,
+            opaque_pass: &mut state.opaque_pass,
+            skybox_pass: &mut state.skybox_pass,
+            transparent_pass: &mut state.transparent_pass,
+            transmission_copy_pass: &mut state.transmission_copy_pass,
+            simple_forward_pass: &mut state.simple_forward_pass,
+            ssss_pass: &mut state.ssss_pass,
+            msaa_sync_pass: &mut state.msaa_sync_pass,
 
-            rdg_shadow_pass: &mut state.rdg_shadow_pass,
-            rdg_brdf_pass: &mut state.rdg_brdf_pass,
-            rdg_ibl_pass: &mut state.rdg_ibl_pass,
+            shadow_pass: &mut state.shadow_pass,
+            brdf_pass: &mut state.brdf_pass,
+            ibl_pass: &mut state.ibl_pass,
         };
 
         // Return FrameComposer, defer Surface acquisition to render() call
@@ -584,5 +573,9 @@ impl Renderer {
     /// Only available after renderer initialization.
     pub fn wgpu_ctx(&self) -> Option<&WgpuContext> {
         self.context.as_ref().map(|s| &s.wgpu_ctx)
+    }
+
+    pub fn dump_graph_mermaid(&self) -> Option<String> {
+        self.context.as_ref().map(|s| s.graph.dump_mermaid())
     }
 }

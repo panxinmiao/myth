@@ -15,7 +15,7 @@ use crate::renderer::core::resources::Tracked;
 use rustc_hash::FxHashMap;
 use wgpu::{Device, TextureView};
 
-use super::types::RdgTextureDesc;
+use super::types::TextureDesc;
 
 /// Number of consecutive idle frames before a texture is evicted from the pool.
 const EVICTION_THRESHOLD: u32 = 3;
@@ -59,7 +59,7 @@ struct BucketKey {
 
 impl BucketKey {
     #[inline]
-    fn from_desc(desc: &RdgTextureDesc) -> Self {
+    fn from_desc(desc: &TextureDesc) -> Self {
         Self {
             dimension: desc.dimension,
             format: desc.format,
@@ -72,7 +72,7 @@ impl BucketKey {
 pub(crate) struct PhysicalTexture {
     /// Monotonically-increasing allocation identifier.
     pub(crate) uid: u64,
-    pub(crate) desc: RdgTextureDesc,
+    pub(crate) desc: TextureDesc,
     /// Raw wgpu texture handle — kept alive for sub-view creation.
     pub(crate) texture: wgpu::Texture,
     /// Full-texture default view (all mips, all layers, aspect = All).
@@ -92,7 +92,7 @@ pub(crate) struct PhysicalTexture {
 /// Textures are bucketed by `(Dimension, Format)` for O(1) lookup, with
 /// automatic eviction of stale textures that have been idle for more than
 /// [`EVICTION_THRESHOLD`] frames.
-pub struct RdgTransientPool {
+pub struct TransientPool {
     /// All physical textures, indexed by dense slot index.
     pub(crate) resources: Vec<PhysicalTexture>,
     /// Per-frame timeline occupancy: `active_allocations[i]` holds the
@@ -104,13 +104,13 @@ pub struct RdgTransientPool {
     buckets: FxHashMap<BucketKey, Vec<usize>>,
 }
 
-impl Default for RdgTransientPool {
+impl Default for TransientPool {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl RdgTransientPool {
+impl TransientPool {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -193,7 +193,7 @@ impl RdgTransientPool {
     pub fn acquire(
         &mut self,
         device: &Device,
-        desc: &RdgTextureDesc,
+        desc: &TextureDesc,
         first_use: usize,
         last_use: usize,
     ) -> usize {
@@ -212,7 +212,7 @@ impl RdgTransientPool {
 
         // No reusable texture found — allocate a new one.
         let texture = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("RDG Transient"),
+            label: Some("Transient"),
             size: desc.size,
             mip_level_count: desc.mip_level_count,
             sample_count: desc.sample_count,
@@ -286,7 +286,7 @@ impl RdgTransientPool {
         let res = &mut self.resources[physical_index];
         res.sub_views.entry(key.clone()).or_insert_with(|| {
             let view = res.texture.create_view(&wgpu::TextureViewDescriptor {
-                label: Some("RDG Sub-View"),
+                label: Some("Sub-View"),
                 format: None,
                 dimension: None,
                 usage: None,

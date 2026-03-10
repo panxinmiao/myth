@@ -5,14 +5,13 @@
 //! - **`FxaaPassNode`** (ephemeral per-frame): carries lightweight IDs and
 //!   a transient bind-group slot.  Created by `FxaaFeature::add_to_graph()`.
 
-use super::builder::PassBuilder;
-use super::context::{ExtractContext, RdgExecuteContext, RdgPrepareContext};
-use super::graph::RenderGraph;
-use super::node::PassNode;
-use super::types::TextureNodeId;
 use crate::FxaaQuality;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
+use crate::renderer::graph::core::{
+    ExecuteContext, ExtractContext, PassBuilder, PassNode, PrepareContext, RenderGraph,
+    TextureNodeId,
+};
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
@@ -137,7 +136,7 @@ impl FxaaFeature {
     /// Build the ephemeral pass node and insert it into the graph.
     pub fn add_to_graph(
         &self,
-        rdg: &mut RenderGraph,
+        graph: &mut RenderGraph,
         input_tex: TextureNodeId,
         output_tex: TextureNodeId,
     ) {
@@ -148,7 +147,7 @@ impl FxaaFeature {
             layout: self.bind_group_layout.clone().unwrap(),
             current_bind_group_key: None,
         };
-        rdg.add_pass(Box::new(node));
+        graph.add_pass(Box::new(node));
     }
 }
 
@@ -166,7 +165,7 @@ struct FxaaPassNode {
 
 impl PassNode for FxaaPassNode {
     fn name(&self) -> &'static str {
-        "RDG_FXAA_Pass"
+        "FXAA_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
@@ -174,7 +173,7 @@ impl PassNode for FxaaPassNode {
         builder.declare_output(self.output_tex);
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         let input_view = ctx.views.get_texture_view(self.input_tex);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
 
@@ -205,7 +204,7 @@ impl PassNode for FxaaPassNode {
         }
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder) {
         let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
 
         let bind_group_key = self
@@ -220,7 +219,7 @@ impl PassNode for FxaaPassNode {
         let rtt = ctx.get_color_attachment(self.output_tex, None, None);
 
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("RDG FXAA Pass"),
+            label: Some("FXAA Pass"),
             color_attachments: &[rtt],
             depth_stencil_attachment: None,
             timestamp_writes: None,

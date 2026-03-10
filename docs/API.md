@@ -1136,7 +1136,7 @@ let settings = RendererSettings {
 
 | Path | Features | Use Case |
 |------|----------|----------|
-| `HighFidelity` | HDR RT, Bloom, ToneMapping, FXAA, SSAO, SSSSS | Full-quality rendering (default) |
+| `HighFidelity` | HDR RT, Bloom, ToneMapping, FXAA, SSAO, SSSS | Full-quality rendering (default) |
 | `BasicForward` | Hardware MSAA, no post-processing | Lightweight / mobile / simple scenes |
 
 ```rust
@@ -1227,11 +1227,11 @@ scene.screen_space.enable_ssr = true;   // Screen-space reflections (reserved)
 Implement the `PassNode` trait to add custom GPU work via the RDG:
 
 ```rust
-use myth::renderer::graph::rdg::node::PassNode;
-use myth::renderer::graph::rdg::builder::PassBuilder;
-use myth::renderer::graph::rdg::context::{RdgPrepareContext, RdgExecuteContext};
-use myth::renderer::graph::rdg::types::TextureNodeId;
-use myth::renderer::graph::rdg::blackboard::HookStage;
+use myth::renderer::graph::core::node::PassNode;
+use myth::renderer::graph::core::builder::PassBuilder;
+use myth::renderer::graph::core::context::{PrepareContext, ExecuteContext};
+use myth::renderer::graph::core::types::TextureNodeId;
+use myth::renderer::graph::core::blackboard::HookStage;
 use myth::render::FrameComposer;
 
 struct MyPass {
@@ -1247,11 +1247,11 @@ impl PassNode for MyPass {
         builder.write_texture(self.target_tex);
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         // Mutable phase: allocate GPU resources, compile pipelines, create bind groups
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         // Read-only phase: record GPU commands
         let view = ctx.get_texture_view(self.target_tex);
     }
@@ -1305,21 +1305,6 @@ composer
 
 `render()` consumes the composer and executes: acquire surface → build RDG → compile (topo-sort + dead-pass cull) → **Prepare** → **Execute** → present → recycle transient textures.
 
-#### RdgPrepareContext / RdgExecuteContext
-
-| Field | RdgPrepareContext | RdgExecuteContext |
-|-------|-------------------|-------------------|
-| `device` | ✅ | ✅ |
-| `queue` | ✅ | ✅ |
-| `resource_manager` | ✅ (mutable) | ✅ (read-only) |
-| `pipeline_cache` | ✅ (mutable) | ✅ (read-only) |
-| `assets` | ✅ | ❌ |
-| `scene` | ✅ (mutable) | ❌ |
-| `camera` | ✅ | ❌ |
-| `blackboard` | ✅ (mutable) | ✅ (read-only) |
-| `frame_resources` | ✅ | ✅ |
-| `transient_pool` | ✅ (mutable) | ✅ (read-only) |
-| `render_lists` | ✅ (mutable) | ✅ (read-only) |
 
 #### Low-Level GPU Access
 

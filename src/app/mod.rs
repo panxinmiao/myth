@@ -142,7 +142,7 @@ pub trait AppHandler: Sized + 'static {
     ///
     /// ```rust,ignore
     /// fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
-    ///     use myth::renderer::graph::rdg::blackboard::HookStage;
+    ///     use myth::renderer::graph::core::blackboard::HookStage;
     ///     composer
     ///         .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
     ///             self.ui_pass.target_tex = bb.surface_out;

@@ -14,12 +14,7 @@
 //! - Only active when materials with Transmission exist in the scene
 //! - Generates mipmaps after the copy for LOD-based blur
 
-use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
-use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
-
-use super::graph::RenderGraph;
+use crate::renderer::graph::core::*;
 
 // ─── Feature ───────────────────────────────────────────────────────────
 
@@ -39,12 +34,12 @@ impl TransmissionCopyFeature {
 
     pub fn add_to_graph(
         &self,
-        rdg: &mut RenderGraph,
+        graph: &mut RenderGraph,
         scene_color: TextureNodeId,
         active: bool,
     ) -> TextureNodeId {
-        let fc = *rdg.frame_config();
-        let desc = RdgTextureDesc::new_2d(
+        let fc = *graph.frame_config();
+        let desc = TextureDesc::new_2d(
             fc.width,
             fc.height,
             fc.hdr_format,
@@ -52,14 +47,14 @@ impl TransmissionCopyFeature {
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_DST,
         );
-        let transmission_tex = rdg.register_resource("Transmission_Tex", desc, false);
+        let transmission_tex = graph.register_resource("Transmission_Tex", desc, false);
 
         let node = TransmissionCopyPassNode {
             scene_color,
             transmission_tex,
             active,
         };
-        rdg.add_pass(Box::new(node));
+        graph.add_pass(Box::new(node));
         transmission_tex
     }
 }
@@ -82,7 +77,7 @@ pub struct TransmissionCopyPassNode {
 
 impl PassNode for TransmissionCopyPassNode {
     fn name(&self) -> &'static str {
-        "RDG_TransmissionCopy_Pass"
+        "TransmissionCopy_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
@@ -93,11 +88,11 @@ impl PassNode for TransmissionCopyPassNode {
         builder.read_texture(self.scene_color);
     }
 
-    fn prepare(&mut self, _ctx: &mut RdgPrepareContext) {
+    fn prepare(&mut self, _ctx: &mut PrepareContext) {
         // No GPU resources to prepare — the copy is recorded directly in execute.
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if !self.active {
             return;
         }

@@ -28,13 +28,8 @@
 
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::resources::{ScreenBindGroupInfo, Tracked};
-use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
-use crate::renderer::graph::rdg::draw::submit_draw_commands;
-use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
-
-use super::graph::RenderGraph;
+use crate::renderer::graph::core::*;
+use crate::renderer::graph::passes::draw::submit_draw_commands;
 
 /// Outputs produced by the Opaque pass, returned to the Composer for
 /// explicit downstream wiring.
@@ -50,7 +45,7 @@ pub struct OpaqueOutputs {
     /// color target in non-MSAA).  Used by screen-space effects and
     /// the post-processing chain.
     pub scene_color_hdr: TextureNodeId,
-    /// Resolved specular texture for SSSSS (`None` when specular is
+    /// Resolved specular texture for SSSS (`None` when specular is
     /// not enabled).
     pub specular_mrt: Option<TextureNodeId>,
 }
@@ -81,18 +76,18 @@ impl OpaqueFeature {
 
     pub fn add_to_graph(
         &self,
-        rdg: &mut RenderGraph,
+        graph: &mut RenderGraph,
         scene_depth_ss: TextureNodeId,
         has_prepass: bool,
         clear_color: wgpu::Color,
         needs_specular: bool,
         ssao_tex: Option<TextureNodeId>,
     ) -> OpaqueOutputs {
-        let fc = *rdg.frame_config();
+        let fc = *graph.frame_config();
         let is_msaa = fc.msaa_samples > 1;
 
         // ── Create color / depth / resolve targets ─────────────────
-        let hdr_desc = RdgTextureDesc::new_2d(
+        let hdr_desc = TextureDesc::new_2d(
             fc.width,
             fc.height,
             HDR_TEXTURE_FORMAT,
@@ -102,7 +97,7 @@ impl OpaqueFeature {
         );
 
         let (color_target, depth_target, resolve_target, scene_color_hdr, in_depth) = if is_msaa {
-            let msaa_color_desc = RdgTextureDesc::new(
+            let msaa_color_desc = TextureDesc::new(
                 fc.width,
                 fc.height,
                 1,
@@ -112,7 +107,7 @@ impl OpaqueFeature {
                 HDR_TEXTURE_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT,
             );
-            let msaa_depth_desc = RdgTextureDesc::new(
+            let msaa_depth_desc = TextureDesc::new(
                 fc.width,
                 fc.height,
                 1,
@@ -123,14 +118,14 @@ impl OpaqueFeature {
                 wgpu::TextureUsages::RENDER_ATTACHMENT,
             );
 
-            let msaa_color = rdg.register_resource("Scene_Color_MSAA", msaa_color_desc, false);
-            let msaa_depth = rdg.register_resource("Scene_Depth_MSAA", msaa_depth_desc, false);
-            let scene_hdr = rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
+            let msaa_color = graph.register_resource("Scene_Color_MSAA", msaa_color_desc, false);
+            let msaa_depth = graph.register_resource("Scene_Depth_MSAA", msaa_depth_desc, false);
+            let scene_hdr = graph.register_resource("Scene_Color_HDR", hdr_desc, false);
 
             (msaa_color, msaa_depth, Some(scene_hdr), scene_hdr, None)
         } else {
-            let scene_hdr = rdg.register_resource("Scene_Color_HDR", hdr_desc, false);
-            let depth_alias = rdg.create_alias(scene_depth_ss, "Scene_Depth_Opaque");
+            let scene_hdr = graph.register_resource("Scene_Color_HDR", hdr_desc, false);
+            let depth_alias = graph.create_alias(scene_depth_ss, "Scene_Depth_Opaque");
             (
                 scene_hdr,
                 depth_alias,
@@ -142,7 +137,7 @@ impl OpaqueFeature {
 
         // ── Specular MRT (conditionally created) ───────────────────
         let (specular_tex, specular_resolved) = if needs_specular {
-            let spec_desc = RdgTextureDesc::new_2d(
+            let spec_desc = TextureDesc::new_2d(
                 fc.width,
                 fc.height,
                 HDR_TEXTURE_FORMAT,
@@ -150,10 +145,10 @@ impl OpaqueFeature {
                     | wgpu::TextureUsages::TEXTURE_BINDING
                     | wgpu::TextureUsages::COPY_SRC,
             );
-            let specular_single = rdg.register_resource("Specular_MRT", spec_desc, false);
+            let specular_single = graph.register_resource("Specular_MRT", spec_desc, false);
 
             if is_msaa {
-                let msaa_spec_desc = RdgTextureDesc::new(
+                let msaa_spec_desc = TextureDesc::new(
                     fc.width,
                     fc.height,
                     1,
@@ -164,7 +159,7 @@ impl OpaqueFeature {
                     wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 );
                 let specular_msaa =
-                    rdg.register_resource("Specular_MRT_MSAA", msaa_spec_desc, false);
+                    graph.register_resource("Specular_MRT_MSAA", msaa_spec_desc, false);
                 (specular_msaa, Some(specular_single))
             } else {
                 (specular_single, None)
@@ -188,7 +183,7 @@ impl OpaqueFeature {
                 .clone()
                 .expect("OpaqueFeature: screen_info not set"),
         );
-        rdg.add_pass(Box::new(node));
+        graph.add_pass(Box::new(node));
 
         let specular_mrt = if needs_specular {
             Some(specular_resolved.unwrap_or(specular_tex))
@@ -270,7 +265,7 @@ impl OpaquePassNode {
 
 impl PassNode for OpaquePassNode {
     fn name(&self) -> &'static str {
-        "RDG_Opaque_Pass"
+        "Opaque_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
@@ -305,7 +300,7 @@ impl PassNode for OpaquePassNode {
         }
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         // Build screen bind group (group 3): SSAO + transmission dummy + sampler
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {
             Some(id) => ctx.views.get_texture_view(id),
@@ -323,7 +318,7 @@ impl PassNode for OpaquePassNode {
         self.screen_bind_group = Some(bg);
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
         // ── Color attachments (auto-deduced LoadOp / StoreOp) ───────────
@@ -336,7 +331,7 @@ impl PassNode for OpaquePassNode {
         )];
 
         // Specular MRT — may have been culled if no downstream consumer
-        // (e.g. SSSSS disabled).  `get_color_attachment` returns `None`
+        // (e.g. SSSS disabled).  `get_color_attachment` returns `None`
         // for dead resources, naturally shrinking the MRT footprint.
         if self.needs_specular
             && let Some(att) = ctx.get_color_attachment(
@@ -354,7 +349,7 @@ impl PassNode for OpaquePassNode {
         let depth_stencil = ctx.get_depth_stencil_attachment(self.depth_target, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {
-            label: Some("RDG Opaque Pass"),
+            label: Some("Opaque Pass"),
             color_attachments: &color_attachments,
             depth_stencil_attachment: depth_stencil,
             timestamp_writes: None,

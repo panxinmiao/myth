@@ -1,10 +1,10 @@
-//! SSSSS Feature + Ephemeral PassNode
+//! SSSS Feature + Ephemeral PassNode
 //!
-//! - **`SssssFeature`** (long-lived): owns pipeline cache, bind group layout,
+//! - **`SsssFeature`** (long-lived): owns pipeline cache, bind group layout,
 //!   profiles storage buffer.  `extract_and_prepare()` compiles pipelines and
 //!   uploads SSS profile data.
-//! - **`SssssPassNode`** (ephemeral per-frame): carries lightweight IDs and
-//!   transient bind-group slots.  Created by `SssssFeature::add_to_graph()`.
+//! - **`SsssPassNode`** (ephemeral per-frame): carries lightweight IDs and
+//!   transient bind-group slots.  Created by `SsssFeature::add_to_graph()`.
 //!
 //! Implements a separable Gaussian blur for SSS materials identified via the
 //! **Thin G-Buffer** stencil channel.  Two sequential render passes are
@@ -13,7 +13,7 @@
 //! # Data Flow (explicit wiring)
 //!
 //! ```text
-//!  Opaque                            SssssPassNode
+//!  Opaque                            SsssPassNode
 //!       |                 +-----------------------------------+
 //! color_in  ------------>|  H Sub-Pass: Horizontal blur      |---> temp_blur
 //! normal_in ----+------->|                                   |         |
@@ -38,12 +38,7 @@
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
-use crate::renderer::graph::rdg::allocator::SubViewKey;
-use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext, RdgPrepareContext};
-use crate::renderer::graph::rdg::graph::RenderGraph;
-use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
+use crate::renderer::graph::core::*;
 use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, RenderPipelineId,
     ShaderCompilationOptions,
@@ -55,11 +50,11 @@ use std::mem::size_of;
 // Feature (long-lived, stored in RenderFeatures)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// Long-lived SSSSS feature — owns persistent GPU resources (pipelines,
+/// Long-lived SSSS feature — owns persistent GPU resources (pipelines,
 /// bind group layout, profiles buffer).
 ///
-/// Produces an ephemeral [`SssssPassNode`] each frame via [`Self::add_to_graph`].
-pub struct SssssFeature {
+/// Produces an ephemeral [`SsssPassNode`] each frame via [`Self::add_to_graph`].
+pub struct SsssFeature {
     // --- Pipelines -------------------------------------------------
     horizontal_pipeline: Option<RenderPipelineId>,
     vertical_pipeline: Option<RenderPipelineId>,
@@ -70,13 +65,13 @@ pub struct SssssFeature {
     last_registry_version: u64,
 }
 
-impl Default for SssssFeature {
+impl Default for SsssFeature {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl SssssFeature {
+impl SsssFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -119,7 +114,7 @@ impl SssssFeature {
         if self.horizontal_pipeline.is_none() {
             let bind_group_layout =
                 device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                    label: Some("SSSSS Bind Group Layout"),
+                    label: Some("SSSS Bind Group Layout"),
                     entries: &[
                         // binding 0: t_color
                         wgpu::BindGroupLayoutEntry {
@@ -198,7 +193,7 @@ impl SssssFeature {
                 });
 
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("SSSSS Pipeline Layout"),
+                label: Some("SSSS Pipeline Layout"),
                 bind_group_layouts: &[&bind_group_layout],
                 immediate_size: 0,
             });
@@ -251,12 +246,12 @@ impl SssssFeature {
                 hor_shader,
                 &pipeline_layout,
                 &hor_key,
-                "SSSSS Horizontal Pipeline",
+                "SSSS Horizontal Pipeline",
             ));
 
-            // -- Vertical shader (SSSSS_VERTICAL_PASS = 1) -------------
+            // -- Vertical shader (SSSS_VERTICAL_PASS = 1) -------------
             let mut vert_defines = ShaderCompilationOptions::default();
-            vert_defines.add_define("SSSSS_VERTICAL_PASS", "1");
+            vert_defines.add_define("SSSS_VERTICAL_PASS", "1");
 
             let (vert_shader, vert_hash) = ctx.shader_manager.get_or_compile_template(
                 device,
@@ -277,7 +272,7 @@ impl SssssFeature {
                 vert_shader,
                 &pipeline_layout,
                 &vert_key,
-                "SSSSS Vertical Pipeline",
+                "SSSS Vertical Pipeline",
             ));
 
             self.bind_group_layout = Some(Tracked::new(bind_group_layout));
@@ -290,32 +285,32 @@ impl SssssFeature {
     /// The pass modifies `scene_color` in-place (read + write).
     pub fn add_to_graph(
         &self,
-        rdg: &mut RenderGraph,
+        graph: &mut RenderGraph,
         scene_color: TextureNodeId,
         scene_depth: TextureNodeId,
         scene_normals: TextureNodeId,
         feature_id: TextureNodeId,
         specular_tex: TextureNodeId,
     ) -> TextureNodeId {
-        let sssss_out_color = rdg.create_alias(scene_color, "Scene_Color_SSSSS");
+        let ssss_out_color = graph.create_alias(scene_color, "Scene_Color_SSSS");
 
-        let node = SssssPassNode {
+        let node = SsssPassNode {
             scene_color_in: scene_color,
-            scene_color_out: sssss_out_color,
+            scene_color_out: ssss_out_color,
             temp_blur: TextureNodeId(0),
             depth_in: scene_depth,
             normal_in: scene_normals,
             feature_id,
             specular_tex,
-            horizontal_pipeline: self.horizontal_pipeline.expect("SssssFeature not prepared"),
-            vertical_pipeline: self.vertical_pipeline.expect("SssssFeature not prepared"),
+            horizontal_pipeline: self.horizontal_pipeline.expect("SsssFeature not prepared"),
+            vertical_pipeline: self.vertical_pipeline.expect("SsssFeature not prepared"),
             bind_group_layout: self.bind_group_layout.clone().unwrap(),
             profiles_buffer: self.profiles_buffer.clone().unwrap(),
             horizontal_bind_group: None,
             vertical_bind_group: None,
         };
-        rdg.add_pass(Box::new(node));
-        sssss_out_color
+        graph.add_pass(Box::new(node));
+        ssss_out_color
     }
 }
 
@@ -323,7 +318,7 @@ impl SssssFeature {
 // PassNode (ephemeral, created per frame)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-struct SssssPassNode {
+struct SsssPassNode {
     // ─── RDG Resource Slots (explicit wiring from add_to_graph) ───────
     scene_color_in: TextureNodeId,
     scene_color_out: TextureNodeId,
@@ -344,22 +339,22 @@ struct SssssPassNode {
     vertical_bind_group: Option<wgpu::BindGroup>,
 }
 
-impl PassNode for SssssPassNode {
+impl PassNode for SsssPassNode {
     fn name(&self) -> &'static str {
-        "RDG SSSSS Pass"
+        "Ssss_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
         // Internal scratch texture for the horizontal blur.
         let (w, h) = builder.global_resolution();
         let hdr_format = builder.frame_config().hdr_format;
-        let desc = RdgTextureDesc::new_2d(
+        let desc = TextureDesc::new_2d(
             w,
             h,
             hdr_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        self.temp_blur = builder.create_texture("SSSSS_Temp", desc);
+        self.temp_blur = builder.create_texture("SSSS_Temp", desc);
 
         // In-place read + write on scene color.
         builder.read_texture(self.scene_color_in);
@@ -372,7 +367,7 @@ impl PassNode for SssssPassNode {
         builder.read_texture(self.specular_tex);
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         // -- Gather input views (RDG-managed) ---------------------------
 
         // Depth: need a DepthOnly sub-view for sampling
@@ -387,7 +382,7 @@ impl PassNode for SssssPassNode {
         let depth_only_view = ctx
             .views
             .get_sub_view(self.depth_in, &depth_sub_key)
-            .expect("RDG SSSSS: depth-only view must exist");
+            .expect("SSSS: depth-only view must exist");
 
         let color_in_view = ctx.views.get_texture_view(self.scene_color_in);
 
@@ -413,7 +408,7 @@ impl PassNode for SssssPassNode {
 
         if ctx.global_bind_group_cache.get(&horizontal_key).is_none() {
             let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("SSSSS Horizontal Bind Group"),
+                label: Some("SSSS Horizontal Bind Group"),
                 layout,
                 entries: &[
                     wgpu::BindGroupEntry {
@@ -463,7 +458,7 @@ impl PassNode for SssssPassNode {
 
         if ctx.global_bind_group_cache.get(&vertical_key).is_none() {
             let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: Some("SSSSS Vertical Bind Group"),
+                label: Some("SSSS Vertical Bind Group"),
                 layout,
                 entries: &[
                     wgpu::BindGroupEntry {
@@ -501,7 +496,7 @@ impl PassNode for SssssPassNode {
         self.vertical_bind_group = ctx.global_bind_group_cache.get(&vertical_key).cloned();
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let depth_stencil_view = ctx.get_texture_view(self.depth_in);
         let temp_blur_view = ctx.get_texture_view(self.temp_blur);
 
@@ -518,7 +513,7 @@ impl PassNode for SssssPassNode {
             // let rtt = ctx.get_color_attachment(self.temp_blur, Some(wgpu::Color::TRANSPARENT), None);
             // we use StoreOp::Store here. Todo: improve resource lifetime tracking.
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("SSSSS Horizontal"),
+                label: Some("SSSS Horizontal"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: temp_blur_view,
                     resolve_target: None,
@@ -547,7 +542,7 @@ impl PassNode for SssssPassNode {
             let rtt = ctx.get_color_attachment(self.scene_color_out, None, None);
 
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("SSSSS Vertical"),
+                label: Some("SSSS Vertical"),
                 color_attachments: &[rtt],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: depth_stencil_view,

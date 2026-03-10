@@ -1,7 +1,6 @@
-use crate::renderer::graph::rdg::context::RdgPrepareContext;
+use crate::renderer::graph::core::context::{ExecuteContext, PrepareContext};
 
 use super::builder::PassBuilder;
-use super::context::RdgExecuteContext;
 use super::types::TextureNodeId;
 use smallvec::SmallVec;
 use wgpu::CommandEncoder;
@@ -32,10 +31,10 @@ pub trait PassNode: Send + Sync + 'static {
     /// should be created here.  The context deliberately excludes heavy
     /// infrastructure (shader compiler, asset server, etc.).
     #[allow(unused_variables)]
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {}
+    fn prepare(&mut self, ctx: &mut PrepareContext) {}
 
     /// Record GPU commands into the shared encoder.
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut CommandEncoder);
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder);
 }
 
 /// Per-pass metadata stored in the [`RenderGraph`].

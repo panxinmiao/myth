@@ -23,7 +23,7 @@
 //! │                                                             │
 //! │  HighFidelity:                                              │
 //! │  BRDF LUT → IBL → Shadow → Prepass → SSAO → Opaque →      │
-//! │  SSSSS → Skybox → TransmissionCopy → Transparent →         │
+//! │  SSSS → Skybox → TransmissionCopy → Transparent →         │
 //! │  Bloom → ToneMap → FXAA → [User Hooks] → Surface           │
 //! │                                                             │
 //! │  BasicForward:                                              │
@@ -48,14 +48,12 @@ use rustc_hash::FxHashMap;
 use crate::assets::AssetServer;
 use crate::render::RenderState;
 use crate::renderer::core::binding::GlobalBindGroupCache;
-use crate::renderer::core::resources::Tracked;
+use crate::renderer::core::resources::{SamplerRegistry, Tracked};
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::ExtractedScene;
+use crate::renderer::graph::core::*;
 use crate::renderer::graph::frame::{PreparedSkyboxDraw, RenderLists};
-use crate::renderer::graph::rdg::blackboard::{GraphBlackboard, HookStage};
-use crate::renderer::graph::rdg::context::RdgViewResolver;
-use crate::renderer::graph::rdg::graph::RenderGraph;
-use crate::renderer::graph::rdg::types::TextureNodeId;
+use crate::renderer::graph::passes::*;
 use crate::renderer::pipeline::PipelineCache;
 use crate::renderer::pipeline::ShaderManager;
 use crate::scene::Scene;
@@ -84,32 +82,30 @@ pub struct ComposerContext<'a> {
     pub assets: &'a AssetServer,
     pub time: f32,
 
-    pub rdg_graph: &'a mut crate::renderer::graph::rdg::graph::RenderGraph,
-    pub rdg_pool: &'a mut crate::renderer::graph::rdg::allocator::RdgTransientPool,
-    pub sampler_registry: &'a mut crate::renderer::core::resources::SamplerRegistry,
+    pub graph: &'a mut RenderGraph,
+    pub transient_pool: &'a mut TransientPool,
+    pub sampler_registry: &'a mut SamplerRegistry,
 
     // ─── RDG Features ────────────────────────────────────────────────────
     // Post-processing
-    pub rdg_fxaa_pass: &'a mut crate::renderer::graph::rdg::fxaa::FxaaFeature,
-    pub rdg_tone_map_pass: &'a mut crate::renderer::graph::rdg::tone_mapping::ToneMapFeature,
-    pub rdg_bloom_pass: &'a mut crate::renderer::graph::rdg::bloom::BloomFeature,
-    pub rdg_ssao_pass: &'a mut crate::renderer::graph::rdg::ssao::SsaoFeature,
+    pub fxaa_pass: &'a mut FxaaFeature,
+    pub tone_map_pass: &'a mut ToneMappingFeature,
+    pub bloom_pass: &'a mut BloomFeature,
+    pub ssao_pass: &'a mut SsaoFeature,
     // Scene rendering
-    pub rdg_prepass: &'a mut crate::renderer::graph::rdg::prepass::PrepassFeature,
-    pub rdg_opaque_pass: &'a mut crate::renderer::graph::rdg::opaque::OpaqueFeature,
-    pub rdg_skybox_pass: &'a mut crate::renderer::graph::rdg::skybox::SkyboxFeature,
-    pub rdg_transparent_pass: &'a mut crate::renderer::graph::rdg::transparent::TransparentFeature,
-    pub rdg_transmission_copy_pass:
-        &'a mut crate::renderer::graph::rdg::transmission_copy::TransmissionCopyFeature,
-    pub rdg_simple_forward_pass:
-        &'a mut crate::renderer::graph::rdg::simple_forward::SimpleForwardFeature,
-    pub rdg_sssss_pass: &'a mut crate::renderer::graph::rdg::sssss::SssssFeature,
-    pub rdg_msaa_sync_pass: &'a mut crate::renderer::graph::rdg::msaa_sync::MsaaSyncFeature,
+    pub prepass: &'a mut PrepassFeature,
+    pub opaque_pass: &'a mut OpaqueFeature,
+    pub skybox_pass: &'a mut SkyboxFeature,
+    pub transparent_pass: &'a mut TransparentFeature,
+    pub transmission_copy_pass: &'a mut TransmissionCopyFeature,
+    pub simple_forward_pass: &'a mut SimpleForwardFeature,
+    pub ssss_pass: &'a mut SsssFeature,
+    pub msaa_sync_pass: &'a mut MsaaSyncFeature,
 
     // Shadow + Compute
-    pub rdg_shadow_pass: &'a mut crate::renderer::graph::rdg::shadow::ShadowFeature,
-    pub rdg_brdf_pass: &'a mut crate::renderer::graph::rdg::compute::BrdfLutFeature,
-    pub rdg_ibl_pass: &'a mut crate::renderer::graph::rdg::compute::IblComputeFeature,
+    pub shadow_pass: &'a mut ShadowFeature,
+    pub brdf_pass: &'a mut BrdfLutFeature,
+    pub ibl_pass: &'a mut IblComputeFeature,
 }
 
 /// Frame Composer
@@ -210,11 +206,6 @@ impl<'a> FrameComposer<'a> {
     ///
     /// Consumes `self`; the composer cannot be reused after render.
     pub fn render(mut self) {
-        use crate::renderer::HDR_TEXTURE_FORMAT;
-        use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
-        use crate::renderer::graph::rdg::types::RdgTextureDesc;
-        use rustc_hash::FxHashMap;
-
         // ━━━ 1. Acquire Surface ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
         let output = match self.ctx.wgpu_ctx.surface.get_current_texture() {
@@ -236,14 +227,14 @@ impl<'a> FrameComposer<'a> {
 
         // ━━━ 2. Build Unified RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        let rdg = self.ctx.rdg_graph;
-        rdg.begin_frame(crate::renderer::graph::rdg::graph::FrameConfig {
+        let graph = self.ctx.graph;
+        graph.begin_frame(crate::renderer::graph::core::graph::FrameConfig {
             width,
             height,
             depth_format: self.ctx.wgpu_ctx.depth_format,
             msaa_samples: self.ctx.wgpu_ctx.msaa_samples,
             surface_format: view_format,
-            hdr_format: HDR_TEXTURE_FORMAT,
+            hdr_format: crate::renderer::HDR_TEXTURE_FORMAT,
         });
 
         // ── 2a. Register Resources ──────────────────────────────────────
@@ -254,14 +245,14 @@ impl<'a> FrameComposer<'a> {
         let msaa_samples = self.ctx.wgpu_ctx.msaa_samples;
         let is_msaa = msaa_samples > 1;
 
-        let surface_desc = RdgTextureDesc::new_2d(
+        let surface_desc = TextureDesc::new_2d(
             width,
             height,
             view_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
 
-        let surface_out = rdg.register_resource("Surface_Out", surface_desc.clone(), true);
+        let surface_out = graph.register_resource("Surface_Out", surface_desc, true);
 
         // ── 2b. Scene Configuration ────────────────────────────────────
 
@@ -277,15 +268,15 @@ impl<'a> FrameComposer<'a> {
 
         // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
         if self.ctx.resource_manager.needs_brdf_compute {
-            self.ctx.rdg_brdf_pass.add_to_graph(rdg);
+            self.ctx.brdf_pass.add_to_graph(graph);
         }
 
         if let Some(source) = self.ctx.resource_manager.pending_ibl_source.take() {
-            self.ctx.rdg_ibl_pass.add_to_graph(rdg, source);
+            self.ctx.ibl_pass.add_to_graph(graph, source);
         }
 
         if self.ctx.extracted_scene.has_shadow_casters() {
-            self.ctx.rdg_shadow_pass.add_to_graph(rdg);
+            self.ctx.shadow_pass.add_to_graph(graph);
         }
 
         // ── 2d. Wire Scene Rendering Passes (explicit data-flow) ──────
@@ -308,16 +299,16 @@ impl<'a> FrameComposer<'a> {
 
             // 1. Prepass — creates single-sample Scene_Depth, optionally
             //    Scene_Normals and Feature_ID.
-            let prepass_out =
-                self.ctx
-                    .rdg_prepass
-                    .add_to_graph(rdg, needs_normal, needs_feature_id);
+            let prepass_out = self
+                .ctx
+                .prepass
+                .add_to_graph(graph, needs_normal, needs_feature_id);
 
             // 2. SSAO — reads Prepass depth + normals, produces half-res AO.
             let ssao_output = if ssao_enabled {
                 Some(
-                    self.ctx.rdg_ssao_pass.add_to_graph(
-                        rdg,
+                    self.ctx.ssao_pass.add_to_graph(
+                        graph,
                         prepass_out.scene_depth,
                         prepass_out
                             .scene_normals
@@ -332,8 +323,8 @@ impl<'a> FrameComposer<'a> {
             //    Scene_Color_HDR (resolve target).  Returns the relay
             //    baton: active drawing surfaces + resolved HDR.
             let opaque_has_prepass = !is_msaa;
-            let opaque_out = self.ctx.rdg_opaque_pass.add_to_graph(
-                rdg,
+            let opaque_out = self.ctx.opaque_pass.add_to_graph(
+                graph,
                 prepass_out.scene_depth,
                 opaque_has_prepass,
                 self.ctx.extracted_scene.background.clear_color(),
@@ -348,10 +339,10 @@ impl<'a> FrameComposer<'a> {
             // Populate blackboard fields for hooks.
             bb_scene_depth = prepass_out.scene_depth;
 
-            // 4. SSSSS — operates on single-sample HDR (post-resolve).
+            // 4. SSSS — operates on single-sample HDR (post-resolve).
             if ssss_enabled {
-                scene_color_hdr = self.ctx.rdg_sssss_pass.add_to_graph(
-                    rdg,
+                scene_color_hdr = self.ctx.ssss_pass.add_to_graph(
+                    graph,
                     scene_color_hdr,
                     prepass_out.scene_depth,
                     prepass_out.scene_normals.unwrap(),
@@ -361,13 +352,10 @@ impl<'a> FrameComposer<'a> {
 
                 // MSAA Sync — broadcast corrected single-sample HDR back
                 // into the multi-sampled colour target so that subsequent
-                // MSAA draws (Skybox, Transparent) see the SSSSS
+                // MSAA draws (Skybox, Transparent) see the SSSS
                 // contributions.
                 if is_msaa {
-                    active_color = self
-                        .ctx
-                        .rdg_msaa_sync_pass
-                        .add_to_graph(rdg, scene_color_hdr);
+                    active_color = self.ctx.msaa_sync_pass.add_to_graph(graph, scene_color_hdr);
                 } else {
                     active_color = scene_color_hdr;
                 }
@@ -376,10 +364,10 @@ impl<'a> FrameComposer<'a> {
             // 5. Skybox — continues in the MSAA (or non-MSAA) context.
             //    Returns the new colour version (SSA alias) for downstream.
             if needs_skybox {
-                active_color =
-                    self.ctx
-                        .rdg_skybox_pass
-                        .add_to_graph(rdg, active_color, active_depth);
+                active_color = self
+                    .ctx
+                    .skybox_pass
+                    .add_to_graph(graph, active_color, active_depth);
             }
 
             // 6. Transmission Copy — snapshot scene colour for refraction.
@@ -393,8 +381,8 @@ impl<'a> FrameComposer<'a> {
                 };
                 Some(
                     self.ctx
-                        .rdg_transmission_copy_pass
-                        .add_to_graph(rdg, tx_source, true),
+                        .transmission_copy_pass
+                        .add_to_graph(graph, tx_source, true),
                 )
             } else {
                 None
@@ -404,8 +392,8 @@ impl<'a> FrameComposer<'a> {
             //    that downstream consumers should read:
             //    MSAA  → `Scene_Color_HDR_Final` (resolve target)
             //    Other → mutated colour alias (same physical memory)
-            let post_transparent_color = self.ctx.rdg_transparent_pass.add_to_graph(
-                rdg,
+            let post_transparent_color = self.ctx.transparent_pass.add_to_graph(
+                graph,
                 active_color,
                 active_depth,
                 transmission_tex,
@@ -425,7 +413,7 @@ impl<'a> FrameComposer<'a> {
                 };
                 for (stage, hook) in &mut self.hooks {
                     if *stage == HookStage::BeforePostProcess {
-                        hook(rdg, &mut blackboard);
+                        hook(graph, &mut blackboard);
                     }
                 }
             }
@@ -433,8 +421,8 @@ impl<'a> FrameComposer<'a> {
             // ── Post-Processing Chain ──────────────────────────────────
 
             let tonemap_input = if bloom_enabled {
-                self.ctx.rdg_bloom_pass.add_to_graph(
-                    rdg,
+                self.ctx.bloom_pass.add_to_graph(
+                    graph,
                     post_transparent_color,
                     self.ctx.scene.bloom.karis_average,
                     self.ctx.scene.bloom.max_mip_levels(),
@@ -444,31 +432,31 @@ impl<'a> FrameComposer<'a> {
             };
 
             let tonemap_output = if fxaa_enabled {
-                rdg.register_resource("LDR_Intermediate", surface_desc.clone(), false)
+                graph.register_resource("LDR_Intermediate", surface_desc.clone(), false)
             } else {
-                current_surface = rdg.create_alias(current_surface, "Surface_After_ToneMap");
+                current_surface = graph.create_alias(current_surface, "Surface_After_ToneMap");
                 current_surface
             };
 
             // ToneMap
             self.ctx
-                .rdg_tone_map_pass
-                .add_to_graph(rdg, tonemap_input, tonemap_output);
+                .tone_map_pass
+                .add_to_graph(graph, tonemap_input, tonemap_output);
 
             // FXAA — reads LDR_Intermediate, writes Surface_Out
             if fxaa_enabled {
-                current_surface = rdg.create_alias(current_surface, "Surface_After_FXAA");
+                current_surface = graph.create_alias(current_surface, "Surface_After_FXAA");
                 self.ctx
-                    .rdg_fxaa_pass
-                    .add_to_graph(rdg, tonemap_output, current_surface);
+                    .fxaa_pass
+                    .add_to_graph(graph, tonemap_output, current_surface);
             }
         } else {
             // BasicForward pipeline: single-pass LDR rendering.
 
             // Skybox prepare (inline rendering in SimpleForward)
             let prepared_skybox = if needs_skybox {
-                let skybox_pipeline = self.ctx.rdg_skybox_pass.current_pipeline;
-                let skybox_bind_group = &self.ctx.rdg_skybox_pass.current_bind_group;
+                let skybox_pipeline = self.ctx.skybox_pass.current_pipeline;
+                let skybox_bind_group = &self.ctx.skybox_pass.current_bind_group;
 
                 if let (Some(pipeline_id), Some(bg)) = (skybox_pipeline, skybox_bind_group) {
                     Some(PreparedSkyboxDraw {
@@ -483,8 +471,8 @@ impl<'a> FrameComposer<'a> {
             };
 
             // SimpleForward — creates its own Scene_Depth, writes Surface_Out
-            self.ctx.rdg_simple_forward_pass.add_to_graph(
-                rdg,
+            self.ctx.simple_forward_pass.add_to_graph(
+                graph,
                 surface_out,
                 self.ctx.extracted_scene.background.clear_color(),
                 prepared_skybox,
@@ -500,14 +488,14 @@ impl<'a> FrameComposer<'a> {
             };
             for (stage, hook) in &mut self.hooks {
                 if *stage == HookStage::AfterPostProcess {
-                    hook(rdg, &mut blackboard);
+                    hook(graph, &mut blackboard);
                 }
             }
         }
 
         // ━━━ 3. Compile & Execute RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        rdg.compile(self.ctx.rdg_pool, &self.ctx.wgpu_ctx.device);
+        graph.compile(self.ctx.transient_pool, &self.ctx.wgpu_ctx.device);
 
         // ─── 3a. Feature extract_and_prepare ────────────────────────────
         //
@@ -522,10 +510,10 @@ impl<'a> FrameComposer<'a> {
         // (scene_color, scene_depth, etc.) are RDG transient resources.
         self.external_res.clear();
 
-        let mut rdg_prepare_ctx = RdgPrepareContext {
-            views: RdgViewResolver {
-                resources: &rdg.resources,
-                pool: self.ctx.rdg_pool,
+        let mut prepare_ctx = PrepareContext {
+            views: ViewResolver {
+                resources: &graph.resources,
+                pool: self.ctx.transient_pool,
                 external_resources: &self.external_res,
             },
             device: &self.ctx.wgpu_ctx.device,
@@ -534,9 +522,9 @@ impl<'a> FrameComposer<'a> {
             global_bind_group_cache: self.ctx.global_bind_group_cache,
         };
 
-        for &pass_idx in &rdg.execution_queue {
-            let pass = rdg.passes[pass_idx].get_pass_mut();
-            pass.prepare(&mut rdg_prepare_ctx);
+        for &pass_idx in &graph.execution_queue {
+            let pass = graph.passes[pass_idx].get_pass_mut();
+            pass.prepare(&mut prepare_ctx);
         }
 
         // ─── 3c. Bake render commands ──────────────────────────────────
@@ -546,9 +534,9 @@ impl<'a> FrameComposer<'a> {
         // "blind" — it processes only pre-resolved GPU state.
         let prepass_config = if is_high_fidelity {
             Some(crate::renderer::graph::bake::PrepassBakeConfig {
-                local_cache: self.ctx.rdg_prepass.local_cache(),
-                needs_normal: self.ctx.rdg_prepass.needs_normal(),
-                needs_feature_id: self.ctx.rdg_prepass.needs_feature_id(),
+                local_cache: self.ctx.prepass.local_cache(),
+                needs_normal: self.ctx.prepass.needs_normal(),
+                needs_feature_id: self.ctx.prepass.needs_feature_id(),
             })
         } else {
             None
@@ -565,9 +553,9 @@ impl<'a> FrameComposer<'a> {
         let mut ext_views: FxHashMap<_, &wgpu::TextureView> = FxHashMap::default();
         ext_views.insert(surface_out, &surface_view);
 
-        let mut rdg_execute_ctx = RdgExecuteContext {
-            resources: &rdg.resources,
-            pool: self.ctx.rdg_pool,
+        let mut execute_ctx = ExecuteContext {
+            resources: &graph.resources,
+            pool: self.ctx.transient_pool,
             device: &self.ctx.wgpu_ctx.device,
             queue: &self.ctx.wgpu_ctx.queue,
             pipeline_cache: self.ctx.pipeline_cache,
@@ -579,27 +567,27 @@ impl<'a> FrameComposer<'a> {
             current_timeline_index: 0,
         };
 
-        let mut rdg_encoder =
+        let mut encoder =
             self.ctx
                 .wgpu_ctx
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                    label: Some("RDG Unified Encoder"),
+                    label: Some("Unified Encoder"),
                 });
 
-        for (timeline_index, &pass_idx) in rdg.execution_queue.iter().enumerate() {
-            rdg_execute_ctx.current_timeline_index = timeline_index;
-            let pass = rdg.passes[pass_idx].get_pass_mut();
+        for (timeline_index, &pass_idx) in graph.execution_queue.iter().enumerate() {
+            execute_ctx.current_timeline_index = timeline_index;
+            let pass = graph.passes[pass_idx].get_pass_mut();
             #[cfg(debug_assertions)]
-            rdg_encoder.push_debug_group(pass.name());
-            pass.execute(&rdg_execute_ctx, &mut rdg_encoder);
+            encoder.push_debug_group(pass.name());
+            pass.execute(&execute_ctx, &mut encoder);
             #[cfg(debug_assertions)]
-            rdg_encoder.pop_debug_group();
+            encoder.pop_debug_group();
         }
 
         // ━━━ 4. Submit & Present ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        self.ctx.wgpu_ctx.queue.submit(Some(rdg_encoder.finish()));
+        self.ctx.wgpu_ctx.queue.submit(Some(encoder.finish()));
         output.present();
     }
 }

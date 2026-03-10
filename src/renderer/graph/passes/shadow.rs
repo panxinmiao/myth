@@ -18,7 +18,7 @@
 //!         │
 //!         ▼
 //!  ┌──────────────────────┐
-//!  │   RdgShadowPass      │
+//!  │   ShadowPass         │
 //!  │  prepare: upload VP   │
 //!  │  execute: draw depth  │
 //!  └──────────────────────┘
@@ -30,12 +30,9 @@
 use glam::Mat4;
 
 use crate::renderer::core::view::ViewTarget;
+use crate::renderer::graph::core::*;
 use crate::renderer::graph::frame::ShadowLightInstance;
-use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext};
-use crate::renderer::graph::rdg::draw::submit_draw_commands;
-use crate::renderer::graph::rdg::graph::RenderGraph;
-use crate::renderer::graph::rdg::node::PassNode;
+use crate::renderer::graph::passes::draw::submit_draw_commands;
 
 /// Shadow rendering feature.
 ///
@@ -65,7 +62,7 @@ impl ShadowFeature {
         let stride = align_to(std::mem::size_of::<Mat4>() as u32, min_alignment);
 
         let bind_group_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("RDG Shadow Light BGL"),
+            label: Some("Shadow Light BGL"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
                 visibility: wgpu::ShaderStages::VERTEX,
@@ -79,14 +76,14 @@ impl ShadowFeature {
         });
 
         let uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("RDG Shadow VP Buffer"),
+            label: Some("Shadow VP Buffer"),
             size: u64::from(stride),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
 
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("RDG Shadow Light BG"),
+            label: Some("Shadow Light BG"),
             layout: &bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -122,7 +119,7 @@ impl ShadowFeature {
         }
 
         self.uniform_buffer = device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("RDG Shadow VP Buffer"),
+            label: Some("Shadow VP Buffer"),
             size: u64::from(self.uniform_stride) * u64::from(capacity),
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
@@ -134,7 +131,7 @@ impl ShadowFeature {
 
     fn recreate_bind_group(&mut self, device: &wgpu::Device) {
         self.bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some("RDG Shadow Light BG"),
+            label: Some("Shadow Light BG"),
             layout: &self.bind_group_layout,
             entries: &[wgpu::BindGroupEntry {
                 binding: 0,
@@ -212,14 +209,14 @@ impl ShadowFeature {
     }
 
     /// Create an ephemeral [`ShadowPassNode`] and add it to the render graph.
-    pub fn add_to_graph(&self, rdg: &mut RenderGraph) {
+    pub fn add_to_graph(&self, graph: &mut RenderGraph) {
         let node = ShadowPassNode {
             bind_group: self.bind_group.clone(),
             shadow_lights: self.shadow_lights.clone(),
             uniform_stride: self.uniform_stride,
             shadow_layer_views: self.shadow_layer_views.clone(),
         };
-        rdg.add_pass(Box::new(node));
+        graph.add_pass(Box::new(node));
     }
 }
 
@@ -240,7 +237,7 @@ pub struct ShadowPassNode {
 
 impl PassNode for ShadowPassNode {
     fn name(&self) -> &'static str {
-        "RDG_Shadow_Pass"
+        "Shadow_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
@@ -252,7 +249,7 @@ impl PassNode for ShadowPassNode {
     /// Uses pre-baked [`DrawCommand`]s from [`BakedRenderLists::shadow_queues`]
     /// and pre-created layer texture views, eliminating all resource-manager
     /// lookups during the execute phase.
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if self.shadow_lights.is_empty() {
             return;
         }
@@ -263,7 +260,7 @@ impl PassNode for ShadowPassNode {
             };
 
             let pass_desc = wgpu::RenderPassDescriptor {
-                label: Some("RDG Shadow Depth"),
+                label: Some("Shadow Depth"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
                     view: layer_view,

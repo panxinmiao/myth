@@ -17,10 +17,11 @@
 
 pub mod bake;
 pub mod composer;
+pub mod core;
 pub mod culling;
 pub mod extracted;
 pub mod frame;
-pub mod rdg;
+pub mod passes;
 pub mod render_state;
 pub mod shadow_utils;
 

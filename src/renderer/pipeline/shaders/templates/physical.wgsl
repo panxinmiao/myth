@@ -361,7 +361,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     $$ if USE_SCREEN_SPACE_FEATURES
         out.specular = vec4<f32>(total_specular, material.roughness);
         if (u_material.sss_id != 0u) {
-            // SSSSS 材质：分离漫反射与高光
+            // SSSS 材质：分离漫反射与高光
             out.color = vec4<f32>(out_diffuse, opacity);
             out.specular = vec4<f32>(out_specular, 1.0); 
         } else {

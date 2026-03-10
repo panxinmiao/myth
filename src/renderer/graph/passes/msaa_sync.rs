@@ -1,7 +1,7 @@
 //! MSAA Sync Feature + Ephemeral PassNode
 //!
 //! Solves the **stale multi-sample context** problem that occurs when
-//! single-sample screen-space effects (SSSSS, etc.) modify the resolved
+//! single-sample screen-space effects (SSSS, etc.) modify the resolved
 //! `Scene_Color_HDR` after the initial MSAA Opaque resolve.  Without this
 //! pass, subsequent multi-sampled draws (Skybox, Transparent) would bind
 //! an outdated `Scene_Color_MSAA` surface, and the final resolve would
@@ -26,18 +26,13 @@
 //! The Composer inserts this pass **only** when all three conditions hold:
 //! 1. `HighFidelity` render path.
 //! 2. MSAA is active (`msaa_samples > 1`).
-//! 3. A single-sample pass (e.g. SSSSS) has modified `Scene_Color_HDR`
+//! 3. A single-sample pass (e.g. SSSS) has modified `Scene_Color_HDR`
 //!    after the Opaque resolve.
 
-use super::builder::PassBuilder;
-use super::context::{ExtractContext, RdgExecuteContext, RdgPrepareContext};
-use super::graph::RenderGraph;
-use super::node::PassNode;
-use super::types::TextureNodeId;
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::{CommonSampler, Tracked};
-use crate::renderer::graph::rdg::types::RdgTextureDesc;
+use crate::renderer::graph::core::*;
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
 };
@@ -155,19 +150,19 @@ impl MsaaSyncFeature {
     ///
     /// - `src_hdr`: single-sample `Scene_Color_HDR` (read).
     /// - `dst_msaa`: multi-sampled `Scene_Color_MSAA` (write).
-    pub fn add_to_graph(&self, rdg: &mut RenderGraph, src_hdr: TextureNodeId) -> TextureNodeId {
-        let msaa_color_desc = RdgTextureDesc::new(
-            rdg.frame_config().width,
-            rdg.frame_config().height,
+    pub fn add_to_graph(&self, graph: &mut RenderGraph, src_hdr: TextureNodeId) -> TextureNodeId {
+        let msaa_color_desc = TextureDesc::new(
+            graph.frame_config().width,
+            graph.frame_config().height,
             1,
             1,
-            rdg.frame_config().msaa_samples,
+            graph.frame_config().msaa_samples,
             wgpu::TextureDimension::D2,
             HDR_TEXTURE_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
 
-        let dst_msaa = rdg.register_resource("Scene_Color_MSAA_Sync", msaa_color_desc, false);
+        let dst_msaa = graph.register_resource("Scene_Color_MSAA_Sync", msaa_color_desc, false);
 
         let node = MsaaSyncPassNode {
             src_hdr,
@@ -176,7 +171,7 @@ impl MsaaSyncFeature {
             layout: self.bind_group_layout.clone().unwrap(),
             bind_group_key: None,
         };
-        rdg.add_pass(Box::new(node));
+        graph.add_pass(Box::new(node));
         dst_msaa
     }
 }
@@ -195,7 +190,7 @@ struct MsaaSyncPassNode {
 
 impl PassNode for MsaaSyncPassNode {
     fn name(&self) -> &'static str {
-        "RDG MSAA Sync Pass"
+        "Msaa_Sync_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
@@ -203,7 +198,7 @@ impl PassNode for MsaaSyncPassNode {
         builder.declare_output(self.dst_msaa);
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         let src_view = ctx.views.get_texture_view(self.src_hdr);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
 
@@ -231,7 +226,7 @@ impl PassNode for MsaaSyncPassNode {
         self.bind_group_key = Some(key);
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder) {
         let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
 
         let bind_group_key = self
@@ -248,7 +243,7 @@ impl PassNode for MsaaSyncPassNode {
         let rtt = ctx.get_color_attachment(self.dst_msaa, None, None);
 
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("RDG MSAA Sync Pass"),
+            label: Some("MSAA Sync Pass"),
             color_attachments: &[rtt],
             depth_stencil_attachment: None,
             timestamp_writes: None,
