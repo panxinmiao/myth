@@ -290,9 +290,12 @@ impl SssssFeature {
         scene_normals: TextureNodeId,
         feature_id: TextureNodeId,
         specular_tex: TextureNodeId,
-    ) {
+    ) -> TextureNodeId {
+        let sssss_out_color = rdg.create_alias(scene_color, "Scene_Color_SSSSS");
+
         let node = SssssPassNode {
-            scene_color,
+            scene_color_in: scene_color,
+            scene_color_out: sssss_out_color,
             temp_blur: TextureNodeId(0),
             depth_in: scene_depth,
             normal_in: scene_normals,
@@ -306,6 +309,7 @@ impl SssssFeature {
             vertical_bind_group: None,
         };
         rdg.add_pass(Box::new(node));
+        sssss_out_color
     }
 }
 
@@ -315,7 +319,8 @@ impl SssssFeature {
 
 struct SssssPassNode {
     // ─── RDG Resource Slots (explicit wiring from add_to_graph) ───────
-    scene_color: TextureNodeId,
+    scene_color_in: TextureNodeId, 
+    scene_color_out: TextureNodeId,
     temp_blur: TextureNodeId,
     depth_in: TextureNodeId,
     normal_in: TextureNodeId,
@@ -351,8 +356,8 @@ impl PassNode for SssssPassNode {
         self.temp_blur = builder.create_texture("SSSSS_Temp", desc);
 
         // In-place read + write on scene color.
-        builder.declare_output(self.scene_color);
-        builder.read_texture(self.scene_color);
+        builder.read_texture(self.scene_color_in);
+        builder.declare_output(self.scene_color_out);
 
         // Upstream inputs.
         builder.read_texture(self.depth_in);
@@ -378,7 +383,7 @@ impl PassNode for SssssPassNode {
             .get_sub_view(self.depth_in, &depth_sub_key)
             .expect("RDG SSSSS: depth-only view must exist");
 
-        let color_in_view = ctx.views.get_texture_view(self.scene_color);
+        let color_in_view = ctx.views.get_texture_view(self.scene_color_in);
 
         let normal_view = ctx.views.get_texture_view(self.normal_in);
         let feature_view = ctx.views.get_texture_view(self.feature_id);
@@ -533,7 +538,7 @@ impl PassNode for SssssPassNode {
 
         // -- V Sub-Pass: temp_blur -> color_out -------------------------
         {
-            let rtt = ctx.get_color_attachment(self.scene_color, None, None);
+            let rtt = ctx.get_color_attachment(self.scene_color_out, None, None);
 
             let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("SSSSS Vertical"),
