@@ -25,11 +25,7 @@ use rustc_hash::FxHashMap;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::resources::SamplerKey;
 use crate::renderer::core::resources::Tracked;
-use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext};
-use crate::renderer::graph::rdg::graph::RenderGraph;
-use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::TextureNodeId;
+use crate::renderer::graph::core::*;
 use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
     ShaderCompilationOptions,
@@ -105,7 +101,7 @@ impl SkyboxVariant {
 
 fn create_uniform_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
     device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-        label: Some("RDG Skybox Layout (NoTex)"),
+        label: Some("Skybox Layout (NoTex)"),
         entries: &[wgpu::BindGroupLayoutEntry {
             binding: 0,
             visibility: wgpu::ShaderStages::FRAGMENT,
@@ -211,12 +207,12 @@ impl SkyboxFeature {
         self.layout_cube = Some(Tracked::new(create_texture_layout(
             device,
             wgpu::TextureViewDimension::Cube,
-            "RDG Skybox Layout (Cube)",
+            "Skybox Layout (Cube)",
         )));
         self.layout_2d = Some(Tracked::new(create_texture_layout(
             device,
             wgpu::TextureViewDimension::D2,
-            "RDG Skybox Layout (2D)",
+            "Skybox Layout (2D)",
         )));
     }
 
@@ -266,7 +262,7 @@ impl SkyboxFeature {
         let pipeline_layout = ctx
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                label: Some("RDG Skybox Pipeline Layout"),
+                label: Some("Skybox Pipeline Layout"),
                 bind_group_layouts: &[&gpu_world.layout, layout],
                 immediate_size: 0,
             });
@@ -297,7 +293,7 @@ impl SkyboxFeature {
             shader_module,
             &pipeline_layout,
             &fullscreen_key,
-            "RDG Skybox Pipeline",
+            "Skybox Pipeline",
         );
 
         self.local_cache.insert(key, pipeline_id);
@@ -408,7 +404,7 @@ impl SkyboxFeature {
                     .expect("Skybox params GPU buffer must exist");
 
                 let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("RDG Skybox BG (Texture)"),
+                    label: Some("Skybox BG (Texture)"),
                     layout,
                     entries: &[
                         wgpu::BindGroupEntry {
@@ -441,7 +437,7 @@ impl SkyboxFeature {
                     .expect("Skybox params GPU buffer must exist");
 
                 let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("RDG Skybox BG (Gradient)"),
+                    label: Some("Skybox BG (Gradient)"),
                     layout,
                     entries: &[wgpu::BindGroupEntry {
                         binding: 0,
@@ -474,11 +470,11 @@ impl SkyboxFeature {
     /// order.  Returns the new colour version for downstream threading.
     pub fn add_to_graph(
         &self,
-        rdg: &mut RenderGraph,
+        graph: &mut RenderGraph,
         scene_color: TextureNodeId,
         scene_depth: TextureNodeId,
     ) -> TextureNodeId {
-        let color_output = rdg.create_alias(scene_color, "Scene_Color_Skybox");
+        let color_output = graph.create_alias(scene_color, "Scene_Color_Skybox");
         let node = SkyboxPassNode {
             in_color: scene_color,
             out_color: color_output,
@@ -486,7 +482,7 @@ impl SkyboxFeature {
             pipeline_id: self.current_pipeline,
             bind_group: self.current_bind_group.clone(),
         };
-        rdg.add_pass(Box::new(node));
+        graph.add_pass(Box::new(node));
         color_output
     }
 }
@@ -506,7 +502,7 @@ pub struct SkyboxPassNode {
 
 impl PassNode for SkyboxPassNode {
     fn name(&self) -> &'static str {
-        "RDG_Skybox_Pass"
+        "Skybox_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
@@ -515,7 +511,7 @@ impl PassNode for SkyboxPassNode {
         builder.read_texture(self.scene_depth);
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let (Some(pipeline_id), Some(bind_group)) = (self.pipeline_id, &self.bind_group) else {
             return;
         };
@@ -526,7 +522,7 @@ impl PassNode for SkyboxPassNode {
         let depth_att = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {
-            label: Some("RDG Skybox Pass"),
+            label: Some("Skybox Pass"),
             color_attachments: &[color_att],
             depth_stencil_attachment: depth_att,
             timestamp_writes: None,

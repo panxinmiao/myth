@@ -247,19 +247,19 @@ pub mod math {
 ///
 /// # Advanced: Custom Render Passes
 ///
-/// Implement [`PassNode`](renderer::graph::rdg::node::PassNode) to add custom
+/// Implement [`PassNode`](renderer::graph::core::node::PassNode) to add custom
 /// rendering passes:
 ///
 /// ```rust,ignore
 /// use myth::render::FrameComposer;
-/// use myth::renderer::graph::rdg::blackboard::HookStage;
+/// use myth::renderer::graph::core::blackboard::HookStage;
 ///
 /// impl AppHandler for MyApp {
 ///     fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
 ///         composer
-///             .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
+///             .add_custom_pass(HookStage::AfterPostProcess, |graph, bb| {
 ///                 my_pass.target_tex = bb.surface_out;
-///                 rdg.add_pass(&mut my_pass);
+///                 graph.add_pass(&mut my_pass);
 ///             })
 ///             .render();
 ///     }

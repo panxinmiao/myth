@@ -10,7 +10,7 @@ use crate::renderer::pipeline::{PipelineCache, ShaderManager};
 use rustc_hash::FxHashMap;
 use wgpu::{Device, Queue, TextureView};
 
-use super::allocator::{RdgTransientPool, SubViewKey};
+use super::allocator::{SubViewKey, TransientPool};
 use super::types::{ResourceRecord, TextureNodeId};
 
 // ─── Extract Context (Feature Pre-RDG Phase) ────────────────────────────────
@@ -58,9 +58,9 @@ pub struct ExtractContext<'a> {
 /// geometry buffers) must be resolved during the earlier
 /// `Feature::extract_and_prepare()` phase and carried into the PassNode
 /// as lightweight cloned handles.
-pub struct RdgPrepareContext<'a> {
+pub struct PrepareContext<'a> {
     /// Transient resource view resolver.
-    pub views: RdgViewResolver<'a>,
+    pub views: ViewResolver<'a>,
     /// GPU device for creating bind groups and sub-views.
     pub device: &'a wgpu::Device,
     /// GPU queue for immediate buffer uploads (rare in prepare).
@@ -71,9 +71,9 @@ pub struct RdgPrepareContext<'a> {
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
 }
 
-pub struct RdgViewResolver<'a> {
+pub struct ViewResolver<'a> {
     pub resources: &'a [ResourceRecord],
-    pub pool: &'a mut RdgTransientPool,
+    pub pool: &'a mut TransientPool,
     pub external_resources: &'a FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
 }
 
@@ -85,7 +85,7 @@ pub fn resolve_root_id(resources: &[ResourceRecord], mut id: TextureNodeId) -> T
     id
 }
 
-impl RdgViewResolver<'_> {
+impl ViewResolver<'_> {
     /// Resolve a virtual [`TextureNodeId`] to its physical [`Tracked<TextureView>`].
     ///
     /// For external resources, the view is looked up in `external_resources`.
@@ -174,9 +174,9 @@ impl RdgViewResolver<'_> {
 /// Provides read-only access to the compiled render graph, physical resource
 /// pool, pipeline cache, render lists, and any external views injected before
 /// execution.
-pub struct RdgExecuteContext<'a> {
+pub struct ExecuteContext<'a> {
     pub resources: &'a [ResourceRecord],
-    pub pool: &'a RdgTransientPool,
+    pub pool: &'a TransientPool,
     pub device: &'a Device,
     pub queue: &'a Queue,
     pub pipeline_cache: &'a PipelineCache,
@@ -204,7 +204,7 @@ pub struct RdgExecuteContext<'a> {
     pub current_timeline_index: usize,
 }
 
-impl RdgExecuteContext<'_> {
+impl ExecuteContext<'_> {
     /// Resolve a virtual [`TextureNodeId`] to its physical [`TextureView`].
     ///
     /// For external resources, the view is looked up in `external_views`.
@@ -217,7 +217,7 @@ impl RdgExecuteContext<'_> {
         if res.is_external {
             self.external_views
                 .get(&root_id)
-                .expect("External view was not provided to RdgExecuteContext!")
+                .expect("External view was not provided to ExecuteContext!")
         } else {
             let physical_index = res
                 .physical_index

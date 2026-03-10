@@ -44,9 +44,9 @@ use myth::{
     assets::TextureHandle,
     renderer::{
         core::ResourceManager,
-        graph::rdg::{
+        graph::core::{
             builder::PassBuilder,
-            context::{RdgExecuteContext, RdgPrepareContext},
+            context::{ExecuteContext, PrepareContext},
             node::PassNode,
             types::TextureNodeId,
         },
@@ -293,7 +293,7 @@ impl UiPass {
 /// engine's read-only execute phase.
 impl PassNode for UiPass {
     fn name(&self) -> &'static str {
-        "RDG_UI_Pass"
+        "UI_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
@@ -304,7 +304,7 @@ impl PassNode for UiPass {
         self.target_tex = builder.mutate_texture(self.target_tex, "Surface_With_UI");
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         let device = ctx.device;
         let queue = ctx.queue;
 
@@ -340,7 +340,7 @@ impl PassNode for UiPass {
         self.textures_delta.free.clear();
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         // Resolve the final swap-chain surface view from the RDG.
         let rtt = ctx.get_color_attachment(self.target_tex, None, None);
         let mut rpass = encoder

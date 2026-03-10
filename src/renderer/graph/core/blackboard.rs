@@ -54,9 +54,9 @@ pub enum HookStage {
 /// # Example
 ///
 /// ```rust,ignore
-/// renderer.add_custom_pass_hook(HookStage::AfterPostProcess, |rdg, bb| {
+/// renderer.add_custom_pass_hook(HookStage::AfterPostProcess, |graph, bb| {
 ///     let mut ui = UiPass { target_tex: bb.surface_out, .. };
-///     rdg.add_pass(&mut ui);
+///     graph.add_pass(&mut ui);
 ///     // Override the scene_color slot with the UI output:
 ///     // bb.scene_color = ui_out_tex;
 /// });

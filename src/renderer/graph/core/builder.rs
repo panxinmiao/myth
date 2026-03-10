@@ -22,7 +22,7 @@ use super::types::TextureNodeId;
 ///
 /// The builder exposes the current frame's resolution and device format
 /// information via [`frame_config`](Self::frame_config), so passes can
-/// derive their own `RdgTextureDesc`s in `setup()` without external push.
+/// derive their own `TextureDesc`s in `setup()` without external push.
 pub struct PassBuilder<'a> {
     pub(crate) graph: &'a mut RenderGraph,
     pub(crate) pass_index: usize,
@@ -53,7 +53,7 @@ impl PassBuilder<'_> {
     pub fn create_texture(
         &mut self,
         name: &'static str,
-        desc: super::types::RdgTextureDesc,
+        desc: super::types::TextureDesc,
     ) -> TextureNodeId {
         let id = self.graph.register_resource(name, desc, false);
         self.graph.passes[self.pass_index].creates.push(id);

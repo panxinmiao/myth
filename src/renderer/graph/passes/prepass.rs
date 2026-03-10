@@ -15,12 +15,8 @@
 
 use rustc_hash::FxHashMap;
 
-use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{ExtractContext, RdgExecuteContext};
-use crate::renderer::graph::rdg::draw::submit_draw_commands;
-use crate::renderer::graph::rdg::graph::RenderGraph;
-use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
+use crate::renderer::graph::core::*;
+use crate::renderer::graph::passes::draw::submit_draw_commands;
 use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, RenderPipelineId, ShaderCompilationOptions,
     SimpleGeometryPipelineKey,
@@ -210,7 +206,7 @@ impl PrepassFeature {
             let layout = ctx
                 .device
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-                    label: Some("RDG Prepass Pipeline Layout"),
+                    label: Some("Prepass Pipeline Layout"),
                     bind_group_layouts: &[
                         &gpu_world_layout_clone,
                         &gpu_material.layout,
@@ -292,7 +288,7 @@ impl PrepassFeature {
                 topology: geometry.topology,
                 cull_mode,
                 front_face,
-                sample_count: 1, // Prepass always uses sample_count = 1 (single-sample depth for SSAO/SSSSS)
+                sample_count: 1, // Prepass always uses sample_count = 1 (single-sample depth for SSAO/SSSS)
             };
 
             let pipeline_id = ctx.pipeline_cache.get_or_create_simple_geometry(
@@ -300,7 +296,7 @@ impl PrepassFeature {
                 shader_module,
                 &layout,
                 &prepass_key,
-                "RDG Prepass Pipeline",
+                "Prepass Pipeline",
                 &vertex_buffers_layout,
             );
 
@@ -319,14 +315,14 @@ impl PrepassFeature {
     /// via explicit [`TextureNodeId`] connections.
     pub fn add_to_graph(
         &self,
-        rdg: &mut RenderGraph,
+        graph: &mut RenderGraph,
         needs_normal: bool,
         needs_feature_id: bool,
     ) -> PrepassOutputs {
-        let fc = *rdg.frame_config();
+        let fc = *graph.frame_config();
 
         // Single-sample scene depth (always created).
-        let depth_desc = RdgTextureDesc::new(
+        let depth_desc = TextureDesc::new(
             fc.width,
             fc.height,
             1,
@@ -336,28 +332,28 @@ impl PrepassFeature {
             fc.depth_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        let scene_depth = rdg.register_resource("Scene_Depth", depth_desc, false);
+        let scene_depth = graph.register_resource("Scene_Depth", depth_desc, false);
 
         let scene_normals = if needs_normal {
-            let desc = RdgTextureDesc::new_2d(
+            let desc = TextureDesc::new_2d(
                 fc.width,
                 fc.height,
                 NORMAL_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            Some(rdg.register_resource("Scene_Normals", desc, false))
+            Some(graph.register_resource("Scene_Normals", desc, false))
         } else {
             None
         };
 
         let feature_id = if needs_feature_id {
-            let desc = RdgTextureDesc::new_2d(
+            let desc = TextureDesc::new_2d(
                 fc.width,
                 fc.height,
                 FEATURE_ID_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            Some(rdg.register_resource("Feature_ID", desc, false))
+            Some(graph.register_resource("Feature_ID", desc, false))
         } else {
             None
         };
@@ -369,7 +365,7 @@ impl PrepassFeature {
             needs_normal,
             needs_feature_id,
         };
-        rdg.add_pass(Box::new(node));
+        graph.add_pass(Box::new(node));
 
         PrepassOutputs {
             scene_depth,
@@ -401,7 +397,7 @@ pub struct PrepassPassNode {
 
 impl PassNode for PrepassPassNode {
     fn name(&self) -> &'static str {
-        "RDG_Prepass"
+        "Pre_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
@@ -419,7 +415,7 @@ impl PassNode for PrepassPassNode {
         }
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
         // ── Color attachments: auto-deduced ops for normals / feature-ID ──
@@ -465,7 +461,7 @@ impl PassNode for PrepassPassNode {
         };
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("RDG Depth-Normal Prepass"),
+            label: Some("Depth-Normal Prepass"),
             color_attachments: &color_attachments,
             depth_stencil_attachment: dtt,
             timestamp_writes: None,

@@ -23,14 +23,9 @@
 //! [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
 
 use crate::renderer::core::resources::ScreenBindGroupInfo;
+use crate::renderer::graph::core::*;
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
-use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
-use crate::renderer::graph::rdg::draw::submit_draw_commands;
-use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::{RdgTextureDesc, TextureNodeId};
-
-use super::graph::RenderGraph;
+use crate::renderer::graph::passes::draw::submit_draw_commands;
 
 // ─── Feature ───────────────────────────────────────────────────────────
 
@@ -63,7 +58,7 @@ impl SimpleForwardFeature {
         prepared_skybox: Option<PreparedSkyboxDraw>,
     ) {
         let fc = *rdg.frame_config();
-        let depth_desc = RdgTextureDesc::new(
+        let depth_desc = TextureDesc::new(
             fc.width,
             fc.height,
             1,
@@ -137,7 +132,7 @@ impl SimpleForwardPassNode {
 
 impl PassNode for SimpleForwardPassNode {
     fn name(&self) -> &'static str {
-        "RDG_SimpleForward_Pass"
+        "SimpleForward_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
@@ -150,7 +145,7 @@ impl PassNode for SimpleForwardPassNode {
         if msaa_samples > 1 {
             let (w, h) = builder.global_resolution();
             let surface_format = builder.frame_config().surface_format;
-            let desc = RdgTextureDesc::new(
+            let desc = TextureDesc::new(
                 w,
                 h,
                 1,
@@ -167,7 +162,7 @@ impl PassNode for SimpleForwardPassNode {
         }
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         // Build screen bind group (group 3) with dummy textures (LDR path
         // has no SSAO or transmission).
         let (bg, _) = self.screen_info.build_screen_bind_group(
@@ -179,7 +174,7 @@ impl PassNode for SimpleForwardPassNode {
         self.screen_bind_group = Some(bg);
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
         let (color_view, resolve_target) = if let Some(msaa_view) = self.msaa_view {

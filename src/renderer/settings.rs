@@ -53,7 +53,7 @@
 /// | FXAA (post-process AA)  | ❌                | ✅                      |
 /// | Depth-Normal Prepass    | ❌                | ✅ (auto-skipped w/ MSAA)|
 /// | SSAO                    | ❌                | ✅                      |
-/// | SSSSS                   | ❌                | ✅                      |
+/// | SSSS                    | ❌                | ✅                      |
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RenderPath {
     /// Lightweight forward rendering pipeline.
@@ -75,7 +75,7 @@ pub enum RenderPath {
     /// into multi-sampled intermediates that are resolved at the appropriate
     /// pipeline stages.
     ///
-    /// Includes Depth-Normal Prepass (auto-managed), SSAO, and SSSSS.
+    /// Includes Depth-Normal Prepass (auto-managed), SSAO, and SSSS.
     ///
     /// Best suited for:
     /// - Desktop / high-end mobile with modern GPUs
@@ -104,7 +104,7 @@ impl RenderPath {
     ///
     /// When hardware MSAA is enabled, the prepass Early-Z benefit is lost
     /// for the main scene draw; the prepass may still be scheduled to
-    /// supply depth/normals to SSAO and SSSSS.
+    /// supply depth/normals to SSAO and SSSS.
     #[inline]
     #[must_use]
     pub fn requires_z_prepass(&self) -> bool {

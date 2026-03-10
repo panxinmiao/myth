@@ -3,8 +3,8 @@ use smallvec::SmallVec;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureNodeId(pub u32);
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct RdgTextureDesc {
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct TextureDesc {
     pub size: wgpu::Extent3d,
     pub mip_level_count: u32,
     pub sample_count: u32,
@@ -13,7 +13,7 @@ pub struct RdgTextureDesc {
     pub usage: wgpu::TextureUsages,
 }
 
-impl RdgTextureDesc {
+impl TextureDesc {
     #[must_use]
     pub fn new(
         width: u32,
@@ -63,7 +63,7 @@ impl RdgTextureDesc {
 
 pub struct ResourceRecord {
     pub name: &'static str,
-    pub desc: RdgTextureDesc,
+    pub desc: TextureDesc,
     pub is_external: bool,
 
     // 在严格 SSA 下，一个资源最多只能有一个生产者

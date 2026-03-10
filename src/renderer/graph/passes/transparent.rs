@@ -31,13 +31,8 @@
 //! Transparent commands are sorted back-to-front for correct alpha blending.
 
 use crate::renderer::core::resources::{ScreenBindGroupInfo, Tracked};
-use crate::renderer::graph::rdg::builder::PassBuilder;
-use crate::renderer::graph::rdg::context::{RdgExecuteContext, RdgPrepareContext};
-use crate::renderer::graph::rdg::draw::submit_draw_commands;
-use crate::renderer::graph::rdg::node::PassNode;
-use crate::renderer::graph::rdg::types::TextureNodeId;
-
-use super::graph::RenderGraph;
+use crate::renderer::graph::core::*;
+use crate::renderer::graph::passes::draw::submit_draw_commands;
 
 // ─── Feature ───────────────────────────────────────────────────────────
 
@@ -75,18 +70,18 @@ impl TransparentFeature {
     /// - **Non-MSAA**: the mutated colour alias.
     pub fn add_to_graph(
         &self,
-        rdg: &mut RenderGraph,
+        graph: &mut RenderGraph,
         color_target: TextureNodeId,
         depth_target: TextureNodeId,
         transmission_tex: Option<TextureNodeId>,
         ssao_tex: Option<TextureNodeId>,
     ) -> TextureNodeId {
-        let color_output = rdg.create_alias(color_target, "Scene_Color_Transparent");
+        let color_output = graph.create_alias(color_target, "Scene_Color_Transparent");
 
-        let resolve_target = if rdg.frame_config().msaa_samples > 1 {
-            Some(rdg.register_resource(
+        let resolve_target = if graph.frame_config().msaa_samples > 1 {
+            Some(graph.register_resource(
                 "Scene_Color_HDR_Final",
-                rdg.frame_config().create_render_target_desc(
+                graph.frame_config().create_render_target_desc(
                     wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                 ),
                 false,
@@ -106,7 +101,7 @@ impl TransparentFeature {
                 .clone()
                 .expect("TransparentFeature: screen_info not set"),
         );
-        rdg.add_pass(Box::new(node));
+        graph.add_pass(Box::new(node));
 
         // MSAA: downstream reads the resolved single-sample target.
         // Non-MSAA: downstream reads the mutated alias (same physical memory).
@@ -169,7 +164,7 @@ impl TransparentPassNode {
 
 impl PassNode for TransparentPassNode {
     fn name(&self) -> &'static str {
-        "RDG_Transparent_Pass"
+        "Transparent_Pass"
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
@@ -195,7 +190,7 @@ impl PassNode for TransparentPassNode {
         }
     }
 
-    fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {
             Some(id) => ctx.views.get_texture_view(id),
             None => &self.screen_info.ssao_dummy_view,
@@ -215,7 +210,7 @@ impl PassNode for TransparentPassNode {
         self.screen_bind_group = Some(bg);
     }
 
-    fn execute(&self, ctx: &RdgExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
         // `out_color` is an alias — LoadOp is auto-deduced to `Load`,
@@ -224,7 +219,7 @@ impl PassNode for TransparentPassNode {
         let depth_att = ctx.get_depth_stencil_attachment(self.depth_target, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {
-            label: Some("RDG Transparent Pass"),
+            label: Some("Transparent Pass"),
             color_attachments: &[color_att],
             depth_stencil_attachment: depth_att,
             timestamp_writes: None,

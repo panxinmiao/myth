@@ -9,7 +9,7 @@
 //! - [`GraphicsPipelineKey`] — material-driven scene geometry pipelines
 //!   (opaque, transparent, shadow).
 //! - [`FullscreenPipelineKey`] — post-processing / fullscreen passes
-//!   (bloom, SSAO, FXAA, tone map, SSSSS, skybox…).
+//!   (bloom, SSAO, FXAA, tone map, SSSS, skybox…).
 //! - [`SimpleGeometryPipelineKey`] — simplified geometry passes (prepass, shadow).
 //! - [`ComputePipelineKey`] — compute shader pipelines (BRDF LUT, IBL).
 
