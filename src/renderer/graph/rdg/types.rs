@@ -70,4 +70,11 @@ pub struct ResourceRecord {
     pub first_use: usize,
     pub last_use: usize,
     pub physical_index: Option<usize>,
+
+    /// If this resource is a versioned alias produced by [`mutate_texture`],
+    /// points to the previous logical version.  Aliased resources share the
+    /// same physical GPU memory as their root ancestor, enabling in-place
+    /// relay rendering (e.g. Opaque → Skybox → Transparent) without
+    /// ambiguous read-write edges in the dependency graph.
+    pub alias_of: Option<TextureNodeId>,
 }

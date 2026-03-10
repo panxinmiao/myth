@@ -199,7 +199,6 @@ pub struct OpaquePassNode {
     pub depth_target: TextureNodeId,
     /// Optional single-sample HDR texture for MSAA resolve.
     pub resolve_target: Option<TextureNodeId>,
-    pub ssao_tex: TextureNodeId,
     pub specular_tex: TextureNodeId,
     pub specular_resolve_target: Option<TextureNodeId>,
 
@@ -207,7 +206,6 @@ pub struct OpaquePassNode {
     pub has_prepass: bool,
     pub clear_color: wgpu::Color,
     pub needs_specular: bool,
-    pub ssao_enabled: bool,
     /// Explicit SSAO input (`None` when SSAO is disabled).
     pub ssao_input: Option<TextureNodeId>, // ─── Screen Bind Group Infrastructure ──────────────────────────
     screen_info: ScreenBindGroupInfo,
@@ -233,13 +231,11 @@ impl OpaquePassNode {
             color_target,
             depth_target,
             resolve_target,
-            ssao_tex: TextureNodeId(0),
             specular_tex,
             specular_resolve_target,
             has_prepass,
             clear_color,
             needs_specular,
-            ssao_enabled: ssao_input.is_some(),
             ssao_input,
             screen_info,
             screen_bind_group: None,
@@ -269,7 +265,6 @@ impl PassNode for OpaquePassNode {
         // SSAO — explicit input wiring.
         if let Some(ssao) = self.ssao_input {
             builder.read_texture(ssao);
-            self.ssao_tex = ssao;
         }
 
         // Specular MRT (pre-registered in add_to_graph).
@@ -287,10 +282,9 @@ impl PassNode for OpaquePassNode {
 
     fn prepare(&mut self, ctx: &mut RdgPrepareContext) {
         // Build screen bind group (group 3): SSAO + transmission dummy + sampler
-        let ssao_view: &Tracked<wgpu::TextureView> = if self.ssao_enabled {
-            ctx.views.get_texture_view(self.ssao_tex)
-        } else {
-            &self.screen_info.ssao_dummy_view
+        let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {
+            Some(id) => ctx.views.get_texture_view(id),
+            None => &self.screen_info.ssao_dummy_view,
         };
 
         let transmission_view = &self.screen_info.dummy_transmission_view;

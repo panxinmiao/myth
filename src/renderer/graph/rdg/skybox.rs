@@ -462,19 +462,27 @@ impl SkyboxFeature {
     }
 
     /// Create an ephemeral [`SkyboxPassNode`] and add it to the render graph.
+    /// Build the ephemeral pass node and insert it into the graph.
+    ///
+    /// Creates an SSA alias of `scene_color` so that the dependency
+    /// Opaque → Skybox is locked by graph edges, not by registration
+    /// order.  Returns the new colour version for downstream threading.
     pub fn add_to_graph(
         &self,
         rdg: &mut RenderGraph,
         scene_color: TextureNodeId,
         scene_depth: TextureNodeId,
-    ) {
+    ) -> TextureNodeId {
+        let color_output = rdg.create_alias(scene_color, "Scene_Color_Skybox");
         let node = SkyboxPassNode {
-            scene_color,
+            in_color: scene_color,
+            out_color: color_output,
             scene_depth,
             pipeline_id: self.current_pipeline,
             bind_group: self.current_bind_group.clone(),
         };
         rdg.add_pass(Box::new(node));
+        color_output
     }
 }
 
@@ -482,7 +490,10 @@ impl SkyboxFeature {
 
 /// Ephemeral per-frame skybox render pass node.
 pub struct SkyboxPassNode {
-    scene_color: TextureNodeId,
+    /// Previous colour version (read dependency).
+    in_color: TextureNodeId,
+    /// New colour version — SSA alias of `in_color` (write dependency).
+    out_color: TextureNodeId,
     scene_depth: TextureNodeId,
     pipeline_id: Option<RenderPipelineId>,
     bind_group: Option<wgpu::BindGroup>,
@@ -494,8 +505,8 @@ impl PassNode for SkyboxPassNode {
     }
 
     fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.read_texture(self.scene_color);
-        builder.write_texture(self.scene_color);
+        builder.read_texture(self.in_color);
+        builder.write_texture(self.out_color);
         builder.read_texture(self.scene_depth);
     }
 
@@ -506,7 +517,7 @@ impl PassNode for SkyboxPassNode {
 
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
-        let color_att = ctx.get_color_attachment(self.scene_color, None, None);
+        let color_att = ctx.get_color_attachment(self.out_color, None, None);
         let depth_att = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {

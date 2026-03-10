@@ -246,10 +246,13 @@ impl<'a> RdgExecuteContext<'a> {
     /// the resource's lifetime within the compiled execution timeline.
     ///
     /// - **`LoadOp`**: `Clear(clear_color)` when this pass is the first to
-    ///   touch the resource (`first_use == current_timeline_index`);
-    ///   `Load` otherwise.
+    ///   touch the resource, it is not external, and it is not an SSA alias
+    ///   (alias resources inherit content from their parent version and must
+    ///   always `Load`); `Load` otherwise.
     /// - **`StoreOp`**: `Discard` when this pass is the last consumer
     ///   **and** the resource is not external; `Store` otherwise.
+    ///   The alias-aware allocation phase propagates the root's unified
+    ///   `last_use` to all aliases, preventing premature discards.
     ///
     /// The optional `resolve_target` specifies a single-sample texture that
     /// receives the hardware MSAA resolve at the end of the render pass.
@@ -273,7 +276,9 @@ impl<'a> RdgExecuteContext<'a> {
         let res = &self.resources[id.0 as usize];
         let ti = self.current_timeline_index;
 
-        let load = if res.first_use == ti && !res.is_external {
+        // Alias resources always Load — they inherit content from the
+        // previous version occupying the same physical memory.
+        let load = if res.first_use == ti && !res.is_external && res.alias_of.is_none() {
             match clear_color {
                 Some(color) => wgpu::LoadOp::Clear(color),
                 None => wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),
@@ -301,7 +306,8 @@ impl<'a> RdgExecuteContext<'a> {
     /// Auto-deduce `LoadOp` and `StoreOp` for a depth-stencil attachment.
     ///
     /// Rules mirror [`get_color_attachment`]:
-    /// - First use → `Clear(clear_depth)`, otherwise `Load`.
+    /// - First use of a non-alias, non-external resource →
+    ///   `Clear(clear_depth)`, otherwise `Load`.
     /// - Last use on a non-external resource → `Discard`, otherwise `Store`.
     ///
     /// Returns `None` if the resource was culled.
@@ -314,7 +320,7 @@ impl<'a> RdgExecuteContext<'a> {
         let res = &self.resources[id.0 as usize];
         let ti = self.current_timeline_index;
 
-        let load = if res.first_use == ti {
+        let load = if res.first_use == ti && res.alias_of.is_none() {
             wgpu::LoadOp::Clear(clear_depth)
         } else {
             wgpu::LoadOp::Load
