@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crate::animation::{
     MorphWeightData,
-    binding::PropertyBinding,
+    binding::ClipBinding,
     clip::{AnimationClip, TrackData},
     tracks::KeyframeCursor,
 };
@@ -25,7 +25,8 @@ pub struct AnimationAction {
     pub paused: bool,
     pub enabled: bool,
 
-    pub bindings: Vec<PropertyBinding>,
+    /// Precomputed track-to-bone mapping (set once during binding).
+    pub clip_binding: ClipBinding,
 
     pub(crate) track_cursors: Vec<KeyframeCursor>,
 }
@@ -43,7 +44,7 @@ impl AnimationAction {
             paused: false,
             enabled: true,
             // Initialize corresponding number of cursors
-            bindings: Vec::new(),
+            clip_binding: ClipBinding { bindings: Vec::new() },
             track_cursors: vec![KeyframeCursor::default(); track_count],
         }
     }

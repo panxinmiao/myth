@@ -443,7 +443,7 @@ fn make_simple_clip(duration: f32) -> Arc<AnimationClip> {
         "test".to_string(),
         vec![Track {
             meta: TrackMeta {
-                node_name: "node".to_string(),
+                path: vec!["node".to_string()],
                 target: TargetPath::Translation,
             },
             data: TrackData::Vector3(KeyframeTrack::new(
@@ -559,7 +559,7 @@ fn clip_auto_duration() {
         vec![
             Track {
                 meta: TrackMeta {
-                    node_name: "a".to_string(),
+                    path: vec!["a".to_string()],
                     target: TargetPath::Translation,
                 },
                 data: TrackData::Vector3(KeyframeTrack::new(
@@ -570,7 +570,7 @@ fn clip_auto_duration() {
             },
             Track {
                 meta: TrackMeta {
-                    node_name: "b".to_string(),
+                    path: vec!["b".to_string()],
                     target: TargetPath::Rotation,
                 },
                 data: TrackData::Quaternion(KeyframeTrack::new(

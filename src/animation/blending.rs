@@ -162,9 +162,4 @@ impl FrameBlendState {
     pub fn iter_nodes(&self) -> impl Iterator<Item = (&NodeHandle, &FxHashMap<TargetPath, BlendEntry>)> {
         self.entries.iter()
     }
-
-    /// Returns `true` if no blend data has been accumulated.
-    pub fn is_empty(&self) -> bool {
-        self.entries.values().all(|m| m.is_empty())
-    }
 }

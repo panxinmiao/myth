@@ -6,10 +6,15 @@ use crate::animation::tracks::KeyframeTrack;
 use crate::animation::values::MorphWeightData;
 
 /// Metadata identifying which scene node and property a track targets.
+///
+/// Each track targets a node identified by a hierarchical path relative
+/// to the animation root (e.g. `["Spine", "Arm_L", "Hand_L"]`). A
+/// single-element path targets a direct child or the root itself.
 #[derive(Debug, Clone)]
 pub struct TrackMeta {
-    /// Name of the target node in the scene hierarchy.
-    pub node_name: String,
+    /// Hierarchical path segments relative to the animation root node.
+    /// Example: `["Spine", "Arm_L", "Hand_L"]` for a deeply nested bone.
+    pub path: Vec<String>,
     /// Which property of the node this track animates.
     pub target: TargetPath,
 }
