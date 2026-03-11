@@ -480,14 +480,10 @@ impl RenderFrame {
             render_lists.active_views.len(),
         );
 
-        // ── 4. Ensure shadow map resources ─────────────────────────────
-        let total_shadow_layers = shadow_views.len() as u32;
-        let max_shadow_map_size = shadow_views
-            .iter()
-            .map(|v| v.viewport_size.0)
-            .max()
-            .unwrap_or(1);
-        resource_manager.ensure_shadow_maps(total_shadow_layers, max_shadow_map_size);
+        // ── 4. Shadow map allocation is deferred to RDG ─────────────────
+        // The physical shadow texture is now a transient RDG resource,
+        // allocated by the graph compiler after topology compilation.
+        // No `ensure_shadow_maps()` call is needed here.
 
         render_lists.active_views.extend(shadow_views);
 

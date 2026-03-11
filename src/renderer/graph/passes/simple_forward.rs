@@ -58,6 +58,7 @@ impl SimpleForwardFeature {
         surface_out: TextureNodeId,
         clear_color: wgpu::Color,
         prepared_skybox: Option<PreparedSkyboxDraw>,
+        shadow_tex: Option<TextureNodeId>,
     ) {
         let fc = *rdg.frame_config();
         let depth_desc = TextureDesc::new(
@@ -80,6 +81,7 @@ impl SimpleForwardFeature {
                 .clone()
                 .expect("SimpleForwardFeature: screen_info not set"),
             prepared_skybox,
+            shadow_tex,
         );
         rdg.add_pass(Box::new(node));
     }
@@ -104,6 +106,9 @@ pub struct SimpleForwardPassNode {
     pub clear_color: wgpu::Color,
     pub prepared_skybox: Option<PreparedSkyboxDraw>,
 
+    /// Optional shadow map input (DAG dependency on ShadowPass).
+    pub shadow_input: Option<TextureNodeId>,
+
     // ─── Screen Bind Group Infrastructure ──────────────────────────
     screen_info: ScreenBindGroupInfo,
 
@@ -119,12 +124,14 @@ impl SimpleForwardPassNode {
         clear_color: wgpu::Color,
         screen_info: ScreenBindGroupInfo,
         prepared_skybox: Option<PreparedSkyboxDraw>,
+        shadow_input: Option<TextureNodeId>,
     ) -> Self {
         Self {
             surface_out,
             scene_depth,
             clear_color,
             prepared_skybox,
+            shadow_input,
             msaa_view: None,
             screen_info,
             screen_bind_group: None,
@@ -141,6 +148,11 @@ impl PassNode for SimpleForwardPassNode {
         // Outputs (pre-registered in add_to_graph).
         builder.declare_output(self.surface_out);
         builder.declare_output(self.scene_depth);
+
+        // Shadow map — explicit DAG dependency on ShadowPass.
+        if let Some(shadow) = self.shadow_input {
+            builder.read_texture(shadow);
+        }
 
         // MSAA intermediate (internal, conditionally created).
         let msaa_samples = builder.frame_config().msaa_samples;
