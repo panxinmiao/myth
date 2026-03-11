@@ -22,8 +22,8 @@ pub struct AnimationAction {
     pub time_scale: f32,
     pub weight: f32,
     pub loop_mode: LoopMode,
-    pub(crate) paused: bool,
-    pub(crate) enabled: bool,
+    pub paused: bool,
+    pub enabled: bool,
 
     /// Precomputed track-to-bone mapping (set once during binding).
     pub clip_binding: ClipBinding,

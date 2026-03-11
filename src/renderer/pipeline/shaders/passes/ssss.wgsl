@@ -62,7 +62,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // 高斯分布的 Sigma 标准差系数 (控制模糊的"胖瘦")
     let sigma = f32(steps) / 2.0; 
 
-    $$ if SSSSS_VERTICAL_PASS is defined
+    $$ if SSSS_VERTICAL_PASS is defined
         let blur_dir = vec2<f32>(0.0, 1.0);
     $$ else
         let blur_dir = vec2<f32>(1.0, 0.0);
@@ -123,7 +123,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // 将积累的颜色除以积累的 rgb 权重
     let final_diffuse = final_color / total_weight;
 
-    $$ if SSSSS_VERTICAL_PASS is defined
+    $$ if SSSS_VERTICAL_PASS is defined
         // 高光部分
         let crisp_specular = textureLoad(t_specular, center_coord, 0).rgb;
         // 合成最终颜色：漫反射 + 保留高光（不模糊）
