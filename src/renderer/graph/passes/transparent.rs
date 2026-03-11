@@ -30,7 +30,7 @@
 //!
 //! Transparent commands are sorted back-to-front for correct alpha blending.
 
-use crate::renderer::core::resources::{ScreenBindGroupInfo, Tracked};
+use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::core::{
     ExecuteContext, PassBuilder, PassNode, PrepareContext, RenderGraph, TextureNodeId,
 };

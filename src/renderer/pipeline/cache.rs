@@ -29,7 +29,7 @@ use smallvec::SmallVec;
 
 use crate::assets::{GeometryHandle, MaterialHandle};
 use crate::renderer::core::BindGroupContext;
-use crate::renderer::core::resources::{GpuGlobalState, GpuMaterial, Tracked};
+use crate::renderer::core::gpu::{GpuGlobalState, GpuMaterial, Tracked};
 use crate::renderer::graph::extracted::SceneFeatures;
 use crate::renderer::pipeline::pipeline_id::{ComputePipelineId, RenderPipelineId};
 use crate::renderer::pipeline::pipeline_key::{

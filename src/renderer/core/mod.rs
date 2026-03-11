@@ -25,11 +25,11 @@
 pub mod binding;
 pub mod builder;
 pub mod context;
-pub mod resources;
+pub mod gpu;
 pub mod view;
 
 pub use binding::{BindingResource, Bindings};
 pub use builder::ResourceBuilder;
 pub use context::WgpuContext;
-pub use resources::{BindGroupContext, ResourceManager};
+pub use gpu::{BindGroupContext, ResourceManager};
 pub use view::{RenderView, ViewTarget};

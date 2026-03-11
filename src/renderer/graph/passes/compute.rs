@@ -14,8 +14,8 @@
 //! nature (equirect → cube, mipmap generation, PMREM prefiltering) the work
 //! is performed during the prepare phase with a dedicated command encoder.
 
-use crate::renderer::core::resources::SamplerKey;
-use crate::renderer::core::resources::{BRDF_LUT_SIZE, CubeSourceType};
+use crate::renderer::core::gpu::SamplerKey;
+use crate::renderer::core::gpu::{BRDF_LUT_SIZE, CubeSourceType};
 use crate::renderer::graph::core::builder::PassBuilder;
 use crate::renderer::graph::core::context::{ExecuteContext, ExtractContext};
 use crate::renderer::graph::core::graph::RenderGraph;

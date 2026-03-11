@@ -17,7 +17,7 @@
 //!    - Depth write/transparency/double-sided rendering changes -> switch Pipeline
 
 use crate::assets::{AssetServer, MaterialHandle};
-use crate::renderer::core::resources::EnsureResult;
+use crate::renderer::core::gpu::EnsureResult;
 use crate::resources::material::{Material, RenderableMaterialTrait};
 
 use crate::renderer::core::builder::ResourceBuilder;

@@ -3,7 +3,7 @@
 use std::ops::Range;
 
 use crate::assets::{AssetServer, GeometryHandle};
-use crate::renderer::core::resources::generate_gpu_resource_id;
+use crate::renderer::core::gpu::generate_gpu_resource_id;
 use crate::renderer::pipeline::vertex::GeneratedVertexLayout;
 use crate::resources::geometry::Geometry;
 

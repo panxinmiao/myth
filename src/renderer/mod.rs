@@ -52,7 +52,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use crate::assets::AssetServer;
 use crate::errors::Result;
 use crate::renderer::core::binding::GlobalBindGroupCache;
-use crate::renderer::core::resources::SamplerRegistry;
+use crate::renderer::core::gpu::SamplerRegistry;
 use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::core::allocator::TransientPool;
 use crate::renderer::graph::core::graph::RenderGraph;
@@ -234,7 +234,7 @@ impl Renderer {
         // Propagate screen bind group info to features that need it.
         if let Some(ref mut state) = self.context {
             let screen_info =
-                crate::renderer::core::resources::ScreenBindGroupInfo::from_resource_manager(
+                crate::renderer::core::gpu::ScreenBindGroupInfo::from_resource_manager(
                     &state.resource_manager,
                 );
             state.opaque_pass.set_screen_info(screen_info.clone());

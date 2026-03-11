@@ -22,7 +22,7 @@ use rustc_hash::FxHashMap;
 use crate::ShaderDefines;
 use crate::assets::TextureHandle;
 use crate::renderer::core::binding::BindGroupKey;
-use crate::renderer::core::resources::{CommonSampler, Tracked};
+use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::core::{
     ExecuteContext, ExtractContext, PassBuilder, PassNode, PrepareContext, RenderGraph,
     TextureNodeId,
