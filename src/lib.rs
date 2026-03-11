@@ -164,7 +164,9 @@ pub mod prelude {
     };
 
     // Animation
-    pub use crate::animation::{AnimationAction, AnimationClip, AnimationMixer, LoopMode};
+    pub use crate::animation::{
+        AnimationAction, AnimationClip, AnimationEvent, AnimationMixer, FiredEvent, LoopMode,
+    };
 
     // Math (re-export common glam types)
     pub use glam::{Affine3A, EulerRot, Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
@@ -341,8 +343,8 @@ pub use assets::{AssetServer, ColorSpace, GeometryHandle, MaterialHandle, Textur
 
 // Animation
 pub use animation::{
-    AnimationAction, AnimationClip, AnimationMixer, AnimationSystem, Binder, InterpolationMode,
-    LoopMode, Track, TrackData, TrackMeta,
+    AnimationAction, AnimationClip, AnimationEvent, AnimationMixer, AnimationSystem, Binder,
+    FiredEvent, InterpolationMode, LoopMode, Track, TrackData, TrackMeta,
 };
 
 // Renderer
