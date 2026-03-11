@@ -22,8 +22,8 @@ pub struct AnimationAction {
     pub time_scale: f32,
     pub weight: f32,
     pub loop_mode: LoopMode,
-    pub paused: bool,
-    pub enabled: bool,
+    pub(crate) paused: bool,
+    pub(crate) enabled: bool,
 
     /// Precomputed track-to-bone mapping (set once during binding).
     pub clip_binding: ClipBinding,
@@ -44,7 +44,9 @@ impl AnimationAction {
             paused: false,
             enabled: true,
             // Initialize corresponding number of cursors
-            clip_binding: ClipBinding { bindings: Vec::new() },
+            clip_binding: ClipBinding {
+                bindings: Vec::new(),
+            },
             track_cursors: vec![KeyframeCursor::default(); track_count],
         }
     }
@@ -52,6 +54,45 @@ impl AnimationAction {
     #[must_use]
     pub fn clip(&self) -> &Arc<AnimationClip> {
         &self.clip
+    }
+
+    pub fn reset(&mut self) {
+        self.time = 0.0;
+        self.paused = false;
+        self.enabled = true;
+        // Reset all track cursors to initial state
+        for cursor in &mut self.track_cursors {
+            *cursor = KeyframeCursor::default();
+        }
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        self.time >= self.clip.duration
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_at_start(&self) -> bool {
+        self.time <= 0.0
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn is_active(&self) -> bool {
+        self.enabled && !self.paused && self.clip.duration > 0.0
+    }
+
+    #[inline]
+    pub fn stop(&mut self) {
+        self.reset();
+        self.enabled = false;
+    }
+
+    #[inline]
+    pub fn pause(&mut self) {
+        self.paused = true;
     }
 
     /// Core logic: advance time.

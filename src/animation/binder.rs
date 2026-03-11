@@ -68,11 +68,7 @@ impl Binder {
     /// rig, a [`TrackBinding`] is emitted. Nodes receiving their first
     /// animation binding get their current transform lazily recorded as
     /// the rest pose in `scene.rest_transforms`.
-    pub fn build_clip_binding(
-        scene: &mut Scene,
-        rig: &Rig,
-        clip: &AnimationClip,
-    ) -> ClipBinding {
+    pub fn build_clip_binding(scene: &mut Scene, rig: &Rig, clip: &AnimationClip) -> ClipBinding {
         let mut bindings = Vec::with_capacity(clip.tracks.len());
 
         for (track_idx, track) in clip.tracks.iter().enumerate() {
@@ -85,12 +81,10 @@ impl Binder {
                 let node_handle = rig.bones[bone_index];
 
                 // Lazy record rest pose on first encounter.
-                if !scene.rest_transforms.contains_key(node_handle) {
-                    if let Some(node) = scene.get_node(node_handle) {
-                        scene
-                            .rest_transforms
-                            .insert(node_handle, node.transform.clone());
-                    }
+                if !scene.rest_transforms.contains_key(node_handle)
+                    && let Some(node) = scene.get_node(node_handle)
+                {
+                    scene.rest_transforms.insert(node_handle, node.transform);
                 }
 
                 bindings.push(TrackBinding {

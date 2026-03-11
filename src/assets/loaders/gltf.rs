@@ -1376,12 +1376,10 @@ impl GltfLoader {
         prefab_nodes: &[PrefabNode],
         root_indices: &[usize],
     ) -> HashMap<usize, Vec<String>> {
-        let mut paths = HashMap::new();
-
         fn walk(
             prefab_nodes: &[PrefabNode],
             idx: usize,
-            current_path: Vec<String>,
+            current_path: &mut Vec<String>,
             out: &mut HashMap<usize, Vec<String>>,
         ) {
             out.insert(idx, current_path.clone());
@@ -1391,21 +1389,23 @@ impl GltfLoader {
                     .as_deref()
                     .unwrap_or("unnamed")
                     .to_string();
-                let mut child_path = current_path.clone();
-                child_path.push(child_name);
-                walk(prefab_nodes, child_idx, child_path, out);
+
+                current_path.push(child_name);
+                walk(prefab_nodes, child_idx, current_path, out);
+                current_path.pop();
             }
         }
 
+        let mut paths = HashMap::new();
         for &root_idx in root_indices {
             let root_name = prefab_nodes[root_idx]
                 .name
                 .as_deref()
                 .unwrap_or("unnamed")
                 .to_string();
-            walk(prefab_nodes, root_idx, vec![root_name], &mut paths);
+            let mut initial_path = vec![root_name];
+            walk(prefab_nodes, root_idx, &mut initial_path, &mut paths);
         }
-
         paths
     }
 
@@ -1988,15 +1988,14 @@ impl GltfLoader {
                 };
 
                 // Build hierarchical path for this node.
-                let path = match node_paths.get(&gltf_node.index()) {
-                    Some(p) => p.clone(),
-                    None => {
-                        let fallback = gltf_node.name().map_or_else(
-                            || format!("Node_{}", gltf_node.index()),
-                            std::string::ToString::to_string,
-                        );
-                        vec![fallback]
-                    }
+                let path = if let Some(p) = node_paths.get(&gltf_node.index()) {
+                    p.clone()
+                } else {
+                    let fallback = gltf_node.name().map_or_else(
+                        || format!("Node_{}", gltf_node.index()),
+                        std::string::ToString::to_string,
+                    );
+                    vec![fallback]
                 };
 
                 let times: Vec<f32> = reader.read_inputs().unwrap().collect();
