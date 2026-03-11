@@ -14,10 +14,15 @@ $$ if USE_TRANSMISSION is defined
     {$ include 'transmission' $}
 $$ endif
 
-// SSAO texture (Group 3, Binding 2) — always bound.
-// When SSAO is disabled, this is a 1×1 white texture (AO = 1.0).
+// ── Screen / Transient BindGroup (Group 3) ──────────────────────────
+//
+// All entries are always bound.  When a feature is disabled the pass
+// substitutes a harmless 1×1 dummy texture so that the layout stays
+// fixed and no per-permutation rebinding is needed.
 @group(3) @binding(1) var s_screen_sampler: sampler;
 @group(3) @binding(2) var t_ssao: texture_2d<f32>;
+@group(3) @binding(3) var t_shadow_map_2d_array: texture_depth_2d_array;
+@group(3) @binding(4) var s_shadow_map_compare: sampler_comparison;
 
 @vertex
 fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {

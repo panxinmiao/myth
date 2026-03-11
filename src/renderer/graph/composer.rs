@@ -509,55 +509,7 @@ impl<'a> FrameComposer<'a> {
 
         graph.compile(self.ctx.transient_pool, &self.ctx.wgpu_ctx.device);
 
-        // ─── 3a. Inject RDG shadow texture into global bind group ──────
-        //
-        // The shadow Depth32Float 2D-array is now a transient RDG resource.
-        // After compilation the pool has allocated the physical texture;
-        // we export its D2Array view to the ResourceManager so that the
-        // existing global bind group (Group 0) can reference it.
-        if let Some(shadow_id) = shadow_tex {
-            let res = &graph.resources[shadow_id.0 as usize];
-            if let Some(physical_idx) = res.physical_index {
-                let texture = self.ctx.transient_pool.get_texture(physical_idx);
-                let shadow_array_view = texture.create_view(&wgpu::TextureViewDescriptor {
-                    label: Some("Shadow_2D_Array_View_RDG"),
-                    dimension: Some(wgpu::TextureViewDimension::D2Array),
-                    ..Default::default()
-                });
-                self.ctx
-                    .resource_manager
-                    .inject_rdg_shadow_view(shadow_array_view);
-            }
-        } else {
-            // No shadow casters this frame — ensure the global bind group
-            // falls back to the dummy shadow texture.
-            self.ctx.resource_manager.clear_rdg_shadow_view();
-        }
-
-        // Rebuild global bind group with the (possibly updated) shadow view.
-        self.ctx.resource_manager.prepare_global(
-            self.ctx.assets,
-            self.ctx.scene,
-            self.ctx.render_state,
-        );
-
-        // Re-fetch the updated bind group into render_lists so that
-        // bake_render_lists (and ultimately the execute phase) uses the
-        // correct global bind group containing the RDG shadow texture.
-        {
-            let render_state_id = self.ctx.render_state.id;
-            let scene_id = self.ctx.extracted_scene.scene_id;
-            if let Some(gpu_world) =
-                self.ctx
-                    .resource_manager
-                    .get_global_state(render_state_id, scene_id)
-            {
-                self.ctx.render_lists.gpu_global_bind_group =
-                    Some(gpu_world.bind_group.clone());
-            }
-        }
-
-        // ─── 3b. RDG Prepare: transient-only BindGroup assembly ────────
+        // ─── 3a. RDG Prepare: transient-only BindGroup assembly ────────
         //
         // Only the swapchain surface is truly external — all other textures
         // (scene_color, scene_depth, etc.) are RDG transient resources.

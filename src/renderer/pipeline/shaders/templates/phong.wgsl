@@ -5,6 +5,12 @@
 {$ include 'morph_pars' $}
 {$ include 'light_common_pars' $}
 {$ include 'light_punctual_pars' $}
+// ── Screen / Transient BindGroup (Group 3) ──────────────────────────
+@group(3) @binding(1) var s_screen_sampler: sampler;
+@group(3) @binding(2) var t_ssao: texture_2d<f32>;
+@group(3) @binding(3) var t_shadow_map_2d_array: texture_depth_2d_array;
+@group(3) @binding(4) var s_shadow_map_compare: sampler_comparison;
+
 {$ include 'shadow_pars' $}
 {$ include 'bsdf/phong' $}
 

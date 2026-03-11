@@ -314,7 +314,7 @@ impl PassNode for OpaquePassNode {
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {
-        // Build screen bind group (group 3): SSAO + transmission dummy + sampler
+        // Resolve transient views for Group 3, falling back to dummies.
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {
             Some(id) => ctx.views.get_texture_view(id),
             None => &self.screen_info.ssao_dummy_view,
@@ -322,11 +322,17 @@ impl PassNode for OpaquePassNode {
 
         let transmission_view = &self.screen_info.dummy_transmission_view;
 
+        let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {
+            Some(id) => ctx.views.get_texture_view(id),
+            None => &self.screen_info.dummy_shadow_view,
+        };
+
         let (bg, _) = self.screen_info.build_screen_bind_group(
             ctx.device,
             ctx.global_bind_group_cache,
             transmission_view,
             ssao_view,
+            shadow_view,
         );
         self.screen_bind_group = Some(bg);
     }

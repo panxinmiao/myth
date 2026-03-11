@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::renderer::core::gpu::Tracked;
+use std::collections::HashMap;
 
 use std::hash::{Hash, Hasher};
 
@@ -36,17 +36,17 @@ impl SamplerKey {
 
 impl PartialEq for SamplerKey {
     fn eq(&self, other: &Self) -> bool {
-        self.address_mode_u == other.address_mode_u &&
-        self.address_mode_v == other.address_mode_v &&
-        self.address_mode_w == other.address_mode_w &&
-        self.mag_filter == other.mag_filter &&
-        self.min_filter == other.min_filter &&
-        self.mipmap_filter == other.mipmap_filter &&
-        self.lod_min_clamp.to_bits() == other.lod_min_clamp.to_bits() &&
-        self.lod_max_clamp.to_bits() == other.lod_max_clamp.to_bits() &&
-        self.compare == other.compare &&
-        self.anisotropy_clamp == other.anisotropy_clamp &&
-        self.border_color == other.border_color
+        self.address_mode_u == other.address_mode_u
+            && self.address_mode_v == other.address_mode_v
+            && self.address_mode_w == other.address_mode_w
+            && self.mag_filter == other.mag_filter
+            && self.min_filter == other.min_filter
+            && self.mipmap_filter == other.mipmap_filter
+            && self.lod_min_clamp.to_bits() == other.lod_min_clamp.to_bits()
+            && self.lod_max_clamp.to_bits() == other.lod_max_clamp.to_bits()
+            && self.compare == other.compare
+            && self.anisotropy_clamp == other.anisotropy_clamp
+            && self.border_color == other.border_color
     }
 }
 impl Eq for SamplerKey {}
