@@ -1,10 +1,22 @@
 # Myth Engine Architecture: Building a Declarative, SSA-Based Render Graph
 
+Modern graphics APIs like WebGPU, Vulkan, and DirectX 12 give developers unprecedented control over GPU resources and synchronization.
+
+But that control comes at a cost.
+
+Once a renderer grows beyond a few passes, you quickly end up managing:
+
+* resource lifetimes
+* memory barriers
+* layout transitions
+* transient allocations
+* pass ordering constraints
+
+Without strong structure, a rendering pipeline can easily collapse into fragile state-management code.
+
+While developing **Myth Engine**, I became deeply aware of this. I refused to settle for "good enough" and accumulate technical debt in the foundational layer. Therefore, I repeatedly refactored this part, went through three rapid architectural pivots before arriving at the current design: a **strictly declarative, SSA-based render graph**.
+
 ## 1. The Road to SSA: Rapid Architectural Pivots
-
-Myth Engine is a young, fast-moving solo project. However, in the brief span of its development leading up to the initial open-source release, the render graph architecture underwent three rapid and ruthless pivots. I refused to settle for "good enough" and accumulate technical debt in the foundational layer.
-
-Here is why I quickly discarded traditional approaches in favor of a strict SSA compiler:
 
 ### Pivot 1: The Hardcoded Prototype
 
@@ -13,11 +25,11 @@ Like many engines, the earliest prototype used a linear, hardcoded sequence of `
 ### Pivot 2: The "Blackboard" Attempt (Manual Wiring)
 
 To decouple the passes, I quickly pivoted to a "Blackboard" driven Render Graph—a common pattern in many open-source engines. Passes communicated by reading and writing resources to a global string-keyed hash map.
-While this decoupled the code, it introduced severe architectural flaws caught during early profiling:
+While this decoupled the code, it introduced severe architectural flaws caught during developing:
 
 * **VRAM Wastage:** Resources allocated dynamically were often kept alive longer than necessary, missing out on transient memory reuse.
 * **Implicit Data Flows:** Because passes interacted via global blackboard keys, pass dependencies were hidden. It was impossible to statically analyze the true data flow or safely reorder passes.
-* **Validation Nightmares:** Tracking manual resource lifetimes and injecting explicit memory barriers led to constant WGPU Validation Errors during complex frame setups.
+* **Validation Nightmares:** Tracking manual resource lifetimes and manually adjusting Load/Store operations, as well as explicitly injecting explicit memory barriers led to constant WGPU Validation Errors during complex frame setups, it is even more difficult to track and debug rendering issues.
 
 ### Pivot 3: The SSA Declarative Rewrite (Current)
 
