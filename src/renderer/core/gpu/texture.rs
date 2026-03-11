@@ -10,7 +10,7 @@ use std::sync::atomic::Ordering;
 
 use crate::assets::server::SamplerHandle;
 use crate::assets::{AssetServer, TextureHandle};
-use crate::renderer::core::resources::generate_gpu_resource_id;
+use crate::renderer::core::gpu::generate_gpu_resource_id;
 use crate::resources::image::{Image, ImageInner};
 use crate::resources::texture::{SamplerSource, TextureSampler};
 

@@ -3,7 +3,7 @@
 use rustc_hash::FxHashMap;
 
 use super::{EnsureResult, ResourceManager};
-use crate::{renderer::core::resources::generate_gpu_resource_id, resources::buffer::BufferRef};
+use crate::{renderer::core::gpu::generate_gpu_resource_id, resources::buffer::BufferRef};
 
 pub struct GpuBuffer {
     pub id: u64,

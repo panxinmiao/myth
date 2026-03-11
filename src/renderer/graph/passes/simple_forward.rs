@@ -22,7 +22,7 @@
 //!
 //! [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
 
-use crate::renderer::core::resources::ScreenBindGroupInfo;
+use crate::renderer::core::gpu::ScreenBindGroupInfo;
 use crate::renderer::graph::core::{
     ExecuteContext, PassBuilder, PassNode, PrepareContext, RenderGraph, TextureDesc, TextureNodeId,
 };

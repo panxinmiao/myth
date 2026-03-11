@@ -11,7 +11,7 @@
 //! 3. **Lazy sub-view caching** — per-texture sub-views (mip slices, array
 //!    layers, depth-only aspects) are created on demand and cached for reuse.
 
-use crate::renderer::core::resources::Tracked;
+use crate::renderer::core::gpu::Tracked;
 use rustc_hash::FxHashMap;
 use wgpu::{Device, TextureView};
 

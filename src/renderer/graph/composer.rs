@@ -48,7 +48,7 @@ use rustc_hash::FxHashMap;
 use crate::assets::AssetServer;
 use crate::render::RenderState;
 use crate::renderer::core::binding::GlobalBindGroupCache;
-use crate::renderer::core::resources::{SamplerRegistry, Tracked};
+use crate::renderer::core::gpu::{SamplerRegistry, Tracked};
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::ExtractedScene;
 use crate::renderer::graph::core::{

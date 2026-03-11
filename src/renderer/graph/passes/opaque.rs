@@ -27,7 +27,7 @@
 //! - `needs_specular`: Whether to output a specular MRT attachment
 
 use crate::renderer::HDR_TEXTURE_FORMAT;
-use crate::renderer::core::resources::{ScreenBindGroupInfo, Tracked};
+use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::core::{
     ExecuteContext, PassBuilder, PassNode, PrepareContext, RenderGraph, TextureDesc, TextureNodeId,
 };

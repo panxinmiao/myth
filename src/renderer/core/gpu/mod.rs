@@ -39,12 +39,12 @@ use slotmap::SecondaryMap;
 
 use crate::assets::server::SamplerHandle;
 
-pub(crate) use crate::renderer::core::resources::buffer::GpuBuffer;
-pub(crate) use crate::renderer::core::resources::environment::GpuEnvironment;
-pub(crate) use crate::renderer::core::resources::environment::{BRDF_LUT_SIZE, CubeSourceType};
-pub(crate) use crate::renderer::core::resources::geometry::GpuGeometry;
-pub(crate) use crate::renderer::core::resources::material::GpuMaterial;
-pub(crate) use crate::renderer::core::resources::texture::{
+pub(crate) use crate::renderer::core::gpu::buffer::GpuBuffer;
+pub(crate) use crate::renderer::core::gpu::environment::GpuEnvironment;
+pub(crate) use crate::renderer::core::gpu::environment::{BRDF_LUT_SIZE, CubeSourceType};
+pub(crate) use crate::renderer::core::gpu::geometry::GpuGeometry;
+pub(crate) use crate::renderer::core::gpu::material::GpuMaterial;
+pub(crate) use crate::renderer::core::gpu::texture::{
     GpuImage, GpuSampler, TextureBinding, TextureViewKey,
 };
 use crate::renderer::pipeline::vertex::VertexLayoutSignature;
@@ -54,7 +54,7 @@ use crate::assets::{GeometryHandle, MaterialHandle, TextureHandle};
 use crate::resources::buffer::{CpuBuffer, GpuData};
 use crate::resources::texture::TextureSource;
 
-pub use crate::renderer::core::resources::mipmap::MipmapGenerator;
+pub use crate::renderer::core::gpu::mipmap::MipmapGenerator;
 pub use allocator::ModelBufferAllocator;
 pub use resource_ids::{
     BindGroupFingerprint, EnsureResult, ResourceId, ResourceIdSet, hash_layout_entries,

@@ -2023,6 +2023,16 @@ impl GltfViewer {
 
                         ui.separator();
 
+                        if ui.button("Dump Render Graph").clicked() {
+                            if let Some(graph_dump) = renderer.dump_graph_mermaid() {
+                                println!("Render Graph Dump:\n{}", graph_dump);
+                            } else {
+                                println!("Failed to dump render graph");
+                            }
+                        }
+
+                        ui.separator();
+
                         // ===== 信息显示 =====
                         ui.label(format!("FPS: {:.1}", self.current_fps));
                     });

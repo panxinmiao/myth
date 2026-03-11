@@ -29,7 +29,7 @@
 use crate::define_gpu_data_struct;
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
-use crate::renderer::core::resources::{CommonSampler, Tracked};
+use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::core::{
     ExecuteContext, ExtractContext, PassBuilder, PassNode, PrepareContext, RenderGraph, SubViewKey,
     TextureDesc, TextureNodeId,
