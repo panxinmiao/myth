@@ -84,6 +84,7 @@ impl OpaqueFeature {
         clear_color: wgpu::Color,
         needs_specular: bool,
         ssao_tex: Option<TextureNodeId>,
+        shadow_tex: Option<TextureNodeId>,
     ) -> OpaqueOutputs {
         let fc = *graph.frame_config();
         let is_msaa = fc.msaa_samples > 1;
@@ -179,6 +180,7 @@ impl OpaqueFeature {
             needs_specular,
             resolve_target,
             ssao_tex,
+            shadow_tex,
             specular_tex,
             specular_resolved,
             self.screen_info
@@ -227,7 +229,10 @@ pub struct OpaquePassNode {
     pub clear_color: wgpu::Color,
     pub needs_specular: bool,
     /// Explicit SSAO input (`None` when SSAO is disabled).
-    pub ssao_input: Option<TextureNodeId>, // ─── Screen Bind Group Infrastructure ──────────────────────────
+    pub ssao_input: Option<TextureNodeId>,
+    /// Explicit shadow map input (`None` when no shadow casters).
+    pub shadow_input: Option<TextureNodeId>,
+    // ─── Screen Bind Group Infrastructure ──────────────────────────
     screen_info: ScreenBindGroupInfo,
     // ─── Internal Cache ────────────────────────────────────────────
     screen_bind_group: Option<wgpu::BindGroup>,
@@ -244,6 +249,7 @@ impl OpaquePassNode {
         needs_specular: bool,
         resolve_target: Option<TextureNodeId>,
         ssao_input: Option<TextureNodeId>,
+        shadow_input: Option<TextureNodeId>,
         specular_tex: TextureNodeId,
         specular_resolve_target: Option<TextureNodeId>,
         screen_info: ScreenBindGroupInfo,
@@ -259,6 +265,7 @@ impl OpaquePassNode {
             clear_color,
             needs_specular,
             ssao_input,
+            shadow_input,
             screen_info,
             screen_bind_group: None,
         }
@@ -280,7 +287,6 @@ impl PassNode for OpaquePassNode {
 
         // Depth target.
         builder.declare_output(self.depth_target);
-        // builder.read_texture(self.depth_target);
 
         // Resolve target — declare write so the graph compiler allocates
         // physical memory and tracks dependencies for downstream consumers.
@@ -291,6 +297,11 @@ impl PassNode for OpaquePassNode {
         // SSAO — explicit input wiring.
         if let Some(ssao) = self.ssao_input {
             builder.read_texture(ssao);
+        }
+
+        // Shadow map — explicit DAG dependency on ShadowPass.
+        if let Some(shadow) = self.shadow_input {
+            builder.read_texture(shadow);
         }
 
         // Specular MRT (pre-registered in add_to_graph).

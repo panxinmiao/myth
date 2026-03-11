@@ -77,6 +77,7 @@ impl TransparentFeature {
         depth_target: TextureNodeId,
         transmission_tex: Option<TextureNodeId>,
         ssao_tex: Option<TextureNodeId>,
+        shadow_tex: Option<TextureNodeId>,
     ) -> TextureNodeId {
         let color_output = graph.create_alias(color_target, "Scene_Color_Transparent");
 
@@ -99,6 +100,7 @@ impl TransparentFeature {
             resolve_target,
             transmission_tex,
             ssao_tex,
+            shadow_tex,
             self.screen_info
                 .clone()
                 .expect("TransparentFeature: screen_info not set"),
@@ -134,6 +136,8 @@ pub struct TransparentPassNode {
     transmission_input: Option<TextureNodeId>,
     /// Optional SSAO texture input.
     ssao_input: Option<TextureNodeId>,
+    /// Optional shadow map input (DAG dependency on ShadowPass).
+    shadow_input: Option<TextureNodeId>,
     // ─── Screen Bind Group Infrastructure ──────────────────────────
     screen_info: ScreenBindGroupInfo,
     // ─── Internal Cache ────────────────────────────────────────────
@@ -149,6 +153,7 @@ impl TransparentPassNode {
         resolve_target: Option<TextureNodeId>,
         transmission_input: Option<TextureNodeId>,
         ssao_input: Option<TextureNodeId>,
+        shadow_input: Option<TextureNodeId>,
         screen_info: ScreenBindGroupInfo,
     ) -> Self {
         Self {
@@ -158,6 +163,7 @@ impl TransparentPassNode {
             resolve_target,
             transmission_input,
             ssao_input,
+            shadow_input,
             screen_info,
             screen_bind_group: None,
         }
@@ -189,6 +195,10 @@ impl PassNode for TransparentPassNode {
         }
         if let Some(ssao) = self.ssao_input {
             builder.read_texture(ssao);
+        }
+        // Shadow map — explicit DAG dependency on ShadowPass.
+        if let Some(shadow) = self.shadow_input {
+            builder.read_texture(shadow);
         }
     }
 

@@ -161,11 +161,7 @@ pub struct ResourceManager {
     /// Mapping from internal texture names to IDs, ensuring ID stability across frames
     pub(crate) internal_name_lookup: FxHashMap<String, u64>,
 
-    pub(crate) shadow_2d_texture: Option<wgpu::Texture>,
-    pub shadow_2d_array: Option<wgpu::TextureView>,
     pub(crate) shadow_2d_array_id: Option<u64>,
-    pub(crate) shadow_2d_capacity: u32,
-    pub(crate) shadow_map_size: u32,
     pub(crate) dummy_shadow_map: GpuImage,
     pub(crate) shadow_compare_sampler: GpuSampler,
 
@@ -593,11 +589,7 @@ impl ResourceManager {
             pending_ibl_source: None,
             internal_resources: FxHashMap::default(),
             internal_name_lookup: FxHashMap::default(),
-            shadow_2d_texture: None,
-            shadow_2d_array: None,
             shadow_2d_array_id: None,
-            shadow_2d_capacity: 0,
-            shadow_map_size: 1,
             screen_bind_group_layout,
             screen_sampler,
             ssao_dummy_view,
@@ -614,70 +606,38 @@ impl ResourceManager {
         self.frame_index
     }
 
-    pub fn ensure_shadow_maps(&mut self, required_2d_count: u32, required_map_size: u32) {
-        if required_2d_count == 0 {
-            return;
-        }
-
-        let mut target_capacity = self.shadow_2d_capacity.max(1);
-        while target_capacity < required_2d_count {
-            target_capacity = target_capacity.saturating_mul(2);
-        }
-
-        let target_size = required_map_size.max(1);
-        let need_recreate = self.shadow_2d_array.is_none()
-            || target_capacity > self.shadow_2d_capacity
-            || target_size > self.shadow_map_size;
-
-        if !need_recreate {
-            return;
-        }
-
-        let texture = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Shadow 2D Array"),
-            size: wgpu::Extent3d {
-                width: target_size,
-                height: target_size,
-                depth_or_array_layers: target_capacity,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-
-        let array_view = texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("Shadow 2D Array View"),
-            dimension: Some(wgpu::TextureViewDimension::D2Array),
-            ..Default::default()
-        });
-
+    /// Inject an RDG-allocated shadow array view into the global bind group system.
+    ///
+    /// Called after the render graph compiler has allocated the physical shadow
+    /// texture from the transient pool. Registers the D2-array view in
+    /// `internal_resources` so that the next `prepare_global()` call picks it
+    /// up via fingerprint mismatch and rebuilds the global bind group (Group 0)
+    /// with the correct shadow texture.
+    ///
+    /// Must be followed by a `prepare_global()` call to actually rebuild the
+    /// bind group, and then by re-fetching `get_global_state()` to update
+    /// the cached bind group reference in `RenderLists`.
+    pub fn inject_rdg_shadow_view(&mut self, shadow_array_view: wgpu::TextureView) {
         if let Some(old_id) = self.shadow_2d_array_id {
             self.internal_resources.remove(&old_id);
         }
 
-        self.shadow_2d_texture = Some(texture);
-        self.shadow_2d_array = Some(array_view);
         let view_id = generate_gpu_resource_id();
-        if let Some(view) = &self.shadow_2d_array {
-            self.internal_resources.insert(view_id, view.clone());
-        }
+        self.internal_resources
+            .insert(view_id, shadow_array_view);
         self.shadow_2d_array_id = Some(view_id);
-        self.shadow_2d_capacity = target_capacity;
-        self.shadow_map_size = target_size;
     }
 
-    pub fn create_shadow_2d_layer_view(&self, layer_index: u32) -> Option<wgpu::TextureView> {
-        let texture = self.shadow_2d_texture.as_ref()?;
-        Some(texture.create_view(&wgpu::TextureViewDescriptor {
-            label: Some("Shadow Layer View"),
-            dimension: Some(wgpu::TextureViewDimension::D2),
-            base_array_layer: layer_index,
-            array_layer_count: Some(1),
-            ..Default::default()
-        }))
+    /// Reset shadow texture state to the dummy fallback.
+    ///
+    /// Called when the current frame has no shadow-casting lights, ensuring
+    /// that the global bind group references the harmless 1×1 dummy texture
+    /// rather than a stale view from a previous frame's transient pool.
+    pub fn clear_rdg_shadow_view(&mut self) {
+        if let Some(old_id) = self.shadow_2d_array_id {
+            self.internal_resources.remove(&old_id);
+        }
+        self.shadow_2d_array_id = None;
     }
 
     // Ensure Model Buffer capacity and synchronize GPU resources
