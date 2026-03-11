@@ -17,6 +17,22 @@ pub trait Interpolatable: Clone + Sized {
         t: f32,
         dt: f32,
     ) -> Self;
+
+    fn interpolate_linear_into(start: &Self, end: &Self, t: f32, out: &mut Self) {
+        *out = Self::interpolate_linear(start, end, t);
+    }
+
+    fn interpolate_cubic_into(
+        v0: &Self,
+        out_tangent0: &Self,
+        in_tangent1: &Self,
+        v1: &Self,
+        t: f32,
+        dt: f32,
+        out: &mut Self,
+    ) {
+        *out = Self::interpolate_cubic(v0, out_tangent0, in_tangent1, v1, t, dt);
+    }
 }
 
 /// Container for morph target blend weights.
@@ -43,9 +59,14 @@ impl MorphWeightData {
     ///
     /// The number of weights written is `min(start.len, end.len, out_buffer.len)`.
     pub fn interpolate_linear_into(start: &Self, end: &Self, t: f32, out_buffer: &mut [f32]) {
-        let len = start.weights.len().min(end.weights.len()).min(out_buffer.len());
-        for i in 0..len {
-            out_buffer[i] = start.weights[i] + (end.weights[i] - start.weights[i]) * t;
+        let len = start
+            .weights
+            .len()
+            .min(end.weights.len())
+            .min(out_buffer.len());
+        // for i in 0..len {
+        for (i, item) in out_buffer.iter_mut().enumerate().take(len) {
+            *item = start.weights[i] + (end.weights[i] - start.weights[i]) * t;
         }
     }
 
@@ -68,10 +89,10 @@ impl MorphWeightData {
         let s1 = s3 - t2 + t;
 
         let len = v0.weights.len().min(v1.weights.len()).min(out_buffer.len());
-        for i in 0..len {
+        for (i, item) in out_buffer.iter_mut().enumerate().take(len) {
             let m0 = out_tangent0.weights[i] * dt;
             let m1 = in_tangent1.weights[i] * dt;
-            out_buffer[i] = s0 * v0.weights[i] + s1 * m0 + s2 * v1.weights[i] + s3 * m1;
+            *item = s0 * v0.weights[i] + s1 * m0 + s2 * v1.weights[i] + s3 * m1;
         }
     }
 }
@@ -81,8 +102,16 @@ impl Interpolatable for MorphWeightData {
         let len = start.weights.len().max(end.weights.len());
         let mut result = MorphWeightData::allocate(len);
         for i in 0..len {
-            let s = if i < start.weights.len() { start.weights[i] } else { 0.0 };
-            let e = if i < end.weights.len() { end.weights[i] } else { 0.0 };
+            let s = if i < start.weights.len() {
+                start.weights[i]
+            } else {
+                0.0
+            };
+            let e = if i < end.weights.len() {
+                end.weights[i]
+            } else {
+                0.0
+            };
             result.weights[i] = s + (e - s) * t;
         }
         result
@@ -112,6 +141,44 @@ impl Interpolatable for MorphWeightData {
             result.weights[i] = s0 * v0.weights[i] + s1 * m0 + s2 * v1.weights[i] + s3 * m1;
         }
         result
+    }
+
+    fn interpolate_linear_into(start: &Self, end: &Self, t: f32, out: &mut Self) {
+        let len = start.weights.len().min(end.weights.len());
+        if out.weights.len() < len {
+            out.weights.resize(len, 0.0);
+        }
+        for i in 0..len {
+            out.weights[i] = start.weights[i] + (end.weights[i] - start.weights[i]) * t;
+        }
+    }
+
+    fn interpolate_cubic_into(
+        v0: &Self,
+        out_tangent0: &Self,
+        in_tangent1: &Self,
+        v1: &Self,
+        t: f32,
+        dt: f32,
+        out: &mut Self,
+    ) {
+        let len = v0.weights.len().min(v1.weights.len());
+        if out.weights.len() < len {
+            out.weights.resize(len, 0.0);
+        }
+
+        let t2 = t * t;
+        let t3 = t2 * t;
+        let s2 = -2.0 * t3 + 3.0 * t2;
+        let s3 = t3 - t2;
+        let s0 = 1.0 - s2;
+        let s1 = s3 - t2 + t;
+
+        for i in 0..len {
+            let m0 = out_tangent0.weights[i] * dt;
+            let m1 = in_tangent1.weights[i] * dt;
+            out.weights[i] = s0 * v0.weights[i] + s1 * m0 + s2 * v1.weights[i] + s3 * m1;
+        }
     }
 }
 

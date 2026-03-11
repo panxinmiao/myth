@@ -626,7 +626,7 @@ impl Scene {
             }
 
             if let Some(node) = self.get_node_mut(handle) {
-                node.transform = p_node.transform.clone();
+                node.transform = p_node.transform;
             }
 
             if let Some(mesh) = &p_node.mesh {

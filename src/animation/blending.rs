@@ -25,10 +25,22 @@ use crate::scene::NodeHandle;
 /// Per-property blend entry storing the accumulated value and total weight.
 #[derive(Clone)]
 pub(crate) enum BlendEntry {
-    Translation { value: Vec3, weight: f32 },
-    Rotation { value: Quat, weight: f32 },
-    Scale { value: Vec3, weight: f32 },
-    MorphWeights { weights: Vec<f32>, total_weight: f32 },
+    Translation {
+        value: Vec3,
+        weight: f32,
+    },
+    Rotation {
+        value: Quat,
+        weight: f32,
+    },
+    Scale {
+        value: Vec3,
+        weight: f32,
+    },
+    MorphWeights {
+        weights: Vec<f32>,
+        total_weight: f32,
+    },
 }
 
 /// Blend state for the current frame, mapping each (node, property) pair
@@ -88,19 +100,12 @@ impl FrameBlendState {
                 let new_total = *w + weight;
                 let mix = weight / new_total;
                 // Sign correction: ensure shortest path
-                let corrected = if acc.dot(value) < 0.0 {
-                    -value
-                } else {
-                    value
-                };
+                let corrected = if acc.dot(value) < 0.0 { -value } else { value };
                 *acc = acc.lerp(corrected, mix).normalize();
                 *w = new_total;
             }
             _ => {
-                props.insert(
-                    TargetPath::Rotation,
-                    BlendEntry::Rotation { value, weight },
-                );
+                props.insert(TargetPath::Rotation, BlendEntry::Rotation { value, weight });
             }
         }
     }
@@ -141,8 +146,8 @@ impl FrameBlendState {
                 let mix = weight / new_total;
                 let len = acc.len().max(data.weights.len());
                 acc.resize(len, 0.0);
-                for i in 0..data.weights.len() {
-                    acc[i] = acc[i] * (1.0 - mix) + data.weights[i] * mix;
+                for (i, item) in acc.iter_mut().enumerate().take(data.weights.len()) {
+                    *item = *item * (1.0 - mix) + data.weights[i] * mix;
                 }
                 *w = new_total;
             }
@@ -159,7 +164,9 @@ impl FrameBlendState {
     }
 
     /// Returns an iterator over all nodes that have accumulated blend data.
-    pub fn iter_nodes(&self) -> impl Iterator<Item = (&NodeHandle, &FxHashMap<TargetPath, BlendEntry>)> {
+    pub fn iter_nodes(
+        &self,
+    ) -> impl Iterator<Item = (&NodeHandle, &FxHashMap<TargetPath, BlendEntry>)> {
         self.entries.iter()
     }
 }

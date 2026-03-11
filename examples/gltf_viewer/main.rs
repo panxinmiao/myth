@@ -1462,40 +1462,6 @@ impl GltfViewer {
                                 if self.animations.is_empty() {
                                     ui.label("No animations available");
                                 } else {
-                                    // 动画选择
-                                    let anim_name = self
-                                        .animations
-                                        .get(self.current_animation)
-                                        .cloned()
-                                        .unwrap_or_else(|| "Select Animation".to_string());
-
-                                    ui.horizontal(|ui| {
-                                        ui.label("Clip:");
-                                        egui::ComboBox::from_id_salt("animation_selector")
-                                            .width(150.0)
-                                            .selected_text(&anim_name)
-                                            .show_ui(ui, |ui| {
-                                                for (i, clip) in self.animations.iter().enumerate()
-                                                {
-                                                    if ui
-                                                        .selectable_value(
-                                                            &mut self.current_animation,
-                                                            i,
-                                                            clip,
-                                                        )
-                                                        .changed()
-                                                        && let Some(gltf_node) = self.gltf_node
-                                                        && let Some(mixer) = scene
-                                                            .animation_mixers
-                                                            .get_mut(gltf_node)
-                                                    {
-                                                        mixer.stop_all();
-                                                        mixer.play(clip);
-                                                    }
-                                                }
-                                            });
-                                    });
-
                                     // 播放控制
                                     ui.horizontal(|ui| {
                                         if ui
@@ -1511,21 +1477,10 @@ impl GltfViewer {
                                                 && let Some(mixer) =
                                                     scene.animation_mixers.get_mut(gltf_node)
                                             {
-                                                if self.is_playing {
-                                                    if let Some(anim) =
-                                                        self.animations.get(self.current_animation)
-                                                    {
-                                                        mixer.play(anim);
-                                                    }
-                                                } else {
-                                                    mixer.stop_all();
-                                                }
+                                                mixer.enabled = self.is_playing;
                                             }
                                         }
-                                    });
 
-                                    // 播放速度
-                                    ui.horizontal(|ui| {
                                         ui.label("Speed:");
                                         ui.add(
                                             egui::Slider::new(&mut self.playback_speed, 0.0..=2.0)
@@ -1533,6 +1488,58 @@ impl GltfViewer {
                                                 .suffix("x"),
                                         );
                                     });
+
+                                    ui.separator();
+
+                                    if let Some(gltf_node) = self.gltf_node {
+                                        if let Some(mixer) =
+                                            scene.animation_mixers.get_mut(gltf_node)
+                                        {
+                                            // checkbox for each animation clip
+                                            for anim in &self.animations {
+                                                // if let Some(action) = mixer.get_control_by_name(anim) {
+                                                ui.horizontal(|ui| {
+                                                    if let Some(action) =
+                                                        mixer.get_control_by_name(anim)
+                                                    {
+                                                        let is_active = action.is_active();
+                                                        let mut current_active = is_active;
+
+                                                        ui.checkbox(&mut current_active, "");
+
+                                                        let name = if anim.len() > 20 {
+                                                            format!(
+                                                                "{}... ({:.2}s)",
+                                                                &anim[..20],
+                                                                action.time
+                                                            )
+                                                        } else {
+                                                            format!(
+                                                                "{} ({:.2}s)",
+                                                                anim, action.time
+                                                            )
+                                                        };
+
+                                                        if ui
+                                                            .selectable_label(current_active, name)
+                                                            .clicked()
+                                                        {
+                                                            mixer.stop_all();
+                                                            current_active = !current_active;
+                                                        }
+
+                                                        if current_active != is_active {
+                                                            if current_active {
+                                                                mixer.play(anim);
+                                                            } else {
+                                                                mixer.stop(anim);
+                                                            }
+                                                        }
+                                                    }
+                                                });
+                                            }
+                                        }
+                                    }
                                 }
                             });
 

@@ -56,6 +56,11 @@ pub struct AnimationMixer {
     /// Node handles that were animated in the previous frame.
     /// Used for rest-pose restoration when animation influence is lost.
     animated_last_frame: FxHashSet<NodeHandle>,
+
+    // Temporary buffer for blended morph weights during application phase.
+    morph_buffer: crate::animation::values::MorphWeightData,
+
+    pub enabled: bool,
 }
 
 impl Default for AnimationMixer {
@@ -80,6 +85,8 @@ impl AnimationMixer {
             blend_state: FrameBlendState::new(),
             fired_events: Vec::new(),
             animated_last_frame: FxHashSet::default(),
+            morph_buffer: crate::animation::values::MorphWeightData::default(),
+            enabled: true,
         }
     }
 
@@ -154,6 +161,11 @@ impl AnimationMixer {
         }
     }
 
+    pub fn get_control_by_name(&mut self, name: &str) -> Option<ActionControl<'_>> {
+        let handle = *self.name_map.get(name)?;
+        self.get_control(handle)
+    }
+
     /// Plays the named animation, adding it to the active set.
     pub fn play(&mut self, name: &str) {
         if let Some(&handle) = self.name_map.get(name) {
@@ -174,8 +186,7 @@ impl AnimationMixer {
     pub fn stop(&mut self, name: &str) {
         if let Some(&handle) = self.name_map.get(name) {
             if let Some(action) = self.actions.get_mut(handle) {
-                action.enabled = false;
-                action.weight = 0.0;
+                action.stop();
             }
             self.active_handles.retain(|&h| h != handle);
         }
@@ -185,8 +196,7 @@ impl AnimationMixer {
     pub fn stop_all(&mut self) {
         for handle in &self.active_handles {
             if let Some(action) = self.actions.get_mut(*handle) {
-                action.enabled = false;
-                action.weight = 0.0;
+                action.stop();
             }
         }
         self.active_handles.clear();
@@ -217,12 +227,27 @@ impl AnimationMixer {
     /// 4. **Restoration**: Nodes that were animated last frame but received no
     ///    contributions this frame are reset to their rest pose.
     pub fn update(&mut self, dt: f32, scene: &mut Scene) {
+        if !self.enabled {
+            return;
+        }
+
+        // phase 0: Restore all nodes that were animated in the previous frame to their rest pose.
+        for &prev_handle in &self.animated_last_frame {
+            if let Some(rest) = scene.rest_transforms.get(prev_handle).copied()
+                && let Some(node) = scene.get_node_mut(prev_handle)
+            {
+                node.transform = rest;
+            }
+        }
+
         let dt = dt * self.time_scale;
         self.time += dt;
 
         // Clear per-frame state
         self.blend_state.clear();
         self.fired_events.clear();
+
+        self.animated_last_frame.clear();
 
         // Phase 1: Advance time and collect events
         for &handle in &self.active_handles {
@@ -263,7 +288,8 @@ impl AnimationMixer {
                 match (&track.data, tb.target) {
                     (TrackData::Vector3(t), TargetPath::Translation) => {
                         let val = t.sample_with_cursor(time, cursor);
-                        self.blend_state.accumulate_translation(node_handle, val, weight);
+                        self.blend_state
+                            .accumulate_translation(node_handle, val, weight);
                     }
                     (TrackData::Vector3(t), TargetPath::Scale) => {
                         let val = t.sample_with_cursor(time, cursor);
@@ -271,12 +297,16 @@ impl AnimationMixer {
                     }
                     (TrackData::Quaternion(t), TargetPath::Rotation) => {
                         let val = t.sample_with_cursor(time, cursor);
-                        self.blend_state.accumulate_rotation(node_handle, val, weight);
+                        self.blend_state
+                            .accumulate_rotation(node_handle, val, weight);
                     }
                     (TrackData::MorphWeights(t), TargetPath::Weights) => {
-                        let val = t.sample_with_cursor(time, cursor);
-                        self.blend_state
-                            .accumulate_morph_weights(node_handle, &val, weight);
+                        t.sample_with_cursor_into(time, cursor, &mut self.morph_buffer);
+                        self.blend_state.accumulate_morph_weights(
+                            node_handle,
+                            &self.morph_buffer,
+                            weight,
+                        );
                     }
                     _ => {}
                 }
@@ -284,18 +314,16 @@ impl AnimationMixer {
         }
 
         // Phase 3: Apply blended results to scene nodes using rest pose as base
-        let mut animated_this_frame = FxHashSet::default();
+        // let mut animated_this_frame = FxHashSet::default();
 
         for (&node_handle, props) in self.blend_state.iter_nodes() {
-            animated_this_frame.insert(node_handle);
+            self.animated_last_frame.insert(node_handle);
 
             let rest_transform = scene
                 .rest_transforms
                 .get(node_handle)
-                .cloned()
+                .copied()
                 .unwrap_or_default();
-
-            let mut transform_dirty = false;
 
             for (target, entry) in props {
                 match (target, entry) {
@@ -307,7 +335,7 @@ impl AnimationMixer {
                             } else {
                                 node.transform.position = *value;
                             }
-                            transform_dirty = true;
+                            node.transform.mark_dirty();
                         }
                     }
                     (TargetPath::Rotation, BlendEntry::Rotation { value, weight }) => {
@@ -323,18 +351,17 @@ impl AnimationMixer {
                             } else {
                                 node.transform.rotation = *value;
                             }
-                            transform_dirty = true;
+                            node.transform.mark_dirty();
                         }
                     }
                     (TargetPath::Scale, BlendEntry::Scale { value, weight }) => {
                         if let Some(node) = scene.get_node_mut(node_handle) {
                             if *weight < 1.0 {
-                                node.transform.scale =
-                                    rest_transform.scale.lerp(*value, *weight);
+                                node.transform.scale = rest_transform.scale.lerp(*value, *weight);
                             } else {
                                 node.transform.scale = *value;
                             }
-                            transform_dirty = true;
+                            node.transform.mark_dirty();
                         }
                     }
                     (
@@ -349,27 +376,7 @@ impl AnimationMixer {
                     _ => {}
                 }
             }
-
-            if transform_dirty {
-                if let Some(node) = scene.get_node_mut(node_handle) {
-                    node.transform.mark_dirty();
-                }
-            }
         }
-
-        // Phase 4: Restore rest pose for nodes that lost all animation influence
-        for &prev_handle in &self.animated_last_frame {
-            if !animated_this_frame.contains(&prev_handle) {
-                if let Some(rest) = scene.rest_transforms.get(prev_handle).cloned() {
-                    if let Some(node) = scene.get_node_mut(prev_handle) {
-                        node.transform = rest;
-                        node.transform.mark_dirty();
-                    }
-                }
-            }
-        }
-
-        self.animated_last_frame = animated_this_frame;
     }
 }
 
@@ -384,7 +391,7 @@ fn apply_morph_weights(scene: &mut Scene, node: NodeHandle, weights: &[f32], tot
         target[..weights.len()].copy_from_slice(weights);
     } else {
         for (dst, &src) in target.iter_mut().zip(weights.iter()) {
-            *dst = *dst * (1.0 - total_weight) + src * total_weight;
+            *dst = src * total_weight;
         }
     }
 }
@@ -467,12 +474,14 @@ impl ActionControl<'_> {
     }
 
     /// Stops playback and removes the action from the active set.
-    pub fn stop(self) {
+    #[must_use]
+    pub fn stop(self) -> Self {
         if let Some(action) = self.mixer.actions.get_mut(self.handle) {
             action.enabled = false;
             action.weight = 0.0;
         }
         self.mixer.active_handles.retain(|&h| h != self.handle);
+        self
     }
 
     /// Starts playback with a fade-in effect over the given duration.
