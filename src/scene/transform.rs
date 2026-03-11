@@ -29,7 +29,7 @@ use glam::{Affine3A, EulerRot, Mat3, Mat4, Quat, Vec3};
 /// transform.rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
 /// transform.scale = Vec3::splat(2.0);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub struct Transform {
     /// Local position relative to parent
     pub position: Vec3,
@@ -172,6 +172,7 @@ impl Transform {
         self.rotation = Quat::from_mat3(&rot_mat);
     }
 
+    #[inline]
     pub fn mark_dirty(&mut self) {
         self.force_update = true;
     }
