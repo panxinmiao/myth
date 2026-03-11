@@ -543,7 +543,7 @@ impl RenderGraph {
         use std::fmt::Write;
         let mut out = String::new();
 
-        writeln!(&mut out, "```mermaid").unwrap();
+        // writeln!(&mut out, "```mermaid").unwrap();
 
         writeln!(&mut out, "flowchart").unwrap();
 
@@ -623,7 +623,7 @@ impl RenderGraph {
             }
         }
 
-        writeln!(&mut out, "```").unwrap();
+        // writeln!(&mut out, "```").unwrap();
 
         // println!("\n🌈 RDG Topology Mermaid Dump:\n{out}");
         log::info!("\n🌈 RDG Topology Mermaid Dump:\n{out}");

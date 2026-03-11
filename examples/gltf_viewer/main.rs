@@ -2032,7 +2032,16 @@ impl GltfViewer {
 
                         if ui.button("Dump Render Graph").clicked() {
                             if let Some(graph_dump) = renderer.dump_graph_mermaid() {
-                                println!("Render Graph Dump:\n{}", graph_dump);
+
+                                #[cfg(target_arch = "wasm32")]
+                                {
+                                    showRenderGraph(&graph_dump);
+                                }
+
+                                #[cfg(not(target_arch = "wasm32"))]
+                                {
+                                    println!("Render Graph:\n{}", graph_dump);
+                                }
                             } else {
                                 println!("Failed to dump render graph");
                             }
@@ -2800,6 +2809,15 @@ fn main() -> myth::Result<()> {
 // ============================================================================
 // WASM Entry Point
 // ============================================================================
+
+
+// 绑定全局 window 对象上的 JS 方法
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen]
+extern "C" {
+    #[wasm_bindgen(js_namespace = window)]
+    fn showRenderGraph(graph: &str);
+}
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(start)]
