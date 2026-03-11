@@ -2058,7 +2058,6 @@ impl GltfViewer {
             .default_height(500.0)
             .vscroll(false)
             .show(ctx, |ui| {
-                // 使用 columns(2) 将窗口分为左右两栏，它们会自动填充窗口宽度
                 ui.columns(2, |columns| {
                     columns[0].push_id("inspector_tree", |ui| {
                         let available_height = ui.available_height();
