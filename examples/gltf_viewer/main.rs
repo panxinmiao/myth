@@ -2032,7 +2032,6 @@ impl GltfViewer {
 
                         if ui.button("Dump Render Graph").clicked() {
                             if let Some(graph_dump) = renderer.dump_graph_mermaid() {
-
                                 #[cfg(target_arch = "wasm32")]
                                 {
                                     showRenderGraph(&graph_dump);
@@ -2809,7 +2808,6 @@ fn main() -> myth::Result<()> {
 // ============================================================================
 // WASM Entry Point
 // ============================================================================
-
 
 // 绑定全局 window 对象上的 JS 方法
 #[cfg(target_arch = "wasm32")]

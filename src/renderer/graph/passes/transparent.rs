@@ -213,11 +213,17 @@ impl PassNode for TransparentPassNode {
             None => &self.screen_info.dummy_transmission_view,
         };
 
+        let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {
+            Some(id) => ctx.views.get_texture_view(id),
+            None => &self.screen_info.dummy_shadow_view,
+        };
+
         let (bg, _) = self.screen_info.build_screen_bind_group(
             ctx.device,
             ctx.global_bind_group_cache,
             transmission_view,
             ssao_view,
+            shadow_view,
         );
         self.screen_bind_group = Some(bg);
     }

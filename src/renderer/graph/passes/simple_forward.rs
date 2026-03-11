@@ -22,7 +22,7 @@
 //!
 //! [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
 
-use crate::renderer::core::gpu::ScreenBindGroupInfo;
+use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::core::{
     ExecuteContext, PassBuilder, PassNode, PrepareContext, RenderGraph, TextureDesc, TextureNodeId,
 };
@@ -177,13 +177,18 @@ impl PassNode for SimpleForwardPassNode {
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {
-        // Build screen bind group (group 3) with dummy textures (LDR path
-        // has no SSAO or transmission).
+        // LDR path has no SSAO or transmission; shadow may be active.
+        let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {
+            Some(id) => ctx.views.get_texture_view(id),
+            None => &self.screen_info.dummy_shadow_view,
+        };
+
         let (bg, _) = self.screen_info.build_screen_bind_group(
             ctx.device,
             ctx.global_bind_group_cache,
             &self.screen_info.dummy_transmission_view.clone(),
             &self.screen_info.ssao_dummy_view.clone(),
+            shadow_view,
         );
         self.screen_bind_group = Some(bg);
     }
