@@ -1,12 +1,12 @@
-use rustc_hash::FxHashMap;
+use rustc_hash::{FxHashMap, FxHashSet};
 use slotmap::{SlotMap, new_key_type};
 
 use crate::animation::action::AnimationAction;
-use crate::animation::binding::TargetPath;
+use crate::animation::binding::{Rig, TargetPath};
 use crate::animation::blending::{BlendEntry, FrameBlendState};
 use crate::animation::clip::TrackData;
 use crate::animation::events::{self, FiredEvent};
-use crate::scene::Scene;
+use crate::scene::{NodeHandle, Scene};
 
 new_key_type! {
     pub struct ActionHandle;
@@ -18,12 +18,19 @@ new_key_type! {
 /// sampled animation data into per-node blend buffers, and applies the
 /// final blended result to scene nodes once per frame.
 ///
+/// # Rest Pose & State Restoration
+///
+/// The mixer tracks which nodes were animated in the previous frame. When
+/// a node loses all animation influence (e.g. an action is stopped), it is
+/// automatically restored to its rest pose recorded in
+/// [`Scene::rest_transforms`](crate::scene::Scene::rest_transforms).
+///
 /// # Blending
 ///
 /// When multiple actions are active simultaneously, their contributions
 /// are combined using weight-based accumulation (see [`FrameBlendState`]).
 /// If the total accumulated weight for a property is less than 1.0, the
-/// original (rest pose) value fills the remainder.
+/// rest pose value fills the remainder.
 ///
 /// # Events
 ///
@@ -34,6 +41,9 @@ pub struct AnimationMixer {
     name_map: FxHashMap<String, ActionHandle>,
     active_handles: Vec<ActionHandle>,
 
+    /// Logical skeleton for this entity, providing O(1) bone-index → node-handle lookup.
+    rig: Rig,
+
     /// Global mixer time in seconds.
     pub time: f32,
     /// Global time scale multiplier applied to all actions.
@@ -43,6 +53,9 @@ pub struct AnimationMixer {
     blend_state: FrameBlendState,
     /// Events fired during the most recent update.
     fired_events: Vec<FiredEvent>,
+    /// Node handles that were animated in the previous frame.
+    /// Used for rest-pose restoration when animation influence is lost.
+    animated_last_frame: FxHashSet<NodeHandle>,
 }
 
 impl Default for AnimationMixer {
@@ -58,11 +71,27 @@ impl AnimationMixer {
             actions: SlotMap::with_key(),
             name_map: FxHashMap::default(),
             active_handles: Vec::new(),
+            rig: Rig {
+                bones: Vec::new(),
+                bone_paths: Vec::new(),
+            },
             time: 0.0,
             time_scale: 1.0,
             blend_state: FrameBlendState::new(),
             fired_events: Vec::new(),
+            animated_last_frame: FxHashSet::default(),
         }
+    }
+
+    /// Sets the logical skeleton used for bone-index → node-handle lookup.
+    pub fn set_rig(&mut self, rig: Rig) {
+        self.rig = rig;
+    }
+
+    /// Returns a read-only reference to the mixer's rig.
+    #[must_use]
+    pub fn rig(&self) -> &Rig {
+        &self.rig
     }
 
     /// Returns a list of all registered animation clip names.
@@ -176,15 +205,17 @@ impl AnimationMixer {
 
     /// Advances all active actions and applies blended results to the scene.
     ///
-    /// This is the core per-frame entry point. The update proceeds in three phases:
+    /// This is the core per-frame entry point. The update proceeds in four phases:
     ///
     /// 1. **Time advancement**: Each active action's time is advanced. Animation
     ///    events that fall within the `[t_prev, t_curr]` window are collected.
     /// 2. **Sampling & accumulation**: Active actions sample their tracks and
-    ///    accumulate weighted results into the blend buffer.
-    /// 3. **Application**: Blended values are written to scene nodes. For transform
-    ///    properties (translation, rotation, scale), `mark_dirty()` is called
-    ///    exactly once per affected node regardless of how many properties changed.
+    ///    accumulate weighted results into the blend buffer. Track-to-node
+    ///    mapping uses [`ClipBinding`] + [`Rig`] for O(1) lookup.
+    /// 3. **Application**: Blended values are mixed with the rest pose and
+    ///    written to scene nodes.
+    /// 4. **Restoration**: Nodes that were animated last frame but received no
+    ///    contributions this frame are reset to their rest pose.
     pub fn update(&mut self, dt: f32, scene: &mut Scene) {
         let dt = dt * self.time_scale;
         self.time += dt;
@@ -200,7 +231,6 @@ impl AnimationMixer {
                 action.update(dt);
                 let t_curr = action.time;
 
-                // Collect animation events
                 let clip = action.clip();
                 events::collect_events(
                     &clip.events,
@@ -213,7 +243,7 @@ impl AnimationMixer {
             }
         }
 
-        // Phase 2: Sample tracks and accumulate into blend buffer
+        // Phase 2: Sample tracks and accumulate into blend buffer (O(1) per track)
         for &handle in &self.active_handles {
             let action = match self.actions.get_mut(handle) {
                 Some(a) if a.enabled && !a.paused && a.weight > 0.0 => a,
@@ -223,44 +253,48 @@ impl AnimationMixer {
             let clip = action.clip().clone();
             let weight = action.weight;
             let time = action.time;
-            let bindings = &action.bindings;
             let cursors = &mut action.track_cursors;
 
-            for binding in bindings {
-                let track_index = binding.track_index;
-                let track = &clip.tracks[track_index];
-                let cursor = &mut cursors[track_index];
-                let node = binding.node_handle;
+            for tb in &action.clip_binding.bindings {
+                let track = &clip.tracks[tb.track_index];
+                let cursor = &mut cursors[tb.track_index];
+                let node_handle = self.rig.bones[tb.bone_index];
 
-                match (&track.data, binding.target) {
+                match (&track.data, tb.target) {
                     (TrackData::Vector3(t), TargetPath::Translation) => {
                         let val = t.sample_with_cursor(time, cursor);
-                        self.blend_state.accumulate_translation(node, val, weight);
+                        self.blend_state.accumulate_translation(node_handle, val, weight);
                     }
                     (TrackData::Vector3(t), TargetPath::Scale) => {
                         let val = t.sample_with_cursor(time, cursor);
-                        self.blend_state.accumulate_scale(node, val, weight);
+                        self.blend_state.accumulate_scale(node_handle, val, weight);
                     }
                     (TrackData::Quaternion(t), TargetPath::Rotation) => {
                         let val = t.sample_with_cursor(time, cursor);
-                        self.blend_state.accumulate_rotation(node, val, weight);
+                        self.blend_state.accumulate_rotation(node_handle, val, weight);
                     }
                     (TrackData::MorphWeights(t), TargetPath::Weights) => {
                         let val = t.sample_with_cursor(time, cursor);
                         self.blend_state
-                            .accumulate_morph_weights(node, &val, weight);
+                            .accumulate_morph_weights(node_handle, &val, weight);
                     }
                     _ => {}
                 }
             }
         }
 
-        // Phase 3: Apply blended results to scene nodes
-        if self.blend_state.is_empty() {
-            return;
-        }
+        // Phase 3: Apply blended results to scene nodes using rest pose as base
+        let mut animated_this_frame = FxHashSet::default();
 
         for (&node_handle, props) in self.blend_state.iter_nodes() {
+            animated_this_frame.insert(node_handle);
+
+            let rest_transform = scene
+                .rest_transforms
+                .get(node_handle)
+                .cloned()
+                .unwrap_or_default();
+
             let mut transform_dirty = false;
 
             for (target, entry) in props {
@@ -268,8 +302,8 @@ impl AnimationMixer {
                     (TargetPath::Translation, BlendEntry::Translation { value, weight }) => {
                         if let Some(node) = scene.get_node_mut(node_handle) {
                             if *weight < 1.0 {
-                                let rest = node.transform.position;
-                                node.transform.position = rest.lerp(*value, *weight);
+                                node.transform.position =
+                                    rest_transform.position.lerp(*value, *weight);
                             } else {
                                 node.transform.position = *value;
                             }
@@ -279,14 +313,13 @@ impl AnimationMixer {
                     (TargetPath::Rotation, BlendEntry::Rotation { value, weight }) => {
                         if let Some(node) = scene.get_node_mut(node_handle) {
                             if *weight < 1.0 {
-                                let rest = node.transform.rotation;
-                                let corrected = if rest.dot(*value) < 0.0 {
+                                let corrected = if rest_transform.rotation.dot(*value) < 0.0 {
                                     -*value
                                 } else {
                                     *value
                                 };
                                 node.transform.rotation =
-                                    rest.lerp(corrected, *weight).normalize();
+                                    rest_transform.rotation.lerp(corrected, *weight).normalize();
                             } else {
                                 node.transform.rotation = *value;
                             }
@@ -296,8 +329,8 @@ impl AnimationMixer {
                     (TargetPath::Scale, BlendEntry::Scale { value, weight }) => {
                         if let Some(node) = scene.get_node_mut(node_handle) {
                             if *weight < 1.0 {
-                                let rest = node.transform.scale;
-                                node.transform.scale = rest.lerp(*value, *weight);
+                                node.transform.scale =
+                                    rest_transform.scale.lerp(*value, *weight);
                             } else {
                                 node.transform.scale = *value;
                             }
@@ -317,19 +350,32 @@ impl AnimationMixer {
                 }
             }
 
-            // Single mark_dirty per node, regardless of how many properties changed
             if transform_dirty {
                 if let Some(node) = scene.get_node_mut(node_handle) {
                     node.transform.mark_dirty();
                 }
             }
         }
+
+        // Phase 4: Restore rest pose for nodes that lost all animation influence
+        for &prev_handle in &self.animated_last_frame {
+            if !animated_this_frame.contains(&prev_handle) {
+                if let Some(rest) = scene.rest_transforms.get(prev_handle).cloned() {
+                    if let Some(node) = scene.get_node_mut(prev_handle) {
+                        node.transform = rest;
+                        node.transform.mark_dirty();
+                    }
+                }
+            }
+        }
+
+        self.animated_last_frame = animated_this_frame;
     }
 }
 
 /// Applies blended morph weights to the scene, mixing with the rest pose
 /// when the total accumulated weight is below 1.0.
-fn apply_morph_weights(scene: &mut Scene, node: crate::scene::NodeHandle, weights: &[f32], total_weight: f32) {
+fn apply_morph_weights(scene: &mut Scene, node: NodeHandle, weights: &[f32], total_weight: f32) {
     let target = scene.morph_weights.entry(node).unwrap().or_default();
     if target.len() < weights.len() {
         target.resize(weights.len(), 0.0);

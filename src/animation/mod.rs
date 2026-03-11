@@ -7,14 +7,31 @@
 //! - **Property animation**: Generic interpolation of any property
 //! - **Animation blending**: Weight-based accumulator for combining multiple actions
 //! - **Animation events**: Frame-synchronized event triggering during playback
+//! - **Rest pose restoration**: Automatic reset when animations stop or weight < 1.0
+//! - **Animation retargeting**: Share clips across models with similar bone topology
 //!
 //! # Architecture
 //!
-//! - [`AnimationClip`]: Contains animation data (tracks, duration, events)
-//! - [`AnimationAction`]: Controls playback of a clip (play, pause, loop)
-//! - [`AnimationMixer`]: Manages multiple actions with blending support
-//! - [`AnimationSystem`]: Updates all animations in a scene
-//! - [`Binder`]: Resolves animation targets to scene nodes (subtree-scoped)
+//! - [`AnimationClip`]: Immutable animation data (tracks with hierarchical path metadata)
+//! - [`AnimationAction`]: Controls playback of a clip (play, pause, loop, weight)
+//! - [`AnimationMixer`]: Manages actions & blending; owns a [`Rig`] for O(1) bone lookup
+//! - [`Rig`]: Logical skeleton mapping bone indices to scene node handles
+//! - [`ClipBinding`]: Precomputed track → bone-index mapping (built once, reusable)
+//! - [`Binder`]: Constructs [`Rig`] and [`ClipBinding`] from scene hierarchy
+//! - [`AnimationSystem`]: Updates all mixers in a scene each frame
+//!
+//! # Two-Phase Binding
+//!
+//! 1. **Clip → Rig**: [`Binder::build_clip_binding`] matches track paths against rig
+//!    bone paths, producing a [`ClipBinding`] (run once at init).
+//! 2. **Rig → NodeHandle**: At runtime the mixer resolves `bone_index` to
+//!    `rig.bones[bone_index]` in O(1), eliminating per-frame string comparisons.
+//!
+//! # Rest Pose
+//!
+//! The first time a node receives animation, its transform is lazily recorded
+//! in [`Scene::rest_transforms`]. When animation influence is lost the mixer
+//! restores the rest pose, fixing the "stop = pause" feedback bug.
 //!
 //! # Blending
 //!
@@ -65,7 +82,7 @@ pub mod values;
 
 pub use action::{AnimationAction, LoopMode};
 pub use binder::Binder;
-pub use binding::{PropertyBinding, TargetPath};
+pub use binding::{ClipBinding, Rig, TargetPath, TrackBinding};
 pub use clip::{AnimationClip, Track, TrackData, TrackMeta};
 pub use events::{AnimationEvent, FiredEvent};
 pub use mixer::AnimationMixer;

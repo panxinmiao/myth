@@ -165,7 +165,8 @@ pub mod prelude {
 
     // Animation
     pub use crate::animation::{
-        AnimationAction, AnimationClip, AnimationEvent, AnimationMixer, FiredEvent, LoopMode,
+        AnimationAction, AnimationClip, AnimationEvent, AnimationMixer, ClipBinding, FiredEvent,
+        LoopMode, Rig,
     };
 
     // Math (re-export common glam types)
@@ -344,7 +345,8 @@ pub use assets::{AssetServer, ColorSpace, GeometryHandle, MaterialHandle, Textur
 // Animation
 pub use animation::{
     AnimationAction, AnimationClip, AnimationEvent, AnimationMixer, AnimationSystem, Binder,
-    FiredEvent, InterpolationMode, LoopMode, Track, TrackData, TrackMeta,
+    ClipBinding, FiredEvent, InterpolationMode, LoopMode, Rig, Track, TrackBinding, TrackData,
+    TrackMeta,
 };
 
 // Renderer
