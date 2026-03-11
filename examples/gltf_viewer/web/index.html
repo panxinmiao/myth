@@ -54,6 +54,50 @@
             animation: spin 1s linear infinite;
             margin-bottom: 20px;
         }
+
+        /* Render Graph Overlay Styles */
+        #graph-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(26, 26, 46, 0.6);
+
+            backdrop-filter: blur(5px);
+            -webkit-backdrop-filter: blur(5px);
+            z-index: 2000;
+            display: none;
+        }
+
+        #graph-close-btn {
+            position: absolute;
+            top: 20px;
+            right: 30px;
+            background: #ff4a4a;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: bold;
+            z-index: 2001;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+            transition: background 0.2s;
+        }
+
+        #graph-container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+            background-color: transparent;
+        }
+
+        #graph-container svg {
+            width: 100% !important;
+            height: 100% !important;
+        }
         
         @keyframes spin {
             to { transform: rotate(360deg); }
@@ -100,6 +144,7 @@
             color: #4a9eff;
         }
     </style>
+    <script src="https://cdn.jsdelivr.net/npm/svg-pan-zoom@3.6.1/dist/svg-pan-zoom.min.js"></script>
 </head>
 <body>
     <div id="loading">
@@ -119,10 +164,69 @@
         </ul>
         <p><a href="https://caniuse.com/webgpu" target="_blank">Check WebGPU support</a></p>
     </div>
+
+    <div id="graph-overlay">
+        <button id="graph-close-btn" onclick="hideRenderGraph()">Close</button>
+        <div id="graph-container"></div>
+    </div>
     
     <canvas id="myth-canvas"></canvas>
     
     <script type="module">
+        import mermaid from 'https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.esm.min.mjs';
+        mermaid.initialize({ startOnLoad: false, theme: 'dark' });
+
+        let panZoomInstance = null;
+        window.showRenderGraph = async function(graphString) {
+            const overlay = document.getElementById('graph-overlay');
+            const container = document.getElementById('graph-container');
+            
+            overlay.style.display = 'block';
+            container.innerHTML = '<div style="color:white; padding: 20px;">Rendering Graph...</div>';
+            
+            try {
+                const { svg } = await mermaid.render('mermaid-svg', graphString);
+                container.innerHTML = svg;
+                
+                const svgElement = container.querySelector('svg');
+                if (svgElement) {
+                    // 关键步骤：移除 Mermaid 默认生成的硬编码 maxWidth/width
+                    svgElement.removeAttribute('style');
+                    svgElement.setAttribute('width', '100%');
+                    svgElement.setAttribute('height', '100%');
+
+                    // 如果之前有实例，先销毁，防止内存泄漏
+                    if (panZoomInstance) {
+                        panZoomInstance.destroy();
+                    }
+
+                    // 初始化 svg-pan-zoom
+                    panZoomInstance = svgPanZoom(svgElement, {
+                        zoomEnabled: true,
+                        controlIconsEnabled: true, // 在右下角显示放大/缩小/还原按钮
+                        fit: true,                 // 自动适应容器大小
+                        center: true,              // 自动居中
+                        minZoom: 0.1,              // 允许缩小的最小比例
+                        maxZoom: 20                // 允许放大的最大比例
+                    });
+                }
+            } catch (err) {
+                console.error("Mermaid 渲染失败:", err);
+                container.innerHTML = `<div style="color: #ff4444; padding: 20px;">Render Error: ${err.message}</div>`;
+            }
+        };
+
+        window.hideRenderGraph = function() {
+            document.getElementById('graph-overlay').style.display = 'none';
+
+            // 隐藏时销毁实例
+            if (panZoomInstance) {
+                panZoomInstance.destroy();
+                panZoomInstance = null;
+            }
+            document.getElementById('graph-container').innerHTML = '';
+        };
+
         let wasm_exports = null;
 
         async function handleDrop(e) {
