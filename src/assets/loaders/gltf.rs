@@ -1357,7 +1357,10 @@ impl GltfLoader {
                 Vec::new()
             };
 
-        let animations = Self::load_animations(gltf, buffers);
+        // Build node_index → relative-path map for animation track metadata.
+        let node_paths = Self::build_node_paths(&self.prefab_nodes, &root_indices);
+
+        let animations = Self::load_animations(gltf, buffers, &node_paths);
 
         Prefab {
             nodes: std::mem::take(&mut self.prefab_nodes),
@@ -1365,6 +1368,45 @@ impl GltfLoader {
             skeletons: std::mem::take(&mut self.prefab_skeletons),
             animations,
         }
+    }
+
+    /// Computes a mapping from glTF node index to hierarchical path segments
+    /// relative to the virtual `gltf_root` node created during instantiation.
+    fn build_node_paths(
+        prefab_nodes: &[PrefabNode],
+        root_indices: &[usize],
+    ) -> HashMap<usize, Vec<String>> {
+        fn walk(
+            prefab_nodes: &[PrefabNode],
+            idx: usize,
+            current_path: &mut Vec<String>,
+            out: &mut HashMap<usize, Vec<String>>,
+        ) {
+            out.insert(idx, current_path.clone());
+            for &child_idx in &prefab_nodes[idx].children_indices {
+                let child_name = prefab_nodes[child_idx]
+                    .name
+                    .as_deref()
+                    .unwrap_or("unnamed")
+                    .to_string();
+
+                current_path.push(child_name);
+                walk(prefab_nodes, child_idx, current_path, out);
+                current_path.pop();
+            }
+        }
+
+        let mut paths = HashMap::new();
+        for &root_idx in root_indices {
+            let root_name = prefab_nodes[root_idx]
+                .name
+                .as_deref()
+                .unwrap_or("unnamed")
+                .to_string();
+            let mut initial_path = vec![root_name];
+            walk(prefab_nodes, root_idx, &mut initial_path, &mut paths);
+        }
+        paths
     }
 
     fn create_prefab_node(node: &gltf::Node) -> PrefabNode {
@@ -1925,7 +1967,11 @@ impl GltfLoader {
     }
 
     #[allow(clippy::too_many_lines)]
-    fn load_animations(gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> Vec<AnimationClip> {
+    fn load_animations(
+        gltf: &gltf::Gltf,
+        buffers: &[Vec<u8>],
+        node_paths: &HashMap<usize, Vec<String>>,
+    ) -> Vec<AnimationClip> {
         let mut animations = Vec::new();
 
         for anim in gltf.animations() {
@@ -1941,10 +1987,16 @@ impl GltfLoader {
                     continue;
                 };
 
-                let node_name = gltf_node.name().map_or_else(
-                    || format!("Node_{}", gltf_node.index()),
-                    std::string::ToString::to_string,
-                );
+                // Build hierarchical path for this node.
+                let path = if let Some(p) = node_paths.get(&gltf_node.index()) {
+                    p.clone()
+                } else {
+                    let fallback = gltf_node.name().map_or_else(
+                        || format!("Node_{}", gltf_node.index()),
+                        std::string::ToString::to_string,
+                    );
+                    vec![fallback]
+                };
 
                 let times: Vec<f32> = reader.read_inputs().unwrap().collect();
 
@@ -1965,7 +2017,7 @@ impl GltfLoader {
 
                         Track {
                             meta: TrackMeta {
-                                node_name,
+                                path: path.clone(),
                                 target: TargetPath::Translation,
                             },
                             data: TrackData::Vector3(KeyframeTrack::new(
@@ -1985,7 +2037,7 @@ impl GltfLoader {
 
                         Track {
                             meta: TrackMeta {
-                                node_name,
+                                path: path.clone(),
                                 target: TargetPath::Rotation,
                             },
                             data: TrackData::Quaternion(KeyframeTrack::new(
@@ -2005,7 +2057,7 @@ impl GltfLoader {
 
                         Track {
                             meta: TrackMeta {
-                                node_name,
+                                path: path.clone(),
                                 target: TargetPath::Scale,
                             },
                             data: TrackData::Vector3(KeyframeTrack::new(
@@ -2041,7 +2093,7 @@ impl GltfLoader {
 
                         Track {
                             meta: TrackMeta {
-                                node_name,
+                                path,
                                 target: TargetPath::Weights,
                             },
                             data: TrackData::MorphWeights(KeyframeTrack::new(

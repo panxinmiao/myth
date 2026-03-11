@@ -130,6 +130,9 @@ pub struct Scene {
     pub morph_weights: SparseSecondaryMap<NodeHandle, Vec<f32>>,
     /// Animation mixer components (sparse, only character roots have animations)
     pub animation_mixers: SparseSecondaryMap<NodeHandle, AnimationMixer>,
+    /// Rest pose transforms recorded before animation takes over.
+    /// Used to restore nodes when animations stop or blend with weight < 1.0.
+    pub rest_transforms: SparseSecondaryMap<NodeHandle, Transform>,
     /// Split primitive tags
     pub split_primitive_tags: SparseSecondaryMap<NodeHandle, SplitPrimitiveTag>,
 
@@ -193,6 +196,7 @@ impl Scene {
             skins: SparseSecondaryMap::new(),
             morph_weights: SparseSecondaryMap::new(),
             animation_mixers: SparseSecondaryMap::new(),
+            rest_transforms: SparseSecondaryMap::new(),
 
             split_primitive_tags: SparseSecondaryMap::new(),
 
@@ -318,6 +322,7 @@ impl Scene {
             self.morph_weights.remove(node_handle);
             self.names.remove(node_handle);
             self.animation_mixers.remove(node_handle);
+            self.rest_transforms.remove(node_handle);
 
             self.nodes.remove(node_handle);
         }
@@ -621,7 +626,7 @@ impl Scene {
             }
 
             if let Some(node) = self.get_node_mut(handle) {
-                node.transform = p_node.transform.clone();
+                node.transform = p_node.transform;
             }
 
             if let Some(mesh) = &p_node.mesh {
@@ -693,17 +698,20 @@ impl Scene {
         if !prefab.animations.is_empty() {
             let mut mixer = AnimationMixer::new();
 
+            let rig = Binder::build_rig(self, root_handle);
+
             for clip in &prefab.animations {
-                let bindings = Binder::bind(self, root_handle, clip);
+                let clip_binding = Binder::build_clip_binding(self, &rig, clip);
 
                 let mut action = AnimationAction::new(Arc::new(clip.clone()));
-                action.bindings = bindings;
+                action.clip_binding = clip_binding;
                 action.enabled = false;
                 action.weight = 0.0;
 
                 mixer.add_action(action);
             }
 
+            mixer.set_rig(rig);
             self.animation_mixers.insert(root_handle, mixer);
         }
 
