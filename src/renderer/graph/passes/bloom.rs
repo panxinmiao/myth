@@ -672,13 +672,6 @@ impl BloomFeature {
             for i in (0..(mip_count - 1)).rev() {
                 let coarser = current_mip;
                 let finer = downsample_chain[i];
-                let finer_res = &g.resources[finer.0 as usize];
-                let finer_desc = TextureDesc::new_2d(
-                    finer_res.desc.size.width,
-                    finer_res.desc.size.height,
-                    hdr_format,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-                );
 
                 let label: &'static str = UPSAMPLE_PASS_NAMES[i];
                 let out_label: &'static str = UPSAMPLE_MIP_NAMES[i];
@@ -686,7 +679,7 @@ impl BloomFeature {
                 current_mip = g.add_pass(label, |builder| {
                     builder.read_texture(coarser);
                     builder.read_texture(finer);
-                    let out = builder.create_and_export(out_label, finer_desc);
+                    let out = builder.mutate_and_export(finer, out_label);
                     let node = BloomUpsampleNode {
                         coarser_tex: coarser,
                         output_tex: out,
@@ -702,8 +695,19 @@ impl BloomFeature {
             // ─── 4. Composite: Scene HDR + Bloom → Output ─────────
             let bloom_result = current_mip;
             g.add_pass("Bloom_Composite", |builder| {
+
+                builder.read_texture(input_color);
                 builder.read_texture(bloom_result);
-                let out = builder.mutate_and_export(input_color, "Scene_Color_Bloom");
+                
+                let out_desc = TextureDesc::new_2d(
+                    fc.width,
+                    fc.height,
+                    hdr_format,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                );
+
+                let out = builder.create_and_export("Scene_Color_Bloom", out_desc);
+
                 let node = BloomCompositeNode {
                     original_tex: input_color,
                     bloom_tex: bloom_result,
