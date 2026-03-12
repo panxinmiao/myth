@@ -292,10 +292,6 @@ impl OpaquePassNode {
 }
 
 impl PassNode for OpaquePassNode {
-    fn name(&self) -> &'static str {
-        "Opaque_Pass"
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         // Resolve transient views for Group 3, falling back to dummies.
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {

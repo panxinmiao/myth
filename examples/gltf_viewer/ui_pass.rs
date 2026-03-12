@@ -291,10 +291,6 @@ impl UiPass {
 /// the RDG-resolved surface. No mutable state is touched — fully compatible with the
 /// engine's read-only execute phase.
 impl PassNode for UiPass {
-    fn name(&self) -> &'static str {
-        "UI_Pass"
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let device = ctx.device;
         let queue = ctx.queue;

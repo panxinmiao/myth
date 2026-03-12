@@ -186,10 +186,6 @@ impl TransparentPassNode {
 }
 
 impl PassNode for TransparentPassNode {
-    fn name(&self) -> &'static str {
-        "Transparent_Pass"
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {
             Some(id) => ctx.views.get_texture_view(id),

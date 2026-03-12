@@ -283,10 +283,6 @@ pub struct ShadowPassNode {
 }
 
 impl PassNode for ShadowPassNode {
-    fn name(&self) -> &'static str {
-        "Shadow_Pass"
-    }
-
     /// Resolve the physical shadow texture and create per-layer D2 views.
     ///
     /// Called after the RDG compiler has allocated transient GPU memory.

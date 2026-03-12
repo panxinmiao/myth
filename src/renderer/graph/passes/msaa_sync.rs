@@ -196,10 +196,6 @@ struct MsaaSyncPassNode {
 }
 
 impl PassNode for MsaaSyncPassNode {
-    fn name(&self) -> &'static str {
-        "Msaa_Sync_Pass"
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let src_view = ctx.views.get_texture_view(self.src_hdr);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);

@@ -407,10 +407,6 @@ pub struct PrepassPassNode {
 }
 
 impl PassNode for PrepassPassNode {
-    fn name(&self) -> &'static str {
-        "Pre_Pass"
-    }
-
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 

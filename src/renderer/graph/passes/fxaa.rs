@@ -168,10 +168,6 @@ struct FxaaPassNode {
 }
 
 impl PassNode for FxaaPassNode {
-    fn name(&self) -> &'static str {
-        "FXAA_Pass"
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let input_view = ctx.views.get_texture_view(self.input_tex);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);

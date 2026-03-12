@@ -613,10 +613,6 @@ impl SsaoPassNode {
 }
 
 impl PassNode for SsaoPassNode {
-    fn name(&self) -> &'static str {
-        "Ssao_Pass"
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         // Transient-only: bind groups referencing RDG-allocated depth/normal views.
         self.build_bind_groups(ctx);

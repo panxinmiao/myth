@@ -90,6 +90,14 @@ pub struct RenderGraph {
     compile_queue: Vec<usize>,
     compile_dependency_graph: Vec<SmallVec<[usize; 8]>>,
 
+    /// Group-name stack for logical subgraph tagging.
+    ///
+    /// Pushed/popped by [`with_group`](Self::with_group).  When the
+    /// `rdg_inspector` feature is disabled this field is absent and the
+    /// method compiles to a plain closure call.
+    #[cfg(feature = "rdg_inspector")]
+    current_group_stack: Vec<&'static str>,
+
     #[cfg(debug_assertions)]
     prev_execution_names: Vec<&'static str>,
 }
@@ -120,6 +128,8 @@ impl RenderGraph {
             compile_in_degrees: Vec::new(),
             compile_queue: Vec::new(),
             compile_dependency_graph: Vec::new(),
+            #[cfg(feature = "rdg_inspector")]
+            current_group_stack: Vec::new(),
             #[cfg(debug_assertions)]
             prev_execution_names: Vec::new(),
         }
@@ -137,6 +147,9 @@ impl RenderGraph {
         self.execution_queue.clear();
         self.resource_registry.clear();
         self.frame_config = config;
+
+        #[cfg(feature = "rdg_inspector")]
+        self.current_group_stack.clear();
     }
 
     /// Returns the current frame's rendering configuration.
@@ -144,6 +157,38 @@ impl RenderGraph {
     #[must_use]
     pub fn frame_config(&self) -> &FrameConfig {
         &self.frame_config
+    }
+
+    // ─── Logical Grouping (Inspector) ────────────────────────────────
+
+    /// Opens a named visual grouping scope for all passes added inside `f`.
+    ///
+    /// When the `rdg_inspector` feature is enabled, the group name is
+    /// stamped onto every [`PassRecord`] created within the closure and
+    /// later used by [`dump_mermaid`](Self::dump_mermaid) to emit Mermaid
+    /// `subgraph` blocks.
+    ///
+    /// When the feature is **disabled**, this compiles to a plain closure
+    /// call with zero overhead — the compiler inlines it completely.
+    #[cfg(feature = "rdg_inspector")]
+    pub fn with_group<F, R>(&mut self, group_name: &'static str, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.current_group_stack.push(group_name);
+        let result = f(self);
+        self.current_group_stack.pop();
+        result
+    }
+
+    /// Zero-cost fallback when the inspector is disabled.
+    #[cfg(not(feature = "rdg_inspector"))]
+    #[inline(always)]
+    pub fn with_group<F, R>(&mut self, _group_name: &'static str, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        f(self)
     }
 
     /// Registers a named texture resource.
@@ -240,6 +285,11 @@ impl RenderGraph {
         // reference the correct index.
         self.passes.push(PassRecord::new_empty(name));
 
+        #[cfg(feature = "rdg_inspector")]
+        {
+            self.passes[pass_index].group = self.current_group_stack.last().copied();
+        }
+
         // Phase 2: execute the closure — all topology wiring happens here.
         let (node, output) = {
             let mut builder = PassBuilder {
@@ -278,6 +328,11 @@ impl RenderGraph {
     {
         let pass_index = self.passes.len();
         self.passes.push(PassRecord::new_empty(name));
+
+        #[cfg(feature = "rdg_inspector")]
+        {
+            self.passes[pass_index].group = self.current_group_stack.last().copied();
+        }
 
         let output = {
             let mut builder = PassBuilder {
@@ -539,17 +594,18 @@ impl RenderGraph {
         }
     }
 
-    /// Dumps the current Render Graph topology as a Markdown Mermaid chart.
-    /// This is an incredibly powerful tool for debugging SSA data flows,
-    /// missing connections, and dead-pass elimination.
+    /// Dumps the current Render Graph topology as a Mermaid flowchart.
+    ///
+    /// When the `rdg_inspector` feature is enabled, passes that share the
+    /// same [`with_group`](Self::with_group) scope are wrapped in Mermaid
+    /// `subgraph` blocks for high-level readability.  Without the feature
+    /// the output is a flat graph (still fully functional for debugging).
     #[must_use]
     pub fn dump_mermaid(&self) -> String {
         use std::fmt::Write;
         let mut out = String::new();
 
-        // writeln!(&mut out, "```mermaid").unwrap();
-
-        writeln!(&mut out, "flowchart").unwrap();
+        writeln!(&mut out, "flowchart TD").unwrap();
 
         writeln!(
             &mut out,
@@ -567,48 +623,73 @@ impl RenderGraph {
         )
         .unwrap();
 
-        writeln!(&mut out, "\n    %% --- Passes (Nodes) ---").unwrap();
-        for (i, pass) in self.passes.iter().enumerate() {
-            // 使用圆角矩形表示 Pass
-            let shape_open = "([";
-            let shape_close = "])";
-            let class = if pass.reference_count > 0 {
-                "alive"
-            } else {
-                "dead"
-            };
+        // ── Passes (Nodes) ──────────────────────────────────────────
+        //
+        // When rdg_inspector is active, collect unique groups and emit
+        // subgraph blocks first, then ungrouped passes at the top level.
+        #[cfg(feature = "rdg_inspector")]
+        {
+            // Collect ordered unique group names (preserving first-seen order).
+            let mut seen_groups: Vec<&'static str> = Vec::new();
+            for pass in &self.passes {
+                if let Some(g) = pass.group {
+                    if !seen_groups.contains(&g) {
+                        seen_groups.push(g);
+                    }
+                }
+            }
 
-            writeln!(
-                &mut out,
-                "    P{}{}\"{}\"{}:::{}",
-                i, shape_open, pass.name, shape_close, class
-            )
-            .unwrap();
+            // Emit subgraph blocks.
+            for group in &seen_groups {
+                writeln!(&mut out, "\n    subgraph {group} [\"{group}\"]").unwrap();
+                writeln!(&mut out, "        direction TB").unwrap();
+                for (i, pass) in self.passes.iter().enumerate() {
+                    if pass.group == Some(group) {
+                        Self::write_pass_node(&mut out, i, pass, "        ");
+                    }
+                }
+                writeln!(&mut out, "    end").unwrap();
+            }
+
+            // Emit ungrouped passes at top level.
+            writeln!(&mut out, "\n    %% --- Ungrouped Passes ---").unwrap();
+            for (i, pass) in self.passes.iter().enumerate() {
+                if pass.group.is_none() {
+                    Self::write_pass_node(&mut out, i, pass, "    ");
+                }
+            }
         }
 
+        #[cfg(not(feature = "rdg_inspector"))]
+        {
+            writeln!(&mut out, "\n    %% --- Passes ---").unwrap();
+            for (i, pass) in self.passes.iter().enumerate() {
+                Self::write_pass_node(&mut out, i, pass, "    ");
+            }
+        }
+
+        // ── Data-Flow Edges ─────────────────────────────────────────
         writeln!(&mut out, "\n    %% --- Data Flow (Edges) ---").unwrap();
         for (pass_idx, pass) in self.passes.iter().enumerate() {
             for &write_id in &pass.writes {
                 let res = &self.resources[write_id.0 as usize];
 
-                // 1. Draw edges to subsequent Consumers
                 for &consumer_idx in &res.consumers {
                     let edge_style = if res.alias_of.is_some() {
-                        "==>" // Bold line indicates an alias relationship (same physical resource) 
+                        "==>" // bold = alias (same physical resource)
                     } else {
-                        "-->" // Thin line indicates a normal data dependency
+                        "-->" // thin = normal dependency
                     };
 
                     writeln!(
                         &mut out,
-                        "    P{} {}|\"{}\"| P{};",
-                        pass_idx, edge_style, res.name, consumer_idx
+                        "    P{pass_idx} {edge_style}|\"{}\"| P{consumer_idx};",
+                        res.name
                     )
                     .unwrap();
                 }
 
-                // 2. If this is a resource with no subsequent consumers but it is an external output (e.g., Surface)
-                // Draw a special endpoint to indicate the data flows out of the RDG pipeline
+                // Terminal external outputs (e.g. Surface).
                 if res.consumers.is_empty() && res.is_external {
                     writeln!(
                         &mut out,
@@ -619,19 +700,32 @@ impl RenderGraph {
                     .unwrap();
                     writeln!(
                         &mut out,
-                        "    P{} -->|\"{}\"| OUT_{};",
-                        pass_idx, res.name, write_id.0
+                        "    P{pass_idx} -->|\"{}\"| OUT_{};",
+                        res.name, write_id.0
                     )
                     .unwrap();
                 }
             }
         }
 
-        // writeln!(&mut out, "```").unwrap();
-
-        // println!("\n🌈 RDG Topology Mermaid Dump:\n{out}");
         log::info!("\n🌈 RDG Topology Mermaid Dump:\n{out}");
         out
+    }
+
+    /// Helper: emit a single pass node in Mermaid syntax.
+    fn write_pass_node(out: &mut String, index: usize, pass: &PassRecord, indent: &str) {
+        use std::fmt::Write;
+        let class = if pass.reference_count > 0 {
+            "alive"
+        } else {
+            "dead"
+        };
+        writeln!(
+            out,
+            "{indent}P{index}([\"{name}\"]):::{class}",
+            name = pass.name
+        )
+        .unwrap();
     }
 }
 
@@ -651,11 +745,6 @@ unsafe impl Send for BorrowedPass {}
 unsafe impl Sync for BorrowedPass {}
 
 impl PassNode for BorrowedPass {
-    fn name(&self) -> &'static str {
-        // SAFETY: Valid during graph execution per caller contract.
-        unsafe { &*self.0 }.name()
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         // SAFETY: Valid during graph execution per caller contract.
         unsafe { &mut *self.0 }.prepare(ctx);
@@ -695,9 +784,6 @@ mod tests {
 
     struct MockExec;
     impl PassNode for MockExec {
-        fn name(&self) -> &'static str {
-            "mock"
-        }
         fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
 
@@ -984,5 +1070,102 @@ mod tests {
             .map(|&i| graph.passes[i].name)
             .collect();
         assert_eq!(names, vec!["Writer", "Mutator", "Reader"]);
+    }
+
+    /// Verifies that `with_group` does not alter topology or execution
+    /// order — it is purely a metadata annotation.
+    #[test]
+    fn test_with_group_preserves_topology() {
+        let mut graph = RenderGraph::new();
+        graph.begin_frame(dummy_config());
+
+        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+
+        let scene_color = graph.with_group("Scene", |g| {
+            let opaque_out = g.add_pass("Opaque", |builder| {
+                let out = builder.create_and_export("SceneColor", dummy_desc());
+                (MockExec, out)
+            });
+
+            let skybox_out = g.add_pass("Skybox", |builder| {
+                let out = builder.mutate_and_export(opaque_out, "SceneColor_Sky");
+                (MockExec, out)
+            });
+
+            skybox_out
+        });
+
+        graph.with_group("PostProcess", |g| {
+            g.add_pass("ToneMap", |builder| {
+                builder.read_texture(scene_color);
+                builder.write_texture(backbuffer);
+                (MockExec, ())
+            });
+        });
+
+        graph.compile_topology();
+
+        let names: Vec<&str> = graph
+            .execution_queue
+            .iter()
+            .map(|&i| graph.passes[i].name)
+            .collect();
+        assert_eq!(names, vec!["Opaque", "Skybox", "ToneMap"]);
+    }
+
+    /// Verifies that the Mermaid dump contains `subgraph` blocks when the
+    /// `rdg_inspector` feature is active.
+    #[cfg(feature = "rdg_inspector")]
+    #[test]
+    fn test_dump_mermaid_subgraphs() {
+        let mut graph = RenderGraph::new();
+        graph.begin_frame(dummy_config());
+
+        let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
+
+        let bloom_out = graph.with_group("Bloom_System", |g| {
+            let extract_out = g.add_pass("Bloom_Extract", |builder| {
+                let out = builder.create_and_export("Bloom_Mip0", dummy_desc());
+                (MockExec, out)
+            });
+
+            g.add_pass("Bloom_Composite", |builder| {
+                builder.read_texture(extract_out);
+                let out = builder.create_and_export("Bloom_Final", dummy_desc());
+                (MockExec, out)
+            })
+        });
+
+        graph.add_pass("ToneMap", |builder| {
+            builder.read_texture(bloom_out);
+            builder.write_texture(backbuffer);
+            (MockExec, ())
+        });
+
+        graph.compile_topology();
+
+        let mermaid = graph.dump_mermaid();
+
+        assert!(
+            mermaid.contains("subgraph Bloom_System"),
+            "Mermaid output should contain the Bloom_System subgraph"
+        );
+        assert!(
+            mermaid.contains("Bloom_Extract"),
+            "Subgraph should contain Bloom_Extract pass"
+        );
+        assert!(
+            mermaid.contains("Bloom_Composite"),
+            "Subgraph should contain Bloom_Composite pass"
+        );
+        // ToneMap should NOT be inside the subgraph.
+        assert!(
+            mermaid.contains("Ungrouped"),
+            "Mermaid should have an ungrouped section for ToneMap"
+        );
+        // Verify group metadata on records.
+        assert_eq!(graph.passes[0].group, Some("Bloom_System"));
+        assert_eq!(graph.passes[1].group, Some("Bloom_System"));
+        assert_eq!(graph.passes[2].group, None); // ToneMap is ungrouped
     }
 }

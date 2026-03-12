@@ -434,10 +434,6 @@ struct ToneMapPassNode {
 }
 
 impl PassNode for ToneMapPassNode {
-    fn name(&self) -> &'static str {
-        "ToneMap_Pass"
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         // ─── Transient BindGroup (Group 2): input texture only ─────
         let input_view = ctx.views.get_texture_view(self.input_tex);

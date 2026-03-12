@@ -920,32 +920,21 @@ the hook-based `FrameComposer` API:
 
 ```rust
 use myth::renderer::graph::core::node::PassNode;
-use myth::renderer::graph::core::builder::PassBuilder;
 use myth::renderer::graph::core::context::{PrepareContext, ExecuteContext};
 use myth::renderer::graph::core::blackboard::HookStage;
 use myth::render::FrameComposer;
 
 struct UiOverlay {
-    target_tex: TextureNodeId,
     // Your GPU resources, bind groups, pipelines...
 }
 
 impl PassNode for UiOverlay {
-    fn name(&self) -> &str { "UiOverlay" }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        // Declare resource dependencies for the RDG topology
-        builder.read_texture(self.target_tex);
-        builder.write_texture(self.target_tex);
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
-        // Phase 1: Allocate GPU resources, compile shaders, etc.
+        // Phase 1: Assemble bind groups referencing RDG-managed transient textures
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         // Phase 2: Record GPU commands
-        let view = ctx.get_texture_view(self.target_tex);
     }
 }
 
@@ -954,13 +943,18 @@ impl AppHandler for MyApp {
     fn compose_frame(&mut self, composer: FrameComposer<'_>) {
         composer
             .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
-                self.ui_overlay.target_tex = bb.surface_out;
-                rdg.add_pass(&mut self.ui_overlay);
+                rdg.add_pass("UiOverlay", |builder, pass| {
+                    let surface = builder.read_texture(bb.surface_out);
+                    // store IDs on `pass` for use in prepare/execute
+                });
             })
             .render();
     }
 }
 ```
+
+Pass naming and resource topology are declared in the `add_pass` closure,
+not inside the `PassNode`. This keeps pass nodes as pure GPU command recorders.
 
 Custom passes are injected into the RDG and participate in the full
 dependency-driven scheduling (topological sort, dead-pass culling, etc.).

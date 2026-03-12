@@ -504,10 +504,6 @@ pub struct SkyboxPassNode {
 }
 
 impl PassNode for SkyboxPassNode {
-    fn name(&self) -> &'static str {
-        "Skybox_Pass"
-    }
-
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let (Some(pipeline_id), Some(bind_group)) = (self.pipeline_id, &self.bind_group) else {
             return;

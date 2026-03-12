@@ -153,10 +153,6 @@ struct BrdfLutPassNode {
 }
 
 impl PassNode for BrdfLutPassNode {
-    fn name(&self) -> &'static str {
-        "BRDF_LUT"
-    }
-
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if !self.active {
             return;
@@ -821,10 +817,6 @@ struct IblPassNode {
 }
 
 impl PassNode for IblPassNode {
-    fn name(&self) -> &'static str {
-        "IBL_Compute"
-    }
-
     fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {
         // All IBL compute work is completed during extract_and_prepare.
     }

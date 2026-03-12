@@ -82,10 +82,6 @@ pub struct TransmissionCopyPassNode {
 }
 
 impl PassNode for TransmissionCopyPassNode {
-    fn name(&self) -> &'static str {
-        "TransmissionCopy_Pass"
-    }
-
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if !self.active {
             return;
