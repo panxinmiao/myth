@@ -47,7 +47,7 @@ use myth::{
         graph::core::{
             context::{ExecuteContext, PrepareContext},
             node::PassNode,
-            types::TextureNodeId,
+            types::{RenderTargetOps, TextureNodeId},
         },
     },
 };
@@ -329,7 +329,7 @@ impl PassNode for UiPass {
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         // Resolve the final swap-chain surface view from the RDG.
-        let rtt = ctx.get_color_attachment(self.target_tex, None, None);
+        let rtt = ctx.get_color_attachment(self.target_tex, RenderTargetOps::Load, None);
         let mut rpass = encoder
             .begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("egui Pass"),

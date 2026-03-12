@@ -33,7 +33,7 @@ use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps,
     TextureDesc, TextureNodeId,
 };
 use crate::renderer::pipeline::{
@@ -238,7 +238,7 @@ impl PassNode for MsaaSyncPassNode {
 
         // Write to the MSAA target; no depth attachment — preserve MSAA
         // geometry depth for subsequent depth-tested draws.
-        let rtt = ctx.get_color_attachment(self.dst_msaa, None, None);
+        let rtt = ctx.get_color_attachment(self.dst_msaa, RenderTargetOps::DontCare, None);
 
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("MSAA Sync Pass"),

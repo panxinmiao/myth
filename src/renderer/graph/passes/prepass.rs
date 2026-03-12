@@ -16,7 +16,8 @@
 use rustc_hash::FxHashMap;
 
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, RenderGraph, TextureDesc, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, RenderGraph, RenderTargetOps, TextureDesc,
+    TextureNodeId,
 };
 use crate::renderer::graph::passes::draw::submit_draw_commands;
 use crate::renderer::pipeline::{
@@ -426,13 +427,13 @@ impl PassNode for PrepassPassNode {
         };
         if self.needs_normal
             && let Some(att) =
-                ctx.get_color_attachment(self.scene_normals, Some(normal_clear), None)
+                ctx.get_color_attachment(self.scene_normals, RenderTargetOps::Clear(normal_clear), None)
         {
             color_attachments.push(Some(att));
         }
         if self.needs_feature_id
             && let Some(att) =
-                ctx.get_color_attachment(self.feature_id, Some(wgpu::Color::TRANSPARENT), None)
+                ctx.get_color_attachment(self.feature_id, RenderTargetOps::Clear(wgpu::Color::TRANSPARENT), None)
         {
             color_attachments.push(Some(att));
         }

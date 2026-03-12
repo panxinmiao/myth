@@ -63,9 +63,12 @@ To demonstrate the power of this architecture, here are real-time dumps of Myth 
 
 *Ps: The engine provides an auxiliary method for RenderGraph, which can dump the topology structure and resource dependency relationships deduced through real-time compilation of RenderGraph, and export them in `mermaid` format. This is very useful in debugging.*
 
-### Case 1: Taming Complex Dependencies & Memory Aliasing (`Ssss_Pass`)
+### Case 1: Taming Complex Dependencies & Memory Aliasing (SSAO / SSSS Flattened)
 
-In a highly complex scene featuring Screen Space Ambient Occlusion (SSAO) and Screen Space Subsurface Scattering (SSSS), the dependency web is massive.
+In a highly complex scene featuring Screen Space Ambient Occlusion (SSAO) and Screen Space Subsurface Scattering (SSSS), the dependency web is massive. Both effects are **flattened** into independent micro-passes visible to the RDG compiler:
+
+- **SSAO** is decomposed into `SSAO_Raw` → `SSAO_Blur` within an `SSAO_System` group.
+- **SSSS** is decomposed into `SSSS_Blur_H` → `SSSS_Blur_V` within an `SSSS_System` group.
 
 ```mermaid
 flowchart
@@ -76,42 +79,55 @@ flowchart
     %% --- Passes (Nodes) ---
     P0(["Shadow_Pass"]):::alive
     P1(["Pre_Pass"]):::alive
-    P2(["Ssao_Pass"]):::alive
-    P3(["Opaque_Pass"]):::alive
-    P4(["Ssss_Pass"]):::alive
-    P5(["Skybox_Pass"]):::alive
-    P6(["Transparent_Pass"]):::alive
-    P7(["ToneMap_Pass"]):::alive
-    P8(["FXAA_Pass"]):::alive
-    P9(["UI_Pass"]):::alive
+    subgraph SSAO_System ["SSAO_System"]
+        P2(["SSAO_Raw"]):::alive
+        P3(["SSAO_Blur"]):::alive
+    end
+    P4(["Opaque_Pass"]):::alive
+    subgraph SSSS_System ["SSSS_System"]
+        P5(["SSSS_Blur_H"]):::alive
+        P6(["SSSS_Blur_V"]):::alive
+    end
+    P7(["Skybox_Pass"]):::alive
+    P8(["Transparent_Pass"]):::alive
+    P9(["ToneMap_Pass"]):::alive
+    P10(["FXAA_Pass"]):::alive
+    P11(["UI_Pass"]):::alive
 
     %% --- Data Flow (Edges) ---
-    P0 -->|"Shadow_Array_Map"| P3;
-    P0 -->|"Shadow_Array_Map"| P6;
+    P0 -->|"Shadow_Array_Map"| P4;
+    P0 -->|"Shadow_Array_Map"| P8;
     P1 -->|"Scene_Depth"| P2;
-    P1 -->|"Scene_Depth"| P3;
     P1 -->|"Scene_Depth"| P4;
+    P1 -->|"Scene_Depth"| P5;
+    P1 -->|"Scene_Depth"| P6;
     P1 -->|"Scene_Normals"| P2;
-    P1 -->|"Scene_Normals"| P4;
-    P1 -->|"Feature_ID"| P4;
-    P2 -->|"SSAO_Output"| P3;
-    P2 -->|"SSAO_Output"| P6;
-    P3 -->|"Scene_Color_HDR"| P4;
-    P3 ==>|"Scene_Depth_Opaque"| P5;
-    P3 ==>|"Scene_Depth_Opaque"| P6;
-    P3 -->|"Specular_MRT"| P4;
-    P4 ==>|"Scene_Color_SSSS"| P5;
-    P5 ==>|"Scene_Color_Skybox"| P6;
-    P6 ==>|"Scene_Color_Transparent"| P7;
-    P7 -->|"LDR_Intermediate"| P8;
-    P8 ==>|"Surface_After_FXAA"| P9;
+    P1 -->|"Scene_Normals"| P5;
+    P1 -->|"Scene_Normals"| P6;
+    P1 -->|"Feature_ID"| P5;
+    P1 -->|"Feature_ID"| P6;
+    P2 -->|"SSAO_Raw_Tex"| P3;
+    P3 -->|"SSAO_Output"| P4;
+    P3 -->|"SSAO_Output"| P8;
+    P4 -->|"Scene_Color_HDR"| P5;
+    P4 ==>|"Scene_Depth_Opaque"| P7;
+    P4 ==>|"Scene_Depth_Opaque"| P8;
+    P4 -->|"Specular_MRT"| P5;
+    P4 -->|"Specular_MRT"| P6;
+    P5 -->|"SSSS_Temp"| P6;
+    P6 ==>|"Scene_Color_SSSS"| P7;
+    P7 ==>|"Scene_Color_Skybox"| P8;
+    P8 ==>|"Scene_Color_Transparent"| P9;
+    P9 -->|"LDR_Intermediate"| P10;
+    P10 ==>|"Surface_After_FXAA"| P11;
     OUT_16[/"Surface_With_UI"/]:::external
-    P9 -->|"Surface_With_UI"| OUT_16;
+    P11 -->|"Surface_With_UI"| OUT_16;
 
 ```
 
-* **Dependency Resolution:** SSSS requires 5 different inputs across 3 different passes. The pass simply declares `builder.read_texture()` for these inputs. The graph automatically guarantees execution order and inserts the exact `ImageMemoryBarrier` transitions required.
+* **Dependency Resolution:** The flattened SSAO and SSSS passes each declare their own explicit inputs. The graph compiler deduces the correct execution order and barrier placement between `SSAO_Raw` → `SSAO_Blur` and `SSSS_Blur_H` → `SSSS_Blur_V` automatically.
 * **Memory Aliasing:** Notice the double-lined arrows (`==>`). Follow the main color buffer: `Scene_Color_HDR` `==>` `Scene_Color_SSSS` `==>` `Scene_Color_Skybox` `==>` `Scene_Color_Transparent`. Logically, these are distinct immutable resources. **Physically, the Graph Compiler intelligently overlays them into the exact same high-resolution transient GPU texture.**
+* **Flattening Benefit:** Previously, SSAO and SSSS were monolithic macro-nodes with hidden internal sub-passes. After flattening, the intermediate textures (`SSAO_Raw_Tex`, `SSSS_Temp`) are first-class RDG citizens — the allocator can alias their memory with other non-overlapping resources.
 
 ### Case 2: Dead Pass Elimination (The MSAA & Pre-Pass Scenario)
 
@@ -251,12 +267,14 @@ No pass may silently consume or discard a `TextureNodeId`. The Rust type system 
 
 ### Macro-Node Flattening
 
-Complex multi-step effects like Bloom were previously monolithic "macro-nodes" — a single `PassNode` that internally looped over multiple `begin_render_pass` calls for each mip level. This hid fine-grained dependencies from the RDG compiler, preventing:
+Complex multi-step effects like Bloom, SSAO, and SSSS were previously monolithic "macro-nodes" — a single `PassNode` that internally looped over multiple `begin_render_pass` calls. This hid fine-grained dependencies from the RDG compiler, preventing:
 
-- **Optimal barrier placement** between individual downsample/upsample steps.
-- **Memory aliasing** between mip textures with non-overlapping lifetimes.
+- **Optimal barrier placement** between individual sub-steps.
+- **Memory aliasing** between intermediate textures with non-overlapping lifetimes.
 
-The flattened architecture decomposes Bloom into independent micro-passes:
+All three effects have been flattened into independent micro-passes:
+
+**Bloom** decomposes into Extract → Downsample chain → Upsample chain → Composite:
 
 ```text
 Bloom_Extract (Scene HDR → Bloom_Mip_0)
@@ -273,7 +291,62 @@ Each mip level is an **independent 2D transient texture** with explicit RDG life
 
 The `with_group("Bloom_System")` wrapper preserves visual hierarchy in topology dumps while the individual passes remain first-class RDG citizens.
 
-## 7. Future-Proofing
+**SSAO** decomposes into 2 passes within `SSAO_System`:
+
+```text
+SSAO_Raw (Scene Depth + Normals → SSAO_Raw_Tex)
+  → SSAO_Blur (SSAO_Raw_Tex + Depth + Normals → SSAO_Output)
+```
+
+The intermediate `SSAO_Raw_Tex` is now a first-class transient resource whose memory can be aliased once `SSAO_Blur` completes.
+
+**SSSS** decomposes into 2 passes within `SSSS_System`:
+
+```text
+SSSS_Blur_H (Scene_Color_HDR → SSSS_Temp)
+  → SSSS_Blur_V (SSSS_Temp → Scene_Color_SSSS via mutate_and_export)
+```
+
+The `SSSS_Temp` scratch texture is explicitly visible to the allocator, and the vertical pass writes back to the scene colour via the standard SSA alias chain.
+
+## 7. Render Target Load Operations: `RenderTargetOps`
+
+The `get_color_attachment` helper on `ExecuteContext` accepts a `RenderTargetOps` enum that forces every pass to **explicitly declare its load operation intent**:
+
+```rust
+pub enum RenderTargetOps {
+    /// Clear to a specific colour before drawing.
+    Clear(wgpu::Color),
+    /// Preserve existing contents (valid only for alias / external resources).
+    Load,
+    /// Contents are undefined — the pass will overwrite every pixel.
+    /// Mapped to `LoadOp::Clear(BLACK)` for TBDR bandwidth savings.
+    DontCare,
+}
+```
+
+### Why not `Option<Color>`?
+
+The previous API used `Option<Color>` where `None` had ambiguous semantics:
+- For a freshly created transient resource, `None` silently became `DontCare`.
+- For an alias (via `mutate_and_export`), `None` silently became `Load`.
+
+This made it impossible to distinguish intentional "don't care" from accidental "forgot to set a clear colour." The enum eliminates this ambiguity.
+
+### First-Write Validation
+
+When `RenderTargetOps::Load` is used on a **freshly created** transient resource (not an alias, not external), the system panics with a descriptive message. Loading uninitialised memory is always a bug — the validation catches it at the earliest possible moment.
+
+### Semantic Guidelines
+
+| Scenario | Recommended Op |
+|----------|---------------|
+| Scene clear (first draw to a new texture) | `Clear(color)` |
+| Full-screen replace shader (tone-map, FXAA, downsample) | `DontCare` |
+| Additive overlay on an existing alias (skybox, UI, upsample) | `Load` |
+| Stencil-tested partial write on alias (SSSS vertical) | `Load` |
+
+## 8. Future-Proofing
 
 By enforcing strict SSA and separating logical declarations from physical execution, Myth Engine's Render Graph is built for the future. The structural purity paves the way for trivially scheduling compute nodes (like Frustum Culling or Async Compute SSAO) onto asynchronous compute queues in upcoming engine iterations.
 

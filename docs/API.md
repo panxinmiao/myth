@@ -1229,7 +1229,7 @@ Implement the `PassNode` trait to add custom GPU work via the RDG:
 ```rust
 use myth::renderer::graph::core::node::PassNode;
 use myth::renderer::graph::core::context::{PrepareContext, ExecuteContext};
-use myth::renderer::graph::core::types::TextureNodeId;
+use myth::renderer::graph::core::types::{TextureNodeId, RenderTargetOps};
 use myth::renderer::graph::core::blackboard::HookStage;
 use myth::render::FrameComposer;
 
@@ -1244,6 +1244,10 @@ impl PassNode for MyPass {
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         // Read-only phase: record GPU commands
+        // Use RenderTargetOps to declare load operation intent:
+        //   RenderTargetOps::Clear(color) - clear before drawing
+        //   RenderTargetOps::Load         - preserve existing contents (alias/external)
+        //   RenderTargetOps::DontCare     - full-screen replace (bandwidth optimal)
     }
 }
 ```

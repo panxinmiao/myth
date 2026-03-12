@@ -24,7 +24,7 @@ use crate::assets::TextureHandle;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps,
     TextureNodeId,
 };
 use crate::renderer::pipeline::{
@@ -480,7 +480,7 @@ impl PassNode for ToneMapPassNode {
             .get(transient_bg_key)
             .expect("Transient BindGroup should have been prepared!");
 
-        let rtt = ctx.get_color_attachment(self.output_tex, None, None);
+        let rtt = ctx.get_color_attachment(self.output_tex, RenderTargetOps::DontCare, None);
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("ToneMap Pass"),
             color_attachments: &[rtt],

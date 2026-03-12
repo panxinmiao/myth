@@ -32,7 +32,7 @@
 
 use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, PassNode, PrepareContext, RenderGraph, TextureNodeId,
+    ExecuteContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps, TextureNodeId,
 };
 use crate::renderer::graph::passes::draw::submit_draw_commands;
 
@@ -217,7 +217,7 @@ impl PassNode for TransparentPassNode {
 
         // `out_color` is an alias — LoadOp is auto-deduced to `Load`,
         // inheriting the content rendered by prior passes.
-        let color_att = ctx.get_color_attachment(self.out_color, None, self.resolve_target);
+        let color_att = ctx.get_color_attachment(self.out_color, RenderTargetOps::Load, self.resolve_target);
         let depth_att = ctx.get_depth_stencil_attachment(self.depth_target, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {

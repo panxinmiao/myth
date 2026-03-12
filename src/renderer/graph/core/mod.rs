@@ -12,4 +12,4 @@ pub use builder::PassBuilder;
 pub use context::{ExecuteContext, ExtractContext, PrepareContext, ViewResolver};
 pub use graph::RenderGraph;
 pub use node::PassNode;
-pub use types::{ResourceRecord, TextureDesc, TextureNodeId};
+pub use types::{RenderTargetOps, ResourceRecord, TextureDesc, TextureNodeId};
