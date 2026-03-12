@@ -16,7 +16,6 @@
 
 use crate::renderer::core::gpu::SamplerKey;
 use crate::renderer::core::gpu::{BRDF_LUT_SIZE, CubeSourceType};
-use crate::renderer::graph::core::builder::PassBuilder;
 use crate::renderer::graph::core::context::{ExecuteContext, ExtractContext};
 use crate::renderer::graph::core::graph::RenderGraph;
 use crate::renderer::graph::core::node::PassNode;
@@ -137,7 +136,10 @@ impl BrdfLutFeature {
             bind_group: self.bind_group.clone(),
             active: self.active,
         };
-        graph.add_pass(Box::new(node));
+        graph.add_pass("BRDF_LUT", |builder| {
+            builder.mark_side_effect();
+            (node, ())
+        });
     }
 }
 
@@ -153,10 +155,6 @@ struct BrdfLutPassNode {
 impl PassNode for BrdfLutPassNode {
     fn name(&self) -> &'static str {
         "BRDF_LUT"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.mark_side_effect();
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -802,7 +800,10 @@ impl IblComputeFeature {
     /// Create an ephemeral [`IblPassNode`] and add it to the render graph.
     pub fn add_to_graph(&self, graph: &mut RenderGraph, source: TextureSource) {
         let node = IblPassNode { _source: source };
-        graph.add_pass(Box::new(node));
+        graph.add_pass("IBL_Compute", |builder| {
+            builder.mark_side_effect();
+            (node, ())
+        });
     }
 }
 
@@ -822,10 +823,6 @@ struct IblPassNode {
 impl PassNode for IblPassNode {
     fn name(&self) -> &'static str {
         "IBL_Compute"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.mark_side_effect();
     }
 
     fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {

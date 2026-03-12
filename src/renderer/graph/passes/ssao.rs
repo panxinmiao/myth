@@ -31,7 +31,7 @@
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassBuilder, PassNode, PrepareContext, RenderGraph, SubViewKey,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, SubViewKey,
     TextureDesc, TextureNodeId,
 };
 use crate::renderer::pipeline::{
@@ -409,30 +409,47 @@ impl SsaoFeature {
             SSAO_TEXTURE_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        let output_tex = graph.register_resource("SSAO_Output", output_desc, false);
 
-        let node = SsaoPassNode {
-            depth_tex: scene_depth,
-            normal_tex: scene_normals,
-            output_tex,
-            internal_raw_tex: TextureNodeId(0),
+        graph.add_pass("Ssao_Pass", |builder| {
+            // Output: half-resolution AO.
+            let output_tex = builder.create_and_export("SSAO_Output", output_desc);
 
-            uniforms_static_bg: self
-                .uniforms_static_bg
-                .clone()
-                .expect("SsaoFeature: uniforms static BG not built"),
+            // Internal scratch texture for the raw SSAO pass.
+            let (w, h) = builder.global_resolution();
+            let desc = TextureDesc::new_2d(
+                w / 2,
+                h / 2,
+                wgpu::TextureFormat::R8Unorm,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            let internal_raw_tex = builder.create_texture("SSAO_Raw_Internal", desc);
 
-            raw_pipeline: self.raw_pipeline.expect("SsaoFeature not prepared"),
-            blur_pipeline: self.blur_pipeline.expect("SsaoFeature not prepared"),
-            raw_layout: self.raw_layout.clone().unwrap(),
-            blur_layout: self.blur_layout.clone().unwrap(),
-            noise_texture_view: self.noise_texture_view.clone().unwrap(),
+            // Inputs: depth and normals from the upstream Prepass.
+            builder.read_texture(scene_depth);
+            builder.read_texture(scene_normals);
 
-            raw_bind_group_key: None,
-            blur_bind_group_key: None,
-        };
-        graph.add_pass(Box::new(node));
-        output_tex
+            let node = SsaoPassNode {
+                depth_tex: scene_depth,
+                normal_tex: scene_normals,
+                output_tex,
+                internal_raw_tex,
+
+                uniforms_static_bg: self
+                    .uniforms_static_bg
+                    .clone()
+                    .expect("SsaoFeature: uniforms static BG not built"),
+
+                raw_pipeline: self.raw_pipeline.expect("SsaoFeature not prepared"),
+                blur_pipeline: self.blur_pipeline.expect("SsaoFeature not prepared"),
+                raw_layout: self.raw_layout.clone().unwrap(),
+                blur_layout: self.blur_layout.clone().unwrap(),
+                noise_texture_view: self.noise_texture_view.clone().unwrap(),
+
+                raw_bind_group_key: None,
+                blur_bind_group_key: None,
+            };
+            (node, output_tex)
+        })
     }
 }
 
@@ -598,25 +615,6 @@ impl SsaoPassNode {
 impl PassNode for SsaoPassNode {
     fn name(&self) -> &'static str {
         "Ssao_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        // Output: half-resolution AO (pre-registered in add_to_graph).
-        builder.declare_output(self.output_tex);
-
-        // Internal scratch texture for the raw SSAO pass.
-        let (w, h) = builder.global_resolution();
-        let desc = TextureDesc::new_2d(
-            w / 2,
-            h / 2,
-            wgpu::TextureFormat::R8Unorm,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        self.internal_raw_tex = builder.create_texture("SSAO_Raw_Internal", desc);
-
-        // Inputs: depth and normals from the upstream Prepass.
-        builder.read_texture(self.depth_tex);
-        builder.read_texture(self.normal_tex);
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {

@@ -34,7 +34,7 @@ use glam::Mat4;
 
 use crate::renderer::core::view::ViewTarget;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassBuilder, PassNode, PrepareContext, RenderGraph,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph,
     TextureDesc, TextureNodeId,
 };
 use crate::renderer::graph::frame::ShadowLightInstance;
@@ -256,7 +256,10 @@ impl ShadowFeature {
             shadow_array_id,
             shadow_layer_views: Vec::with_capacity(self.shadow_lights.len()),
         };
-        graph.add_pass(Box::new(node));
+        graph.add_pass("Shadow_Pass", |builder| {
+            builder.write_texture(shadow_array_id);
+            (node, ())
+        });
 
         Some(shadow_array_id)
     }
@@ -282,10 +285,6 @@ pub struct ShadowPassNode {
 impl PassNode for ShadowPassNode {
     fn name(&self) -> &'static str {
         "Shadow_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.declare_output(self.shadow_array_id);
     }
 
     /// Resolve the physical shadow texture and create per-layer D2 views.

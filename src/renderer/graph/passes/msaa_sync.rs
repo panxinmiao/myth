@@ -33,7 +33,7 @@ use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassBuilder, PassNode, PrepareContext, RenderGraph,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph,
     TextureDesc, TextureNodeId,
 };
 use crate::renderer::pipeline::{
@@ -174,7 +174,11 @@ impl MsaaSyncFeature {
             layout: self.bind_group_layout.clone().unwrap(),
             bind_group_key: None,
         };
-        graph.add_pass(Box::new(node));
+        graph.add_pass("Msaa_Sync_Pass", |builder| {
+            builder.read_texture(src_hdr);
+            builder.write_texture(dst_msaa);
+            (node, ())
+        });
         dst_msaa
     }
 }
@@ -194,11 +198,6 @@ struct MsaaSyncPassNode {
 impl PassNode for MsaaSyncPassNode {
     fn name(&self) -> &'static str {
         "Msaa_Sync_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.read_texture(self.src_hdr);
-        builder.declare_output(self.dst_msaa);
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {

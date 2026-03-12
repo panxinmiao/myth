@@ -1,8 +1,8 @@
 use crate::renderer::graph::core::allocator::TransientPool;
-use crate::renderer::graph::core::context::{ExecuteContext, PrepareContext};
 use crate::renderer::graph::core::types::TextureDesc;
 
 use super::builder::PassBuilder;
+use super::context::{ExecuteContext, PrepareContext};
 use super::node::{PassNode, PassRecord};
 use super::types::{ResourceRecord, TextureNodeId};
 use rustc_hash::FxHashMap;
@@ -12,9 +12,10 @@ use wgpu::Device;
 /// Per-frame rendering configuration stored in the [`RenderGraph`].
 ///
 /// Set once per frame via [`RenderGraph::begin_frame`] and read by passes
-/// during [`PassNode::setup`] through [`PassBuilder`] accessors.  This
-/// eliminates the need for passes to receive screen-size or format information
-/// through push parameters — they can derive `TextureDesc`s directly.
+/// during graph construction through [`PassBuilder`] accessors.  This
+/// eliminates the need for passes to receive screen-size or format
+/// information through push parameters — they can derive `TextureDesc`s
+/// directly.
 #[derive(Debug, Clone, Copy)]
 pub struct FrameConfig {
     /// Framebuffer width in pixels.
@@ -69,13 +70,6 @@ impl FrameConfig {
 ///
 /// Stores pass and resource records, performs dependency analysis,
 /// dead-pass culling, topological sorting, and physical resource allocation.
-///
-/// # Resource Registry
-///
-/// Named resources registered via [`register_resource`](Self::register_resource)
-/// are stored in a `name → TextureNodeId` lookup table so that passes can
-/// resolve well-known resources by name during [`PassNode::setup`] via
-/// [`PassBuilder::find_resource`].
 pub struct RenderGraph {
     /// All pass records for the current frame.
     pub passes: Vec<PassRecord>,
@@ -198,7 +192,7 @@ impl RenderGraph {
     ///
     /// Used by `Feature::add_to_graph()` when the output ID must be known
     /// before the pass is inserted.  For self-contained passes, prefer
-    /// [`PassBuilder::mutate_texture`] which calls this internally.
+    /// [`PassBuilder::mutate_and_export`] which calls this internally.
     pub fn create_alias(&mut self, input_id: TextureNodeId, name: &'static str) -> TextureNodeId {
         let root_idx = self.resolve_alias_root(input_id.0 as usize);
         let root_id = TextureNodeId(root_idx as u32);
@@ -222,72 +216,82 @@ impl RenderGraph {
         }
     }
 
-    /// Adds an ephemeral pass node to the graph, transferring ownership.
+    /// Adds a pass to the graph using eager setup.
     ///
-    /// The node is owned by the graph for the duration of the current frame
-    /// and automatically dropped when [`begin_frame`](Self::begin_frame)
-    /// clears the pass list.
+    /// The closure receives a [`PassBuilder`] and must return a tuple of
+    /// `(PassNode, Out)`.  All resource creation and dependency wiring
+    /// happens immediately inside the closure; the returned `Out` (usually
+    /// a [`TextureNodeId`] or typed output struct) is forwarded to the
+    /// caller for downstream wiring.
     ///
-    /// Internally performs two phases:
-    /// 1. Push a placeholder `PassRecord` (node not yet stored).
-    /// 2. Call `node.setup(&mut PassBuilder)` so the node can declare
-    ///    its resource read/write topology.
-    /// 3. Move the node into the record.
-    pub fn add_pass(&mut self, mut node: Box<dyn PassNode>) {
+    /// # Type Parameters
+    ///
+    /// - `N` — concrete [`PassNode`] type (boxed automatically).
+    /// - `Out` — caller-chosen return payload (e.g. `TextureNodeId`).
+    /// - `F` — closure type.
+    pub fn add_pass<N, Out, F>(&mut self, name: &'static str, setup_fn: F) -> Out
+    where
+        N: PassNode + 'static,
+        F: FnOnce(&mut PassBuilder) -> (N, Out),
+    {
         let pass_index = self.passes.len();
-        let name = node.name();
 
-        // Phase 1: placeholder record (node = None)
+        // Phase 1: placeholder record (node = None) so the PassBuilder can
+        // reference the correct index.
         self.passes.push(PassRecord::new_empty(name));
 
-        // Phase 2: setup — node is still a local Box, disjoint from graph
-        {
+        // Phase 2: execute the closure — all topology wiring happens here.
+        let (node, output) = {
             let mut builder = PassBuilder {
                 graph: self,
                 pass_index,
             };
-            node.setup(&mut builder);
-        }
+            setup_fn(&mut builder)
+        };
 
-        // Phase 3: move owned node into the record
-        self.passes[pass_index].node = Some(node);
+        // Phase 3: move owned node into the record.
+        self.passes[pass_index].node = Some(Box::new(node));
+        output
     }
 
-    /// Adds a **borrowed** pass node to the graph.
+    /// Adds a borrowed pass to the graph with eager setup.
     ///
-    /// This is a convenience wrapper for external (user-land) passes that
-    /// are long-lived and allocated outside the graph. The reference must
-    /// remain valid until `FrameComposer::render()` completes (guaranteed
-    /// when called from an [`add_custom_pass`] hook closure).
+    /// The closure receives a [`PassBuilder`] for topology wiring, but the
+    /// pass node is provided externally and stored via a thin raw-pointer
+    /// wrapper.  This method exists for long-lived passes (such as UI
+    /// overlays) where the `PassNode`'s state spans multiple frames.
     ///
-    /// Internally wraps the raw pointer in a thin forwarding struct so that
-    /// the graph can store it alongside owned nodes.
-    pub fn add_pass_ref(&mut self, pass: &mut dyn PassNode) {
-        struct BorrowedPass(*mut dyn PassNode);
+    /// # Safety Contract
+    ///
+    /// The caller **must** ensure that `node` remains valid (not moved,
+    /// dropped, or mutably aliased) from this call until after the graph's
+    /// `prepare` and `execute` phases complete.  In practice this means
+    /// the reference must outlive [`FrameComposer::render()`].
+    pub fn add_pass_borrowed<Out, F>(
+        &mut self,
+        name: &'static str,
+        node: &mut dyn PassNode,
+        setup_fn: F,
+    ) -> Out
+    where
+        F: FnOnce(&mut PassBuilder) -> Out,
+    {
+        let pass_index = self.passes.len();
+        self.passes.push(PassRecord::new_empty(name));
 
-        // Safety: graph build / prepare / execute are single-threaded within
-        // the FrameComposer::render() call that owns the borrow.
-        unsafe impl Send for BorrowedPass {}
-        unsafe impl Sync for BorrowedPass {}
+        let output = {
+            let mut builder = PassBuilder {
+                graph: self,
+                pass_index,
+            };
+            setup_fn(&mut builder)
+        };
 
-        impl PassNode for BorrowedPass {
-            fn name(&self) -> &'static str {
-                unsafe { &*self.0 }.name()
-            }
-            fn setup(&mut self, builder: &mut PassBuilder) {
-                unsafe { &mut *self.0 }.setup(builder);
-            }
-            fn prepare(&mut self, ctx: &mut PrepareContext) {
-                unsafe { &mut *self.0 }.prepare(ctx);
-            }
-            fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-                unsafe { &*self.0 }.execute(ctx, encoder);
-            }
-        }
-
-        self.add_pass(Box::new(BorrowedPass(std::ptr::from_mut::<dyn PassNode>(
-            pass,
-        ))));
+        // SAFETY: BorrowedPass stores a raw pointer to the externally-owned
+        // PassNode.  The caller guarantees the reference outlives the graph's
+        // prepare→execute window (bounded by FrameComposer::render()).
+        self.passes[pass_index].node = Some(Box::new(BorrowedPass(node as *mut dyn PassNode)));
+        output
     }
 
     pub fn compile_topology(&mut self) {
@@ -631,6 +635,38 @@ impl RenderGraph {
     }
 }
 
+// ─── BorrowedPass ──────────────────────────────────────────────────────
+
+/// Thin raw-pointer wrapper for externally-owned `PassNode`s.
+///
+/// Used by [`RenderGraph::add_pass_borrowed`] to integrate long-lived
+/// pass nodes (e.g. UI overlays) that cannot transfer ownership into the
+/// graph.  Lifetime correctness is guaranteed by the caller's contract.
+struct BorrowedPass(*mut dyn PassNode);
+
+// SAFETY: The graph's single-threaded frame execution model ensures no
+// concurrent access.  The caller guarantees the pointer is valid for the
+// duration of prepare + execute.
+unsafe impl Send for BorrowedPass {}
+unsafe impl Sync for BorrowedPass {}
+
+impl PassNode for BorrowedPass {
+    fn name(&self) -> &'static str {
+        // SAFETY: Valid during graph execution per caller contract.
+        unsafe { &*self.0 }.name()
+    }
+
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
+        // SAFETY: Valid during graph execution per caller contract.
+        unsafe { &mut *self.0 }.prepare(ctx);
+    }
+
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+        // SAFETY: Valid during graph execution per caller contract.
+        unsafe { &*self.0 }.execute(ctx, encoder);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -655,47 +691,12 @@ mod tests {
         )
     }
 
-    struct MockOpaquePass {
-        out_color: TextureNodeId,
-    }
-    impl PassNode for MockOpaquePass {
-        fn name(&self) -> &'static str {
-            "Opaque"
-        }
-        fn setup(&mut self, builder: &mut PassBuilder) {
-            builder.declare_output(self.out_color);
-        }
-        fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
-    }
+    // ─── Shared Mock Pass Type ───────────────────────────────────────
 
-    struct MockBloomPass {
-        in_color: TextureNodeId,
-        out_bloom: TextureNodeId,
-    }
-    impl PassNode for MockBloomPass {
+    struct MockExec;
+    impl PassNode for MockExec {
         fn name(&self) -> &'static str {
-            "Bloom"
-        }
-        fn setup(&mut self, builder: &mut PassBuilder) {
-            builder.read_texture(self.in_color);
-            builder.declare_output(self.out_bloom);
-        }
-        fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
-    }
-
-    struct MockToneMappingPass {
-        in_color: TextureNodeId,
-        in_bloom: TextureNodeId,
-        out_target: TextureNodeId,
-    }
-    impl PassNode for MockToneMappingPass {
-        fn name(&self) -> &'static str {
-            "ToneMapping"
-        }
-        fn setup(&mut self, builder: &mut PassBuilder) {
-            builder.read_texture(self.in_color);
-            builder.read_texture(self.in_bloom);
-            builder.declare_output(self.out_target);
+            "mock"
         }
         fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
@@ -708,29 +709,25 @@ mod tests {
         for frame in 0..2 {
             graph.begin_frame(dummy_config());
 
-            let scene_color = graph.register_resource("SceneColor", dummy_desc(), false);
-            let bloom_tex = graph.register_resource("BloomTex", dummy_desc(), false);
             let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-            let opaque_pass = MockOpaquePass {
-                out_color: scene_color,
-            };
-            let bloom_pass = MockBloomPass {
-                in_color: scene_color,
-                out_bloom: bloom_tex,
-            };
-            let tm_pass = MockToneMappingPass {
-                in_color: scene_color,
-                in_bloom: bloom_tex,
-                out_target: backbuffer,
-            };
+            let scene_color = graph.add_pass("Opaque", |builder| {
+                let out = builder.create_and_export("SceneColor", dummy_desc());
+                (MockExec, out)
+            });
 
-            // Add in forward order (Opaque → Bloom → ToneMapping).
-            // The graph should resolve dependencies and produce the same
-            // topological order.
-            graph.add_pass(Box::new(opaque_pass));
-            graph.add_pass(Box::new(bloom_pass));
-            graph.add_pass(Box::new(tm_pass));
+            let bloom_tex = graph.add_pass("Bloom", |builder| {
+                builder.read_texture(scene_color);
+                let out = builder.create_and_export("BloomTex", dummy_desc());
+                (MockExec, out)
+            });
+
+            graph.add_pass("ToneMapping", |builder| {
+                builder.read_texture(scene_color);
+                builder.read_texture(bloom_tex);
+                builder.write_texture(backbuffer);
+                (MockExec, ())
+            });
 
             graph.compile_topology();
 
@@ -759,47 +756,21 @@ mod tests {
         let mut graph = RenderGraph::new();
         graph.begin_frame(dummy_config());
 
-        let color = graph.register_resource("Color", dummy_desc(), false);
-        let motion = graph.register_resource("MotionVec", dummy_desc(), false);
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
         // GBuffer writes both Color and MotionVector.
-        struct MockGBufferPass {
-            color: TextureNodeId,
-            motion: TextureNodeId,
-        }
-        impl PassNode for MockGBufferPass {
-            fn name(&self) -> &'static str {
-                "GBuffer"
-            }
-            fn setup(&mut self, builder: &mut PassBuilder) {
-                builder.declare_output(self.color);
-                builder.declare_output(self.motion);
-            }
-            fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
-        }
+        let (color, motion) = graph.add_pass("GBuffer", |builder| {
+            let color = builder.create_and_export("Color", dummy_desc());
+            let motion = builder.create_and_export("MotionVec", dummy_desc());
+            (MockExec, (color, motion))
+        });
 
         // ToneMap reads only Color, ignoring MotionVector.
-        struct MockToneMap {
-            color: TextureNodeId,
-            out: TextureNodeId,
-        }
-        impl PassNode for MockToneMap {
-            fn name(&self) -> &'static str {
-                "ToneMap"
-            }
-            fn setup(&mut self, builder: &mut PassBuilder) {
-                builder.read_texture(self.color);
-                builder.declare_output(self.out);
-            }
-            fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
-        }
-
-        graph.add_pass(Box::new(MockGBufferPass { color, motion }));
-        graph.add_pass(Box::new(MockToneMap {
-            color,
-            out: backbuffer,
-        }));
+        graph.add_pass("ToneMap", |builder| {
+            builder.read_texture(color);
+            builder.write_texture(backbuffer);
+            (MockExec, ())
+        });
 
         graph.compile_topology();
 
@@ -822,29 +793,14 @@ mod tests {
         let mut graph = RenderGraph::new();
         graph.begin_frame(dummy_config());
 
-        let internal = graph.register_resource("Internal", dummy_desc(), false);
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-        struct MockMacroNode {
-            internal: TextureNodeId,
-            output: TextureNodeId,
-        }
-        impl PassNode for MockMacroNode {
-            fn name(&self) -> &'static str {
-                "MacroNode"
-            }
-            fn setup(&mut self, builder: &mut PassBuilder) {
-                builder.declare_output(self.internal);
-                builder.read_texture(self.internal); // self-read
-                builder.declare_output(self.output);
-            }
-            fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
-        }
-
-        graph.add_pass(Box::new(MockMacroNode {
-            internal,
-            output: backbuffer,
-        }));
+        let internal = graph.add_pass("MacroNode", |builder| {
+            let internal = builder.create_and_export("Internal", dummy_desc());
+            builder.read_texture(internal); // self-read
+            builder.write_texture(backbuffer);
+            (MockExec, internal)
+        });
 
         graph.compile_topology();
 
@@ -859,20 +815,25 @@ mod tests {
         let mut graph = RenderGraph::new();
         graph.begin_frame(dummy_config());
 
-        let color = graph.register_resource("Color", dummy_desc(), false);
-        let bloom = graph.register_resource("Bloom", dummy_desc(), false);
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-        graph.add_pass(Box::new(MockOpaquePass { out_color: color }));
-        graph.add_pass(Box::new(MockBloomPass {
-            in_color: color,
-            out_bloom: bloom,
-        }));
-        graph.add_pass(Box::new(MockToneMappingPass {
-            in_color: color,
-            in_bloom: bloom,
-            out_target: backbuffer,
-        }));
+        let color = graph.add_pass("Opaque", |builder| {
+            let out = builder.create_and_export("Color", dummy_desc());
+            (MockExec, out)
+        });
+
+        let bloom = graph.add_pass("Bloom", |builder| {
+            builder.read_texture(color);
+            let out = builder.create_and_export("Bloom", dummy_desc());
+            (MockExec, out)
+        });
+
+        graph.add_pass("ToneMapping", |builder| {
+            builder.read_texture(color);
+            builder.read_texture(bloom);
+            builder.write_texture(backbuffer);
+            (MockExec, ())
+        });
 
         graph.compile_topology();
 
@@ -898,7 +859,7 @@ mod tests {
         );
     }
 
-    /// Verifies the SSA alias (mutate_texture / create_alias) mechanism:
+    /// Verifies the SSA alias (mutate_and_export / create_alias) mechanism:
     ///
     /// - Relay passes (Opaque → Skybox → Transparent) produce unique
     ///   logical IDs sharing the same physical memory.
@@ -910,109 +871,54 @@ mod tests {
         let mut graph = RenderGraph::new();
         graph.begin_frame(dummy_config());
 
-        // 1. Register the root colour resource (owned by Opaque).
-        let color_v0 = graph.register_resource("SceneColor_v0", dummy_desc(), false);
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-        // 2. Create SSA aliases that simulate Skybox and Transparent relays.
-        let color_v1 = graph.create_alias(color_v0, "SceneColor_v1");
-        let color_v2 = graph.create_alias(color_v1, "SceneColor_v2");
+        // 1. Opaque creates the root colour resource.
+        let color_v0 = graph.add_pass("Opaque", |builder| {
+            let out = builder.create_and_export("SceneColor_v0", dummy_desc());
+            (MockExec, out)
+        });
 
         // — Alias metadata checks —
         assert!(
             graph.resources[color_v0.0 as usize].alias_of.is_none(),
             "v0 is a root resource"
         );
+
+        // 2. Skybox mutates v0 → v1 (SSA relay).
+        let color_v1 = graph.add_pass("Skybox", |builder| {
+            let out = builder.mutate_and_export(color_v0, "SceneColor_v1");
+            (MockExec, out)
+        });
+
         assert_eq!(
             graph.resources[color_v1.0 as usize].alias_of,
             Some(color_v0),
             "v1 aliases v0"
         );
+
+        // 3. Transparent mutates v1 → v2.
+        let color_v2 = graph.add_pass("Transparent", |builder| {
+            let out = builder.mutate_and_export(color_v1, "SceneColor_v2");
+            (MockExec, out)
+        });
+
         assert_eq!(
             graph.resources[color_v2.0 as usize].alias_of,
             Some(color_v0),
-            "v2 aliases v1"
+            "v2 aliases v0 (root)"
         );
 
-        // 3. Build passes with explicit read → write (SSA model).
-        //    Note: passes are added in FORWARD order here, but the
-        //    ordering is determined by edges, not insertion order.
-
-        struct MockOpaque {
-            out: TextureNodeId,
-        }
-        impl PassNode for MockOpaque {
-            fn name(&self) -> &'static str {
-                "Opaque"
-            }
-            fn setup(&mut self, b: &mut PassBuilder) {
-                b.declare_output(self.out);
-            }
-            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
-        }
-
-        struct MockSkybox {
-            r: TextureNodeId,
-            w: TextureNodeId,
-        }
-        impl PassNode for MockSkybox {
-            fn name(&self) -> &'static str {
-                "Skybox"
-            }
-            fn setup(&mut self, b: &mut PassBuilder) {
-                b.read_texture(self.r);
-                b.declare_output(self.w);
-            }
-            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
-        }
-
-        struct MockTransparent {
-            r: TextureNodeId,
-            w: TextureNodeId,
-        }
-        impl PassNode for MockTransparent {
-            fn name(&self) -> &'static str {
-                "Transparent"
-            }
-            fn setup(&mut self, b: &mut PassBuilder) {
-                b.read_texture(self.r);
-                b.declare_output(self.w);
-            }
-            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
-        }
-
-        struct MockPost {
-            r: TextureNodeId,
-            out: TextureNodeId,
-        }
-        impl PassNode for MockPost {
-            fn name(&self) -> &'static str {
-                "ToneMap"
-            }
-            fn setup(&mut self, b: &mut PassBuilder) {
-                b.read_texture(self.r);
-                b.declare_output(self.out);
-            }
-            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
-        }
-
-        graph.add_pass(Box::new(MockOpaque { out: color_v0 }));
-        graph.add_pass(Box::new(MockSkybox {
-            r: color_v0,
-            w: color_v1,
-        }));
-        graph.add_pass(Box::new(MockTransparent {
-            r: color_v1,
-            w: color_v2,
-        }));
-        graph.add_pass(Box::new(MockPost {
-            r: color_v2,
-            out: backbuffer,
-        }));
+        // 4. ToneMap reads the final version.
+        graph.add_pass("ToneMap", |builder| {
+            builder.read_texture(color_v2);
+            builder.write_texture(backbuffer);
+            (MockExec, ())
+        });
 
         graph.compile_topology();
 
-        // 4. Verify topological order: Opaque → Skybox → Transparent → ToneMap.
+        // 5. Verify topological order: Opaque → Skybox → Transparent → ToneMap.
         assert_eq!(graph.execution_queue.len(), 4);
         let names: Vec<&str> = graph
             .execution_queue
@@ -1021,7 +927,7 @@ mod tests {
             .collect();
         assert_eq!(names, vec!["Opaque", "Skybox", "Transparent", "ToneMap"]);
 
-        // 5. Verify alias chain resolves to root: v2 → v1 → v0.
+        // 6. Verify alias chain resolves to root: v2 → v1 → v0.
         assert_eq!(
             graph.resolve_alias_root(color_v2.0 as usize),
             color_v0.0 as usize
@@ -1036,75 +942,38 @@ mod tests {
         );
     }
 
-    /// Verifies that `mutate_texture` on the PassBuilder correctly
+    /// Verifies that `mutate_and_export` on the PassBuilder correctly
     /// creates an alias, reads the input, and writes the new version.
     #[test]
-    fn test_mutate_texture_api() {
+    fn test_mutate_and_export_api() {
         let mut graph = RenderGraph::new();
         graph.begin_frame(dummy_config());
 
-        let color = graph.register_resource("Color", dummy_desc(), false);
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-        struct Writer {
-            out: TextureNodeId,
-        }
-        impl PassNode for Writer {
-            fn name(&self) -> &'static str {
-                "Writer"
-            }
-            fn setup(&mut self, b: &mut PassBuilder) {
-                b.declare_output(self.out);
-            }
-            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
-        }
+        let color = graph.add_pass("Writer", |builder| {
+            let out = builder.create_and_export("Color", dummy_desc());
+            (MockExec, out)
+        });
 
-        struct Mutator {
-            input: TextureNodeId,
-            output: TextureNodeId,
-        }
-        impl PassNode for Mutator {
-            fn name(&self) -> &'static str {
-                "Mutator"
-            }
-            fn setup(&mut self, b: &mut PassBuilder) {
-                self.output = b.mutate_texture(self.input, "Color_Mutated");
-            }
-            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
-        }
+        let mutated_id = graph.add_pass("Mutator", |builder| {
+            let out = builder.mutate_and_export(color, "Color_Mutated");
+            (MockExec, out)
+        });
 
-        struct Reader {
-            r: TextureNodeId,
-            out: TextureNodeId,
-        }
-        impl PassNode for Reader {
-            fn name(&self) -> &'static str {
-                "Reader"
-            }
-            fn setup(&mut self, b: &mut PassBuilder) {
-                b.read_texture(self.r);
-                b.declare_output(self.out);
-            }
-            fn execute(&self, _: &ExecuteContext, _: &mut wgpu::CommandEncoder) {}
-        }
-
-        graph.add_pass(Box::new(Writer { out: color }));
-        graph.add_pass(Box::new(Mutator {
-            input: color,
-            output: TextureNodeId(0),
-        }));
-
-        // After Mutator's setup, the graph has a new resource "Color_Mutated".
-        let mutated_id = graph
+        // After Mutator, the graph has a new resource "Color_Mutated".
+        let found = graph
             .find_resource("Color_Mutated")
-            .expect("mutate_texture should register the new resource");
+            .expect("mutate_and_export should register the new resource");
+        assert_eq!(found, mutated_id);
         assert!(graph.resources[mutated_id.0 as usize].alias_of.is_some());
 
         // Reader consumes the mutated version.
-        graph.add_pass(Box::new(Reader {
-            r: mutated_id,
-            out: backbuffer,
-        }));
+        graph.add_pass("Reader", |builder| {
+            builder.read_texture(mutated_id);
+            builder.write_texture(backbuffer);
+            (MockExec, ())
+        });
 
         graph.compile_topology();
 

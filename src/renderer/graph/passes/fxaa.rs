@@ -9,7 +9,7 @@ use crate::FxaaQuality;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassBuilder, PassNode, PrepareContext, RenderGraph,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph,
     TextureNodeId,
 };
 use crate::renderer::pipeline::{
@@ -147,7 +147,11 @@ impl FxaaFeature {
             layout: self.bind_group_layout.clone().unwrap(),
             current_bind_group_key: None,
         };
-        graph.add_pass(Box::new(node));
+        graph.add_pass("FXAA_Pass", |builder| {
+            builder.read_texture(input_tex);
+            builder.write_texture(output_tex);
+            (node, ())
+        });
     }
 }
 
@@ -166,11 +170,6 @@ struct FxaaPassNode {
 impl PassNode for FxaaPassNode {
     fn name(&self) -> &'static str {
         "FXAA_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.read_texture(self.input_tex);
-        builder.declare_output(self.output_tex);
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {

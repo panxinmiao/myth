@@ -24,7 +24,7 @@ use crate::assets::TextureHandle;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassBuilder, PassNode, PrepareContext, RenderGraph,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph,
     TextureNodeId,
 };
 use crate::renderer::pipeline::{
@@ -401,7 +401,11 @@ impl ToneMappingFeature {
             transient_layout: self.transient_layout.clone().unwrap(),
             current_bind_group_key: None,
         };
-        graph.add_pass(Box::new(node));
+        graph.add_pass("ToneMap_Pass", |builder| {
+            builder.read_texture(input_tex);
+            builder.write_texture(output_tex);
+            (node, ())
+        });
     }
 }
 
@@ -432,11 +436,6 @@ struct ToneMapPassNode {
 impl PassNode for ToneMapPassNode {
     fn name(&self) -> &'static str {
         "ToneMap_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.read_texture(self.input_tex);
-        builder.declare_output(self.output_tex);
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {

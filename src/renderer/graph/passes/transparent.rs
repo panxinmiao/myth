@@ -32,7 +32,7 @@
 
 use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, PassBuilder, PassNode, PrepareContext, RenderGraph, TextureNodeId,
+    ExecuteContext, PassNode, PrepareContext, RenderGraph, TextureNodeId,
 };
 use crate::renderer::graph::passes::draw::submit_draw_commands;
 
@@ -79,37 +79,55 @@ impl TransparentFeature {
         ssao_tex: Option<TextureNodeId>,
         shadow_tex: Option<TextureNodeId>,
     ) -> TextureNodeId {
-        let color_output = graph.create_alias(color_target, "Scene_Color_Transparent");
+        let fc = *graph.frame_config();
+        let screen_info = self
+            .screen_info
+            .clone()
+            .expect("TransparentFeature: screen_info not set");
 
-        let resolve_target = if graph.frame_config().msaa_samples > 1 {
-            Some(graph.register_resource(
-                "Scene_Color_HDR_Final",
-                graph.frame_config().create_render_target_desc(
+        graph.add_pass("Transparent_Pass", |builder| {
+            // SSA colour relay: read the incoming version, write a new alias.
+            let color_output =
+                builder.mutate_and_export(color_target, "Scene_Color_Transparent");
+
+            let resolve_target = if fc.msaa_samples > 1 {
+                let desc = fc.create_render_target_desc(
                     wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
-                ),
-                false,
-            ))
-        } else {
-            None
-        };
+                );
+                Some(builder.create_and_export("Scene_Color_HDR_Final", desc))
+            } else {
+                None
+            };
 
-        let node = TransparentPassNode::new(
-            color_target,
-            color_output,
-            depth_target,
-            resolve_target,
-            transmission_tex,
-            ssao_tex,
-            shadow_tex,
-            self.screen_info
-                .clone()
-                .expect("TransparentFeature: screen_info not set"),
-        );
-        graph.add_pass(Box::new(node));
+            // Depth — read-only for depth testing.
+            builder.read_texture(depth_target);
 
-        // MSAA: downstream reads the resolved single-sample target.
-        // Non-MSAA: downstream reads the mutated alias (same physical memory).
-        resolve_target.unwrap_or(color_output)
+            // Optional texture inputs.
+            if let Some(tx) = transmission_tex {
+                builder.read_texture(tx);
+            }
+            if let Some(ssao) = ssao_tex {
+                builder.read_texture(ssao);
+            }
+            if let Some(shadow) = shadow_tex {
+                builder.read_texture(shadow);
+            }
+
+            let result = resolve_target.unwrap_or(color_output);
+
+            let node = TransparentPassNode::new(
+                color_target,
+                color_output,
+                depth_target,
+                resolve_target,
+                transmission_tex,
+                ssao_tex,
+                shadow_tex,
+                screen_info,
+            );
+
+            (node, result)
+        })
     }
 }
 
@@ -124,9 +142,7 @@ impl TransparentFeature {
 /// automatic `StoreOp::Discard` via the RDG lifetime system.
 pub struct TransparentPassNode {
     // ─── RDG Resource Slots (SSA model) ────────────────────────────
-    /// Previous colour version (read dependency).
-    in_color: TextureNodeId,
-    /// New colour version — SSA alias of `in_color` (write dependency).
+    /// New colour version — SSA alias of the input (write dependency).
     out_color: TextureNodeId,
     /// Depth buffer (read-only for depth testing).
     depth_target: TextureNodeId,
@@ -147,7 +163,7 @@ pub struct TransparentPassNode {
 impl TransparentPassNode {
     #[must_use]
     fn new(
-        in_color: TextureNodeId,
+        _in_color: TextureNodeId,
         out_color: TextureNodeId,
         depth_target: TextureNodeId,
         resolve_target: Option<TextureNodeId>,
@@ -157,7 +173,6 @@ impl TransparentPassNode {
         screen_info: ScreenBindGroupInfo,
     ) -> Self {
         Self {
-            in_color,
             out_color,
             depth_target,
             resolve_target,
@@ -173,33 +188,6 @@ impl TransparentPassNode {
 impl PassNode for TransparentPassNode {
     fn name(&self) -> &'static str {
         "Transparent_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        // SSA colour relay: read the incoming version, write the new alias.
-        builder.read_texture(self.in_color);
-        builder.declare_output(self.out_color);
-
-        // Depth — read-only for depth testing.
-        builder.read_texture(self.depth_target);
-
-        // Resolve target — write dependency for MSAA resolve and
-        // downstream consumer tracking.
-        if let Some(rt) = self.resolve_target {
-            builder.declare_output(rt);
-        }
-
-        // Optional texture inputs.
-        if let Some(tx) = self.transmission_input {
-            builder.read_texture(tx);
-        }
-        if let Some(ssao) = self.ssao_input {
-            builder.read_texture(ssao);
-        }
-        // Shadow map — explicit DAG dependency on ShadowPass.
-        if let Some(shadow) = self.shadow_input {
-            builder.read_texture(shadow);
-        }
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {

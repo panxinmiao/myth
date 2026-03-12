@@ -29,7 +29,7 @@
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, PassBuilder, PassNode, PrepareContext, RenderGraph, TextureDesc, TextureNodeId,
+    ExecuteContext, PassNode, PrepareContext, RenderGraph, TextureDesc, TextureNodeId,
 };
 use crate::renderer::graph::passes::draw::submit_draw_commands;
 
@@ -88,8 +88,11 @@ impl OpaqueFeature {
     ) -> OpaqueOutputs {
         let fc = *graph.frame_config();
         let is_msaa = fc.msaa_samples > 1;
+        let screen_info = self
+            .screen_info
+            .clone()
+            .expect("OpaqueFeature: screen_info not set");
 
-        // ── Create color / depth / resolve targets ─────────────────
         let hdr_desc = TextureDesc::new_2d(
             fc.width,
             fc.height,
@@ -99,108 +102,124 @@ impl OpaqueFeature {
                 | wgpu::TextureUsages::COPY_SRC,
         );
 
-        let (color_target, depth_target, resolve_target, scene_color_hdr, in_depth) = if is_msaa {
-            let msaa_color_desc = TextureDesc::new(
-                fc.width,
-                fc.height,
-                1,
-                1,
-                fc.msaa_samples,
-                wgpu::TextureDimension::D2,
-                HDR_TEXTURE_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT,
-            );
-            let msaa_depth_desc = TextureDesc::new(
-                fc.width,
-                fc.height,
-                1,
-                1,
-                fc.msaa_samples,
-                wgpu::TextureDimension::D2,
-                fc.depth_format,
-                wgpu::TextureUsages::RENDER_ATTACHMENT,
-            );
+        graph.add_pass("Opaque_Pass", |builder| {
+            // ── Create color / depth / resolve targets ─────────────────
+            let (color_target, depth_target, resolve_target, scene_color_hdr, in_depth) =
+                if is_msaa {
+                    let msaa_color_desc = TextureDesc::new(
+                        fc.width,
+                        fc.height,
+                        1,
+                        1,
+                        fc.msaa_samples,
+                        wgpu::TextureDimension::D2,
+                        HDR_TEXTURE_FORMAT,
+                        wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    );
+                    let msaa_depth_desc = TextureDesc::new(
+                        fc.width,
+                        fc.height,
+                        1,
+                        1,
+                        fc.msaa_samples,
+                        wgpu::TextureDimension::D2,
+                        fc.depth_format,
+                        wgpu::TextureUsages::RENDER_ATTACHMENT,
+                    );
 
-            let msaa_color = graph.register_resource("Scene_Color_MSAA", msaa_color_desc, false);
-            let msaa_depth = graph.register_resource("Scene_Depth_MSAA", msaa_depth_desc, false);
-            let scene_hdr = graph.register_resource("Scene_Color_HDR", hdr_desc, false);
+                    let msaa_color =
+                        builder.create_and_export("Scene_Color_MSAA", msaa_color_desc);
+                    let msaa_depth =
+                        builder.create_and_export("Scene_Depth_MSAA", msaa_depth_desc);
+                    let scene_hdr = builder.create_and_export("Scene_Color_HDR", hdr_desc);
 
-            (msaa_color, msaa_depth, Some(scene_hdr), scene_hdr, None)
-        } else {
-            let scene_hdr = graph.register_resource("Scene_Color_HDR", hdr_desc, false);
-            let depth_alias = graph.create_alias(scene_depth_ss, "Scene_Depth_Opaque");
-            (
-                scene_hdr,
-                depth_alias,
-                None,
-                scene_hdr,
-                Some(scene_depth_ss),
-            )
-        };
+                    (msaa_color, msaa_depth, Some(scene_hdr), scene_hdr, None)
+                } else {
+                    let scene_hdr = builder.create_and_export("Scene_Color_HDR", hdr_desc);
+                    let depth_alias =
+                        builder.mutate_and_export(scene_depth_ss, "Scene_Depth_Opaque");
+                    (
+                        scene_hdr,
+                        depth_alias,
+                        None,
+                        scene_hdr,
+                        Some(scene_depth_ss),
+                    )
+                };
 
-        // ── Specular MRT (conditionally created) ───────────────────
-        let (specular_tex, specular_resolved) = if needs_specular {
-            let spec_desc = TextureDesc::new_2d(
-                fc.width,
-                fc.height,
-                HDR_TEXTURE_FORMAT,
-                wgpu::TextureUsages::RENDER_ATTACHMENT
-                    | wgpu::TextureUsages::TEXTURE_BINDING
-                    | wgpu::TextureUsages::COPY_SRC,
-            );
-            let specular_single = graph.register_resource("Specular_MRT", spec_desc, false);
-
-            if is_msaa {
-                let msaa_spec_desc = TextureDesc::new(
+            // ── Specular MRT (conditionally created) ───────────────────
+            let (specular_tex, specular_resolved) = if needs_specular {
+                let spec_desc = TextureDesc::new_2d(
                     fc.width,
                     fc.height,
-                    1,
-                    1,
-                    fc.msaa_samples,
-                    wgpu::TextureDimension::D2,
                     HDR_TEXTURE_FORMAT,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC,
                 );
-                let specular_msaa =
-                    graph.register_resource("Specular_MRT_MSAA", msaa_spec_desc, false);
-                (specular_msaa, Some(specular_single))
+                let specular_single = builder.create_and_export("Specular_MRT", spec_desc);
+
+                if is_msaa {
+                    let msaa_spec_desc = TextureDesc::new(
+                        fc.width,
+                        fc.height,
+                        1,
+                        1,
+                        fc.msaa_samples,
+                        wgpu::TextureDimension::D2,
+                        HDR_TEXTURE_FORMAT,
+                        wgpu::TextureUsages::RENDER_ATTACHMENT
+                            | wgpu::TextureUsages::TEXTURE_BINDING,
+                    );
+                    let specular_msaa =
+                        builder.create_and_export("Specular_MRT_MSAA", msaa_spec_desc);
+                    (specular_msaa, Some(specular_single))
+                } else {
+                    (specular_single, None)
+                }
             } else {
-                (specular_single, None)
+                (TextureNodeId(0), None)
+            };
+
+            // ── Read dependencies ──────────────────────────────────────
+            if let Some(ssao) = ssao_tex {
+                builder.read_texture(ssao);
             }
-        } else {
-            (TextureNodeId(0), None)
-        };
+            if let Some(shadow) = shadow_tex {
+                builder.read_texture(shadow);
+            }
 
-        let node = OpaquePassNode::new(
-            color_target,
-            depth_target,
-            in_depth,
-            has_prepass,
-            clear_color,
-            needs_specular,
-            resolve_target,
-            ssao_tex,
-            shadow_tex,
-            specular_tex,
-            specular_resolved,
-            self.screen_info
-                .clone()
-                .expect("OpaqueFeature: screen_info not set"),
-        );
-        graph.add_pass(Box::new(node));
+            let node = OpaquePassNode::new(
+                color_target,
+                depth_target,
+                in_depth,
+                has_prepass,
+                clear_color,
+                needs_specular,
+                resolve_target,
+                ssao_tex,
+                shadow_tex,
+                specular_tex,
+                specular_resolved,
+                screen_info,
+            );
 
-        let specular_mrt = if needs_specular {
-            Some(specular_resolved.unwrap_or(specular_tex))
-        } else {
-            None
-        };
+            let specular_mrt = if needs_specular {
+                Some(specular_resolved.unwrap_or(specular_tex))
+            } else {
+                None
+            };
 
-        OpaqueOutputs {
-            active_color: color_target,
-            active_depth: depth_target,
-            scene_color_hdr,
-            specular_mrt,
-        }
+            (
+                node,
+                OpaqueOutputs {
+                    active_color: color_target,
+                    active_depth: depth_target,
+                    scene_color_hdr,
+                    specular_mrt,
+                },
+            )
+        })
     }
 }
 
@@ -275,42 +294,6 @@ impl OpaquePassNode {
 impl PassNode for OpaquePassNode {
     fn name(&self) -> &'static str {
         "Opaque_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        // Primary color target — may be single-sample HDR or MSAA.
-        builder.declare_output(self.color_target);
-
-        if let Some(in_depth) = self.in_depth {
-            builder.read_texture(in_depth);
-        }
-
-        // Depth target.
-        builder.declare_output(self.depth_target);
-
-        // Resolve target — declare write so the graph compiler allocates
-        // physical memory and tracks dependencies for downstream consumers.
-        if let Some(rt) = self.resolve_target {
-            builder.declare_output(rt);
-        }
-
-        // SSAO — explicit input wiring.
-        if let Some(ssao) = self.ssao_input {
-            builder.read_texture(ssao);
-        }
-
-        // Shadow map — explicit DAG dependency on ShadowPass.
-        if let Some(shadow) = self.shadow_input {
-            builder.read_texture(shadow);
-        }
-
-        // Specular MRT (pre-registered in add_to_graph).
-        if self.needs_specular {
-            builder.declare_output(self.specular_tex);
-            if let Some(resolve) = self.specular_resolve_target {
-                builder.declare_output(resolve);
-            }
-        }
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {

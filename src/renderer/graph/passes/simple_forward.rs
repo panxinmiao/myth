@@ -24,7 +24,7 @@
 
 use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, PassBuilder, PassNode, PrepareContext, RenderGraph, TextureDesc, TextureNodeId,
+    ExecuteContext, PassNode, PrepareContext, RenderGraph, TextureDesc, TextureNodeId,
 };
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::graph::passes::draw::submit_draw_commands;
@@ -61,6 +61,11 @@ impl SimpleForwardFeature {
         shadow_tex: Option<TextureNodeId>,
     ) {
         let fc = *rdg.frame_config();
+        let screen_info = self
+            .screen_info
+            .clone()
+            .expect("SimpleForwardFeature: screen_info not set");
+
         let depth_desc = TextureDesc::new(
             fc.width,
             fc.height,
@@ -71,19 +76,46 @@ impl SimpleForwardFeature {
             fc.depth_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        let scene_depth = rdg.register_resource("Scene_Depth", depth_desc, false);
 
-        let node = SimpleForwardPassNode::new(
-            surface_out,
-            scene_depth,
-            clear_color,
-            self.screen_info
-                .clone()
-                .expect("SimpleForwardFeature: screen_info not set"),
-            prepared_skybox,
-            shadow_tex,
-        );
-        rdg.add_pass(Box::new(node));
+        rdg.add_pass("SimpleForward_Pass", |builder| {
+            builder.write_texture(surface_out);
+            let scene_depth = builder.create_and_export("Scene_Depth", depth_desc);
+
+            // Shadow map — explicit DAG dependency on ShadowPass.
+            if let Some(shadow) = shadow_tex {
+                builder.read_texture(shadow);
+            }
+
+            // MSAA intermediate (internal, conditionally created).
+            let msaa_view = if fc.msaa_samples > 1 {
+                let desc = TextureDesc::new(
+                    fc.width,
+                    fc.height,
+                    1,
+                    1,
+                    fc.msaa_samples,
+                    wgpu::TextureDimension::D2,
+                    fc.surface_format,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                );
+                Some(builder.create_texture("Scene_Msaa", desc))
+            } else {
+                None
+            };
+
+            let node = SimpleForwardPassNode {
+                surface_out,
+                scene_depth,
+                msaa_view,
+                clear_color,
+                prepared_skybox,
+                shadow_input: shadow_tex,
+                screen_info,
+                screen_bind_group: None,
+            };
+            (node, ())
+        });
     }
 }
 
@@ -142,38 +174,6 @@ impl SimpleForwardPassNode {
 impl PassNode for SimpleForwardPassNode {
     fn name(&self) -> &'static str {
         "SimpleForward_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        // Outputs (pre-registered in add_to_graph).
-        builder.declare_output(self.surface_out);
-        builder.declare_output(self.scene_depth);
-
-        // Shadow map — explicit DAG dependency on ShadowPass.
-        if let Some(shadow) = self.shadow_input {
-            builder.read_texture(shadow);
-        }
-
-        // MSAA intermediate (internal, conditionally created).
-        let msaa_samples = builder.frame_config().msaa_samples;
-        if msaa_samples > 1 {
-            let (w, h) = builder.global_resolution();
-            let surface_format = builder.frame_config().surface_format;
-            let desc = TextureDesc::new(
-                w,
-                h,
-                1,
-                1,
-                msaa_samples,
-                wgpu::TextureDimension::D2,
-                surface_format,
-                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-            );
-            let msaa_id = builder.create_texture("Scene_Msaa", desc);
-            self.msaa_view = Some(msaa_id);
-        } else {
-            self.msaa_view = None;
-        }
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {

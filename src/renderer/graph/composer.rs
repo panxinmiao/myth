@@ -36,9 +36,12 @@
 //!
 //! ```ignore
 //! renderer.begin_frame(scene, &camera, assets, time)?
-//!     .add_custom_pass(|rdg, bb| {
-//!         ui_pass.target_tex = bb.surface_out;
-//!         rdg.add_pass(&mut ui_pass);
+//!     .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
+//!         let new_surface = rdg.add_pass("UI_Pass", |builder| {
+//!             let out = builder.mutate_and_export(bb.surface_out, "Surface_With_UI");
+//!             (ui_node, out)
+//!         });
+//!         GraphBlackboard { surface_out: new_surface, ..bb }
 //!     })
 //!     .render();
 //! ```
@@ -137,7 +140,7 @@ pub struct FrameComposer<'a> {
     hooks: smallvec::SmallVec<
         [(
             HookStage,
-            Box<dyn FnMut(&mut RenderGraph, &mut GraphBlackboard) + 'a>,
+            Box<dyn FnMut(&mut RenderGraph, GraphBlackboard) -> GraphBlackboard + 'a>,
         ); 4],
     >,
 }
@@ -173,8 +176,8 @@ impl<'a> FrameComposer<'a> {
     ///
     /// The closure receives a mutable reference to the [`RenderGraph`] and
     /// the [`GraphBlackboard`] containing the frame's well-known resource slots.
-    /// This is the primary extension point for UI overlays, debug visualisations,
-    /// and other user-defined passes.
+    /// It must return an (optionally updated) [`GraphBlackboard`] — the Rust
+    /// type system enforces that every hook path returns a valid blackboard.
     ///
     /// Hooks registered with [`HookStage::AfterPostProcess`] run after all
     /// built-in post-processing (Bloom, ToneMap, FXAA) and are typically used
@@ -185,8 +188,11 @@ impl<'a> FrameComposer<'a> {
     /// ```ignore
     /// composer
     ///     .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
-    ///         my_ui_pass.target_tex = bb.surface_out;
-    ///         rdg.add_pass(&mut my_ui_pass);
+    ///         let new_surface = rdg.add_pass("MyPass", |builder| {
+    ///             let out = builder.mutate_and_export(bb.surface_out, "Surface_MyPass");
+    ///             (MyPassNode { target: out }, out)
+    ///         });
+    ///         GraphBlackboard { surface_out: new_surface, ..bb }
     ///     })
     ///     .render();
     /// ```
@@ -194,7 +200,7 @@ impl<'a> FrameComposer<'a> {
     #[must_use]
     pub fn add_custom_pass<F>(mut self, stage: HookStage, hook: F) -> Self
     where
-        F: FnMut(&mut RenderGraph, &mut GraphBlackboard) + 'a,
+        F: FnMut(&mut RenderGraph, GraphBlackboard) -> GraphBlackboard + 'a,
     {
         self.hooks.push((stage, Box::new(hook)));
         self
@@ -424,7 +430,7 @@ impl<'a> FrameComposer<'a> {
                 };
                 for (stage, hook) in &mut self.hooks {
                     if *stage == HookStage::BeforePostProcess {
-                        hook(graph, &mut blackboard);
+                        blackboard = hook(graph, blackboard);
                     }
                 }
             }
@@ -500,7 +506,7 @@ impl<'a> FrameComposer<'a> {
             };
             for (stage, hook) in &mut self.hooks {
                 if *stage == HookStage::AfterPostProcess {
-                    hook(graph, &mut blackboard);
+                    blackboard = hook(graph, blackboard);
                 }
             }
         }

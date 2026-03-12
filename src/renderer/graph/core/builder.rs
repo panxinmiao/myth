@@ -1,28 +1,30 @@
 use super::graph::{FrameConfig, RenderGraph};
-use super::types::TextureNodeId;
+use super::types::{TextureDesc, TextureNodeId};
 
-/// Builder for declaring a pass's resource dependencies.
+/// Builder for declaring a pass's resource dependencies during eager graph
+/// construction.
 ///
-/// Provides ergonomic APIs for creating, reading, and writing texture
-/// resources within the graph.
+/// Obtained exclusively inside the closure passed to
+/// [`RenderGraph::add_pass`].  All topology wiring — resource creation, read
+/// / write declarations, and alias production — happens **immediately** and
+/// is captured before the closure returns.
 ///
-/// # Explicit Wiring
+/// # Core API
 ///
-/// All cross-pass resource dependencies are expressed via explicit
-/// `TextureNodeId` parameters passed from `add_to_graph()` into the
-/// `PassNode` struct.  There is no longer a name-based blackboard
-/// lookup for mutable resources.
-///
-/// - [`create_texture`](Self::create_texture) — create an internal
-///   transient texture (e.g. scratch buffers) owned by this pass.
-/// - [`read_texture`](Self::read_texture) — declare a read dependency.
-/// - [`write_texture`](Self::write_texture) — declare a write dependency.
+/// | Method | Purpose |
+/// |--------|---------|
+/// | [`create_texture`](Self::create_texture) | Internal scratch resource (e.g. Bloom mip-chain) |
+/// | [`create_and_export`](Self::create_and_export) | Create a new output resource and return it for downstream wiring |
+/// | [`read_texture`](Self::read_texture) | Declare a read dependency on an existing resource |
+/// | [`write_texture`](Self::write_texture) | Claim an externally-created resource as this pass's output |
+/// | [`mutate_and_export`](Self::mutate_and_export) | SSA relay: read → alias → write, returning the new version |
+/// | [`mark_side_effect`](Self::mark_side_effect) | Prevent dead-pass culling |
 ///
 /// # Frame Configuration
 ///
-/// The builder exposes the current frame's resolution and device format
-/// information via [`frame_config`](Self::frame_config), so passes can
-/// derive their own `TextureDesc`s in `setup()` without external push.
+/// [`frame_config`](Self::frame_config) exposes the current frame's
+/// resolution and device format information so that descriptor derivation
+/// stays self-contained within the closure.
 pub struct PassBuilder<'a> {
     pub(crate) graph: &'a mut RenderGraph,
     pub(crate) pass_index: usize,
@@ -47,18 +49,40 @@ impl PassBuilder<'_> {
         (c.width, c.height)
     }
 
-    // ─── Low-Level Resource API ──────────────────────────────────────
+    // ─── Resource Creation ───────────────────────────────────────────
 
-    /// Creates a new transient texture resource owned by this pass.
+    /// Creates an internal transient texture owned by this pass.
+    ///
+    /// Use this for scratch resources that are produced *and* consumed
+    /// entirely within one pass (e.g. Bloom's mip-chain, SSAO's raw
+    /// half-res intermediate).  The returned [`TextureNodeId`] is valid
+    /// for the duration of the frame.
     pub fn create_texture(
         &mut self,
         name: &'static str,
-        desc: super::types::TextureDesc,
+        desc: TextureDesc,
     ) -> TextureNodeId {
         let id = self.graph.register_resource(name, desc, false);
         self.graph.passes[self.pass_index].creates.push(id);
-        self.declare_output(id)
+        self.write_texture(id)
     }
+
+    /// Creates a new transient texture and immediately exports it as an
+    /// output of this pass.
+    ///
+    /// Semantically identical to [`create_texture`](Self::create_texture)
+    /// but signals intent: the returned [`TextureNodeId`] is meant to be
+    /// propagated to downstream passes via the closure's return value.
+    #[inline]
+    pub fn create_and_export(
+        &mut self,
+        name: &'static str,
+        desc: TextureDesc,
+    ) -> TextureNodeId {
+        self.create_texture(name, desc)
+    }
+
+    // ─── Dependency Declaration ──────────────────────────────────────
 
     /// Declares that this pass reads from the given texture resource.
     pub fn read_texture(&mut self, id: TextureNodeId) {
@@ -68,21 +92,26 @@ impl PassBuilder<'_> {
             .push(self.pass_index);
     }
 
-    /// Declares that this pass writes to the given texture resource.
+    /// Declares that this pass writes to (produces) the given texture
+    /// resource.
     ///
-    /// # Panics (Strict SSA Enforcement)
-    /// Panics if the resource already has a producer. In a strict SSA Render Graph,
-    /// a logical resource can only be written to ONCE.
-    /// To append/modify an existing resource, use [`mutate_texture`](Self::mutate_texture) instead.
-    pub fn declare_output(&mut self, id: TextureNodeId) -> TextureNodeId {
+    /// Use this to claim ownership of a resource that was created outside
+    /// the current closure (e.g. by the Composer or a preceding pass's
+    /// return value).
+    ///
+    /// # Panics — Strict SSA Enforcement
+    ///
+    /// Panics if the resource already has a producer.  In a strict SSA
+    /// render graph every logical resource can have at most **one**
+    /// producer.  To modify an existing resource, use
+    /// [`mutate_and_export`](Self::mutate_and_export) instead.
+    pub fn write_texture(&mut self, id: TextureNodeId) -> TextureNodeId {
         let res = &mut self.graph.resources[id.0 as usize];
 
-        // 🚨 检查是否已经存在生产者
         if let Some(existing_producer) = res.producer {
             panic!(
                 "SSA Violation in Pass '{}': Texture '{}' already has a producer (Pass '{}'). \
-                 You cannot write to an existing resource. Use `builder.mutate_texture()` \
-                 to create a new version (alias) of this resource.",
+                 Use `builder.mutate_and_export()` to create a new version (alias).",
                 self.graph.passes[self.pass_index].name,
                 res.name,
                 self.graph.passes[existing_producer].name
@@ -94,41 +123,36 @@ impl PassBuilder<'_> {
         id
     }
 
-    /// Declares that this pass performs an in-place read-modify-write on
-    /// the given texture, producing a new logical version that shares the
-    /// same physical GPU memory (SSA alias).
+    /// Performs an SSA relay: reads `input_id`, creates a new alias that
+    /// shares the same physical GPU memory, and declares this pass as the
+    /// alias's producer.
     ///
-    /// Internally this performs:
-    /// 1. `read_texture(input_id)` — establishes a topological dependency
-    ///    on the previous writer.
-    /// 2. Registers a new resource (alias) with the same descriptor.
-    /// 3. `write_texture(new_id)` — marks this pass as the producer of
-    ///    the new version.
-    ///
-    /// Returns the [`TextureNodeId`] of the new version.  All downstream
-    /// consumers must reference this new ID rather than `input_id`.
+    /// Returns the **new** [`TextureNodeId`].  All downstream consumers
+    /// must reference this new ID rather than `input_id`.
     ///
     /// # When to use
     ///
-    /// Use this for relay rendering patterns where multiple passes draw
-    /// into the same physical render target in sequence (e.g. Opaque →
-    /// Skybox → Transparent).  Each pass "mutates" the previous version,
-    /// producing a clean DAG with no read-write ambiguity.
-    #[must_use = "You must store and use the new mutated TextureNodeId for downstream passes"]
-    pub fn mutate_texture(
+    /// Relay rendering patterns where multiple passes draw into the same
+    /// physical render target in sequence (e.g. Opaque → Skybox →
+    /// Transparent).  Each pass "mutates" the previous version, producing
+    /// a clean DAG with no read-write ambiguity.
+    #[must_use = "The returned TextureNodeId must be used for downstream wiring"]
+    pub fn mutate_and_export(
         &mut self,
         input_id: TextureNodeId,
         new_name: &'static str,
     ) -> TextureNodeId {
         self.read_texture(input_id);
         let new_id = self.graph.create_alias(input_id, new_name);
-        self.declare_output(new_id)
+        self.write_texture(new_id)
     }
+
+    // ─── Flags ───────────────────────────────────────────────────────
 
     /// Marks this pass as having an externally-visible side effect.
     ///
-    /// Side-effect passes are never culled, even if they don't write to
-    /// any external resource.
+    /// Side-effect passes are never culled by the graph compiler, even
+    /// when they produce no resources consumed by downstream passes.
     pub fn mark_side_effect(&mut self) {
         self.graph.passes[self.pass_index].has_side_effect = true;
     }

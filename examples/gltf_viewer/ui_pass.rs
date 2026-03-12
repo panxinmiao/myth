@@ -45,7 +45,6 @@ use myth::{
     renderer::{
         core::ResourceManager,
         graph::core::{
-            builder::PassBuilder,
             context::{ExecuteContext, PrepareContext},
             node::PassNode,
             types::TextureNodeId,
@@ -294,14 +293,6 @@ impl UiPass {
 impl PassNode for UiPass {
     fn name(&self) -> &'static str {
         "UI_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        // UI writes (overlays) to the surface output. Topological sort
-        // ensures it runs after all post-processing passes.
-        // builder.read_texture(self.target_tex);
-        // builder.declare_output(self.target_tex);
-        self.target_tex = builder.mutate_texture(self.target_tex, "Surface_With_UI");
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {

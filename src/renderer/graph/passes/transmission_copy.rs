@@ -15,7 +15,7 @@
 //! - Generates mipmaps after the copy for LOD-based blur
 
 use crate::renderer::graph::core::{
-    ExecuteContext, PassBuilder, PassNode, PrepareContext, RenderGraph, TextureDesc, TextureNodeId,
+    ExecuteContext, PassNode, RenderGraph, TextureDesc, TextureNodeId,
 };
 
 // ─── Feature ───────────────────────────────────────────────────────────
@@ -56,7 +56,11 @@ impl TransmissionCopyFeature {
             transmission_tex,
             active,
         };
-        graph.add_pass(Box::new(node));
+        graph.add_pass("TransmissionCopy_Pass", |builder| {
+            builder.write_texture(transmission_tex);
+            builder.read_texture(scene_color);
+            (node, ())
+        });
         transmission_tex
     }
 }
@@ -80,18 +84,6 @@ pub struct TransmissionCopyPassNode {
 impl PassNode for TransmissionCopyPassNode {
     fn name(&self) -> &'static str {
         "TransmissionCopy_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        // Output: transmission texture (pre-registered in add_to_graph).
-        builder.declare_output(self.transmission_tex);
-
-        // Input: scene colour as copy source.
-        builder.read_texture(self.scene_color);
-    }
-
-    fn prepare(&mut self, _ctx: &mut PrepareContext) {
-        // No GPU resources to prepare — the copy is recorded directly in execute.
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
