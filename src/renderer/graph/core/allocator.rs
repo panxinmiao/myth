@@ -23,7 +23,7 @@ const EVICTION_THRESHOLD: u32 = 3;
 // --- Sub-View Key --------------------------------------------------------------
 
 /// Discriminator for lazily-cached sub-views of a physical texture.
-#[derive(Debug, Clone, Hash, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub struct SubViewKey {
     pub base_mip: u32,
     pub mip_count: Option<u32>,
@@ -79,10 +79,8 @@ pub(crate) struct PhysicalTexture {
     pub(crate) default_view: Tracked<wgpu::TextureView>,
     /// Lazily-populated sub-view cache.
     pub(crate) sub_views: FxHashMap<SubViewKey, Tracked<wgpu::TextureView>>,
-    /// Number of consecutive frames this texture has been idle (not acquired).
-    idle_frames: u32,
-    /// Whether this texture was acquired during the current frame.
-    used_this_frame: bool,
+    /// Frame index of the last access (acquire or sub-view retrieval). Used for eviction.
+    pub(crate) last_accessed_frame: u64,
 }
 
 // --- RDG Transient Pool --------------------------------------------------------
@@ -94,7 +92,9 @@ pub(crate) struct PhysicalTexture {
 /// [`EVICTION_THRESHOLD`] frames.
 pub struct TransientPool {
     /// All physical textures, indexed by dense slot index.
-    pub(crate) resources: Vec<PhysicalTexture>,
+    pub(crate) resources: Vec<Option<PhysicalTexture>>,
+    /// Free slot indices within `resources` (due to eviction).
+    free_slots: Vec<usize>,
     /// Per-frame timeline occupancy: `active_allocations[i]` holds the
     /// exclusive upper bound of the last timeline slot that acquired texture `i`.
     active_allocations: Vec<usize>,
@@ -102,6 +102,8 @@ pub struct TransientPool {
     uid_counter: u64,
     /// Bucketed free-list: maps `(Dimension, Format)` → indices into `resources`.
     buckets: FxHashMap<BucketKey, Vec<usize>>,
+    /// Current frame index (for eviction tracking).
+    current_frame_index: u64,
 }
 
 impl Default for TransientPool {
@@ -115,9 +117,11 @@ impl TransientPool {
     pub fn new() -> Self {
         Self {
             resources: Vec::new(),
+            free_slots: Vec::new(),
             active_allocations: Vec::new(),
             uid_counter: 0,
             buckets: FxHashMap::default(),
+            current_frame_index: 0,
         }
     }
 
@@ -126,50 +130,47 @@ impl TransientPool {
     ///
     /// Must be called once at the start of each frame, before any `acquire`.
     pub fn begin_frame(&mut self) {
-        // Update idle counters and mark all textures as unused for this frame.
-        for tex in &mut self.resources {
-            if tex.used_this_frame {
-                tex.idle_frames = 0;
-            } else {
-                tex.idle_frames += 1;
-            }
-            tex.used_this_frame = false;
-        }
+        // 1. Advance frame index for eviction tracking.
+        self.current_frame_index += 1;
 
-        // Evict stale textures (iterate in reverse to preserve indices).
+        #[cfg(debug_assertions)]
         let mut evicted = 0u32;
-        for i in (0..self.resources.len()).rev() {
-            if self.resources[i].idle_frames >= EVICTION_THRESHOLD {
-                let removed = self.resources.swap_remove(i);
-                self.active_allocations.swap_remove(i);
 
-                // Remove old index from its bucket.
+        // Iterate over all live textures
+        for i in 0..self.resources.len() {
+            // 2. Perform a read-only check first (no borrow conflicts or memory writes)
+            let should_evict = if let Some(tex) = &self.resources[i] {
+                // If the current frame index minus the last accessed frame index >= threshold, it is considered expired
+                self.current_frame_index - tex.last_accessed_frame >= u64::from(EVICTION_THRESHOLD)
+            } else {
+                false
+            };
+
+            // 3. Only borrow mutably and perform eviction logic if necessary
+            if should_evict {
+                // 1. Take the physical texture, leaving the slot empty (None)
+                let removed = self.resources[i].take().unwrap();
+
+                // 2. Add the index to the free slots list
+                self.free_slots.push(i);
+
+                // 3. O(k) clean up the bucket (k is usually very small, and no need to fix other element indices!)
                 let key = BucketKey::from_desc(&removed.desc);
                 if let Some(bucket) = self.buckets.get_mut(&key) {
                     bucket.retain(|&idx| idx != i);
-                    // The swap_remove moved the last element into position `i` —
-                    // update any bucket entry that pointed to the old last index.
-                    let old_last = self.resources.len(); // post-swap_remove, this is the old last
-                    if old_last != i {
-                        let moved_key = BucketKey::from_desc(&self.resources[i].desc);
-                        if let Some(moved_bucket) = self.buckets.get_mut(&moved_key) {
-                            for idx in moved_bucket.iter_mut() {
-                                if *idx == old_last {
-                                    *idx = i;
-                                    break;
-                                }
-                            }
-                        }
-                    }
                 }
-                evicted += 1;
+                #[cfg(debug_assertions)]
+                {
+                    evicted += 1;
+                }
             }
         }
 
+        #[cfg(debug_assertions)]
         if evicted > 0 {
             log::debug!(
-                "RDG pool: evicted {evicted} stale texture(s), {} remaining",
-                self.resources.len()
+                "RDG pool: evicted {evicted} stale texture(s), {} remaining slots",
+                self.resources.len() - self.free_slots.len()
             );
         }
 
@@ -202,9 +203,12 @@ impl TransientPool {
         // Search within the bucket for a compatible, idle texture.
         if let Some(bucket) = self.buckets.get(&bucket_key) {
             for &idx in bucket {
-                if self.active_allocations[idx] <= first_use && self.resources[idx].desc == *desc {
+                if self.active_allocations[idx] <= first_use
+                    && let Some(tex) = &mut self.resources[idx]
+                    && tex.desc == *desc
+                {
                     self.active_allocations[idx] = last_use + 1;
-                    self.resources[idx].used_this_frame = true;
+                    tex.last_accessed_frame = self.current_frame_index;
                     return idx;
                 }
             }
@@ -225,17 +229,25 @@ impl TransientPool {
 
         self.uid_counter += 1;
 
-        let index = self.resources.len();
-        self.resources.push(PhysicalTexture {
+        let physical_tex = PhysicalTexture {
             uid: self.uid_counter,
             desc: *desc,
             texture,
             default_view: Tracked::new(view),
             sub_views: FxHashMap::default(),
-            idle_frames: 0,
-            used_this_frame: true,
-        });
-        self.active_allocations.push(last_use + 1);
+            last_accessed_frame: self.current_frame_index,
+        };
+
+        let index = if let Some(free_idx) = self.free_slots.pop() {
+            self.resources[free_idx] = Some(physical_tex);
+            self.active_allocations[free_idx] = last_use + 1;
+            free_idx
+        } else {
+            let new_idx = self.resources.len();
+            self.resources.push(Some(physical_tex));
+            self.active_allocations.push(last_use + 1);
+            new_idx
+        };
 
         // Insert into bucket index.
         self.buckets
@@ -246,32 +258,52 @@ impl TransientPool {
         index
     }
 
+    #[inline]
+    fn get_tex(&self, index: usize) -> &PhysicalTexture {
+        debug_assert!(
+            self.resources[index].is_some(),
+            "Fatal: try to access evicted transient texture index {index}"
+        );
+        // Todo: Use unwrap_unchecked here to avoid the overhead of Option's safety checks,
+        // since we have a debug_assert ensuring the texture is present.
+        self.resources[index].as_ref().unwrap()
+    }
+
+    #[inline]
+    fn get_tex_mut(&mut self, index: usize) -> &mut PhysicalTexture {
+        debug_assert!(
+            self.resources[index].is_some(),
+            "Fatal: try to access evicted transient texture index {index}"
+        );
+        self.resources[index].as_mut().unwrap()
+    }
+
     /// Returns the default full-texture view for the given pool index.
     #[inline]
     #[must_use]
     pub fn get_view(&self, index: usize) -> &TextureView {
-        &self.resources[index].default_view
+        &self.get_tex(index).default_view
     }
 
     /// Returns the tracked default view (carries a unique ID for state dedup).
     #[inline]
     #[must_use]
     pub fn get_tracked_view(&self, index: usize) -> &Tracked<wgpu::TextureView> {
-        &self.resources[index].default_view
+        &self.get_tex(index).default_view
     }
 
     /// Returns the raw `wgpu::Texture` handle.
     #[inline]
     #[must_use]
     pub fn get_texture(&self, index: usize) -> &wgpu::Texture {
-        &self.resources[index].texture
+        &self.get_tex(index).texture
     }
 
     /// Returns the allocation UID (monotonically increasing, unique per texture).
     #[inline]
     #[must_use]
     pub fn get_uid(&self, index: usize) -> u64 {
-        self.resources[index].uid
+        self.get_tex(index).uid
     }
 
     /// Lazily creates and caches a sub-view for the given physical texture.
@@ -283,8 +315,8 @@ impl TransientPool {
         physical_index: usize,
         key: &SubViewKey,
     ) -> &Tracked<wgpu::TextureView> {
-        let res = &mut self.resources[physical_index];
-        res.sub_views.entry(key.clone()).or_insert_with(|| {
+        let res = self.get_tex_mut(physical_index);
+        res.sub_views.entry(*key).or_insert_with(|| {
             let view = res.texture.create_view(&wgpu::TextureViewDescriptor {
                 label: Some("Sub-View"),
                 format: None,
@@ -306,6 +338,6 @@ impl TransientPool {
         physical_index: usize,
         key: &SubViewKey,
     ) -> Option<&Tracked<wgpu::TextureView>> {
-        self.resources[physical_index].sub_views.get(key)
+        self.get_tex(physical_index).sub_views.get(key)
     }
 }
