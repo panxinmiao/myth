@@ -490,7 +490,7 @@ impl RenderGraph {
             }
         }
 
-        // // Kahn's algorithm
+        // // Kahn's algorithm (Heuristic Order)
         // 一个单调递增的游标，用于赋予新解锁的 Node 更高的优先级，从而模拟强局部的 DFS 行为
         let mut sequence_counter = 0;
 
@@ -1281,12 +1281,12 @@ mod tests {
         );
         // ToneMap should NOT be inside the subgraph.
         assert!(
-            mermaid.contains("Ungrouped"),
+            mermaid.contains("ToneMap"),
             "Mermaid should have an ungrouped section for ToneMap"
         );
         // Verify group metadata on records.
-        assert_eq!(graph.passes[0].group, Some("Bloom_System"));
-        assert_eq!(graph.passes[1].group, Some("Bloom_System"));
-        assert_eq!(graph.passes[2].group, None); // ToneMap is ungrouped
+        assert_eq!(graph.passes[0].groups.as_slice(), &["Bloom_System"]);
+        assert_eq!(graph.passes[1].groups.as_slice(), &["Bloom_System"]);
+        assert!(graph.passes[2].groups.is_empty()); // ToneMap is ungrouped
     }
 }
