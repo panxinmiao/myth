@@ -74,10 +74,10 @@ pub struct ResourceRecord {
     pub last_use: usize,
     pub physical_index: Option<usize>,
 
-    /// If this resource is a versioned alias produced by [`mutate_texture`],
-    /// points to the previous logical version.  Aliased resources share the
-    /// same physical GPU memory as their root ancestor, enabling in-place
-    /// relay rendering (e.g. Opaque → Skybox → Transparent) without
-    /// ambiguous read-write edges in the dependency graph.
+    /// If this resource is a versioned alias produced by
+    /// [`PassBuilder::mutate_and_export`], points to the root (non-alias)
+    /// resource.  Aliased resources share the same physical GPU memory as
+    /// their root ancestor, enabling in-place relay rendering (e.g.
+    /// Opaque → Skybox → Transparent) without ambiguous read-write edges.
     pub alias_of: Option<TextureNodeId>,
 }

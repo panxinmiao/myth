@@ -26,7 +26,7 @@ use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::SamplerKey;
 use crate::renderer::core::gpu::Tracked;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassBuilder, PassNode, RenderGraph, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, RenderGraph, TextureNodeId,
 };
 use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
@@ -476,16 +476,19 @@ impl SkyboxFeature {
         scene_color: TextureNodeId,
         scene_depth: TextureNodeId,
     ) -> TextureNodeId {
-        let color_output = graph.create_alias(scene_color, "Scene_Color_Skybox");
-        let node = SkyboxPassNode {
-            in_color: scene_color,
-            out_color: color_output,
-            scene_depth,
-            pipeline_id: self.current_pipeline,
-            bind_group: self.current_bind_group.clone(),
-        };
-        graph.add_pass(Box::new(node));
-        color_output
+        let pipeline_id = self.current_pipeline;
+        let bind_group = self.current_bind_group.clone();
+        graph.add_pass("Skybox_Pass", |builder| {
+            let out_color = builder.mutate_and_export(scene_color, "Scene_Color_Skybox");
+            builder.read_texture(scene_depth);
+            let node = SkyboxPassNode {
+                out_color,
+                scene_depth,
+                pipeline_id,
+                bind_group,
+            };
+            (node, out_color)
+        })
     }
 }
 
@@ -493,9 +496,7 @@ impl SkyboxFeature {
 
 /// Ephemeral per-frame skybox render pass node.
 pub struct SkyboxPassNode {
-    /// Previous colour version (read dependency).
-    in_color: TextureNodeId,
-    /// New colour version — SSA alias of `in_color` (write dependency).
+    /// New colour version — SSA alias (write dependency).
     out_color: TextureNodeId,
     scene_depth: TextureNodeId,
     pipeline_id: Option<RenderPipelineId>,
@@ -505,12 +506,6 @@ pub struct SkyboxPassNode {
 impl PassNode for SkyboxPassNode {
     fn name(&self) -> &'static str {
         "Skybox_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.read_texture(self.in_color);
-        builder.declare_output(self.out_color);
-        builder.read_texture(self.scene_depth);
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

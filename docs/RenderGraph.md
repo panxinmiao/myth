@@ -61,6 +61,8 @@ The RDG lifecycle is split into strictly isolated phases, ensuring passes only a
 
 To demonstrate the power of this architecture, here are real-time dumps of Myth Engine's render graph under different configurations.
 
+*Ps: The engine provides an auxiliary method for RenderGraph, which can dump the topology structure and resource dependency relationships deduced through real-time compilation of RenderGraph, and export them in `mermaid` format. This is very useful in debugging.*
+
 ### Case 1: Taming Complex Dependencies & Memory Aliasing (`Ssss_Pass`)
 
 In a highly complex scene featuring Screen Space Ambient Occlusion (SSAO) and Screen Space Subsurface Scattering (SSSS), the dependency web is massive.

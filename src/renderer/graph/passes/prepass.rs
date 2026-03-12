@@ -16,7 +16,7 @@
 use rustc_hash::FxHashMap;
 
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassBuilder, PassNode, RenderGraph, TextureDesc, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, RenderGraph, TextureDesc, TextureNodeId,
 };
 use crate::renderer::graph::passes::draw::submit_draw_commands;
 use crate::renderer::pipeline::{
@@ -367,7 +367,16 @@ impl PrepassFeature {
             needs_normal,
             needs_feature_id,
         };
-        graph.add_pass(Box::new(node));
+        graph.add_pass("Pre_Pass", |builder| {
+            builder.write_texture(scene_depth);
+            if let Some(n) = scene_normals {
+                builder.write_texture(n);
+            }
+            if let Some(f) = feature_id {
+                builder.write_texture(f);
+            }
+            (node, ())
+        });
 
         PrepassOutputs {
             scene_depth,
@@ -400,21 +409,6 @@ pub struct PrepassPassNode {
 impl PassNode for PrepassPassNode {
     fn name(&self) -> &'static str {
         "Pre_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        // Depth — always written.
-        builder.declare_output(self.scene_depth);
-
-        // Normals — conditionally written.
-        if self.needs_normal {
-            builder.declare_output(self.scene_normals);
-        }
-
-        // Feature-ID — conditionally written.
-        if self.needs_feature_id {
-            builder.declare_output(self.feature_id);
-        }
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {

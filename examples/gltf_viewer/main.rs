@@ -559,7 +559,7 @@ impl AppHandler for GltfViewer {
     }
 
     fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
-        use myth::renderer::graph::core::HookStage;
+        use myth::renderer::graph::core::{GraphBlackboard, HookStage};
 
         if self.show_ui {
             // Resolve pending engine texture registrations before the RDG
@@ -570,8 +570,12 @@ impl AppHandler for GltfViewer {
             let ui_pass = &mut self.ui_pass;
             composer
                 .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
-                    ui_pass.target_tex = bb.surface_out;
-                    rdg.add_pass_ref(ui_pass);
+                    let new_surface =
+                        rdg.add_pass_borrowed("UI_Pass", ui_pass, |builder| {
+                            builder.mutate_and_export(bb.surface_out, "Surface_With_UI")
+                        });
+                    ui_pass.target_tex = new_surface;
+                    GraphBlackboard { surface_out: new_surface, ..bb }
                 })
                 .render();
         } else {

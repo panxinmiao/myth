@@ -39,7 +39,7 @@ use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassBuilder, PassNode, PrepareContext, RenderGraph, SubViewKey,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, SubViewKey,
     TextureDesc, TextureNodeId,
 };
 use crate::renderer::pipeline::{
@@ -295,25 +295,47 @@ impl SsssFeature {
         feature_id: TextureNodeId,
         specular_tex: TextureNodeId,
     ) -> TextureNodeId {
-        let ssss_out_color = graph.create_alias(scene_color, "Scene_Color_SSSS");
+        graph.add_pass("Ssss_Pass", |builder| {
+            // Internal scratch texture for the horizontal blur.
+            let (w, h) = builder.global_resolution();
+            let hdr_format = builder.frame_config().hdr_format;
+            let desc = TextureDesc::new_2d(
+                w,
+                h,
+                hdr_format,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            let temp_blur = builder.create_texture("SSSS_Temp", desc);
 
-        let node = SsssPassNode {
-            scene_color_in: scene_color,
-            scene_color_out: ssss_out_color,
-            temp_blur: TextureNodeId(0),
-            depth_in: scene_depth,
-            normal_in: scene_normals,
-            feature_id,
-            specular_tex,
-            horizontal_pipeline: self.horizontal_pipeline.expect("SsssFeature not prepared"),
-            vertical_pipeline: self.vertical_pipeline.expect("SsssFeature not prepared"),
-            bind_group_layout: self.bind_group_layout.clone().unwrap(),
-            profiles_buffer: self.profiles_buffer.clone().unwrap(),
-            horizontal_bind_group: None,
-            vertical_bind_group: None,
-        };
-        graph.add_pass(Box::new(node));
-        ssss_out_color
+            // SSA relay: read scene_color, write a new alias.
+            let ssss_out_color =
+                builder.mutate_and_export(scene_color, "Scene_Color_SSSS");
+
+            // Upstream inputs.
+            builder.read_texture(scene_depth);
+            builder.read_texture(scene_normals);
+            builder.read_texture(feature_id);
+            builder.read_texture(specular_tex);
+
+            let node = SsssPassNode {
+                scene_color_in: scene_color,
+                scene_color_out: ssss_out_color,
+                temp_blur,
+                depth_in: scene_depth,
+                normal_in: scene_normals,
+                feature_id,
+                specular_tex,
+                horizontal_pipeline: self
+                    .horizontal_pipeline
+                    .expect("SsssFeature not prepared"),
+                vertical_pipeline: self.vertical_pipeline.expect("SsssFeature not prepared"),
+                bind_group_layout: self.bind_group_layout.clone().unwrap(),
+                profiles_buffer: self.profiles_buffer.clone().unwrap(),
+                horizontal_bind_group: None,
+                vertical_bind_group: None,
+            };
+            (node, ssss_out_color)
+        })
     }
 }
 
@@ -345,29 +367,6 @@ struct SsssPassNode {
 impl PassNode for SsssPassNode {
     fn name(&self) -> &'static str {
         "Ssss_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        // Internal scratch texture for the horizontal blur.
-        let (w, h) = builder.global_resolution();
-        let hdr_format = builder.frame_config().hdr_format;
-        let desc = TextureDesc::new_2d(
-            w,
-            h,
-            hdr_format,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        self.temp_blur = builder.create_texture("SSSS_Temp", desc);
-
-        // In-place read + write on scene color.
-        builder.read_texture(self.scene_color_in);
-        builder.declare_output(self.scene_color_out);
-
-        // Upstream inputs.
-        builder.read_texture(self.depth_in);
-        builder.read_texture(self.normal_in);
-        builder.read_texture(self.feature_id);
-        builder.read_texture(self.specular_tex);
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {

@@ -31,7 +31,7 @@ use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassBuilder, PassNode, PrepareContext, RenderGraph, SubViewKey,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, SubViewKey,
     TextureDesc, TextureNodeId,
 };
 use crate::renderer::pipeline::{
@@ -550,56 +550,80 @@ impl BloomFeature {
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_SRC,
         );
-        let output_tex = graph.register_resource("Bloom_Out", output_desc, false);
 
-        let node = BloomPassNode {
-            input_tex: input_color,
-            output_tex,
-            bloom_texture: TextureNodeId(0),
+        graph.add_pass("Bloom_Pass", |builder| {
+            let output_tex = builder.create_and_export("Bloom_Out", output_desc);
 
-            karis_average,
-            max_mip_levels,
+            // Internal mip chain.
+            let (w, h) = builder.global_resolution();
+            let hdr_format = builder.frame_config().hdr_format;
+            let bloom_w = (w / 2).max(1);
+            let bloom_h = (h / 2).max(1);
+            let max_possible = ((bloom_w.max(bloom_h) as f32).log2().floor() as u32) + 1;
+            let mip_count = max_mip_levels.min(max_possible).max(1);
 
-            downsample_pipeline: self
-                .downsample_pipeline
-                .expect("BloomFeature: downsample pipeline not initialised"),
-            upsample_pipeline: self
-                .upsample_pipeline
-                .expect("BloomFeature: upsample pipeline not initialised"),
-            composite_pipeline: self
-                .composite_pipeline
-                .expect("BloomFeature: composite pipeline not initialised"),
+            let bloom_chain_desc = TextureDesc::new(
+                bloom_w,
+                bloom_h,
+                1,
+                mip_count,
+                1,
+                wgpu::TextureDimension::D2,
+                hdr_format,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            let bloom_texture = builder.create_texture("Bloom_MipChain", bloom_chain_desc);
 
-            karis_on_static_bg: self
-                .karis_on_static_bg
-                .clone()
-                .expect("BloomFeature: karis_on static BG not built"),
-            karis_off_static_bg: self
-                .karis_off_static_bg
-                .clone()
-                .expect("BloomFeature: karis_off static BG not built"),
-            upsample_static_bg: self
-                .upsample_static_bg
-                .clone()
-                .expect("BloomFeature: upsample static BG not built"),
-            composite_static_bg: self
-                .composite_static_bg
-                .clone()
-                .expect("BloomFeature: composite static BG not built"),
+            // Input: scene color (explicit wiring).
+            builder.read_texture(input_color);
 
-            ds_transient_layout: self.ds_transient_layout.clone().unwrap(),
-            us_transient_layout: self.us_transient_layout.clone().unwrap(),
-            comp_transient_layout: self.comp_transient_layout.clone().unwrap(),
+            let node = BloomPassNode {
+                input_tex: input_color,
+                output_tex,
+                bloom_texture,
 
-            mip_render_views: Vec::new(),
-            ds_transient_bgs: Vec::new(),
-            us_transient_bgs: Vec::new(),
-            comp_transient_bg: None,
-            last_input_view_id: 0,
-        };
+                karis_average,
 
-        graph.add_pass(Box::new(node));
-        output_tex
+                downsample_pipeline: self
+                    .downsample_pipeline
+                    .expect("BloomFeature: downsample pipeline not initialised"),
+                upsample_pipeline: self
+                    .upsample_pipeline
+                    .expect("BloomFeature: upsample pipeline not initialised"),
+                composite_pipeline: self
+                    .composite_pipeline
+                    .expect("BloomFeature: composite pipeline not initialised"),
+
+                karis_on_static_bg: self
+                    .karis_on_static_bg
+                    .clone()
+                    .expect("BloomFeature: karis_on static BG not built"),
+                karis_off_static_bg: self
+                    .karis_off_static_bg
+                    .clone()
+                    .expect("BloomFeature: karis_off static BG not built"),
+                upsample_static_bg: self
+                    .upsample_static_bg
+                    .clone()
+                    .expect("BloomFeature: upsample static BG not built"),
+                composite_static_bg: self
+                    .composite_static_bg
+                    .clone()
+                    .expect("BloomFeature: composite static BG not built"),
+
+                ds_transient_layout: self.ds_transient_layout.clone().unwrap(),
+                us_transient_layout: self.us_transient_layout.clone().unwrap(),
+                comp_transient_layout: self.comp_transient_layout.clone().unwrap(),
+
+                mip_render_views: Vec::new(),
+                ds_transient_bgs: Vec::new(),
+                us_transient_bgs: Vec::new(),
+                comp_transient_bg: None,
+                last_input_view_id: 0,
+            };
+
+            (node, output_tex)
+        })
     }
 }
 
@@ -621,7 +645,6 @@ pub struct BloomPassNode {
 
     // ─── Push Parameters ───────────────────────────────────────────
     karis_average: bool,
-    max_mip_levels: u32,
 
     // ─── Pipeline IDs ──────────────────────────────────────────────
     downsample_pipeline: RenderPipelineId,
@@ -809,35 +832,6 @@ impl BloomPassNode {
 impl PassNode for BloomPassNode {
     fn name(&self) -> &'static str {
         "Bloom_Pass"
-    }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        let (w, h) = builder.global_resolution();
-        let hdr_format = builder.frame_config().hdr_format;
-
-        // Output (pre-registered in add_to_graph).
-        builder.declare_output(self.output_tex);
-
-        // Internal mip chain.
-        let bloom_w = (w / 2).max(1);
-        let bloom_h = (h / 2).max(1);
-        let max_possible = ((bloom_w.max(bloom_h) as f32).log2().floor() as u32) + 1;
-        let mip_count = self.max_mip_levels.min(max_possible).max(1);
-
-        let bloom_chain_desc = TextureDesc::new(
-            bloom_w,
-            bloom_h,
-            1,
-            mip_count,
-            1,
-            wgpu::TextureDimension::D2,
-            hdr_format,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
-        self.bloom_texture = builder.create_texture("Bloom_MipChain", bloom_chain_desc);
-
-        // Input: scene color (explicit wiring).
-        builder.read_texture(self.input_tex);
     }
 
     fn prepare(&mut self, ctx: &mut PrepareContext) {

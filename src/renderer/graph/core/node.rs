@@ -1,29 +1,29 @@
 use crate::renderer::graph::core::context::{ExecuteContext, PrepareContext};
 
-use super::builder::PassBuilder;
 use super::types::TextureNodeId;
 use smallvec::SmallVec;
 use wgpu::CommandEncoder;
 
-/// An ephemeral per-frame render or compute pass in the declarative render graph.
+/// An ephemeral per-frame render or compute pass in the declarative render
+/// graph.
 ///
-/// PassNodes are **data-only packets** created by their corresponding
-/// `Feature` each frame via `Feature::add_to_graph()`.  They carry only
-/// lightweight IDs and transient bind-group slots — all persistent GPU
-/// resources (layouts, pipelines, buffers) live in the Feature.
+/// PassNodes are **pure GPU execution bodies** — they carry only lightweight
+/// IDs and transient bind-group slots.  All persistent GPU resources
+/// (layouts, pipelines, buffers) live in the owning `Feature`.
 ///
-/// # Lifecycle
+/// # Lifecycle (Eager Setup)
 ///
-/// 1. **`setup`** — declare resource read/write topology for the graph.
-/// 2. **`prepare`** — called *after* graph compilation and transient memory
-///    allocation.  Only assemble `BindGroup`s that reference RDG-managed
+/// Resource topology is declared **outside** the PassNode, inside the closure
+/// passed to [`RenderGraph::add_pass`].  The PassNode itself only participates
+/// in two phases:
+///
+/// 1. **`prepare`** — called *after* graph compilation and transient memory
+///    allocation.  Assemble `BindGroup`s that reference RDG-managed
 ///    transient textures.  Context is intentionally minimal.
-/// 3. **`execute`** — record GPU commands into the shared encoder.
+/// 2. **`execute`** — record GPU commands into the shared encoder.
 pub trait PassNode: Send + Sync + 'static {
+    /// Human-readable name for debug labels and diagnostic output.
     fn name(&self) -> &'static str;
-
-    /// Declare resource dependencies for the graph topology.
-    fn setup(&mut self, builder: &mut PassBuilder);
 
     /// Assemble transient `BindGroup`s after physical resource allocation.
     ///
@@ -43,8 +43,7 @@ pub trait PassNode: Send + Sync + 'static {
 /// the current frame.  The graph drops all records in `begin_frame()`.
 pub struct PassRecord {
     pub name: &'static str,
-    /// Owned ephemeral pass node — `None` only briefly during `add_pass()`
-    /// between the placeholder push and the node insertion.
+    /// Owned ephemeral pass node.
     pub node: Option<Box<dyn PassNode>>,
 
     pub reads: SmallVec<[TextureNodeId; 8]>,
@@ -60,8 +59,9 @@ pub struct PassRecord {
 impl PassRecord {
     /// Creates a placeholder record without a node.
     ///
-    /// Used by `RenderGraph::add_pass` during the two-phase insertion:
-    /// the record is pushed first, then setup is called, then the node is stored.
+    /// Used internally by [`RenderGraph::add_pass`] during the two-phase
+    /// insertion: the record is pushed first so the [`PassBuilder`] can
+    /// reference it, then the node is stored after the closure returns.
     #[must_use]
     pub fn new_empty(name: &'static str) -> Self {
         Self {
@@ -79,8 +79,7 @@ impl PassRecord {
     /// Returns a mutable reference to the owned pass node.
     ///
     /// # Panics
-    /// Panics if the node has not been inserted yet (should never happen
-    /// outside of the `add_pass` two-phase window).
+    /// Panics if the node has not been inserted yet.
     #[inline]
     pub fn get_pass_mut(&mut self) -> &mut dyn PassNode {
         self.node
