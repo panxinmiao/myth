@@ -11,7 +11,7 @@ use rustc_hash::FxHashMap;
 use wgpu::{Device, Queue, TextureView};
 
 use super::allocator::{SubViewKey, TransientPool};
-use super::types::{ResourceRecord, TextureNodeId};
+use super::types::{RenderTargetOps, ResourceRecord, TextureNodeId};
 
 // ─── Extract Context (Feature Pre-RDG Phase) ────────────────────────────────
 
@@ -267,50 +267,74 @@ impl ExecuteContext<'_> {
         res.is_external || res.physical_index.is_some()
     }
 
-    /// Auto-deduce `LoadOp` and `StoreOp` for a color attachment based on
-    /// the resource's lifetime within the compiled execution timeline.
+    /// Construct a `wgpu::RenderPassColorAttachment` with explicit load
+    /// semantics and automatic `StoreOp` deduction.
     ///
-    /// - **`LoadOp`**: `Clear(clear_color)` when this pass is the first to
-    ///   touch the resource, it is not external, and it is not an SSA alias
-    ///   (alias resources inherit content from their parent version and must
-    ///   always `Load`); `Load` otherwise.
-    /// - **`StoreOp`**: `Discard` when this pass is the last consumer
-    ///   **and** the resource is not external; `Store` otherwise.
-    ///   The alias-aware allocation phase propagates the root's unified
-    ///   `last_use` to all aliases, preventing premature discards.
+    /// # Load Semantics (`RenderTargetOps`)
     ///
-    /// The optional `resolve_target` specifies a single-sample texture that
-    /// receives the hardware MSAA resolve at the end of the render pass.
-    /// When provided, the target's physical view is resolved via the graph;
-    /// if the target was culled (no allocation), `resolve_target` is silently
-    /// ignored.  Crucially, the primary attachment's `StoreOp` is **not**
-    /// altered by the presence of a resolve target — it remains governed
-    /// purely by the resource's lifetime (`last_use`), ensuring that
-    /// multi-pass MSAA pipelines can keep the multi-sampled surface alive
-    /// across passes (Store) or discard it at the final use (Discard).
+    /// | Variant    | GPU Effect | Notes |
+    /// |------------|------------|-------|
+    /// | `Clear(c)` | `LoadOp::Clear(c)` | Use when a known background is required. |
+    /// | `Load`     | `LoadOp::Load`     | Only valid on resources with prior content (aliases or multi-write). |
+    /// | `DontCare` | `LoadOp::Clear(BLACK)` | Full-screen replace — zero bandwidth on TBDR. |
     ///
-    /// Returns `None` if the primary resource was culled (no physical
-    /// allocation), enabling dynamic MRT construction without panics.
+    /// # Store Semantics (Automatic)
+    ///
+    /// - **`Discard`** when `last_use == current_timeline_index` and the
+    ///   resource is not external.
+    /// - **`Store`** otherwise.
+    ///
+    /// # Safety Validation
+    ///
+    /// In debug builds, using `RenderTargetOps::Load` on a freshly created
+    /// transient resource (first write, non-alias, non-external) will
+    /// **panic** — this catches uninitialised-memory reads that would
+    /// produce visual artefacts and waste GPU bandwidth.
+    ///
+    /// # MSAA Resolve
+    ///
+    /// The optional `resolve_target` specifies a single-sample texture for
+    /// hardware MSAA resolve.  If the target was culled (no allocation),
+    /// it is silently ignored.
+    ///
+    /// Returns `None` if the primary resource was culled.
     #[must_use]
     pub fn get_color_attachment(
         &self,
         id: TextureNodeId,
-        clear_color: Option<wgpu::Color>,
+        ops: RenderTargetOps,
         resolve_target: Option<TextureNodeId>,
     ) -> Option<wgpu::RenderPassColorAttachment<'_>> {
         let view = self.try_get_texture_view(id)?;
         let res = &self.resources[id.0 as usize];
         let ti = self.current_timeline_index;
 
-        // Alias resources always Load — they inherit content from the
-        // previous version occupying the same physical memory.
-        let load = if res.first_use == ti && !res.is_external && res.alias_of.is_none() {
-            match clear_color {
-                Some(color) => wgpu::LoadOp::Clear(color),
-                None => wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),
-            }
+        let is_first_write =
+            res.first_use == ti && !res.is_external && res.alias_of.is_none();
+
+        // Validate: Load on an uninitialised transient resource is always a bug.
+        if matches!(ops, RenderTargetOps::Load) && is_first_write {
+            panic!(
+                "RDG Validation Error: LoadOp::Load on freshly created transient \
+                 resource '{name}' (node {id:?}).  This reads uninitialised GPU \
+                 memory and wastes bandwidth.  Use RenderTargetOps::DontCare for \
+                 full-screen replace shaders, or RenderTargetOps::Clear(color) \
+                 when a specific background is needed.",
+                name = res.name,
+            );
+        }
+
+        // For alias resources the caller should pass `Load` explicitly;
+        // the graph guarantees content inheritance from the prior version.
+        let load = if is_first_write {
+            ops.to_wgpu_load_op()
         } else {
-            wgpu::LoadOp::Load
+            // Aliases and subsequent writes always load prior content
+            // unless the caller explicitly requests Clear/DontCare.
+            match ops {
+                RenderTargetOps::Load => wgpu::LoadOp::Load,
+                other => other.to_wgpu_load_op(),
+            }
         };
 
         let store = if res.last_use == ti && !res.is_external {

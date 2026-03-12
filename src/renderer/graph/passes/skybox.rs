@@ -26,7 +26,7 @@ use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::SamplerKey;
 use crate::renderer::core::gpu::Tracked;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, RenderGraph, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, RenderGraph, RenderTargetOps, TextureNodeId,
 };
 use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
@@ -511,7 +511,7 @@ impl PassNode for SkyboxPassNode {
 
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
-        let color_att = ctx.get_color_attachment(self.out_color, None, None);
+        let color_att = ctx.get_color_attachment(self.out_color, RenderTargetOps::Load, None);
         let depth_att = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {

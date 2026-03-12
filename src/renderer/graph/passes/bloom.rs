@@ -38,7 +38,7 @@ use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps,
     TextureDesc, TextureNodeId,
 };
 use crate::renderer::pipeline::{
@@ -855,7 +855,7 @@ impl PassNode for BloomDownsampleNode {
             .get(self.transient_bg_key.as_ref().unwrap())
             .expect("Bloom DS transient BG missing");
 
-        let rtt = ctx.get_color_attachment(self.output_tex, None, None);
+        let rtt = ctx.get_color_attachment(self.output_tex, RenderTargetOps::DontCare, None);
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Bloom Downsample"),
             color_attachments: &[rtt],
@@ -913,7 +913,7 @@ impl PassNode for BloomUpsampleNode {
         // Output renders onto the finer mip's resolution. The upsample shader
         // reads the coarser texture (via transient BG) and additively blends
         // onto the finer resolution output.
-        let rtt = ctx.get_color_attachment(self.output_tex, None, None);
+        let rtt = ctx.get_color_attachment(self.output_tex, RenderTargetOps::Load, None);
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Bloom Upsample"),
             color_attachments: &[rtt],
@@ -977,7 +977,7 @@ impl PassNode for BloomCompositeNode {
             .get(self.transient_bg_key.as_ref().unwrap())
             .expect("Bloom Comp transient BG missing");
 
-        let rtt = ctx.get_color_attachment(self.output_tex, None, None);
+        let rtt = ctx.get_color_attachment(self.output_tex, RenderTargetOps::DontCare, None);
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Bloom Composite"),
             color_attachments: &[rtt],

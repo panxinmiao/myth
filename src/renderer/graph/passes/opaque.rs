@@ -29,7 +29,8 @@
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, PassNode, PrepareContext, RenderGraph, TextureDesc, TextureNodeId,
+    ExecuteContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps, TextureDesc,
+    TextureNodeId,
 };
 use crate::renderer::graph::passes::draw::submit_draw_commands;
 
@@ -324,7 +325,7 @@ impl PassNode for OpaquePassNode {
             [Option<wgpu::RenderPassColorAttachment>; 2],
         > = smallvec::smallvec![ctx.get_color_attachment(
             self.color_target,
-            Some(self.clear_color),
+            RenderTargetOps::Clear(self.clear_color),
             self.resolve_target
         )];
 
@@ -334,7 +335,7 @@ impl PassNode for OpaquePassNode {
         if self.needs_specular
             && let Some(att) = ctx.get_color_attachment(
                 self.specular_tex,
-                Some(wgpu::Color::TRANSPARENT),
+                RenderTargetOps::Clear(wgpu::Color::TRANSPARENT),
                 self.specular_resolve_target,
             )
         {

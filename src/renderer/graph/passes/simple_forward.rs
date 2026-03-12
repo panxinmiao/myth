@@ -24,7 +24,8 @@
 
 use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, PassNode, PrepareContext, RenderGraph, TextureDesc, TextureNodeId,
+    ExecuteContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps, TextureDesc,
+    TextureNodeId,
 };
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::graph::passes::draw::submit_draw_commands;
@@ -200,7 +201,7 @@ impl PassNode for SimpleForwardPassNode {
 
         let depth_att = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
         let color_att =
-            ctx.get_color_attachment(color_view, Some(self.clear_color), resolve_target);
+            ctx.get_color_attachment(color_view, RenderTargetOps::Clear(self.clear_color), resolve_target);
 
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("RDG Simple Forward Pass"),
