@@ -159,11 +159,15 @@ As the number of passes grows, a flat list of nodes in a topology dump becomes h
 `RenderGraph::with_group(name, closure)` scopes all `add_pass` calls inside the closure under a named group:
 
 ```rust
-let (bloom_in, bloom_out) = graph.with_group("PostProcess", |g| {
-    let bloom = bloom_pass.add_to_graph(g, scene_color);
-    let tone  = tone_map_pass.add_to_graph(g, bloom);
-    let fxaa  = fxaa_pass.add_to_graph(g, tone);
-    (bloom, fxaa)
+let surface = graph.with_group("PostProcess", |g| {
+    // Bloom is internally flattened into a Bloom_System subgroup:
+    // Extract → Downsample_1..N → Upsample_N..0 → Composite
+    let scene_color = bloom_pass.add_to_graph(g, scene_color, karis, max_mips);
+
+    // Every Feature returns its output TextureNodeId — pure dataflow chain
+    let mut surface = tone_map_pass.add_to_graph(g, scene_color, surface_out);
+    surface = fxaa_pass.add_to_graph(g, surface, surface_out);
+    surface
 });
 ```
 
@@ -202,21 +206,74 @@ flowchart TD
         P3(["Skybox_Pass"]):::alive
     end
     subgraph PostProcess ["PostProcess"]
-        P4(["Bloom_Pass"]):::alive
-        P5(["ToneMap_Pass"]):::alive
-        P6(["FXAA_Pass"]):::alive
+        subgraph Bloom_System ["Bloom_System"]
+            P4(["Bloom_Extract"]):::alive
+            P5(["Bloom_Downsample_1"]):::alive
+            P6(["Bloom_Downsample_2"]):::alive
+            P7(["Bloom_Upsample_1"]):::alive
+            P8(["Bloom_Upsample_0"]):::alive
+            P9(["Bloom_Composite"]):::alive
+        end
+        P10(["ToneMap_Pass"]):::alive
+        P11(["FXAA_Pass"]):::alive
     end
     P0 -->|"Shadow_Map"| P2
     P1 -->|"Scene_Depth"| P2
     P2 ==>|"Scene_Color_HDR"| P3
     P3 ==>|"Scene_Color_Skybox"| P4
-    P4 -->|"Bloom_Output"| P5
-    P5 -->|"LDR_Intermediate"| P6
+    P4 -->|"Bloom_Mip_0"| P5
+    P5 -->|"Bloom_Mip_1"| P6
+    P6 -->|"Bloom_Mip_2"| P7
+    P5 -->|"Bloom_Mip_1"| P7
+    P7 -->|"Bloom_Up_1"| P8
+    P4 -->|"Bloom_Mip_0"| P8
+    P8 -->|"Bloom_Up_0"| P9
+    P9 ==>|"Scene_Color_Bloom"| P10
+    P10 -->|"LDR_Intermediate"| P11
 ```
 
 This makes it straightforward to identify logical pipeline stages at a glance, especially when debugging complex frame compositions with dozens of passes.
 
-## 6. Future-Proofing
+## 6. Pure Dataflow Chain & Macro-Node Flattening
+
+### Strict Return Policy
+
+Every `Feature::add_to_graph()` method **must** return its output `TextureNodeId`. Even terminal passes that write directly to the swap-chain surface return the mutated surface handle via `mutate_and_export`. This strict constraint transforms the `FrameComposer` into a pure functional pipeline:
+
+```rust
+// Every Feature returns a TextureNodeId — the Composer threads them as a chain
+let scene_color = bloom_feature.add_to_graph(graph, scene_hdr, karis, max_mips);
+let mut surface = tone_map_feature.add_to_graph(graph, scene_color, surface_out);
+surface = fxaa_feature.add_to_graph(graph, surface, surface_out);
+```
+
+No pass may silently consume or discard a `TextureNodeId`. The Rust type system enforces this — `#[must_use]` on the returned ID makes the compiler reject any call site that ignores the output.
+
+### Macro-Node Flattening
+
+Complex multi-step effects like Bloom were previously monolithic "macro-nodes" — a single `PassNode` that internally looped over multiple `begin_render_pass` calls for each mip level. This hid fine-grained dependencies from the RDG compiler, preventing:
+
+- **Optimal barrier placement** between individual downsample/upsample steps.
+- **Memory aliasing** between mip textures with non-overlapping lifetimes.
+
+The flattened architecture decomposes Bloom into independent micro-passes:
+
+```text
+Bloom_Extract (Scene HDR → Bloom_Mip_0)
+  → Bloom_Downsample_1 (Bloom_Mip_0 → Bloom_Mip_1)
+  → Bloom_Downsample_2 (Bloom_Mip_1 → Bloom_Mip_2)
+  → ...
+  → Bloom_Upsample_N (Bloom_Mip_N + Bloom_Mip_N-1 → Bloom_Up_N-1)
+  → ...
+  → Bloom_Upsample_0 (Bloom_Up_1 + Bloom_Mip_0 → Bloom_Up_0)
+  → Bloom_Composite (Scene HDR + Bloom_Up_0 → Scene_Color_Bloom)
+```
+
+Each mip level is an **independent 2D transient texture** with explicit RDG lifetime tracking. The allocator automatically discovers that textures like `Bloom_Mip_0` and `Bloom_Mip_2` have non-overlapping lifetimes and maps them to the **same physical GPU memory** — achieving aggressive memory aliasing with zero manual intervention.
+
+The `with_group("Bloom_System")` wrapper preserves visual hierarchy in topology dumps while the individual passes remain first-class RDG citizens.
+
+## 7. Future-Proofing
 
 By enforcing strict SSA and separating logical declarations from physical execution, Myth Engine's Render Graph is built for the future. The structural purity paves the way for trivially scheduling compute nodes (like Frustum Culling or Async Compute SSAO) onto asynchronous compute queues in upcoming engine iterations.
 

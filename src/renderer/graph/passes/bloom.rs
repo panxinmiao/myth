@@ -1,13 +1,13 @@
-//! RDG Bloom Post-Processing — Dual-Layer BindGroup Architecture.
+//! RDG Bloom Post-Processing — Flattened Micro-Pass Architecture.
 //!
 //! Implements the Call of Duty: Advanced Warfare physically-based bloom
-//! technique within the RDG framework using a strict two-layer binding
-//! separation:
+//! technique within the RDG framework using fully flattened per-mip passes
+//! and a strict two-layer binding separation:
 //!
 //! - **Group 0 (Static)**: Sampler + uniform buffer — built and owned by
 //!   [`BloomFeature`], lifetime matches the engine.
-//! - **Group 1 (Transient)**: RDG texture views — built by
-//!   [`BloomPassNode`] each frame, cached via [`GlobalBindGroupCache`].
+//! - **Group 1 (Transient)**: RDG texture views — built by each micro-pass
+//!   node during `prepare`, cached via [`GlobalBindGroupCache`].
 //!
 //! # Architecture
 //!
@@ -15,23 +15,30 @@
 //!   layouts, static uniform buffers, and Group 0 bind groups.  Initialised
 //!   lazily by [`extract_and_prepare`](BloomFeature::extract_and_prepare).
 //!
-//! - **`BloomPassNode`** – ephemeral per-frame node added to the render
-//!   graph by [`add_to_graph`](BloomFeature::add_to_graph).  Receives
-//!   pre-built Group 0 bind groups and only assembles Group 1 (transient
-//!   texture) bind groups during `prepare`.
+//! - **Micro-Passes** – each downsample, upsample, and composite step is
+//!   an independent [`PassNode`] with its own RDG resource declarations.
+//!   This exposes fine-grained dependencies to the RDG compiler, enabling
+//!   optimal barrier insertion and memory aliasing across mip levels.
 //!
-//! # RDG Slots (explicit wiring)
+//! # RDG Topology (Flattened)
 //!
-//! - `input_tex`     – HDR scene color (input)
-//! - `output_tex`    – HDR scene color with bloom composited (output)
-//! - `bloom_texture` – internal mip chain
+//! ```text
+//! Bloom_Extract (Scene HDR → Mip_0)
+//!   → Bloom_Downsample_1 (Mip_0 → Mip_1)
+//!   → Bloom_Downsample_2 (Mip_1 → Mip_2)
+//!   → ...
+//!   → Bloom_Upsample_N-2 (Mip_N-1 + Mip_N-2 → Up_N-2)
+//!   → ...
+//!   → Bloom_Upsample_0 (Up_1 + Mip_0 → Up_0)
+//!   → Bloom_Composite (Scene HDR + Up_0 → Output)
+//! ```
 
 use crate::define_gpu_data_struct;
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, SubViewKey,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph,
     TextureDesc, TextureNodeId,
 };
 use crate::renderer::pipeline::{
@@ -59,14 +66,15 @@ define_gpu_data_struct!(
 ///
 /// The Composer calls [`extract_and_prepare`](Self::extract_and_prepare)
 /// once per frame before the render graph is built, then
-/// [`add_to_graph`](Self::add_to_graph) to inject an ephemeral
-/// [`BloomPassNode`] into the RDG.
+/// [`add_to_graph`](Self::add_to_graph) to emit a chain of flattened
+/// micro-passes (Extract → Downsample × N → Upsample × N → Composite)
+/// into the RDG.
 ///
 /// # Dual-Layer BindGroup Model
 ///
 /// Static bind groups (Group 0) containing samplers and uniform buffers
-/// are built here and handed to the PassNode as cheap `Arc` clones.
-/// The PassNode only assembles Group 1 (transient texture views).
+/// are built here and shared across all micro-pass nodes as cheap clones.
+/// Each micro-pass only assembles Group 1 (transient texture views).
 pub struct BloomFeature {
     // ─── Pipelines ─────────────────────────────────────────────────
     downsample_pipeline: Option<RenderPipelineId>,
@@ -524,16 +532,22 @@ impl BloomFeature {
     }
 
     // =========================================================================
-    // Graph Integration
+    // Graph Integration — Flattened Micro-Pass Architecture
     // =========================================================================
 
-    /// Create an ephemeral [`BloomPassNode`] and add it to the render graph.
+    /// Emit the full bloom pipeline as a chain of independent RDG passes.
     ///
-    /// The output texture (`Bloom_Out`) is registered here and returned as
-    /// a [`TextureNodeId`] for explicit downstream wiring (ToneMap).
-    /// The PassNode receives pre-built Group 0 static bind groups from the
-    /// Feature and only assembles Group 1 (transient texture) bind groups
-    /// during its prepare phase.
+    /// Each downsample and upsample step is a separate pass operating on
+    /// independent 2D transient textures with progressively halved
+    /// resolution. The RDG compiler sees fine-grained dependencies between
+    /// every mip level, enabling:
+    ///
+    /// - **Optimal barrier/transition insertion** between individual steps.
+    /// - **Aggressive memory aliasing** — textures whose lifetimes don't
+    ///   overlap are automatically mapped to the same physical GPU memory.
+    ///
+    /// Returns the composited output [`TextureNodeId`] (scene HDR with
+    /// bloom applied) for downstream wiring (e.g. ToneMapping).
     pub fn add_to_graph(
         &self,
         graph: &mut RenderGraph,
@@ -542,387 +556,425 @@ impl BloomFeature {
         max_mip_levels: u32,
     ) -> TextureNodeId {
         let fc = *graph.frame_config();
-        let output_desc = TextureDesc::new_2d(
-            fc.width,
-            fc.height,
-            fc.hdr_format,
-            wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-        );
+        let hdr_format = fc.hdr_format;
+        let bloom_w = (fc.width / 2).max(1);
+        let bloom_h = (fc.height / 2).max(1);
+        let max_possible = ((bloom_w.max(bloom_h) as f32).log2().floor() as u32) + 1;
+        let mip_count = max_mip_levels.min(max_possible).max(1) as usize;
 
-        graph.add_pass("Bloom_Pass", |builder| {
-            let output_tex = builder.create_and_export("Bloom_Out", output_desc);
+        let ds_pipeline = self
+            .downsample_pipeline
+            .expect("BloomFeature: downsample pipeline not initialised");
+        let us_pipeline = self
+            .upsample_pipeline
+            .expect("BloomFeature: upsample pipeline not initialised");
+        let comp_pipeline = self
+            .composite_pipeline
+            .expect("BloomFeature: composite pipeline not initialised");
 
-            // Internal mip chain.
-            let (w, h) = builder.global_resolution();
-            let hdr_format = builder.frame_config().hdr_format;
-            let bloom_w = (w / 2).max(1);
-            let bloom_h = (h / 2).max(1);
-            let max_possible = ((bloom_w.max(bloom_h) as f32).log2().floor() as u32) + 1;
-            let mip_count = max_mip_levels.min(max_possible).max(1);
+        let karis_on_bg = self
+            .karis_on_static_bg
+            .clone()
+            .expect("BloomFeature: karis_on static BG not built");
+        let karis_off_bg = self
+            .karis_off_static_bg
+            .clone()
+            .expect("BloomFeature: karis_off static BG not built");
+        let upsample_bg = self
+            .upsample_static_bg
+            .clone()
+            .expect("BloomFeature: upsample static BG not built");
+        let composite_bg = self
+            .composite_static_bg
+            .clone()
+            .expect("BloomFeature: composite static BG not built");
 
-            let bloom_chain_desc = TextureDesc::new(
-                bloom_w,
-                bloom_h,
-                1,
-                mip_count,
-                1,
-                wgpu::TextureDimension::D2,
+        let ds_transient_layout = self.ds_transient_layout.clone().unwrap();
+        let us_transient_layout = self.us_transient_layout.clone().unwrap();
+        let comp_transient_layout = self.comp_transient_layout.clone().unwrap();
+
+        graph.with_group("Bloom_System", |g| {
+            // ─── 1. Extract: Scene HDR → Bloom Mip 0 ──────────────
+            let mip0_w = bloom_w;
+            let mip0_h = bloom_h;
+            let mip0_desc = TextureDesc::new_2d(
+                mip0_w,
+                mip0_h,
                 hdr_format,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            let bloom_texture = builder.create_texture("Bloom_MipChain", bloom_chain_desc);
 
-            // Input: scene color (explicit wiring).
-            builder.read_texture(input_color);
-
-            let node = BloomPassNode {
-                input_tex: input_color,
-                output_tex,
-                bloom_texture,
-
-                karis_average,
-
-                downsample_pipeline: self
-                    .downsample_pipeline
-                    .expect("BloomFeature: downsample pipeline not initialised"),
-                upsample_pipeline: self
-                    .upsample_pipeline
-                    .expect("BloomFeature: upsample pipeline not initialised"),
-                composite_pipeline: self
-                    .composite_pipeline
-                    .expect("BloomFeature: composite pipeline not initialised"),
-
-                karis_on_static_bg: self
-                    .karis_on_static_bg
-                    .clone()
-                    .expect("BloomFeature: karis_on static BG not built"),
-                karis_off_static_bg: self
-                    .karis_off_static_bg
-                    .clone()
-                    .expect("BloomFeature: karis_off static BG not built"),
-                upsample_static_bg: self
-                    .upsample_static_bg
-                    .clone()
-                    .expect("BloomFeature: upsample static BG not built"),
-                composite_static_bg: self
-                    .composite_static_bg
-                    .clone()
-                    .expect("BloomFeature: composite static BG not built"),
-
-                ds_transient_layout: self.ds_transient_layout.clone().unwrap(),
-                us_transient_layout: self.us_transient_layout.clone().unwrap(),
-                comp_transient_layout: self.comp_transient_layout.clone().unwrap(),
-
-                mip_render_views: Vec::new(),
-                ds_transient_bgs: Vec::new(),
-                us_transient_bgs: Vec::new(),
-                comp_transient_bg: None,
-                last_input_view_id: 0,
+            let static_bg = if karis_average {
+                karis_on_bg.clone()
+            } else {
+                karis_off_bg.clone()
             };
 
-            (node, output_tex)
+            let mut current_mip: TextureNodeId =
+                g.add_pass("Bloom_Extract", |builder| {
+                    builder.read_texture(input_color);
+                    let out = builder.create_and_export("Bloom_Mip_0", mip0_desc);
+                    let node = BloomDownsampleNode {
+                        input_tex: input_color,
+                        output_tex: out,
+                        pipeline_id: ds_pipeline,
+                        static_bg,
+                        transient_layout: ds_transient_layout.clone(),
+                        transient_bg_key: None,
+                    };
+                    (node, out)
+                });
+
+            // Collect downsample chain for upsample phase references.
+            let mut downsample_chain = Vec::with_capacity(mip_count);
+            downsample_chain.push(current_mip);
+
+            // ─── 2. Downsample chain: Mip N → Mip N+1 ─────────────
+            let mut w = mip0_w;
+            let mut h = mip0_h;
+            for i in 1..mip_count {
+                w = (w / 2).max(1);
+                h = (h / 2).max(1);
+
+                let desc = TextureDesc::new_2d(
+                    w,
+                    h,
+                    hdr_format,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                );
+
+                let input = current_mip;
+                let label: &'static str = DOWNSAMPLE_PASS_NAMES[i];
+                let out_label: &'static str = DOWNSAMPLE_MIP_NAMES[i];
+
+                current_mip = g.add_pass(label, |builder| {
+                    builder.read_texture(input);
+                    let out = builder.create_and_export(out_label, desc);
+                    let node = BloomDownsampleNode {
+                        input_tex: input,
+                        output_tex: out,
+                        pipeline_id: ds_pipeline,
+                        static_bg: karis_off_bg.clone(),
+                        transient_layout: ds_transient_layout.clone(),
+                        transient_bg_key: None,
+                    };
+                    (node, out)
+                });
+
+                downsample_chain.push(current_mip);
+            }
+
+            // ─── 3. Upsample chain: coarse → fine with additive blend ─
+            // Start from the coarsest mip (last in chain) and accumulate
+            // upward. Each upsample reads the current (coarser) result and
+            // the next finer downsample mip, producing a new texture at the
+            // finer resolution.
+            for i in (0..(mip_count - 1)).rev() {
+                let coarser = current_mip;
+                let finer = downsample_chain[i];
+                let finer_res = &g.resources[finer.0 as usize];
+                let finer_desc = TextureDesc::new_2d(
+                    finer_res.desc.size.width,
+                    finer_res.desc.size.height,
+                    hdr_format,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                );
+
+                let label: &'static str = UPSAMPLE_PASS_NAMES[i];
+                let out_label: &'static str = UPSAMPLE_MIP_NAMES[i];
+
+                current_mip = g.add_pass(label, |builder| {
+                    builder.read_texture(coarser);
+                    builder.read_texture(finer);
+                    let out = builder.create_and_export(out_label, finer_desc);
+                    let node = BloomUpsampleNode {
+                        coarser_tex: coarser,
+                        output_tex: out,
+                        pipeline_id: us_pipeline,
+                        static_bg: upsample_bg.clone(),
+                        transient_layout: us_transient_layout.clone(),
+                        transient_bg_key: None,
+                    };
+                    (node, out)
+                });
+            }
+
+            // ─── 4. Composite: Scene HDR + Bloom → Output ─────────
+            let bloom_result = current_mip;
+            g.add_pass("Bloom_Composite", |builder| {
+                builder.read_texture(bloom_result);
+                let out = builder.mutate_and_export(input_color, "Scene_Color_Bloom");
+                let node = BloomCompositeNode {
+                    original_tex: input_color,
+                    bloom_tex: bloom_result,
+                    output_tex: out,
+                    pipeline_id: comp_pipeline,
+                    static_bg: composite_bg,
+                    transient_layout: comp_transient_layout,
+                    transient_bg_key: None,
+                };
+                (node, out)
+            })
         })
     }
 }
 
 // =============================================================================
-// BloomPassNode — ephemeral per-frame render graph node
+// Pre-allocated static pass/resource name tables
+// =============================================================================
+//
+// RDG pass and resource names must be `&'static str`. We pre-allocate up to
+// 16 mip levels (covers 65536×65536 max resolution) as compile-time constants
+// to avoid runtime string formatting and heap allocation.
+
+/// Pass names for each downsample step (index 0 is the extract step).
+static DOWNSAMPLE_PASS_NAMES: [&str; 16] = [
+    "Bloom_Extract",
+    "Bloom_Downsample_1",
+    "Bloom_Downsample_2",
+    "Bloom_Downsample_3",
+    "Bloom_Downsample_4",
+    "Bloom_Downsample_5",
+    "Bloom_Downsample_6",
+    "Bloom_Downsample_7",
+    "Bloom_Downsample_8",
+    "Bloom_Downsample_9",
+    "Bloom_Downsample_10",
+    "Bloom_Downsample_11",
+    "Bloom_Downsample_12",
+    "Bloom_Downsample_13",
+    "Bloom_Downsample_14",
+    "Bloom_Downsample_15",
+];
+
+/// Resource names for each downsample mip output.
+static DOWNSAMPLE_MIP_NAMES: [&str; 16] = [
+    "Bloom_Mip_0",
+    "Bloom_Mip_1",
+    "Bloom_Mip_2",
+    "Bloom_Mip_3",
+    "Bloom_Mip_4",
+    "Bloom_Mip_5",
+    "Bloom_Mip_6",
+    "Bloom_Mip_7",
+    "Bloom_Mip_8",
+    "Bloom_Mip_9",
+    "Bloom_Mip_10",
+    "Bloom_Mip_11",
+    "Bloom_Mip_12",
+    "Bloom_Mip_13",
+    "Bloom_Mip_14",
+    "Bloom_Mip_15",
+];
+
+/// Pass names for each upsample step.
+static UPSAMPLE_PASS_NAMES: [&str; 16] = [
+    "Bloom_Upsample_0",
+    "Bloom_Upsample_1",
+    "Bloom_Upsample_2",
+    "Bloom_Upsample_3",
+    "Bloom_Upsample_4",
+    "Bloom_Upsample_5",
+    "Bloom_Upsample_6",
+    "Bloom_Upsample_7",
+    "Bloom_Upsample_8",
+    "Bloom_Upsample_9",
+    "Bloom_Upsample_10",
+    "Bloom_Upsample_11",
+    "Bloom_Upsample_12",
+    "Bloom_Upsample_13",
+    "Bloom_Upsample_14",
+    "Bloom_Upsample_15",
+];
+
+/// Resource names for each upsample output.
+static UPSAMPLE_MIP_NAMES: [&str; 16] = [
+    "Bloom_Up_0",
+    "Bloom_Up_1",
+    "Bloom_Up_2",
+    "Bloom_Up_3",
+    "Bloom_Up_4",
+    "Bloom_Up_5",
+    "Bloom_Up_6",
+    "Bloom_Up_7",
+    "Bloom_Up_8",
+    "Bloom_Up_9",
+    "Bloom_Up_10",
+    "Bloom_Up_11",
+    "Bloom_Up_12",
+    "Bloom_Up_13",
+    "Bloom_Up_14",
+    "Bloom_Up_15",
+];
+
+// =============================================================================
+// Micro-Pass Nodes
 // =============================================================================
 
-/// Ephemeral bloom pass node inserted into the RDG each frame.
+/// Downsample micro-pass: reads one input texture, writes one output texture
+/// at half resolution using a 13-tap box filter.
 ///
-/// Receives pre-built **Group 0** (static) bind groups from [`BloomFeature`]
-/// as cheap `Arc` clones. Only assembles **Group 1** (transient texture)
-/// bind groups during [`prepare`](PassNode::prepare), achieving clean
-/// separation between persistent and per-frame GPU resources.
-pub struct BloomPassNode {
-    // ─── RDG Resource Slots ────────────────────────────────────────
+/// Used for both the initial extract (scene HDR → mip 0) and subsequent
+/// mip-chain downsamples. The karis averaging flag is controlled by which
+/// static bind group (Group 0) is provided.
+struct BloomDownsampleNode {
     input_tex: TextureNodeId,
     output_tex: TextureNodeId,
-    bloom_texture: TextureNodeId,
-
-    // ─── Push Parameters ───────────────────────────────────────────
-    karis_average: bool,
-
-    // ─── Pipeline IDs ──────────────────────────────────────────────
-    downsample_pipeline: RenderPipelineId,
-    upsample_pipeline: RenderPipelineId,
-    composite_pipeline: RenderPipelineId,
-
-    // ─── Static BindGroups (Group 0, from Feature) ─────────────────
-    /// Downsample Group 0 with karis on (sampler + karis_on uniforms).
-    karis_on_static_bg: wgpu::BindGroup,
-    /// Downsample Group 0 with karis off (sampler + karis_off uniforms).
-    karis_off_static_bg: wgpu::BindGroup,
-    /// Upsample Group 0 (sampler + UpsampleUniforms).
-    upsample_static_bg: wgpu::BindGroup,
-    /// Composite Group 0 (sampler + CompositeUniforms).
-    composite_static_bg: wgpu::BindGroup,
-
-    // ─── Transient Layouts (Group 1) ───────────────────────────────
-    ds_transient_layout: Tracked<wgpu::BindGroupLayout>,
-    us_transient_layout: Tracked<wgpu::BindGroupLayout>,
-    comp_transient_layout: Tracked<wgpu::BindGroupLayout>,
-
-    // ─── Per-Mip Render Views (resolved in prepare) ────────────────
-    mip_render_views: Vec<Tracked<wgpu::TextureView>>,
-
-    // ─── Transient BindGroups (Group 1, built in prepare) ──────────
-    /// `ds_transient_bgs[i]` binds the input view for downsample step i.
-    ds_transient_bgs: Vec<wgpu::BindGroup>,
-    /// `us_transient_bgs[i]` binds the source mip view for upsample step i.
-    us_transient_bgs: Vec<wgpu::BindGroup>,
-    /// Composite Group 1: original + bloom mip 0 textures.
-    comp_transient_bg: Option<wgpu::BindGroup>,
-
-    /// Tracked ID of the input texture view for staleness detection.
-    last_input_view_id: u64,
+    pipeline_id: RenderPipelineId,
+    static_bg: wgpu::BindGroup,
+    transient_layout: Tracked<wgpu::BindGroupLayout>,
+    transient_bg_key: Option<BindGroupKey>,
 }
 
-impl BloomPassNode {
-    // =========================================================================
-    // Mip Chain Management via RdgViewResolver
-    // =========================================================================
-
-    /// Populate per-mip render views from the pool's sub-view cache.
-    fn resolve_mip_views(&mut self, ctx: &mut PrepareContext) {
-        let mip_count = ctx.views.get_texture(self.bloom_texture).mip_level_count();
-
-        self.mip_render_views.clear();
-        // self.mip_view_ids.clear();
-
-        for mip in 0..mip_count {
-            let key = SubViewKey {
-                base_mip: mip,
-                mip_count: Some(1),
-                ..Default::default()
-            };
-            let tracked = ctx.views.get_or_create_sub_view(self.bloom_texture, &key);
-            // self.mip_view_ids.push(tracked.id());
-            self.mip_render_views.push(tracked.clone());
-        }
-    }
-
-    /// Build all transient (Group 1) bind groups.
-    ///
-    /// Group 1 only contains RDG texture views — no samplers or uniform
-    /// buffers. Cache keys are trivially small, yielding high hit rates.
-    fn rebuild_transient_bind_groups(&mut self, ctx: &mut PrepareContext) {
-        let input_view = ctx.views.get_texture_view(self.input_tex);
-        let input_view_id = input_view.id();
-        let mip_count = self.mip_render_views.len();
-
-        let needs_full_rebuild =
-            self.ds_transient_bgs.len() != mip_count || self.last_input_view_id != input_view_id;
-
-        // ─── First DS transient BG (scene → mip 0) ────────────────
-        let first_ds_key =
-            BindGroupKey::new(self.ds_transient_layout.id()).with_resource(input_view_id);
-
-        let first_ds_bg = ctx
-            .global_bind_group_cache
-            .get_or_create(first_ds_key, || {
-                ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Bloom DS G1 scene→0"),
-                    layout: &self.ds_transient_layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(input_view),
-                    }],
-                })
-            })
-            .clone();
-
-        if needs_full_rebuild {
-            // ─── Downsample transient BGs ──────────────────────────
-            self.ds_transient_bgs.clear();
-            self.ds_transient_bgs.push(first_ds_bg);
-
-            for i in 0..(mip_count - 1) {
-                let mip_view = &self.mip_render_views[i];
-                let layout = &self.ds_transient_layout;
-
-                let key = BindGroupKey::new(layout.id()).with_resource(mip_view.id());
-                let bg = ctx
-                    .global_bind_group_cache
-                    .get_or_create(key, || {
-                        ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("Bloom DS G1 mip→mip"),
-                            layout,
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(mip_view),
-                            }],
-                        })
-                    })
-                    .clone();
-                self.ds_transient_bgs.push(bg);
-            }
-
-            // ─── Upsample transient BGs ────────────────────────────
-            self.us_transient_bgs.clear();
-            for i in 0..(mip_count - 1) {
-                let source_mip = i + 1;
-                let mip_view = &self.mip_render_views[source_mip];
-                let layout = &self.us_transient_layout;
-
-                let key = BindGroupKey::new(layout.id()).with_resource(mip_view.id());
-                let bg = ctx
-                    .global_bind_group_cache
-                    .get_or_create(key, || {
-                        ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                            label: Some("Bloom US G1 mip→mip"),
-                            layout,
-                            entries: &[wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(mip_view),
-                            }],
-                        })
-                    })
-                    .clone();
-                self.us_transient_bgs.push(bg);
-            }
-
-            self.last_input_view_id = input_view_id;
-        } else {
-            // Only the first DS BG needs updating (input view may differ).
-            self.ds_transient_bgs[0] = first_ds_bg;
-        }
-
-        // ─── Composite transient BG ───────────────────────────────
-        if needs_full_rebuild || self.comp_transient_bg.is_none() {
-            let bloom_view = &self.mip_render_views[0];
-            let layout = &self.comp_transient_layout;
-
-            let key = BindGroupKey::new(layout.id())
-                .with_resource(input_view_id)
-                .with_resource(bloom_view.id());
-
-            let bg = ctx
-                .global_bind_group_cache
-                .get_or_create(key, || {
-                    ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                        label: Some("Bloom Comp G1"),
-                        layout,
-                        entries: &[
-                            wgpu::BindGroupEntry {
-                                binding: 0,
-                                resource: wgpu::BindingResource::TextureView(input_view),
-                            },
-                            wgpu::BindGroupEntry {
-                                binding: 1,
-                                resource: wgpu::BindingResource::TextureView(bloom_view),
-                            },
-                        ],
-                    })
-                })
-                .clone();
-
-            self.comp_transient_bg = Some(bg);
-        }
-    }
-}
-
-// =============================================================================
-// PassNode implementation
-// =============================================================================
-
-impl PassNode for BloomPassNode {
+impl PassNode for BloomDownsampleNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
-        self.resolve_mip_views(ctx);
-        self.rebuild_transient_bind_groups(ctx);
+        let input_view = ctx.views.get_texture_view(self.input_tex);
+        let key = BindGroupKey::new(self.transient_layout.id()).with_resource(input_view.id());
+
+        ctx.global_bind_group_cache.get_or_create(key.clone(), || {
+            ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Bloom DS G1"),
+                layout: &self.transient_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(input_view),
+                }],
+            })
+        });
+        self.transient_bg_key = Some(key);
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        if self.mip_render_views.is_empty() {
-            return;
-        }
-
-        let Some(comp_bg) = &self.comp_transient_bg else {
-            return;
-        };
-
-        let ds_pipeline = ctx
-            .pipeline_cache
-            .get_render_pipeline(self.downsample_pipeline);
-        let us_pipeline = ctx
-            .pipeline_cache
-            .get_render_pipeline(self.upsample_pipeline);
-        let comp_pipeline = ctx
-            .pipeline_cache
-            .get_render_pipeline(self.composite_pipeline);
-
-        // =====================================================================
-        // Phase 1: Downsample — Scene HDR → Bloom Mip Chain
-        // =====================================================================
-        for i in 0..self.ds_transient_bgs.len() {
-            // First mip uses karis-aware static BG; subsequent mips use karis-off.
-            let static_bg = if i == 0 && self.karis_average {
-                &self.karis_on_static_bg
-            } else {
-                &self.karis_off_static_bg
-            };
-
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Bloom Downsample"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.mip_render_views[i],
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::DontCare(wgpu::LoadOpDontCare::default()),
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-
-            pass.set_pipeline(ds_pipeline);
-            pass.set_bind_group(0, static_bg, &[]);
-            pass.set_bind_group(1, &self.ds_transient_bgs[i], &[]);
-            pass.draw(0..3, 0..1);
-        }
-
-        // =====================================================================
-        // Phase 2: Upsample — Accumulate bloom from coarsest to finest
-        // =====================================================================
-        for i in (0..self.us_transient_bgs.len()).rev() {
-            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some("Bloom Upsample"),
-                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &self.mip_render_views[i],
-                    resolve_target: None,
-                    ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Load,
-                        store: wgpu::StoreOp::Store,
-                    },
-                    depth_slice: None,
-                })],
-                depth_stencil_attachment: None,
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-
-            pass.set_pipeline(us_pipeline);
-            pass.set_bind_group(0, &self.upsample_static_bg, &[]);
-            pass.set_bind_group(1, &self.us_transient_bgs[i], &[]);
-            pass.draw(0..3, 0..1);
-        }
-
-        // =====================================================================
-        // Phase 3: Composite — Original HDR + Bloom → Output
-        // =====================================================================
-        // let output_view = ctx.get_texture_view(self.output_tex);
+        let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
+        let transient_bg = ctx
+            .global_bind_group_cache
+            .get(self.transient_bg_key.as_ref().unwrap())
+            .expect("Bloom DS transient BG missing");
 
         let rtt = ctx.get_color_attachment(self.output_tex, None, None);
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Bloom Downsample"),
+            color_attachments: &[rtt],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
 
-        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        rpass.set_pipeline(pipeline);
+        rpass.set_bind_group(0, &self.static_bg, &[]);
+        rpass.set_bind_group(1, transient_bg, &[]);
+        rpass.draw(0..3, 0..1);
+    }
+}
+
+/// Upsample micro-pass: reads a coarser bloom texture and the corresponding
+/// finer downsample mip, blends them additively into a new output at the
+/// finer resolution using a 9-tap tent filter.
+struct BloomUpsampleNode {
+    coarser_tex: TextureNodeId,
+    output_tex: TextureNodeId,
+    pipeline_id: RenderPipelineId,
+    static_bg: wgpu::BindGroup,
+    transient_layout: Tracked<wgpu::BindGroupLayout>,
+    transient_bg_key: Option<BindGroupKey>,
+}
+
+impl PassNode for BloomUpsampleNode {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
+        let coarser_view = ctx.views.get_texture_view(self.coarser_tex);
+        let key =
+            BindGroupKey::new(self.transient_layout.id()).with_resource(coarser_view.id());
+
+        ctx.global_bind_group_cache.get_or_create(key.clone(), || {
+            ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Bloom US G1"),
+                layout: &self.transient_layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(coarser_view),
+                }],
+            })
+        });
+        self.transient_bg_key = Some(key);
+    }
+
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+        let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
+        let transient_bg = ctx
+            .global_bind_group_cache
+            .get(self.transient_bg_key.as_ref().unwrap())
+            .expect("Bloom US transient BG missing");
+
+        // Output renders onto the finer mip's resolution. The upsample shader
+        // reads the coarser texture (via transient BG) and additively blends
+        // onto the finer resolution output.
+        let rtt = ctx.get_color_attachment(self.output_tex, None, None);
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Bloom Upsample"),
+            color_attachments: &[rtt],
+            depth_stencil_attachment: None,
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+
+        rpass.set_pipeline(pipeline);
+        rpass.set_bind_group(0, &self.static_bg, &[]);
+        rpass.set_bind_group(1, transient_bg, &[]);
+        rpass.draw(0..3, 0..1);
+    }
+}
+
+/// Composite micro-pass: reads the original HDR scene color and the final
+/// bloom result (finest upsample output), writes the blended result to
+/// the output target.
+struct BloomCompositeNode {
+    original_tex: TextureNodeId,
+    bloom_tex: TextureNodeId,
+    output_tex: TextureNodeId,
+    pipeline_id: RenderPipelineId,
+    static_bg: wgpu::BindGroup,
+    transient_layout: Tracked<wgpu::BindGroupLayout>,
+    transient_bg_key: Option<BindGroupKey>,
+}
+
+impl PassNode for BloomCompositeNode {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {
+        let original_view = ctx.views.get_texture_view(self.original_tex);
+        let bloom_view = ctx.views.get_texture_view(self.bloom_tex);
+        let key = BindGroupKey::new(self.transient_layout.id())
+            .with_resource(original_view.id())
+            .with_resource(bloom_view.id());
+
+        ctx.global_bind_group_cache.get_or_create(key.clone(), || {
+            ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("Bloom Comp G1"),
+                layout: &self.transient_layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(original_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::TextureView(bloom_view),
+                    },
+                ],
+            })
+        });
+        self.transient_bg_key = Some(key);
+    }
+
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+        let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
+        let transient_bg = ctx
+            .global_bind_group_cache
+            .get(self.transient_bg_key.as_ref().unwrap())
+            .expect("Bloom Comp transient BG missing");
+
+        let rtt = ctx.get_color_attachment(self.output_tex, None, None);
+        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Bloom Composite"),
             color_attachments: &[rtt],
             depth_stencil_attachment: None,
@@ -931,9 +983,9 @@ impl PassNode for BloomPassNode {
             multiview_mask: None,
         });
 
-        pass.set_pipeline(comp_pipeline);
-        pass.set_bind_group(0, &self.composite_static_bg, &[]);
-        pass.set_bind_group(1, comp_bg, &[]);
-        pass.draw(0..3, 0..1);
+        rpass.set_pipeline(pipeline);
+        rpass.set_bind_group(0, &self.static_bg, &[]);
+        rpass.set_bind_group(1, transient_bg, &[]);
+        rpass.draw(0..3, 0..1);
     }
 }

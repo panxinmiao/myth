@@ -382,30 +382,37 @@ impl ToneMappingFeature {
 
     /// Build the ephemeral pass node and insert it into the graph.
     ///
-    /// PassNode carries only pipeline ID, pre-built static BG (Arc clone),
-    /// and transient layout — no GPU buffers or raw texture views.
+    /// Accepts the HDR input and the target LDR texture, performs an SSA
+    /// relay on `target_ldr` (via `mutate_and_export`), and returns the
+    /// updated target handle. This enforces a pure dataflow chain where
+    /// every Feature explicitly produces a new resource version.
     pub fn add_to_graph(
         &self,
         graph: &mut RenderGraph,
-        input_tex: TextureNodeId,
-        output_tex: TextureNodeId,
-    ) {
-        let node = ToneMapPassNode {
-            input_tex,
-            output_tex,
-            pipeline_id: self.current_pipeline.expect("ToneMapFeature not prepared"),
-            static_bg: self
-                .static_bg
-                .clone()
-                .expect("ToneMapFeature: static BG not built"),
-            transient_layout: self.transient_layout.clone().unwrap(),
-            current_bind_group_key: None,
-        };
+        input_hdr: TextureNodeId,
+        target_ldr: TextureNodeId,
+    ) -> TextureNodeId {
+        let pipeline_id = self.current_pipeline.expect("ToneMapFeature not prepared");
+        let static_bg = self
+            .static_bg
+            .clone()
+            .expect("ToneMapFeature: static BG not built");
+        let transient_layout = self.transient_layout.clone().unwrap();
+
         graph.add_pass("ToneMap_Pass", |builder| {
-            builder.read_texture(input_tex);
-            builder.write_texture(output_tex);
-            (node, ())
-        });
+            builder.read_texture(input_hdr);
+            let output = builder.mutate_and_export(target_ldr, "Surface_ToneMapped");
+
+            let node = ToneMapPassNode {
+                input_tex: input_hdr,
+                output_tex: output,
+                pipeline_id,
+                static_bg,
+                transient_layout,
+                current_bind_group_key: None,
+            };
+            (node, output)
+        })
     }
 }
 

@@ -134,24 +134,33 @@ impl FxaaFeature {
     }
 
     /// Build the ephemeral pass node and insert it into the graph.
+    ///
+    /// Accepts the LDR input and the target surface, performs an SSA relay
+    /// on `target_surface` (via `mutate_and_export`), and returns the
+    /// updated surface handle. This enforces a pure dataflow chain where
+    /// every Feature explicitly produces a new resource version.
     pub fn add_to_graph(
         &self,
         graph: &mut RenderGraph,
-        input_tex: TextureNodeId,
-        output_tex: TextureNodeId,
-    ) {
-        let node = FxaaPassNode {
-            input_tex,
-            output_tex,
-            pipeline_id: self.pipeline_id.expect("FxaaFeature not prepared"),
-            layout: self.bind_group_layout.clone().unwrap(),
-            current_bind_group_key: None,
-        };
+        input_ldr: TextureNodeId,
+        target_surface: TextureNodeId,
+    ) -> TextureNodeId {
+        let pipeline_id = self.pipeline_id.expect("FxaaFeature not prepared");
+        let layout = self.bind_group_layout.clone().unwrap();
+
         graph.add_pass("FXAA_Pass", |builder| {
-            builder.read_texture(input_tex);
-            builder.write_texture(output_tex);
-            (node, ())
-        });
+            builder.read_texture(input_ldr);
+            let output = builder.mutate_and_export(target_surface, "Surface_FXAA");
+
+            let node = FxaaPassNode {
+                input_tex: input_ldr,
+                output_tex: output,
+                pipeline_id,
+                layout,
+                current_bind_group_key: None,
+            };
+            (node, output)
+        })
     }
 }
 
