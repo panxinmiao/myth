@@ -105,48 +105,45 @@ impl OpaqueFeature {
 
         graph.add_pass("Opaque_Pass", |builder| {
             // ── Create color / depth / resolve targets ─────────────────
-            let (color_target, depth_target, resolve_target, scene_color_hdr, in_depth) =
-                if is_msaa {
-                    let msaa_color_desc = TextureDesc::new(
-                        fc.width,
-                        fc.height,
-                        1,
-                        1,
-                        fc.msaa_samples,
-                        wgpu::TextureDimension::D2,
-                        HDR_TEXTURE_FORMAT,
-                        wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    );
-                    let msaa_depth_desc = TextureDesc::new(
-                        fc.width,
-                        fc.height,
-                        1,
-                        1,
-                        fc.msaa_samples,
-                        wgpu::TextureDimension::D2,
-                        fc.depth_format,
-                        wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    );
+            let (color_target, depth_target, resolve_target, scene_color_hdr, in_depth) = if is_msaa
+            {
+                let msaa_color_desc = TextureDesc::new(
+                    fc.width,
+                    fc.height,
+                    1,
+                    1,
+                    fc.msaa_samples,
+                    wgpu::TextureDimension::D2,
+                    HDR_TEXTURE_FORMAT,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT,
+                );
+                let msaa_depth_desc = TextureDesc::new(
+                    fc.width,
+                    fc.height,
+                    1,
+                    1,
+                    fc.msaa_samples,
+                    wgpu::TextureDimension::D2,
+                    fc.depth_format,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT,
+                );
 
-                    let msaa_color =
-                        builder.create_and_export("Scene_Color_MSAA", msaa_color_desc);
-                    let msaa_depth =
-                        builder.create_and_export("Scene_Depth_MSAA", msaa_depth_desc);
-                    let scene_hdr = builder.create_and_export("Scene_Color_HDR", hdr_desc);
+                let msaa_color = builder.create_and_export("Scene_Color_MSAA", msaa_color_desc);
+                let msaa_depth = builder.create_and_export("Scene_Depth_MSAA", msaa_depth_desc);
+                let scene_hdr = builder.create_and_export("Scene_Color_HDR", hdr_desc);
 
-                    (msaa_color, msaa_depth, Some(scene_hdr), scene_hdr, None)
-                } else {
-                    let scene_hdr = builder.create_and_export("Scene_Color_HDR", hdr_desc);
-                    let depth_alias =
-                        builder.mutate_and_export(scene_depth_ss, "Scene_Depth_Opaque");
-                    (
-                        scene_hdr,
-                        depth_alias,
-                        None,
-                        scene_hdr,
-                        Some(scene_depth_ss),
-                    )
-                };
+                (msaa_color, msaa_depth, Some(scene_hdr), scene_hdr, None)
+            } else {
+                let scene_hdr = builder.create_and_export("Scene_Color_HDR", hdr_desc);
+                let depth_alias = builder.mutate_and_export(scene_depth_ss, "Scene_Depth_Opaque");
+                (
+                    scene_hdr,
+                    depth_alias,
+                    None,
+                    scene_hdr,
+                    Some(scene_depth_ss),
+                )
+            };
 
             // ── Specular MRT (conditionally created) ───────────────────
             let (specular_tex, specular_resolved) = if needs_specular {

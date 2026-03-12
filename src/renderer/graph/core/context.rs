@@ -309,20 +309,17 @@ impl ExecuteContext<'_> {
         let res = &self.resources[id.0 as usize];
         let ti = self.current_timeline_index;
 
-        let is_first_write =
-            res.first_use == ti && !res.is_external && res.alias_of.is_none();
+        let is_first_write = res.first_use == ti && !res.is_external && res.alias_of.is_none();
 
         // Validate: Load on an uninitialised transient resource is always a bug.
-        if matches!(ops, RenderTargetOps::Load) && is_first_write {
-            panic!(
-                "RDG Validation Error: LoadOp::Load on freshly created transient \
-                 resource '{name}' (node {id:?}).  This reads uninitialised GPU \
-                 memory and wastes bandwidth.  Use RenderTargetOps::DontCare for \
-                 full-screen replace shaders, or RenderTargetOps::Clear(color) \
-                 when a specific background is needed.",
-                name = res.name,
-            );
-        }
+        assert!(!(matches!(ops, RenderTargetOps::Load) && is_first_write), 
+            "RDG Validation Error: LoadOp::Load on freshly created transient \
+             resource '{name}' (node {id:?}).  This reads uninitialised GPU \
+             memory and wastes bandwidth.  Use RenderTargetOps::DontCare for \
+             full-screen replace shaders, or RenderTargetOps::Clear(color) \
+             when a specific background is needed.",
+            name = res.name,
+        );
 
         // For alias resources the caller should pass `Load` explicitly;
         // the graph guarantees content inheritance from the prior version.

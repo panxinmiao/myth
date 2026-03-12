@@ -87,8 +87,7 @@ impl TransparentFeature {
 
         graph.add_pass("Transparent_Pass", |builder| {
             // SSA colour relay: read the incoming version, write a new alias.
-            let color_output =
-                builder.mutate_and_export(color_target, "Scene_Color_Transparent");
+            let color_output = builder.mutate_and_export(color_target, "Scene_Color_Transparent");
 
             let resolve_target = if fc.msaa_samples > 1 {
                 let desc = fc.create_render_target_desc(
@@ -217,7 +216,8 @@ impl PassNode for TransparentPassNode {
 
         // `out_color` is an alias — LoadOp is auto-deduced to `Load`,
         // inheriting the content rendered by prior passes.
-        let color_att = ctx.get_color_attachment(self.out_color, RenderTargetOps::Load, self.resolve_target);
+        let color_att =
+            ctx.get_color_attachment(self.out_color, RenderTargetOps::Load, self.resolve_target);
         let depth_att = ctx.get_depth_stencil_attachment(self.depth_target, 0.0);
 
         let pass_desc = wgpu::RenderPassDescriptor {

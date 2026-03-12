@@ -570,12 +570,14 @@ impl AppHandler for GltfViewer {
             let ui_pass = &mut self.ui_pass;
             composer
                 .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
-                    let new_surface =
-                        rdg.add_pass_borrowed("UI_Pass", ui_pass, |builder| {
-                            builder.mutate_and_export(bb.surface_out, "Surface_With_UI")
-                        });
+                    let new_surface = rdg.add_pass_borrowed("UI_Pass", ui_pass, |builder| {
+                        builder.mutate_and_export(bb.surface_out, "Surface_With_UI")
+                    });
                     ui_pass.target_tex = new_surface;
-                    GraphBlackboard { surface_out: new_surface, ..bb }
+                    GraphBlackboard {
+                        surface_out: new_surface,
+                        ..bb
+                    }
                 })
                 .render();
         } else {

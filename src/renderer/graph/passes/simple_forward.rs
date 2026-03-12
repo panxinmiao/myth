@@ -97,8 +97,7 @@ impl SimpleForwardFeature {
                     fc.msaa_samples,
                     wgpu::TextureDimension::D2,
                     fc.surface_format,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 );
                 Some(builder.create_texture("Scene_Msaa", desc))
             } else {
@@ -200,8 +199,11 @@ impl PassNode for SimpleForwardPassNode {
         };
 
         let depth_att = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
-        let color_att =
-            ctx.get_color_attachment(color_view, RenderTargetOps::Clear(self.clear_color), resolve_target);
+        let color_att = ctx.get_color_attachment(
+            color_view,
+            RenderTargetOps::Clear(self.clear_color),
+            resolve_target,
+        );
 
         let pass_desc = wgpu::RenderPassDescriptor {
             label: Some("RDG Simple Forward Pass"),
