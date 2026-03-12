@@ -301,9 +301,7 @@ impl SsssFeature {
         feature_id: TextureNodeId,
         specular_tex: TextureNodeId,
     ) -> TextureNodeId {
-        let horizontal_pipeline = self
-            .horizontal_pipeline
-            .expect("SsssFeature not prepared");
+        let horizontal_pipeline = self.horizontal_pipeline.expect("SsssFeature not prepared");
         let vertical_pipeline = self.vertical_pipeline.expect("SsssFeature not prepared");
         let bind_group_layout = self.bind_group_layout.clone().unwrap();
         let profiles_buffer = self.profiles_buffer.clone().unwrap();

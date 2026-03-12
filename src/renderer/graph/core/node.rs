@@ -48,7 +48,7 @@ pub struct PassRecord {
     /// feature is enabled; otherwise always `None`.  Used exclusively
     /// by [`RenderGraph::dump_mermaid`] to emit Mermaid `subgraph` blocks.
     #[cfg(feature = "rdg_inspector")]
-    pub group: Option<&'static str>,
+    pub groups: smallvec::SmallVec<[&'static str; 4]>,
 
     /// Owned ephemeral pass node.
     pub node: Option<Box<dyn PassNode>>,
@@ -74,7 +74,7 @@ impl PassRecord {
         Self {
             name,
             #[cfg(feature = "rdg_inspector")]
-            group: None,
+            groups: SmallVec::new(),
             node: None,
             reads: SmallVec::new(),
             writes: SmallVec::new(),

@@ -34,8 +34,8 @@ use glam::Mat4;
 
 use crate::renderer::core::view::ViewTarget;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph,
-    TextureDesc, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, TextureDesc,
+    TextureNodeId,
 };
 use crate::renderer::graph::frame::ShadowLightInstance;
 use crate::renderer::graph::passes::draw::submit_draw_commands;
@@ -247,18 +247,17 @@ impl ShadowFeature {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
 
-        let shadow_array_id = graph.register_resource("Shadow_Array_Map", desc, false);
+        let shadow_array_id = graph.add_pass("Shadow_Pass", |builder| {
+            let shadow_array_id = builder.create_and_export("Shadow_Array_Map", desc);
 
-        let node = ShadowPassNode {
-            bind_group: self.bind_group.clone(),
-            shadow_lights: self.shadow_lights.clone(),
-            uniform_stride: self.uniform_stride,
-            shadow_array_id,
-            shadow_layer_views: Vec::with_capacity(self.shadow_lights.len()),
-        };
-        graph.add_pass("Shadow_Pass", |builder| {
-            builder.write_texture(shadow_array_id);
-            (node, ())
+            let node = ShadowPassNode {
+                bind_group: self.bind_group.clone(),
+                shadow_lights: self.shadow_lights.clone(),
+                uniform_stride: self.uniform_stride,
+                shadow_array_id,
+                shadow_layer_views: Vec::with_capacity(self.shadow_lights.len()),
+            };
+            (node, shadow_array_id)
         });
 
         Some(shadow_array_id)

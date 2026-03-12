@@ -426,14 +426,20 @@ impl PassNode for PrepassPassNode {
             a: 0.0,
         };
         if self.needs_normal
-            && let Some(att) =
-                ctx.get_color_attachment(self.scene_normals, RenderTargetOps::Clear(normal_clear), None)
+            && let Some(att) = ctx.get_color_attachment(
+                self.scene_normals,
+                RenderTargetOps::Clear(normal_clear),
+                None,
+            )
         {
             color_attachments.push(Some(att));
         }
         if self.needs_feature_id
-            && let Some(att) =
-                ctx.get_color_attachment(self.feature_id, RenderTargetOps::Clear(wgpu::Color::TRANSPARENT), None)
+            && let Some(att) = ctx.get_color_attachment(
+                self.feature_id,
+                RenderTargetOps::Clear(wgpu::Color::TRANSPARENT),
+                None,
+            )
         {
             color_attachments.push(Some(att));
         }

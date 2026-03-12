@@ -183,7 +183,7 @@ impl RenderGraph {
 
     /// Zero-cost fallback when the inspector is disabled.
     #[cfg(not(feature = "rdg_inspector"))]
-    #[inline(always)]
+    #[inline]
     pub fn with_group<F, R>(&mut self, _group_name: &'static str, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
@@ -287,7 +287,7 @@ impl RenderGraph {
 
         #[cfg(feature = "rdg_inspector")]
         {
-            self.passes[pass_index].group = self.current_group_stack.last().copied();
+            self.passes[pass_index].groups = self.current_group_stack.iter().copied().collect();
         }
 
         // Phase 2: execute the closure — all topology wiring happens here.
@@ -331,7 +331,7 @@ impl RenderGraph {
 
         #[cfg(feature = "rdg_inspector")]
         {
-            self.passes[pass_index].group = self.current_group_stack.last().copied();
+            self.passes[pass_index].groups = self.current_group_stack.iter().copied().collect();
         }
 
         let output = {
@@ -345,7 +345,7 @@ impl RenderGraph {
         // SAFETY: BorrowedPass stores a raw pointer to the externally-owned
         // PassNode.  The caller guarantees the reference outlives the graph's
         // prepare→execute window (bounded by FrameComposer::render()).
-        self.passes[pass_index].node = Some(Box::new(BorrowedPass(node as *mut dyn PassNode)));
+        self.passes[pass_index].node = Some(Box::new(BorrowedPass(std::ptr::from_mut::<dyn PassNode>(node))));
         output
     }
 
@@ -629,35 +629,116 @@ impl RenderGraph {
         // subgraph blocks first, then ungrouped passes at the top level.
         #[cfg(feature = "rdg_inspector")]
         {
-            // Collect ordered unique group names (preserving first-seen order).
-            let mut seen_groups: Vec<&'static str> = Vec::new();
-            for pass in &self.passes {
-                if let Some(g) = pass.group {
-                    if !seen_groups.contains(&g) {
-                        seen_groups.push(g);
+            #[derive(Default)]
+            struct GroupNode {
+                name: &'static str,
+                passes: Vec<usize>,
+                children: Vec<GroupNode>,
+            }
+
+            impl GroupNode {
+                // 递归插入 pass 索引
+                fn insert(&mut self, path: &[&'static str], pass_idx: usize) {
+                    if path.is_empty() {
+                        self.passes.push(pass_idx);
+                    } else {
+                        let next_name = path[0];
+                        if let Some(child) = self.children.iter_mut().find(|c| c.name == next_name)
+                        {
+                            child.insert(&path[1..], pass_idx);
+                        } else {
+                            let mut new_child = GroupNode {
+                                name: next_name,
+                                ..Default::default()
+                            };
+                            new_child.insert(&path[1..], pass_idx);
+                            self.children.push(new_child);
+                        }
+                    }
+                }
+
+                // 递归生成 Mermaid 字符串
+                fn write_mermaid(&self, out: &mut String, graph: &RenderGraph, depth: usize) {
+                    use std::fmt::Write;
+                    let indent = "    ".repeat(depth);
+
+                    // 如果不是根节点（根节点 name 为空），则绘制 subgraph 块
+                    if !self.name.is_empty() {
+                        writeln!(out, "{indent}subgraph {} [\"{}\"]", self.name, self.name)
+                            .unwrap();
+                        writeln!(out, "{indent}    direction TB").unwrap();
+                    }
+
+                    let inner_indent = if self.name.is_empty() {
+                        indent.clone()
+                    } else {
+                        format!("{indent}    ")
+                    };
+
+                    // 绘制当前组内的 Passes
+                    for &pass_idx in &self.passes {
+                        RenderGraph::write_pass_node(
+                            out,
+                            pass_idx,
+                            &graph.passes[pass_idx],
+                            &inner_indent,
+                        );
+                    }
+
+                    // 递归绘制子组
+                    for child in &self.children {
+                        child.write_mermaid(
+                            out,
+                            graph,
+                            if self.name.is_empty() {
+                                depth
+                            } else {
+                                depth + 1
+                            },
+                        );
+                    }
+
+                    if !self.name.is_empty() {
+                        writeln!(out, "{indent}end").unwrap();
+
+                        // ─── 动态分配子图样式 ───
+                        // 通过计算字符串的简单 Hash 值，确保相同的模块每次 dump 颜色一致
+                        let hash = self
+                            .name
+                            .bytes()
+                            .fold(0usize, |acc, b| acc.wrapping_add(b as usize));
+
+                        // 预定义一套极客且不突兀的半透明调色板（支持深色模式）
+                        const STYLES: &[(&str, &str)] = &[
+                            ("#3b82f614", "#3b82f6"), // Blue (科技蓝)
+                            ("#10b98114", "#10b981"), // Emerald (翡翠绿)
+                            ("#8b5cf614", "#8b5cf6"), // Violet (赛博紫)
+                            ("#f59e0b14", "#f59e0b"), // Amber (警示黄)
+                            ("#ef444414", "#ef4444"), // Red (危险红)
+                            ("#ec489914", "#ec4899"), // Pink (霓虹粉)
+                            ("#06b6d414", "#06b6d4"), // Cyan (青色)
+                        ];
+
+                        let (bg, stroke) = STYLES[hash % STYLES.len()];
+
+                        // 为子图生成专属的 CSS 样式 (半透明背景 + 彩色虚线框 + 圆角)
+                        writeln!(
+                            out,
+                            "{indent}style {} fill:{},stroke:{},stroke-width:2px,stroke-dasharray: 5 5,color:#fff,rx:10,ry:10", 
+                            self.name, bg, stroke
+                        ).unwrap();
                     }
                 }
             }
 
-            // Emit subgraph blocks.
-            for group in &seen_groups {
-                writeln!(&mut out, "\n    subgraph {group} [\"{group}\"]").unwrap();
-                writeln!(&mut out, "        direction TB").unwrap();
-                for (i, pass) in self.passes.iter().enumerate() {
-                    if pass.group == Some(group) {
-                        Self::write_pass_node(&mut out, i, pass, "        ");
-                    }
-                }
-                writeln!(&mut out, "    end").unwrap();
-            }
-
-            // Emit ungrouped passes at top level.
-            writeln!(&mut out, "\n    %% --- Ungrouped Passes ---").unwrap();
+            // 将扁平的 Passes 构建进树结构中
+            let mut root = GroupNode::default();
             for (i, pass) in self.passes.iter().enumerate() {
-                if pass.group.is_none() {
-                    Self::write_pass_node(&mut out, i, pass, "    ");
-                }
+                root.insert(&pass.groups, i);
             }
+
+            // 递归写出
+            root.write_mermaid(&mut out, self, 1);
         }
 
         #[cfg(not(feature = "rdg_inspector"))]

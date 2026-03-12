@@ -327,17 +327,21 @@ impl<'a> FrameComposer<'a> {
                 graph.with_group("Scene", |g| {
                     // 1. Prepass
                     let prepass_out =
-                        self.ctx.prepass.add_to_graph(g, needs_normal, needs_feature_id);
+                        self.ctx
+                            .prepass
+                            .add_to_graph(g, needs_normal, needs_feature_id);
 
                     // 2. SSAO
                     let ssao_output = if ssao_enabled {
-                        Some(self.ctx.ssao_pass.add_to_graph(
-                            g,
-                            prepass_out.scene_depth,
-                            prepass_out
-                                .scene_normals
-                                .expect("SSAO requires scene normals from Prepass"),
-                        ))
+                        Some(
+                            self.ctx.ssao_pass.add_to_graph(
+                                g,
+                                prepass_out.scene_depth,
+                                prepass_out
+                                    .scene_normals
+                                    .expect("SSAO requires scene normals from Prepass"),
+                            ),
+                        )
                     } else {
                         None
                     };
@@ -370,8 +374,7 @@ impl<'a> FrameComposer<'a> {
                         );
 
                         if is_msaa {
-                            active_color =
-                                self.ctx.msaa_sync_pass.add_to_graph(g, scene_color_hdr);
+                            active_color = self.ctx.msaa_sync_pass.add_to_graph(g, scene_color_hdr);
                         } else {
                             active_color = scene_color_hdr;
                         }
@@ -380,12 +383,18 @@ impl<'a> FrameComposer<'a> {
                     // 5. Skybox
                     if needs_skybox {
                         active_color =
-                            self.ctx.skybox_pass.add_to_graph(g, active_color, active_depth);
+                            self.ctx
+                                .skybox_pass
+                                .add_to_graph(g, active_color, active_depth);
                     }
 
                     // 6. Transmission Copy
                     let transmission_tex = if has_transmission {
-                        let tx_source = if is_msaa { scene_color_hdr } else { active_color };
+                        let tx_source = if is_msaa {
+                            scene_color_hdr
+                        } else {
+                            active_color
+                        };
                         Some(
                             self.ctx
                                 .transmission_copy_pass
@@ -444,9 +453,7 @@ impl<'a> FrameComposer<'a> {
                 let mut surface = if fxaa_enabled {
                     // Route through an intermediate LDR texture for FXAA input
                     let ldr = g.register_resource("LDR_Intermediate", surface_desc, false);
-                    self.ctx
-                        .tone_map_pass
-                        .add_to_graph(g, tonemap_input, ldr)
+                    self.ctx.tone_map_pass.add_to_graph(g, tonemap_input, ldr)
                 } else {
                     self.ctx
                         .tone_map_pass
@@ -456,7 +463,8 @@ impl<'a> FrameComposer<'a> {
                 // FXAA: anti-alias the LDR result onto the surface
                 if fxaa_enabled {
                     let ldr_intermediate = surface;
-                    surface = self.ctx
+                    surface = self
+                        .ctx
                         .fxaa_pass
                         .add_to_graph(g, ldr_intermediate, current_surface);
                 }
@@ -586,7 +594,9 @@ impl<'a> FrameComposer<'a> {
             execute_ctx.current_timeline_index = timeline_index;
             #[cfg(debug_assertions)]
             encoder.push_debug_group(graph.passes[pass_idx].name);
-            graph.passes[pass_idx].get_pass_mut().execute(&execute_ctx, &mut encoder);
+            graph.passes[pass_idx]
+                .get_pass_mut()
+                .execute(&execute_ctx, &mut encoder);
             #[cfg(debug_assertions)]
             encoder.pop_debug_group();
         }

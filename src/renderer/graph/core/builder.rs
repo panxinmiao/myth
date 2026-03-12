@@ -57,11 +57,7 @@ impl PassBuilder<'_> {
     /// entirely within one pass (e.g. Bloom's mip-chain, SSAO's raw
     /// half-res intermediate).  The returned [`TextureNodeId`] is valid
     /// for the duration of the frame.
-    pub fn create_texture(
-        &mut self,
-        name: &'static str,
-        desc: TextureDesc,
-    ) -> TextureNodeId {
+    pub fn create_texture(&mut self, name: &'static str, desc: TextureDesc) -> TextureNodeId {
         let id = self.graph.register_resource(name, desc, false);
         self.graph.passes[self.pass_index].creates.push(id);
         self.write_texture(id)
@@ -74,11 +70,7 @@ impl PassBuilder<'_> {
     /// but signals intent: the returned [`TextureNodeId`] is meant to be
     /// propagated to downstream passes via the closure's return value.
     #[inline]
-    pub fn create_and_export(
-        &mut self,
-        name: &'static str,
-        desc: TextureDesc,
-    ) -> TextureNodeId {
+    pub fn create_and_export(&mut self, name: &'static str, desc: TextureDesc) -> TextureNodeId {
         self.create_texture(name, desc)
     }
 

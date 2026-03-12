@@ -610,20 +610,19 @@ impl BloomFeature {
                 karis_off_bg.clone()
             };
 
-            let mut current_mip: TextureNodeId =
-                g.add_pass("Bloom_Extract", |builder| {
-                    builder.read_texture(input_color);
-                    let out = builder.create_and_export("Bloom_Mip_0", mip0_desc);
-                    let node = BloomDownsampleNode {
-                        input_tex: input_color,
-                        output_tex: out,
-                        pipeline_id: ds_pipeline,
-                        static_bg,
-                        transient_layout: ds_transient_layout.clone(),
-                        transient_bg_key: None,
-                    };
-                    (node, out)
-                });
+            let mut current_mip: TextureNodeId = g.add_pass("Bloom_Extract", |builder| {
+                builder.read_texture(input_color);
+                let out = builder.create_and_export("Bloom_Mip_0", mip0_desc);
+                let node = BloomDownsampleNode {
+                    input_tex: input_color,
+                    output_tex: out,
+                    pipeline_id: ds_pipeline,
+                    static_bg,
+                    transient_layout: ds_transient_layout.clone(),
+                    transient_bg_key: None,
+                };
+                (node, out)
+            });
 
             // Collect downsample chain for upsample phase references.
             let mut downsample_chain = Vec::with_capacity(mip_count);
@@ -678,7 +677,6 @@ impl BloomFeature {
 
                 current_mip = g.add_pass(label, |builder| {
                     builder.read_texture(coarser);
-                    builder.read_texture(finer);
                     let out = builder.mutate_and_export(finer, out_label);
                     let node = BloomUpsampleNode {
                         coarser_tex: coarser,
@@ -695,10 +693,9 @@ impl BloomFeature {
             // ─── 4. Composite: Scene HDR + Bloom → Output ─────────
             let bloom_result = current_mip;
             g.add_pass("Bloom_Composite", |builder| {
-
                 builder.read_texture(input_color);
                 builder.read_texture(bloom_result);
-                
+
                 let out_desc = TextureDesc::new_2d(
                     fc.width,
                     fc.height,
@@ -887,8 +884,7 @@ struct BloomUpsampleNode {
 impl PassNode for BloomUpsampleNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let coarser_view = ctx.views.get_texture_view(self.coarser_tex);
-        let key =
-            BindGroupKey::new(self.transient_layout.id()).with_resource(coarser_view.id());
+        let key = BindGroupKey::new(self.transient_layout.id()).with_resource(coarser_view.id());
 
         ctx.global_bind_group_cache.get_or_create(key.clone(), || {
             ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
