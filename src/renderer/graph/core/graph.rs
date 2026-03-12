@@ -1,3 +1,6 @@
+use std::cmp::Ordering;
+use std::collections::BinaryHeap;
+
 use crate::renderer::graph::core::allocator::TransientPool;
 use crate::renderer::graph::core::types::TextureDesc;
 
@@ -66,6 +69,27 @@ impl FrameConfig {
     }
 }
 
+// ReadyNode is a helper struct used during topological sorting of the render graph. It represents a pass that is ready to be executed, along with its priority score for scheduling.
+#[derive(Eq, PartialEq)]
+struct ReadyNode {
+    /// The priority score of the node, which can be based on various heuristics such as the number of downstream dependencies, resource usage, or custom user-defined metrics. Higher scores indicate higher priority for execution.
+    priority: i32,
+    pass_idx: usize,
+}
+
+// Rust's BinaryHeap is a max-heap, so we define the ordering such that higher priority scores come first.
+impl Ord for ReadyNode {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.priority.cmp(&other.priority)
+    }
+}
+
+impl PartialOrd for ReadyNode {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
 /// Declarative Render Graph.
 ///
 /// Stores pass and resource records, performs dependency analysis,
@@ -87,7 +111,7 @@ pub struct RenderGraph {
     // --- Compile-time scratch buffers (zero-alloc across frames) ---
     compile_stack: Vec<usize>,
     compile_in_degrees: Vec<usize>,
-    compile_queue: Vec<usize>,
+    compile_ready_heap: BinaryHeap<ReadyNode>,
     compile_dependency_graph: Vec<SmallVec<[usize; 8]>>,
 
     /// Group-name stack for logical subgraph tagging.
@@ -126,7 +150,7 @@ impl RenderGraph {
             },
             compile_stack: Vec::new(),
             compile_in_degrees: Vec::new(),
-            compile_queue: Vec::new(),
+            compile_ready_heap: BinaryHeap::new(),
             compile_dependency_graph: Vec::new(),
             #[cfg(feature = "rdg_inspector")]
             current_group_stack: Vec::new(),
@@ -444,7 +468,8 @@ impl RenderGraph {
         self.compile_dependency_graph
             .resize(pass_count, SmallVec::new());
 
-        self.compile_queue.clear();
+        // self.compile_queue.clear();
+        self.compile_ready_heap.clear();
 
         // 统计存活节点的入度和依赖反转图
         for (i, pass) in self.passes.iter().enumerate() {
@@ -452,7 +477,11 @@ impl RenderGraph {
                 self.compile_in_degrees[i] = pass.physical_dependencies.len();
 
                 if self.compile_in_degrees[i] == 0 {
-                    self.compile_queue.push(i);
+                    // Initial nodes with in-degree 0 can be given an initial weight based on Pass type
+                    self.compile_ready_heap.push(ReadyNode {
+                        priority: 0,
+                        pass_idx: i,
+                    });
                 }
 
                 for &dep in &pass.physical_dependencies {
@@ -461,17 +490,26 @@ impl RenderGraph {
             }
         }
 
-        // Kahn's algorithm — uses a cursor instead of remove(0) to avoid O(N²).
-        let mut cursor = 0;
-        while cursor < self.compile_queue.len() {
-            let node = self.compile_queue[cursor];
-            cursor += 1;
+        // // Kahn's algorithm
+        // 一个单调递增的游标，用于赋予新解锁的 Node 更高的优先级，从而模拟强局部的 DFS 行为
+        let mut sequence_counter = 0;
+
+        while let Some(ReadyNode { pass_idx: node, .. }) = self.compile_ready_heap.pop() {
             self.execution_queue.push(node);
+            sequence_counter += 1;
 
             for &downstream in &self.compile_dependency_graph[node] {
                 self.compile_in_degrees[downstream] -= 1;
                 if self.compile_in_degrees[downstream] == 0 {
-                    self.compile_queue.push(downstream);
+                    // 核心启发式：刚被解锁的下游节点获得当前最高的 sequence_counter 权重。
+                    // 这保证了它会紧接着它的生产者（即当前 node）执行，最大化 GPU Cache 命中率。
+                    // Todo: 未来可以在这里加上：如果 downstream 是 Compute Pass，则 priority 降低，推迟到最后执行。
+                    let heuristic_score = sequence_counter;
+
+                    self.compile_ready_heap.push(ReadyNode {
+                        priority: heuristic_score,
+                        pass_idx: downstream,
+                    });
                 }
             }
         }
