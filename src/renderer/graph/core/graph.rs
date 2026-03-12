@@ -345,7 +345,9 @@ impl RenderGraph {
         // SAFETY: BorrowedPass stores a raw pointer to the externally-owned
         // PassNode.  The caller guarantees the reference outlives the graph's
         // prepare→execute window (bounded by FrameComposer::render()).
-        self.passes[pass_index].node = Some(Box::new(BorrowedPass(std::ptr::from_mut::<dyn PassNode>(node))));
+        self.passes[pass_index].node = Some(Box::new(BorrowedPass(std::ptr::from_mut::<
+            dyn PassNode,
+        >(node))));
         output
     }
 

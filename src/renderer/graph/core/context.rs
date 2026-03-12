@@ -101,8 +101,7 @@ impl ViewResolver<'_> {
                 .unwrap_or_else(|| panic!("External {} resource missing!", res.name))
         } else {
             let physical_index = res.physical_index.expect("No physical memory!");
-            &self.pool.resources[physical_index].default_view
-            // self.pool.get_tracked_view(res.physical_index.unwrap())
+            self.pool.get_tracked_view(physical_index)
         }
     }
 
@@ -312,7 +311,8 @@ impl ExecuteContext<'_> {
         let is_first_write = res.first_use == ti && !res.is_external && res.alias_of.is_none();
 
         // Validate: Load on an uninitialised transient resource is always a bug.
-        assert!(!(matches!(ops, RenderTargetOps::Load) && is_first_write), 
+        assert!(
+            !(matches!(ops, RenderTargetOps::Load) && is_first_write),
             "RDG Validation Error: LoadOp::Load on freshly created transient \
              resource '{name}' (node {id:?}).  This reads uninitialised GPU \
              memory and wastes bandwidth.  Use RenderTargetOps::DontCare for \

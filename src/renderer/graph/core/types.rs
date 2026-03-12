@@ -41,7 +41,7 @@ pub enum RenderTargetOps {
 impl RenderTargetOps {
     /// Convert to the corresponding `wgpu::LoadOp`.
     #[inline]
-    #[must_use] 
+    #[must_use]
     pub fn to_wgpu_load_op(self) -> wgpu::LoadOp<wgpu::Color> {
         match self {
             Self::Clear(c) => wgpu::LoadOp::Clear(c),
