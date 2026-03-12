@@ -18,18 +18,19 @@
 //! # Rendering Architecture
 //!
 //! ```text
-//! ┌─────────────────────────────────────────────────────────────┐
-//! │                  Unified RDG Pipeline                       │
-//! │                                                             │
-//! │  HighFidelity:                                              │
-//! │  BRDF LUT → IBL → Shadow → Prepass → SSAO → Opaque →      │
-//! │  SSSS → Skybox → TransmissionCopy → Transparent →         │
-//! │  Bloom → ToneMap → FXAA → [User Hooks] → Surface           │
-//! │                                                             │
-//! │  BasicForward:                                              │
-//! │  BRDF LUT → IBL → Shadow → Skybox(prepare) →               │
-//! │  SimpleForward → [User Hooks] → Surface                    │
-//! └─────────────────────────────────────────────────────────────┘
+//! ┌────────────────────────────────────────────────────────────────┐
+//! │                    Unified RDG Pipeline                        │
+//! │                                                                │
+//! │  HighFidelity:                                                 │
+//! │  BRDF LUT → IBL → Shadow → Prepass → SSAO → Opaque →         │
+//! │  SSSS → Skybox → TransmissionCopy → Transparent →             │
+//! │  [Bloom_System: Extract → DS_1..N → US_N..0 → Composite] →   │
+//! │  ToneMap → FXAA → [User Hooks] → Surface                     │
+//! │                                                                │
+//! │  BasicForward:                                                 │
+//! │  BRDF LUT → IBL → Shadow → Skybox(prepare) →                  │
+//! │  SimpleForward → [User Hooks] → Surface                       │
+//! └────────────────────────────────────────────────────────────────┘
 //! ```
 //!
 //! # Example
@@ -127,6 +128,12 @@ pub struct ComposerContext<'a> {
 ///
 /// - **Single unified graph**: All rendering (scene + post + custom) flows
 ///   through the RDG. No legacy graph system remains.
+/// - **Pure dataflow chain**: Every `Feature::add_to_graph` returns a
+///   [`TextureNodeId`], enabling a strict functional pipeline where each
+///   pass's output feeds the next pass's input — no side-effect writes.
+/// - **Flattened macro-nodes**: Complex multi-step effects (e.g. Bloom)
+///   are decomposed into individual RDG passes, exposing fine-grained
+///   dependencies to the compiler for optimal barrier and memory aliasing.
 /// - **Hook-based extensibility**: External code (e.g. UI) injects passes
 ///   via [`add_custom_pass`](Self::add_custom_pass) closures that receive
 ///   the [`GraphBlackboard`] for type-safe resource wiring.
@@ -420,7 +427,8 @@ impl<'a> FrameComposer<'a> {
 
             // ── Post-Processing Group ──────────────────────────────────
 
-            graph.with_group("PostProcess", |g| {
+            current_surface = graph.with_group("PostProcess", |g| {
+                // Bloom (internally flattened into Bloom_System subgroup)
                 let tonemap_input = if bloom_enabled {
                     self.ctx.bloom_pass.add_to_graph(
                         g,
@@ -432,23 +440,28 @@ impl<'a> FrameComposer<'a> {
                     post_transparent_color
                 };
 
-                let tonemap_output = if fxaa_enabled {
-                    g.register_resource("LDR_Intermediate", surface_desc, false)
+                // ToneMapping: HDR → LDR
+                let mut surface = if fxaa_enabled {
+                    // Route through an intermediate LDR texture for FXAA input
+                    let ldr = g.register_resource("LDR_Intermediate", surface_desc, false);
+                    self.ctx
+                        .tone_map_pass
+                        .add_to_graph(g, tonemap_input, ldr)
                 } else {
-                    current_surface = g.create_alias(current_surface, "Surface_After_ToneMap");
-                    current_surface
+                    self.ctx
+                        .tone_map_pass
+                        .add_to_graph(g, tonemap_input, current_surface)
                 };
 
-                self.ctx
-                    .tone_map_pass
-                    .add_to_graph(g, tonemap_input, tonemap_output);
-
+                // FXAA: anti-alias the LDR result onto the surface
                 if fxaa_enabled {
-                    current_surface = g.create_alias(current_surface, "Surface_After_FXAA");
-                    self.ctx
+                    let ldr_intermediate = surface;
+                    surface = self.ctx
                         .fxaa_pass
-                        .add_to_graph(g, tonemap_output, current_surface);
+                        .add_to_graph(g, ldr_intermediate, current_surface);
                 }
+
+                surface
             });
         } else {
             // BasicForward pipeline: single-pass LDR rendering.

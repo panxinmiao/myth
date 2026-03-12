@@ -1161,7 +1161,7 @@ renderer.msaa_samples();          // independent of path
 | HDR Path | `OpaquePass`, `TransparentPass`, `TransmissionCopyPass` |
 | Skybox | `SkyboxPass` |
 | Compute | `BRDFLutComputePass`, `IBLComputePass` |
-| Post-Processing | `SssssPass`, `BloomPass`, `ToneMapPass`, `FxaaPass`, `SsaoPass` |
+| Post-Processing | `SssssPass`, `BloomFeature` (Extract + Downsample × N + Upsample × N + Composite), `ToneMapPass`, `FxaaPass`, `SsaoPass` |
 
 ### Post-Processing
 
@@ -1316,9 +1316,12 @@ Logically groups passes for inspector diagnostics (requires `rdg_inspector` feat
 
 ```rust
 graph.with_group("PostProcess", |g| {
-    let bloom = bloom_pass.add_to_graph(g, color);
-    let tone  = tone_map.add_to_graph(g, bloom);
-    fxaa.add_to_graph(g, tone)
+    // Bloom is internally flattened into a Bloom_System subgroup
+    let scene_color = bloom.add_to_graph(g, color, karis, max_mips);
+    // Every Feature returns its output TextureNodeId — pure dataflow chain
+    let mut surface = tone_map.add_to_graph(g, scene_color, surface_out);
+    surface = fxaa.add_to_graph(g, surface, surface_out);
+    surface
 });
 ```
 
