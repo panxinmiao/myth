@@ -280,16 +280,18 @@ impl<'a> FrameComposer<'a> {
         let fxaa_enabled = self.ctx.scene.fxaa.enabled && is_high_fidelity;
 
         // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
-        if self.ctx.resource_manager.needs_brdf_compute {
-            self.ctx.brdf_pass.add_to_graph(graph);
-        }
+        graph.with_group("Compute", |g| {
+            if self.ctx.resource_manager.needs_brdf_compute {
+                self.ctx.brdf_pass.add_to_graph(g);
+            }
 
-        if let Some(source) = self.ctx.resource_manager.pending_ibl_source.take() {
-            self.ctx.ibl_pass.add_to_graph(graph, source);
-        }
+            if let Some(source) = self.ctx.resource_manager.pending_ibl_source.take() {
+                self.ctx.ibl_pass.add_to_graph(g, source);
+            }
+        });
 
         let shadow_tex = if self.ctx.extracted_scene.has_shadow_casters() {
-            self.ctx.shadow_pass.add_to_graph(graph)
+            graph.with_group("Shadow", |g| self.ctx.shadow_pass.add_to_graph(g))
         } else {
             None
         };
@@ -312,120 +314,101 @@ impl<'a> FrameComposer<'a> {
             // HighFidelity pipeline: separate passes, explicit wiring.
             // ────────────────────────────────────────────────────────────
 
-            // 1. Prepass — creates single-sample Scene_Depth, optionally
-            //    Scene_Normals and Feature_ID.
-            let prepass_out = self
-                .ctx
-                .prepass
-                .add_to_graph(graph, needs_normal, needs_feature_id);
+            // ── Scene Rendering Group ──────────────────────────────────
 
-            // 2. SSAO — reads Prepass depth + normals, produces half-res AO.
-            let ssao_output = if ssao_enabled {
-                Some(
-                    self.ctx.ssao_pass.add_to_graph(
-                        graph,
+            let (post_transparent_color, prepass_depth, _ssao_output) =
+                graph.with_group("Scene", |g| {
+                    // 1. Prepass
+                    let prepass_out =
+                        self.ctx.prepass.add_to_graph(g, needs_normal, needs_feature_id);
+
+                    // 2. SSAO
+                    let ssao_output = if ssao_enabled {
+                        Some(self.ctx.ssao_pass.add_to_graph(
+                            g,
+                            prepass_out.scene_depth,
+                            prepass_out
+                                .scene_normals
+                                .expect("SSAO requires scene normals from Prepass"),
+                        ))
+                    } else {
+                        None
+                    };
+
+                    // 3. Opaque
+                    let opaque_has_prepass = !is_msaa;
+                    let opaque_out = self.ctx.opaque_pass.add_to_graph(
+                        g,
                         prepass_out.scene_depth,
-                        prepass_out
-                            .scene_normals
-                            .expect("SSAO requires scene normals from Prepass"),
-                    ),
-                )
-            } else {
-                None
-            };
+                        opaque_has_prepass,
+                        self.ctx.extracted_scene.background.clear_color(),
+                        ssss_enabled,
+                        ssao_output,
+                        shadow_tex,
+                    );
 
-            // 3. Opaque — creates MSAA targets (if needed) and
-            //    Scene_Color_HDR (resolve target).  Returns the relay
-            //    baton: active drawing surfaces + resolved HDR.
-            let opaque_has_prepass = !is_msaa;
-            let opaque_out = self.ctx.opaque_pass.add_to_graph(
-                graph,
-                prepass_out.scene_depth,
-                opaque_has_prepass,
-                self.ctx.extracted_scene.background.clear_color(),
-                ssss_enabled,
-                ssao_output,
-                shadow_tex,
-            );
+                    let mut active_color = opaque_out.active_color;
+                    let active_depth = opaque_out.active_depth;
+                    let mut scene_color_hdr = opaque_out.scene_color_hdr;
 
-            let mut active_color = opaque_out.active_color;
-            let active_depth = opaque_out.active_depth;
-            let mut scene_color_hdr = opaque_out.scene_color_hdr;
+                    // 4. SSSS
+                    if ssss_enabled {
+                        scene_color_hdr = self.ctx.ssss_pass.add_to_graph(
+                            g,
+                            scene_color_hdr,
+                            prepass_out.scene_depth,
+                            prepass_out.scene_normals.unwrap(),
+                            prepass_out.feature_id.unwrap(),
+                            opaque_out.specular_mrt.unwrap(),
+                        );
 
-            // Populate blackboard fields for hooks.
-            bb_scene_depth = prepass_out.scene_depth;
+                        if is_msaa {
+                            active_color =
+                                self.ctx.msaa_sync_pass.add_to_graph(g, scene_color_hdr);
+                        } else {
+                            active_color = scene_color_hdr;
+                        }
+                    }
 
-            // 4. SSSS — operates on single-sample HDR (post-resolve).
-            if ssss_enabled {
-                scene_color_hdr = self.ctx.ssss_pass.add_to_graph(
-                    graph,
-                    scene_color_hdr,
-                    prepass_out.scene_depth,
-                    prepass_out.scene_normals.unwrap(),
-                    prepass_out.feature_id.unwrap(),
-                    opaque_out.specular_mrt.unwrap(),
-                );
+                    // 5. Skybox
+                    if needs_skybox {
+                        active_color =
+                            self.ctx.skybox_pass.add_to_graph(g, active_color, active_depth);
+                    }
 
-                // MSAA Sync — broadcast corrected single-sample HDR back
-                // into the multi-sampled colour target so that subsequent
-                // MSAA draws (Skybox, Transparent) see the SSSS
-                // contributions.
-                if is_msaa {
-                    active_color = self.ctx.msaa_sync_pass.add_to_graph(graph, scene_color_hdr);
-                } else {
-                    active_color = scene_color_hdr;
-                }
-            }
+                    // 6. Transmission Copy
+                    let transmission_tex = if has_transmission {
+                        let tx_source = if is_msaa { scene_color_hdr } else { active_color };
+                        Some(
+                            self.ctx
+                                .transmission_copy_pass
+                                .add_to_graph(g, tx_source, true),
+                        )
+                    } else {
+                        None
+                    };
 
-            // 5. Skybox — continues in the MSAA (or non-MSAA) context.
-            //    Returns the new colour version (SSA alias) for downstream.
-            if needs_skybox {
-                active_color = self
-                    .ctx
-                    .skybox_pass
-                    .add_to_graph(graph, active_color, active_depth);
-            }
+                    // 7. Transparent
+                    let post_transparent_color = self.ctx.transparent_pass.add_to_graph(
+                        g,
+                        active_color,
+                        active_depth,
+                        transmission_tex,
+                        ssao_output,
+                        shadow_tex,
+                    );
 
-            // 6. Transmission Copy — snapshot scene colour for refraction.
-            //    MSAA: reads Opaque's single-sample resolve (pre-Skybox).
-            //    Non-MSAA: reads the latest colour version (post-Skybox).
-            let transmission_tex = if has_transmission {
-                let tx_source = if is_msaa {
-                    scene_color_hdr
-                } else {
-                    active_color
-                };
-                Some(
-                    self.ctx
-                        .transmission_copy_pass
-                        .add_to_graph(graph, tx_source, true),
-                )
-            } else {
-                None
-            };
+                    (post_transparent_color, prepass_out.scene_depth, ssao_output)
+                });
 
-            // 7. Transparent — final scene draw.  Returns the texture
-            //    that downstream consumers should read:
-            //    MSAA  → `Scene_Color_HDR_Final` (resolve target)
-            //    Other → mutated colour alias (same physical memory)
-            let post_transparent_color = self.ctx.transparent_pass.add_to_graph(
-                graph,
-                active_color,
-                active_depth,
-                transmission_tex,
-                ssao_output,
-                shadow_tex,
-            );
-
-            // Update the blackboard pointer so hooks and post-processing
-            // consume the latest scene colour (including transparent).
             bb_scene_color = post_transparent_color;
+            bb_scene_depth = prepass_depth;
 
             // ── Before-Post-Process Hooks ──────────────────────────────
             {
                 let mut blackboard = GraphBlackboard {
                     scene_color: post_transparent_color,
-                    scene_depth: prepass_out.scene_depth,
+                    scene_depth: prepass_depth,
                     surface_out,
                 };
                 for (stage, hook) in &mut self.hooks {
@@ -435,42 +418,41 @@ impl<'a> FrameComposer<'a> {
                 }
             }
 
-            // ── Post-Processing Chain ──────────────────────────────────
+            // ── Post-Processing Group ──────────────────────────────────
 
-            let tonemap_input = if bloom_enabled {
-                self.ctx.bloom_pass.add_to_graph(
-                    graph,
-                    post_transparent_color,
-                    self.ctx.scene.bloom.karis_average,
-                    self.ctx.scene.bloom.max_mip_levels(),
-                )
-            } else {
-                post_transparent_color
-            };
+            graph.with_group("PostProcess", |g| {
+                let tonemap_input = if bloom_enabled {
+                    self.ctx.bloom_pass.add_to_graph(
+                        g,
+                        post_transparent_color,
+                        self.ctx.scene.bloom.karis_average,
+                        self.ctx.scene.bloom.max_mip_levels(),
+                    )
+                } else {
+                    post_transparent_color
+                };
 
-            let tonemap_output = if fxaa_enabled {
-                graph.register_resource("LDR_Intermediate", surface_desc, false)
-            } else {
-                current_surface = graph.create_alias(current_surface, "Surface_After_ToneMap");
-                current_surface
-            };
+                let tonemap_output = if fxaa_enabled {
+                    g.register_resource("LDR_Intermediate", surface_desc, false)
+                } else {
+                    current_surface = g.create_alias(current_surface, "Surface_After_ToneMap");
+                    current_surface
+                };
 
-            // ToneMap
-            self.ctx
-                .tone_map_pass
-                .add_to_graph(graph, tonemap_input, tonemap_output);
-
-            // FXAA — reads LDR_Intermediate, writes Surface_Out
-            if fxaa_enabled {
-                current_surface = graph.create_alias(current_surface, "Surface_After_FXAA");
                 self.ctx
-                    .fxaa_pass
-                    .add_to_graph(graph, tonemap_output, current_surface);
-            }
+                    .tone_map_pass
+                    .add_to_graph(g, tonemap_input, tonemap_output);
+
+                if fxaa_enabled {
+                    current_surface = g.create_alias(current_surface, "Surface_After_FXAA");
+                    self.ctx
+                        .fxaa_pass
+                        .add_to_graph(g, tonemap_output, current_surface);
+                }
+            });
         } else {
             // BasicForward pipeline: single-pass LDR rendering.
 
-            // Skybox prepare (inline rendering in SimpleForward)
             let prepared_skybox = if needs_skybox {
                 let skybox_pipeline = self.ctx.skybox_pass.current_pipeline;
                 let skybox_bind_group = &self.ctx.skybox_pass.current_bind_group;
@@ -487,14 +469,15 @@ impl<'a> FrameComposer<'a> {
                 None
             };
 
-            // SimpleForward — creates its own Scene_Depth, writes Surface_Out
-            self.ctx.simple_forward_pass.add_to_graph(
-                graph,
-                surface_out,
-                self.ctx.extracted_scene.background.clear_color(),
-                prepared_skybox,
-                shadow_tex,
-            );
+            graph.with_group("BasicForward", |g| {
+                self.ctx.simple_forward_pass.add_to_graph(
+                    g,
+                    surface_out,
+                    self.ctx.extracted_scene.background.clear_color(),
+                    prepared_skybox,
+                    shadow_tex,
+                );
+            });
         }
 
         // ── After-Post-Process Hooks (UI, debug overlays) ──────────────
@@ -588,10 +571,9 @@ impl<'a> FrameComposer<'a> {
 
         for (timeline_index, &pass_idx) in graph.execution_queue.iter().enumerate() {
             execute_ctx.current_timeline_index = timeline_index;
-            let pass = graph.passes[pass_idx].get_pass_mut();
             #[cfg(debug_assertions)]
-            encoder.push_debug_group(pass.name());
-            pass.execute(&execute_ctx, &mut encoder);
+            encoder.push_debug_group(graph.passes[pass_idx].name);
+            graph.passes[pass_idx].get_pass_mut().execute(&execute_ctx, &mut encoder);
             #[cfg(debug_assertions)]
             encoder.pop_debug_group();
         }

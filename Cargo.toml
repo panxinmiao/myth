@@ -159,6 +159,9 @@ features = ["links"]
 default = ["winit", "gltf", "http"]
 winit = ["dep:winit"]
 gltf = ["dep:gltf"]
+# Enable Render Graph inspection: retains logical group metadata per pass
+# and supports Mermaid subgraph dumping for visual debugging.
+rdg_inspector = []
 # Enable meshopt decompression for glTF models using EXT_meshopt_compression.
 # Note: This pulls in the meshopt C library, which requires an LLVM/Clang
 # toolchain when compiling for WASM targets.

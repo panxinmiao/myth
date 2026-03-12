@@ -1228,34 +1228,35 @@ Implement the `PassNode` trait to add custom GPU work via the RDG:
 
 ```rust
 use myth::renderer::graph::core::node::PassNode;
-use myth::renderer::graph::core::builder::PassBuilder;
 use myth::renderer::graph::core::context::{PrepareContext, ExecuteContext};
 use myth::renderer::graph::core::types::TextureNodeId;
 use myth::renderer::graph::core::blackboard::HookStage;
 use myth::render::FrameComposer;
 
 struct MyPass {
-    target_tex: TextureNodeId,
-    // ...
+    // lightweight IDs and transient bind-group slots only
 }
 
 impl PassNode for MyPass {
-    fn name(&self) -> &str { "MyPass" }
-
-    fn setup(&mut self, builder: &mut PassBuilder) {
-        builder.read_texture(self.target_tex);
-        builder.write_texture(self.target_tex);
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
-        // Mutable phase: allocate GPU resources, compile pipelines, create bind groups
+        // Mutable phase: assemble bind groups referencing RDG-managed transient textures
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         // Read-only phase: record GPU commands
-        let view = ctx.get_texture_view(self.target_tex);
     }
 }
+```
+
+Pass naming and resource topology are declared **outside** the PassNode,
+inside the closure passed to `RenderGraph::add_pass`:
+
+```rust
+rdg.add_pass("MyPass", |builder, pass| {
+    let input = builder.read_texture(some_texture);
+    let output = builder.declare_output("MyOutput", desc);
+    // store texture IDs on `pass` for use in prepare/execute
+});
 ```
 
 Register via `compose_frame` hooks:
@@ -1265,8 +1266,10 @@ impl AppHandler for MyApp {
     fn compose_frame(&mut self, composer: FrameComposer<'_>) {
         composer
             .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
-                self.my_pass.target_tex = bb.surface_out;
-                rdg.add_pass(&mut self.my_pass);
+                rdg.add_pass("MyPass", |builder, pass| {
+                    builder.read_texture(bb.surface_out);
+                    // ...
+                });
             })
             .render();
     }
@@ -1297,13 +1300,38 @@ The `GraphBlackboard` provides well-known resource slots to hook closures:
 ```rust
 composer
     .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
-        my_pass.target_tex = bb.surface_out;
-        rdg.add_pass(&mut my_pass);
+        rdg.add_pass("MyOverlay", |builder, pass| {
+            builder.read_texture(bb.surface_out);
+            // ...
+        });
     })
     .render();                                        // Execute pipeline
 ```
 
 `render()` consumes the composer and executes: acquire surface → build RDG → compile (topo-sort + dead-pass cull) → **Prepare** → **Execute** → present → recycle transient textures.
+
+#### RenderGraph::with_group
+
+Logically groups passes for inspector diagnostics (requires `rdg_inspector` feature):
+
+```rust
+graph.with_group("PostProcess", |g| {
+    let bloom = bloom_pass.add_to_graph(g, color);
+    let tone  = tone_map.add_to_graph(g, bloom);
+    fxaa.add_to_graph(g, tone)
+});
+```
+
+When `rdg_inspector` is **disabled** (default), `with_group` compiles to a zero-cost `#[inline(always)]` closure call.
+
+#### RenderGraph::dump_mermaid
+
+Returns the current graph topology as a Mermaid `flowchart TD` string. When `rdg_inspector` is enabled, grouped passes are emitted inside `subgraph` blocks. Useful for debugging and documentation.
+
+```rust
+let mermaid = graph.dump_mermaid();
+std::fs::write("graph.mmd", mermaid).unwrap();
+```
 
 
 #### Low-Level GPU Access
@@ -1450,6 +1478,7 @@ Automatic `From` conversions: `image::ImageError`, `gltf::Error`, `io::Error`, `
 | `winit` | ✅ | Window management via winit |
 | `gltf` | ✅ | glTF 2.0 model loading |
 | `gltf-meshopt` | | Meshopt decompression for glTF `EXT_meshopt_compression`. Implicitly enables `gltf`. **Note:** requires LLVM/Clang toolchain when targeting WASM. |
+| `rdg_inspector` | | Render graph inspector: enables `with_group` pass grouping metadata and Mermaid `subgraph` output in `dump_mermaid()`. Zero-cost when disabled. |
 | `http` | ✅ | HTTP/network asset loading |
 
 ```toml

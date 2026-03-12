@@ -830,10 +830,6 @@ impl BloomPassNode {
 // =============================================================================
 
 impl PassNode for BloomPassNode {
-    fn name(&self) -> &'static str {
-        "Bloom_Pass"
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         self.resolve_mip_views(ctx);
         self.rebuild_transient_bind_groups(ctx);

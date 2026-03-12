@@ -4,27 +4,23 @@ use super::types::TextureNodeId;
 use smallvec::SmallVec;
 use wgpu::CommandEncoder;
 
-/// An ephemeral per-frame render or compute pass in the declarative render
-/// graph.
+/// Pure GPU command recorder for a single render or compute pass.
 ///
-/// PassNodes are **pure GPU execution bodies** — they carry only lightweight
-/// IDs and transient bind-group slots.  All persistent GPU resources
-/// (layouts, pipelines, buffers) live in the owning `Feature`.
+/// `PassNode` is intentionally minimal — it carries only lightweight IDs
+/// and transient bind-group slots.  All persistent GPU resources (layouts,
+/// pipelines, buffers) live in the owning `Feature`.
 ///
 /// # Lifecycle (Eager Setup)
 ///
-/// Resource topology is declared **outside** the PassNode, inside the closure
-/// passed to [`RenderGraph::add_pass`].  The PassNode itself only participates
-/// in two phases:
+/// Resource topology and naming are declared **outside** the `PassNode`,
+/// inside the closure passed to [`RenderGraph::add_pass`].  The node
+/// itself only participates in two runtime phases:
 ///
-/// 1. **`prepare`** — called *after* graph compilation and transient memory
+/// 1. **`prepare`** — called after graph compilation and transient memory
 ///    allocation.  Assemble `BindGroup`s that reference RDG-managed
-///    transient textures.  Context is intentionally minimal.
+///    transient textures.
 /// 2. **`execute`** — record GPU commands into the shared encoder.
 pub trait PassNode: Send + Sync + 'static {
-    /// Human-readable name for debug labels and diagnostic output.
-    fn name(&self) -> &'static str;
-
     /// Assemble transient `BindGroup`s after physical resource allocation.
     ///
     /// Only `BindGroup`s that reference RDG-managed transient textures
@@ -42,7 +38,18 @@ pub trait PassNode: Send + Sync + 'static {
 /// Owns the ephemeral [`PassNode`] (via `Box`) for the duration of
 /// the current frame.  The graph drops all records in `begin_frame()`.
 pub struct PassRecord {
+    /// Human-readable name for debug labels, topology dumps, and GPU
+    /// debug groups.  Set once by [`RenderGraph::add_pass`].
     pub name: &'static str,
+
+    /// Logical group this pass belongs to (e.g. `"Bloom_System"`).
+    ///
+    /// Populated by [`RenderGraph::with_group`] when the `rdg_inspector`
+    /// feature is enabled; otherwise always `None`.  Used exclusively
+    /// by [`RenderGraph::dump_mermaid`] to emit Mermaid `subgraph` blocks.
+    #[cfg(feature = "rdg_inspector")]
+    pub group: Option<&'static str>,
+
     /// Owned ephemeral pass node.
     pub node: Option<Box<dyn PassNode>>,
 
@@ -66,6 +73,8 @@ impl PassRecord {
     pub fn new_empty(name: &'static str) -> Self {
         Self {
             name,
+            #[cfg(feature = "rdg_inspector")]
+            group: None,
             node: None,
             reads: SmallVec::new(),
             writes: SmallVec::new(),

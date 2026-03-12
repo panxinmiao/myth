@@ -365,10 +365,6 @@ struct SsssPassNode {
 }
 
 impl PassNode for SsssPassNode {
-    fn name(&self) -> &'static str {
-        "Ssss_Pass"
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         // -- Gather input views (RDG-managed) ---------------------------
 

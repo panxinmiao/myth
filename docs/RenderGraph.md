@@ -44,7 +44,7 @@ At the heart of Myth Engine's RDG is the concept of **Static Single Assignment (
 In traditional rendering, a pass might simply "bind a texture and draw to it." In my SSA graph, a logical resource (`TextureNodeId`) is immutable. Once a pass declares itself as the producer of a resource, no other pass can write to that exact logical ID.
 
 **But what about rendering multiple passes to the same screen?**
-Instead of allowing in-place mutations that break the Directed Acyclic Graph (DAG) topology, I introduced the concept of **Aliasing** (`mutate_texture`).
+Instead of allowing in-place mutations that break the Directed Acyclic Graph (DAG) topology, I introduced the concept of **Aliasing** (`mutate_and_export`).
 
 When a pass needs to perform a read-modify-write operation, it consumes the previous logical version and produces a *new* logical version. The graph compiler understands this topological chain and guarantees that under the hood, they **alias the exact same physical GPU memory**.
 
@@ -150,7 +150,73 @@ Because MSAA requires its own multi-sampled depth buffer (`Scene_Depth_MSAA`), t
 
 The graph compiler detects this zero-reference state during the compilation phase. It marks `P1(["Pre_Pass"])` as **dead**, automatically bypassing its physical memory allocation, CPU preparation, and GPU command recording entirely. Zero configuration required.
 
-## 5. Future-Proofing
+## 5. Logical Grouping & Inspector (`rdg_inspector`)
+
+As the number of passes grows, a flat list of nodes in a topology dump becomes hard to reason about. To solve this without imposing any runtime cost in production builds, the RDG introduces **logical pass groups** gated behind the `rdg_inspector` Cargo feature.
+
+### `with_group` — Zero-Cost Pass Grouping
+
+`RenderGraph::with_group(name, closure)` scopes all `add_pass` calls inside the closure under a named group:
+
+```rust
+let (bloom_in, bloom_out) = graph.with_group("PostProcess", |g| {
+    let bloom = bloom_pass.add_to_graph(g, scene_color);
+    let tone  = tone_map_pass.add_to_graph(g, bloom);
+    let fxaa  = fxaa_pass.add_to_graph(g, tone);
+    (bloom, fxaa)
+});
+```
+
+When **`rdg_inspector`** is enabled:
+- `with_group` pushes the group name onto an internal stack, stamps every `PassRecord.group` created within, then pops the stack.
+- `dump_mermaid()` uses these group annotations to emit Mermaid `subgraph` blocks, producing a hierarchically grouped topology diagram.
+
+When **`rdg_inspector`** is disabled (the default):
+- `with_group` compiles down to `#[inline(always)] f(self)` — zero overhead, zero metadata, zero allocations.
+
+### `PassNode` Trait Purification
+
+The `PassNode` trait has been reduced to a minimal two-method interface:
+
+```rust
+pub trait PassNode: Send + Sync + 'static {
+    fn prepare(&mut self, ctx: &mut PrepareContext) {}
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder);
+}
+```
+
+Pass naming is no longer a concern of the node itself. Names are provided externally via `RenderGraph::add_pass(name, closure)` and stored in the `PassRecord`. This separation keeps pass nodes as pure GPU command recorders while the graph owns all metadata.
+
+### Mermaid Subgraph Output
+
+With `rdg_inspector` enabled, `dump_mermaid()` produces grouped topology diagrams:
+
+```mermaid
+flowchart TD
+    subgraph Shadow ["Shadow"]
+        P0(["Shadow_Pass"]):::alive
+    end
+    subgraph Scene ["Scene"]
+        P1(["Pre_Pass"]):::alive
+        P2(["Opaque_Pass"]):::alive
+        P3(["Skybox_Pass"]):::alive
+    end
+    subgraph PostProcess ["PostProcess"]
+        P4(["Bloom_Pass"]):::alive
+        P5(["ToneMap_Pass"]):::alive
+        P6(["FXAA_Pass"]):::alive
+    end
+    P0 -->|"Shadow_Map"| P2
+    P1 -->|"Scene_Depth"| P2
+    P2 ==>|"Scene_Color_HDR"| P3
+    P3 ==>|"Scene_Color_Skybox"| P4
+    P4 -->|"Bloom_Output"| P5
+    P5 -->|"LDR_Intermediate"| P6
+```
+
+This makes it straightforward to identify logical pipeline stages at a glance, especially when debugging complex frame compositions with dozens of passes.
+
+## 6. Future-Proofing
 
 By enforcing strict SSA and separating logical declarations from physical execution, Myth Engine's Render Graph is built for the future. The structural purity paves the way for trivially scheduling compute nodes (like Frustum Culling or Async Compute SSAO) onto asynchronous compute queues in upcoming engine iterations.
 

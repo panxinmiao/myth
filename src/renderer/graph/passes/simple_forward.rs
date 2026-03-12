@@ -172,10 +172,6 @@ impl SimpleForwardPassNode {
 }
 
 impl PassNode for SimpleForwardPassNode {
-    fn name(&self) -> &'static str {
-        "SimpleForward_Pass"
-    }
-
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         // LDR path has no SSAO or transmission; shadow may be active.
         let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {
