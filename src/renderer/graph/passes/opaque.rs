@@ -79,7 +79,7 @@ impl OpaqueFeature {
 
     pub fn add_to_graph(
         &self,
-        graph: &mut RenderGraph,
+        graph: &mut RenderGraph<'_>,
         scene_depth_ss: TextureNodeId,
         has_prepass: bool,
         clear_color: wgpu::Color,
@@ -289,7 +289,7 @@ impl OpaquePassNode {
     }
 }
 
-impl PassNode for OpaquePassNode {
+impl PassNode<'_> for OpaquePassNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         // Resolve transient views for Group 3, falling back to dummies.
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {

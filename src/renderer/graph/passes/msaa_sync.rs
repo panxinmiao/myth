@@ -153,7 +153,7 @@ impl MsaaSyncFeature {
     ///
     /// - `src_hdr`: single-sample `Scene_Color_HDR` (read).
     /// - `dst_msaa`: multi-sampled `Scene_Color_MSAA` (write).
-    pub fn add_to_graph(&self, graph: &mut RenderGraph, src_hdr: TextureNodeId) -> TextureNodeId {
+    pub fn add_to_graph(&self, graph: &mut RenderGraph<'_>, src_hdr: TextureNodeId) -> TextureNodeId {
         let msaa_color_desc = TextureDesc::new(
             graph.frame_config().width,
             graph.frame_config().height,
@@ -195,7 +195,7 @@ struct MsaaSyncPassNode {
     bind_group_key: Option<BindGroupKey>,
 }
 
-impl PassNode for MsaaSyncPassNode {
+impl PassNode<'_> for MsaaSyncPassNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let src_view = ctx.views.get_texture_view(self.src_hdr);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);

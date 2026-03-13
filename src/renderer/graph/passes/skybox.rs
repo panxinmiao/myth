@@ -472,7 +472,7 @@ impl SkyboxFeature {
     /// order.  Returns the new colour version for downstream threading.
     pub fn add_to_graph(
         &self,
-        graph: &mut RenderGraph,
+        graph: &mut RenderGraph<'_>,
         scene_color: TextureNodeId,
         scene_depth: TextureNodeId,
     ) -> TextureNodeId {
@@ -503,7 +503,7 @@ pub struct SkyboxPassNode {
     bind_group: Option<wgpu::BindGroup>,
 }
 
-impl PassNode for SkyboxPassNode {
+impl PassNode<'_> for SkyboxPassNode {
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let (Some(pipeline_id), Some(bind_group)) = (self.pipeline_id, &self.bind_group) else {
             return;

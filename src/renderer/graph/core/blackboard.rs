@@ -66,4 +66,4 @@ pub enum HookStage {
 /// });
 /// ```
 pub type CustomPassHook<'a> =
-    Box<dyn FnMut(&mut super::graph::RenderGraph, GraphBlackboard) -> GraphBlackboard + 'a>;
+    Box<dyn for<'g> FnMut(&mut super::graph::RenderGraph<'g>, GraphBlackboard) -> GraphBlackboard + 'a>;

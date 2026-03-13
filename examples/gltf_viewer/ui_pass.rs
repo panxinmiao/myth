@@ -290,7 +290,7 @@ impl UiPass {
 /// Records a single `wgpu::RenderPass` that draws the tessellated primitives onto
 /// the RDG-resolved surface. No mutable state is touched — fully compatible with the
 /// engine's read-only execute phase.
-impl PassNode for UiPass {
+impl PassNode<'_> for UiPass {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let device = ctx.device;
         let queue = ctx.queue;

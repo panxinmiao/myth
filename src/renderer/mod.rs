@@ -56,7 +56,7 @@ use crate::renderer::core::gpu::SamplerRegistry;
 use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::core::allocator::TransientPool;
 use crate::renderer::graph::core::arena::FrameArena;
-use crate::renderer::graph::core::graph::RenderGraph;
+use crate::renderer::graph::core::graph::GraphStorage;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
     BloomFeature, BrdfLutFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
@@ -112,7 +112,7 @@ struct RendererState {
     global_bind_group_cache: GlobalBindGroupCache,
 
     // ===== RDG (Declarative Render Graph) =====
-    pub(crate) graph: RenderGraph,
+    pub(crate) graph_storage: GraphStorage,
     pub(crate) sampler_registry: SamplerRegistry,
     pub(crate) transient_pool: TransientPool,
     pub(crate) frame_arena: FrameArena,
@@ -209,7 +209,7 @@ impl Renderer {
             global_bind_group_cache,
 
             // RDG
-            graph: RenderGraph::new(),
+            graph_storage: GraphStorage::new(),
             sampler_registry,
             transient_pool: TransientPool::new(),
             frame_arena: FrameArena::new(),
@@ -300,10 +300,8 @@ impl Renderer {
         let state = self.context.as_mut()?;
 
         // ── Frame Arena Lifecycle ───────────────────────────────────────
-        // Drop previous frame's arena-allocated PassNodes (releases owned
-        // GPU resources like BindGroup Arc refs), then reclaim the arena
-        // memory in O(1).
-        state.graph.cleanup_nodes();
+        // Reset the arena in O(1) — all previous PassNodes are trivially
+        // forgotten (no Drop needed).
         state.frame_arena.reset();
 
         // Advance the bind-group cache's frame counter for TTL tracking.
@@ -461,7 +459,7 @@ impl Renderer {
             assets,
             time,
 
-            graph: &mut state.graph,
+            graph_storage: &mut state.graph_storage,
             transient_pool: &mut state.transient_pool,
             sampler_registry: &mut state.sampler_registry,
             frame_arena: &state.frame_arena,
@@ -591,6 +589,6 @@ impl Renderer {
     }
 
     pub fn dump_graph_mermaid(&self) -> Option<String> {
-        self.context.as_ref().map(|s| s.graph.dump_mermaid())
+        self.context.as_ref().map(|s| s.graph_storage.dump_mermaid())
     }
 }

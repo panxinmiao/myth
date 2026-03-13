@@ -388,7 +388,7 @@ impl ToneMappingFeature {
     /// every Feature explicitly produces a new resource version.
     pub fn add_to_graph(
         &self,
-        graph: &mut RenderGraph,
+        graph: &mut RenderGraph<'_>,
         input_hdr: TextureNodeId,
         target_ldr: TextureNodeId,
     ) -> TextureNodeId {
@@ -440,7 +440,7 @@ struct ToneMapPassNode {
     current_bind_group_key: Option<BindGroupKey>,
 }
 
-impl PassNode for ToneMapPassNode {
+impl PassNode<'_> for ToneMapPassNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         // ─── Transient BindGroup (Group 2): input texture only ─────
         let input_view = ctx.views.get_texture_view(self.input_tex);

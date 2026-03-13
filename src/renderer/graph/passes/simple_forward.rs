@@ -55,7 +55,7 @@ impl SimpleForwardFeature {
 
     pub fn add_to_graph(
         &self,
-        rdg: &mut RenderGraph,
+        rdg: &mut RenderGraph<'_>,
         surface_out: TextureNodeId,
         clear_color: wgpu::Color,
         prepared_skybox: Option<PreparedSkyboxDraw>,
@@ -171,7 +171,7 @@ impl SimpleForwardPassNode {
     }
 }
 
-impl PassNode for SimpleForwardPassNode {
+impl PassNode<'_> for SimpleForwardPassNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         // LDR path has no SSAO or transmission; shadow may be active.
         let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {

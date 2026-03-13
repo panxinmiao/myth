@@ -231,7 +231,7 @@ impl ShadowFeature {
     ///
     /// Returns `None` if no shadow layers are required this frame (the pass
     /// is not added to the graph at all, and no GPU memory is allocated).
-    pub fn add_to_graph(&self, graph: &mut RenderGraph) -> Option<TextureNodeId> {
+    pub fn add_to_graph(&self, graph: &mut RenderGraph<'_>) -> Option<TextureNodeId> {
         if self.total_layers == 0 || self.shadow_lights.is_empty() {
             return None;
         }
@@ -281,7 +281,7 @@ pub struct ShadowPassNode {
     shadow_layer_views: Vec<wgpu::TextureView>,
 }
 
-impl PassNode for ShadowPassNode {
+impl PassNode<'_> for ShadowPassNode {
     /// Resolve the physical shadow texture and create per-layer D2 views.
     ///
     /// Called after the RDG compiler has allocated transient GPU memory.

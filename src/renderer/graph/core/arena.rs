@@ -21,13 +21,10 @@
 //! `Vec`, `Arc`, etc.).  They should hold only plain-old-data (POD) fields
 //! or borrowed references (`&'a T`).
 //!
-//! During the transition period, the [`RenderGraph`](super::graph::RenderGraph)
-//! calls [`std::ptr::drop_in_place`] on each arena-allocated `PassNode`
-//! before [`reset()`](FrameArena::reset).  This ensures that legacy nodes
-//! carrying owned GPU handles (e.g. `wgpu::BindGroup`) are properly cleaned
-//! up.  As nodes are progressively refactored to hold only references,
-//! these destructor calls will be elided by the compiler
-//! (`needs_drop::<T>() == false`).
+//! With the `PassNode<'a>` lifetime model, all nodes carry only borrowed
+//! references and trivially-copy IDs.  No `Drop` glue is required —
+//! [`FrameArena::reset()`] reclaims all memory in $O(1)$ without running
+//! destructors.
 
 use bumpalo::Bump;
 

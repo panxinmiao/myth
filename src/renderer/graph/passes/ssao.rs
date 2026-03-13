@@ -402,7 +402,7 @@ impl SsaoFeature {
     /// 2. **SSAO_Blur** — cross-bilateral blur → clean AO output
     pub fn add_to_graph(
         &self,
-        graph: &mut RenderGraph,
+        graph: &mut RenderGraph<'_>,
         scene_depth: TextureNodeId,
         scene_normals: TextureNodeId,
     ) -> TextureNodeId {
@@ -497,7 +497,7 @@ struct SsaoRawNode {
     bind_group_key: Option<BindGroupKey>,
 }
 
-impl PassNode for SsaoRawNode {
+impl PassNode<'_> for SsaoRawNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let device = ctx.device;
 
@@ -619,7 +619,7 @@ struct SsaoBlurNode {
     bind_group_key: Option<BindGroupKey>,
 }
 
-impl PassNode for SsaoBlurNode {
+impl PassNode<'_> for SsaoBlurNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let device = ctx.device;
 
