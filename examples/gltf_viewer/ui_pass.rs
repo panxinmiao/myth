@@ -274,12 +274,9 @@ impl UiPass {
     }
 }
 
-
-
-
 pub struct UiPassNode<'a> {
     pub pass: &'a mut UiPass,
-    pub target_tex: TextureNodeId, 
+    pub target_tex: TextureNodeId,
 }
 
 /// [`PassNode`] implementation for `UiPass`.

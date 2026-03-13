@@ -15,9 +15,9 @@
 
 use rustc_hash::FxHashMap;
 
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, RenderGraph, RenderTargetOps, TextureDesc,
-    TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, RenderTargetOps, TextureDesc, TextureNodeId,
 };
 use crate::renderer::graph::passes::draw::submit_draw_commands;
 use crate::renderer::pipeline::{
@@ -318,11 +318,11 @@ impl PrepassFeature {
     /// via explicit [`TextureNodeId`] connections.
     pub fn add_to_graph(
         &self,
-        graph: &mut RenderGraph<'_>,
+        ctx: &mut GraphBuilderContext<'_, '_>,
         needs_normal: bool,
         needs_feature_id: bool,
     ) -> PrepassOutputs {
-        let fc = *graph.frame_config();
+        let fc = ctx.frame_config;
 
         // Single-sample scene depth (always created).
         let depth_desc = TextureDesc::new(
@@ -335,7 +335,9 @@ impl PrepassFeature {
             fc.depth_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
-        let scene_depth = graph.register_resource("Scene_Depth", depth_desc, false);
+        let scene_depth = ctx
+            .graph
+            .register_resource("Scene_Depth", depth_desc, false);
 
         let scene_normals = if needs_normal {
             let desc = TextureDesc::new_2d(
@@ -344,7 +346,7 @@ impl PrepassFeature {
                 NORMAL_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            Some(graph.register_resource("Scene_Normals", desc, false))
+            Some(ctx.graph.register_resource("Scene_Normals", desc, false))
         } else {
             None
         };
@@ -356,7 +358,7 @@ impl PrepassFeature {
                 FEATURE_ID_FORMAT,
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
-            Some(graph.register_resource("Feature_ID", desc, false))
+            Some(ctx.graph.register_resource("Feature_ID", desc, false))
         } else {
             None
         };
@@ -368,7 +370,7 @@ impl PrepassFeature {
             needs_normal,
             needs_feature_id,
         };
-        graph.add_pass("Pre_Pass", |builder| {
+        ctx.graph.add_pass("Pre_Pass", |builder| {
             builder.write_texture(scene_depth);
             if let Some(n) = scene_normals {
                 builder.write_texture(n);

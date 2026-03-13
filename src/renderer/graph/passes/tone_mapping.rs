@@ -23,9 +23,9 @@ use crate::ShaderDefines;
 use crate::assets::TextureHandle;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps,
-    TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureNodeId,
 };
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
@@ -388,19 +388,21 @@ impl ToneMappingFeature {
     /// every Feature explicitly produces a new resource version.
     pub fn add_to_graph<'a>(
         &'a self,
-        graph: &mut RenderGraph<'a>,
+        ctx: &mut GraphBuilderContext<'a, '_>,
+        // graph: &mut RenderGraph<'a>,
+        // pipeline_cache: &'a PipelineCache,
         input_hdr: TextureNodeId,
         target_ldr: TextureNodeId,
     ) -> TextureNodeId {
         let pipeline_id = self.current_pipeline.expect("ToneMapFeature not prepared");
-        let pipeline = graph.pipeline_cache.get_render_pipeline(pipeline_id);
+        let pipeline = ctx.pipeline_cache.get_render_pipeline(pipeline_id);
         let static_bg = self
             .static_bg
             .as_ref()
             .expect("ToneMapFeature: static BG not built");
         let transient_layout = self.transient_layout.as_ref().unwrap();
 
-        graph.add_pass("ToneMap_Pass", |builder| {
+        ctx.graph.add_pass("ToneMap_Pass", |builder| {
             builder.read_texture(input_hdr);
             let output = builder.mutate_and_export(target_ldr, "Surface_ToneMapped");
 
@@ -441,7 +443,12 @@ struct ToneMapPassNode<'a> {
 
 impl<'a> PassNode<'a> for ToneMapPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            ..
+        } = ctx;
         let device = *device;
         let input_view = views.get_texture_view(self.input_tex);
         let layout = self.transient_layout;

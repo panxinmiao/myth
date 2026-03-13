@@ -37,9 +37,10 @@ use crate::define_gpu_data_struct;
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps,
-    TextureDesc, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc,
+    TextureNodeId,
 };
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
@@ -550,26 +551,29 @@ impl BloomFeature {
     /// bloom applied) for downstream wiring (e.g. ToneMapping).
     pub fn add_to_graph<'a>(
         &'a self,
-        graph: &mut RenderGraph<'a>,
+        ctx: &mut GraphBuilderContext<'a, '_>,
         input_color: TextureNodeId,
         karis_average: bool,
         max_mip_levels: u32,
     ) -> TextureNodeId {
-        let fc = *graph.frame_config();
+        let fc = ctx.frame_config;
         let hdr_format = fc.hdr_format;
         let bloom_w = (fc.width / 2).max(1);
         let bloom_h = (fc.height / 2).max(1);
         let max_possible = ((bloom_w.max(bloom_h) as f32).log2().floor() as u32) + 1;
         let mip_count = max_mip_levels.min(max_possible).max(1) as usize;
 
-        let ds_pipeline = graph.pipeline_cache.get_render_pipeline(
-            self.downsample_pipeline.expect("BloomFeature: downsample pipeline not initialised"),
+        let ds_pipeline = ctx.pipeline_cache.get_render_pipeline(
+            self.downsample_pipeline
+                .expect("BloomFeature: downsample pipeline not initialised"),
         );
-        let us_pipeline = graph.pipeline_cache.get_render_pipeline(
-            self.upsample_pipeline.expect("BloomFeature: upsample pipeline not initialised"),
+        let us_pipeline = ctx.pipeline_cache.get_render_pipeline(
+            self.upsample_pipeline
+                .expect("BloomFeature: upsample pipeline not initialised"),
         );
-        let comp_pipeline = graph.pipeline_cache.get_render_pipeline(
-            self.composite_pipeline.expect("BloomFeature: composite pipeline not initialised"),
+        let comp_pipeline = ctx.pipeline_cache.get_render_pipeline(
+            self.composite_pipeline
+                .expect("BloomFeature: composite pipeline not initialised"),
         );
 
         let karis_on_bg = self
@@ -593,7 +597,7 @@ impl BloomFeature {
         let us_transient_layout = self.us_transient_layout.as_ref().unwrap();
         let comp_transient_layout = self.comp_transient_layout.as_ref().unwrap();
 
-        graph.with_group("Bloom_System", |g| {
+        ctx.with_group("Bloom_System", |ctx| {
             // ─── 1. Extract: Scene HDR → Bloom Mip 0 ──────────────
             let mip0_w = bloom_w;
             let mip0_h = bloom_h;
@@ -610,7 +614,7 @@ impl BloomFeature {
                 karis_off_bg
             };
 
-            let mut current_mip: TextureNodeId = g.add_pass("Bloom_Extract", |builder| {
+            let mut current_mip: TextureNodeId = ctx.graph.add_pass("Bloom_Extract", |builder| {
                 builder.read_texture(input_color);
                 let out = builder.create_and_export("Bloom_Mip_0", mip0_desc);
                 let node = BloomDownsampleNode {
@@ -646,7 +650,7 @@ impl BloomFeature {
                 let label: &'static str = DOWNSAMPLE_PASS_NAMES[i];
                 let out_label: &'static str = DOWNSAMPLE_MIP_NAMES[i];
 
-                current_mip = g.add_pass(label, |builder| {
+                current_mip = ctx.graph.add_pass(label, |builder| {
                     builder.read_texture(input);
                     let out = builder.create_and_export(out_label, desc);
                     let node = BloomDownsampleNode {
@@ -671,7 +675,7 @@ impl BloomFeature {
                 let label: &'static str = UPSAMPLE_PASS_NAMES[i];
                 let out_label: &'static str = UPSAMPLE_MIP_NAMES[i];
 
-                current_mip = g.add_pass(label, |builder| {
+                current_mip = ctx.graph.add_pass(label, |builder| {
                     builder.read_texture(coarser);
                     let out = builder.mutate_and_export(finer, out_label);
                     let node = BloomUpsampleNode {
@@ -688,7 +692,7 @@ impl BloomFeature {
 
             // ─── 4. Composite: Scene HDR + Bloom → Output ─────────
             let bloom_result = current_mip;
-            g.add_pass("Bloom_Composite", |builder| {
+            ctx.graph.add_pass("Bloom_Composite", |builder| {
                 builder.read_texture(input_color);
                 builder.read_texture(bloom_result);
 
@@ -825,7 +829,12 @@ struct BloomDownsampleNode<'a> {
 
 impl<'a> PassNode<'a> for BloomDownsampleNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            ..
+        } = ctx;
         let device = *device;
         let input_view = views.get_texture_view(self.input_tex);
         let key = BindGroupKey::new(self.transient_layout.id()).with_resource(input_view.id());
@@ -845,7 +854,9 @@ impl<'a> PassNode<'a> for BloomDownsampleNode<'a> {
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let transient_bg = self.transient_bg.expect("Bloom DS transient BG not prepared");
+        let transient_bg = self
+            .transient_bg
+            .expect("Bloom DS transient BG not prepared");
 
         let rtt = ctx.get_color_attachment(self.output_tex, RenderTargetOps::DontCare, None);
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -875,7 +886,12 @@ struct BloomUpsampleNode<'a> {
 
 impl<'a> PassNode<'a> for BloomUpsampleNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            ..
+        } = ctx;
         let device = *device;
         let coarser_view = views.get_texture_view(self.coarser_tex);
         let key = BindGroupKey::new(self.transient_layout.id()).with_resource(coarser_view.id());
@@ -895,7 +911,9 @@ impl<'a> PassNode<'a> for BloomUpsampleNode<'a> {
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let transient_bg = self.transient_bg.expect("Bloom US transient BG not prepared");
+        let transient_bg = self
+            .transient_bg
+            .expect("Bloom US transient BG not prepared");
 
         let rtt = ctx.get_color_attachment(self.output_tex, RenderTargetOps::Load, None);
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -926,7 +944,12 @@ struct BloomCompositeNode<'a> {
 
 impl<'a> PassNode<'a> for BloomCompositeNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            ..
+        } = ctx;
         let device = *device;
         let original_view = views.get_texture_view(self.original_tex);
         let bloom_view = views.get_texture_view(self.bloom_tex);
@@ -955,7 +978,9 @@ impl<'a> PassNode<'a> for BloomCompositeNode<'a> {
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let transient_bg = self.transient_bg.expect("Bloom Comp transient BG not prepared");
+        let transient_bg = self
+            .transient_bg
+            .expect("Bloom Comp transient BG not prepared");
 
         let rtt = ctx.get_color_attachment(self.output_tex, RenderTargetOps::DontCare, None);
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {

@@ -28,9 +28,10 @@
 
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps, TextureDesc,
-    TextureNodeId, build_screen_bind_group,
+    ExecuteContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc, TextureNodeId,
+    build_screen_bind_group,
 };
 use crate::renderer::graph::passes::draw::submit_draw_commands;
 
@@ -79,7 +80,7 @@ impl OpaqueFeature {
 
     pub fn add_to_graph<'a>(
         &'a self,
-        graph: &mut RenderGraph<'a>,
+        ctx: &mut GraphBuilderContext<'a, '_>,
         scene_depth_ss: TextureNodeId,
         has_prepass: bool,
         clear_color: wgpu::Color,
@@ -87,7 +88,7 @@ impl OpaqueFeature {
         ssao_tex: Option<TextureNodeId>,
         shadow_tex: Option<TextureNodeId>,
     ) -> OpaqueOutputs {
-        let fc = *graph.frame_config();
+        let fc = ctx.frame_config;
         let is_msaa = fc.msaa_samples > 1;
         let screen_info = self
             .screen_info
@@ -103,7 +104,7 @@ impl OpaqueFeature {
                 | wgpu::TextureUsages::COPY_SRC,
         );
 
-        graph.add_pass("Opaque_Pass", |builder| {
+        ctx.graph.add_pass("Opaque_Pass", |builder| {
             // ── Create color / depth / resolve targets ─────────────────
             let (color_target, depth_target, resolve_target, scene_color_hdr, in_depth) = if is_msaa
             {
@@ -286,7 +287,12 @@ impl<'a> OpaquePassNode<'a> {
 
 impl<'a> PassNode<'a> for OpaquePassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            ..
+        } = ctx;
         let device = *device;
 
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {

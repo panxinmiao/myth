@@ -4,7 +4,6 @@ use std::collections::BinaryHeap;
 use crate::renderer::graph::core::allocator::TransientPool;
 use crate::renderer::graph::core::arena::FrameArena;
 use crate::renderer::graph::core::types::TextureDesc;
-use crate::renderer::pipeline::PipelineCache;
 
 use super::builder::PassBuilder;
 use super::node::{NodeSlot, PassNode, PassRecord};
@@ -154,15 +153,6 @@ impl GraphStorage {
 
     /// Clears all per-frame data while retaining heap capacity.
     pub fn clear(&mut self) {
-        // ⚠️ 临时防泄漏兜底：手动调用 drop_in_place
-        // for pass in &mut self.passes {
-        //     if let Some(slot) = pass.node.take() {
-        //         if slot.needs_drop {
-        //             unsafe { std::ptr::drop_in_place(slot.ptr); }
-        //         }
-        //     }
-        // }
-
         self.passes.clear();
         self.resources.clear();
         self.execution_queue.clear();
@@ -312,11 +302,7 @@ impl GraphStorage {
                 let res = &self.resources[write_id.0 as usize];
 
                 for &consumer_idx in &res.consumers {
-                    let edge_style = if res.alias_of.is_some() {
-                        "==>"
-                    } else {
-                        "-->"
-                    };
+                    let edge_style = if res.alias_of.is_some() { "==>" } else { "-->" };
 
                     writeln!(
                         &mut out,
@@ -364,7 +350,6 @@ impl GraphStorage {
     }
 }
 
-
 /// Zero-drop marker trait for PassNodes.
 trait AssertNoDrop {
     const VALID: ();
@@ -374,7 +359,7 @@ trait AssertNoDrop {
 impl<T> AssertNoDrop for T {
     // This constant will fail to compile if T needs Drop, which enforces that PassNodes cannot have destructors or own heap data.
     const VALID: () = assert!(
-        !std::mem::needs_drop::<Self>(), 
+        !std::mem::needs_drop::<Self>(),
         "FATAL ERROR: PassNode MUST NOT implement Drop or contain heap allocations (like Arc, Vec, String). It must be a POD type or only hold references."
     );
 }
@@ -392,12 +377,6 @@ impl<T> AssertNoDrop for T {
 pub struct RenderGraph<'a> {
     pub(crate) storage: &'a mut GraphStorage,
     arena: &'a FrameArena,
-    frame_config: FrameConfig,
-    /// Pipeline cache for resolving pipeline IDs to physical GPU objects
-    /// during graph construction.  Features use this in `add_to_graph` to
-    /// hand `&'a wgpu::RenderPipeline` / `&'a wgpu::ComputePipeline`
-    /// references directly to PassNodes, eliminating hash lookups in execute.
-    pub pipeline_cache: &'a PipelineCache,
 }
 
 impl<'a> RenderGraph<'a> {
@@ -405,50 +384,23 @@ impl<'a> RenderGraph<'a> {
     ///
     /// Clears the storage's per-frame data and records the frame config
     /// for pass-level access via [`PassBuilder::frame_config`].
-    pub fn new(
-        storage: &'a mut GraphStorage,
-        arena: &'a FrameArena,
-        config: FrameConfig,
-        pipeline_cache: &'a PipelineCache,
-    ) -> Self {
+    pub fn new(storage: &'a mut GraphStorage, arena: &'a FrameArena) -> Self {
         storage.clear();
-        Self {
-            storage,
-            arena,
-            frame_config: config,
-            pipeline_cache,
-        }
-    }
-
-    /// Returns the current frame's rendering configuration.
-    #[inline]
-    #[must_use]
-    pub fn frame_config(&self) -> &FrameConfig {
-        &self.frame_config
+        Self { storage, arena }
     }
 
     // ─── Logical Grouping (Inspector) ────────────────────────────────
 
-    /// Opens a named visual grouping scope for all passes added inside `f`.
     #[cfg(feature = "rdg_inspector")]
-    pub fn with_group<F, R>(&mut self, group_name: &'static str, f: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        self.storage.current_group_stack.push(group_name);
-        let result = f(self);
-        self.storage.current_group_stack.pop();
-        result
+    #[inline]
+    pub(crate) fn push_group(&mut self, name: &'static str) {
+        self.storage.current_group_stack.push(name);
     }
 
-    /// Zero-cost fallback when the inspector is disabled.
-    #[cfg(not(feature = "rdg_inspector"))]
+    #[cfg(feature = "rdg_inspector")]
     #[inline]
-    pub fn with_group<F, R>(&mut self, _group_name: &'static str, f: F) -> R
-    where
-        F: FnOnce(&mut Self) -> R,
-    {
-        f(self)
+    pub(crate) fn pop_group(&mut self) {
+        self.storage.current_group_stack.pop();
     }
 
     /// Registers a named texture resource.
@@ -532,10 +484,10 @@ impl<'a> RenderGraph<'a> {
         N: PassNode<'a> + 'a,
         F: FnOnce(&mut PassBuilder<'_, 'a>) -> (N, Out),
     {
-        // Static assertion to enforce that N does not implement Drop and does not contain heap data. 
+        // Static assertion to enforce that N does not implement Drop and does not contain heap data.
         // This ensures that PassNodes are safe to allocate on the FrameArena without needing to run destructors.
-        let _ = <N as AssertNoDrop>::VALID;
-        
+        let () = <N as AssertNoDrop>::VALID;
+
         let pass_index = self.storage.passes.len();
 
         // Phase 1: placeholder record (node = None) so the PassBuilder can
@@ -770,7 +722,8 @@ impl<'a> RenderGraph<'a> {
         for i in 0..self.storage.resources.len() {
             if self.storage.resources[i].alias_of.is_some() {
                 let root_idx = self.resolve_alias_root(i);
-                self.storage.resources[i].physical_index = self.storage.resources[root_idx].physical_index;
+                self.storage.resources[i].physical_index =
+                    self.storage.resources[root_idx].physical_index;
             }
         }
     }
@@ -811,12 +764,10 @@ impl<'a> RenderGraph<'a> {
     }
 }
 
-
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::renderer::graph::core::context::ExecuteContext;
+    use crate::renderer::graph::{composer::GraphBuilderContext, core::context::ExecuteContext};
 
     fn dummy_config() -> FrameConfig {
         FrameConfig {
@@ -838,6 +789,10 @@ mod tests {
         )
     }
 
+    fn dummy_pipeline_cache() -> crate::renderer::pipeline::PipelineCache {
+        crate::renderer::pipeline::PipelineCache::new()
+    }
+
     // ─── Shared Mock Pass Type ───────────────────────────────────────
 
     struct MockExec;
@@ -849,22 +804,20 @@ mod tests {
     fn begin_test_frame<'a>(
         storage: &'a mut GraphStorage,
         arena: &'a FrameArena,
-        pipeline_cache: &'a PipelineCache,
     ) -> RenderGraph<'a> {
         storage.clear();
-        RenderGraph::new(storage, arena, dummy_config(), pipeline_cache)
+        RenderGraph::new(storage, arena)
     }
 
     #[test]
     fn test_zero_alloc_graph() {
         let mut storage = GraphStorage::new();
         let mut arena = FrameArena::new();
-        let pc = PipelineCache::new();
 
         // Run two frames to verify capacity reuse.
         for frame in 0..2 {
             arena.reset();
-            let mut graph = begin_test_frame(&mut storage, &arena, &pc);
+            let mut graph = begin_test_frame(&mut storage, &arena);
 
             let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -889,9 +842,18 @@ mod tests {
             graph.compile_topology();
 
             assert_eq!(graph.storage.execution_queue.len(), 3);
-            assert_eq!(graph.storage.passes[graph.storage.execution_queue[0]].name, "Opaque");
-            assert_eq!(graph.storage.passes[graph.storage.execution_queue[1]].name, "Bloom");
-            assert_eq!(graph.storage.passes[graph.storage.execution_queue[2]].name, "ToneMapping");
+            assert_eq!(
+                graph.storage.passes[graph.storage.execution_queue[0]].name,
+                "Opaque"
+            );
+            assert_eq!(
+                graph.storage.passes[graph.storage.execution_queue[1]].name,
+                "Bloom"
+            );
+            assert_eq!(
+                graph.storage.passes[graph.storage.execution_queue[2]].name,
+                "ToneMapping"
+            );
 
             println!(
                 "Frame {} executed: {:?}",
@@ -910,8 +872,7 @@ mod tests {
     fn test_dead_resource_culling() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let pc = PipelineCache::new();
-        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -930,17 +891,27 @@ mod tests {
         graph.compile_topology();
 
         assert_eq!(graph.storage.execution_queue.len(), 2);
-        assert!(!graph.storage.resources[color.0 as usize].consumers.is_empty());
-        assert!(graph.storage.resources[motion.0 as usize].consumers.is_empty());
-        assert_ne!(graph.storage.resources[motion.0 as usize].first_use, usize::MAX);
+        assert!(
+            !graph.storage.resources[color.0 as usize]
+                .consumers
+                .is_empty()
+        );
+        assert!(
+            graph.storage.resources[motion.0 as usize]
+                .consumers
+                .is_empty()
+        );
+        assert_ne!(
+            graph.storage.resources[motion.0 as usize].first_use,
+            usize::MAX
+        );
     }
 
     #[test]
     fn test_self_read_prevents_culling() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let pc = PipelineCache::new();
-        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -952,15 +923,18 @@ mod tests {
         });
 
         graph.compile_topology();
-        assert!(!graph.storage.resources[internal.0 as usize].consumers.is_empty());
+        assert!(
+            !graph.storage.resources[internal.0 as usize]
+                .consumers
+                .is_empty()
+        );
     }
 
     #[test]
     fn test_resource_lifetime_deduction() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let pc = PipelineCache::new();
-        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -985,20 +959,31 @@ mod tests {
         graph.compile_topology();
 
         let color_res = &graph.storage.resources[color.0 as usize];
-        assert_eq!(color_res.first_use, 0, "Color first written by Opaque at timeline 0");
-        assert_eq!(color_res.last_use, 2, "Color last read by ToneMapping at timeline 2");
+        assert_eq!(
+            color_res.first_use, 0,
+            "Color first written by Opaque at timeline 0"
+        );
+        assert_eq!(
+            color_res.last_use, 2,
+            "Color last read by ToneMapping at timeline 2"
+        );
 
         let bloom_res = &graph.storage.resources[bloom.0 as usize];
-        assert_eq!(bloom_res.first_use, 1, "Bloom first written by BloomPass at timeline 1");
-        assert_eq!(bloom_res.last_use, 2, "Bloom last read by ToneMapping at timeline 2");
+        assert_eq!(
+            bloom_res.first_use, 1,
+            "Bloom first written by BloomPass at timeline 1"
+        );
+        assert_eq!(
+            bloom_res.last_use, 2,
+            "Bloom last read by ToneMapping at timeline 2"
+        );
     }
 
     #[test]
     fn test_ssa_alias_relay_passes() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let pc = PipelineCache::new();
-        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1008,7 +993,9 @@ mod tests {
         });
 
         assert!(
-            graph.storage.resources[color_v0.0 as usize].alias_of.is_none(),
+            graph.storage.resources[color_v0.0 as usize]
+                .alias_of
+                .is_none(),
             "v0 is a root resource"
         );
 
@@ -1069,8 +1056,7 @@ mod tests {
     fn test_mutate_and_export_api() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let pc = PipelineCache::new();
-        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1088,7 +1074,11 @@ mod tests {
             .find_resource("Color_Mutated")
             .expect("mutate_and_export should register the new resource");
         assert_eq!(found, mutated_id);
-        assert!(graph.storage.resources[mutated_id.0 as usize].alias_of.is_some());
+        assert!(
+            graph.storage.resources[mutated_id.0 as usize]
+                .alias_of
+                .is_some()
+        );
 
         graph.add_pass("Reader", |builder| {
             builder.read_texture(mutated_id);
@@ -1112,18 +1102,23 @@ mod tests {
     fn test_with_group_preserves_topology() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let pc = PipelineCache::new();
-        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-        let scene_color = graph.with_group("Scene", |g| {
-            let opaque_out = g.add_pass("Opaque", |builder| {
+        let mut ctx = GraphBuilderContext {
+            graph: &mut graph,
+            pipeline_cache: &dummy_pipeline_cache(),
+            frame_config: &dummy_config(),
+        };
+
+        let scene_color = ctx.with_group("Scene", |ctx| {
+            let opaque_out = ctx.graph.add_pass("Opaque", |builder| {
                 let out = builder.create_and_export("SceneColor", dummy_desc());
                 (MockExec, out)
             });
 
-            let skybox_out = g.add_pass("Skybox", |builder| {
+            let skybox_out = ctx.graph.add_pass("Skybox", |builder| {
                 let out = builder.mutate_and_export(opaque_out, "SceneColor_Sky");
                 (MockExec, out)
             });
@@ -1131,8 +1126,8 @@ mod tests {
             skybox_out
         });
 
-        graph.with_group("PostProcess", |g| {
-            g.add_pass("ToneMap", |builder| {
+        ctx.with_group("PostProcess", |ctx| {
+            ctx.graph.add_pass("ToneMap", |builder| {
                 builder.read_texture(scene_color);
                 builder.write_texture(backbuffer);
                 (MockExec, ())

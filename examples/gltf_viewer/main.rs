@@ -584,7 +584,6 @@ impl AppHandler for GltfViewer {
                         surface_out: new_surface,
                         ..bb
                     }
-                    
                 })
                 .render();
         } else {

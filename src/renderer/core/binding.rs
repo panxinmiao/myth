@@ -270,7 +270,8 @@ impl GlobalBindGroupCache {
         // at a stable address.  HashMap resizing moves Box pointers but
         // not the heap-allocated data they reference.  The entry is
         // retained until garbage_collect() at frame boundaries.
-        unsafe { &*(&entry.bg as *const wgpu::BindGroup) }
+        let ptr = &raw const entry.bg;
+        unsafe { &*ptr }
     }
 
     /// Retrieve or create a bind group, returning a pointer-stable `&'a`

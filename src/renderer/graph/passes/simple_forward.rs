@@ -23,9 +23,10 @@
 //! [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
 
 use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps, TextureDesc,
-    TextureNodeId, build_screen_bind_group,
+    ExecuteContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc, TextureNodeId,
+    build_screen_bind_group,
 };
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::graph::passes::draw::submit_draw_commands;
@@ -55,13 +56,13 @@ impl SimpleForwardFeature {
 
     pub fn add_to_graph<'a>(
         &'a self,
-        rdg: &mut RenderGraph<'a>,
+        ctx: &mut GraphBuilderContext<'a, '_>,
         surface_out: TextureNodeId,
         clear_color: wgpu::Color,
         prepared_skybox: Option<PreparedSkyboxDraw<'a>>,
         shadow_tex: Option<TextureNodeId>,
     ) {
-        let fc = *rdg.frame_config();
+        let fc = ctx.frame_config;
         let screen_info = self
             .screen_info
             .as_ref()
@@ -78,7 +79,7 @@ impl SimpleForwardFeature {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
 
-        rdg.add_pass("SimpleForward_Pass", |builder| {
+        ctx.graph.add_pass("SimpleForward_Pass", |builder| {
             builder.write_texture(surface_out);
             let scene_depth = builder.create_and_export("Scene_Depth", depth_desc);
 
@@ -162,7 +163,12 @@ impl<'a> SimpleForwardPassNode<'a> {
 
 impl<'a> PassNode<'a> for SimpleForwardPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            ..
+        } = ctx;
         let device = *device;
 
         let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {

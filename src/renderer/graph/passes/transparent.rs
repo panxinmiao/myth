@@ -31,8 +31,9 @@
 //! Transparent commands are sorted back-to-front for correct alpha blending.
 
 use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps, TextureNodeId,
+    ExecuteContext, PassNode, PrepareContext, RenderTargetOps, TextureNodeId,
     build_screen_bind_group,
 };
 use crate::renderer::graph::passes::draw::submit_draw_commands;
@@ -73,20 +74,20 @@ impl TransparentFeature {
     /// - **Non-MSAA**: the mutated colour alias.
     pub fn add_to_graph<'a>(
         &'a self,
-        graph: &mut RenderGraph<'a>,
+        ctx: &mut GraphBuilderContext<'a, '_>,
         color_target: TextureNodeId,
         depth_target: TextureNodeId,
         transmission_tex: Option<TextureNodeId>,
         ssao_tex: Option<TextureNodeId>,
         shadow_tex: Option<TextureNodeId>,
     ) -> TextureNodeId {
-        let fc = *graph.frame_config();
+        let fc = ctx.frame_config;
         let screen_info = self
             .screen_info
             .as_ref()
             .expect("TransparentFeature: screen_info not set");
 
-        graph.add_pass("Transparent_Pass", |builder| {
+        ctx.graph.add_pass("Transparent_Pass", |builder| {
             let color_output = builder.mutate_and_export(color_target, "Scene_Color_Transparent");
 
             let resolve_target = if fc.msaa_samples > 1 {
@@ -168,7 +169,12 @@ impl<'a> TransparentPassNode<'a> {
 
 impl<'a> PassNode<'a> for TransparentPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            ..
+        } = ctx;
         let device = *device;
 
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {

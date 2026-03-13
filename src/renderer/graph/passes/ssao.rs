@@ -1,4 +1,4 @@
-﻿//! SSAO Feature + Ephemeral PassNodes (Flattened)
+//! SSAO Feature + Ephemeral PassNodes (Flattened)
 //!
 //! - **`SsaoFeature`** (long-lived): owns pipelines, bind group layouts,
 //!   noise texture.  `extract_and_prepare()` compiles pipelines and uploads
@@ -29,9 +29,10 @@
 
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps,
-    SubViewKey, TextureDesc, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, SubViewKey,
+    TextureDesc, TextureNodeId,
 };
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
@@ -402,20 +403,20 @@ impl SsaoFeature {
     /// 2. **SSAO_Blur** — cross-bilateral blur → clean AO output
     pub fn add_to_graph<'a>(
         &'a self,
-        graph: &mut RenderGraph<'a>,
+        ctx: &mut GraphBuilderContext<'a, '_>,
         scene_depth: TextureNodeId,
         scene_normals: TextureNodeId,
     ) -> TextureNodeId {
-        let fc = *graph.frame_config();
+        let fc = ctx.frame_config;
         let half_w = (fc.width / 2).max(1);
         let half_h = (fc.height / 2).max(1);
 
-        let raw_pipeline = graph.pipeline_cache.get_render_pipeline(
-            self.raw_pipeline.expect("SsaoFeature not prepared"),
-        );
-        let blur_pipeline = graph.pipeline_cache.get_render_pipeline(
-            self.blur_pipeline.expect("SsaoFeature not prepared"),
-        );
+        let raw_pipeline = ctx
+            .pipeline_cache
+            .get_render_pipeline(self.raw_pipeline.expect("SsaoFeature not prepared"));
+        let blur_pipeline = ctx
+            .pipeline_cache
+            .get_render_pipeline(self.blur_pipeline.expect("SsaoFeature not prepared"));
         let raw_layout = self.raw_layout.as_ref().unwrap();
         let blur_layout = self.blur_layout.as_ref().unwrap();
         let noise_texture_view = self.noise_texture_view.as_ref().unwrap();
@@ -424,7 +425,7 @@ impl SsaoFeature {
             .as_ref()
             .expect("SsaoFeature: uniforms static BG not built");
 
-        graph.with_group("SSAO_System", |g| {
+        ctx.with_group("SSAO_System", |ctx| {
             // ─── Pass 1: Raw SSAO ──────────────────────────────────
             let raw_desc = TextureDesc::new_2d(
                 half_w,
@@ -433,7 +434,7 @@ impl SsaoFeature {
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
 
-            let raw_tex: TextureNodeId = g.add_pass("SSAO_Raw", |builder| {
+            let raw_tex: TextureNodeId = ctx.graph.add_pass("SSAO_Raw", |builder| {
                 builder.read_texture(scene_depth);
                 builder.read_texture(scene_normals);
                 let out = builder.create_and_export("SSAO_Raw_Tex", raw_desc);
@@ -458,7 +459,7 @@ impl SsaoFeature {
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
 
-            let blur_out: TextureNodeId = g.add_pass("SSAO_Blur", |builder| {
+            let blur_out: TextureNodeId = ctx.graph.add_pass("SSAO_Blur", |builder| {
                 builder.read_texture(raw_tex);
                 builder.read_texture(scene_depth);
                 builder.read_texture(scene_normals);
@@ -503,7 +504,13 @@ struct SsaoRawNode<'a> {
 
 impl<'a> PassNode<'a> for SsaoRawNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, sampler_registry, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            sampler_registry,
+            ..
+        } = ctx;
         let device = *device;
 
         let depth_key = SubViewKey {
@@ -612,7 +619,13 @@ struct SsaoBlurNode<'a> {
 
 impl<'a> PassNode<'a> for SsaoBlurNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, sampler_registry, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            sampler_registry,
+            ..
+        } = ctx;
         let device = *device;
 
         let depth_key = SubViewKey {

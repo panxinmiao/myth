@@ -25,8 +25,9 @@ use rustc_hash::FxHashMap;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::SamplerKey;
 use crate::renderer::core::gpu::Tracked;
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, RenderGraph, RenderTargetOps, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, RenderTargetOps, TextureNodeId,
 };
 use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
@@ -472,15 +473,15 @@ impl SkyboxFeature {
     /// order.  Returns the new colour version for downstream threading.
     pub fn add_to_graph<'a>(
         &'a self,
-        graph: &mut RenderGraph<'a>,
+        ctx: &mut GraphBuilderContext<'a, '_>,
         scene_color: TextureNodeId,
         scene_depth: TextureNodeId,
     ) -> TextureNodeId {
         let pipeline = self
             .current_pipeline
-            .map(|id| graph.pipeline_cache.get_render_pipeline(id));
+            .map(|id| ctx.pipeline_cache.get_render_pipeline(id));
         let bind_group = self.current_bind_group.as_ref();
-        graph.add_pass("Skybox_Pass", |builder| {
+        ctx.graph.add_pass("Skybox_Pass", |builder| {
             let out_color = builder.mutate_and_export(scene_color, "Scene_Color_Skybox");
             builder.read_texture(scene_depth);
             let node = SkyboxPassNode {

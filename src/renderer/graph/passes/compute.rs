@@ -16,8 +16,8 @@
 
 use crate::renderer::core::gpu::SamplerKey;
 use crate::renderer::core::gpu::{BRDF_LUT_SIZE, CubeSourceType};
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::context::{ExecuteContext, ExtractContext};
-use crate::renderer::graph::core::graph::RenderGraph;
 use crate::renderer::graph::core::node::PassNode;
 use crate::renderer::pipeline::{
     ColorTargetKey, ComputePipelineId, ComputePipelineKey, FullscreenPipelineKey, RenderPipelineId,
@@ -130,15 +130,22 @@ impl BrdfLutFeature {
     }
 
     /// Create an ephemeral [`BrdfLutPassNode`] and add it to the render graph.
-    pub fn add_to_graph<'a>(&'a self, graph: &mut RenderGraph<'a>) {
+    pub fn add_to_graph<'a>(&'a self, ctx: &mut GraphBuilderContext<'a, '_>) {
         let pipeline = self
             .pipeline_id
-            .map(|id| graph.pipeline_cache.get_compute_pipeline(id));
+            .map(|id| ctx.pipeline_cache.get_compute_pipeline(id));
         let bind_group = self.bind_group.as_ref();
         let active = self.active;
-        graph.add_pass("BRDF_LUT", |builder| {
+        ctx.graph.add_pass("BRDF_LUT", |builder| {
             builder.mark_side_effect();
-            (BrdfLutPassNode { pipeline, bind_group, active }, ())
+            (
+                BrdfLutPassNode {
+                    pipeline,
+                    bind_group,
+                    active,
+                },
+                (),
+            )
         });
     }
 }
@@ -792,9 +799,9 @@ impl IblComputeFeature {
     }
 
     /// Create an ephemeral [`IblPassNode`] and add it to the render graph.
-    pub fn add_to_graph(&self, graph: &mut RenderGraph<'_>, source: TextureSource) {
+    pub fn add_to_graph(&self, ctx: &mut GraphBuilderContext<'_, '_>, source: TextureSource) {
         let node = IblPassNode { _source: source };
-        graph.add_pass("IBL_Compute", |builder| {
+        ctx.graph.add_pass("IBL_Compute", |builder| {
             builder.mark_side_effect();
             (node, ())
         });
