@@ -56,7 +56,7 @@ use crate::renderer::core::gpu::{SamplerRegistry, Tracked};
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::ExtractedScene;
 use crate::renderer::graph::core::{
-    ExecuteContext, GraphBlackboard, HookStage, PrepareContext, RenderGraph, TextureDesc,
+    ExecuteContext, FrameArena, GraphBlackboard, HookStage, PrepareContext, RenderGraph, TextureDesc,
     TextureNodeId, TransientPool, ViewResolver,
 };
 use crate::renderer::graph::frame::{PreparedSkyboxDraw, RenderLists};
@@ -84,9 +84,6 @@ pub struct ComposerContext<'a> {
     /// Render lists (populated by `SceneCullPass`)
     pub render_lists: &'a mut RenderLists,
 
-    // /// Frame blackboard (cross-pass transient data communication)
-    // pub blackboard: &'a mut FrameBlackboard,
-
     // External scene data
     pub scene: &'a mut Scene,
     pub camera: &'a RenderCamera,
@@ -96,6 +93,7 @@ pub struct ComposerContext<'a> {
     pub graph: &'a mut RenderGraph,
     pub transient_pool: &'a mut TransientPool,
     pub sampler_registry: &'a mut SamplerRegistry,
+    pub frame_arena: &'a FrameArena,
 
     // ─── RDG Features ────────────────────────────────────────────────────
     // Post-processing
@@ -256,6 +254,7 @@ impl<'a> FrameComposer<'a> {
             surface_format: view_format,
             hdr_format: crate::renderer::HDR_TEXTURE_FORMAT,
         });
+        graph.set_frame_arena(self.ctx.frame_arena);
 
         // ── 2a. Register Resources ──────────────────────────────────────
         // Only the swapchain surface is truly external.
