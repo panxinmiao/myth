@@ -153,7 +153,7 @@ impl MsaaSyncFeature {
     ///
     /// - `src_hdr`: single-sample `Scene_Color_HDR` (read).
     /// - `dst_msaa`: multi-sampled `Scene_Color_MSAA` (write).
-    pub fn add_to_graph(&self, graph: &mut RenderGraph<'_>, src_hdr: TextureNodeId) -> TextureNodeId {
+    pub fn add_to_graph<'a>(&'a self, graph: &mut RenderGraph<'a>, src_hdr: TextureNodeId) -> TextureNodeId {
         let msaa_color_desc = TextureDesc::new(
             graph.frame_config().width,
             graph.frame_config().height,
@@ -167,12 +167,16 @@ impl MsaaSyncFeature {
 
         let dst_msaa = graph.register_resource("Scene_Color_MSAA_Sync", msaa_color_desc, false);
 
+        let pipeline_id = self.pipeline_id.expect("MsaaSyncFeature not prepared");
+        let pipeline = graph.pipeline_cache.get_render_pipeline(pipeline_id);
+        let layout = self.bind_group_layout.as_ref().unwrap();
+
         let node = MsaaSyncPassNode {
             src_hdr,
             dst_msaa,
-            pipeline_id: self.pipeline_id.expect("MsaaSyncFeature not prepared"),
-            layout: self.bind_group_layout.clone().unwrap(),
-            bind_group_key: None,
+            pipeline,
+            layout,
+            transient_bg: None,
         };
         graph.add_pass("Msaa_Sync_Pass", |builder| {
             builder.read_texture(src_hdr);
@@ -187,27 +191,30 @@ impl MsaaSyncFeature {
 // PassNode (ephemeral, created per frame)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-struct MsaaSyncPassNode {
+struct MsaaSyncPassNode<'a> {
     src_hdr: TextureNodeId,
     dst_msaa: TextureNodeId,
-    pipeline_id: RenderPipelineId,
-    layout: Tracked<wgpu::BindGroupLayout>,
-    bind_group_key: Option<BindGroupKey>,
+    pipeline: &'a wgpu::RenderPipeline,
+    layout: &'a Tracked<wgpu::BindGroupLayout>,
+    transient_bg: Option<&'a wgpu::BindGroup>,
 }
 
-impl PassNode<'_> for MsaaSyncPassNode {
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
-        let src_view = ctx.views.get_texture_view(self.src_hdr);
-        let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
+impl<'a> PassNode<'a> for MsaaSyncPassNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
+        let PrepareContext { views, global_bind_group_cache: cache, device, sampler_registry, .. } = ctx;
+        let device = *device;
+        let src_view = views.get_texture_view(self.src_hdr);
+        let sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
 
         let key = BindGroupKey::new(self.layout.id())
             .with_resource(src_view.id())
             .with_resource(sampler.id());
 
-        if ctx.global_bind_group_cache.get(&key).is_none() {
-            let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let layout = &**self.layout;
+        let bg = cache.get_or_create_bg(key, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("MSAA Sync BindGroup"),
-                layout: &self.layout,
+                layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -218,26 +225,14 @@ impl PassNode<'_> for MsaaSyncPassNode {
                         resource: wgpu::BindingResource::Sampler(sampler),
                     },
                 ],
-            });
-            ctx.global_bind_group_cache.insert(key.clone(), bg);
-        }
-        self.bind_group_key = Some(key);
+            })
+        });
+        self.transient_bg = Some(bg);
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder) {
-        let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
+        let bind_group = self.transient_bg.expect("MSAA Sync BG not prepared");
 
-        let bind_group_key = self
-            .bind_group_key
-            .as_ref()
-            .expect("MSAA Sync bind group key must be set in prepare");
-        let bind_group = ctx
-            .global_bind_group_cache
-            .get(bind_group_key)
-            .expect("MSAA Sync bind group must be prepared");
-
-        // Write to the MSAA target; no depth attachment — preserve MSAA
-        // geometry depth for subsequent depth-tested draws.
         let rtt = ctx.get_color_attachment(self.dst_msaa, RenderTargetOps::DontCare, None);
 
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -249,7 +244,7 @@ impl PassNode<'_> for MsaaSyncPassNode {
             multiview_mask: None,
         });
 
-        rpass.set_pipeline(pipeline);
+        rpass.set_pipeline(self.pipeline);
         rpass.set_bind_group(0, bind_group, &[]);
         rpass.draw(0..3, 0..1);
     }

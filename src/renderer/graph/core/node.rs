@@ -67,7 +67,7 @@ pub(crate) struct NodeSlot {
     pub(crate) ptr: *mut dyn for<'a> PassNode<'a>,
 
     // ⚠️ 临时防泄漏机制（在所有节点变成 POD 前，我们需要它）
-    pub(crate) needs_drop: bool,
+    // pub(crate) needs_drop: bool,
 }
 
 // SAFETY: `NodeSlot` wraps a pointer to a `dyn PassNode` which itself
@@ -83,7 +83,7 @@ impl NodeSlot {
         let erased_ptr = unsafe { std::mem::transmute(ptr as *mut dyn PassNode<'a>) };
         Self { 
             ptr: erased_ptr,
-            needs_drop: std::mem::needs_drop::<N>(), // 记录是否需要 Drop
+            // needs_drop: std::mem::needs_drop::<N>(), // 记录是否需要 Drop
         }
     }
 }

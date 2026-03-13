@@ -18,7 +18,7 @@ use rustc_hash::FxHashMap;
 
 use crate::assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::renderer::core::{BindGroupContext, RenderView, ResourceManager};
-use crate::renderer::pipeline::{PipelineCache, RenderPipelineId};
+use crate::renderer::pipeline::RenderPipelineId;
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
 
@@ -171,24 +171,22 @@ pub struct ShadowLightInstance {
 /// Populated by [`SkyboxPass::prepare()`] and consumed by
 /// [`SimpleForwardPass::run()`] to draw the skybox between
 /// opaque and transparent objects within a single render pass.
-pub struct PreparedSkyboxDraw {
-    /// The skybox render pipeline ID (variant-specific, resolved via `PipelineCache`).
-    pub pipeline_id: RenderPipelineId,
+pub struct PreparedSkyboxDraw<'a> {
+    /// Pre-resolved skybox render pipeline reference.
+    pub pipeline: &'a wgpu::RenderPipeline,
     /// The skybox bind group (uniforms + optional texture/sampler).
-    pub bind_group: wgpu::BindGroup,
+    pub bind_group: &'a wgpu::BindGroup,
 }
 
-impl PreparedSkyboxDraw {
-    pub fn draw<'a>(
-        &'a self,
+impl<'a> PreparedSkyboxDraw<'a> {
+    pub fn draw(
+        &self,
         pass: &mut wgpu::RenderPass<'a>,
         global_bind_group: &'a wgpu::BindGroup,
-        pipeline_cache: &'a PipelineCache,
     ) {
-        let pipeline = pipeline_cache.get_render_pipeline(self.pipeline_id);
-        pass.set_pipeline(pipeline);
+        pass.set_pipeline(self.pipeline);
         pass.set_bind_group(0, global_bind_group, &[]);
-        pass.set_bind_group(1, &self.bind_group, &[]);
+        pass.set_bind_group(1, self.bind_group, &[]);
         pass.draw(0..3, 0..1);
     }
 }
@@ -225,10 +223,7 @@ pub struct RenderLists {
     /// Whether a transmission copy is needed this frame
     pub use_transmission: bool,
 
-    /// Prepared skybox draw state for inline rendering in the LDR path.
-    ///
-    /// Set by `SkyboxPass::prepare()`, consumed by `SimpleForwardPass::run()`.
-    pub prepared_skybox: Option<PreparedSkyboxDraw>,
+
 }
 
 impl RenderLists {
@@ -243,7 +238,6 @@ impl RenderLists {
             active_views: Vec::with_capacity(16),
             gpu_global_bind_group: None,
             use_transmission: false,
-            prepared_skybox: None,
         }
     }
 
@@ -257,7 +251,6 @@ impl RenderLists {
         self.active_views.clear();
         self.gpu_global_bind_group = None;
         self.use_transmission = false;
-        self.prepared_skybox = None;
     }
 
     /// Inserts an opaque render command.

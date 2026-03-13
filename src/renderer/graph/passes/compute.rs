@@ -130,15 +130,15 @@ impl BrdfLutFeature {
     }
 
     /// Create an ephemeral [`BrdfLutPassNode`] and add it to the render graph.
-    pub fn add_to_graph(&self, graph: &mut RenderGraph<'_>) {
-        let node = BrdfLutPassNode {
-            pipeline_id: self.pipeline_id,
-            bind_group: self.bind_group.clone(),
-            active: self.active,
-        };
+    pub fn add_to_graph<'a>(&'a self, graph: &mut RenderGraph<'a>) {
+        let pipeline = self
+            .pipeline_id
+            .map(|id| graph.pipeline_cache.get_compute_pipeline(id));
+        let bind_group = self.bind_group.as_ref();
+        let active = self.active;
         graph.add_pass("BRDF_LUT", |builder| {
             builder.mark_side_effect();
-            (node, ())
+            (BrdfLutPassNode { pipeline, bind_group, active }, ())
         });
     }
 }
@@ -146,25 +146,23 @@ impl BrdfLutFeature {
 // ─── BRDF LUT Pass Node ──────────────────────────────────────────────────────
 
 /// Ephemeral per-frame BRDF LUT compute pass node.
-struct BrdfLutPassNode {
-    pipeline_id: Option<ComputePipelineId>,
-    bind_group: Option<wgpu::BindGroup>,
+struct BrdfLutPassNode<'a> {
+    pipeline: Option<&'a wgpu::ComputePipeline>,
+    bind_group: Option<&'a wgpu::BindGroup>,
     active: bool,
 }
 
-impl PassNode<'_> for BrdfLutPassNode {
-    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
+impl<'a> PassNode<'a> for BrdfLutPassNode<'a> {
+    fn execute(&self, _ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if !self.active {
             return;
         }
 
-        let Some(bg) = &self.bind_group else {
+        let Some(bg) = self.bind_group else {
             return;
         };
 
-        let pipeline = ctx
-            .pipeline_cache
-            .get_compute_pipeline(self.pipeline_id.expect("Pipeline must exist"));
+        let pipeline = self.pipeline.expect("Pipeline must exist");
 
         let mut cpass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
             label: Some("BRDF LUT"),

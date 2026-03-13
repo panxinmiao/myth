@@ -25,7 +25,7 @@
 use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::core::{
     ExecuteContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps, TextureDesc,
-    TextureNodeId,
+    TextureNodeId, build_screen_bind_group,
 };
 use crate::renderer::graph::frame::PreparedSkyboxDraw;
 use crate::renderer::graph::passes::draw::submit_draw_commands;
@@ -53,18 +53,18 @@ impl SimpleForwardFeature {
         self.screen_info = Some(info);
     }
 
-    pub fn add_to_graph(
-        &self,
-        rdg: &mut RenderGraph<'_>,
+    pub fn add_to_graph<'a>(
+        &'a self,
+        rdg: &mut RenderGraph<'a>,
         surface_out: TextureNodeId,
         clear_color: wgpu::Color,
-        prepared_skybox: Option<PreparedSkyboxDraw>,
+        prepared_skybox: Option<PreparedSkyboxDraw<'a>>,
         shadow_tex: Option<TextureNodeId>,
     ) {
         let fc = *rdg.frame_config();
         let screen_info = self
             .screen_info
-            .clone()
+            .as_ref()
             .expect("SimpleForwardFeature: screen_info not set");
 
         let depth_desc = TextureDesc::new(
@@ -82,12 +82,10 @@ impl SimpleForwardFeature {
             builder.write_texture(surface_out);
             let scene_depth = builder.create_and_export("Scene_Depth", depth_desc);
 
-            // Shadow map — explicit DAG dependency on ShadowPass.
             if let Some(shadow) = shadow_tex {
                 builder.read_texture(shadow);
             }
 
-            // MSAA intermediate (internal, conditionally created).
             let msaa_view = if fc.msaa_samples > 1 {
                 let desc = TextureDesc::new(
                     fc.width,
@@ -128,34 +126,25 @@ impl SimpleForwardFeature {
 /// directly to the swap-chain surface via `surface_out`.
 ///
 /// [`BasicForward`]: crate::renderer::settings::RenderPath::BasicForward
-pub struct SimpleForwardPassNode {
-    // ─── RDG Resource Slots (explicit wiring from add_to_graph) ───
+pub struct SimpleForwardPassNode<'a> {
     pub surface_out: TextureNodeId,
     pub scene_depth: TextureNodeId,
     pub msaa_view: Option<TextureNodeId>,
-
-    // ─── Push Parameters ─────────────────────────────────────────────
     pub clear_color: wgpu::Color,
-    pub prepared_skybox: Option<PreparedSkyboxDraw>,
-
-    /// Optional shadow map input (DAG dependency on ShadowPass).
+    pub prepared_skybox: Option<PreparedSkyboxDraw<'a>>,
     pub shadow_input: Option<TextureNodeId>,
-
-    // ─── Screen Bind Group Infrastructure ──────────────────────────
-    screen_info: ScreenBindGroupInfo,
-
-    // ─── Internal Cache ──────────────────────────────────────────
-    screen_bind_group: Option<wgpu::BindGroup>,
+    screen_info: &'a ScreenBindGroupInfo,
+    screen_bind_group: Option<&'a wgpu::BindGroup>,
 }
 
-impl SimpleForwardPassNode {
+impl<'a> SimpleForwardPassNode<'a> {
     #[must_use]
     pub fn new(
         surface_out: TextureNodeId,
         scene_depth: TextureNodeId,
         clear_color: wgpu::Color,
-        screen_info: ScreenBindGroupInfo,
-        prepared_skybox: Option<PreparedSkyboxDraw>,
+        screen_info: &'a ScreenBindGroupInfo,
+        prepared_skybox: Option<PreparedSkyboxDraw<'a>>,
         shadow_input: Option<TextureNodeId>,
     ) -> Self {
         Self {
@@ -171,19 +160,22 @@ impl SimpleForwardPassNode {
     }
 }
 
-impl PassNode<'_> for SimpleForwardPassNode {
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
-        // LDR path has no SSAO or transmission; shadow may be active.
+impl<'a> PassNode<'a> for SimpleForwardPassNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
+        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let device = *device;
+
         let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {
-            Some(id) => ctx.views.get_texture_view(id),
+            Some(id) => views.get_texture_view(id),
             None => &self.screen_info.dummy_shadow_view,
         };
 
-        let (bg, _) = self.screen_info.build_screen_bind_group(
-            ctx.device,
-            ctx.global_bind_group_cache,
-            &self.screen_info.dummy_transmission_view.clone(),
-            &self.screen_info.ssao_dummy_view.clone(),
+        let bg = build_screen_bind_group(
+            cache,
+            device,
+            self.screen_info,
+            &self.screen_info.dummy_transmission_view,
+            &self.screen_info.ssao_dummy_view,
             shadow_view,
         );
         self.screen_bind_group = Some(bg);
@@ -217,11 +209,9 @@ impl PassNode<'_> for SimpleForwardPassNode {
         let raw_pass = encoder.begin_render_pass(&pass_desc);
         let mut pass = raw_pass;
 
-        // Set global bind group (group 0: camera, lights, etc.)
         pass.set_bind_group(0, gpu_global_bind_group, &[]);
 
-        // Set screen bind group (Group 3) at the pass level.
-        let screen_bg = self.screen_bind_group.as_ref().unwrap();
+        let screen_bg = self.screen_bind_group.unwrap();
         pass.set_bind_group(3, screen_bg, &[]);
 
         // 1. Opaque (front-to-back)
@@ -229,17 +219,13 @@ impl PassNode<'_> for SimpleForwardPassNode {
 
         // 2. Skybox (between opaque and transparent)
         if let Some(skybox) = &self.prepared_skybox {
-            skybox.draw(&mut pass, gpu_global_bind_group, ctx.pipeline_cache);
+            skybox.draw(&mut pass, gpu_global_bind_group);
 
-            // Re-set global and screen bind groups for subsequent transparent
-            // draws — skybox uses a different pipeline and bind group layout.
             pass.set_bind_group(0, gpu_global_bind_group, &[]);
             pass.set_bind_group(3, screen_bg, &[]);
         }
 
         // 3. Transparent (back-to-front)
         submit_draw_commands(&mut pass, &ctx.baked_lists.transparent);
-
-        // RenderPass automatically resolves MSAA on drop if resolve_target is set.
     }
 }

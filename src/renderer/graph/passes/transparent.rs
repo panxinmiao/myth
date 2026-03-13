@@ -33,6 +33,7 @@
 use crate::renderer::core::gpu::{ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::core::{
     ExecuteContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps, TextureNodeId,
+    build_screen_bind_group,
 };
 use crate::renderer::graph::passes::draw::submit_draw_commands;
 
@@ -70,9 +71,9 @@ impl TransparentFeature {
     /// ToneMap, hooks) should read:
     /// - **MSAA**: the resolve target (`Scene_Color_HDR_Final`).
     /// - **Non-MSAA**: the mutated colour alias.
-    pub fn add_to_graph(
-        &self,
-        graph: &mut RenderGraph<'_>,
+    pub fn add_to_graph<'a>(
+        &'a self,
+        graph: &mut RenderGraph<'a>,
         color_target: TextureNodeId,
         depth_target: TextureNodeId,
         transmission_tex: Option<TextureNodeId>,
@@ -82,11 +83,10 @@ impl TransparentFeature {
         let fc = *graph.frame_config();
         let screen_info = self
             .screen_info
-            .clone()
+            .as_ref()
             .expect("TransparentFeature: screen_info not set");
 
         graph.add_pass("Transparent_Pass", |builder| {
-            // SSA colour relay: read the incoming version, write a new alias.
             let color_output = builder.mutate_and_export(color_target, "Scene_Color_Transparent");
 
             let resolve_target = if fc.msaa_samples > 1 {
@@ -98,10 +98,8 @@ impl TransparentFeature {
                 None
             };
 
-            // Depth — read-only for depth testing.
             builder.read_texture(depth_target);
 
-            // Optional texture inputs.
             if let Some(tx) = transmission_tex {
                 builder.read_texture(tx);
             }
@@ -132,34 +130,18 @@ impl TransparentFeature {
 
 // ─── Pass Node ─────────────────────────────────────────────────────────
 
-/// RDG Transparent Render Pass.
-///
-/// Draws `render_lists.transparent` with back-to-front sorting.  Builds a
-/// screen bind group (group 3) containing the real transmission texture
-/// (if available) and SSAO view.  When MSAA is active, this pass is
-/// typically the last user of the multi-sampled colour surface, triggering
-/// automatic `StoreOp::Discard` via the RDG lifetime system.
-pub struct TransparentPassNode {
-    // ─── RDG Resource Slots (SSA model) ────────────────────────────
-    /// New colour version — SSA alias of the input (write dependency).
+pub struct TransparentPassNode<'a> {
     out_color: TextureNodeId,
-    /// Depth buffer (read-only for depth testing).
     depth_target: TextureNodeId,
-    /// Optional single-sample HDR texture for MSAA resolve.
     resolve_target: Option<TextureNodeId>,
-    /// Optional transmission texture input.
     transmission_input: Option<TextureNodeId>,
-    /// Optional SSAO texture input.
     ssao_input: Option<TextureNodeId>,
-    /// Optional shadow map input (DAG dependency on ShadowPass).
     shadow_input: Option<TextureNodeId>,
-    // ─── Screen Bind Group Infrastructure ──────────────────────────
-    screen_info: ScreenBindGroupInfo,
-    // ─── Internal Cache ────────────────────────────────────────────
-    screen_bind_group: Option<wgpu::BindGroup>,
+    screen_info: &'a ScreenBindGroupInfo,
+    screen_bind_group: Option<&'a wgpu::BindGroup>,
 }
 
-impl TransparentPassNode {
+impl<'a> TransparentPassNode<'a> {
     #[must_use]
     fn new(
         _in_color: TextureNodeId,
@@ -169,7 +151,7 @@ impl TransparentPassNode {
         transmission_input: Option<TextureNodeId>,
         ssao_input: Option<TextureNodeId>,
         shadow_input: Option<TextureNodeId>,
-        screen_info: ScreenBindGroupInfo,
+        screen_info: &'a ScreenBindGroupInfo,
     ) -> Self {
         Self {
             out_color,
@@ -184,26 +166,30 @@ impl TransparentPassNode {
     }
 }
 
-impl PassNode<'_> for TransparentPassNode {
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
+impl<'a> PassNode<'a> for TransparentPassNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
+        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let device = *device;
+
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {
-            Some(id) => ctx.views.get_texture_view(id),
+            Some(id) => views.get_texture_view(id),
             None => &self.screen_info.ssao_dummy_view,
         };
 
         let transmission_view: &Tracked<wgpu::TextureView> = match self.transmission_input {
-            Some(id) => ctx.views.get_texture_view(id),
+            Some(id) => views.get_texture_view(id),
             None => &self.screen_info.dummy_transmission_view,
         };
 
         let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {
-            Some(id) => ctx.views.get_texture_view(id),
+            Some(id) => views.get_texture_view(id),
             None => &self.screen_info.dummy_shadow_view,
         };
 
-        let (bg, _) = self.screen_info.build_screen_bind_group(
-            ctx.device,
-            ctx.global_bind_group_cache,
+        let bg = build_screen_bind_group(
+            cache,
+            device,
+            self.screen_info,
             transmission_view,
             ssao_view,
             shadow_view,
@@ -214,8 +200,6 @@ impl PassNode<'_> for TransparentPassNode {
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
-        // `out_color` is an alias — LoadOp is auto-deduced to `Load`,
-        // inheriting the content rendered by prior passes.
         let color_att =
             ctx.get_color_attachment(self.out_color, RenderTargetOps::Load, self.resolve_target);
         let depth_att = ctx.get_depth_stencil_attachment(self.depth_target, 0.0);
@@ -235,7 +219,7 @@ impl PassNode<'_> for TransparentPassNode {
         pass.set_bind_group(0, gpu_global_bind_group, &[]);
 
         if !ctx.baked_lists.transparent.is_empty() {
-            let screen_bg = self.screen_bind_group.as_ref().unwrap();
+            let screen_bg = self.screen_bind_group.unwrap();
             pass.set_bind_group(3, screen_bg, &[]);
 
             submit_draw_commands(&mut pass, &ctx.baked_lists.transparent);

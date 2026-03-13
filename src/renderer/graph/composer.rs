@@ -257,6 +257,7 @@ impl<'a> FrameComposer<'a> {
                 surface_format: view_format,
                 hdr_format: crate::renderer::HDR_TEXTURE_FORMAT,
             },
+            self.ctx.pipeline_cache,
         );
 
         // ── 2a. Register Resources ──────────────────────────────────────
@@ -484,8 +485,8 @@ impl<'a> FrameComposer<'a> {
 
                 if let (Some(pipeline_id), Some(bg)) = (skybox_pipeline, skybox_bind_group) {
                     Some(PreparedSkyboxDraw {
-                        pipeline_id,
-                        bind_group: bg.clone(),
+                        pipeline: self.ctx.pipeline_cache.get_render_pipeline(pipeline_id),
+                        bind_group: bg,
                     })
                 } else {
                     None
