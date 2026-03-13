@@ -12,6 +12,6 @@ pub use arena::FrameArena;
 pub use blackboard::{CustomPassHook, GraphBlackboard, HookStage};
 pub use builder::PassBuilder;
 pub use context::{ExecuteContext, ExtractContext, PrepareContext, ViewResolver};
-pub use graph::RenderGraph;
+pub use graph::{GraphStorage, RenderGraph};
 pub use node::PassNode;
 pub use types::{RenderTargetOps, ResourceRecord, TextureDesc, TextureNodeId};

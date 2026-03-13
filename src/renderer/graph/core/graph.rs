@@ -13,8 +13,6 @@ use smallvec::SmallVec;
 use wgpu::Device;
 
 /// Per-frame rendering configuration stored in the [`RenderGraph`].
-///
-/// Set once per frame via [`RenderGraph::begin_frame`] and read by passes
 /// during graph construction through [`PassBuilder`] accessors.  This
 /// eliminates the need for passes to receive screen-size or format
 /// information through push parameters — they can derive `TextureDesc`s
@@ -90,11 +88,20 @@ impl PartialOrd for ReadyNode {
     }
 }
 
-/// Declarative Render Graph.
+/// Declarative Render Graph — persistent capacity storage.
 ///
-/// Stores pass and resource records, performs dependency analysis,
-/// dead-pass culling, topological sorting, and physical resource allocation.
-pub struct RenderGraph {
+/// Holds the backing `Vec`s whose heap capacity is reused across frames.
+/// This struct never appears in the public API — it is hidden inside
+/// [`RendererState`] and lent to [`RenderGraph`] each frame via a
+/// mutable reference.
+///
+/// # Why separate?
+///
+/// A [`RenderGraph`] has a per-frame lifetime `'a` tied to the
+/// [`FrameArena`].  Storing `Vec`s directly on that view would
+/// require reconstructing them every frame, wasting the capacity
+/// that `Vec::clear()` preserves for free.
+pub struct GraphStorage {
     /// All pass records for the current frame.
     pub passes: Vec<PassRecord>,
     /// All resource records for the current frame.
@@ -105,22 +112,6 @@ pub struct RenderGraph {
     /// Name-based resource registry for self-wiring passes.
     resource_registry: FxHashMap<&'static str, TextureNodeId>,
 
-    /// Per-frame rendering configuration (resolution, formats, MSAA).
-    frame_config: FrameConfig,
-
-    /// Raw pointer to the current frame's [`FrameArena`].
-    ///
-    /// Set by [`set_frame_arena()`](Self::set_frame_arena) before graph
-    /// construction begins.  Used internally by [`add_pass()`](Self::add_pass)
-    /// to allocate `PassNode`s on the arena instead of the system heap.
-    ///
-    /// # Safety
-    ///
-    /// The pointed-to arena must outlive all `PassNode`s allocated through
-    /// this graph.  The engine frame lifecycle guarantees this:
-    /// `cleanup_nodes()` → `arena.reset()` at frame boundaries.
-    arena: Option<ArenaPtr>,
-
     // --- Compile-time scratch buffers (zero-alloc across frames) ---
     compile_stack: Vec<usize>,
     compile_in_degrees: Vec<usize>,
@@ -128,10 +119,6 @@ pub struct RenderGraph {
     compile_dependency_graph: Vec<SmallVec<[usize; 8]>>,
 
     /// Group-name stack for logical subgraph tagging.
-    ///
-    /// Pushed/popped by [`with_group`](Self::with_group).  When the
-    /// `rdg_inspector` feature is disabled this field is absent and the
-    /// method compiles to a plain closure call.
     #[cfg(feature = "rdg_inspector")]
     current_group_stack: Vec<&'static str>,
 
@@ -139,25 +126,13 @@ pub struct RenderGraph {
     prev_execution_names: Vec<&'static str>,
 }
 
-/// Send/Sync wrapper for the raw arena pointer stored in [`RenderGraph`].
-///
-/// The engine's single-threaded frame model guarantees no concurrent access
-/// to the arena through this pointer.
-struct ArenaPtr(*const FrameArena);
-
-// SAFETY: The arena is only accessed on the render thread.  The frame
-// lifecycle ensures the pointer is valid from `set_frame_arena()` until
-// the next `cleanup_nodes()` + `arena.reset()` sequence.
-unsafe impl Send for ArenaPtr {}
-unsafe impl Sync for ArenaPtr {}
-
-impl Default for RenderGraph {
+impl Default for GraphStorage {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl RenderGraph {
+impl GraphStorage {
     #[must_use]
     pub fn new() -> Self {
         Self {
@@ -165,15 +140,6 @@ impl RenderGraph {
             resources: Vec::new(),
             execution_queue: Vec::new(),
             resource_registry: FxHashMap::default(),
-            frame_config: FrameConfig {
-                width: 1,
-                height: 1,
-                depth_format: wgpu::TextureFormat::Depth24PlusStencil8,
-                msaa_samples: 1,
-                surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
-                hdr_format: wgpu::TextureFormat::Rgba16Float,
-            },
-            arena: None,
             compile_stack: Vec::new(),
             compile_in_degrees: Vec::new(),
             compile_ready_heap: BinaryHeap::new(),
@@ -185,62 +151,237 @@ impl RenderGraph {
         }
     }
 
-    /// Resets per-frame state while retaining allocated capacity.
-    ///
-    /// Must be called once at the start of each frame, before any
-    /// `register_resource` or `add_pass` calls.  The [`FrameConfig`] is
-    /// stored and made available to passes via [`PassBuilder`] accessors
-    /// so they can derive `RdgTextureDesc`s without external push params.
-    ///
-    /// **Note:** [`cleanup_nodes()`](Self::cleanup_nodes) must be called
-    /// *before* this method to properly tear down arena-allocated nodes.
-    pub fn begin_frame(&mut self, config: FrameConfig) {
+    /// Clears all per-frame data while retaining heap capacity.
+    pub fn clear(&mut self) {
         self.passes.clear();
         self.resources.clear();
         self.execution_queue.clear();
         self.resource_registry.clear();
-        self.frame_config = config;
-
         #[cfg(feature = "rdg_inspector")]
         self.current_group_stack.clear();
     }
 
-    /// Stores a reference to the current frame's [`FrameArena`].
-    ///
-    /// Must be called after [`begin_frame()`](Self::begin_frame) and before
-    /// any [`add_pass()`](Self::add_pass) calls.  The arena must outlive
-    /// all `PassNode`s created during this frame.
-    #[inline]
-    pub fn set_frame_arena(&mut self, arena: &FrameArena) {
-        self.arena = Some(ArenaPtr(std::ptr::from_ref(arena)));
-    }
+    /// Dumps the current Render Graph topology as a Mermaid flowchart.
+    #[must_use]
+    pub fn dump_mermaid(&self) -> String {
+        use std::fmt::Write;
+        let mut out = String::new();
 
-    /// Drops all arena-allocated pass nodes in place.
-    ///
-    /// Iterates every [`PassRecord`] and calls [`drop_in_place`] on
-    /// arena-owned nodes.  Borrowed nodes (from [`add_pass_borrowed`]) are
-    /// skipped — the caller retains ownership.
-    ///
-    /// This must be called **before** [`FrameArena::reset()`] to ensure
-    /// that owned GPU resources (bind groups, etc.) are properly released.
-    ///
-    /// [`drop_in_place`]: std::ptr::drop_in_place
-    /// [`add_pass_borrowed`]: Self::add_pass_borrowed
-    pub fn cleanup_nodes(&mut self) {
-        for pass in &mut self.passes {
-            if let Some(slot) = pass.node.take()
-                && slot.is_owned()
-            {
-                // SAFETY: The pointer was arena-allocated by `add_pass`
-                // and has not been moved or freed.  `drop_in_place`
-                // runs the concrete PassNode's destructor to release
-                // owned resources (e.g. wgpu::BindGroup Arc refs).
-                // The arena memory itself is reclaimed by the
-                // subsequent `FrameArena::reset()` call.
-                unsafe { std::ptr::drop_in_place(slot.ptr); }
+        writeln!(&mut out, "flowchart TD").unwrap();
+
+        writeln!(
+            &mut out,
+            "    classDef alive fill:#2b3c5a,stroke:#4a6f9f,stroke-width:2px,color:#fff,rx:5,ry:5;"
+        )
+        .unwrap();
+        writeln!(
+            &mut out,
+            "    classDef dead fill:#222,stroke:#555,stroke-width:2px,stroke-dasharray: 5 5,color:#777,rx:5,ry:5;"
+        )
+        .unwrap();
+        writeln!(
+            &mut out,
+            "    classDef external fill:#5a2b3c,stroke:#9f4a6f,stroke-width:2px,color:#fff;"
+        )
+        .unwrap();
+
+        #[cfg(feature = "rdg_inspector")]
+        {
+            #[derive(Default)]
+            struct GroupNode {
+                name: &'static str,
+                passes: Vec<usize>,
+                children: Vec<GroupNode>,
+            }
+
+            impl GroupNode {
+                fn insert(&mut self, path: &[&'static str], pass_idx: usize) {
+                    if path.is_empty() {
+                        self.passes.push(pass_idx);
+                    } else {
+                        let next_name = path[0];
+                        if let Some(child) = self.children.iter_mut().find(|c| c.name == next_name)
+                        {
+                            child.insert(&path[1..], pass_idx);
+                        } else {
+                            let mut new_child = GroupNode {
+                                name: next_name,
+                                ..Default::default()
+                            };
+                            new_child.insert(&path[1..], pass_idx);
+                            self.children.push(new_child);
+                        }
+                    }
+                }
+
+                fn write_mermaid(&self, out: &mut String, storage: &GraphStorage, depth: usize) {
+                    use std::fmt::Write;
+                    let indent = "    ".repeat(depth);
+
+                    if !self.name.is_empty() {
+                        writeln!(out, "{indent}subgraph {} [\"{}\"]", self.name, self.name)
+                            .unwrap();
+                        writeln!(out, "{indent}    direction TB").unwrap();
+                    }
+
+                    let inner_indent = if self.name.is_empty() {
+                        indent.clone()
+                    } else {
+                        format!("{indent}    ")
+                    };
+
+                    for &pass_idx in &self.passes {
+                        GraphStorage::write_pass_node(
+                            out,
+                            pass_idx,
+                            &storage.passes[pass_idx],
+                            &inner_indent,
+                        );
+                    }
+
+                    for child in &self.children {
+                        child.write_mermaid(
+                            out,
+                            storage,
+                            if self.name.is_empty() {
+                                depth
+                            } else {
+                                depth + 1
+                            },
+                        );
+                    }
+
+                    if !self.name.is_empty() {
+                        writeln!(out, "{indent}end").unwrap();
+
+                        let hash = self
+                            .name
+                            .bytes()
+                            .fold(0usize, |acc, b| acc.wrapping_add(b as usize));
+
+                        const STYLES: &[(&str, &str)] = &[
+                            ("#3b82f614", "#3b82f6"),
+                            ("#10b98114", "#10b981"),
+                            ("#8b5cf614", "#8b5cf6"),
+                            ("#f59e0b14", "#f59e0b"),
+                            ("#ef444414", "#ef4444"),
+                            ("#ec489914", "#ec4899"),
+                            ("#06b6d414", "#06b6d4"),
+                        ];
+
+                        let (bg, stroke) = STYLES[hash % STYLES.len()];
+
+                        writeln!(
+                            out,
+                            "{indent}style {} fill:{},stroke:{},stroke-width:2px,stroke-dasharray: 5 5,color:#fff,rx:10,ry:10",
+                            self.name, bg, stroke
+                        ).unwrap();
+                    }
+                }
+            }
+
+            let mut root = GroupNode::default();
+            for (i, pass) in self.passes.iter().enumerate() {
+                root.insert(&pass.groups, i);
+            }
+
+            root.write_mermaid(&mut out, self, 1);
+        }
+
+        #[cfg(not(feature = "rdg_inspector"))]
+        {
+            writeln!(&mut out, "\n    %% --- Passes ---").unwrap();
+            for (i, pass) in self.passes.iter().enumerate() {
+                Self::write_pass_node(&mut out, i, pass, "    ");
             }
         }
-        self.arena = None;
+
+        writeln!(&mut out, "\n    %% --- Data Flow (Edges) ---").unwrap();
+        for (pass_idx, pass) in self.passes.iter().enumerate() {
+            for &write_id in &pass.writes {
+                let res = &self.resources[write_id.0 as usize];
+
+                for &consumer_idx in &res.consumers {
+                    let edge_style = if res.alias_of.is_some() {
+                        "==>"
+                    } else {
+                        "-->"
+                    };
+
+                    writeln!(
+                        &mut out,
+                        "    P{pass_idx} {edge_style}|\"{}\"| P{consumer_idx};",
+                        res.name
+                    )
+                    .unwrap();
+                }
+
+                if res.consumers.is_empty() && res.is_external {
+                    writeln!(
+                        &mut out,
+                        "    OUT_{id}[/\"{name}\"/]:::external",
+                        id = write_id.0,
+                        name = res.name
+                    )
+                    .unwrap();
+                    writeln!(
+                        &mut out,
+                        "    P{pass_idx} -->|\"{}\"| OUT_{};",
+                        res.name, write_id.0
+                    )
+                    .unwrap();
+                }
+            }
+        }
+
+        log::info!("\n🌈 RDG Topology Mermaid Dump:\n{out}");
+        out
+    }
+
+    fn write_pass_node(out: &mut String, index: usize, pass: &PassRecord, indent: &str) {
+        use std::fmt::Write;
+        let class = if pass.reference_count > 0 {
+            "alive"
+        } else {
+            "dead"
+        };
+        writeln!(
+            out,
+            "{indent}P{index}([\"{name}\"]):::{class}",
+            name = pass.name
+        )
+        .unwrap();
+    }
+}
+
+/// Declarative Render Graph — per-frame view with lifetime `'a`.
+///
+/// Provides the full graph construction, compilation, and execution API.
+/// Created each frame by [`FrameComposer`] from a [`GraphStorage`]
+/// reference and a [`FrameArena`] reference, ensuring that:
+///
+/// - All `PassNode<'a>` values can borrow data with frame scope.
+/// - The underlying `Vec` capacity is silently reused across frames.
+/// - The `RenderGraph` is *not* `'static`, accurately reflecting its
+///   single-frame semantic lifetime.
+pub struct RenderGraph<'a> {
+    pub(crate) storage: &'a mut GraphStorage,
+    arena: &'a FrameArena,
+    frame_config: FrameConfig,
+}
+
+impl<'a> RenderGraph<'a> {
+    /// Creates a new per-frame render graph view.
+    ///
+    /// Clears the storage's per-frame data and records the frame config
+    /// for pass-level access via [`PassBuilder::frame_config`].
+    pub fn new(storage: &'a mut GraphStorage, arena: &'a FrameArena, config: FrameConfig) -> Self {
+        storage.clear();
+        Self {
+            storage,
+            arena,
+            frame_config: config,
+        }
     }
 
     /// Returns the current frame's rendering configuration.
@@ -253,22 +394,14 @@ impl RenderGraph {
     // ─── Logical Grouping (Inspector) ────────────────────────────────
 
     /// Opens a named visual grouping scope for all passes added inside `f`.
-    ///
-    /// When the `rdg_inspector` feature is enabled, the group name is
-    /// stamped onto every [`PassRecord`] created within the closure and
-    /// later used by [`dump_mermaid`](Self::dump_mermaid) to emit Mermaid
-    /// `subgraph` blocks.
-    ///
-    /// When the feature is **disabled**, this compiles to a plain closure
-    /// call with zero overhead — the compiler inlines it completely.
     #[cfg(feature = "rdg_inspector")]
     pub fn with_group<F, R>(&mut self, group_name: &'static str, f: F) -> R
     where
         F: FnOnce(&mut Self) -> R,
     {
-        self.current_group_stack.push(group_name);
+        self.storage.current_group_stack.push(group_name);
         let result = f(self);
-        self.current_group_stack.pop();
+        self.storage.current_group_stack.pop();
         result
     }
 
@@ -283,17 +416,14 @@ impl RenderGraph {
     }
 
     /// Registers a named texture resource.
-    ///
-    /// The name is recorded in the resource registry so that passes can
-    /// look it up via [`PassBuilder::find_resource`] during setup.
     pub fn register_resource(
         &mut self,
         name: &'static str,
         desc: TextureDesc,
         is_external: bool,
     ) -> TextureNodeId {
-        let id = TextureNodeId(self.resources.len() as u32);
-        self.resources.push(ResourceRecord {
+        let id = TextureNodeId(self.storage.resources.len() as u32);
+        self.storage.resources.push(ResourceRecord {
             name,
             desc,
             is_external,
@@ -304,70 +434,39 @@ impl RenderGraph {
             physical_index: None,
             alias_of: None,
         });
-        self.resource_registry.insert(name, id);
+        self.storage.resource_registry.insert(name, id);
         id
     }
 
-    /// Looks up a resource by name. Returns `None` if the name has not been
-    /// registered in the current frame.
+    /// Looks up a resource by name.
     #[inline]
     #[must_use]
     pub fn find_resource(&self, name: &str) -> Option<TextureNodeId> {
-        self.resource_registry.get(name).copied()
+        self.storage.resource_registry.get(name).copied()
     }
 
     /// Creates a versioned alias of `input_id` that shares the same physical
     /// GPU memory.
-    ///
-    /// This is the foundation of the SSA (Static Single Assignment) resource
-    /// model: any in-place modification of a texture (e.g. Skybox drawing
-    /// over Opaque output) produces a *new* logical ID while reusing the
-    /// same physical allocation.  The resulting DAG has no ambiguous
-    /// read-write edges, enabling cycle-free topological sorting without
-    /// reliance on `add_pass` registration order.
-    ///
-    /// Used by `Feature::add_to_graph()` when the output ID must be known
-    /// before the pass is inserted.  For self-contained passes, prefer
-    /// [`PassBuilder::mutate_and_export`] which calls this internally.
     pub fn create_alias(&mut self, input_id: TextureNodeId, name: &'static str) -> TextureNodeId {
         let root_idx = self.resolve_alias_root(input_id.0 as usize);
         let root_id = TextureNodeId(root_idx as u32);
 
-        let root_res = &self.resources[root_idx];
+        let root_res = &self.storage.resources[root_idx];
         let desc = root_res.desc;
         let is_external = root_res.is_external;
 
         let new_id = self.register_resource(name, desc, is_external);
-        self.resources[new_id.0 as usize].alias_of = Some(root_id);
+        self.storage.resources[new_id.0 as usize].alias_of = Some(root_id);
         new_id
     }
 
     /// Chases the `alias_of` chain to find the root (non-alias) resource.
     #[inline]
     fn resolve_alias_root(&self, idx: usize) -> usize {
-        if let Some(root_id) = self.resources[idx].alias_of {
+        if let Some(root_id) = self.storage.resources[idx].alias_of {
             root_id.0 as usize
         } else {
             idx
-        }
-    }
-
-    /// Returns the current frame's [`FrameArena`] reference.
-    ///
-    /// # Panics
-    ///
-    /// Panics if [`set_frame_arena()`](Self::set_frame_arena) has not been
-    /// called for the current frame.
-    #[inline]
-    fn arena(&self) -> &FrameArena {
-        // SAFETY: The pointer is valid for the duration of graph building
-        // (from `set_frame_arena()` to `cleanup_nodes()`).
-        unsafe {
-            &*self
-                .arena
-                .as_ref()
-                .expect("Frame arena not set — call set_frame_arena() before add_pass()")
-                .0
         }
     }
 
@@ -386,25 +485,27 @@ impl RenderGraph {
     /// allocator overhead.  All nodes reside in contiguous memory,
     /// maximising CPU cache utilisation during the execute phase.
     ///
-    /// # Type Parameters
+    /// # Zero Drop
     ///
-    /// - `N` — concrete [`PassNode`] type (arena-allocated).
-    /// - `Out` — caller-chosen return payload (e.g. `TextureNodeId`).
-    /// - `F` — closure type.
+    /// Arena-allocated nodes are **never** dropped.  [`FrameArena::reset()`]
+    /// reclaims all memory in O(1) without running destructors.  Nodes
+    /// must therefore hold only borrowed references (`&'a T`) or `Copy`
+    /// types — never owned heap data.
     pub fn add_pass<N, Out, F>(&mut self, name: &'static str, setup_fn: F) -> Out
     where
-        N: PassNode + 'static,
-        F: FnOnce(&mut PassBuilder) -> (N, Out),
+        N: for<'b> PassNode<'b> + 'a + 'static,
+        F: FnOnce(&mut PassBuilder<'_, 'a>) -> (N, Out),
     {
-        let pass_index = self.passes.len();
+        let pass_index = self.storage.passes.len();
 
         // Phase 1: placeholder record (node = None) so the PassBuilder can
         // reference the correct index.
-        self.passes.push(PassRecord::new_empty(name));
+        self.storage.passes.push(PassRecord::new_empty(name));
 
         #[cfg(feature = "rdg_inspector")]
         {
-            self.passes[pass_index].groups = self.current_group_stack.iter().copied().collect();
+            self.storage.passes[pass_index].groups =
+                self.storage.current_group_stack.iter().copied().collect();
         }
 
         // Phase 2: execute the closure — all topology wiring happens here.
@@ -417,44 +518,42 @@ impl RenderGraph {
         };
 
         // Phase 3: allocate the node on the frame arena (O(1) pointer bump).
-        let node_ref: &mut N = self.arena().alloc(node);
-        let ptr: *mut dyn PassNode = node_ref as *mut N;
-        self.passes[pass_index].node = Some(NodeSlot::new_owned(ptr));
+        let node_ref: &mut N = self.arena.alloc(node);
+        let ptr: *mut dyn for<'b> PassNode<'b> = node_ref as *mut N;
+        self.storage.passes[pass_index].node = Some(NodeSlot::new(ptr));
         output
     }
 
     /// Adds a borrowed pass to the graph with eager setup.
     ///
-    /// The closure receives a [`PassBuilder`] for topology wiring, but the
-    /// pass node is provided externally and stored via a direct pointer.
+    /// The pass node is provided externally and stored via a direct pointer.
     /// This method exists for long-lived passes (such as UI overlays)
     /// where the `PassNode`'s state spans multiple frames.
     ///
     /// Unlike [`add_pass()`](Self::add_pass), the node is **not** allocated
-    /// on the frame arena and will **not** be dropped during
-    /// [`cleanup_nodes()`](Self::cleanup_nodes).
+    /// on the frame arena.
     ///
     /// # Safety Contract
     ///
     /// The caller **must** ensure that `node` remains valid (not moved,
     /// dropped, or mutably aliased) from this call until after the graph's
-    /// `prepare` and `execute` phases complete.  In practice this means
-    /// the reference must outlive [`FrameComposer::render()`].
+    /// `prepare` and `execute` phases complete.
     pub fn add_pass_borrowed<Out, F>(
         &mut self,
         name: &'static str,
-        node: &mut (dyn PassNode + 'static),
+        node: &mut (dyn for<'b> PassNode<'b> + 'static),
         setup_fn: F,
     ) -> Out
     where
-        F: FnOnce(&mut PassBuilder) -> Out,
+        F: FnOnce(&mut PassBuilder<'_, 'a>) -> Out,
     {
-        let pass_index = self.passes.len();
-        self.passes.push(PassRecord::new_empty(name));
+        let pass_index = self.storage.passes.len();
+        self.storage.passes.push(PassRecord::new_empty(name));
 
         #[cfg(feature = "rdg_inspector")]
         {
-            self.passes[pass_index].groups = self.current_group_stack.iter().copied().collect();
+            self.storage.passes[pass_index].groups =
+                self.storage.current_group_stack.iter().copied().collect();
         }
 
         let output = {
@@ -465,9 +564,9 @@ impl RenderGraph {
             setup_fn(&mut builder)
         };
 
-        // Store a non-owned pointer — cleanup_nodes() will skip this slot.
-        let ptr: *mut dyn PassNode = std::ptr::from_mut::<dyn PassNode>(node);
-        self.passes[pass_index].node = Some(NodeSlot::new_borrowed(ptr));
+        let ptr: *mut dyn for<'b> PassNode<'b> =
+            std::ptr::from_mut::<dyn for<'b> PassNode<'b>>(node);
+        self.storage.passes[pass_index].node = Some(NodeSlot::new(ptr));
         output
     }
 
@@ -485,29 +584,19 @@ impl RenderGraph {
         self.allocate_physical_resources(pool, device);
     }
 
-    /// Builds physical pass-to-pass dependencies from resource read/write edges.
-    ///
-    /// For each pass, every resource it reads creates a dependency on all
-    /// passes that produce (write) that resource.  Self-loops (a pass that
-    /// both reads and writes the same resource) are excluded.
-    ///
-    /// With the SSA alias model, every relay-write produces a *new* logical
-    /// resource ID, so the dependency direction is fully determined by the
-    /// graph edges — no reliance on `add_pass` registration order.
     fn build_physical_dependencies(&mut self) {
-        for pass_idx in 0..self.passes.len() {
-            let num_reads = self.passes[pass_idx].reads.len();
+        for pass_idx in 0..self.storage.passes.len() {
+            let num_reads = self.storage.passes[pass_idx].reads.len();
             for read_i in 0..num_reads {
-                let res_id = self.passes[pass_idx].reads[read_i];
+                let res_id = self.storage.passes[pass_idx].reads[read_i];
 
-                // ✅ 直接获取唯一的生产者（如果有的话）
-                if let Some(producer_idx) = self.resources[res_id.0 as usize].producer
+                if let Some(producer_idx) = self.storage.resources[res_id.0 as usize].producer
                     && producer_idx < pass_idx
-                    && !self.passes[pass_idx]
+                    && !self.storage.passes[pass_idx]
                         .physical_dependencies
                         .contains(&producer_idx)
                 {
-                    self.passes[pass_idx]
+                    self.storage.passes[pass_idx]
                         .physical_dependencies
                         .push(producer_idx);
                 }
@@ -515,94 +604,79 @@ impl RenderGraph {
         }
     }
 
-    /// Marks passes as "alive" by back-propagating reference counts from
-    /// root passes (those with side effects or external outputs).
-    ///
-    /// Dead passes that contribute to no external output are left with
-    /// `reference_count == 0` and will be excluded from the execution queue.
-    ///
-    /// Uses index-based iteration to avoid cloning dependency lists.
     fn cull_dead_passes(&mut self) {
-        self.compile_stack.clear();
+        self.storage.compile_stack.clear();
 
-        for (i, pass) in self.passes.iter_mut().enumerate() {
+        for (i, pass) in self.storage.passes.iter_mut().enumerate() {
             pass.reference_count = 0;
             if pass.has_side_effect {
-                self.compile_stack.push(i);
+                self.storage.compile_stack.push(i);
                 pass.reference_count += 1;
                 continue;
             }
             for write_id in &pass.writes {
-                if self.resources[write_id.0 as usize].is_external {
-                    self.compile_stack.push(i);
+                if self.storage.resources[write_id.0 as usize].is_external {
+                    self.storage.compile_stack.push(i);
                     pass.reference_count += 1;
                     break;
                 }
             }
         }
 
-        while let Some(pass_idx) = self.compile_stack.pop() {
-            let num_deps = self.passes[pass_idx].physical_dependencies.len();
+        while let Some(pass_idx) = self.storage.compile_stack.pop() {
+            let num_deps = self.storage.passes[pass_idx].physical_dependencies.len();
             for dep_i in 0..num_deps {
-                let dep_idx = self.passes[pass_idx].physical_dependencies[dep_i];
-                if self.passes[dep_idx].reference_count == 0 {
-                    self.compile_stack.push(dep_idx);
+                let dep_idx = self.storage.passes[pass_idx].physical_dependencies[dep_i];
+                if self.storage.passes[dep_idx].reference_count == 0 {
+                    self.storage.compile_stack.push(dep_idx);
                 }
-                self.passes[dep_idx].reference_count += 1;
+                self.storage.passes[dep_idx].reference_count += 1;
             }
         }
     }
 
     fn topological_sort(&mut self) {
-        let pass_count = self.passes.len();
+        let pass_count = self.storage.passes.len();
 
-        // 重置缓冲区，复用内存
-        self.compile_in_degrees.clear();
-        self.compile_in_degrees.resize(pass_count, 0);
+        self.storage.compile_in_degrees.clear();
+        self.storage.compile_in_degrees.resize(pass_count, 0);
 
-        self.compile_dependency_graph.clear();
-        self.compile_dependency_graph
+        self.storage.compile_dependency_graph.clear();
+        self.storage
+            .compile_dependency_graph
             .resize(pass_count, SmallVec::new());
 
-        // self.compile_queue.clear();
-        self.compile_ready_heap.clear();
+        self.storage.compile_ready_heap.clear();
 
-        // 统计存活节点的入度和依赖反转图
-        for (i, pass) in self.passes.iter().enumerate() {
+        for (i, pass) in self.storage.passes.iter().enumerate() {
             if pass.reference_count > 0 {
-                self.compile_in_degrees[i] = pass.physical_dependencies.len();
+                self.storage.compile_in_degrees[i] = pass.physical_dependencies.len();
 
-                if self.compile_in_degrees[i] == 0 {
-                    // Initial nodes with in-degree 0 can be given an initial weight based on Pass type
-                    self.compile_ready_heap.push(ReadyNode {
+                if self.storage.compile_in_degrees[i] == 0 {
+                    self.storage.compile_ready_heap.push(ReadyNode {
                         priority: 0,
                         pass_idx: i,
                     });
                 }
 
                 for &dep in &pass.physical_dependencies {
-                    self.compile_dependency_graph[dep].push(i);
+                    self.storage.compile_dependency_graph[dep].push(i);
                 }
             }
         }
 
-        // // Kahn's algorithm (Heuristic Order)
-        // 一个单调递增的游标，用于赋予新解锁的 Node 更高的优先级，从而模拟强局部的 DFS 行为
         let mut sequence_counter = 0;
 
-        while let Some(ReadyNode { pass_idx: node, .. }) = self.compile_ready_heap.pop() {
-            self.execution_queue.push(node);
+        while let Some(ReadyNode { pass_idx: node, .. }) = self.storage.compile_ready_heap.pop() {
+            self.storage.execution_queue.push(node);
             sequence_counter += 1;
 
-            for &downstream in &self.compile_dependency_graph[node] {
-                self.compile_in_degrees[downstream] -= 1;
-                if self.compile_in_degrees[downstream] == 0 {
-                    // 核心启发式：刚被解锁的下游节点获得当前最高的 sequence_counter 权重。
-                    // 这保证了它会紧接着它的生产者（即当前 node）执行，最大化 GPU Cache 命中率。
-                    // Todo: 未来可以在这里加上：如果 downstream 是 Compute Pass，则 priority 降低，推迟到最后执行。
+            for &downstream in &self.storage.compile_dependency_graph[node] {
+                self.storage.compile_in_degrees[downstream] -= 1;
+                if self.storage.compile_in_degrees[downstream] == 0 {
                     let heuristic_score = sequence_counter;
 
-                    self.compile_ready_heap.push(ReadyNode {
+                    self.storage.compile_ready_heap.push(ReadyNode {
                         priority: heuristic_score,
                         pass_idx: downstream,
                     });
@@ -610,9 +684,14 @@ impl RenderGraph {
             }
         }
 
-        let alive_count = self.passes.iter().filter(|p| p.reference_count > 0).count();
+        let alive_count = self
+            .storage
+            .passes
+            .iter()
+            .filter(|p| p.reference_count > 0)
+            .count();
         assert_eq!(
-            self.execution_queue.len(),
+            self.storage.execution_queue.len(),
             alive_count,
             "Render Graph Detected Circular Dependency!"
         );
@@ -622,16 +701,16 @@ impl RenderGraph {
     }
 
     fn compute_resource_lifetimes(&mut self) {
-        for res in &mut self.resources {
+        for res in &mut self.storage.resources {
             res.first_use = usize::MAX;
             res.last_use = 0;
         }
 
-        for (timeline_index, &pass_idx) in self.execution_queue.iter().enumerate() {
-            let pass = &self.passes[pass_idx];
+        for (timeline_index, &pass_idx) in self.storage.execution_queue.iter().enumerate() {
+            let pass = &self.storage.passes[pass_idx];
 
             let mut touch_resource = |id: TextureNodeId| {
-                let res = &mut self.resources[id.0 as usize];
+                let res = &mut self.storage.resources[id.0 as usize];
                 res.first_use = res.first_use.min(timeline_index);
                 res.last_use = res.last_use.max(timeline_index);
             };
@@ -665,44 +744,38 @@ impl RenderGraph {
     fn allocate_physical_resources(&mut self, pool: &mut TransientPool, device: &Device) {
         pool.begin_frame();
 
-        // ✅ Phase 1: Before allocating physical memory, merge the lifetimes of all aliases into their root
-        for i in 0..self.resources.len() {
-            if self.resources[i].alias_of.is_some() {
+        for i in 0..self.storage.resources.len() {
+            if self.storage.resources[i].alias_of.is_some() {
                 let root_idx = self.resolve_alias_root(i);
-                let alias_first = self.resources[i].first_use;
-                let alias_last = self.resources[i].last_use;
-                self.resources[root_idx].first_use =
-                    self.resources[root_idx].first_use.min(alias_first);
-                self.resources[root_idx].last_use =
-                    self.resources[root_idx].last_use.max(alias_last);
+                let alias_first = self.storage.resources[i].first_use;
+                let alias_last = self.storage.resources[i].last_use;
+                self.storage.resources[root_idx].first_use =
+                    self.storage.resources[root_idx].first_use.min(alias_first);
+                self.storage.resources[root_idx].last_use =
+                    self.storage.resources[root_idx].last_use.max(alias_last);
             }
         }
 
-        // ✅ Phase 2: Propagate the root's unified lifetime back to every alias
-        // (This step is crucial for accurate LoadOp / StoreOp deduction during execution)
-        for i in 0..self.resources.len() {
-            if self.resources[i].alias_of.is_some() {
+        for i in 0..self.storage.resources.len() {
+            if self.storage.resources[i].alias_of.is_some() {
                 let root_idx = self.resolve_alias_root(i);
-                self.resources[i].first_use = self.resources[root_idx].first_use;
-                self.resources[i].last_use = self.resources[root_idx].last_use;
+                self.storage.resources[i].first_use = self.storage.resources[root_idx].first_use;
+                self.storage.resources[i].last_use = self.storage.resources[root_idx].last_use;
             }
         }
 
-        // ✅ Phase 3: Request physical allocations from the pool for root resources. Aliases will be skipped since they share the same physical memory.
-        for i in 0..self.resources.len() {
-            let res = &mut self.resources[i];
+        for i in 0..self.storage.resources.len() {
+            let res = &mut self.storage.resources[i];
             if res.is_external || res.first_use == usize::MAX || res.alias_of.is_some() {
-                continue; // skip external resources, unused resources, and aliases (they share the root's physical memory)
+                continue;
             }
             res.physical_index = Some(pool.acquire(device, &res.desc, res.first_use, res.last_use));
         }
 
-        // ✅ Phase 4: Aliases share the same physical memory as their root, so propagate the root's unified `last_use` back to every alias.
-        // This ensures that the execute-phase `LoadOp` deduction sees the correct lifetime and keeps the physical memory alive for the entire duration of all aliases.
-        for i in 0..self.resources.len() {
-            if self.resources[i].alias_of.is_some() {
+        for i in 0..self.storage.resources.len() {
+            if self.storage.resources[i].alias_of.is_some() {
                 let root_idx = self.resolve_alias_root(i);
-                self.resources[i].physical_index = self.resources[root_idx].physical_index;
+                self.storage.resources[i].physical_index = self.storage.resources[root_idx].physical_index;
             }
         }
     }
@@ -710,12 +783,13 @@ impl RenderGraph {
     #[cfg(debug_assertions)]
     fn debug_print_topology_changes(&mut self) {
         let current_names: Vec<&'static str> = self
+            .storage
             .execution_queue
             .iter()
-            .map(|&idx| self.passes[idx].name)
+            .map(|&idx| self.storage.passes[idx].name)
             .collect();
 
-        if current_names != self.prev_execution_names {
+        if current_names != self.storage.prev_execution_names {
             log::info!(
                 "🌈 RDG Topology Changed! New Execution Order ({} passes): \n{:#?}",
                 current_names.len(),
@@ -726,7 +800,7 @@ impl RenderGraph {
 
             let dump = self.dump_mermaid();
             println!("\n🌈 RDG Topology Mermaid Dump:\n{dump}");
-            self.prev_execution_names = current_names;
+            self.storage.prev_execution_names = current_names;
         }
     }
 
@@ -738,211 +812,7 @@ impl RenderGraph {
     /// the output is a flat graph (still fully functional for debugging).
     #[must_use]
     pub fn dump_mermaid(&self) -> String {
-        use std::fmt::Write;
-        let mut out = String::new();
-
-        writeln!(&mut out, "flowchart TD").unwrap();
-
-        writeln!(
-            &mut out,
-            "    classDef alive fill:#2b3c5a,stroke:#4a6f9f,stroke-width:2px,color:#fff,rx:5,ry:5;"
-        )
-        .unwrap();
-        writeln!(
-            &mut out,
-            "    classDef dead fill:#222,stroke:#555,stroke-width:2px,stroke-dasharray: 5 5,color:#777,rx:5,ry:5;"
-        )
-        .unwrap();
-        writeln!(
-            &mut out,
-            "    classDef external fill:#5a2b3c,stroke:#9f4a6f,stroke-width:2px,color:#fff;"
-        )
-        .unwrap();
-
-        // ── Passes (Nodes) ──────────────────────────────────────────
-        //
-        // When rdg_inspector is active, collect unique groups and emit
-        // subgraph blocks first, then ungrouped passes at the top level.
-        #[cfg(feature = "rdg_inspector")]
-        {
-            #[derive(Default)]
-            struct GroupNode {
-                name: &'static str,
-                passes: Vec<usize>,
-                children: Vec<GroupNode>,
-            }
-
-            impl GroupNode {
-                // 递归插入 pass 索引
-                fn insert(&mut self, path: &[&'static str], pass_idx: usize) {
-                    if path.is_empty() {
-                        self.passes.push(pass_idx);
-                    } else {
-                        let next_name = path[0];
-                        if let Some(child) = self.children.iter_mut().find(|c| c.name == next_name)
-                        {
-                            child.insert(&path[1..], pass_idx);
-                        } else {
-                            let mut new_child = GroupNode {
-                                name: next_name,
-                                ..Default::default()
-                            };
-                            new_child.insert(&path[1..], pass_idx);
-                            self.children.push(new_child);
-                        }
-                    }
-                }
-
-                // 递归生成 Mermaid 字符串
-                fn write_mermaid(&self, out: &mut String, graph: &RenderGraph, depth: usize) {
-                    use std::fmt::Write;
-                    let indent = "    ".repeat(depth);
-
-                    // 如果不是根节点（根节点 name 为空），则绘制 subgraph 块
-                    if !self.name.is_empty() {
-                        writeln!(out, "{indent}subgraph {} [\"{}\"]", self.name, self.name)
-                            .unwrap();
-                        writeln!(out, "{indent}    direction TB").unwrap();
-                    }
-
-                    let inner_indent = if self.name.is_empty() {
-                        indent.clone()
-                    } else {
-                        format!("{indent}    ")
-                    };
-
-                    // 绘制当前组内的 Passes
-                    for &pass_idx in &self.passes {
-                        RenderGraph::write_pass_node(
-                            out,
-                            pass_idx,
-                            &graph.passes[pass_idx],
-                            &inner_indent,
-                        );
-                    }
-
-                    // 递归绘制子组
-                    for child in &self.children {
-                        child.write_mermaid(
-                            out,
-                            graph,
-                            if self.name.is_empty() {
-                                depth
-                            } else {
-                                depth + 1
-                            },
-                        );
-                    }
-
-                    if !self.name.is_empty() {
-                        writeln!(out, "{indent}end").unwrap();
-
-                        // ─── 动态分配子图样式 ───
-                        // 通过计算字符串的简单 Hash 值，确保相同的模块每次 dump 颜色一致
-                        let hash = self
-                            .name
-                            .bytes()
-                            .fold(0usize, |acc, b| acc.wrapping_add(b as usize));
-
-                        // 预定义一套极客且不突兀的半透明调色板（支持深色模式）
-                        const STYLES: &[(&str, &str)] = &[
-                            ("#3b82f614", "#3b82f6"), // Blue (科技蓝)
-                            ("#10b98114", "#10b981"), // Emerald (翡翠绿)
-                            ("#8b5cf614", "#8b5cf6"), // Violet (赛博紫)
-                            ("#f59e0b14", "#f59e0b"), // Amber (警示黄)
-                            ("#ef444414", "#ef4444"), // Red (危险红)
-                            ("#ec489914", "#ec4899"), // Pink (霓虹粉)
-                            ("#06b6d414", "#06b6d4"), // Cyan (青色)
-                        ];
-
-                        let (bg, stroke) = STYLES[hash % STYLES.len()];
-
-                        // 为子图生成专属的 CSS 样式 (半透明背景 + 彩色虚线框 + 圆角)
-                        writeln!(
-                            out,
-                            "{indent}style {} fill:{},stroke:{},stroke-width:2px,stroke-dasharray: 5 5,color:#fff,rx:10,ry:10", 
-                            self.name, bg, stroke
-                        ).unwrap();
-                    }
-                }
-            }
-
-            // 将扁平的 Passes 构建进树结构中
-            let mut root = GroupNode::default();
-            for (i, pass) in self.passes.iter().enumerate() {
-                root.insert(&pass.groups, i);
-            }
-
-            // 递归写出
-            root.write_mermaid(&mut out, self, 1);
-        }
-
-        #[cfg(not(feature = "rdg_inspector"))]
-        {
-            writeln!(&mut out, "\n    %% --- Passes ---").unwrap();
-            for (i, pass) in self.passes.iter().enumerate() {
-                Self::write_pass_node(&mut out, i, pass, "    ");
-            }
-        }
-
-        // ── Data-Flow Edges ─────────────────────────────────────────
-        writeln!(&mut out, "\n    %% --- Data Flow (Edges) ---").unwrap();
-        for (pass_idx, pass) in self.passes.iter().enumerate() {
-            for &write_id in &pass.writes {
-                let res = &self.resources[write_id.0 as usize];
-
-                for &consumer_idx in &res.consumers {
-                    let edge_style = if res.alias_of.is_some() {
-                        "==>" // bold = alias (same physical resource)
-                    } else {
-                        "-->" // thin = normal dependency
-                    };
-
-                    writeln!(
-                        &mut out,
-                        "    P{pass_idx} {edge_style}|\"{}\"| P{consumer_idx};",
-                        res.name
-                    )
-                    .unwrap();
-                }
-
-                // Terminal external outputs (e.g. Surface).
-                if res.consumers.is_empty() && res.is_external {
-                    writeln!(
-                        &mut out,
-                        "    OUT_{id}[/\"{name}\"/]:::external",
-                        id = write_id.0,
-                        name = res.name
-                    )
-                    .unwrap();
-                    writeln!(
-                        &mut out,
-                        "    P{pass_idx} -->|\"{}\"| OUT_{};",
-                        res.name, write_id.0
-                    )
-                    .unwrap();
-                }
-            }
-        }
-
-        log::info!("\n🌈 RDG Topology Mermaid Dump:\n{out}");
-        out
-    }
-
-    /// Helper: emit a single pass node in Mermaid syntax.
-    fn write_pass_node(out: &mut String, index: usize, pass: &PassRecord, indent: &str) {
-        use std::fmt::Write;
-        let class = if pass.reference_count > 0 {
-            "alive"
-        } else {
-            "dead"
-        };
-        writeln!(
-            out,
-            "{indent}P{index}([\"{name}\"]):::{class}",
-            name = pass.name
-        )
-        .unwrap();
+        self.storage.dump_mermaid()
     }
 }
 
@@ -976,26 +846,28 @@ mod tests {
     // ─── Shared Mock Pass Type ───────────────────────────────────────
 
     struct MockExec;
-    impl PassNode for MockExec {
+    impl<'a> PassNode<'a> for MockExec {
         fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
 
-    /// Helper: prepare graph + arena for a single frame.
-    fn begin_test_frame(graph: &mut RenderGraph, arena: &mut FrameArena) {
-        graph.cleanup_nodes();
-        arena.reset();
-        graph.begin_frame(dummy_config());
-        graph.set_frame_arena(arena);
+    /// Helper: create a fresh RenderGraph for a test frame.
+    fn begin_test_frame<'a>(
+        storage: &'a mut GraphStorage,
+        arena: &'a FrameArena,
+    ) -> RenderGraph<'a> {
+        storage.clear();
+        RenderGraph::new(storage, arena, dummy_config())
     }
 
     #[test]
     fn test_zero_alloc_graph() {
-        let mut graph = RenderGraph::new();
+        let mut storage = GraphStorage::new();
         let mut arena = FrameArena::new();
 
-        // Run two frames to verify begin_frame capacity reuse.
+        // Run two frames to verify capacity reuse.
         for frame in 0..2 {
-            begin_test_frame(&mut graph, &mut arena);
+            arena.reset();
+            let mut graph = begin_test_frame(&mut storage, &arena);
 
             let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1019,42 +891,38 @@ mod tests {
 
             graph.compile_topology();
 
-            assert_eq!(graph.execution_queue.len(), 3);
-            assert_eq!(graph.passes[graph.execution_queue[0]].name, "Opaque");
-            assert_eq!(graph.passes[graph.execution_queue[1]].name, "Bloom");
-            assert_eq!(graph.passes[graph.execution_queue[2]].name, "ToneMapping");
+            assert_eq!(graph.storage.execution_queue.len(), 3);
+            assert_eq!(graph.storage.passes[graph.storage.execution_queue[0]].name, "Opaque");
+            assert_eq!(graph.storage.passes[graph.storage.execution_queue[1]].name, "Bloom");
+            assert_eq!(graph.storage.passes[graph.storage.execution_queue[2]].name, "ToneMapping");
 
             println!(
                 "Frame {} executed: {:?}",
                 frame,
                 graph
+                    .storage
                     .execution_queue
                     .iter()
-                    .map(|&i| graph.passes[i].name)
+                    .map(|&i| graph.storage.passes[i].name)
                     .collect::<Vec<_>>()
             );
         }
     }
 
-    /// Verifies that transient resources with no consumers are treated as
-    /// dead resources and skip physical allocation, while the producing
-    /// pass itself remains alive (because it has other consumed outputs).
     #[test]
     fn test_dead_resource_culling() {
-        let mut graph = RenderGraph::new();
-        let mut arena = FrameArena::new();
-        begin_test_frame(&mut graph, &mut arena);
+        let mut storage = GraphStorage::new();
+        let arena = FrameArena::new();
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-        // GBuffer writes both Color and MotionVector.
         let (color, motion) = graph.add_pass("GBuffer", |builder| {
             let color = builder.create_and_export("Color", dummy_desc());
             let motion = builder.create_and_export("MotionVec", dummy_desc());
             (MockExec, (color, motion))
         });
 
-        // ToneMap reads only Color, ignoring MotionVector.
         graph.add_pass("ToneMap", |builder| {
             builder.read_texture(color);
             builder.write_texture(backbuffer);
@@ -1063,48 +931,36 @@ mod tests {
 
         graph.compile_topology();
 
-        // GBuffer stays alive because Color is consumed.
-        assert_eq!(graph.execution_queue.len(), 2);
-
-        // Color has a consumer (ToneMap) → should be allocated.
-        assert!(!graph.resources[color.0 as usize].consumers.is_empty());
-
-        // MotionVector has no consumer → dead resource, skip allocation.
-        assert!(graph.resources[motion.0 as usize].consumers.is_empty());
-        // first_use is still valid because the producing pass is alive.
-        assert_ne!(graph.resources[motion.0 as usize].first_use, usize::MAX);
+        assert_eq!(graph.storage.execution_queue.len(), 2);
+        assert!(!graph.storage.resources[color.0 as usize].consumers.is_empty());
+        assert!(graph.storage.resources[motion.0 as usize].consumers.is_empty());
+        assert_ne!(graph.storage.resources[motion.0 as usize].first_use, usize::MAX);
     }
 
-    /// Verifies that a self-read (write + read by the same pass) protects
-    /// an internal resource from being culled.
     #[test]
     fn test_self_read_prevents_culling() {
-        let mut graph = RenderGraph::new();
-        let mut arena = FrameArena::new();
-        begin_test_frame(&mut graph, &mut arena);
+        let mut storage = GraphStorage::new();
+        let arena = FrameArena::new();
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
         let internal = graph.add_pass("MacroNode", |builder| {
             let internal = builder.create_and_export("Internal", dummy_desc());
-            builder.read_texture(internal); // self-read
+            builder.read_texture(internal);
             builder.write_texture(backbuffer);
             (MockExec, internal)
         });
 
         graph.compile_topology();
-
-        // Internal resource has a consumer (self-read) → survives culling.
-        assert!(!graph.resources[internal.0 as usize].consumers.is_empty());
+        assert!(!graph.storage.resources[internal.0 as usize].consumers.is_empty());
     }
 
-    /// Verifies auto-deduced resource lifetimes: first_use and last_use
-    /// correctly reflect the compiled execution timeline.
     #[test]
     fn test_resource_lifetime_deduction() {
-        let mut graph = RenderGraph::new();
-        let mut arena = FrameArena::new();
-        begin_test_frame(&mut graph, &mut arena);
+        let mut storage = GraphStorage::new();
+        let arena = FrameArena::new();
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1128,80 +984,55 @@ mod tests {
 
         graph.compile_topology();
 
-        // Timeline: [0]=Opaque, [1]=Bloom, [2]=ToneMapping
-        let color_res = &graph.resources[color.0 as usize];
-        assert_eq!(
-            color_res.first_use, 0,
-            "Color first written by Opaque at timeline 0"
-        );
-        assert_eq!(
-            color_res.last_use, 2,
-            "Color last read by ToneMapping at timeline 2"
-        );
+        let color_res = &graph.storage.resources[color.0 as usize];
+        assert_eq!(color_res.first_use, 0, "Color first written by Opaque at timeline 0");
+        assert_eq!(color_res.last_use, 2, "Color last read by ToneMapping at timeline 2");
 
-        let bloom_res = &graph.resources[bloom.0 as usize];
-        assert_eq!(
-            bloom_res.first_use, 1,
-            "Bloom first written by BloomPass at timeline 1"
-        );
-        assert_eq!(
-            bloom_res.last_use, 2,
-            "Bloom last read by ToneMapping at timeline 2"
-        );
+        let bloom_res = &graph.storage.resources[bloom.0 as usize];
+        assert_eq!(bloom_res.first_use, 1, "Bloom first written by BloomPass at timeline 1");
+        assert_eq!(bloom_res.last_use, 2, "Bloom last read by ToneMapping at timeline 2");
     }
 
-    /// Verifies the SSA alias (mutate_and_export / create_alias) mechanism:
-    ///
-    /// - Relay passes (Opaque → Skybox → Transparent) produce unique
-    ///   logical IDs sharing the same physical memory.
-    /// - Topological ordering is determined purely by graph edges, not
-    ///   by `add_pass` registration order.
-    /// - Alias resources inherit `LoadOp::Load` semantics.
     #[test]
     fn test_ssa_alias_relay_passes() {
-        let mut graph = RenderGraph::new();
-        let mut arena = FrameArena::new();
-        begin_test_frame(&mut graph, &mut arena);
+        let mut storage = GraphStorage::new();
+        let arena = FrameArena::new();
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-        // 1. Opaque creates the root colour resource.
         let color_v0 = graph.add_pass("Opaque", |builder| {
             let out = builder.create_and_export("SceneColor_v0", dummy_desc());
             (MockExec, out)
         });
 
-        // — Alias metadata checks —
         assert!(
-            graph.resources[color_v0.0 as usize].alias_of.is_none(),
+            graph.storage.resources[color_v0.0 as usize].alias_of.is_none(),
             "v0 is a root resource"
         );
 
-        // 2. Skybox mutates v0 → v1 (SSA relay).
         let color_v1 = graph.add_pass("Skybox", |builder| {
             let out = builder.mutate_and_export(color_v0, "SceneColor_v1");
             (MockExec, out)
         });
 
         assert_eq!(
-            graph.resources[color_v1.0 as usize].alias_of,
+            graph.storage.resources[color_v1.0 as usize].alias_of,
             Some(color_v0),
             "v1 aliases v0"
         );
 
-        // 3. Transparent mutates v1 → v2.
         let color_v2 = graph.add_pass("Transparent", |builder| {
             let out = builder.mutate_and_export(color_v1, "SceneColor_v2");
             (MockExec, out)
         });
 
         assert_eq!(
-            graph.resources[color_v2.0 as usize].alias_of,
+            graph.storage.resources[color_v2.0 as usize].alias_of,
             Some(color_v0),
             "v2 aliases v0 (root)"
         );
 
-        // 4. ToneMap reads the final version.
         graph.add_pass("ToneMap", |builder| {
             builder.read_texture(color_v2);
             builder.write_texture(backbuffer);
@@ -1210,16 +1041,15 @@ mod tests {
 
         graph.compile_topology();
 
-        // 5. Verify topological order: Opaque → Skybox → Transparent → ToneMap.
-        assert_eq!(graph.execution_queue.len(), 4);
+        assert_eq!(graph.storage.execution_queue.len(), 4);
         let names: Vec<&str> = graph
+            .storage
             .execution_queue
             .iter()
-            .map(|&i| graph.passes[i].name)
+            .map(|&i| graph.storage.passes[i].name)
             .collect();
         assert_eq!(names, vec!["Opaque", "Skybox", "Transparent", "ToneMap"]);
 
-        // 6. Verify alias chain resolves to root: v2 → v1 → v0.
         assert_eq!(
             graph.resolve_alias_root(color_v2.0 as usize),
             color_v0.0 as usize
@@ -1234,13 +1064,11 @@ mod tests {
         );
     }
 
-    /// Verifies that `mutate_and_export` on the PassBuilder correctly
-    /// creates an alias, reads the input, and writes the new version.
     #[test]
     fn test_mutate_and_export_api() {
-        let mut graph = RenderGraph::new();
-        let mut arena = FrameArena::new();
-        begin_test_frame(&mut graph, &mut arena);
+        let mut storage = GraphStorage::new();
+        let arena = FrameArena::new();
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1254,14 +1082,12 @@ mod tests {
             (MockExec, out)
         });
 
-        // After Mutator, the graph has a new resource "Color_Mutated".
         let found = graph
             .find_resource("Color_Mutated")
             .expect("mutate_and_export should register the new resource");
         assert_eq!(found, mutated_id);
-        assert!(graph.resources[mutated_id.0 as usize].alias_of.is_some());
+        assert!(graph.storage.resources[mutated_id.0 as usize].alias_of.is_some());
 
-        // Reader consumes the mutated version.
         graph.add_pass("Reader", |builder| {
             builder.read_texture(mutated_id);
             builder.write_texture(backbuffer);
@@ -1270,22 +1096,21 @@ mod tests {
 
         graph.compile_topology();
 
-        assert_eq!(graph.execution_queue.len(), 3);
+        assert_eq!(graph.storage.execution_queue.len(), 3);
         let names: Vec<&str> = graph
+            .storage
             .execution_queue
             .iter()
-            .map(|&i| graph.passes[i].name)
+            .map(|&i| graph.storage.passes[i].name)
             .collect();
         assert_eq!(names, vec!["Writer", "Mutator", "Reader"]);
     }
 
-    /// Verifies that `with_group` does not alter topology or execution
-    /// order — it is purely a metadata annotation.
     #[test]
     fn test_with_group_preserves_topology() {
-        let mut graph = RenderGraph::new();
-        let mut arena = FrameArena::new();
-        begin_test_frame(&mut graph, &mut arena);
+        let mut storage = GraphStorage::new();
+        let arena = FrameArena::new();
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1314,21 +1139,20 @@ mod tests {
         graph.compile_topology();
 
         let names: Vec<&str> = graph
+            .storage
             .execution_queue
             .iter()
-            .map(|&i| graph.passes[i].name)
+            .map(|&i| graph.storage.passes[i].name)
             .collect();
         assert_eq!(names, vec!["Opaque", "Skybox", "ToneMap"]);
     }
 
-    /// Verifies that the Mermaid dump contains `subgraph` blocks when the
-    /// `rdg_inspector` feature is active.
     #[cfg(feature = "rdg_inspector")]
     #[test]
     fn test_dump_mermaid_subgraphs() {
-        let mut graph = RenderGraph::new();
-        let mut arena = FrameArena::new();
-        begin_test_frame(&mut graph, &mut arena);
+        let mut storage = GraphStorage::new();
+        let arena = FrameArena::new();
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1367,14 +1191,12 @@ mod tests {
             mermaid.contains("Bloom_Composite"),
             "Subgraph should contain Bloom_Composite pass"
         );
-        // ToneMap should NOT be inside the subgraph.
         assert!(
             mermaid.contains("ToneMap"),
             "Mermaid should have an ungrouped section for ToneMap"
         );
-        // Verify group metadata on records.
-        assert_eq!(graph.passes[0].groups.as_slice(), &["Bloom_System"]);
-        assert_eq!(graph.passes[1].groups.as_slice(), &["Bloom_System"]);
-        assert!(graph.passes[2].groups.is_empty()); // ToneMap is ungrouped
+        assert_eq!(graph.storage.passes[0].groups.as_slice(), &["Bloom_System"]);
+        assert_eq!(graph.storage.passes[1].groups.as_slice(), &["Bloom_System"]);
+        assert!(graph.storage.passes[2].groups.is_empty());
     }
 }

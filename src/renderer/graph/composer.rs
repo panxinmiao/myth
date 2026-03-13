@@ -59,6 +59,7 @@ use crate::renderer::graph::core::{
     ExecuteContext, FrameArena, GraphBlackboard, HookStage, PrepareContext, RenderGraph, TextureDesc,
     TextureNodeId, TransientPool, ViewResolver,
 };
+use crate::renderer::graph::core::GraphStorage;
 use crate::renderer::graph::frame::{PreparedSkyboxDraw, RenderLists};
 use crate::renderer::graph::passes::{
     BloomFeature, BrdfLutFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
@@ -90,7 +91,7 @@ pub struct ComposerContext<'a> {
     pub assets: &'a AssetServer,
     pub time: f32,
 
-    pub graph: &'a mut RenderGraph,
+    pub graph_storage: &'a mut GraphStorage,
     pub transient_pool: &'a mut TransientPool,
     pub sampler_registry: &'a mut SamplerRegistry,
     pub frame_arena: &'a FrameArena,
@@ -145,7 +146,7 @@ pub struct FrameComposer<'a> {
     hooks: smallvec::SmallVec<
         [(
             HookStage,
-            Box<dyn FnMut(&mut RenderGraph, GraphBlackboard) -> GraphBlackboard + 'a>,
+            Box<dyn for<'g> FnMut(&mut RenderGraph<'g>, GraphBlackboard) -> GraphBlackboard + 'a>,
         ); 4],
     >,
 }
@@ -205,7 +206,7 @@ impl<'a> FrameComposer<'a> {
     #[must_use]
     pub fn add_custom_pass<F>(mut self, stage: HookStage, hook: F) -> Self
     where
-        F: FnMut(&mut RenderGraph, GraphBlackboard) -> GraphBlackboard + 'a,
+        F: for<'g> FnMut(&mut RenderGraph<'g>, GraphBlackboard) -> GraphBlackboard + 'a,
     {
         self.hooks.push((stage, Box::new(hook)));
         self
@@ -245,16 +246,18 @@ impl<'a> FrameComposer<'a> {
 
         // ━━━ 2. Build Unified RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        let graph = self.ctx.graph;
-        graph.begin_frame(crate::renderer::graph::core::graph::FrameConfig {
-            width,
-            height,
-            depth_format: self.ctx.wgpu_ctx.depth_format,
-            msaa_samples: self.ctx.wgpu_ctx.msaa_samples,
-            surface_format: view_format,
-            hdr_format: crate::renderer::HDR_TEXTURE_FORMAT,
-        });
-        graph.set_frame_arena(self.ctx.frame_arena);
+        let mut graph = RenderGraph::new(
+            self.ctx.graph_storage,
+            self.ctx.frame_arena,
+            crate::renderer::graph::core::graph::FrameConfig {
+                width,
+                height,
+                depth_format: self.ctx.wgpu_ctx.depth_format,
+                msaa_samples: self.ctx.wgpu_ctx.msaa_samples,
+                surface_format: view_format,
+                hdr_format: crate::renderer::HDR_TEXTURE_FORMAT,
+            },
+        );
 
         // ── 2a. Register Resources ──────────────────────────────────────
         // Only the swapchain surface is truly external.
@@ -428,7 +431,7 @@ impl<'a> FrameComposer<'a> {
                 };
                 for (stage, hook) in &mut self.hooks {
                     if *stage == HookStage::BeforePostProcess {
-                        blackboard = hook(graph, blackboard);
+                        blackboard = hook(&mut graph, blackboard);
                     }
                 }
             }
@@ -509,7 +512,7 @@ impl<'a> FrameComposer<'a> {
             };
             for (stage, hook) in &mut self.hooks {
                 if *stage == HookStage::AfterPostProcess {
-                    blackboard = hook(graph, blackboard);
+                    blackboard = hook(&mut graph, blackboard);
                 }
             }
         }
@@ -526,7 +529,7 @@ impl<'a> FrameComposer<'a> {
 
         let mut prepare_ctx = PrepareContext {
             views: ViewResolver {
-                resources: &graph.resources,
+                resources: &graph.storage.resources,
                 pool: self.ctx.transient_pool,
                 external_resources: &self.external_res,
             },
@@ -536,8 +539,8 @@ impl<'a> FrameComposer<'a> {
             global_bind_group_cache: self.ctx.global_bind_group_cache,
         };
 
-        for &pass_idx in &graph.execution_queue {
-            let pass = graph.passes[pass_idx].get_pass_mut();
+        for &pass_idx in &graph.storage.execution_queue {
+            let pass = graph.storage.passes[pass_idx].get_pass_mut();
             pass.prepare(&mut prepare_ctx);
         }
 
@@ -568,7 +571,7 @@ impl<'a> FrameComposer<'a> {
         ext_views.insert(surface_out, &surface_view);
 
         let mut execute_ctx = ExecuteContext {
-            resources: &graph.resources,
+            resources: &graph.storage.resources,
             pool: self.ctx.transient_pool,
             device: &self.ctx.wgpu_ctx.device,
             queue: &self.ctx.wgpu_ctx.queue,
@@ -589,11 +592,11 @@ impl<'a> FrameComposer<'a> {
                     label: Some("Unified Encoder"),
                 });
 
-        for (timeline_index, &pass_idx) in graph.execution_queue.iter().enumerate() {
+        for (timeline_index, &pass_idx) in graph.storage.execution_queue.iter().enumerate() {
             execute_ctx.current_timeline_index = timeline_index;
             #[cfg(debug_assertions)]
-            encoder.push_debug_group(graph.passes[pass_idx].name);
-            graph.passes[pass_idx]
+            encoder.push_debug_group(graph.storage.passes[pass_idx].name);
+            graph.storage.passes[pass_idx]
                 .get_pass_mut()
                 .execute(&execute_ctx, &mut encoder);
             #[cfg(debug_assertions)]

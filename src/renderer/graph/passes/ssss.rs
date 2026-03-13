@@ -294,7 +294,7 @@ impl SsssFeature {
     /// 2. **SSSS_Blur_V** — vertical scatter: `temp_blur` → `scene_color` alias
     pub fn add_to_graph(
         &self,
-        graph: &mut RenderGraph,
+        graph: &mut RenderGraph<'_>,
         scene_color: TextureNodeId,
         scene_depth: TextureNodeId,
         scene_normals: TextureNodeId,
@@ -391,7 +391,7 @@ struct SsssHorizontalNode {
     bind_group: Option<wgpu::BindGroup>,
 }
 
-impl PassNode for SsssHorizontalNode {
+impl PassNode<'_> for SsssHorizontalNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let depth_sub_key = SubViewKey {
             aspect: wgpu::TextureAspect::DepthOnly,
@@ -515,7 +515,7 @@ struct SsssVerticalNode {
     bind_group: Option<wgpu::BindGroup>,
 }
 
-impl PassNode for SsssVerticalNode {
+impl PassNode<'_> for SsssVerticalNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let depth_sub_key = SubViewKey {
             aspect: wgpu::TextureAspect::DepthOnly,

@@ -318,7 +318,7 @@ impl PrepassFeature {
     /// via explicit [`TextureNodeId`] connections.
     pub fn add_to_graph(
         &self,
-        graph: &mut RenderGraph,
+        graph: &mut RenderGraph<'_>,
         needs_normal: bool,
         needs_feature_id: bool,
     ) -> PrepassOutputs {
@@ -407,7 +407,7 @@ pub struct PrepassPassNode {
     needs_feature_id: bool,
 }
 
-impl PassNode for PrepassPassNode {
+impl PassNode<'_> for PrepassPassNode {
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 

@@ -550,7 +550,7 @@ impl BloomFeature {
     /// bloom applied) for downstream wiring (e.g. ToneMapping).
     pub fn add_to_graph(
         &self,
-        graph: &mut RenderGraph,
+        graph: &mut RenderGraph<'_>,
         input_color: TextureNodeId,
         karis_average: bool,
         max_mip_levels: u32,
@@ -827,7 +827,7 @@ struct BloomDownsampleNode {
     transient_bg_key: Option<BindGroupKey>,
 }
 
-impl PassNode for BloomDownsampleNode {
+impl PassNode<'_> for BloomDownsampleNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let input_view = ctx.views.get_texture_view(self.input_tex);
         let key = BindGroupKey::new(self.transient_layout.id()).with_resource(input_view.id());
@@ -881,7 +881,7 @@ struct BloomUpsampleNode {
     transient_bg_key: Option<BindGroupKey>,
 }
 
-impl PassNode for BloomUpsampleNode {
+impl PassNode<'_> for BloomUpsampleNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let coarser_view = ctx.views.get_texture_view(self.coarser_tex);
         let key = BindGroupKey::new(self.transient_layout.id()).with_resource(coarser_view.id());
@@ -939,7 +939,7 @@ struct BloomCompositeNode {
     transient_bg_key: Option<BindGroupKey>,
 }
 
-impl PassNode for BloomCompositeNode {
+impl PassNode<'_> for BloomCompositeNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let original_view = ctx.views.get_texture_view(self.original_tex);
         let bloom_view = ctx.views.get_texture_view(self.bloom_tex);

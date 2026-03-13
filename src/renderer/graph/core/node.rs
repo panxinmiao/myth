@@ -6,9 +6,10 @@ use wgpu::CommandEncoder;
 
 /// Pure GPU command recorder for a single render or compute pass.
 ///
-/// `PassNode` is intentionally minimal — it carries only lightweight IDs
-/// and transient bind-group slots.  All persistent GPU resources (layouts,
-/// pipelines, buffers) live in the owning `Feature`.
+/// `PassNode` is intentionally minimal — it carries only lightweight IDs,
+/// borrowed references to persistent GPU resources (`&'a wgpu::BindGroup`),
+/// and transient bind-group cache keys.  All persistent GPU resources
+/// (layouts, pipelines, buffers) live in the owning `Feature`.
 ///
 /// # Lifecycle (Eager Setup)
 ///
@@ -23,13 +24,18 @@ use wgpu::CommandEncoder;
 ///
 /// # Lifetime Model
 ///
-/// The `'static` bound has been intentionally **removed**.  Concrete
-/// `PassNode` implementations may carry frame-scoped borrowed references
-/// (e.g. `&'a [Vertex]`, `&'a wgpu::BindGroup`) whose lifetimes are
-/// tied to the [`FrameArena`](super::arena::FrameArena) that allocates
-/// them.  The type system enforces that all such references remain valid
-/// for the duration of the frame.
-pub trait PassNode: Send + Sync {
+/// The lifetime parameter `'a` represents the duration of a single frame.
+/// Concrete implementations may carry frame-scoped borrowed references
+/// (e.g. `&'a wgpu::BindGroup`, `&'a [ShadowLightInstance]`) whose
+/// lifetimes are tied to either:
+///
+/// - The [`FrameArena`](super::arena::FrameArena) that allocates the node.
+/// - Persistent `Feature` state that outlives the frame.
+///
+/// Because all nodes are allocated on the arena and the arena is reset
+/// at frame boundaries, **no `Drop` glue is required** — the arena
+/// reclaims all memory in O(1) without running destructors.
+pub trait PassNode<'a>: Send + Sync {
     /// Assemble transient `BindGroup`s after physical resource allocation.
     ///
     /// Only `BindGroup`s that reference RDG-managed transient textures
@@ -47,24 +53,18 @@ pub trait PassNode: Send + Sync {
 /// Type-erased handle to a [`PassNode`] allocated on the [`FrameArena`].
 ///
 /// Stores a fat pointer (data + vtable) to a `dyn PassNode` trait object.
-/// The pointed-to memory resides either in the frame arena (owned) or in
-/// an externally managed location (borrowed).
+/// No ownership or drop semantics — the arena reclaims all memory in O(1)
+/// via [`FrameArena::reset()`](super::arena::FrameArena::reset) at frame
+/// boundaries.
 ///
 /// # Safety Contract
 ///
 /// The arena allocation must outlive this handle.  In practice this is
-/// guaranteed by the [`FrameComposer`] which ensures the sequence:
-/// `cleanup_nodes()` → `arena.reset()`.
+/// guaranteed by the frame lifecycle: `arena.reset()` is called only
+/// after the entire execute phase completes.
 pub(crate) struct NodeSlot {
     /// Fat pointer to the `dyn PassNode` trait object.
-    pub(crate) ptr: *mut dyn PassNode,
-    /// Whether this node was allocated on the frame arena.
-    ///
-    /// - `true` — arena-owned; [`cleanup_nodes`](RenderGraph::cleanup_nodes)
-    ///   calls [`drop_in_place`](std::ptr::drop_in_place) during frame teardown.
-    /// - `false` — externally borrowed (e.g. via [`add_pass_borrowed`]);
-    ///   the graph must **not** drop the node.
-    owned: bool,
+    pub(crate) ptr: *mut dyn for<'a> PassNode<'a>,
 }
 
 // SAFETY: `NodeSlot` wraps a pointer to a `dyn PassNode` which itself
@@ -74,22 +74,10 @@ unsafe impl Send for NodeSlot {}
 unsafe impl Sync for NodeSlot {}
 
 impl NodeSlot {
-    /// Creates a slot for an arena-allocated node.
+    /// Creates a slot for an arena-allocated or externally-owned node.
     #[inline]
-    pub(crate) fn new_owned(ptr: *mut dyn PassNode) -> Self {
-        Self { ptr, owned: true }
-    }
-
-    /// Creates a slot for an externally-owned (borrowed) node.
-    #[inline]
-    pub(crate) fn new_borrowed(ptr: *mut dyn PassNode) -> Self {
-        Self { ptr, owned: false }
-    }
-
-    /// Whether this slot owns the pointed-to node (arena-allocated).
-    #[inline]
-    pub(crate) fn is_owned(&self) -> bool {
-        self.owned
+    pub(crate) fn new(ptr: *mut dyn for<'a> PassNode<'a>) -> Self {
+        Self { ptr }
     }
 }
 
@@ -160,10 +148,10 @@ impl PassRecord {
     /// exist.  In practice, the sequential prepare→execute pipeline
     /// guarantees this.
     #[inline]
-    pub fn get_pass_mut(&mut self) -> &mut dyn PassNode {
+    pub fn get_pass_mut(&mut self) -> &mut dyn for<'a> PassNode<'a> {
         let slot = self.node.as_ref().expect("PassRecord node not set");
         // SAFETY: The pointer was set by `add_pass` or `add_pass_borrowed`
-        // and remains valid until `cleanup_nodes()` + `arena.reset()`.
+        // and remains valid until `arena.reset()`.
         // `&mut self` guarantees exclusive access to this record.
         unsafe { &mut *slot.ptr }
     }

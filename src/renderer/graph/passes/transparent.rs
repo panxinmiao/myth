@@ -72,7 +72,7 @@ impl TransparentFeature {
     /// - **Non-MSAA**: the mutated colour alias.
     pub fn add_to_graph(
         &self,
-        graph: &mut RenderGraph,
+        graph: &mut RenderGraph<'_>,
         color_target: TextureNodeId,
         depth_target: TextureNodeId,
         transmission_tex: Option<TextureNodeId>,
@@ -184,7 +184,7 @@ impl TransparentPassNode {
     }
 }
 
-impl PassNode for TransparentPassNode {
+impl PassNode<'_> for TransparentPassNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {
             Some(id) => ctx.views.get_texture_view(id),

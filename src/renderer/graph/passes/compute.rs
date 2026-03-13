@@ -130,7 +130,7 @@ impl BrdfLutFeature {
     }
 
     /// Create an ephemeral [`BrdfLutPassNode`] and add it to the render graph.
-    pub fn add_to_graph(&self, graph: &mut RenderGraph) {
+    pub fn add_to_graph(&self, graph: &mut RenderGraph<'_>) {
         let node = BrdfLutPassNode {
             pipeline_id: self.pipeline_id,
             bind_group: self.bind_group.clone(),
@@ -152,7 +152,7 @@ struct BrdfLutPassNode {
     active: bool,
 }
 
-impl PassNode for BrdfLutPassNode {
+impl PassNode<'_> for BrdfLutPassNode {
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if !self.active {
             return;
@@ -794,7 +794,7 @@ impl IblComputeFeature {
     }
 
     /// Create an ephemeral [`IblPassNode`] and add it to the render graph.
-    pub fn add_to_graph(&self, graph: &mut RenderGraph, source: TextureSource) {
+    pub fn add_to_graph(&self, graph: &mut RenderGraph<'_>, source: TextureSource) {
         let node = IblPassNode { _source: source };
         graph.add_pass("IBL_Compute", |builder| {
             builder.mark_side_effect();
@@ -816,7 +816,7 @@ struct IblPassNode {
     _source: TextureSource,
 }
 
-impl PassNode for IblPassNode {
+impl PassNode<'_> for IblPassNode {
     fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {
         // All IBL compute work is completed during extract_and_prepare.
     }

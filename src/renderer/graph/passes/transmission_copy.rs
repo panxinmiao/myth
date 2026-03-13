@@ -36,7 +36,7 @@ impl TransmissionCopyFeature {
 
     pub fn add_to_graph(
         &self,
-        graph: &mut RenderGraph,
+        graph: &mut RenderGraph<'_>,
         scene_color: TextureNodeId,
         active: bool,
     ) -> TextureNodeId {
@@ -81,7 +81,7 @@ pub struct TransmissionCopyPassNode {
     pub active: bool,
 }
 
-impl PassNode for TransmissionCopyPassNode {
+impl PassNode<'_> for TransmissionCopyPassNode {
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if !self.active {
             return;

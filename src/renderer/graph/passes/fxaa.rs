@@ -141,7 +141,7 @@ impl FxaaFeature {
     /// every Feature explicitly produces a new resource version.
     pub fn add_to_graph(
         &self,
-        graph: &mut RenderGraph,
+        graph: &mut RenderGraph<'_>,
         input_ldr: TextureNodeId,
         target_surface: TextureNodeId,
     ) -> TextureNodeId {
@@ -176,7 +176,7 @@ struct FxaaPassNode {
     current_bind_group_key: Option<BindGroupKey>,
 }
 
-impl PassNode for FxaaPassNode {
+impl PassNode<'_> for FxaaPassNode {
     fn prepare(&mut self, ctx: &mut PrepareContext) {
         let input_view = ctx.views.get_texture_view(self.input_tex);
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
