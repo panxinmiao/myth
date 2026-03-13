@@ -323,7 +323,7 @@ impl SsssFeature {
                 builder.read_texture(scene_depth);
                 builder.read_texture(scene_normals);
                 builder.read_texture(feature_id);
-                builder.read_texture(specular_tex);
+                // builder.read_texture(specular_tex);
                 let out = builder.create_and_export("SSSS_Temp", temp_desc);
                 let node = SsssHorizontalNode {
                     scene_color_in: scene_color,
