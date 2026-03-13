@@ -567,17 +567,24 @@ impl AppHandler for GltfViewer {
             self.ui_pass
                 .resolve_textures(composer.device(), composer.resource_manager());
 
-            let ui_pass = &mut self.ui_pass;
+            let ui_pass_ref = &mut self.ui_pass;
+
             composer
-                .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
-                    let new_surface = rdg.add_pass_borrowed("UI_Pass", ui_pass, |builder| {
-                        builder.mutate_and_export(bb.surface_out, "Surface_With_UI")
+                .add_custom_pass(HookStage::AfterPostProcess, move |rdg, bb| {
+                    let new_surface = rdg.add_pass("UI_Pass", |builder| {
+                        let out = builder.mutate_and_export(bb.surface_out, "Surface_With_UI");
+                        let node = ui_pass::UiPassNode {
+                            pass: ui_pass_ref,
+                            target_tex: out,
+                        };
+                        (node, out)
                     });
-                    ui_pass.target_tex = new_surface;
+
                     GraphBlackboard {
                         surface_out: new_surface,
                         ..bb
                     }
+                    
                 })
                 .render();
         } else {

@@ -146,7 +146,7 @@ pub struct FrameComposer<'a> {
     hooks: smallvec::SmallVec<
         [(
             HookStage,
-            Box<dyn for<'g> FnMut(&mut RenderGraph<'g>, GraphBlackboard) -> GraphBlackboard + 'a>,
+            Option<Box<dyn FnOnce(&mut RenderGraph<'a>, GraphBlackboard) -> GraphBlackboard + 'a>>,
         ); 4],
     >,
 }
@@ -206,9 +206,9 @@ impl<'a> FrameComposer<'a> {
     #[must_use]
     pub fn add_custom_pass<F>(mut self, stage: HookStage, hook: F) -> Self
     where
-        F: for<'g> FnMut(&mut RenderGraph<'g>, GraphBlackboard) -> GraphBlackboard + 'a,
+        F: FnOnce(&mut RenderGraph<'a>, GraphBlackboard) -> GraphBlackboard + 'a,
     {
-        self.hooks.push((stage, Box::new(hook)));
+        self.hooks.push((stage, Some(Box::new(hook))));
         self
     }
 
@@ -429,9 +429,11 @@ impl<'a> FrameComposer<'a> {
                     scene_depth: prepass_depth,
                     surface_out,
                 };
-                for (stage, hook) in &mut self.hooks {
+                for (stage, hook_opt) in &mut self.hooks {
                     if *stage == HookStage::BeforePostProcess {
-                        blackboard = hook(&mut graph, blackboard);
+                        if let Some(hook) = hook_opt.take() {
+                            blackboard = hook(&mut graph, blackboard);
+                        }
                     }
                 }
             }
@@ -510,9 +512,11 @@ impl<'a> FrameComposer<'a> {
                 scene_depth: bb_scene_depth,
                 surface_out: current_surface,
             };
-            for (stage, hook) in &mut self.hooks {
+            for (stage, hook_opt) in &mut self.hooks {
                 if *stage == HookStage::AfterPostProcess {
-                    blackboard = hook(&mut graph, blackboard);
+                    if let Some(hook) = hook_opt.take() {
+                        blackboard = hook(&mut graph, blackboard);
+                    }
                 }
             }
         }

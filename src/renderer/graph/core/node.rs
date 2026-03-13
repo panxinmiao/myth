@@ -42,7 +42,7 @@ pub trait PassNode<'a>: Send + Sync {
     /// should be created here.  The context deliberately excludes heavy
     /// infrastructure (shader compiler, asset server, etc.).
     #[allow(unused_variables)]
-    fn prepare(&mut self, ctx: &mut PrepareContext) {}
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {}
 
     /// Record GPU commands into the shared encoder.
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder);
@@ -65,6 +65,9 @@ pub trait PassNode<'a>: Send + Sync {
 pub(crate) struct NodeSlot {
     /// Fat pointer to the `dyn PassNode` trait object.
     pub(crate) ptr: *mut dyn for<'a> PassNode<'a>,
+
+    // ⚠️ 临时防泄漏机制（在所有节点变成 POD 前，我们需要它）
+    pub(crate) needs_drop: bool,
 }
 
 // SAFETY: `NodeSlot` wraps a pointer to a `dyn PassNode` which itself
@@ -76,8 +79,12 @@ unsafe impl Sync for NodeSlot {}
 impl NodeSlot {
     /// Creates a slot for an arena-allocated or externally-owned node.
     #[inline]
-    pub(crate) fn new(ptr: *mut dyn for<'a> PassNode<'a>) -> Self {
-        Self { ptr }
+    pub(crate) fn new<'a, N: PassNode<'a> + 'a>(ptr: *mut N) -> Self {
+        let erased_ptr = unsafe { std::mem::transmute(ptr as *mut dyn PassNode<'a>) };
+        Self { 
+            ptr: erased_ptr,
+            needs_drop: std::mem::needs_drop::<N>(), // 记录是否需要 Drop
+        }
     }
 }
 
@@ -148,11 +155,11 @@ impl PassRecord {
     /// exist.  In practice, the sequential prepare→execute pipeline
     /// guarantees this.
     #[inline]
-    pub fn get_pass_mut(&mut self) -> &mut dyn for<'a> PassNode<'a> {
+    pub fn get_pass_mut<'a>(&mut self) -> &mut (dyn PassNode<'a> + 'a) {
         let slot = self.node.as_ref().expect("PassRecord node not set");
         // SAFETY: The pointer was set by `add_pass` or `add_pass_borrowed`
         // and remains valid until `arena.reset()`.
         // `&mut self` guarantees exclusive access to this record.
-        unsafe { &mut *slot.ptr }
+        unsafe { std::mem::transmute(&mut *slot.ptr) }
     }
 }
