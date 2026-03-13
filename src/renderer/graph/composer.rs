@@ -55,11 +55,12 @@ use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::gpu::{SamplerRegistry, Tracked};
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::ExtractedScene;
-use crate::renderer::graph::core::{
-    ExecuteContext, FrameArena, GraphBlackboard, HookStage, PrepareContext, RenderGraph, TextureDesc,
-    TextureNodeId, TransientPool, ViewResolver,
-};
 use crate::renderer::graph::core::GraphStorage;
+use crate::renderer::graph::core::graph::FrameConfig;
+use crate::renderer::graph::core::{
+    ExecuteContext, FrameArena, GraphBlackboard, HookStage, PrepareContext, RenderGraph,
+    TextureDesc, TextureNodeId, TransientPool, ViewResolver,
+};
 use crate::renderer::graph::frame::{PreparedSkyboxDraw, RenderLists};
 use crate::renderer::graph::passes::{
     BloomFeature, BrdfLutFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
@@ -118,6 +119,35 @@ pub struct ComposerContext<'a> {
     pub ibl_pass: &'a mut IblComputeFeature,
 }
 
+pub struct GraphBuilderContext<'a, 'g> {
+    pub graph: &'g mut RenderGraph<'a>,
+    pub pipeline_cache: &'a PipelineCache,
+    pub frame_config: &'g FrameConfig,
+}
+
+impl GraphBuilderContext<'_, '_> {
+    #[cfg(feature = "rdg_inspector")]
+    pub fn with_group<F, R>(&mut self, group_name: &'static str, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        self.graph.push_group(group_name);
+        let result = f(self);
+        self.graph.pop_group();
+        result
+    }
+
+    /// Zero-cost fallback when the inspector is disabled.
+    #[cfg(not(feature = "rdg_inspector"))]
+    #[inline]
+    pub fn with_group<F, R>(&mut self, _group_name: &'static str, f: F) -> R
+    where
+        F: FnOnce(&mut Self) -> R,
+    {
+        f(self)
+    }
+}
+
 /// Frame Composer
 ///
 /// Holds all context references needed to render a single frame and provides
@@ -141,6 +171,7 @@ pub struct ComposerContext<'a> {
 ///   `.render()` to minimise hold time.
 pub struct FrameComposer<'a> {
     ctx: ComposerContext<'a>,
+    frame_config: FrameConfig,
     external_res: FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
     #[allow(clippy::type_complexity)]
     hooks: smallvec::SmallVec<
@@ -153,9 +184,19 @@ pub struct FrameComposer<'a> {
 
 impl<'a> FrameComposer<'a> {
     /// Creates a new frame composer.
-    pub(crate) fn new(ctx: ComposerContext<'a>) -> Self {
+    pub(crate) fn new(ctx: ComposerContext<'a>, size: (u32, u32)) -> Self {
+        let frame_config = FrameConfig {
+            width: size.0,
+            height: size.1,
+            depth_format: ctx.wgpu_ctx.depth_format,
+            msaa_samples: ctx.wgpu_ctx.msaa_samples,
+            surface_format: ctx.wgpu_ctx.surface_view_format,
+            hdr_format: crate::renderer::HDR_TEXTURE_FORMAT,
+        };
+
         Self {
             ctx,
+            frame_config,
             external_res: FxHashMap::default(),
             hooks: smallvec::SmallVec::new(),
         }
@@ -246,19 +287,13 @@ impl<'a> FrameComposer<'a> {
 
         // ━━━ 2. Build Unified RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-        let mut graph = RenderGraph::new(
-            self.ctx.graph_storage,
-            self.ctx.frame_arena,
-            crate::renderer::graph::core::graph::FrameConfig {
-                width,
-                height,
-                depth_format: self.ctx.wgpu_ctx.depth_format,
-                msaa_samples: self.ctx.wgpu_ctx.msaa_samples,
-                surface_format: view_format,
-                hdr_format: crate::renderer::HDR_TEXTURE_FORMAT,
-            },
-            self.ctx.pipeline_cache,
-        );
+        let mut graph = RenderGraph::new(self.ctx.graph_storage, self.ctx.frame_arena);
+
+        let mut graph_ctx = GraphBuilderContext {
+            graph: &mut graph,
+            pipeline_cache: self.ctx.pipeline_cache,
+            frame_config: &self.frame_config,
+        };
 
         // ── 2a. Register Resources ──────────────────────────────────────
         // Only the swapchain surface is truly external.
@@ -275,7 +310,9 @@ impl<'a> FrameComposer<'a> {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
 
-        let surface_out = graph.register_resource("Surface_Out", surface_desc, true);
+        let surface_out = graph_ctx
+            .graph
+            .register_resource("Surface_Out", surface_desc, true);
 
         // ── 2b. Scene Configuration ────────────────────────────────────
 
@@ -290,18 +327,18 @@ impl<'a> FrameComposer<'a> {
         let fxaa_enabled = self.ctx.scene.fxaa.enabled && is_high_fidelity;
 
         // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
-        graph.with_group("Compute", |g| {
+        graph_ctx.with_group("Compute", |c| {
             if self.ctx.resource_manager.needs_brdf_compute {
-                self.ctx.brdf_pass.add_to_graph(g);
+                self.ctx.brdf_pass.add_to_graph(c);
             }
 
             if let Some(source) = self.ctx.resource_manager.pending_ibl_source.take() {
-                self.ctx.ibl_pass.add_to_graph(g, source);
+                self.ctx.ibl_pass.add_to_graph(c, source);
             }
         });
 
         let shadow_tex = if self.ctx.extracted_scene.has_shadow_casters() {
-            graph.with_group("Shadow", |g| self.ctx.shadow_pass.add_to_graph(g))
+            graph_ctx.with_group("Shadow", |c| self.ctx.shadow_pass.add_to_graph(c))
         } else {
             None
         };
@@ -327,18 +364,18 @@ impl<'a> FrameComposer<'a> {
             // ── Scene Rendering Group ──────────────────────────────────
 
             let (post_transparent_color, prepass_depth, _ssao_output) =
-                graph.with_group("Scene", |g| {
+                graph_ctx.with_group("Scene", |c| {
                     // 1. Prepass
                     let prepass_out =
                         self.ctx
                             .prepass
-                            .add_to_graph(g, needs_normal, needs_feature_id);
+                            .add_to_graph(c, needs_normal, needs_feature_id);
 
                     // 2. SSAO
                     let ssao_output = if ssao_enabled {
                         Some(
                             self.ctx.ssao_pass.add_to_graph(
-                                g,
+                                c,
                                 prepass_out.scene_depth,
                                 prepass_out
                                     .scene_normals
@@ -352,7 +389,7 @@ impl<'a> FrameComposer<'a> {
                     // 3. Opaque
                     let opaque_has_prepass = !is_msaa;
                     let opaque_out = self.ctx.opaque_pass.add_to_graph(
-                        g,
+                        c,
                         prepass_out.scene_depth,
                         opaque_has_prepass,
                         self.ctx.extracted_scene.background.clear_color(),
@@ -368,7 +405,7 @@ impl<'a> FrameComposer<'a> {
                     // 4. SSSS
                     if ssss_enabled {
                         scene_color_hdr = self.ctx.ssss_pass.add_to_graph(
-                            g,
+                            c,
                             scene_color_hdr,
                             prepass_out.scene_depth,
                             prepass_out.scene_normals.unwrap(),
@@ -377,7 +414,7 @@ impl<'a> FrameComposer<'a> {
                         );
 
                         if is_msaa {
-                            active_color = self.ctx.msaa_sync_pass.add_to_graph(g, scene_color_hdr);
+                            active_color = self.ctx.msaa_sync_pass.add_to_graph(c, scene_color_hdr);
                         } else {
                             active_color = scene_color_hdr;
                         }
@@ -388,7 +425,7 @@ impl<'a> FrameComposer<'a> {
                         active_color =
                             self.ctx
                                 .skybox_pass
-                                .add_to_graph(g, active_color, active_depth);
+                                .add_to_graph(c, active_color, active_depth);
                     }
 
                     // 6. Transmission Copy
@@ -401,7 +438,7 @@ impl<'a> FrameComposer<'a> {
                         Some(
                             self.ctx
                                 .transmission_copy_pass
-                                .add_to_graph(g, tx_source, true),
+                                .add_to_graph(c, tx_source, true),
                         )
                     } else {
                         None
@@ -409,7 +446,7 @@ impl<'a> FrameComposer<'a> {
 
                     // 7. Transparent
                     let post_transparent_color = self.ctx.transparent_pass.add_to_graph(
-                        g,
+                        c,
                         active_color,
                         active_depth,
                         transmission_tex,
@@ -431,21 +468,21 @@ impl<'a> FrameComposer<'a> {
                     surface_out,
                 };
                 for (stage, hook_opt) in &mut self.hooks {
-                    if *stage == HookStage::BeforePostProcess {
-                        if let Some(hook) = hook_opt.take() {
-                            blackboard = hook(&mut graph, blackboard);
-                        }
+                    if *stage == HookStage::BeforePostProcess
+                        && let Some(hook) = hook_opt.take()
+                    {
+                        blackboard = hook(graph_ctx.graph, blackboard);
                     }
                 }
             }
 
             // ── Post-Processing Group ──────────────────────────────────
 
-            current_surface = graph.with_group("PostProcess", |g| {
+            current_surface = graph_ctx.with_group("PostProcess", |ctx| {
                 // Bloom (internally flattened into Bloom_System subgroup)
                 let tonemap_input = if bloom_enabled {
                     self.ctx.bloom_pass.add_to_graph(
-                        g,
+                        ctx,
                         post_transparent_color,
                         self.ctx.scene.bloom.karis_average,
                         self.ctx.scene.bloom.max_mip_levels(),
@@ -457,21 +494,23 @@ impl<'a> FrameComposer<'a> {
                 // ToneMapping: HDR → LDR
                 let mut surface = if fxaa_enabled {
                     // Route through an intermediate LDR texture for FXAA input
-                    let ldr = g.register_resource("LDR_Intermediate", surface_desc, false);
-                    self.ctx.tone_map_pass.add_to_graph(g, tonemap_input, ldr)
+                    let ldr = ctx
+                        .graph
+                        .register_resource("LDR_Intermediate", surface_desc, false);
+                    self.ctx.tone_map_pass.add_to_graph(ctx, tonemap_input, ldr)
                 } else {
                     self.ctx
                         .tone_map_pass
-                        .add_to_graph(g, tonemap_input, current_surface)
+                        .add_to_graph(ctx, tonemap_input, current_surface)
                 };
 
                 // FXAA: anti-alias the LDR result onto the surface
                 if fxaa_enabled {
                     let ldr_intermediate = surface;
-                    surface = self
-                        .ctx
-                        .fxaa_pass
-                        .add_to_graph(g, ldr_intermediate, current_surface);
+                    surface =
+                        self.ctx
+                            .fxaa_pass
+                            .add_to_graph(ctx, ldr_intermediate, current_surface);
                 }
 
                 surface
@@ -495,9 +534,9 @@ impl<'a> FrameComposer<'a> {
                 None
             };
 
-            graph.with_group("BasicForward", |g| {
+            graph_ctx.with_group("BasicForward", |c| {
                 self.ctx.simple_forward_pass.add_to_graph(
-                    g,
+                    c,
                     surface_out,
                     self.ctx.extracted_scene.background.clear_color(),
                     prepared_skybox,
@@ -514,10 +553,10 @@ impl<'a> FrameComposer<'a> {
                 surface_out: current_surface,
             };
             for (stage, hook_opt) in &mut self.hooks {
-                if *stage == HookStage::AfterPostProcess {
-                    if let Some(hook) = hook_opt.take() {
-                        blackboard = hook(&mut graph, blackboard);
-                    }
+                if *stage == HookStage::AfterPostProcess
+                    && let Some(hook) = hook_opt.take()
+                {
+                    blackboard = hook(&mut graph, blackboard);
                 }
             }
         }

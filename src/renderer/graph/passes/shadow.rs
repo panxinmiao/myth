@@ -33,9 +33,9 @@
 use glam::Mat4;
 
 use crate::renderer::core::view::ViewTarget;
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, RenderGraph, TextureDesc,
-    TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, TextureDesc, TextureNodeId,
 };
 use crate::renderer::graph::frame::ShadowLightInstance;
 use crate::renderer::graph::passes::draw::submit_draw_commands;
@@ -231,7 +231,10 @@ impl ShadowFeature {
     ///
     /// Returns `None` if no shadow layers are required this frame (the pass
     /// is not added to the graph at all, and no GPU memory is allocated).
-    pub fn add_to_graph<'a>(&'a self, graph: &mut RenderGraph<'a>) -> Option<TextureNodeId> {
+    pub fn add_to_graph<'a>(
+        &'a self,
+        ctx: &mut GraphBuilderContext<'a, '_>,
+    ) -> Option<TextureNodeId> {
         if self.total_layers == 0 || self.shadow_lights.is_empty() {
             return None;
         }
@@ -247,7 +250,7 @@ impl ShadowFeature {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
 
-        let shadow_array_id = graph.add_pass("Shadow_Pass", |builder| {
+        let shadow_array_id = ctx.graph.add_pass("Shadow_Pass", |builder| {
             let shadow_array_id = builder.create_and_export("Shadow_Array_Map", desc);
 
             let node = ShadowPassNode {

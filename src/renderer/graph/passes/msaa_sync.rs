@@ -32,9 +32,10 @@
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps,
-    TextureDesc, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc,
+    TextureNodeId,
 };
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
@@ -153,22 +154,28 @@ impl MsaaSyncFeature {
     ///
     /// - `src_hdr`: single-sample `Scene_Color_HDR` (read).
     /// - `dst_msaa`: multi-sampled `Scene_Color_MSAA` (write).
-    pub fn add_to_graph<'a>(&'a self, graph: &mut RenderGraph<'a>, src_hdr: TextureNodeId) -> TextureNodeId {
+    pub fn add_to_graph<'a>(
+        &'a self,
+        ctx: &mut GraphBuilderContext<'a, '_>,
+        src_hdr: TextureNodeId,
+    ) -> TextureNodeId {
         let msaa_color_desc = TextureDesc::new(
-            graph.frame_config().width,
-            graph.frame_config().height,
+            ctx.frame_config.width,
+            ctx.frame_config.height,
             1,
             1,
-            graph.frame_config().msaa_samples,
+            ctx.frame_config.msaa_samples,
             wgpu::TextureDimension::D2,
             HDR_TEXTURE_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT,
         );
 
-        let dst_msaa = graph.register_resource("Scene_Color_MSAA_Sync", msaa_color_desc, false);
+        let dst_msaa = ctx
+            .graph
+            .register_resource("Scene_Color_MSAA_Sync", msaa_color_desc, false);
 
         let pipeline_id = self.pipeline_id.expect("MsaaSyncFeature not prepared");
-        let pipeline = graph.pipeline_cache.get_render_pipeline(pipeline_id);
+        let pipeline = ctx.pipeline_cache.get_render_pipeline(pipeline_id);
         let layout = self.bind_group_layout.as_ref().unwrap();
 
         let node = MsaaSyncPassNode {
@@ -178,7 +185,7 @@ impl MsaaSyncFeature {
             layout,
             transient_bg: None,
         };
-        graph.add_pass("Msaa_Sync_Pass", |builder| {
+        ctx.graph.add_pass("Msaa_Sync_Pass", |builder| {
             builder.read_texture(src_hdr);
             builder.write_texture(dst_msaa);
             (node, ())
@@ -201,7 +208,13 @@ struct MsaaSyncPassNode<'a> {
 
 impl<'a> PassNode<'a> for MsaaSyncPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, sampler_registry, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            sampler_registry,
+            ..
+        } = ctx;
         let device = *device;
         let src_view = views.get_texture_view(self.src_hdr);
         let sampler = sampler_registry.get_common(CommonSampler::LinearClamp);

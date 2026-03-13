@@ -179,11 +179,7 @@ pub struct PreparedSkyboxDraw<'a> {
 }
 
 impl<'a> PreparedSkyboxDraw<'a> {
-    pub fn draw(
-        &self,
-        pass: &mut wgpu::RenderPass<'a>,
-        global_bind_group: &'a wgpu::BindGroup,
-    ) {
+    pub fn draw(&self, pass: &mut wgpu::RenderPass<'a>, global_bind_group: &'a wgpu::BindGroup) {
         pass.set_pipeline(self.pipeline);
         pass.set_bind_group(0, global_bind_group, &[]);
         pass.set_bind_group(1, self.bind_group, &[]);
@@ -222,8 +218,6 @@ pub struct RenderLists {
 
     /// Whether a transmission copy is needed this frame
     pub use_transmission: bool,
-
-
 }
 
 impl RenderLists {

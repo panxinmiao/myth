@@ -8,9 +8,9 @@
 use crate::FxaaQuality;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps,
-    TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureNodeId,
 };
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
@@ -141,15 +141,15 @@ impl FxaaFeature {
     /// every Feature explicitly produces a new resource version.
     pub fn add_to_graph<'a>(
         &'a self,
-        graph: &mut RenderGraph<'a>,
+        ctx: &mut GraphBuilderContext<'a, '_>,
         input_ldr: TextureNodeId,
         target_surface: TextureNodeId,
     ) -> TextureNodeId {
         let pipeline_id = self.pipeline_id.expect("FxaaFeature not prepared");
-        let pipeline = graph.pipeline_cache.get_render_pipeline(pipeline_id);
+        let pipeline = ctx.pipeline_cache.get_render_pipeline(pipeline_id);
         let layout = self.bind_group_layout.as_ref().unwrap();
 
-        graph.add_pass("FXAA_Pass", |builder| {
+        ctx.graph.add_pass("FXAA_Pass", |builder| {
             builder.read_texture(input_ldr);
             let output = builder.mutate_and_export(target_surface, "Surface_FXAA");
 
@@ -179,7 +179,13 @@ struct FxaaPassNode<'a> {
 
 impl<'a> PassNode<'a> for FxaaPassNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, sampler_registry, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            sampler_registry,
+            ..
+        } = ctx;
         let device = *device;
         let input_view = views.get_texture_view(self.input_tex);
         let sampler = sampler_registry.get_common(CommonSampler::LinearClamp);

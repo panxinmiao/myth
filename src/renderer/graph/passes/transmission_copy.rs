@@ -14,8 +14,9 @@
 //! - Only active when materials with Transmission exist in the scene
 //! - Generates mipmaps after the copy for LOD-based blur
 
-use crate::renderer::graph::core::{
-    ExecuteContext, PassNode, RenderGraph, TextureDesc, TextureNodeId,
+use crate::renderer::graph::{
+    composer::GraphBuilderContext,
+    core::{ExecuteContext, PassNode, TextureDesc, TextureNodeId},
 };
 
 // ─── Feature ───────────────────────────────────────────────────────────
@@ -36,11 +37,11 @@ impl TransmissionCopyFeature {
 
     pub fn add_to_graph(
         &self,
-        graph: &mut RenderGraph<'_>,
+        ctx: &mut GraphBuilderContext<'_, '_>,
         scene_color: TextureNodeId,
         active: bool,
     ) -> TextureNodeId {
-        let fc = *graph.frame_config();
+        let fc = ctx.frame_config;
         let desc = TextureDesc::new_2d(
             fc.width,
             fc.height,
@@ -49,14 +50,14 @@ impl TransmissionCopyFeature {
                 | wgpu::TextureUsages::TEXTURE_BINDING
                 | wgpu::TextureUsages::COPY_DST,
         );
-        let transmission_tex = graph.register_resource("Transmission_Tex", desc, false);
+        let transmission_tex = ctx.graph.register_resource("Transmission_Tex", desc, false);
 
         let node = TransmissionCopyPassNode {
             scene_color,
             transmission_tex,
             active,
         };
-        graph.add_pass("TransmissionCopy_Pass", |builder| {
+        ctx.graph.add_pass("TransmissionCopy_Pass", |builder| {
             builder.write_texture(transmission_tex);
             builder.read_texture(scene_color);
             (node, ())

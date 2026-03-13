@@ -1,4 +1,4 @@
-use super::graph::{FrameConfig, RenderGraph};
+use super::graph::RenderGraph;
 use super::types::{TextureDesc, TextureNodeId};
 
 /// Builder for declaring a pass's resource dependencies during eager graph
@@ -14,19 +14,6 @@ pub struct PassBuilder<'graph, 'a> {
 }
 
 impl PassBuilder<'_, '_> {
-    #[inline]
-    #[must_use]
-    pub fn frame_config(&self) -> &FrameConfig {
-        self.graph.frame_config()
-    }
-
-    #[inline]
-    #[must_use]
-    pub fn global_resolution(&self) -> (u32, u32) {
-        let c = self.graph.frame_config();
-        (c.width, c.height)
-    }
-
     pub fn create_texture(&mut self, name: &'static str, desc: TextureDesc) -> TextureNodeId {
         let id = self.graph.register_resource(name, desc, false);
         self.graph.storage.passes[self.pass_index].creates.push(id);

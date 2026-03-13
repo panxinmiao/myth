@@ -483,7 +483,7 @@ impl Renderer {
         };
 
         // Return FrameComposer, defer Surface acquisition to render() call
-        Some(FrameComposer::new(ctx))
+        Some(FrameComposer::new(ctx, self.size))
     }
 
     /// Performs periodic resource cleanup.
@@ -589,6 +589,8 @@ impl Renderer {
     }
 
     pub fn dump_graph_mermaid(&self) -> Option<String> {
-        self.context.as_ref().map(|s| s.graph_storage.dump_mermaid())
+        self.context
+            .as_ref()
+            .map(|s| s.graph_storage.dump_mermaid())
     }
 }

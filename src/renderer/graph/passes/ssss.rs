@@ -38,9 +38,10 @@
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
+use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, RenderTargetOps,
-    SubViewKey, TextureDesc, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, SubViewKey,
+    TextureDesc, TextureNodeId,
 };
 use crate::renderer::pipeline::{
     ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, RenderPipelineId,
@@ -294,25 +295,25 @@ impl SsssFeature {
     /// 2. **SSSS_Blur_V** — vertical scatter: `temp_blur` → `scene_color` alias
     pub fn add_to_graph<'a>(
         &'a self,
-        graph: &mut RenderGraph<'a>,
+        ctx: &mut GraphBuilderContext<'a, '_>,
         scene_color: TextureNodeId,
         scene_depth: TextureNodeId,
         scene_normals: TextureNodeId,
         feature_id: TextureNodeId,
         specular_tex: TextureNodeId,
     ) -> TextureNodeId {
-        let horizontal_pipeline = graph.pipeline_cache.get_render_pipeline(
-            self.horizontal_pipeline.expect("SsssFeature not prepared"),
-        );
-        let vertical_pipeline = graph.pipeline_cache.get_render_pipeline(
-            self.vertical_pipeline.expect("SsssFeature not prepared"),
-        );
+        let horizontal_pipeline = ctx
+            .pipeline_cache
+            .get_render_pipeline(self.horizontal_pipeline.expect("SsssFeature not prepared"));
+        let vertical_pipeline = ctx
+            .pipeline_cache
+            .get_render_pipeline(self.vertical_pipeline.expect("SsssFeature not prepared"));
         let bind_group_layout = self.bind_group_layout.as_ref().unwrap();
         let profiles_buffer = self.profiles_buffer.as_ref().unwrap();
 
-        graph.with_group("SSSS_System", |g| {
+        ctx.with_group("SSSS_System", |ctx| {
             // ─── Pass 1: Horizontal blur ───────────────────────────
-            let fc = g.frame_config();
+            let fc = ctx.frame_config;
             let (w, h) = (fc.width, fc.height);
             let hdr_format = fc.hdr_format;
             let temp_desc = TextureDesc::new_2d(
@@ -322,7 +323,7 @@ impl SsssFeature {
                 wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
             );
 
-            let temp_blur: TextureNodeId = g.add_pass("SSSS_Blur_H", |builder| {
+            let temp_blur: TextureNodeId = ctx.graph.add_pass("SSSS_Blur_H", |builder| {
                 builder.read_texture(scene_color);
                 builder.read_texture(scene_depth);
                 builder.read_texture(scene_normals);
@@ -344,7 +345,7 @@ impl SsssFeature {
             });
 
             // ─── Pass 2: Vertical blur ─────────────────────────────
-            let ssss_out: TextureNodeId = g.add_pass("SSSS_Blur_V", |builder| {
+            let ssss_out: TextureNodeId = ctx.graph.add_pass("SSSS_Blur_V", |builder| {
                 builder.read_texture(temp_blur);
                 builder.read_texture(scene_depth);
                 builder.read_texture(scene_normals);
@@ -396,7 +397,13 @@ struct SsssHorizontalNode<'a> {
 
 impl<'a> PassNode<'a> for SsssHorizontalNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, sampler_registry, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            sampler_registry,
+            ..
+        } = ctx;
         let device = *device;
 
         let depth_sub_key = SubViewKey {
@@ -517,7 +524,13 @@ struct SsssVerticalNode<'a> {
 
 impl<'a> PassNode<'a> for SsssVerticalNode<'a> {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
-        let PrepareContext { views, global_bind_group_cache: cache, device, sampler_registry, .. } = ctx;
+        let PrepareContext {
+            views,
+            global_bind_group_cache: cache,
+            device,
+            sampler_registry,
+            ..
+        } = ctx;
         let device = *device;
 
         let depth_sub_key = SubViewKey {
