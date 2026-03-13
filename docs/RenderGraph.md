@@ -236,10 +236,10 @@ flowchart
 
 ```
 
-*(* **Legend:** *Single arrows `-->` represent logical data dependencies; double arrows `==>` represent physical memory aliasing / in-place reuse)*
+*<center>(* **Legend:** *Single arrows `-->` represent logical data dependencies; double arrows `==>` represent physical memory aliasing / in-place reuse)</center>*
 
-* **Dependency Resolution:** SSSS requires 5 different inputs from 3 different passes. You simply declare `builder.read_texture()` for these inputs. The compiler guarantees the execution order and inserts the exact `ImageMemoryBarrier` transitions required.
-* **Memory Aliasing:** Notice the double arrows (`==>`). Trace the main color buffer: `Scene_Color_HDR ==> Scene_Color_SSSS ==> Scene_Color_Skybox ==> Scene_Color_Transparent`. Logically, they are completely distinct, immutable resources. Physically, the compiler intelligently overlaps their allocations onto the exact same, high-resolution, transient GPU texture.
+* **Dependency Resolution:** SSSS requires 5 different inputs from different passes. You simply declare `builder.read_texture()` for these inputs. The compiler guarantees the execution order and inserts the exact `ImageMemoryBarrier` transitions required.
+* **Memory Aliasing:** Notice the double arrows (`==>`). Trace the main color buffer: `Scene_Color_SSSS ==> Scene_Color_Skybox ==> Scene_Color_Transparent`. Logically, they are completely distinct, immutable resources. Physically, the compiler intelligently overlaps their allocations onto the exact same, high-resolution, transient GPU texture.
 
 ### Case 2: Dead Pass Elimination (DPE)
 
@@ -274,7 +274,7 @@ flowchart
 
 ```
 
-*(* **Legend:** *Grey dashed nodes represent dead passes culled by the compiler)*
+*<center>（* **Legend:** *Grey dashed nodes represent dead passes culled by the compiler)</center>*
 
 Because MSAA requires its own multisampled depth buffer, the `Opaque_Pass` no longer depends on the standard depth buffer from the `Pre_Pass`. With SSAO and SSSS disabled, no active passes consume the output of the `Pre_Pass`.
 
@@ -371,7 +371,6 @@ flowchart TD
     P4 -->|"Scene_Depth_MSAA"| P9;
     P4 -->|"Scene_Color_HDR"| P5;
     P4 -->|"Scene_Color_HDR"| P6;
-    P4 -->|"Specular_MRT"| P5;
     P4 -->|"Specular_MRT"| P6;
     P5 -->|"SSSS_Temp"| P6;
     P6 ==>|"Scene_Color_SSSS"| P7;
@@ -402,7 +401,7 @@ flowchart TD
     P24 -->|"Surface_With_UI"| OUT_33;
 
 ```
-*(Legend: Single-line arrow --> indicates logical data dependency; double-line arrow ==> indicates physical memory aliasing/in-place reuse)*
+*<center>(Legend: Single-line arrow --> indicates logical data dependency; double-line arrow ==> indicates physical memory aliasing/in-place reuse)</center>*
 
 By doing this, we fully unleash the power of the compiler. Each pass is an independent, atomic unit. The compiler can globally optimizes their execution order, memory allocation, and resource aliasing without worrying about hidden side effects. Meanwhile, logical subgraphs keep the developer's cognitive load perfectly manageable.
 

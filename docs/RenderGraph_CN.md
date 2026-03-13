@@ -223,10 +223,10 @@ flowchart
     P9 -->|"Surface_With_UI"| OUT_16;
 ```
 
-*（* **图例说明：** *单箭头 `-->` 代表逻辑数据依赖；双箭头 `==>` 代表物理内存 aliasing / in-place reuse)*
+*<center>（* **图例说明：** *单箭头 `-->` 代表逻辑数据依赖；双箭头 `==>` 代表物理内存 aliasing / in-place reuse)</center>*
 
-*   **Dependency Resolution:** SSSS 需要来自 3 个不同 Pass 中的 5 个不同输入。你只需为这些输入声明 `builder.read_texture()`。编译器保证执行顺序，并精确插入所需的 `ImageMemoryBarrier` 转换。
-*   **Memory Aliasing:** 注意双箭头（`==>`）。追踪主颜色缓冲区：`Scene_Color_HDR ==> Scene_Color_SSSS ==> Scene_Color_Skybox ==> Scene_Color_Transparent`。逻辑上，它们是完全不同的、不可变的资源。物理上，编译器智能地将它们的分配重叠到完全相同的、高分辨率的瞬时 GPU 纹理上。
+*   **Dependency Resolution:** SSSS 需要来自不同 Pass 中的 5 个不同输入。你只需为这些输入声明 `builder.read_texture()`。编译器保证执行顺序，并精确插入所需的 `ImageMemoryBarrier` 转换。
+*   **Memory Aliasing:** 注意双箭头（`==>`）。追踪主颜色缓冲区：`Scene_Color_SSSS ==> Scene_Color_Skybox ==> Scene_Color_Transparent`。逻辑上，它们是完全不同的、不可变的资源。物理上，编译器智能地将它们的分配重叠到完全相同的、高分辨率的瞬时 GPU 纹理上。
 
 ### Case 2: Dead Pass Elimination (DPE)
 
@@ -260,7 +260,7 @@ flowchart
     P7 -->|"Surface_With_UI"| OUT_11;
 ```
 
-*（* **图例说明：** *灰色虚线节点代表被编译器剔除的 dead passes)*
+*<center>（* **图例说明：** *灰色虚线节点代表被编译器剔除的 dead passes)</center>*
 
 因为 MSAA 需要其自身的 multisampled depth buffer，`Opaque_Pass` 不再依赖于来自 `Pre_Pass` 的标准 depth buffer。随着 SSAO 和 SSSS 被禁用，没有活动的 Pass 消费 `Pre_Pass` 的输出。
 
@@ -357,7 +357,6 @@ flowchart TD
     P4 -->|"Scene_Depth_MSAA"| P9;
     P4 -->|"Scene_Color_HDR"| P5;
     P4 -->|"Scene_Color_HDR"| P6;
-    P4 -->|"Specular_MRT"| P5;
     P4 -->|"Specular_MRT"| P6;
     P5 -->|"SSSS_Temp"| P6;
     P6 ==>|"Scene_Color_SSSS"| P7;
@@ -387,7 +386,7 @@ flowchart TD
     OUT_33[/"Surface_With_UI"/]:::external
     P24 -->|"Surface_With_UI"| OUT_33;
 ```
-*（图例说明：单线箭头 --> 表示逻辑数据依赖；双线箭头 ==> 表示物理内存别名/原位复用）*
+*<center>（图例说明：单线箭头 --> 表示逻辑数据依赖；双线箭头 ==> 表示物理内存别名/原位复用）</center>*
 
 通过这样做，我们充分释放了编译器的力量。每个 Pass 都是一个独立的原子单元。可以在全局范围内优化它们的执行顺序、内存分配和资源 aliasing，而无需担心隐藏的副作用。同时，logical subgraphs 使开发者的认知负荷保持得完美可控。
 
