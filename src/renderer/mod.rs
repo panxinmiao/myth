@@ -55,6 +55,7 @@ use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::gpu::SamplerRegistry;
 use crate::renderer::graph::composer::ComposerContext;
 use crate::renderer::graph::core::allocator::TransientPool;
+use crate::renderer::graph::core::arena::FrameArena;
 use crate::renderer::graph::core::graph::RenderGraph;
 use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
@@ -114,6 +115,7 @@ struct RendererState {
     pub(crate) graph: RenderGraph,
     pub(crate) sampler_registry: SamplerRegistry,
     pub(crate) transient_pool: TransientPool,
+    pub(crate) frame_arena: FrameArena,
 
     // Post-processing passes
     pub(crate) fxaa_pass: FxaaFeature,
@@ -210,6 +212,7 @@ impl Renderer {
             graph: RenderGraph::new(),
             sampler_registry,
             transient_pool: TransientPool::new(),
+            frame_arena: FrameArena::new(),
             fxaa_pass: FxaaFeature::new(),
             tone_map_pass: ToneMappingFeature::new(),
             bloom_pass: BloomFeature::new(),
@@ -295,6 +298,13 @@ impl Renderer {
         }
 
         let state = self.context.as_mut()?;
+
+        // ── Frame Arena Lifecycle ───────────────────────────────────────
+        // Drop previous frame's arena-allocated PassNodes (releases owned
+        // GPU resources like BindGroup Arc refs), then reclaim the arena
+        // memory in O(1).
+        state.graph.cleanup_nodes();
+        state.frame_arena.reset();
 
         // Advance the bind-group cache's frame counter for TTL tracking.
         state.global_bind_group_cache.begin_frame();
@@ -454,6 +464,7 @@ impl Renderer {
             graph: &mut state.graph,
             transient_pool: &mut state.transient_pool,
             sampler_registry: &mut state.sampler_registry,
+            frame_arena: &state.frame_arena,
             fxaa_pass: &mut state.fxaa_pass,
             tone_map_pass: &mut state.tone_map_pass,
             bloom_pass: &mut state.bloom_pass,

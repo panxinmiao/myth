@@ -2,11 +2,11 @@ use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
 use crate::renderer::graph::core::allocator::TransientPool;
+use crate::renderer::graph::core::arena::FrameArena;
 use crate::renderer::graph::core::types::TextureDesc;
 
 use super::builder::PassBuilder;
-use super::context::{ExecuteContext, PrepareContext};
-use super::node::{PassNode, PassRecord};
+use super::node::{NodeSlot, PassNode, PassRecord};
 use super::types::{ResourceRecord, TextureNodeId};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
@@ -108,6 +108,19 @@ pub struct RenderGraph {
     /// Per-frame rendering configuration (resolution, formats, MSAA).
     frame_config: FrameConfig,
 
+    /// Raw pointer to the current frame's [`FrameArena`].
+    ///
+    /// Set by [`set_frame_arena()`](Self::set_frame_arena) before graph
+    /// construction begins.  Used internally by [`add_pass()`](Self::add_pass)
+    /// to allocate `PassNode`s on the arena instead of the system heap.
+    ///
+    /// # Safety
+    ///
+    /// The pointed-to arena must outlive all `PassNode`s allocated through
+    /// this graph.  The engine frame lifecycle guarantees this:
+    /// `cleanup_nodes()` → `arena.reset()` at frame boundaries.
+    arena: Option<ArenaPtr>,
+
     // --- Compile-time scratch buffers (zero-alloc across frames) ---
     compile_stack: Vec<usize>,
     compile_in_degrees: Vec<usize>,
@@ -125,6 +138,18 @@ pub struct RenderGraph {
     #[cfg(debug_assertions)]
     prev_execution_names: Vec<&'static str>,
 }
+
+/// Send/Sync wrapper for the raw arena pointer stored in [`RenderGraph`].
+///
+/// The engine's single-threaded frame model guarantees no concurrent access
+/// to the arena through this pointer.
+struct ArenaPtr(*const FrameArena);
+
+// SAFETY: The arena is only accessed on the render thread.  The frame
+// lifecycle ensures the pointer is valid from `set_frame_arena()` until
+// the next `cleanup_nodes()` + `arena.reset()` sequence.
+unsafe impl Send for ArenaPtr {}
+unsafe impl Sync for ArenaPtr {}
 
 impl Default for RenderGraph {
     fn default() -> Self {
@@ -148,6 +173,7 @@ impl RenderGraph {
                 surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
                 hdr_format: wgpu::TextureFormat::Rgba16Float,
             },
+            arena: None,
             compile_stack: Vec::new(),
             compile_in_degrees: Vec::new(),
             compile_ready_heap: BinaryHeap::new(),
@@ -165,6 +191,9 @@ impl RenderGraph {
     /// `register_resource` or `add_pass` calls.  The [`FrameConfig`] is
     /// stored and made available to passes via [`PassBuilder`] accessors
     /// so they can derive `RdgTextureDesc`s without external push params.
+    ///
+    /// **Note:** [`cleanup_nodes()`](Self::cleanup_nodes) must be called
+    /// *before* this method to properly tear down arena-allocated nodes.
     pub fn begin_frame(&mut self, config: FrameConfig) {
         self.passes.clear();
         self.resources.clear();
@@ -174,6 +203,44 @@ impl RenderGraph {
 
         #[cfg(feature = "rdg_inspector")]
         self.current_group_stack.clear();
+    }
+
+    /// Stores a reference to the current frame's [`FrameArena`].
+    ///
+    /// Must be called after [`begin_frame()`](Self::begin_frame) and before
+    /// any [`add_pass()`](Self::add_pass) calls.  The arena must outlive
+    /// all `PassNode`s created during this frame.
+    #[inline]
+    pub fn set_frame_arena(&mut self, arena: &FrameArena) {
+        self.arena = Some(ArenaPtr(std::ptr::from_ref(arena)));
+    }
+
+    /// Drops all arena-allocated pass nodes in place.
+    ///
+    /// Iterates every [`PassRecord`] and calls [`drop_in_place`] on
+    /// arena-owned nodes.  Borrowed nodes (from [`add_pass_borrowed`]) are
+    /// skipped — the caller retains ownership.
+    ///
+    /// This must be called **before** [`FrameArena::reset()`] to ensure
+    /// that owned GPU resources (bind groups, etc.) are properly released.
+    ///
+    /// [`drop_in_place`]: std::ptr::drop_in_place
+    /// [`add_pass_borrowed`]: Self::add_pass_borrowed
+    pub fn cleanup_nodes(&mut self) {
+        for pass in &mut self.passes {
+            if let Some(slot) = pass.node.take()
+                && slot.is_owned()
+            {
+                // SAFETY: The pointer was arena-allocated by `add_pass`
+                // and has not been moved or freed.  `drop_in_place`
+                // runs the concrete PassNode's destructor to release
+                // owned resources (e.g. wgpu::BindGroup Arc refs).
+                // The arena memory itself is reclaimed by the
+                // subsequent `FrameArena::reset()` call.
+                unsafe { std::ptr::drop_in_place(slot.ptr); }
+            }
+        }
+        self.arena = None;
     }
 
     /// Returns the current frame's rendering configuration.
@@ -285,6 +352,25 @@ impl RenderGraph {
         }
     }
 
+    /// Returns the current frame's [`FrameArena`] reference.
+    ///
+    /// # Panics
+    ///
+    /// Panics if [`set_frame_arena()`](Self::set_frame_arena) has not been
+    /// called for the current frame.
+    #[inline]
+    fn arena(&self) -> &FrameArena {
+        // SAFETY: The pointer is valid for the duration of graph building
+        // (from `set_frame_arena()` to `cleanup_nodes()`).
+        unsafe {
+            &*self
+                .arena
+                .as_ref()
+                .expect("Frame arena not set — call set_frame_arena() before add_pass()")
+                .0
+        }
+    }
+
     /// Adds a pass to the graph using eager setup.
     ///
     /// The closure receives a [`PassBuilder`] and must return a tuple of
@@ -293,9 +379,16 @@ impl RenderGraph {
     /// a [`TextureNodeId`] or typed output struct) is forwarded to the
     /// caller for downstream wiring.
     ///
+    /// # Arena Allocation
+    ///
+    /// The returned `PassNode` is allocated on the current frame's
+    /// [`FrameArena`] — a simple $O(1)$ pointer bump with no system
+    /// allocator overhead.  All nodes reside in contiguous memory,
+    /// maximising CPU cache utilisation during the execute phase.
+    ///
     /// # Type Parameters
     ///
-    /// - `N` — concrete [`PassNode`] type (boxed automatically).
+    /// - `N` — concrete [`PassNode`] type (arena-allocated).
     /// - `Out` — caller-chosen return payload (e.g. `TextureNodeId`).
     /// - `F` — closure type.
     pub fn add_pass<N, Out, F>(&mut self, name: &'static str, setup_fn: F) -> Out
@@ -323,17 +416,23 @@ impl RenderGraph {
             setup_fn(&mut builder)
         };
 
-        // Phase 3: move owned node into the record.
-        self.passes[pass_index].node = Some(Box::new(node));
+        // Phase 3: allocate the node on the frame arena (O(1) pointer bump).
+        let node_ref: &mut N = self.arena().alloc(node);
+        let ptr: *mut dyn PassNode = node_ref as *mut N;
+        self.passes[pass_index].node = Some(NodeSlot::new_owned(ptr));
         output
     }
 
     /// Adds a borrowed pass to the graph with eager setup.
     ///
     /// The closure receives a [`PassBuilder`] for topology wiring, but the
-    /// pass node is provided externally and stored via a thin raw-pointer
-    /// wrapper.  This method exists for long-lived passes (such as UI
-    /// overlays) where the `PassNode`'s state spans multiple frames.
+    /// pass node is provided externally and stored via a direct pointer.
+    /// This method exists for long-lived passes (such as UI overlays)
+    /// where the `PassNode`'s state spans multiple frames.
+    ///
+    /// Unlike [`add_pass()`](Self::add_pass), the node is **not** allocated
+    /// on the frame arena and will **not** be dropped during
+    /// [`cleanup_nodes()`](Self::cleanup_nodes).
     ///
     /// # Safety Contract
     ///
@@ -344,7 +443,7 @@ impl RenderGraph {
     pub fn add_pass_borrowed<Out, F>(
         &mut self,
         name: &'static str,
-        node: &mut dyn PassNode,
+        node: &mut (dyn PassNode + 'static),
         setup_fn: F,
     ) -> Out
     where
@@ -366,12 +465,9 @@ impl RenderGraph {
             setup_fn(&mut builder)
         };
 
-        // SAFETY: BorrowedPass stores a raw pointer to the externally-owned
-        // PassNode.  The caller guarantees the reference outlives the graph's
-        // prepare→execute window (bounded by FrameComposer::render()).
-        self.passes[pass_index].node = Some(Box::new(BorrowedPass(std::ptr::from_mut::<
-            dyn PassNode,
-        >(node))));
+        // Store a non-owned pointer — cleanup_nodes() will skip this slot.
+        let ptr: *mut dyn PassNode = std::ptr::from_mut::<dyn PassNode>(node);
+        self.passes[pass_index].node = Some(NodeSlot::new_borrowed(ptr));
         output
     }
 
@@ -850,36 +946,12 @@ impl RenderGraph {
     }
 }
 
-// ─── BorrowedPass ──────────────────────────────────────────────────────
 
-/// Thin raw-pointer wrapper for externally-owned `PassNode`s.
-///
-/// Used by [`RenderGraph::add_pass_borrowed`] to integrate long-lived
-/// pass nodes (e.g. UI overlays) that cannot transfer ownership into the
-/// graph.  Lifetime correctness is guaranteed by the caller's contract.
-struct BorrowedPass(*mut dyn PassNode);
-
-// SAFETY: The graph's single-threaded frame execution model ensures no
-// concurrent access.  The caller guarantees the pointer is valid for the
-// duration of prepare + execute.
-unsafe impl Send for BorrowedPass {}
-unsafe impl Sync for BorrowedPass {}
-
-impl PassNode for BorrowedPass {
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
-        // SAFETY: Valid during graph execution per caller contract.
-        unsafe { &mut *self.0 }.prepare(ctx);
-    }
-
-    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        // SAFETY: Valid during graph execution per caller contract.
-        unsafe { &*self.0 }.execute(ctx, encoder);
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::renderer::graph::core::context::ExecuteContext;
 
     fn dummy_config() -> FrameConfig {
         FrameConfig {
@@ -908,13 +980,22 @@ mod tests {
         fn execute(&self, _ctx: &ExecuteContext, _encoder: &mut wgpu::CommandEncoder) {}
     }
 
+    /// Helper: prepare graph + arena for a single frame.
+    fn begin_test_frame(graph: &mut RenderGraph, arena: &mut FrameArena) {
+        graph.cleanup_nodes();
+        arena.reset();
+        graph.begin_frame(dummy_config());
+        graph.set_frame_arena(arena);
+    }
+
     #[test]
     fn test_zero_alloc_graph() {
         let mut graph = RenderGraph::new();
+        let mut arena = FrameArena::new();
 
         // Run two frames to verify begin_frame capacity reuse.
         for frame in 0..2 {
-            graph.begin_frame(dummy_config());
+            begin_test_frame(&mut graph, &mut arena);
 
             let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -961,7 +1042,8 @@ mod tests {
     #[test]
     fn test_dead_resource_culling() {
         let mut graph = RenderGraph::new();
-        graph.begin_frame(dummy_config());
+        let mut arena = FrameArena::new();
+        begin_test_frame(&mut graph, &mut arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -998,7 +1080,8 @@ mod tests {
     #[test]
     fn test_self_read_prevents_culling() {
         let mut graph = RenderGraph::new();
-        graph.begin_frame(dummy_config());
+        let mut arena = FrameArena::new();
+        begin_test_frame(&mut graph, &mut arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1020,7 +1103,8 @@ mod tests {
     #[test]
     fn test_resource_lifetime_deduction() {
         let mut graph = RenderGraph::new();
-        graph.begin_frame(dummy_config());
+        let mut arena = FrameArena::new();
+        begin_test_frame(&mut graph, &mut arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1076,7 +1160,8 @@ mod tests {
     #[test]
     fn test_ssa_alias_relay_passes() {
         let mut graph = RenderGraph::new();
-        graph.begin_frame(dummy_config());
+        let mut arena = FrameArena::new();
+        begin_test_frame(&mut graph, &mut arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1154,7 +1239,8 @@ mod tests {
     #[test]
     fn test_mutate_and_export_api() {
         let mut graph = RenderGraph::new();
-        graph.begin_frame(dummy_config());
+        let mut arena = FrameArena::new();
+        begin_test_frame(&mut graph, &mut arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1198,7 +1284,8 @@ mod tests {
     #[test]
     fn test_with_group_preserves_topology() {
         let mut graph = RenderGraph::new();
-        graph.begin_frame(dummy_config());
+        let mut arena = FrameArena::new();
+        begin_test_frame(&mut graph, &mut arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1240,7 +1327,8 @@ mod tests {
     #[test]
     fn test_dump_mermaid_subgraphs() {
         let mut graph = RenderGraph::new();
-        graph.begin_frame(dummy_config());
+        let mut arena = FrameArena::new();
+        begin_test_frame(&mut graph, &mut arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
