@@ -148,8 +148,15 @@ struct CachedBindGroup {
 /// by [`garbage_collect`](Self::garbage_collect), ensuring that VRAM held
 /// by stale bind groups (e.g. after SSAO is disabled or a resize occurs)
 /// is promptly released.
+///
+/// # Heap-Stable Pointers
+///
+/// Entries are stored behind [`Box`] to guarantee that `&wgpu::BindGroup`
+/// references remain valid even when the backing `HashMap` resizes.  This
+/// enables the prepare phase to hand out `&'a wgpu::BindGroup` references
+/// that survive across multiple `prepare()` calls without invalidation.
 pub struct GlobalBindGroupCache {
-    cache: FxHashMap<BindGroupKey, CachedBindGroup>,
+    cache: FxHashMap<BindGroupKey, Box<CachedBindGroup>>,
     current_frame: u64,
 }
 
@@ -197,14 +204,21 @@ impl GlobalBindGroupCache {
         }
     }
 
+    /// Checks whether the cache contains an entry for the given key
+    /// without updating its TTL.
+    #[must_use]
+    pub fn contains(&self, key: &BindGroupKey) -> bool {
+        self.cache.contains_key(key)
+    }
+
     /// Inserts a bind group into the cache with the current frame timestamp.
     pub fn insert(&mut self, key: BindGroupKey, bind_group: wgpu::BindGroup) {
         self.cache.insert(
             key,
-            CachedBindGroup {
+            Box::new(CachedBindGroup {
                 bg: bind_group,
                 last_accessed_frame: AtomicU64::new(self.current_frame),
-            },
+            }),
         );
     }
 
@@ -215,12 +229,65 @@ impl GlobalBindGroupCache {
         factory: impl FnOnce() -> wgpu::BindGroup,
     ) -> &wgpu::BindGroup {
         let frame = self.current_frame;
-        let entry = self.cache.entry(key).or_insert_with(|| CachedBindGroup {
-            bg: factory(),
-            last_accessed_frame: AtomicU64::new(frame),
+        let entry = self.cache.entry(key).or_insert_with(|| {
+            Box::new(CachedBindGroup {
+                bg: factory(),
+                last_accessed_frame: AtomicU64::new(frame),
+            })
         });
         entry.last_accessed_frame.store(frame, Ordering::Relaxed);
         &entry.bg
+    }
+
+    /// Ensure a bind group exists and return a pointer-stable `&'a` reference.
+    ///
+    /// Because entries are `Box`-allocated, the returned `&wgpu::BindGroup`
+    /// resides at a heap address that remains valid even if the underlying
+    /// `HashMap` is later resized by subsequent insertions.  This allows
+    /// the prepare phase to hand out frame-scoped references that survive
+    /// across multiple `prepare()` calls.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure the cache is **not** garbage-collected or
+    /// cleared while the returned reference is alive.  In practice this
+    /// is guaranteed by the sequential prepare→execute pipeline: GC runs
+    /// only at frame boundaries, after all references have expired.
+    pub unsafe fn get_or_create_stable<'a>(
+        &mut self,
+        key: BindGroupKey,
+        factory: impl FnOnce() -> wgpu::BindGroup,
+    ) -> &'a wgpu::BindGroup {
+        let frame = self.current_frame;
+        let entry = self.cache.entry(key).or_insert_with(|| {
+            Box::new(CachedBindGroup {
+                bg: factory(),
+                last_accessed_frame: AtomicU64::new(frame),
+            })
+        });
+        entry.last_accessed_frame.store(frame, Ordering::Relaxed);
+        // SAFETY: Box<CachedBindGroup> places the BindGroup on the heap
+        // at a stable address.  HashMap resizing moves Box pointers but
+        // not the heap-allocated data they reference.  The entry is
+        // retained until garbage_collect() at frame boundaries.
+        unsafe { &*(&entry.bg as *const wgpu::BindGroup) }
+    }
+
+    /// Retrieve or create a bind group, returning a pointer-stable `&'a`
+    /// reference suitable for storing on a `PassNode<'a>`.
+    ///
+    /// This is the **safe entry-point** for RDG prepare-phase code.
+    /// It wraps [`Self::get_or_create_stable`] and relies on the
+    /// architectural invariant that cache entries live for the full frame.
+    pub(crate) fn get_or_create_bg<'a>(
+        &mut self,
+        key: BindGroupKey,
+        factory: impl FnOnce() -> wgpu::BindGroup,
+    ) -> &'a wgpu::BindGroup {
+        // SAFETY: Box'd entries have heap-stable addresses.  The cache is
+        // not garbage-collected until frame boundaries, after all `&'a`
+        // references have expired in the sequential prepare→execute model.
+        unsafe { self.get_or_create_stable(key, factory) }
     }
 
     /// Forcibly clears all entries.

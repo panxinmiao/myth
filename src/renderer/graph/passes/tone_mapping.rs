@@ -386,18 +386,19 @@ impl ToneMappingFeature {
     /// relay on `target_ldr` (via `mutate_and_export`), and returns the
     /// updated target handle. This enforces a pure dataflow chain where
     /// every Feature explicitly produces a new resource version.
-    pub fn add_to_graph(
-        &self,
-        graph: &mut RenderGraph<'_>,
+    pub fn add_to_graph<'a>(
+        &'a self,
+        graph: &mut RenderGraph<'a>,
         input_hdr: TextureNodeId,
         target_ldr: TextureNodeId,
     ) -> TextureNodeId {
         let pipeline_id = self.current_pipeline.expect("ToneMapFeature not prepared");
+        let pipeline = graph.pipeline_cache.get_render_pipeline(pipeline_id);
         let static_bg = self
             .static_bg
-            .clone()
+            .as_ref()
             .expect("ToneMapFeature: static BG not built");
-        let transient_layout = self.transient_layout.clone().unwrap();
+        let transient_layout = self.transient_layout.as_ref().unwrap();
 
         graph.add_pass("ToneMap_Pass", |builder| {
             builder.read_texture(input_hdr);
@@ -406,10 +407,10 @@ impl ToneMappingFeature {
             let node = ToneMapPassNode {
                 input_tex: input_hdr,
                 output_tex: output,
-                pipeline_id,
+                pipeline,
                 static_bg,
                 transient_layout,
-                current_bind_group_key: None,
+                transient_bg: None,
             };
             (node, output)
         })
@@ -420,65 +421,50 @@ impl ToneMappingFeature {
 // PassNode (ephemeral, created per frame)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-/// Ephemeral tone mapping pass node.
+/// Ephemeral tone mapping pass node — zero-drop POD.
 ///
-/// Carries only:
-/// - Pipeline ID (from Feature's L1 cache)
-/// - Pre-built static BG (Group 1, Arc clone from Feature)
-/// - Transient layout for building Group 2 with the RDG input texture
-struct ToneMapPassNode {
+/// All fields are either `Copy` types or borrowed references with
+/// frame lifetime `'a`.  No hash lookups occur during execute.
+struct ToneMapPassNode<'a> {
     input_tex: TextureNodeId,
     output_tex: TextureNodeId,
-    pipeline_id: RenderPipelineId,
+    pipeline: &'a wgpu::RenderPipeline,
 
     /// Feature-owned static bind group (Group 1): sampler + uniforms + optional LUT.
-    static_bg: wgpu::BindGroup,
+    static_bg: &'a wgpu::BindGroup,
     /// Layout for transient bind group (Group 2).
-    transient_layout: Tracked<wgpu::BindGroupLayout>,
+    transient_layout: &'a Tracked<wgpu::BindGroupLayout>,
 
-    /// Cache key for the transient bind group built in `prepare()`.
-    current_bind_group_key: Option<BindGroupKey>,
+    /// Pointer-stable transient bind group built in `prepare()`.
+    transient_bg: Option<&'a wgpu::BindGroup>,
 }
 
-impl PassNode<'_> for ToneMapPassNode {
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
-        // ─── Transient BindGroup (Group 2): input texture only ─────
-        let input_view = ctx.views.get_texture_view(self.input_tex);
-        let layout = &self.transient_layout;
+impl<'a> PassNode<'a> for ToneMapPassNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
+        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let device = *device;
+        let input_view = views.get_texture_view(self.input_tex);
+        let layout = self.transient_layout;
 
         let key = BindGroupKey::new(layout.id()).with_resource(input_view.id());
 
-        if self.current_bind_group_key.as_ref() != Some(&key) {
-            if ctx.global_bind_group_cache.get(&key).is_none() {
-                let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("ToneMap Transient BG (G2)"),
-                    layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: wgpu::BindingResource::TextureView(input_view),
-                    }],
-                });
-                ctx.global_bind_group_cache.insert(key.clone(), bg);
-            }
-            self.current_bind_group_key = Some(key);
-        }
+        let bg = cache.get_or_create_bg(key, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("ToneMap Transient BG (G2)"),
+                layout,
+                entries: &[wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(input_view),
+                }],
+            })
+        });
+        self.transient_bg = Some(bg);
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let global_bind_group = ctx.baked_lists.global_bind_group;
 
-        // let output_view = ctx.get_texture_view(self.output_tex);
-
-        let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
-
-        let transient_bg_key = self
-            .current_bind_group_key
-            .as_ref()
-            .expect("BindGroupKey should have been set in prepare!");
-        let transient_bg = ctx
-            .global_bind_group_cache
-            .get(transient_bg_key)
-            .expect("Transient BindGroup should have been prepared!");
+        let transient_bg = self.transient_bg.expect("Transient BG not prepared!");
 
         let rtt = ctx.get_color_attachment(self.output_tex, RenderTargetOps::DontCare, None);
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -490,9 +476,9 @@ impl PassNode<'_> for ToneMapPassNode {
             multiview_mask: None,
         });
 
-        rpass.set_pipeline(pipeline);
+        rpass.set_pipeline(self.pipeline);
         rpass.set_bind_group(0, global_bind_group, &[]);
-        rpass.set_bind_group(1, &self.static_bg, &[]);
+        rpass.set_bind_group(1, self.static_bg, &[]);
         rpass.set_bind_group(2, transient_bg, &[]);
         rpass.draw(0..3, 0..1);
     }

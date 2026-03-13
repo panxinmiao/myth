@@ -1,9 +1,9 @@
 use crate::assets::AssetServer;
 use crate::renderer::core::ResourceManager;
 use crate::renderer::core::WgpuContext;
-use crate::renderer::core::binding::GlobalBindGroupCache;
+use crate::renderer::core::binding::{BindGroupKey, GlobalBindGroupCache};
 use crate::renderer::core::gpu::MipmapGenerator;
-use crate::renderer::core::gpu::{SamplerRegistry, Tracked};
+use crate::renderer::core::gpu::{SamplerRegistry, ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::frame::{BakedRenderLists, RenderLists};
 use crate::renderer::graph::{ExtractedScene, RenderState};
 use crate::renderer::pipeline::{PipelineCache, ShaderManager};
@@ -166,6 +166,68 @@ impl ViewResolver<'_> {
     }
 }
 
+// ─── PrepareContext Helpers ────────────────────────────────────────────────────
+
+/// Build the screen / transient bind group (Group 3), returning a
+/// pointer-stable `&'a` reference.
+///
+/// Encapsulates key construction and cache lookup for the screen bind group
+/// used by Opaque, Transparent, and SimpleForward passes.
+///
+/// Callers must destructure [`PrepareContext`] to obtain split borrows of
+/// `global_bind_group_cache` and `device` before calling this function.
+pub fn build_screen_bind_group<'a>(
+    cache: &mut GlobalBindGroupCache,
+    device: &wgpu::Device,
+    screen_info: &ScreenBindGroupInfo,
+    transmission_view: &Tracked<wgpu::TextureView>,
+    ssao_view: &Tracked<wgpu::TextureView>,
+    shadow_view: &Tracked<wgpu::TextureView>,
+) -> &'a wgpu::BindGroup {
+    let key = BindGroupKey::new(screen_info.layout.id())
+        .with_resource(transmission_view.id())
+        .with_resource(screen_info.sampler.id())
+        .with_resource(ssao_view.id())
+        .with_resource(shadow_view.id())
+        .with_resource(screen_info.shadow_compare_sampler.id());
+
+    let layout = &*screen_info.layout;
+    let sampler = &*screen_info.sampler;
+    let tv = &**transmission_view;
+    let sv = &**ssao_view;
+    let shv = &**shadow_view;
+    let shs = &*screen_info.shadow_compare_sampler;
+
+    cache.get_or_create_bg(key, || {
+        device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("Screen BindGroup (Group 3)"),
+            layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(tv),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::TextureView(sv),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: wgpu::BindingResource::TextureView(shv),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::Sampler(shs),
+                },
+            ],
+        })
+    })
+}
+
 // ─── Execute Context ──────────────────────────────────────────────────────────
 
 /// Immutable context available during the RDG **execute** phase.
@@ -235,6 +297,20 @@ impl ExecuteContext<'_> {
             .physical_index
             .expect("Resource has no physical memory!");
         self.pool.get_tracked_view(physical_index)
+    }
+
+    /// Returns the raw [`wgpu::Texture`] handle for the given node.
+    ///
+    /// Useful for passes that need to create custom views at execute time
+    /// (e.g. per-layer shadow map views from a 2D-array texture).
+    #[must_use]
+    pub fn get_texture(&self, id: TextureNodeId) -> &wgpu::Texture {
+        let root_id = resolve_root_id(self.resources, id);
+        let res = &self.resources[root_id.0 as usize];
+        let physical_index = res
+            .physical_index
+            .expect("Transient resource has no physical memory assigned!");
+        self.pool.get_texture(physical_index)
     }
 
     /// Safely resolve a [`TextureNodeId`] to its physical [`TextureView`].

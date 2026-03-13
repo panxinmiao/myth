@@ -292,19 +292,23 @@ impl SsssFeature {
     ///
     /// 1. **SSSS_Blur_H** — horizontal scatter: `scene_color` → `temp_blur`
     /// 2. **SSSS_Blur_V** — vertical scatter: `temp_blur` → `scene_color` alias
-    pub fn add_to_graph(
-        &self,
-        graph: &mut RenderGraph<'_>,
+    pub fn add_to_graph<'a>(
+        &'a self,
+        graph: &mut RenderGraph<'a>,
         scene_color: TextureNodeId,
         scene_depth: TextureNodeId,
         scene_normals: TextureNodeId,
         feature_id: TextureNodeId,
         specular_tex: TextureNodeId,
     ) -> TextureNodeId {
-        let horizontal_pipeline = self.horizontal_pipeline.expect("SsssFeature not prepared");
-        let vertical_pipeline = self.vertical_pipeline.expect("SsssFeature not prepared");
-        let bind_group_layout = self.bind_group_layout.clone().unwrap();
-        let profiles_buffer = self.profiles_buffer.clone().unwrap();
+        let horizontal_pipeline = graph.pipeline_cache.get_render_pipeline(
+            self.horizontal_pipeline.expect("SsssFeature not prepared"),
+        );
+        let vertical_pipeline = graph.pipeline_cache.get_render_pipeline(
+            self.vertical_pipeline.expect("SsssFeature not prepared"),
+        );
+        let bind_group_layout = self.bind_group_layout.as_ref().unwrap();
+        let profiles_buffer = self.profiles_buffer.as_ref().unwrap();
 
         graph.with_group("SSSS_System", |g| {
             // ─── Pass 1: Horizontal blur ───────────────────────────
@@ -323,7 +327,6 @@ impl SsssFeature {
                 builder.read_texture(scene_depth);
                 builder.read_texture(scene_normals);
                 builder.read_texture(feature_id);
-                // builder.read_texture(specular_tex);
                 let out = builder.create_and_export("SSSS_Temp", temp_desc);
                 let node = SsssHorizontalNode {
                     scene_color_in: scene_color,
@@ -332,9 +335,9 @@ impl SsssFeature {
                     normal_in: scene_normals,
                     feature_id,
                     specular_tex,
-                    horizontal_pipeline,
-                    bind_group_layout: bind_group_layout.clone(),
-                    profiles_buffer: profiles_buffer.clone(),
+                    pipeline: horizontal_pipeline,
+                    bind_group_layout,
+                    profiles_buffer,
                     bind_group: None,
                 };
                 (node, out)
@@ -355,9 +358,9 @@ impl SsssFeature {
                     normal_in: scene_normals,
                     feature_id,
                     specular_tex,
-                    vertical_pipeline,
-                    bind_group_layout: bind_group_layout.clone(),
-                    profiles_buffer: profiles_buffer.clone(),
+                    pipeline: vertical_pipeline,
+                    bind_group_layout,
+                    profiles_buffer,
                     bind_group: None,
                 };
                 (node, out)
@@ -376,7 +379,7 @@ impl SsssFeature {
 ///
 /// Reads scene colour and writes to the scratch `temp_blur` texture.
 /// Uses stencil test to only scatter pixels marked with `STENCIL_FEATURE_SSS`.
-struct SsssHorizontalNode {
+struct SsssHorizontalNode<'a> {
     scene_color_in: TextureNodeId,
     temp_blur: TextureNodeId,
     depth_in: TextureNodeId,
@@ -384,34 +387,35 @@ struct SsssHorizontalNode {
     feature_id: TextureNodeId,
     specular_tex: TextureNodeId,
 
-    horizontal_pipeline: RenderPipelineId,
-    bind_group_layout: Tracked<wgpu::BindGroupLayout>,
-    profiles_buffer: Tracked<wgpu::Buffer>,
+    pipeline: &'a wgpu::RenderPipeline,
+    bind_group_layout: &'a Tracked<wgpu::BindGroupLayout>,
+    profiles_buffer: &'a Tracked<wgpu::Buffer>,
 
-    bind_group: Option<wgpu::BindGroup>,
+    bind_group: Option<&'a wgpu::BindGroup>,
 }
 
-impl PassNode<'_> for SsssHorizontalNode {
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
+impl<'a> PassNode<'a> for SsssHorizontalNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
+        let PrepareContext { views, global_bind_group_cache: cache, device, sampler_registry, .. } = ctx;
+        let device = *device;
+
         let depth_sub_key = SubViewKey {
             aspect: wgpu::TextureAspect::DepthOnly,
             ..Default::default()
         };
-        ctx.views
-            .get_or_create_sub_view(self.depth_in, &depth_sub_key);
+        views.get_or_create_sub_view(self.depth_in, &depth_sub_key);
 
-        let depth_only_view = ctx
-            .views
+        let depth_only_view = views
             .get_sub_view(self.depth_in, &depth_sub_key)
             .expect("SSSS H: depth-only view must exist");
-        let color_in_view = ctx.views.get_texture_view(self.scene_color_in);
-        let normal_view = ctx.views.get_texture_view(self.normal_in);
-        let feature_view = ctx.views.get_texture_view(self.feature_id);
-        let specular_view = ctx.views.get_texture_view(self.specular_tex);
+        let color_in_view = views.get_texture_view(self.scene_color_in);
+        let normal_view = views.get_texture_view(self.normal_in);
+        let feature_view = views.get_texture_view(self.feature_id);
+        let specular_view = views.get_texture_view(self.specular_tex);
 
-        let layout = &self.bind_group_layout;
-        let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
-        let profiles_buffer = &self.profiles_buffer;
+        let layout = self.bind_group_layout;
+        let sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
+        let profiles_buffer = self.profiles_buffer;
 
         let key = BindGroupKey::new(layout.id())
             .with_resource(color_in_view.id())
@@ -422,8 +426,8 @@ impl PassNode<'_> for SsssHorizontalNode {
             .with_resource(feature_view.id())
             .with_resource(specular_view.id());
 
-        if ctx.global_bind_group_cache.get(&key).is_none() {
-            let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bg = cache.get_or_create_bg(key, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SSSS Horizontal Bind Group"),
                 layout,
                 entries: &[
@@ -456,17 +460,13 @@ impl PassNode<'_> for SsssHorizontalNode {
                         resource: wgpu::BindingResource::TextureView(specular_view),
                     },
                 ],
-            });
-            ctx.global_bind_group_cache.insert(key.clone(), bg);
-        }
-        self.bind_group = ctx.global_bind_group_cache.get(&key).cloned();
+            })
+        });
+        self.bind_group = Some(bg);
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let depth_stencil_view = ctx.get_texture_view(self.depth_in);
-        let pipeline = ctx
-            .pipeline_cache
-            .get_render_pipeline(self.horizontal_pipeline);
 
         let rtt = ctx.get_color_attachment(
             self.temp_blur,
@@ -485,9 +485,9 @@ impl PassNode<'_> for SsssHorizontalNode {
             ..Default::default()
         });
 
-        rpass.set_pipeline(pipeline);
+        rpass.set_pipeline(self.pipeline);
         rpass.set_stencil_reference(STENCIL_FEATURE_SSS);
-        rpass.set_bind_group(0, self.bind_group.as_ref().unwrap(), &[]);
+        rpass.set_bind_group(0, self.bind_group.unwrap(), &[]);
         rpass.draw(0..3, 0..1);
     }
 }
@@ -500,7 +500,7 @@ impl PassNode<'_> for SsssHorizontalNode {
 ///
 /// Reads the `temp_blur` scratch texture and writes back to the scene colour
 /// alias (via `mutate_and_export`). Uses stencil test to preserve non-SSS pixels.
-struct SsssVerticalNode {
+struct SsssVerticalNode<'a> {
     scene_color_out: TextureNodeId,
     temp_blur: TextureNodeId,
     depth_in: TextureNodeId,
@@ -508,34 +508,35 @@ struct SsssVerticalNode {
     feature_id: TextureNodeId,
     specular_tex: TextureNodeId,
 
-    vertical_pipeline: RenderPipelineId,
-    bind_group_layout: Tracked<wgpu::BindGroupLayout>,
-    profiles_buffer: Tracked<wgpu::Buffer>,
+    pipeline: &'a wgpu::RenderPipeline,
+    bind_group_layout: &'a Tracked<wgpu::BindGroupLayout>,
+    profiles_buffer: &'a Tracked<wgpu::Buffer>,
 
-    bind_group: Option<wgpu::BindGroup>,
+    bind_group: Option<&'a wgpu::BindGroup>,
 }
 
-impl PassNode<'_> for SsssVerticalNode {
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
+impl<'a> PassNode<'a> for SsssVerticalNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
+        let PrepareContext { views, global_bind_group_cache: cache, device, sampler_registry, .. } = ctx;
+        let device = *device;
+
         let depth_sub_key = SubViewKey {
             aspect: wgpu::TextureAspect::DepthOnly,
             ..Default::default()
         };
-        ctx.views
-            .get_or_create_sub_view(self.depth_in, &depth_sub_key);
+        views.get_or_create_sub_view(self.depth_in, &depth_sub_key);
 
-        let depth_only_view = ctx
-            .views
+        let depth_only_view = views
             .get_sub_view(self.depth_in, &depth_sub_key)
             .expect("SSSS V: depth-only view must exist");
-        let temp_blur_view = ctx.views.get_texture_view(self.temp_blur);
-        let normal_view = ctx.views.get_texture_view(self.normal_in);
-        let feature_view = ctx.views.get_texture_view(self.feature_id);
-        let specular_view = ctx.views.get_texture_view(self.specular_tex);
+        let temp_blur_view = views.get_texture_view(self.temp_blur);
+        let normal_view = views.get_texture_view(self.normal_in);
+        let feature_view = views.get_texture_view(self.feature_id);
+        let specular_view = views.get_texture_view(self.specular_tex);
 
-        let layout = &self.bind_group_layout;
-        let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
-        let profiles_buffer = &self.profiles_buffer;
+        let layout = self.bind_group_layout;
+        let sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
+        let profiles_buffer = self.profiles_buffer;
 
         let key = BindGroupKey::new(layout.id())
             .with_resource(temp_blur_view.id())
@@ -546,8 +547,8 @@ impl PassNode<'_> for SsssVerticalNode {
             .with_resource(feature_view.id())
             .with_resource(specular_view.id());
 
-        if ctx.global_bind_group_cache.get(&key).is_none() {
-            let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bg = cache.get_or_create_bg(key, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("SSSS Vertical Bind Group"),
                 layout,
                 entries: &[
@@ -580,17 +581,13 @@ impl PassNode<'_> for SsssVerticalNode {
                         resource: wgpu::BindingResource::TextureView(specular_view),
                     },
                 ],
-            });
-            ctx.global_bind_group_cache.insert(key.clone(), bg);
-        }
-        self.bind_group = ctx.global_bind_group_cache.get(&key).cloned();
+            })
+        });
+        self.bind_group = Some(bg);
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let depth_stencil_view = ctx.get_texture_view(self.depth_in);
-        let pipeline = ctx
-            .pipeline_cache
-            .get_render_pipeline(self.vertical_pipeline);
 
         let rtt = ctx.get_color_attachment(self.scene_color_out, RenderTargetOps::Load, None);
 
@@ -605,9 +602,9 @@ impl PassNode<'_> for SsssVerticalNode {
             ..Default::default()
         });
 
-        rpass.set_pipeline(pipeline);
+        rpass.set_pipeline(self.pipeline);
         rpass.set_stencil_reference(STENCIL_FEATURE_SSS);
-        rpass.set_bind_group(0, self.bind_group.as_ref().unwrap(), &[]);
+        rpass.set_bind_group(0, self.bind_group.unwrap(), &[]);
         rpass.draw(0..3, 0..1);
     }
 }

@@ -139,14 +139,15 @@ impl FxaaFeature {
     /// on `target_surface` (via `mutate_and_export`), and returns the
     /// updated surface handle. This enforces a pure dataflow chain where
     /// every Feature explicitly produces a new resource version.
-    pub fn add_to_graph(
-        &self,
-        graph: &mut RenderGraph<'_>,
+    pub fn add_to_graph<'a>(
+        &'a self,
+        graph: &mut RenderGraph<'a>,
         input_ldr: TextureNodeId,
         target_surface: TextureNodeId,
     ) -> TextureNodeId {
         let pipeline_id = self.pipeline_id.expect("FxaaFeature not prepared");
-        let layout = self.bind_group_layout.clone().unwrap();
+        let pipeline = graph.pipeline_cache.get_render_pipeline(pipeline_id);
+        let layout = self.bind_group_layout.as_ref().unwrap();
 
         graph.add_pass("FXAA_Pass", |builder| {
             builder.read_texture(input_ldr);
@@ -155,9 +156,9 @@ impl FxaaFeature {
             let node = FxaaPassNode {
                 input_tex: input_ldr,
                 output_tex: output,
-                pipeline_id,
+                pipeline,
                 layout,
-                current_bind_group_key: None,
+                transient_bg: None,
             };
             (node, output)
         })
@@ -168,57 +169,47 @@ impl FxaaFeature {
 // PassNode (ephemeral, created per frame)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-struct FxaaPassNode {
+struct FxaaPassNode<'a> {
     input_tex: TextureNodeId,
     output_tex: TextureNodeId,
-    pipeline_id: RenderPipelineId,
-    layout: Tracked<wgpu::BindGroupLayout>,
-    current_bind_group_key: Option<BindGroupKey>,
+    pipeline: &'a wgpu::RenderPipeline,
+    layout: &'a Tracked<wgpu::BindGroupLayout>,
+    transient_bg: Option<&'a wgpu::BindGroup>,
 }
 
-impl PassNode<'_> for FxaaPassNode {
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
-        let input_view = ctx.views.get_texture_view(self.input_tex);
-        let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
+impl<'a> PassNode<'a> for FxaaPassNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
+        let PrepareContext { views, global_bind_group_cache: cache, device, sampler_registry, .. } = ctx;
+        let device = *device;
+        let input_view = views.get_texture_view(self.input_tex);
+        let sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
 
-        let current_key = BindGroupKey::new(self.layout.id())
+        let key = BindGroupKey::new(self.layout.id())
             .with_resource(input_view.id())
             .with_resource(sampler.id());
 
-        if self.current_bind_group_key.as_ref() != Some(&current_key) {
-            if ctx.global_bind_group_cache.get(&current_key).is_none() {
-                let new_bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("FXAA BindGroup"),
-                    layout: &self.layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(input_view),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                    ],
-                });
-                ctx.global_bind_group_cache
-                    .insert(current_key.clone(), new_bg);
-            }
-            self.current_bind_group_key = Some(current_key);
-        }
+        let layout = self.layout;
+        let bg = cache.get_or_create_bg(key, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("FXAA BindGroup"),
+                layout,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(input_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            })
+        });
+        self.transient_bg = Some(bg);
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut CommandEncoder) {
-        let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
-
-        let bind_group_key = self
-            .current_bind_group_key
-            .as_ref()
-            .expect("BindGroupKey should have been set in prepare!");
-        let bind_group = ctx
-            .global_bind_group_cache
-            .get(bind_group_key)
-            .expect("BindGroup should have been prepared!");
+        let bind_group = self.transient_bg.expect("FXAA BG not prepared!");
 
         let rtt = ctx.get_color_attachment(self.output_tex, RenderTargetOps::DontCare, None);
 
@@ -231,7 +222,7 @@ impl PassNode<'_> for FxaaPassNode {
             multiview_mask: None,
         });
 
-        rpass.set_pipeline(pipeline);
+        rpass.set_pipeline(self.pipeline);
         rpass.set_bind_group(0, bind_group, &[]);
         rpass.draw(0..3, 0..1);
     }

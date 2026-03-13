@@ -548,9 +548,9 @@ impl BloomFeature {
     ///
     /// Returns the composited output [`TextureNodeId`] (scene HDR with
     /// bloom applied) for downstream wiring (e.g. ToneMapping).
-    pub fn add_to_graph(
-        &self,
-        graph: &mut RenderGraph<'_>,
+    pub fn add_to_graph<'a>(
+        &'a self,
+        graph: &mut RenderGraph<'a>,
         input_color: TextureNodeId,
         karis_average: bool,
         max_mip_levels: u32,
@@ -562,36 +562,36 @@ impl BloomFeature {
         let max_possible = ((bloom_w.max(bloom_h) as f32).log2().floor() as u32) + 1;
         let mip_count = max_mip_levels.min(max_possible).max(1) as usize;
 
-        let ds_pipeline = self
-            .downsample_pipeline
-            .expect("BloomFeature: downsample pipeline not initialised");
-        let us_pipeline = self
-            .upsample_pipeline
-            .expect("BloomFeature: upsample pipeline not initialised");
-        let comp_pipeline = self
-            .composite_pipeline
-            .expect("BloomFeature: composite pipeline not initialised");
+        let ds_pipeline = graph.pipeline_cache.get_render_pipeline(
+            self.downsample_pipeline.expect("BloomFeature: downsample pipeline not initialised"),
+        );
+        let us_pipeline = graph.pipeline_cache.get_render_pipeline(
+            self.upsample_pipeline.expect("BloomFeature: upsample pipeline not initialised"),
+        );
+        let comp_pipeline = graph.pipeline_cache.get_render_pipeline(
+            self.composite_pipeline.expect("BloomFeature: composite pipeline not initialised"),
+        );
 
         let karis_on_bg = self
             .karis_on_static_bg
-            .clone()
+            .as_ref()
             .expect("BloomFeature: karis_on static BG not built");
         let karis_off_bg = self
             .karis_off_static_bg
-            .clone()
+            .as_ref()
             .expect("BloomFeature: karis_off static BG not built");
         let upsample_bg = self
             .upsample_static_bg
-            .clone()
+            .as_ref()
             .expect("BloomFeature: upsample static BG not built");
         let composite_bg = self
             .composite_static_bg
-            .clone()
+            .as_ref()
             .expect("BloomFeature: composite static BG not built");
 
-        let ds_transient_layout = self.ds_transient_layout.clone().unwrap();
-        let us_transient_layout = self.us_transient_layout.clone().unwrap();
-        let comp_transient_layout = self.comp_transient_layout.clone().unwrap();
+        let ds_transient_layout = self.ds_transient_layout.as_ref().unwrap();
+        let us_transient_layout = self.us_transient_layout.as_ref().unwrap();
+        let comp_transient_layout = self.comp_transient_layout.as_ref().unwrap();
 
         graph.with_group("Bloom_System", |g| {
             // ─── 1. Extract: Scene HDR → Bloom Mip 0 ──────────────
@@ -605,9 +605,9 @@ impl BloomFeature {
             );
 
             let static_bg = if karis_average {
-                karis_on_bg.clone()
+                karis_on_bg
             } else {
-                karis_off_bg.clone()
+                karis_off_bg
             };
 
             let mut current_mip: TextureNodeId = g.add_pass("Bloom_Extract", |builder| {
@@ -616,10 +616,10 @@ impl BloomFeature {
                 let node = BloomDownsampleNode {
                     input_tex: input_color,
                     output_tex: out,
-                    pipeline_id: ds_pipeline,
+                    pipeline: ds_pipeline,
                     static_bg,
-                    transient_layout: ds_transient_layout.clone(),
-                    transient_bg_key: None,
+                    transient_layout: ds_transient_layout,
+                    transient_bg: None,
                 };
                 (node, out)
             });
@@ -652,10 +652,10 @@ impl BloomFeature {
                     let node = BloomDownsampleNode {
                         input_tex: input,
                         output_tex: out,
-                        pipeline_id: ds_pipeline,
-                        static_bg: karis_off_bg.clone(),
-                        transient_layout: ds_transient_layout.clone(),
-                        transient_bg_key: None,
+                        pipeline: ds_pipeline,
+                        static_bg: karis_off_bg,
+                        transient_layout: ds_transient_layout,
+                        transient_bg: None,
                     };
                     (node, out)
                 });
@@ -664,10 +664,6 @@ impl BloomFeature {
             }
 
             // ─── 3. Upsample chain: coarse → fine with additive blend ─
-            // Start from the coarsest mip (last in chain) and accumulate
-            // upward. Each upsample reads the current (coarser) result and
-            // the next finer downsample mip, producing a new texture at the
-            // finer resolution.
             for i in (0..(mip_count - 1)).rev() {
                 let coarser = current_mip;
                 let finer = downsample_chain[i];
@@ -681,10 +677,10 @@ impl BloomFeature {
                     let node = BloomUpsampleNode {
                         coarser_tex: coarser,
                         output_tex: out,
-                        pipeline_id: us_pipeline,
-                        static_bg: upsample_bg.clone(),
-                        transient_layout: us_transient_layout.clone(),
-                        transient_bg_key: None,
+                        pipeline: us_pipeline,
+                        static_bg: upsample_bg,
+                        transient_layout: us_transient_layout,
+                        transient_bg: None,
                     };
                     (node, out)
                 });
@@ -709,10 +705,10 @@ impl BloomFeature {
                     original_tex: input_color,
                     bloom_tex: bloom_result,
                     output_tex: out,
-                    pipeline_id: comp_pipeline,
+                    pipeline: comp_pipeline,
                     static_bg: composite_bg,
                     transient_layout: comp_transient_layout,
-                    transient_bg_key: None,
+                    transient_bg: None,
                 };
                 (node, out)
             })
@@ -818,39 +814,38 @@ static UPSAMPLE_MIP_NAMES: [&str; 16] = [
 /// Used for both the initial extract (scene HDR → mip 0) and subsequent
 /// mip-chain downsamples. The karis averaging flag is controlled by which
 /// static bind group (Group 0) is provided.
-struct BloomDownsampleNode {
+struct BloomDownsampleNode<'a> {
     input_tex: TextureNodeId,
     output_tex: TextureNodeId,
-    pipeline_id: RenderPipelineId,
-    static_bg: wgpu::BindGroup,
-    transient_layout: Tracked<wgpu::BindGroupLayout>,
-    transient_bg_key: Option<BindGroupKey>,
+    pipeline: &'a wgpu::RenderPipeline,
+    static_bg: &'a wgpu::BindGroup,
+    transient_layout: &'a Tracked<wgpu::BindGroupLayout>,
+    transient_bg: Option<&'a wgpu::BindGroup>,
 }
 
-impl PassNode<'_> for BloomDownsampleNode {
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
-        let input_view = ctx.views.get_texture_view(self.input_tex);
+impl<'a> PassNode<'a> for BloomDownsampleNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
+        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let device = *device;
+        let input_view = views.get_texture_view(self.input_tex);
         let key = BindGroupKey::new(self.transient_layout.id()).with_resource(input_view.id());
+        let layout = &**self.transient_layout;
 
-        ctx.global_bind_group_cache.get_or_create(key.clone(), || {
-            ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bg = cache.get_or_create_bg(key, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Bloom DS G1"),
-                layout: &self.transient_layout,
+                layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(input_view),
                 }],
             })
         });
-        self.transient_bg_key = Some(key);
+        self.transient_bg = Some(bg);
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
-        let transient_bg = ctx
-            .global_bind_group_cache
-            .get(self.transient_bg_key.as_ref().unwrap())
-            .expect("Bloom DS transient BG missing");
+        let transient_bg = self.transient_bg.expect("Bloom DS transient BG not prepared");
 
         let rtt = ctx.get_color_attachment(self.output_tex, RenderTargetOps::DontCare, None);
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -862,53 +857,46 @@ impl PassNode<'_> for BloomDownsampleNode {
             multiview_mask: None,
         });
 
-        rpass.set_pipeline(pipeline);
-        rpass.set_bind_group(0, &self.static_bg, &[]);
+        rpass.set_pipeline(self.pipeline);
+        rpass.set_bind_group(0, self.static_bg, &[]);
         rpass.set_bind_group(1, transient_bg, &[]);
         rpass.draw(0..3, 0..1);
     }
 }
 
-/// Upsample micro-pass: reads a coarser bloom texture and the corresponding
-/// finer downsample mip, blends them additively into a new output at the
-/// finer resolution using a 9-tap tent filter.
-struct BloomUpsampleNode {
+struct BloomUpsampleNode<'a> {
     coarser_tex: TextureNodeId,
     output_tex: TextureNodeId,
-    pipeline_id: RenderPipelineId,
-    static_bg: wgpu::BindGroup,
-    transient_layout: Tracked<wgpu::BindGroupLayout>,
-    transient_bg_key: Option<BindGroupKey>,
+    pipeline: &'a wgpu::RenderPipeline,
+    static_bg: &'a wgpu::BindGroup,
+    transient_layout: &'a Tracked<wgpu::BindGroupLayout>,
+    transient_bg: Option<&'a wgpu::BindGroup>,
 }
 
-impl PassNode<'_> for BloomUpsampleNode {
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
-        let coarser_view = ctx.views.get_texture_view(self.coarser_tex);
+impl<'a> PassNode<'a> for BloomUpsampleNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
+        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let device = *device;
+        let coarser_view = views.get_texture_view(self.coarser_tex);
         let key = BindGroupKey::new(self.transient_layout.id()).with_resource(coarser_view.id());
+        let layout = &**self.transient_layout;
 
-        ctx.global_bind_group_cache.get_or_create(key.clone(), || {
-            ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bg = cache.get_or_create_bg(key, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Bloom US G1"),
-                layout: &self.transient_layout,
+                layout,
                 entries: &[wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(coarser_view),
                 }],
             })
         });
-        self.transient_bg_key = Some(key);
+        self.transient_bg = Some(bg);
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
-        let transient_bg = ctx
-            .global_bind_group_cache
-            .get(self.transient_bg_key.as_ref().unwrap())
-            .expect("Bloom US transient BG missing");
+        let transient_bg = self.transient_bg.expect("Bloom US transient BG not prepared");
 
-        // Output renders onto the finer mip's resolution. The upsample shader
-        // reads the coarser texture (via transient BG) and additively blends
-        // onto the finer resolution output.
         let rtt = ctx.get_color_attachment(self.output_tex, RenderTargetOps::Load, None);
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Bloom Upsample"),
@@ -919,38 +907,38 @@ impl PassNode<'_> for BloomUpsampleNode {
             multiview_mask: None,
         });
 
-        rpass.set_pipeline(pipeline);
-        rpass.set_bind_group(0, &self.static_bg, &[]);
+        rpass.set_pipeline(self.pipeline);
+        rpass.set_bind_group(0, self.static_bg, &[]);
         rpass.set_bind_group(1, transient_bg, &[]);
         rpass.draw(0..3, 0..1);
     }
 }
 
-/// Composite micro-pass: reads the original HDR scene color and the final
-/// bloom result (finest upsample output), writes the blended result to
-/// the output target.
-struct BloomCompositeNode {
+struct BloomCompositeNode<'a> {
     original_tex: TextureNodeId,
     bloom_tex: TextureNodeId,
     output_tex: TextureNodeId,
-    pipeline_id: RenderPipelineId,
-    static_bg: wgpu::BindGroup,
-    transient_layout: Tracked<wgpu::BindGroupLayout>,
-    transient_bg_key: Option<BindGroupKey>,
+    pipeline: &'a wgpu::RenderPipeline,
+    static_bg: &'a wgpu::BindGroup,
+    transient_layout: &'a Tracked<wgpu::BindGroupLayout>,
+    transient_bg: Option<&'a wgpu::BindGroup>,
 }
 
-impl PassNode<'_> for BloomCompositeNode {
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
-        let original_view = ctx.views.get_texture_view(self.original_tex);
-        let bloom_view = ctx.views.get_texture_view(self.bloom_tex);
+impl<'a> PassNode<'a> for BloomCompositeNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
+        let PrepareContext { views, global_bind_group_cache: cache, device, .. } = ctx;
+        let device = *device;
+        let original_view = views.get_texture_view(self.original_tex);
+        let bloom_view = views.get_texture_view(self.bloom_tex);
         let key = BindGroupKey::new(self.transient_layout.id())
             .with_resource(original_view.id())
             .with_resource(bloom_view.id());
+        let layout = &**self.transient_layout;
 
-        ctx.global_bind_group_cache.get_or_create(key.clone(), || {
-            ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        let bg = cache.get_or_create_bg(key, || {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("Bloom Comp G1"),
-                layout: &self.transient_layout,
+                layout,
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
@@ -963,15 +951,11 @@ impl PassNode<'_> for BloomCompositeNode {
                 ],
             })
         });
-        self.transient_bg_key = Some(key);
+        self.transient_bg = Some(bg);
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let pipeline = ctx.pipeline_cache.get_render_pipeline(self.pipeline_id);
-        let transient_bg = ctx
-            .global_bind_group_cache
-            .get(self.transient_bg_key.as_ref().unwrap())
-            .expect("Bloom Comp transient BG missing");
+        let transient_bg = self.transient_bg.expect("Bloom Comp transient BG not prepared");
 
         let rtt = ctx.get_color_attachment(self.output_tex, RenderTargetOps::DontCare, None);
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -983,8 +967,8 @@ impl PassNode<'_> for BloomCompositeNode {
             multiview_mask: None,
         });
 
-        rpass.set_pipeline(pipeline);
-        rpass.set_bind_group(0, &self.static_bg, &[]);
+        rpass.set_pipeline(self.pipeline);
+        rpass.set_bind_group(0, self.static_bg, &[]);
         rpass.set_bind_group(1, transient_bg, &[]);
         rpass.draw(0..3, 0..1);
     }

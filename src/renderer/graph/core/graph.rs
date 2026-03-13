@@ -4,6 +4,7 @@ use std::collections::BinaryHeap;
 use crate::renderer::graph::core::allocator::TransientPool;
 use crate::renderer::graph::core::arena::FrameArena;
 use crate::renderer::graph::core::types::TextureDesc;
+use crate::renderer::pipeline::PipelineCache;
 
 use super::builder::PassBuilder;
 use super::node::{NodeSlot, PassNode, PassRecord};
@@ -154,14 +155,13 @@ impl GraphStorage {
     /// Clears all per-frame data while retaining heap capacity.
     pub fn clear(&mut self) {
         // ⚠️ 临时防泄漏兜底：手动调用 drop_in_place
-        for pass in &mut self.passes {
-            if let Some(slot) = pass.node.take() {
-                if slot.needs_drop {
-                    unsafe { std::ptr::drop_in_place(slot.ptr); }
-                }
-            }
-        }
-
+        // for pass in &mut self.passes {
+        //     if let Some(slot) = pass.node.take() {
+        //         if slot.needs_drop {
+        //             unsafe { std::ptr::drop_in_place(slot.ptr); }
+        //         }
+        //     }
+        // }
 
         self.passes.clear();
         self.resources.clear();
@@ -364,6 +364,21 @@ impl GraphStorage {
     }
 }
 
+
+/// Zero-drop marker trait for PassNodes.
+trait AssertNoDrop {
+    const VALID: ();
+}
+
+// Any PassNode that requires Drop will fail to compile due to the static assertion in AssertNoDrop::VALID.
+impl<T> AssertNoDrop for T {
+    // This constant will fail to compile if T needs Drop, which enforces that PassNodes cannot have destructors or own heap data.
+    const VALID: () = assert!(
+        !std::mem::needs_drop::<Self>(), 
+        "FATAL ERROR: PassNode MUST NOT implement Drop or contain heap allocations (like Arc, Vec, String). It must be a POD type or only hold references."
+    );
+}
+
 /// Declarative Render Graph — per-frame view with lifetime `'a`.
 ///
 /// Provides the full graph construction, compilation, and execution API.
@@ -378,6 +393,11 @@ pub struct RenderGraph<'a> {
     pub(crate) storage: &'a mut GraphStorage,
     arena: &'a FrameArena,
     frame_config: FrameConfig,
+    /// Pipeline cache for resolving pipeline IDs to physical GPU objects
+    /// during graph construction.  Features use this in `add_to_graph` to
+    /// hand `&'a wgpu::RenderPipeline` / `&'a wgpu::ComputePipeline`
+    /// references directly to PassNodes, eliminating hash lookups in execute.
+    pub pipeline_cache: &'a PipelineCache,
 }
 
 impl<'a> RenderGraph<'a> {
@@ -385,12 +405,18 @@ impl<'a> RenderGraph<'a> {
     ///
     /// Clears the storage's per-frame data and records the frame config
     /// for pass-level access via [`PassBuilder::frame_config`].
-    pub fn new(storage: &'a mut GraphStorage, arena: &'a FrameArena, config: FrameConfig) -> Self {
+    pub fn new(
+        storage: &'a mut GraphStorage,
+        arena: &'a FrameArena,
+        config: FrameConfig,
+        pipeline_cache: &'a PipelineCache,
+    ) -> Self {
         storage.clear();
         Self {
             storage,
             arena,
             frame_config: config,
+            pipeline_cache,
         }
     }
 
@@ -506,6 +532,10 @@ impl<'a> RenderGraph<'a> {
         N: PassNode<'a> + 'a,
         F: FnOnce(&mut PassBuilder<'_, 'a>) -> (N, Out),
     {
+        // Static assertion to enforce that N does not implement Drop and does not contain heap data. 
+        // This ensures that PassNodes are safe to allocate on the FrameArena without needing to run destructors.
+        let _ = <N as AssertNoDrop>::VALID;
+        
         let pass_index = self.storage.passes.len();
 
         // Phase 1: placeholder record (node = None) so the PassBuilder can
@@ -819,20 +849,22 @@ mod tests {
     fn begin_test_frame<'a>(
         storage: &'a mut GraphStorage,
         arena: &'a FrameArena,
+        pipeline_cache: &'a PipelineCache,
     ) -> RenderGraph<'a> {
         storage.clear();
-        RenderGraph::new(storage, arena, dummy_config())
+        RenderGraph::new(storage, arena, dummy_config(), pipeline_cache)
     }
 
     #[test]
     fn test_zero_alloc_graph() {
         let mut storage = GraphStorage::new();
         let mut arena = FrameArena::new();
+        let pc = PipelineCache::new();
 
         // Run two frames to verify capacity reuse.
         for frame in 0..2 {
             arena.reset();
-            let mut graph = begin_test_frame(&mut storage, &arena);
+            let mut graph = begin_test_frame(&mut storage, &arena, &pc);
 
             let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -878,7 +910,8 @@ mod tests {
     fn test_dead_resource_culling() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let mut graph = begin_test_frame(&mut storage, &arena);
+        let pc = PipelineCache::new();
+        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -906,7 +939,8 @@ mod tests {
     fn test_self_read_prevents_culling() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let mut graph = begin_test_frame(&mut storage, &arena);
+        let pc = PipelineCache::new();
+        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -925,7 +959,8 @@ mod tests {
     fn test_resource_lifetime_deduction() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let mut graph = begin_test_frame(&mut storage, &arena);
+        let pc = PipelineCache::new();
+        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -962,7 +997,8 @@ mod tests {
     fn test_ssa_alias_relay_passes() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let mut graph = begin_test_frame(&mut storage, &arena);
+        let pc = PipelineCache::new();
+        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1033,7 +1069,8 @@ mod tests {
     fn test_mutate_and_export_api() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let mut graph = begin_test_frame(&mut storage, &arena);
+        let pc = PipelineCache::new();
+        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1075,7 +1112,8 @@ mod tests {
     fn test_with_group_preserves_topology() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let mut graph = begin_test_frame(&mut storage, &arena);
+        let pc = PipelineCache::new();
+        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
@@ -1117,7 +1155,8 @@ mod tests {
     fn test_dump_mermaid_subgraphs() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let mut graph = begin_test_frame(&mut storage, &arena);
+        let pc = PipelineCache::new();
+        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 

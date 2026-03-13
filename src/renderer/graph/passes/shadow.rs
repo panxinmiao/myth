@@ -34,7 +34,7 @@ use glam::Mat4;
 
 use crate::renderer::core::view::ViewTarget;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderGraph, TextureDesc,
+    ExecuteContext, ExtractContext, PassNode, RenderGraph, TextureDesc,
     TextureNodeId,
 };
 use crate::renderer::graph::frame::ShadowLightInstance;
@@ -231,7 +231,7 @@ impl ShadowFeature {
     ///
     /// Returns `None` if no shadow layers are required this frame (the pass
     /// is not added to the graph at all, and no GPU memory is allocated).
-    pub fn add_to_graph(&self, graph: &mut RenderGraph<'_>) -> Option<TextureNodeId> {
+    pub fn add_to_graph<'a>(&'a self, graph: &mut RenderGraph<'a>) -> Option<TextureNodeId> {
         if self.total_layers == 0 || self.shadow_lights.is_empty() {
             return None;
         }
@@ -251,11 +251,10 @@ impl ShadowFeature {
             let shadow_array_id = builder.create_and_export("Shadow_Array_Map", desc);
 
             let node = ShadowPassNode {
-                bind_group: self.bind_group.clone(),
-                shadow_lights: self.shadow_lights.clone(),
+                bind_group: &self.bind_group,
+                shadow_lights: &self.shadow_lights,
                 uniform_stride: self.uniform_stride,
                 shadow_array_id,
-                shadow_layer_views: Vec::with_capacity(self.shadow_lights.len()),
             };
             (node, shadow_array_id)
         });
@@ -271,31 +270,23 @@ impl ShadowFeature {
 /// Carries the RDG texture node ID for the shadow array and cloned light
 /// metadata. Layer texture views are created in the [`prepare`] phase after
 /// the RDG compiler has allocated the physical GPU texture.
-pub struct ShadowPassNode {
-    bind_group: wgpu::BindGroup,
-    shadow_lights: Vec<ShadowLightInstance>,
+pub struct ShadowPassNode<'a> {
+    bind_group: &'a wgpu::BindGroup,
+    shadow_lights: &'a [ShadowLightInstance],
     uniform_stride: u32,
-    /// RDG transient texture node for the Depth32Float 2D-array.
     shadow_array_id: TextureNodeId,
-    /// Per-layer texture views, populated in [`Self::prepare`].
-    shadow_layer_views: Vec<wgpu::TextureView>,
 }
 
-impl PassNode<'_> for ShadowPassNode {
-    /// Resolve the physical shadow texture and create per-layer D2 views.
-    ///
-    /// Called after the RDG compiler has allocated transient GPU memory.
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
-        self.shadow_layer_views.clear();
-
+impl<'a> PassNode<'a> for ShadowPassNode<'a> {
+    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         if self.shadow_lights.is_empty() {
             return;
         }
 
-        let texture = ctx.views.get_texture(self.shadow_array_id);
+        let texture = ctx.get_texture(self.shadow_array_id);
 
-        for shadow_light in &self.shadow_lights {
-            let view = texture.create_view(&wgpu::TextureViewDescriptor {
+        for shadow_light in self.shadow_lights {
+            let layer_view = texture.create_view(&wgpu::TextureViewDescriptor {
                 label: Some("Shadow_Layer_View"),
                 format: Some(wgpu::TextureFormat::Depth32Float),
                 dimension: Some(wgpu::TextureViewDimension::D2),
@@ -303,26 +294,12 @@ impl PassNode<'_> for ShadowPassNode {
                 array_layer_count: Some(1),
                 ..Default::default()
             });
-            self.shadow_layer_views.push(view);
-        }
-    }
-
-    /// Render shadow depth maps — one render pass per shadow layer.
-    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        if self.shadow_lights.is_empty() {
-            return;
-        }
-
-        for (i, shadow_light) in self.shadow_lights.iter().enumerate() {
-            let Some(layer_view) = self.shadow_layer_views.get(i) else {
-                continue;
-            };
 
             let pass_desc = wgpu::RenderPassDescriptor {
                 label: Some("Shadow Depth"),
                 color_attachments: &[],
                 depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                    view: layer_view,
+                    view: &layer_view,
                     depth_ops: Some(wgpu::Operations {
                         load: wgpu::LoadOp::Clear(1.0),
                         store: wgpu::StoreOp::Store,
@@ -338,7 +315,7 @@ impl PassNode<'_> for ShadowPassNode {
             let mut pass = raw_pass;
 
             let dynamic_offset = shadow_light.layer_index * self.uniform_stride;
-            pass.set_bind_group(0, &self.bind_group, &[dynamic_offset]);
+            pass.set_bind_group(0, self.bind_group, &[dynamic_offset]);
 
             let Some(commands) = ctx
                 .baked_lists

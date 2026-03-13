@@ -470,21 +470,23 @@ impl SkyboxFeature {
     /// Creates an SSA alias of `scene_color` so that the dependency
     /// Opaque → Skybox is locked by graph edges, not by registration
     /// order.  Returns the new colour version for downstream threading.
-    pub fn add_to_graph(
-        &self,
-        graph: &mut RenderGraph<'_>,
+    pub fn add_to_graph<'a>(
+        &'a self,
+        graph: &mut RenderGraph<'a>,
         scene_color: TextureNodeId,
         scene_depth: TextureNodeId,
     ) -> TextureNodeId {
-        let pipeline_id = self.current_pipeline;
-        let bind_group = self.current_bind_group.clone();
+        let pipeline = self
+            .current_pipeline
+            .map(|id| graph.pipeline_cache.get_render_pipeline(id));
+        let bind_group = self.current_bind_group.as_ref();
         graph.add_pass("Skybox_Pass", |builder| {
             let out_color = builder.mutate_and_export(scene_color, "Scene_Color_Skybox");
             builder.read_texture(scene_depth);
             let node = SkyboxPassNode {
                 out_color,
                 scene_depth,
-                pipeline_id,
+                pipeline,
                 bind_group,
             };
             (node, out_color)
@@ -495,17 +497,16 @@ impl SkyboxFeature {
 // ─── Skybox Pass Node ─────────────────────────────────────────────────────────
 
 /// Ephemeral per-frame skybox render pass node.
-pub struct SkyboxPassNode {
-    /// New colour version — SSA alias (write dependency).
+pub struct SkyboxPassNode<'a> {
     out_color: TextureNodeId,
     scene_depth: TextureNodeId,
-    pipeline_id: Option<RenderPipelineId>,
-    bind_group: Option<wgpu::BindGroup>,
+    pipeline: Option<&'a wgpu::RenderPipeline>,
+    bind_group: Option<&'a wgpu::BindGroup>,
 }
 
-impl PassNode<'_> for SkyboxPassNode {
+impl<'a> PassNode<'a> for SkyboxPassNode<'a> {
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let (Some(pipeline_id), Some(bind_group)) = (self.pipeline_id, &self.bind_group) else {
+        let (Some(pipeline), Some(bind_group)) = (self.pipeline, self.bind_group) else {
             return;
         };
 
@@ -525,7 +526,6 @@ impl PassNode<'_> for SkyboxPassNode {
 
         let mut pass = encoder.begin_render_pass(&pass_desc);
 
-        let pipeline = ctx.pipeline_cache.get_render_pipeline(pipeline_id);
         pass.set_pipeline(pipeline);
         pass.set_bind_group(0, gpu_global_bind_group, &[]);
         pass.set_bind_group(1, bind_group, &[]);
