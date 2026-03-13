@@ -82,7 +82,7 @@ pub struct UiPass {
 
     /// RDG resource slot: the final swap-chain output target.
     /// Set by the custom pass hook from [`GraphBlackboard::surface_out`].
-    pub target_tex: TextureNodeId,
+    // pub target_tex: TextureNodeId,
 
     // ── Deferred texture registration ──────────────────────────────────────
     /// Handles waiting for GPU-side readiness (drained each prepare phase).
@@ -119,7 +119,7 @@ impl UiPass {
                 size_in_pixels: [size.width, size.height],
                 pixels_per_point: window.scale_factor() as f32,
             },
-            target_tex: TextureNodeId(0),
+            // target_tex: TextureNodeId(0),
             texture_requests: Vec::new(),
             texture_map: FxHashMap::default(),
             gpu_resource_ids: FxHashMap::default(),
@@ -274,6 +274,14 @@ impl UiPass {
     }
 }
 
+
+
+
+pub struct UiPassNode<'a> {
+    pub pass: &'a mut UiPass,
+    pub target_tex: TextureNodeId, 
+}
+
 /// [`PassNode`] implementation for `UiPass`.
 ///
 /// # Phase Responsibilities
@@ -290,26 +298,26 @@ impl UiPass {
 /// Records a single `wgpu::RenderPass` that draws the tessellated primitives onto
 /// the RDG-resolved surface. No mutable state is touched — fully compatible with the
 /// engine's read-only execute phase.
-impl PassNode<'_> for UiPass {
-    fn prepare(&mut self, ctx: &mut PrepareContext) {
+impl<'a> PassNode<'a> for UiPassNode<'a> {
+    fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
         let device = ctx.device;
         let queue = ctx.queue;
 
         // 2. Upload new / updated egui-managed textures.
-        for (id, delta) in &self.textures_delta.set {
-            self.renderer.update_texture(device, queue, *id, delta);
+        for (id, delta) in &self.pass.textures_delta.set {
+            self.pass.renderer.update_texture(device, queue, *id, delta);
         }
 
         // 3. Upload vertex & index buffers via a temporary encoder.
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("egui buffer upload"),
         });
-        let user_cmd_bufs = self.renderer.update_buffers(
+        let user_cmd_bufs = self.pass.renderer.update_buffers(
             device,
             queue,
             &mut encoder,
-            &self.clipped_primitives,
-            &self.screen_descriptor,
+            &self.pass.clipped_primitives,
+            &self.pass.screen_descriptor,
         );
         let mut cmd_bufs: Vec<wgpu::CommandBuffer> = Vec::with_capacity(1 + user_cmd_bufs.len());
         cmd_bufs.push(encoder.finish());
@@ -317,14 +325,14 @@ impl PassNode<'_> for UiPass {
         queue.submit(cmd_bufs);
 
         // 4. Free textures that egui no longer needs.
-        for id in &self.textures_delta.free {
-            self.renderer.free_texture(id);
-            self.texture_map.retain(|_, v| v != id);
+        for id in &self.pass.textures_delta.free {
+            self.pass.renderer.free_texture(id);
+            self.pass.texture_map.retain(|_, v| v != id);
         }
 
         // 5. Clear the delta so it is not re-processed next frame.
-        self.textures_delta.set.clear();
-        self.textures_delta.free.clear();
+        self.pass.textures_delta.set.clear();
+        self.pass.textures_delta.free.clear();
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
@@ -341,10 +349,10 @@ impl PassNode<'_> for UiPass {
             })
             .forget_lifetime();
 
-        self.renderer.render(
+        self.pass.renderer.render(
             &mut rpass,
-            &self.clipped_primitives,
-            &self.screen_descriptor,
+            &self.pass.clipped_primitives,
+            &self.pass.screen_descriptor,
         );
     }
 }

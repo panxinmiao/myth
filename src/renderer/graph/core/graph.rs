@@ -153,6 +153,16 @@ impl GraphStorage {
 
     /// Clears all per-frame data while retaining heap capacity.
     pub fn clear(&mut self) {
+        // ⚠️ 临时防泄漏兜底：手动调用 drop_in_place
+        for pass in &mut self.passes {
+            if let Some(slot) = pass.node.take() {
+                if slot.needs_drop {
+                    unsafe { std::ptr::drop_in_place(slot.ptr); }
+                }
+            }
+        }
+
+
         self.passes.clear();
         self.resources.clear();
         self.execution_queue.clear();
@@ -493,7 +503,7 @@ impl<'a> RenderGraph<'a> {
     /// types — never owned heap data.
     pub fn add_pass<N, Out, F>(&mut self, name: &'static str, setup_fn: F) -> Out
     where
-        N: for<'b> PassNode<'b> + 'a + 'static,
+        N: PassNode<'a> + 'a,
         F: FnOnce(&mut PassBuilder<'_, 'a>) -> (N, Out),
     {
         let pass_index = self.storage.passes.len();
@@ -518,54 +528,9 @@ impl<'a> RenderGraph<'a> {
         };
 
         // Phase 3: allocate the node on the frame arena (O(1) pointer bump).
-        let node_ref: &mut N = self.arena.alloc(node);
-        let ptr: *mut dyn for<'b> PassNode<'b> = node_ref as *mut N;
-        self.storage.passes[pass_index].node = Some(NodeSlot::new(ptr));
-        output
-    }
-
-    /// Adds a borrowed pass to the graph with eager setup.
-    ///
-    /// The pass node is provided externally and stored via a direct pointer.
-    /// This method exists for long-lived passes (such as UI overlays)
-    /// where the `PassNode`'s state spans multiple frames.
-    ///
-    /// Unlike [`add_pass()`](Self::add_pass), the node is **not** allocated
-    /// on the frame arena.
-    ///
-    /// # Safety Contract
-    ///
-    /// The caller **must** ensure that `node` remains valid (not moved,
-    /// dropped, or mutably aliased) from this call until after the graph's
-    /// `prepare` and `execute` phases complete.
-    pub fn add_pass_borrowed<Out, F>(
-        &mut self,
-        name: &'static str,
-        node: &mut (dyn for<'b> PassNode<'b> + 'static),
-        setup_fn: F,
-    ) -> Out
-    where
-        F: FnOnce(&mut PassBuilder<'_, 'a>) -> Out,
-    {
-        let pass_index = self.storage.passes.len();
-        self.storage.passes.push(PassRecord::new_empty(name));
-
-        #[cfg(feature = "rdg_inspector")]
-        {
-            self.storage.passes[pass_index].groups =
-                self.storage.current_group_stack.iter().copied().collect();
-        }
-
-        let output = {
-            let mut builder = PassBuilder {
-                graph: self,
-                pass_index,
-            };
-            setup_fn(&mut builder)
-        };
-
-        let ptr: *mut dyn for<'b> PassNode<'b> =
-            std::ptr::from_mut::<dyn for<'b> PassNode<'b>>(node);
+        // let node_ref: &mut N = self.arena.alloc(node);
+        let node_ref: &'a mut N = self.arena.alloc(node);
+        let ptr = node_ref as *mut N;
         self.storage.passes[pass_index].node = Some(NodeSlot::new(ptr));
         output
     }
