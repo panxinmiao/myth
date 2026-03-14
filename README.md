@@ -35,7 +35,7 @@ Inspired by the ergonomic simplicity of **Three.js** and built on the modern pow
         * **Automatic Synchronization**: Zero manual memory barriers or layout transitions.
         * **Aggressive Memory Aliasing**: Reuses transient high-resolution physical textures perfectly across distinct logical passes.
         * **Dead Pass Elimination**: Automatically culls rendering workloads (e.g., bypassing shadow maps or pre-passes) if their outputs are unreferenced.
-        * **Zero-Allocation Per-Frame Rebuild**: Evaluates and compiles the entire directed acyclic graph (DAG) every single frame in ~10 microseconds, completely avoiding the bugs and overhead of state-tracking and diffing.
+        * **Zero-Allocation Per-Frame Rebuild**: Evaluates and compiles the entire directed acyclic graph (DAG) every single frame (extremely fast), completely avoiding the bugs and overhead of state-tracking and diffing.
     * **Web First**: First-class support for **WASM** and WebGPU. Write once, run seamlessly in modern browsers.
 
 * **Advanced Rendering & Lighting**
