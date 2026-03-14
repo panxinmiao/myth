@@ -331,7 +331,7 @@ impl ExtractedScene {
         }
 
         // Ensure model buffer capacity
-        resource_manager.ensure_model_buffer_capacity(self.collected_meshes.len());
+        // resource_manager.ensure_model_buffer_capacity(self.collected_meshes.len());
 
         for item in &self.collected_meshes {
             let Some(mesh) = scene.meshes.get_mut(item.node_handle) else {

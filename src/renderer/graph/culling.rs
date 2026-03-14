@@ -99,7 +99,8 @@ pub fn cull_and_sort(
         assets,
     );
 
-    resource_manager.upload_model_buffer();
+    // resource_manager.upload_model_buffer();
+    resource_manager.flush_model_buffers();
 }
 
 // ============================================================================
