@@ -146,13 +146,19 @@ Crucially:
 
 The entire compilation process can be broken down into three main phases, each boasting **linear or near-linear time complexity**:
 
-Assuming $ V $= Number of Pass nodes,$ E $= Number of dependency edges,$ R $ = Number of virtual resources:
+Assuming $V$= Number of Pass nodes, $E$ = Number of dependency edges, $R$ = Number of virtual resources:
 
 * Topological Sort (Kahn's Algorithm): $O(V + E)$
-In a render graph, an average Pass only has 2–3 inputs/outputs, so $ E \approx 2.5V $, effectively degrading to $ O(V) $.
-* Lifecycle Analysis: $ O(V) $
+
+In a render graph, an average Pass only has 2–3 inputs/outputs, so $E \approx 2.5V$, effectively degrading to $O(V)$.
+
+* Lifecycle Analysis: $O(V)$
+
 A linear scan of the topologically sorted node array to update `first_use` / `last_use` for each resource.
-* Pooled Resource Allocation: $O(R \log R)$ or $ O(R) $    Using Interval Greedy Allocation requires sorting lifecycle intervals, but$ R $ is typically < 100, making this step effectively free on the CPU.
+
+* Pooled Resource Allocation: $O(R \log R)$ or $O(R)$
+
+Using Interval Greedy Allocation requires sorting lifecycle intervals, but $R$ is typically < 100, making this step effectively free on the CPU.
 
 Overall, the entire RenderGraph compilation path scales strictly linearly. Growing from 20 to 200 passes results in a gentle linear increase in compile time, never an exponential avalanche.
 
@@ -203,7 +209,7 @@ The graph compiler automatically deduces the correct topology. If the system rel
 
 For Myth Engine, the conclusion was clear: **Rebuilding and compiling the RenderGraph per frame is simpler, safer, and usually faster (or equally fast).**
 
-### 4.4 Myth Engine's RenderGraph Core Design Philosophy
+### 4.4 Perfect Synergy with Rust's Language Features
 
 In the latest refactor, the RenderGraph fully embraces Rust's lifetime system, realizing a foundational rendering pipeline with **zero runtime overhead, zero heap allocation, and zero drop costs**.
 
@@ -213,6 +219,8 @@ In the latest refactor, the RenderGraph fully embraces Rust's lifetime system, r
 * **"Zero-lookup" execution phase**: All ID resolutions, hash addressing, and variant calculations are pushed forward to the "Setup" and "Preparation" phases, ensuring the final `execute` phase acts purely as a relentless "machine-code dumping machine."
 
 Building upon this, I also provided a safe `add_custom_pass` hook system for the Frame Composer. Combined with the `GraphBlackboard`, external programs can painlessly mount custom transient nodes at specific `HookStage`s without needing to understand the underlying infrastructure's complexity.
+
+---
 
 ## 5. Case Studies: Auto-Generated Graph Topology
 
@@ -436,6 +444,8 @@ flowchart TD
 *(Legend: Single-line arrows --> indicate logical data dependencies; double-line arrows ==> indicate physical memory aliasing/in-place reuse)*
 
 By doing this, we fully unlock the power of the compiler. Each Pass is an independent atomic unit. Their execution order, memory allocation, and resource aliasing can be globally optimized without worrying about hidden side effects. Meanwhile, logical subgraphs keep the developer's cognitive load perfectly manageable.
+
+---
 
 ## 7. Looking Forward
 
