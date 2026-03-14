@@ -114,7 +114,7 @@ impl ResourceManager {
 
         // 2. Call with_uniform_bytes, passing a closure
         material.data.with_uniform_bytes(&mut |bytes| {
-            uniform_result = self.ensure_buffer_ref(&material.data.uniform_buffer(), bytes);
+            (_, uniform_result) = self.ensure_buffer_ref(&material.data.uniform_buffer(), bytes);
         });
 
         // Collect resource IDs

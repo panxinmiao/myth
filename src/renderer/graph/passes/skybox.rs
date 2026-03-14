@@ -400,10 +400,8 @@ impl SkyboxFeature {
             if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
                 cached.clone()
             } else {
-                let params_gpu = ctx
-                    .resource_manager
-                    .gpu_buffers
-                    .get(&bg_uniforms.id())
+                let params_gpu = bg_uniforms.gpu_handle()
+                    .and_then(|h| ctx.resource_manager.gpu_buffers.get(h))
                     .expect("Skybox params GPU buffer must exist");
 
                 let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -433,10 +431,8 @@ impl SkyboxFeature {
             if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
                 cached.clone()
             } else {
-                let params_gpu = ctx
-                    .resource_manager
-                    .gpu_buffers
-                    .get(&bg_uniforms.id())
+                let params_gpu = bg_uniforms.gpu_handle()
+                    .and_then(|h| ctx.resource_manager.gpu_buffers.get(h))
                     .expect("Skybox params GPU buffer must exist");
 
                 let bg = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {

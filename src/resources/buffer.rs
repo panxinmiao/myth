@@ -4,6 +4,8 @@ use parking_lot::{RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::renderer::core::gpu::GpuBufferHandle;
+
 static NEXT_BUFFER_ID: AtomicU64 = AtomicU64::new(1);
 
 pub trait GpuData {
@@ -170,19 +172,22 @@ pub struct CpuBuffer<T: GpuData> {
     #[cfg(debug_assertions)]
     label: Cow<'static, str>,
 
-    // 2. Mutable State - placed inside the lock
+    // 2. Cached GPU handle - atomic for lock-free O(1) access.
+    //    0 means "not yet assigned".
+    cached_gpu_handle: AtomicU64,
+
+    // 3. Mutable State - placed inside the lock
     inner: RwLock<CpuBufferState<T>>,
 }
 
 impl<T: GpuData + Clone> Clone for CpuBuffer<T> {
     fn clone(&self) -> Self {
-        // 1. Acquire read lock to get reference to current data
         let guard = self.inner.read();
-        // 2. Construct new CpuBuffer with cloned data
+        // Cloned buffers get a fresh ID and no cached handle.
         Self::new(
             guard.data.clone(),
             self.usage,
-            self.label(), // Reuse Label
+            self.label(),
         )
     }
 }
@@ -195,13 +200,11 @@ impl<T: GpuData> CpuBuffer<T> {
         let base_ref = BufferRef::new(size, usage, label);
 
         Self {
-            // Extract immutable metadata to outer layer
             id: base_ref.id,
             usage: base_ref.usage,
             #[cfg(debug_assertions)]
             label: base_ref.label,
-
-            // Initialize internal mutable state
+            cached_gpu_handle: AtomicU64::new(0),
             inner: RwLock::new(CpuBufferState {
                 data,
                 version: 0,
@@ -265,6 +268,33 @@ impl<T: GpuData> CpuBuffer<T> {
         {
             None
         }
+    }
+
+    /// Retrieve the cached [`GpuBufferHandle`] without any locking.
+    ///
+    /// Returns `None` when no GPU buffer has been assigned yet (first frame).
+    /// Uses `Acquire` ordering to pair with the `Release` store in
+    /// [`set_gpu_handle`].
+    #[inline]
+    pub fn gpu_handle(&self) -> Option<GpuBufferHandle> {
+        GpuBufferHandle::from_bits(self.cached_gpu_handle.load(Ordering::Acquire))
+    }
+
+    /// Store a [`GpuBufferHandle`], making it visible to future
+    /// `gpu_handle()` calls on any thread.
+    ///
+    /// Called by [`ResourceManager::ensure_buffer`] after allocating the
+    /// GPU-side resource.
+    #[inline]
+    pub fn set_gpu_handle(&self, handle: GpuBufferHandle) {
+        self.cached_gpu_handle
+            .store(handle.to_bits(), Ordering::Release);
+    }
+
+    /// Reset the cached handle to "unassigned".
+    #[inline]
+    pub fn clear_gpu_handle(&self) {
+        self.cached_gpu_handle.store(0, Ordering::Release);
     }
 
     // === Operations requiring lock ===

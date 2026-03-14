@@ -175,7 +175,7 @@ impl BloomFeature {
         ctx.resource_manager.ensure_buffer(upsample_uniform);
         ctx.resource_manager.ensure_buffer(composite_uniform);
 
-        self.build_static_bind_groups(ctx, upsample_uniform.id(), composite_uniform.id());
+        self.build_static_bind_groups(ctx, upsample_uniform, composite_uniform);
     }
 
     // =========================================================================
@@ -441,8 +441,8 @@ impl BloomFeature {
     fn build_static_bind_groups(
         &mut self,
         ctx: &mut ExtractContext,
-        upsample_cpu_id: u64,
-        composite_cpu_id: u64,
+        upsample_uniform: &CpuBuffer<UpsampleUniforms>,
+        composite_uniform: &CpuBuffer<CompositeUniforms>,
     ) {
         let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
         let ds_layout = self.ds_static_layout.as_ref().unwrap();
@@ -486,7 +486,8 @@ impl BloomFeature {
         }
 
         // ─── Upsample static BG (rebuild on buffer identity change) ──
-        if let Some(g) = ctx.resource_manager.gpu_buffers.get(&upsample_cpu_id)
+        if let Some(handle) = upsample_uniform.gpu_handle()
+            && let Some(g) = ctx.resource_manager.gpu_buffers.get(handle)
             && (self.upsample_static_bg.is_none() || self.last_upsample_buffer_id != g.id)
         {
             let us_layout = self.us_static_layout.as_ref().unwrap();
@@ -509,7 +510,8 @@ impl BloomFeature {
         }
 
         // ─── Composite static BG (rebuild on buffer identity change) ──
-        if let Some(g) = ctx.resource_manager.gpu_buffers.get(&composite_cpu_id)
+        if let Some(handle) = composite_uniform.gpu_handle()
+            && let Some(g) = ctx.resource_manager.gpu_buffers.get(handle)
             && (self.composite_static_bg.is_none() || self.last_composite_buffer_id != g.id)
         {
             let comp_layout = self.comp_static_layout.as_ref().unwrap();
