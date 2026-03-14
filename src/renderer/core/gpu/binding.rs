@@ -178,7 +178,7 @@ impl ResourceManager {
         cache_key: ObjectBindGroupKey,
     ) -> BindGroupContext {
         let min_binding_size = ModelBufferAllocator::uniform_stride();
-        
+
         let model_buffer_ref = self.model_allocator.buffer_handle();
 
         // let model_binding = self.get_model_buffer_binding()?;
@@ -186,9 +186,9 @@ impl ResourceManager {
         let mut builder = ResourceBuilder::new();
         builder.add_dynamic_uniform::<DynamicModelUniforms>(
             "model",
-            &model_buffer_ref,
+            model_buffer_ref,
             None,
-            min_binding_size ,
+            min_binding_size,
             ShaderStages::VERTEX | ShaderStages::FRAGMENT,
         );
         mesh.define_bindings(&mut builder);

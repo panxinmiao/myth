@@ -39,6 +39,7 @@ slotmap::new_key_type! {
 impl GpuBufferHandle {
     /// Pack the handle into a `u64` suitable for atomic storage.
     #[inline]
+    #[must_use] 
     pub fn to_bits(self) -> u64 {
         self.0.as_ffi()
     }
@@ -48,6 +49,7 @@ impl GpuBufferHandle {
     /// Returns `None` for the sentinel value `0` (used by [`CpuBuffer`] to
     /// indicate "no handle assigned yet").
     #[inline]
+    #[must_use] 
     pub fn from_bits(bits: u64) -> Option<Self> {
         if bits == 0 {
             None
@@ -111,7 +113,11 @@ impl GpuBuffer {
         usage: wgpu::BufferUsages,
         label: Option<&str>,
     ) -> Self {
-        let min_size = if usage.contains(wgpu::BufferUsages::UNIFORM) { 256 } else { 16 };
+        let min_size = if usage.contains(wgpu::BufferUsages::UNIFORM) {
+            256
+        } else {
+            16
+        };
         let size = capacity_bytes.max(min_size);
 
         let buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -137,7 +143,12 @@ impl GpuBuffer {
     ///
     /// Returns `true` when the physical `wgpu::Buffer` was recreated (callers
     /// must rebuild any `BindGroup`s that reference this buffer).
-    pub(crate) fn write_to_gpu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) -> bool {
+    pub(crate) fn write_to_gpu(
+        &mut self,
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        data: &[u8],
+    ) -> bool {
         let new_size = data.len() as u64;
         if new_size > self.size {
             self.resize(device, new_size);
@@ -289,10 +300,7 @@ impl ResourceManager {
 
     /// Convenience wrapper returning only the physical resource ID.
     #[inline]
-    pub fn ensure_buffer_id<T: super::GpuData>(
-        &mut self,
-        cpu_buffer: &super::CpuBuffer<T>,
-    ) -> u64 {
+    pub fn ensure_buffer_id<T: super::GpuData>(&mut self, cpu_buffer: &super::CpuBuffer<T>) -> u64 {
         self.ensure_buffer(cpu_buffer).1.resource_id
     }
 
@@ -347,11 +355,10 @@ impl ResourceManager {
                 attr.buffer.label()
             );
             // Re-check after logging (fallback for race with late uploads)
-            if let Some(&h) = self.buffer_index.get(&cpu_id) {
-                if let Some(g) = self.gpu_buffers.get(h) {
+            if let Some(&h) = self.buffer_index.get(&cpu_id)
+                && let Some(g) = self.gpu_buffers.get(h) {
                     return EnsureResult::existing(g.id);
                 }
-            }
             let dummy_data = [0u8; 1];
             let gpu_buf = GpuBuffer::new(
                 &self.device,
@@ -411,4 +418,3 @@ impl ResourceManager {
             .and_then(|&h| self.gpu_buffers.get(h))
     }
 }
-

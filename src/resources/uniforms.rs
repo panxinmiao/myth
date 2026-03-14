@@ -411,7 +411,7 @@ define_gpu_data_struct!(
         pub world_matrix: Mat4,       //64
         pub world_matrix_inverse: Mat4,  //64
         pub normal_matrix: Mat3Uniform,   //48
-
+        // 256 bytes
         pub(crate) __padding_20: UniformArray<f32, 20> = UniformArray::new([0.0; 20]),
     }
 );
