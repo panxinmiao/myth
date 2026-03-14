@@ -406,14 +406,22 @@ macro_rules! define_gpu_data_struct {
 // ============================================================================
 
 define_gpu_data_struct!(
-    /// Dynamic Model Uniforms (updated per object)
+    /// Dynamic Model Uniforms (updated per object, 256 bytes)
     struct DynamicModelUniforms {
-        pub world_matrix: Mat4,       //64
-        pub world_matrix_inverse: Mat4,  //64
-        pub normal_matrix: Mat3Uniform,   //48
-        // 256 bytes
-        pub(crate) __padding_20: UniformArray<f32, 20> = UniformArray::new([0.0; 20]),
+        pub world_matrix: Mat4,         //64
+        pub world_matrix_inverse: Mat4, //64
+        pub normal_matrix: Mat3Uniform, //48
+
+        // reserved fields for future expansion (must be at the end to maintain backward compatibility)
+        pub(crate) __previous_model_matrix: Mat4, //64 (for motion blur - optional, can be zero if not used)
+        pub(crate) __instance_tint: Vec4, //16 (instance-specific data, e.g. for GPU instancing - optional, can be zero if not used)
     }
+);
+
+// Static compile-time assertion: ensure struct size is a multiple of 256 bytes to satisfy wgpu's dynamic uniform buffer alignment requirements!
+const _: () = assert!(
+    std::mem::size_of::<DynamicModelUniforms>().is_multiple_of(256),
+    "CRITICAL: DynamicModelUniforms size must be a multiple of 256 bytes to satisfy wgpu's dynamic uniform offset alignment requirements! Please add padding!"
 );
 
 define_gpu_data_struct!(
