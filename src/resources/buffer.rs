@@ -184,11 +184,7 @@ impl<T: GpuData + Clone> Clone for CpuBuffer<T> {
     fn clone(&self) -> Self {
         let guard = self.inner.read();
         // Cloned buffers get a fresh ID and no cached handle.
-        Self::new(
-            guard.data.clone(),
-            self.usage,
-            self.label(),
-        )
+        Self::new(guard.data.clone(), self.usage, self.label())
     }
 }
 
