@@ -226,13 +226,13 @@ impl ToneMappingFeature {
         // ─── 3. Build static bind group (Group 1) ─────────────────
         // Resolve GPU buffer for uniforms
 
-        ctx.resource_manager.ensure_buffer(uniforms);
+        let (buf_handle, _) = ctx.resource_manager.ensure_buffer(uniforms);
 
         if has_lut && let Some(handle) = lut_handle {
             ctx.resource_manager.prepare_texture(ctx.assets, handle);
         }
 
-        let gpu_buf = ctx.resource_manager.gpu_buffers.get(&uniforms.id());
+        let gpu_buf = ctx.resource_manager.gpu_buffers.get(buf_handle);
 
         let Some(gpu_buf) = gpu_buf else { return };
         let buf_id = gpu_buf.id;

@@ -40,6 +40,7 @@ use slotmap::SecondaryMap;
 use crate::assets::server::SamplerHandle;
 
 pub(crate) use crate::renderer::core::gpu::buffer::GpuBuffer;
+pub use crate::renderer::core::gpu::buffer::GpuBufferHandle;
 pub(crate) use crate::renderer::core::gpu::environment::GpuEnvironment;
 pub(crate) use crate::renderer::core::gpu::environment::{BRDF_LUT_SIZE, CubeSourceType};
 pub(crate) use crate::renderer::core::gpu::geometry::GpuGeometry;
@@ -119,8 +120,10 @@ pub struct ResourceManager {
     /// Mapping from `SamplerHandle` to `SamplerId`
     pub(crate) sampler_bindings: SecondaryMap<SamplerHandle, u64>,
 
-    /// All GpuBuffers, keyed by CPU Buffer ID
-    pub(crate) gpu_buffers: FxHashMap<u64, GpuBuffer>,
+    /// All GPU buffers stored in a contiguous arena for O(1) handle-based access.
+    pub(crate) gpu_buffers: slotmap::SlotMap<GpuBufferHandle, GpuBuffer>,
+    /// Reverse index: CPU-side buffer ID → SlotMap handle.
+    pub(crate) buffer_index: FxHashMap<u64, GpuBufferHandle>,
     /// All GpuImages, keyed by CPU Image ID
     pub(crate) gpu_images: FxHashMap<u64, GpuImage>,
 
@@ -463,22 +466,28 @@ impl ResourceManager {
             }));
 
         let mipmap_generator = MipmapGenerator::new(&device);
-        let model_allocator = ModelBufferAllocator::new();
+        let mut model_allocator = ModelBufferAllocator::new();
 
         // Initialize Model GPU Buffer mapping
-        let gpu_buffers = {
-            let cpu_buf = model_allocator.cpu_buffer();
-            let buffer_guard = cpu_buf.read();
+        let (gpu_buffers, buffer_index) = {
+            let initial_data = vec![
+                crate::resources::uniforms::DynamicModelUniforms::default();
+                4096
+            ];
+            let bytes: &[u8] = bytemuck::cast_slice(&initial_data);
             let gpu_buf = GpuBuffer::new(
                 &device,
-                buffer_guard.as_bytes(),
-                cpu_buf.usage(),
-                cpu_buf.label(),
+                bytes,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some("GlobalModelBuffer"),
             );
 
-            let mut map = FxHashMap::default();
-            map.insert(cpu_buf.id(), gpu_buf);
-            map
+            let mut arena = slotmap::SlotMap::with_key();
+            let mut index = FxHashMap::default();
+            let handle = arena.insert(gpu_buf);
+            index.insert(model_allocator.buffer_id(), handle);
+            model_allocator.set_gpu_handle(handle);
+            (arena, index)
         };
 
         // Initialize sampler_id_lookup and add dummy_sampler
@@ -596,6 +605,7 @@ impl ResourceManager {
             sampler_bindings: SecondaryMap::new(),
             global_states: FxHashMap::default(),
             gpu_buffers,
+            buffer_index,
             gpu_images: FxHashMap::default(),
             layout_cache: FxHashMap::default(),
             vertex_layout_cache: FxHashMap::default(),
@@ -649,19 +659,20 @@ impl ResourceManager {
             self.object_bind_group_cache.clear();
             self.bind_group_id_lookup.clear();
 
-            let cpu_buf = self.model_allocator.cpu_buffer();
-            // Immediately create the new GpuBuffer (data is not filled yet, but
-            // the wgpu::Buffer object must exist). For safety, we initialize it
-            // with the CpuBuffer's default data.
-            let buffer_guard = cpu_buf.read();
+            // Create new GpuBuffer with zeroed data at new capacity
+            let byte_size = count
+                * std::mem::size_of::<crate::resources::uniforms::DynamicModelUniforms>();
+            let zeroed = vec![0u8; byte_size];
             let gpu_buf = GpuBuffer::new(
                 &self.device,
-                buffer_guard.as_bytes(),
-                cpu_buf.usage(),
-                cpu_buf.label(),
+                &zeroed,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some("GlobalModelBuffer"),
             );
 
-            self.gpu_buffers.insert(new_id, gpu_buf);
+            let handle = self.gpu_buffers.insert(gpu_buf);
+            self.buffer_index.insert(new_id, handle);
+            self.model_allocator.set_gpu_handle(handle);
         }
     }
 
@@ -680,26 +691,14 @@ impl ResourceManager {
             return;
         }
 
-        self.model_allocator.flush_to_buffer();
-
-        let allocator = &self.model_allocator;
-        let buffer_ref = allocator.buffer_handle();
-
-        let buffer_guard = allocator.cpu_buffer().read();
-
-        let full_slice = buffer_guard.as_bytes();
-
-        let stride = std::mem::size_of::<crate::resources::uniforms::DynamicModelUniforms>();
-
-        // Only upload the valid data portion (cursor * stride)
-        let used_bytes = allocator.len() * stride;
-
-        let data_to_upload = &full_slice[0..used_bytes];
+        let buffer_ref = self.model_allocator.buffer_handle();
+        let data_to_upload = self.model_allocator.host_bytes();
 
         Self::write_buffer_internal(
             &self.device,
             &self.queue,
             &mut self.gpu_buffers,
+            &mut self.buffer_index,
             self.frame_index,
             &buffer_ref,
             data_to_upload,
@@ -730,6 +729,9 @@ impl ResourceManager {
             .retain(|_, v| v.last_used_frame >= cutoff);
         // Sampler cache uses a global cache; no per-Texture cleanup needed
         self.gpu_buffers.retain(|_, v| v.last_used_frame >= cutoff);
+        // Keep buffer_index in sync with the arena.
+        self.buffer_index
+            .retain(|_, h| self.gpu_buffers.contains_key(*h));
         self.gpu_images.retain(|_, v| v.last_used_frame >= cutoff);
         self.global_states
             .retain(|_, v| v.last_used_frame >= cutoff);

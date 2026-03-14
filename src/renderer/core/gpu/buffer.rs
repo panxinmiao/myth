@@ -1,10 +1,72 @@
-//! Buffer operations
+//! GPU buffer storage and lifecycle management.
+//!
+//! # Architecture
+//!
+//! GPU buffers are stored in a [`SlotMap`] keyed by [`GpuBufferHandle`], providing
+//! O(1) insertion, removal, and lookup by handle. A secondary index
+//! (`buffer_index: FxHashMap<u64, GpuBufferHandle>`) maps CPU-side buffer IDs to
+//! their corresponding slot, bridging the gap for code paths that only have a
+//! `BufferRef` or raw `u64` id.
+//!
+//! [`CpuBuffer`] caches its assigned [`GpuBufferHandle`] in an `AtomicU64` field,
+//! enabling a lock-free O(1) fast path in [`ResourceManager::ensure_buffer`].
+//!
+//! # Resize Strategy
+//!
+//! When incoming data exceeds the current `wgpu::Buffer` capacity, the old buffer
+//! is destroyed and a new, larger one is created **in the same SlotMap slot**. The
+//! handle remains stable, but `GpuBuffer::id` is regenerated to signal downstream
+//! consumers (e.g. `ResourceIdSet` fingerprints) that the physical resource has
+//! changed and dependent `BindGroup`s must be rebuilt.
 
-use rustc_hash::FxHashMap;
+use slotmap::SlotMap;
 
-use super::{EnsureResult, ResourceManager};
-use crate::{renderer::core::gpu::generate_gpu_resource_id, resources::buffer::BufferRef};
+use super::{EnsureResult, ResourceManager, generate_gpu_resource_id};
+use crate::resources::buffer::BufferRef;
 
+// ────────────────────────────────────────────────────────────────────────────
+// Handle
+// ────────────────────────────────────────────────────────────────────────────
+
+slotmap::new_key_type! {
+    /// Opaque handle into the `ResourceManager`'s GPU buffer arena.
+    ///
+    /// Internally a SlotMap key with built-in generation checking, making
+    /// stale-handle access safe and detectable at O(1) cost.
+    pub struct GpuBufferHandle;
+}
+
+impl GpuBufferHandle {
+    /// Pack the handle into a `u64` suitable for atomic storage.
+    #[inline]
+    pub fn to_bits(self) -> u64 {
+        self.0.as_ffi()
+    }
+
+    /// Reconstruct a handle from a previously packed `u64`.
+    ///
+    /// Returns `None` for the sentinel value `0` (used by [`CpuBuffer`] to
+    /// indicate "no handle assigned yet").
+    #[inline]
+    pub fn from_bits(bits: u64) -> Option<Self> {
+        if bits == 0 {
+            None
+        } else {
+            Some(Self(slotmap::KeyData::from_ffi(bits)))
+        }
+    }
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// GpuBuffer
+// ────────────────────────────────────────────────────────────────────────────
+
+/// A GPU-resident buffer managed by [`ResourceManager`].
+///
+/// The `id` field is a *physical* resource identity: it changes whenever the
+/// underlying `wgpu::Buffer` is recreated (e.g. on resize), allowing
+/// `ResourceIdSet` fingerprints to detect the change and trigger `BindGroup`
+/// rebuilds.
 pub struct GpuBuffer {
     pub id: u64,
     pub buffer: wgpu::Buffer,
@@ -14,7 +76,6 @@ pub struct GpuBuffer {
     pub last_used_frame: u64,
     pub version: u64,
     pub last_uploaded_version: u64,
-    shadow_data: Option<Vec<u8>>,
 }
 
 impl GpuBuffer {
@@ -41,49 +102,14 @@ impl GpuBuffer {
             last_used_frame: 0,
             version: 0,
             last_uploaded_version: 0,
-            shadow_data: None,
         }
     }
 
-    pub fn enable_shadow_copy(&mut self) {
-        if self.shadow_data.is_none() {
-            self.shadow_data = Some(Vec::new());
-        }
-    }
-
-    pub fn update_with_data(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        data: &[u8],
-    ) -> bool {
-        if let Some(prev) = &mut self.shadow_data {
-            if prev == data {
-                return false;
-            }
-            if prev.len() != data.len() {
-                *prev = vec![0u8; data.len()];
-            }
-            prev.copy_from_slice(data);
-        }
-        self.write_to_gpu(device, queue, data)
-    }
-
-    pub fn update_with_version(
-        &mut self,
-        device: &wgpu::Device,
-        queue: &wgpu::Queue,
-        data: &[u8],
-        new_version: u64,
-    ) -> bool {
-        if new_version <= self.version {
-            return false;
-        }
-        self.version = new_version;
-        self.write_to_gpu(device, queue, data)
-    }
-
-    fn write_to_gpu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) -> bool {
+    /// Write `data` to the GPU, resizing the buffer in-place if necessary.
+    ///
+    /// Returns `true` when the physical `wgpu::Buffer` was recreated (callers
+    /// must rebuild any `BindGroup`s that reference this buffer).
+    pub(crate) fn write_to_gpu(&mut self, device: &wgpu::Device, queue: &wgpu::Queue, data: &[u8]) -> bool {
         let new_size = data.len() as u64;
         if new_size > self.size {
             self.resize(device, new_size);
@@ -94,6 +120,10 @@ impl GpuBuffer {
         false
     }
 
+    /// Destroy the current `wgpu::Buffer` and allocate a larger one.
+    ///
+    /// The handle in the SlotMap is unchanged; only `id` is regenerated to
+    /// propagate the physical-resource change through the fingerprint system.
     fn resize(&mut self, device: &wgpu::Device, new_size: u64) {
         self.buffer.destroy();
         self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
@@ -108,129 +138,167 @@ impl GpuBuffer {
 }
 
 impl ResourceManager {
-    /// Static helper method: borrows only necessary fields to resolve borrow checker conflicts.
-    /// Can be called while holding references to other `ResourceManager` fields.
+    // ────────────────────────────────────────────────────────────────────────
+    // Internal write helper (borrows split fields to satisfy borrow-checker)
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// Upload `data` for the buffer identified by `buffer_ref`, creating or
+    /// resizing the GPU-side buffer as needed.
     ///
-    /// Returns EnsureResult containing the physical resource ID and a rebuild flag
+    /// This is a **static method** that borrows only the fields it touches,
+    /// allowing callers to hold references to other `ResourceManager` members
+    /// concurrently (e.g. `model_allocator`).
     pub fn write_buffer_internal(
         device: &wgpu::Device,
         queue: &wgpu::Queue,
-        gpu_buffers: &mut FxHashMap<u64, GpuBuffer>,
+        gpu_buffers: &mut SlotMap<GpuBufferHandle, GpuBuffer>,
+        buffer_index: &mut rustc_hash::FxHashMap<u64, GpuBufferHandle>,
         frame_index: u64,
         buffer_ref: &BufferRef,
         data: &[u8],
-    ) -> EnsureResult {
+    ) -> (GpuBufferHandle, EnsureResult) {
         let cpu_id = buffer_ref.id();
-        let mut was_recreated = false;
 
-        match gpu_buffers.entry(cpu_id) {
-            std::collections::hash_map::Entry::Occupied(mut entry) => {
-                let gpu_buf = entry.get_mut();
+        if let Some(&handle) = buffer_index.get(&cpu_id) {
+            if let Some(gpu_buf) = gpu_buffers.get_mut(handle) {
+                let mut was_recreated = false;
 
-                // Check version and upload
                 if buffer_ref.version > gpu_buf.last_uploaded_version {
-                    if (data.len() as u64) > gpu_buf.size {
-                        log::debug!("Resizing buffer {:?}...", buffer_ref.label());
-                        let old_id = gpu_buf.id;
-                        // In-place replacement
-                        *gpu_buf =
-                            GpuBuffer::new(device, data, buffer_ref.usage, buffer_ref.label());
-                        was_recreated = gpu_buf.id != old_id;
-                    } else {
-                        queue.write_buffer(&gpu_buf.buffer, 0, data);
+                    let old_id = gpu_buf.id;
+                    was_recreated = gpu_buf.write_to_gpu(device, queue, data);
+                    if !was_recreated && gpu_buf.id != old_id {
+                        was_recreated = true;
                     }
                     gpu_buf.last_uploaded_version = buffer_ref.version;
                 }
                 gpu_buf.last_used_frame = frame_index;
-                EnsureResult::new(gpu_buf.id, was_recreated)
+                return (handle, EnsureResult::new(gpu_buf.id, was_recreated));
             }
-            std::collections::hash_map::Entry::Vacant(entry) => {
-                let mut buf = GpuBuffer::new(device, data, buffer_ref.usage, buffer_ref.label());
-                buf.last_uploaded_version = buffer_ref.version;
-                buf.last_used_frame = frame_index;
-                let id = buf.id;
-                entry.insert(buf);
-                EnsureResult::created(id)
-            }
+            // Stale handle — slot was freed. Remove from index and fall through.
+            buffer_index.remove(&cpu_id);
         }
+
+        // First encounter: create a new GPU buffer.
+        let mut buf = GpuBuffer::new(device, data, buffer_ref.usage, buffer_ref.label());
+        buf.last_uploaded_version = buffer_ref.version;
+        buf.last_used_frame = frame_index;
+        let phys_id = buf.id;
+        let handle = gpu_buffers.insert(buf);
+        buffer_index.insert(cpu_id, handle);
+        (handle, EnsureResult::created(phys_id))
     }
 
-    /// Ensure the `GpuBuffer` corresponding to a `CpuBuffer` is created and uploaded with the latest data
+    // ────────────────────────────────────────────────────────────────────────
+    // Public ensure_buffer family
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// Ensure the GPU buffer for a [`CpuBuffer`] exists and contains the
+    /// latest data.
     ///
-    /// Returns EnsureResult containing the physical resource ID and a rebuild flag
+    /// Uses the `CpuBuffer`'s internal atomic handle cache for an O(1) fast
+    /// path on subsequent calls (no hash lookup required).
     pub fn ensure_buffer<T: super::GpuData>(
         &mut self,
         cpu_buffer: &super::CpuBuffer<T>,
-    ) -> EnsureResult {
+    ) -> (GpuBufferHandle, EnsureResult) {
+        // ── Fast path: CpuBuffer already knows its slot ────────────
+        if let Some(handle) = cpu_buffer.gpu_handle() {
+            if let Some(gpu_buf) = self.gpu_buffers.get_mut(handle) {
+                let buffer_ref = cpu_buffer.handle();
+                let mut was_recreated = false;
+
+                if buffer_ref.version > gpu_buf.last_uploaded_version {
+                    let guard = cpu_buffer.read();
+                    let data: &[u8] = bytemuck::cast_slice(guard.as_bytes());
+                    was_recreated = gpu_buf.write_to_gpu(&self.device, &self.queue, data);
+                    gpu_buf.last_uploaded_version = buffer_ref.version;
+                }
+                gpu_buf.last_used_frame = self.frame_index;
+                return (handle, EnsureResult::new(gpu_buf.id, was_recreated));
+            }
+            // Handle went stale (shouldn't happen under normal operation).
+            // Clear the cache and fall through to the slow path.
+            cpu_buffer.clear_gpu_handle();
+        }
+
+        // ── Slow path: first call or stale handle ──────────────────
         let buffer_ref = cpu_buffer.handle();
-        let buffer_gard = cpu_buffer.read();
+        let guard = cpu_buffer.read();
+        let data: &[u8] = bytemuck::cast_slice(guard.as_bytes());
 
-        let data_to_upload = bytemuck::cast_slice(buffer_gard.as_bytes());
-
-        Self::write_buffer_internal(
+        let (handle, result) = Self::write_buffer_internal(
             &self.device,
             &self.queue,
             &mut self.gpu_buffers,
+            &mut self.buffer_index,
             self.frame_index,
             &buffer_ref,
-            data_to_upload,
-        )
+            data,
+        );
+        cpu_buffer.set_gpu_handle(handle);
+        (handle, result)
     }
 
-    /// Ensure a `GpuBuffer` exists and has up-to-date data via `BufferRef` and raw byte data
+    /// Ensure a GPU buffer from a [`BufferRef`] and raw byte data.
     ///
-    /// Used to support generic interfaces like `MaterialTrait`
-    pub fn ensure_buffer_ref(&mut self, buffer_ref: &BufferRef, data: &[u8]) -> EnsureResult {
+    /// Used by generic interfaces (e.g. `MaterialTrait`) that don't hold a
+    /// `CpuBuffer`.
+    pub fn ensure_buffer_ref(
+        &mut self,
+        buffer_ref: &BufferRef,
+        data: &[u8],
+    ) -> (GpuBufferHandle, EnsureResult) {
         Self::write_buffer_internal(
             &self.device,
             &self.queue,
             &mut self.gpu_buffers,
+            &mut self.buffer_index,
             self.frame_index,
             buffer_ref,
             data,
         )
     }
 
-    /// Ensure the `GpuBuffer` corresponding to a `CpuBuffer` is created and uploaded with the latest data
-    ///
-    /// Returns only the physical resource ID (backward compatible)
+    /// Convenience wrapper returning only the physical resource ID.
     #[inline]
-    pub fn ensure_buffer_id<T: super::GpuData>(&mut self, cpu_buffer: &super::CpuBuffer<T>) -> u64 {
-        self.ensure_buffer(cpu_buffer).resource_id
+    pub fn ensure_buffer_id<T: super::GpuData>(
+        &mut self,
+        cpu_buffer: &super::CpuBuffer<T>,
+    ) -> u64 {
+        self.ensure_buffer(cpu_buffer).1.resource_id
     }
 
+    // ────────────────────────────────────────────────────────────────────────
+    // Attribute / slot-based helpers
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// Ensure the GPU buffer for a geometry attribute is created and current.
     pub fn prepare_attribute_buffer(
         &mut self,
         attr: &crate::resources::geometry::Attribute,
     ) -> EnsureResult {
         let cpu_id = attr.buffer.id();
-        let mut was_recreated = false;
 
-        if let Some(gpu_buf) = self.gpu_buffers.get_mut(&cpu_id) {
-            if attr.version > gpu_buf.last_uploaded_version
-                && let Some(data) = &attr.data
-            {
-                let bytes: &[u8] = data.as_ref();
+        // ── Existing buffer ────────────────────────────────────────
+        if let Some(&handle) = self.buffer_index.get(&cpu_id) {
+            if let Some(gpu_buf) = self.gpu_buffers.get_mut(handle) {
+                let mut was_recreated = false;
 
-                // Check if expansion is needed
-                if (bytes.len() as u64) > gpu_buf.size {
-                    let old_id = gpu_buf.id;
-                    *gpu_buf = GpuBuffer::new(
-                        &self.device,
-                        bytes,
-                        attr.buffer.usage(),
-                        attr.buffer.label(),
-                    );
-                    was_recreated = gpu_buf.id != old_id;
-                } else {
-                    self.queue.write_buffer(&gpu_buf.buffer, 0, bytes);
+                if attr.version > gpu_buf.last_uploaded_version
+                    && let Some(data) = &attr.data
+                {
+                    let bytes: &[u8] = data.as_ref();
+                    was_recreated = gpu_buf.write_to_gpu(&self.device, &self.queue, bytes);
+                    gpu_buf.last_uploaded_version = attr.version;
                 }
-                gpu_buf.last_uploaded_version = attr.version;
+                gpu_buf.last_used_frame = self.frame_index;
+                return EnsureResult::new(gpu_buf.id, was_recreated);
             }
-            gpu_buf.last_used_frame = self.frame_index;
-            return EnsureResult::new(gpu_buf.id, was_recreated);
+            // Stale handle
+            self.buffer_index.remove(&cpu_id);
         }
 
+        // ── New buffer ─────────────────────────────────────────────
         if let Some(data) = &attr.data {
             let bytes: &[u8] = data.as_ref();
             let mut gpu_buf = GpuBuffer::new(
@@ -241,16 +309,20 @@ impl ResourceManager {
             );
             gpu_buf.last_uploaded_version = attr.version;
             gpu_buf.last_used_frame = self.frame_index;
-            let buf_id = gpu_buf.id;
-            self.gpu_buffers.insert(cpu_id, gpu_buf);
-            EnsureResult::created(buf_id)
+            let phys_id = gpu_buf.id;
+            let handle = self.gpu_buffers.insert(gpu_buf);
+            self.buffer_index.insert(cpu_id, handle);
+            EnsureResult::created(phys_id)
         } else {
             log::error!(
                 "Geometry attribute buffer {:?} missing CPU data!",
                 attr.buffer.label()
             );
-            if let Some(gpu_buf) = self.gpu_buffers.get_mut(&cpu_id) {
-                return EnsureResult::existing(gpu_buf.id);
+            // Re-check after logging (fallback for race with late uploads)
+            if let Some(&h) = self.buffer_index.get(&cpu_id) {
+                if let Some(g) = self.gpu_buffers.get(h) {
+                    return EnsureResult::existing(g.id);
+                }
             }
             let dummy_data = [0u8; 1];
             let gpu_buf = GpuBuffer::new(
@@ -259,41 +331,56 @@ impl ResourceManager {
                 attr.buffer.usage(),
                 Some("Dummy Fallback Buffer"),
             );
-            let buf_id = gpu_buf.id;
-            self.gpu_buffers.insert(cpu_id, gpu_buf);
-            EnsureResult::created(buf_id)
+            let phys_id = gpu_buf.id;
+            let handle = self.gpu_buffers.insert(gpu_buf);
+            self.buffer_index.insert(cpu_id, handle);
+            EnsureResult::created(phys_id)
         }
     }
 
+    /// Ensure a uniform slot buffer exists, creating it on first access and
+    /// uploading new data on subsequent calls when content differs.
     pub fn prepare_uniform_slot_data(
         &mut self,
         slot_id: u64,
         data: &[u8],
         label: &str,
     ) -> EnsureResult {
-        let mut was_recreated = false;
-        let existed = self.gpu_buffers.contains_key(&slot_id);
-
-        let gpu_buf = self.gpu_buffers.entry(slot_id).or_insert_with(|| {
-            was_recreated = true;
-            let mut buf = GpuBuffer::new(
-                &self.device,
-                data,
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some(label),
-            );
-            buf.enable_shadow_copy();
-            buf
-        });
-
-        if existed {
-            let size_changed = gpu_buf.update_with_data(&self.device, &self.queue, data);
-            if size_changed {
-                was_recreated = true;
+        if let Some(&handle) = self.buffer_index.get(&slot_id) {
+            if let Some(gpu_buf) = self.gpu_buffers.get_mut(handle) {
+                let was_recreated = gpu_buf.write_to_gpu(&self.device, &self.queue, data);
+                gpu_buf.last_used_frame = self.frame_index;
+                return EnsureResult::new(gpu_buf.id, was_recreated);
             }
+            self.buffer_index.remove(&slot_id);
         }
 
-        gpu_buf.last_used_frame = self.frame_index;
-        EnsureResult::new(gpu_buf.id, was_recreated)
+        let mut buf = GpuBuffer::new(
+            &self.device,
+            data,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            Some(label),
+        );
+        buf.last_used_frame = self.frame_index;
+        let phys_id = buf.id;
+        let handle = self.gpu_buffers.insert(buf);
+        self.buffer_index.insert(slot_id, handle);
+        EnsureResult::created(phys_id)
+    }
+
+    // ────────────────────────────────────────────────────────────────────────
+    // Lookup helpers
+    // ────────────────────────────────────────────────────────────────────────
+
+    /// Look up a [`GpuBuffer`] by the CPU-side buffer ID.
+    ///
+    /// This goes through the `buffer_index` reverse map and is slightly
+    /// slower than a direct `gpu_buffers.get(handle)`.
+    #[inline]
+    pub fn get_gpu_buffer_by_cpu_id(&self, cpu_id: u64) -> Option<&GpuBuffer> {
+        self.buffer_index
+            .get(&cpu_id)
+            .and_then(|&h| self.gpu_buffers.get(h))
     }
 }
+

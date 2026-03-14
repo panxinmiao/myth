@@ -374,7 +374,8 @@ impl SsaoFeature {
         ctx.resource_manager.ensure_buffer(ssao_uniforms);
 
         // Build Group 2 static BG (uniforms only) — rebuild on buffer identity change.
-        if let Some(g) = ctx.resource_manager.gpu_buffers.get(&ssao_uniforms.id())
+        if let Some(handle) = ssao_uniforms.gpu_handle()
+            && let Some(g) = ctx.resource_manager.gpu_buffers.get(handle)
             && (self.uniforms_static_bg.is_none() || self.last_uniforms_buffer_id != g.id)
         {
             let layout = self.raw_uniforms_layout.as_ref().unwrap();

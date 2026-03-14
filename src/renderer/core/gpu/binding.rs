@@ -33,7 +33,6 @@ impl ResourceManager {
 
     /// Upload skeleton data to GPU
     pub fn prepare_skeleton(&mut self, skeleton: &Skeleton) {
-        // Force upload joint matrices to GPU every frame
         let buffer_ref = skeleton.joint_matrices.handle();
 
         let buffer_guard = skeleton.joint_matrices.read();
@@ -42,6 +41,7 @@ impl ResourceManager {
             &self.device,
             &self.queue,
             &mut self.gpu_buffers,
+            &mut self.buffer_index,
             self.frame_index,
             &buffer_ref,
             bytemuck::cast_slice(buffer_guard.as_slice()),
@@ -139,26 +139,23 @@ impl ResourceManager {
 
         if self.model_allocator.last_ensure_frame != self.frame_index {
             let buffer_ref = self.model_allocator.buffer_handle();
+            let data = self.model_allocator.host_bytes();
 
-            {
-                let cpu_buffer = self.model_allocator.cpu_buffer();
-                let guard = cpu_buffer.read();
-                let data = guard.as_slice();
-                Self::write_buffer_internal(
-                    &self.device,
-                    &self.queue,
-                    &mut self.gpu_buffers,
-                    self.frame_index,
-                    &buffer_ref,
-                    bytemuck::cast_slice(data),
-                );
-            }
+            Self::write_buffer_internal(
+                &self.device,
+                &self.queue,
+                &mut self.gpu_buffers,
+                &mut self.buffer_index,
+                self.frame_index,
+                &buffer_ref,
+                data,
+            );
 
             self.model_allocator.last_ensure_frame = self.frame_index;
         }
 
         mesh.update_morph_uniforms();
-        let morph_result = self.ensure_buffer(&mesh.morph_uniforms);
+        let (_, morph_result) = self.ensure_buffer(&mesh.morph_uniforms);
         self.prepare_geometry(assets, mesh.geometry);
         self.prepare_material(assets, mesh.material);
 
@@ -192,7 +189,7 @@ impl ResourceManager {
         cache_key: ObjectBindGroupKey,
     ) -> BindGroupContext {
         let min_binding_size = ModelBufferAllocator::uniform_stride();
-        let model_buffer_ref = self.model_allocator.cpu_buffer().handle().clone();
+        let model_buffer_ref = self.model_allocator.buffer_handle();
 
         let mut builder = ResourceBuilder::new();
         builder.add_dynamic_uniform::<DynamicModelUniforms>(
@@ -256,7 +253,9 @@ impl ResourceManager {
                 } => {
                     let id = buffer_ref.id();
                     if let Some(bytes) = data {
-                        let gpu_buf = self.gpu_buffers.entry(id).or_insert_with(|| {
+                        let handle = if let Some(&h) = self.buffer_index.get(&id) {
+                            h
+                        } else {
                             let mut buf = GpuBuffer::new(
                                 &self.device,
                                 bytes,
@@ -264,29 +263,23 @@ impl ResourceManager {
                                 buffer_ref.label(),
                             );
                             buf.last_uploaded_version = buffer_ref.version;
-                            buf
-                        });
+                            buf.last_used_frame = self.frame_index;
+                            let h = self.gpu_buffers.insert(buf);
+                            self.buffer_index.insert(id, h);
+                            h
+                        };
 
-                        if buffer_ref.version > gpu_buf.last_uploaded_version {
-                            if bytes.len() as u64 > gpu_buf.size {
-                                log::debug!(
-                                    "Recreating buffer {:?} due to size increase.",
-                                    buffer_ref.label()
-                                );
-                                *gpu_buf = GpuBuffer::new(
-                                    &self.device,
-                                    bytes,
-                                    buffer_ref.usage,
-                                    buffer_ref.label(),
-                                );
-                            } else {
-                                self.queue.write_buffer(&gpu_buf.buffer, 0, bytes);
+                        if let Some(gpu_buf) = self.gpu_buffers.get_mut(handle) {
+                            if buffer_ref.version > gpu_buf.last_uploaded_version {
+                                gpu_buf.write_to_gpu(&self.device, &self.queue, bytes);
+                                gpu_buf.last_uploaded_version = buffer_ref.version;
                             }
-                            gpu_buf.last_uploaded_version = buffer_ref.version;
+                            gpu_buf.last_used_frame = self.frame_index;
                         }
-                        gpu_buf.last_used_frame = self.frame_index;
-                    } else if let Some(gpu_buf) = self.gpu_buffers.get_mut(&id) {
-                        gpu_buf.last_used_frame = self.frame_index;
+                    } else if let Some(&h) = self.buffer_index.get(&id) {
+                        if let Some(gpu_buf) = self.gpu_buffers.get_mut(h) {
+                            gpu_buf.last_used_frame = self.frame_index;
+                        }
                     } else {
                         panic!(
                             "ResourceManager: Trying to bind buffer {:?} (ID: {}) but it is not initialized!",
@@ -370,8 +363,7 @@ impl ResourceManager {
                 } => {
                     let cpu_id = buffer.id();
                     let gpu_buf = self
-                        .gpu_buffers
-                        .get(&cpu_id)
+                        .get_gpu_buffer_by_cpu_id(cpu_id)
                         .expect("Buffer should be prepared");
                     wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                         buffer: &gpu_buf.buffer,
@@ -491,10 +483,10 @@ impl ResourceManager {
         render_state: &RenderState,
     ) -> u32 {
         // === Ensure: upload all buffers, obtain physical resource IDs ===
-        let camera_result = self.ensure_buffer(render_state.uniforms());
-        let env_result = self.ensure_buffer(&scene.uniforms_buffer);
-        let light_result = self.ensure_buffer(&scene.light_storage_buffer);
-        let scene_uniform_result = self.ensure_buffer(&scene.uniforms_buffer);
+        let (_, camera_result) = self.ensure_buffer(render_state.uniforms());
+        let (_, env_result) = self.ensure_buffer(&scene.uniforms_buffer);
+        let (_, light_result) = self.ensure_buffer(&scene.light_storage_buffer);
+        let (_, scene_uniform_result) = self.ensure_buffer(&scene.uniforms_buffer);
 
         // Resolve environment texture IDs from GpuEnvironment cache.
         // resolve_gpu_environment runs before prepare_global and always creates

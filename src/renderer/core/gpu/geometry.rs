@@ -121,8 +121,7 @@ impl ResourceManager {
 
         for layout_desc in &layout_info.buffers {
             let gpu_buf = self
-                .gpu_buffers
-                .get(&layout_desc.buffer.id())
+                .get_gpu_buffer_by_cpu_id(layout_desc.buffer.id())
                 .expect("Vertex buffer should be prepared");
             vertex_buffers.push(gpu_buf.buffer.clone());
             vertex_buffer_ids.push(gpu_buf.id);
@@ -130,8 +129,7 @@ impl ResourceManager {
 
         let index_buffer = if let Some(indices) = geometry.index_attribute() {
             let gpu_buf = self
-                .gpu_buffers
-                .get(&indices.buffer.id())
+                .get_gpu_buffer_by_cpu_id(indices.buffer.id())
                 .expect("Index buffer should be prepared");
             let format = match indices.format {
                 wgpu::VertexFormat::Uint32 => wgpu::IndexFormat::Uint32,
