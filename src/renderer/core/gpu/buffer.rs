@@ -39,7 +39,7 @@ slotmap::new_key_type! {
 impl GpuBufferHandle {
     /// Pack the handle into a `u64` suitable for atomic storage.
     #[inline]
-    #[must_use] 
+    #[must_use]
     pub fn to_bits(self) -> u64 {
         self.0.as_ffi()
     }
@@ -49,7 +49,7 @@ impl GpuBufferHandle {
     /// Returns `None` for the sentinel value `0` (used by [`CpuBuffer`] to
     /// indicate "no handle assigned yet").
     #[inline]
-    #[must_use] 
+    #[must_use]
     pub fn from_bits(bits: u64) -> Option<Self> {
         if bits == 0 {
             None
@@ -356,9 +356,10 @@ impl ResourceManager {
             );
             // Re-check after logging (fallback for race with late uploads)
             if let Some(&h) = self.buffer_index.get(&cpu_id)
-                && let Some(g) = self.gpu_buffers.get(h) {
-                    return EnsureResult::existing(g.id);
-                }
+                && let Some(g) = self.gpu_buffers.get(h)
+            {
+                return EnsureResult::existing(g.id);
+            }
             let dummy_data = [0u8; 1];
             let gpu_buf = GpuBuffer::new(
                 &self.device,

@@ -64,17 +64,6 @@ impl ModelBufferAllocator {
 
     /// Allocate a model uniform slot, returning the byte offset.
     pub fn allocate(&mut self, data: DynamicModelUniforms) -> u32 {
-        // let index = self.cursor;
-        // self.cursor += 1;
-
-        // if self.cursor > self.capacity {
-        //     self.expand_capacity();
-        // }
-
-        // self.host_data.push(data);
-
-        // (index * std::mem::size_of::<DynamicModelUniforms>()) as u32
-
         let index = self.host_data.len();
 
         if index >= self.capacity {
@@ -83,6 +72,13 @@ impl ModelBufferAllocator {
 
         self.host_data.push(data);
         (index * std::mem::size_of::<DynamicModelUniforms>()) as u32
+    }
+
+    /// Shrink the capacity to fit the current number of uniforms.
+    /// Only intended to be called during scene transitions when we expect a significant drop in the number of active models, to free up GPU memory.
+    /// Not called every frame to avoid fragmentation and performance overhead.
+    pub fn shrink_to_fit(&mut self) {
+        self.capacity = self.host_data.len().max(128);
     }
 
     pub fn flush_to_buffer(
@@ -126,17 +122,18 @@ impl ModelBufferAllocator {
 
         // Check if the existing buffer needs to be resized (capacity expansion)
         if handle_bits != 0
-            && let Some(gpu_buf) = gpu_buffers.get_mut(handle) {
-                if gpu_buf.size < target_size {
-                    gpu_buf.resize(device, target_size);
-                    was_resized = true;
-                }
-
-                if !active_data.is_empty() {
-                    queue.write_buffer(&gpu_buf.buffer, 0, active_data);
-                }
-                gpu_buf.last_used_frame = frame_index;
+            && let Some(gpu_buf) = gpu_buffers.get_mut(handle)
+        {
+            if gpu_buf.size < target_size {
+                gpu_buf.resize(device, target_size);
+                was_resized = true;
             }
+
+            if !active_data.is_empty() {
+                queue.write_buffer(&gpu_buf.buffer, 0, active_data);
+            }
+            gpu_buf.last_used_frame = frame_index;
+        }
         was_resized
     }
 
