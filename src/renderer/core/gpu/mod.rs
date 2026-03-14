@@ -466,29 +466,10 @@ impl ResourceManager {
             }));
 
         let mipmap_generator = MipmapGenerator::new(&device);
-        let mut model_allocator = ModelBufferAllocator::new();
+        let model_allocator = ModelBufferAllocator::new();
 
-        // Initialize Model GPU Buffer mapping
-        let (gpu_buffers, buffer_index) = {
-            let initial_data = vec![
-                crate::resources::uniforms::DynamicModelUniforms::default();
-                4096
-            ];
-            let bytes: &[u8] = bytemuck::cast_slice(&initial_data);
-            let gpu_buf = GpuBuffer::new(
-                &device,
-                bytes,
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("GlobalModelBuffer"),
-            );
-
-            let mut arena = slotmap::SlotMap::with_key();
-            let mut index = FxHashMap::default();
-            let handle = arena.insert(gpu_buf);
-            index.insert(model_allocator.buffer_id(), handle);
-            model_allocator.set_gpu_handle(handle);
-            (arena, index)
-        };
+        let gpu_buffers = slotmap::SlotMap::with_key();
+        let buffer_index = rustc_hash::FxHashMap::default();
 
         // Initialize sampler_id_lookup and add dummy_sampler
         let mut sampler_id_lookup = FxHashMap::default();
@@ -644,37 +625,47 @@ impl ResourceManager {
         self.frame_index
     }
 
-    // Ensure Model Buffer capacity and synchronize GPU resources
-    pub fn ensure_model_buffer_capacity(&mut self, count: usize) {
-        let old_id = self.model_allocator.buffer_id();
-
-        self.model_allocator.ensure_capacity(count);
-
-        // If expansion occurred (ID changed), we need to immediately create the
-        // corresponding GPU Buffer. Otherwise subsequent prepare_mesh calls will
-        // fail to find the Buffer or bind to the old one.
-        let new_id = self.model_allocator.buffer_id();
-        if new_id != old_id {
-            // Clear old caches (important to prevent BindGroups pointing to the old Buffer)
-            self.object_bind_group_cache.clear();
-            self.bind_group_id_lookup.clear();
-
-            // Create new GpuBuffer with zeroed data at new capacity
-            let byte_size = count
-                * std::mem::size_of::<crate::resources::uniforms::DynamicModelUniforms>();
-            let zeroed = vec![0u8; byte_size];
-            let gpu_buf = GpuBuffer::new(
-                &self.device,
-                &zeroed,
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("GlobalModelBuffer"),
-            );
-
-            let handle = self.gpu_buffers.insert(gpu_buf);
-            self.buffer_index.insert(new_id, handle);
-            self.model_allocator.set_gpu_handle(handle);
-        }
+    pub fn flush_model_buffers(&mut self) {
+        self.model_allocator.flush_to_buffer(
+            &self.device,
+            &self.queue,
+            &mut self.gpu_buffers,
+            &mut self.buffer_index,
+            self.frame_index,
+        );
     }
+
+    // Ensure Model Buffer capacity and synchronize GPU resources
+    // pub fn ensure_model_buffer_capacity(&mut self, count: usize) {
+    //     let old_id = self.model_allocator.buffer_id();
+
+    //     self.model_allocator.ensure_capacity(count);
+
+    //     // If expansion occurred (ID changed), we need to immediately create the
+    //     // corresponding GPU Buffer. Otherwise subsequent prepare_mesh calls will
+    //     // fail to find the Buffer or bind to the old one.
+    //     let new_id = self.model_allocator.buffer_id();
+    //     if new_id != old_id {
+    //         // Clear old caches (important to prevent BindGroups pointing to the old Buffer)
+    //         self.object_bind_group_cache.clear();
+    //         self.bind_group_id_lookup.clear();
+
+    //         // Create new GpuBuffer with zeroed data at new capacity
+    //         let byte_size = count
+    //             * std::mem::size_of::<crate::resources::uniforms::DynamicModelUniforms>();
+    //         let zeroed = vec![0u8; byte_size];
+    //         let gpu_buf = GpuBuffer::new(
+    //             &self.device,
+    //             &zeroed,
+    //             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+    //             Some("GlobalModelBuffer"),
+    //         );
+
+    //         let handle = self.gpu_buffers.insert(gpu_buf);
+    //         self.buffer_index.insert(new_id, handle);
+    //         self.model_allocator.set_gpu_handle(handle);
+    //     }
+    // }
 
     /// Allocate a Model Uniform slot, returning the byte offset
     #[inline]
@@ -686,29 +677,29 @@ impl ResourceManager {
     }
 
     /// Upload Model Buffer to GPU before the end of each frame
-    pub fn upload_model_buffer(&mut self) {
-        if self.model_allocator.is_empty() {
-            return;
-        }
+    // pub fn upload_model_buffer(&mut self) {
+    //     if self.model_allocator.is_empty() {
+    //         return;
+    //     }
 
-        let buffer_ref = self.model_allocator.buffer_handle();
-        let data_to_upload = self.model_allocator.host_bytes();
+    //     let buffer_ref = self.model_allocator.buffer_handle();
+    //     let data_to_upload = self.model_allocator.host_bytes();
 
-        Self::write_buffer_internal(
-            &self.device,
-            &self.queue,
-            &mut self.gpu_buffers,
-            &mut self.buffer_index,
-            self.frame_index,
-            &buffer_ref,
-            data_to_upload,
-        );
-    }
+    //     Self::write_buffer_internal(
+    //         &self.device,
+    //         &self.queue,
+    //         &mut self.gpu_buffers,
+    //         &mut self.buffer_index,
+    //         self.frame_index,
+    //         &buffer_ref,
+    //         data_to_upload,
+    //     );
+    // }
 
     /// Get the current Model Buffer ID for cache validation
     #[inline]
     pub fn model_buffer_id(&self) -> u64 {
-        self.model_allocator.buffer_id()
+        self.model_allocator.buffer_handle().id()
     }
 
     /// Quickly retrieve `BindGroup` data by cached ID

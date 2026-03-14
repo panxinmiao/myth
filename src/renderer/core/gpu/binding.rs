@@ -136,24 +136,6 @@ impl ResourceManager {
     ) -> Option<BindGroupContext> {
         // === Ensure phase: ensure all resources are uploaded ===
         // If the Allocator expanded this frame, IDs will change and must be registered here
-
-        if self.model_allocator.last_ensure_frame != self.frame_index {
-            let buffer_ref = self.model_allocator.buffer_handle();
-            let data = self.model_allocator.host_bytes();
-
-            Self::write_buffer_internal(
-                &self.device,
-                &self.queue,
-                &mut self.gpu_buffers,
-                &mut self.buffer_index,
-                self.frame_index,
-                &buffer_ref,
-                data,
-            );
-
-            self.model_allocator.last_ensure_frame = self.frame_index;
-        }
-
         mesh.update_morph_uniforms();
         let (_, morph_result) = self.ensure_buffer(&mesh.morph_uniforms);
         self.prepare_geometry(assets, mesh.geometry);
@@ -163,7 +145,7 @@ impl ResourceManager {
 
         // === Collect phase: gather all resource IDs ===
         let mut current_ids = super::ResourceIdSet::with_capacity(4);
-        current_ids.push(self.model_allocator.buffer_id());
+        current_ids.push(self.model_allocator.buffer_handle().id());
         current_ids.push(morph_result.resource_id);
         current_ids.push_optional(skeleton.map(|s| s.joint_matrices.handle().id));
 
@@ -180,6 +162,13 @@ impl ResourceManager {
         Some(binding_data)
     }
 
+    // pub fn get_model_buffer_binding(&self) -> Option<wgpu::BindingResource> {
+    //     let logical_id = self.model_allocator.buffer_id();
+    //     let handle = self.buffer_index.get(&logical_id)?;
+    //     let gpu_buf = self.gpu_buffers.get(*handle)?;
+    //     Some(gpu_buf.buffer.as_entire_binding())
+    // }
+
     fn create_object_bind_group_internal(
         &mut self,
         assets: &AssetServer,
@@ -189,14 +178,17 @@ impl ResourceManager {
         cache_key: ObjectBindGroupKey,
     ) -> BindGroupContext {
         let min_binding_size = ModelBufferAllocator::uniform_stride();
+        
         let model_buffer_ref = self.model_allocator.buffer_handle();
+
+        // let model_binding = self.get_model_buffer_binding()?;
 
         let mut builder = ResourceBuilder::new();
         builder.add_dynamic_uniform::<DynamicModelUniforms>(
             "model",
             &model_buffer_ref,
             None,
-            min_binding_size,
+            min_binding_size ,
             ShaderStages::VERTEX | ShaderStages::FRAGMENT,
         );
         mesh.define_bindings(&mut builder);

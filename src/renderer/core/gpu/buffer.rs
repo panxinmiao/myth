@@ -105,6 +105,34 @@ impl GpuBuffer {
         }
     }
 
+    pub fn with_capacity(
+        device: &wgpu::Device,
+        capacity_bytes: u64,
+        usage: wgpu::BufferUsages,
+        label: Option<&str>,
+    ) -> Self {
+        let min_size = if usage.contains(wgpu::BufferUsages::UNIFORM) { 256 } else { 16 };
+        let size = capacity_bytes.max(min_size);
+
+        let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label,
+            size,
+            usage,
+            mapped_at_creation: false,
+        });
+
+        Self {
+            id: generate_gpu_resource_id(),
+            buffer,
+            size,
+            usage,
+            label: label.unwrap_or("Buffer").to_string(),
+            last_used_frame: 0,
+            version: 0,
+            last_uploaded_version: 0,
+        }
+    }
+
     /// Write `data` to the GPU, resizing the buffer in-place if necessary.
     ///
     /// Returns `true` when the physical `wgpu::Buffer` was recreated (callers
@@ -124,7 +152,7 @@ impl GpuBuffer {
     ///
     /// The handle in the SlotMap is unchanged; only `id` is regenerated to
     /// propagate the physical-resource change through the fingerprint system.
-    fn resize(&mut self, device: &wgpu::Device, new_size: u64) {
+    pub(crate) fn resize(&mut self, device: &wgpu::Device, new_size: u64) {
         self.buffer.destroy();
         self.buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some(&self.label),

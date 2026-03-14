@@ -6,7 +6,9 @@
 //! intermediary for zero-overhead GPU uploads.
 
 use std::num::NonZero;
+use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::renderer::core::gpu::GpuBuffer;
 use crate::resources::buffer::BufferRef;
 use crate::resources::uniforms::DynamicModelUniforms;
 
@@ -21,156 +23,68 @@ use super::buffer::GpuBufferHandle;
 pub struct ModelBufferAllocator {
     /// CPU-side staging data for the current frame.
     host_data: Vec<DynamicModelUniforms>,
-    /// Current write position (number of allocated slots this frame).
-    cursor: usize,
+    // /// Current write position (number of allocated slots this frame).
+    // cursor: usize,
     /// Allocated entry count (may be larger than cursor).
-    capacity: usize,
-    /// Handle into the SlotMap GPU buffer arena.
-    gpu_handle: Option<GpuBufferHandle>,
-    /// Logical buffer id used for BufferRef compatibility.
-    buffer_id: u64,
-    /// Whether a capacity expansion happened this frame.
-    needs_recreate: bool,
+    // capacity: usize,
+    // /// Handle into the SlotMap GPU buffer arena.
+    // gpu_handle: Option<GpuBufferHandle>,
+    // /// Logical buffer id used for BufferRef compatibility.
+    // buffer_id: u64,
+    // /// Whether a capacity expansion happened this frame.
+    // needs_recreate: bool,
 
-    pub(crate) last_ensure_frame: u64,
+    // pub(crate) last_ensure_frame: u64,
+
+    /// 容量（元素个数）
+    capacity: usize,
+    /// 稳定的逻辑 ID，用于向 RenderGraph 提供绑定的 Key
+    logical_ref: BufferRef,
+    /// 缓存的 GPU 句柄
+    cached_gpu_handle: AtomicU64,
+    
+    // pub(crate) last_ensure_frame: u64,
 }
 
 impl ModelBufferAllocator {
     #[must_use]
     pub fn new() -> Self {
         let initial_capacity = 4096;
-        let buffer_ref = BufferRef::new(
-            initial_capacity * std::mem::size_of::<DynamicModelUniforms>(),
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            Some("GlobalModelBuffer"),
+        let logical_ref = BufferRef::empty(
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST, 
+            Some("GlobalModelBuffer")
         );
 
         Self {
             host_data: Vec::with_capacity(initial_capacity),
-            cursor: 0,
+            // cursor: 0,
             capacity: initial_capacity,
-            gpu_handle: None,
-            buffer_id: buffer_ref.id,
-            needs_recreate: false,
-            last_ensure_frame: 0,
+            // gpu_handle: None,
+            // buffer_id: buffer_ref.id,
+            // needs_recreate: false,
+            logical_ref,
+            cached_gpu_handle: AtomicU64::new(0),
+            // last_ensure_frame: 0,
         }
     }
 
     /// Reset at the beginning of each frame.
     pub fn reset(&mut self) {
-        self.cursor = 0;
+        // self.cursor = 0;
+        // self.host_data.clear();
+        // self.needs_recreate = false;
+
         self.host_data.clear();
-        self.needs_recreate = false;
     }
 
-    /// Allocate a model uniform slot, returning the byte offset.
-    pub fn allocate(&mut self, data: DynamicModelUniforms) -> u32 {
-        let index = self.cursor;
-        self.cursor += 1;
-
-        if self.cursor > self.capacity {
-            self.expand_capacity();
-        }
-
-        self.host_data.push(data);
-
-        (index * std::mem::size_of::<DynamicModelUniforms>()) as u32
+    pub fn buffer_handle(&self) -> &BufferRef {
+        &self.logical_ref
     }
 
-    /// Pre-ensure capacity for `required_count` items.
-    pub fn ensure_capacity(&mut self, required_count: usize) {
-        if required_count > self.capacity {
-            let mut new_cap = self.capacity;
-            while new_cap < required_count {
-                new_cap *= 2;
-            }
-            new_cap = new_cap.max(128);
+    // pub fn uniform_stride() -> u64 {
+    //     std::mem::size_of::<DynamicModelUniforms>() as u64
+    // }
 
-            log::info!(
-                "Model Buffer resizing to fit {} items: {} -> {}",
-                required_count,
-                self.capacity,
-                new_cap
-            );
-
-            self.capacity = new_cap;
-            self.needs_recreate = true;
-            self.regenerate_buffer_id();
-        }
-    }
-
-    fn expand_capacity(&mut self) {
-        let new_cap = (self.capacity * 2).max(128);
-        log::info!(
-            "Model Buffer expanding capacity: {} -> {}",
-            self.capacity,
-            new_cap
-        );
-
-        self.capacity = new_cap;
-        self.needs_recreate = true;
-        self.regenerate_buffer_id();
-    }
-
-    /// Assign a new BufferRef id — called on capacity changes so callers
-    /// detect the stale buffer identity.
-    fn regenerate_buffer_id(&mut self) {
-        let new_ref = BufferRef::new(
-            self.capacity * std::mem::size_of::<DynamicModelUniforms>(),
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            Some("GlobalModelBuffer"),
-        );
-        self.buffer_id = new_ref.id;
-        self.gpu_handle = None; // Force re-lookup in ResourceManager
-    }
-
-    pub fn need_recreate_buffer(&self) -> bool {
-        self.needs_recreate
-    }
-
-    /// Build a [`BufferRef`] snapshot for `write_buffer_internal` compatibility.
-    pub fn buffer_handle(&self) -> BufferRef {
-        BufferRef::with_fixed_id(
-            self.buffer_id,
-            self.capacity * std::mem::size_of::<DynamicModelUniforms>(),
-            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-            0,
-            Some("GlobalModelBuffer"),
-        )
-    }
-
-    /// CPU-side buffer id used as the key in the buffer index.
-    pub fn buffer_id(&self) -> u64 {
-        self.buffer_id
-    }
-
-    /// Cached [`GpuBufferHandle`] in the SlotMap arena.
-    pub fn gpu_handle(&self) -> Option<GpuBufferHandle> {
-        self.gpu_handle
-    }
-
-    /// Store the handle after the first GPU allocation.
-    pub fn set_gpu_handle(&mut self, handle: GpuBufferHandle) {
-        self.gpu_handle = Some(handle);
-    }
-
-    /// Raw host data bytes for the used portion of this frame.
-    pub fn host_bytes(&self) -> &[u8] {
-        let stride = std::mem::size_of::<DynamicModelUniforms>();
-        let used_bytes = self.cursor * stride;
-        &bytemuck::cast_slice::<DynamicModelUniforms, u8>(&self.host_data)[..used_bytes]
-    }
-
-    /// Number of slots written this frame.
-    pub fn len(&self) -> usize {
-        self.cursor
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.cursor == 0
-    }
-
-    /// Byte size of a single dynamic model uniform.
     pub fn uniform_stride() -> NonZero<u64> {
         std::mem::size_of::<DynamicModelUniforms>()
             .try_into()
@@ -178,6 +92,125 @@ impl ModelBufferAllocator {
             .and_then(NonZero::new)
             .expect("DynamicModelUniforms size should be non-zero")
     }
+
+    /// Allocate a model uniform slot, returning the byte offset.
+    pub fn allocate(&mut self, data: DynamicModelUniforms) -> u32 {
+        // let index = self.cursor;
+        // self.cursor += 1;
+
+        // if self.cursor > self.capacity {
+        //     self.expand_capacity();
+        // }
+
+        // self.host_data.push(data);
+
+        // (index * std::mem::size_of::<DynamicModelUniforms>()) as u32
+
+        let index = self.host_data.len();
+        
+        if index >= self.capacity {
+            self.expand_capacity();
+        }
+
+        self.host_data.push(data);
+        (index * std::mem::size_of::<DynamicModelUniforms>()) as u32
+    }
+
+
+    pub fn flush_to_buffer(
+        &self, 
+        device: &wgpu::Device,
+        queue: &wgpu::Queue,
+        gpu_buffers: &mut slotmap::SlotMap<GpuBufferHandle, GpuBuffer>,
+        buffer_index: &mut rustc_hash::FxHashMap<u64, GpuBufferHandle>,
+        frame_index: u64,
+    ) {
+        // 目标物理大小由 Capacity 决定，而不是当前帧的元素个数！
+        let target_size = (self.capacity * std::mem::size_of::<DynamicModelUniforms>()) as u64;
+        let active_data = bytemuck::cast_slice(&self.host_data); // 仅有用的数据
+
+        let handle_bits = self.cached_gpu_handle.load(Ordering::Acquire);
+        
+        let handle = if handle_bits == 0 {
+            // 第一次：按 capacity 分配物理缓冲
+            let mut gpu_buf = GpuBuffer::with_capacity(
+                &device,
+                target_size,
+                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                Some("GlobalModelBuffer"),
+            );
+            
+            // 如果第一帧就有数据，执行上传
+            if !active_data.is_empty() {
+                queue.write_buffer(&gpu_buf.buffer, 0, active_data);
+            }
+            
+            gpu_buf.last_used_frame = frame_index;
+            let h = gpu_buffers.insert(gpu_buf);
+            buffer_index.insert(self.logical_ref.id(), h);
+            self.cached_gpu_handle.store(h.to_bits(), Ordering::Release);
+            h
+        } else {
+            GpuBufferHandle::from_bits(handle_bits).unwrap()
+        };
+
+        // 如果资源已经存在，检查是否需要 Resize，然后只上传有用的 active_data
+        if handle_bits != 0 {
+            if let Some(gpu_buf) = gpu_buffers.get_mut(handle) {
+                // 如果容量扩张了，重建底层的 wgpu::Buffer
+                if gpu_buf.size < target_size {
+                    gpu_buf.resize(device, target_size);
+                }
+                
+                // 极致性能点：只通过 PCIe 发送实际 push 的那部分字节
+                if !active_data.is_empty() {
+                    queue.write_buffer(&gpu_buf.buffer, 0, active_data);
+                }
+                gpu_buf.last_used_frame = frame_index;
+            }
+        }
+    }
+
+    pub fn host_data(&self) -> &[DynamicModelUniforms] {
+        &self.host_data
+    }
+
+    /// Pre-ensure capacity for `required_count` items.
+    // pub fn ensure_capacity(&mut self, required_count: usize) {
+    //     if required_count > self.capacity {
+    //         let mut new_cap = self.capacity;
+    //         while new_cap < required_count {
+    //             new_cap *= 2;
+    //         }
+    //         new_cap = new_cap.max(128);
+
+    //         log::info!(
+    //             "Model Buffer resizing to fit {} items: {} -> {}",
+    //             required_count,
+    //             self.capacity,
+    //             new_cap
+    //         );
+
+    //         self.capacity = new_cap;
+    //         self.needs_recreate = true;
+    //         self.regenerate_buffer_id();
+    //     }
+    // }
+
+    fn expand_capacity(&mut self) {
+        let new_cap = (self.capacity * 2).max(128);
+        log::info!("Model Buffer expanding capacity: {} -> {}", self.capacity, new_cap);
+        self.capacity = new_cap;
+    }
+
+    pub fn len(&self) -> usize {
+        self.host_data.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.host_data.is_empty()
+    }
+
 }
 
 impl Default for ModelBufferAllocator {
