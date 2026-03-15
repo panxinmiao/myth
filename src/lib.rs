@@ -177,7 +177,7 @@ pub mod prelude {
 
     // Renderer (limited exposure)
     pub use crate::renderer::graph::FrameComposer;
-    pub use crate::renderer::settings::{RenderPath, RendererSettings};
+    pub use crate::renderer::settings::{AntiAliasingMode, RenderPath, RendererSettings};
 
     // Backward compatibility
     #[doc(hidden)]

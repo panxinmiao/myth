@@ -115,7 +115,7 @@ fn main() -> myth::Result<()> {
     App::new()
         .with_settings(RendererSettings {
             path: RenderPath::BasicForward,
-            msaa_samples: 1,
+            aa_mode: AntiAliasingMode::None,
             vsync: false,
             ..Default::default()
         })

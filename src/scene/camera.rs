@@ -1,19 +1,48 @@
-use glam::{Affine3A, Mat4, Vec3, Vec3A, Vec4};
+use glam::{Affine3A, Mat4, Vec2, Vec3, Vec3A, Vec4};
 use std::borrow::Cow;
 use uuid::Uuid;
 
 use crate::resources::BoundingBox;
 
-/// [New] Pure stack-based render camera object (POD)
-/// TODO: Consider directly satisfying std140 alignment requirements?
+/// Generates a value from the Halton low-discrepancy sequence.
+///
+/// Used to produce sub-pixel jitter offsets for TAA.  The sequence
+/// distributes samples more evenly than simple random noise, reducing
+/// visible patterns across frames.
+#[inline]
+pub fn halton(index: u32, base: u32) -> f32 {
+    let mut f = 1.0_f32;
+    let mut r = 0.0_f32;
+    let mut current = index;
+    while current > 0 {
+        f /= base as f32;
+        r += f * (current % base) as f32;
+        current /= base;
+    }
+    r
+}
+
+/// Pure stack-based render camera snapshot (POD).
+///
+/// Extracted from [`Camera`] once per frame and consumed by the renderer.
+/// Contains both the (potentially jittered) matrices for rasterization and
+/// the unjittered projection needed for UI / raycasting.
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 pub struct RenderCamera {
     pub view_matrix: Mat4,
+    /// Projection matrix — may contain TAA sub-pixel jitter.
     pub projection_matrix: Mat4,
+    /// View-projection matrix — may contain TAA sub-pixel jitter.
     pub view_projection_matrix: Mat4,
-    pub position: Vec3A,  // World position, needed for lighting
-    pub frustum: Frustum, // Needed for culling
+    /// Clean projection without jitter.  Use for UI overlay, picking, etc.
+    pub unjittered_projection: Mat4,
+    /// World-space camera position (for lighting calculations).
+    pub position: Vec3A,
+    /// Frustum planes (for culling).
+    pub frustum: Frustum,
+    /// Current-frame TAA jitter in NDC space.
+    pub jitter: Vec2,
     pub near: f32,
     pub far: f32,
 }
@@ -23,7 +52,7 @@ pub struct Camera {
     uuid: Uuid,
     pub name: Cow<'static, str>,
 
-    // === Projection Properties (Projection Only) ===
+    // === Projection Properties ===
     projection_type: ProjectionType,
     fov: f32,
     aspect: f32,
@@ -31,12 +60,20 @@ pub struct Camera {
     far: f32,
     ortho_size: f32,
 
+    // === TAA temporal state ===
+    taa_enabled: bool,
+    frame_index: u32,
+    viewport_size: Vec2,
+
     // Cached matrices (read-only for renderer)
     pub(crate) world_matrix: Affine3A,
     pub(crate) view_matrix: Mat4,
+    pub(crate) unjittered_projection: Mat4,
+    /// Final projection matrix fed to the pipeline (may include TAA jitter).
     pub(crate) projection_matrix: Mat4,
     pub(crate) view_projection_matrix: Mat4,
     pub(crate) frustum: Frustum,
+    pub(crate) jitter: Vec2,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -157,31 +194,102 @@ impl Camera {
             far: f32::INFINITY,
             ortho_size: 10.0,
 
+            taa_enabled: false,
+            frame_index: 0,
+            viewport_size: Vec2::new(1.0, 1.0),
+
             world_matrix: Affine3A::IDENTITY,
+            unjittered_projection: Mat4::IDENTITY,
             projection_matrix: Mat4::IDENTITY,
             view_matrix: Mat4::IDENTITY,
             view_projection_matrix: Mat4::IDENTITY,
             frustum: Frustum::default(),
+            jitter: Vec2::ZERO,
         };
 
         cam.update_projection_matrix();
         cam
     }
 
+    // ========================================================================
+    // TAA control
+    // ========================================================================
+
+    /// Sets the viewport dimensions.  TAA needs the true pixel resolution to
+    /// convert Halton offsets into precise NDC-space sub-pixel jitter.
+    pub fn set_viewport_size(&mut self, width: f32, height: f32) {
+        self.viewport_size = Vec2::new(width.max(1.0), height.max(1.0));
+        self.set_aspect(width / height.max(1.0));
+    }
+
+    /// Enables or disables temporal anti-aliasing.
+    ///
+    /// When disabled the jitter is cleared and the projection matrix reverts
+    /// to the clean (unjittered) version.
+    pub fn set_taa_enabled(&mut self, enabled: bool) {
+        if self.taa_enabled != enabled {
+            self.taa_enabled = enabled;
+            if !enabled {
+                self.frame_index = 0;
+            }
+            self.update_projection_matrix();
+        }
+    }
+
+    /// Advances the TAA frame counter.  **Must** be called once per frame
+    /// before rendering so the Halton jitter sequence progresses.
+    pub fn step_frame(&mut self) {
+        if self.taa_enabled {
+            self.frame_index = (self.frame_index + 1) % 16;
+            self.update_projection_matrix();
+        }
+    }
+
+    // ========================================================================
+    // Matrix update core
+    // ========================================================================
+
     pub fn update_projection_matrix(&mut self) {
-        self.projection_matrix = match self.projection_type {
+        // 1. Compute the clean (unjittered) projection.
+        self.unjittered_projection = match self.projection_type {
             ProjectionType::Perspective => {
-                // glam's perspective_rh is designed for WGPU/Vulkan (0 to 1) by default
                 Mat4::perspective_infinite_reverse_rh(self.fov, self.aspect, self.near)
             }
             ProjectionType::Orthographic => {
                 let w = self.ortho_size * self.aspect;
                 let h = self.ortho_size;
-                // Reverse Z, swap near and far
                 Mat4::orthographic_rh(-w, w, -h, h, self.far, self.near)
             }
         };
 
+        // 2. Apply sub-pixel jitter when TAA is active.
+        if self.taa_enabled {
+            let jitter_x = halton(self.frame_index + 1, 2) - 0.5;
+            let jitter_y = halton(self.frame_index + 1, 3) - 0.5;
+
+            self.jitter = Vec2::new(
+                jitter_x * 2.0 / self.viewport_size.x,
+                jitter_y * 2.0 / self.viewport_size.y,
+            );
+
+            let mut jittered = self.unjittered_projection;
+            match self.projection_type {
+                ProjectionType::Perspective => {
+                    jittered.z_axis.x += self.jitter.x;
+                    jittered.z_axis.y += self.jitter.y;
+                }
+                ProjectionType::Orthographic => {
+                    jittered.w_axis.x += self.jitter.x;
+                    jittered.w_axis.y += self.jitter.y;
+                }
+            }
+            self.projection_matrix = jittered;
+        } else {
+            self.jitter = Vec2::ZERO;
+            self.projection_matrix = self.unjittered_projection;
+        }
+
+        // 3. Recompute VP and frustum.
         self.view_projection_matrix = self.projection_matrix * self.view_matrix;
         self.frustum = Frustum::from_matrix(self.view_projection_matrix);
     }
@@ -205,9 +313,10 @@ impl Camera {
             view_matrix: self.view_matrix,
             projection_matrix: self.projection_matrix,
             view_projection_matrix: self.view_projection_matrix,
-            // Extract position from world matrix (Translation)
+            unjittered_projection: self.unjittered_projection,
             position: self.world_matrix.translation,
-            frustum: self.frustum, // Frustum is also Copy
+            frustum: self.frustum,
+            jitter: self.jitter,
             near: self.near,
             far: self.far,
         }

@@ -411,10 +411,8 @@ define_gpu_data_struct!(
         pub world_matrix: Mat4,         //64
         pub world_matrix_inverse: Mat4, //64
         pub normal_matrix: Mat3Uniform, //48
-
-        // reserved fields for future expansion (must be at the end to maintain backward compatibility)
-        pub(crate) __previous_model_matrix: Mat4, //64 (for motion blur - optional, can be zero if not used)
-        pub(crate) __instance_tint: Vec4, //16 (instance-specific data, e.g. for GPU instancing - optional, can be zero if not used)
+        pub previous_world_matrix: Mat4,  //64
+        pub(crate) __instance_tint: Vec4, //16
     }
 );
 
@@ -434,8 +432,13 @@ define_gpu_data_struct!(
         pub projection_inverse: Mat4 = Mat4::IDENTITY,
 
         pub view_matrix: Mat4 = Mat4::IDENTITY,
+
+        pub prev_view_projection: Mat4 = Mat4::IDENTITY,
+
         pub camera_position: Vec3 = Vec3::ZERO,
         pub time: f32 = 0.0,
+        pub jitter: Vec2 = Vec2::ZERO,
+        pub prev_jitter: Vec2 = Vec2::ZERO,
     }
 );
 

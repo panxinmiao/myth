@@ -136,6 +136,7 @@ fn prepare_main_camera_commands(
     let render_state_id = render_state.id;
     let scene_id = extracted_scene.scene_id;
     let pipeline_settings_version = wgpu_ctx.pipeline_settings_version;
+    let taa_enabled = wgpu_ctx.taa_enabled;
     let camera_frustum = camera.frustum;
     let camera_pos = camera.position;
 
@@ -294,6 +295,7 @@ fn prepare_main_camera_commands(
                         wgpu::FrontFace::Ccw
                     },
                     is_specular_split,
+                    is_velocity_output: taa_enabled && is_opaque_item,
                 };
 
                 let id = pipeline_cache.get_or_create_graphics(

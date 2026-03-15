@@ -7,7 +7,7 @@
 //! - Texel alignment for shimmer prevention
 //! - Spot light VP matrix construction
 
-use glam::{Mat4, Vec3, Vec3A};
+use glam::{Mat4, Vec2, Vec3, Vec3A};
 
 use myth::renderer::graph::shadow_utils::*;
 use myth::scene::camera::{Frustum, RenderCamera};
@@ -133,6 +133,8 @@ fn make_render_camera(
         frustum: Frustum::from_matrix(proj * view),
         near,
         far: f32::INFINITY,
+        unjittered_projection: proj,
+        jitter: Vec2::ZERO,
     }
 }
 

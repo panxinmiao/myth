@@ -152,7 +152,7 @@ impl Engine {
         self.input.inject_resize(width, height);
 
         if width > 0 && height > 0 {
-            self.update_camera_aspect(width as f32 / height as f32);
+            self.update_camera_viewport(width as f32, height as f32);
         }
     }
 
@@ -187,7 +187,7 @@ impl Engine {
         self.renderer.maybe_prune();
     }
 
-    fn update_camera_aspect(&mut self, aspect: f32) {
+    fn update_camera_viewport(&mut self, width: f32, height: f32) {
         let Some(scene) = self.scene_manager.active_scene_mut() else {
             return;
         };
@@ -195,7 +195,23 @@ impl Engine {
             return;
         };
         if let Some(cam) = scene.cameras.get_mut(cam_handle) {
-            cam.set_aspect(aspect);
+            cam.set_viewport_size(width, height);
+        }
+    }
+
+    /// Syncs the active camera’s TAA state with the renderer settings and
+    /// advances the temporal jitter sequence.
+    fn step_camera_frame(&mut self) {
+        let taa = self.renderer.settings().is_taa_enabled();
+        let Some(scene) = self.scene_manager.active_scene_mut() else {
+            return;
+        };
+        let Some(cam_handle) = scene.active_camera else {
+            return;
+        };
+        if let Some(cam) = scene.cameras.get_mut(cam_handle) {
+            cam.set_taa_enabled(taa);
+            cam.step_frame();
         }
     }
 
@@ -208,6 +224,9 @@ impl Engine {
     /// Returns `true` if a frame was successfully rendered, `false` if rendering
     /// was skipped (no active scene, no active camera, etc.).
     pub fn render_active_scene(&mut self) -> bool {
+        // Advance TAA jitter before extracting the camera snapshot.
+        self.step_camera_frame();
+
         let Some(scene_handle) = self.scene_manager.active_handle() else {
             return false;
         };
