@@ -9,7 +9,6 @@ use crate::renderer::graph::core::types::TextureDesc;
 use super::builder::PassBuilder;
 use super::node::{NodeSlot, PassNode, PassRecord};
 use super::types::{ResourceRecord, TextureNodeId};
-use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 use wgpu::Device;
 
@@ -110,8 +109,8 @@ pub struct GraphStorage {
     /// Compiled execution queue (topologically sorted pass indices).
     pub execution_queue: Vec<usize>,
 
-    /// Name-based resource registry for self-wiring passes.
-    resource_registry: FxHashMap<&'static str, TextureNodeId>,
+    // /// Name-based resource registry for self-wiring passes.
+    // resource_registry: FxHashMap<&'static str, TextureNodeId>,
 
     // --- Compile-time scratch buffers (zero-alloc across frames) ---
     compile_stack: Vec<usize>,
@@ -140,7 +139,7 @@ impl GraphStorage {
             passes: Vec::new(),
             resources: Vec::new(),
             execution_queue: Vec::new(),
-            resource_registry: FxHashMap::default(),
+            // resource_registry: FxHashMap::default(),
             compile_stack: Vec::new(),
             compile_in_degrees: Vec::new(),
             compile_ready_heap: BinaryHeap::new(),
@@ -157,7 +156,7 @@ impl GraphStorage {
         self.passes.clear();
         self.resources.clear();
         self.execution_queue.clear();
-        self.resource_registry.clear();
+        // self.resource_registry.clear();
         #[cfg(feature = "rdg_inspector")]
         self.current_group_stack.clear();
     }
@@ -424,7 +423,7 @@ impl<'a> RenderGraph<'a> {
             external_view_ptr: None,
             alias_of: None,
         });
-        self.storage.resource_registry.insert(name, id);
+        // self.storage.resource_registry.insert(name, id);
         id
     }
 
@@ -441,11 +440,11 @@ impl<'a> RenderGraph<'a> {
     }
 
     /// Looks up a resource by name.
-    #[inline]
-    #[must_use]
-    pub fn find_resource(&self, name: &str) -> Option<TextureNodeId> {
-        self.storage.resource_registry.get(name).copied()
-    }
+    // #[inline]
+    // #[must_use]
+    // pub fn find_resource(&self, name: &str) -> Option<TextureNodeId> {
+    //     self.storage.resource_registry.get(name).copied()
+    // }
 
     /// Creates a versioned alias of `input_id` that shares the same physical
     /// GPU memory.
@@ -1084,10 +1083,6 @@ mod tests {
             (MockExec, out)
         });
 
-        let found = graph
-            .find_resource("Color_Mutated")
-            .expect("mutate_and_export should register the new resource");
-        assert_eq!(found, mutated_id);
         assert!(
             graph.storage.resources[mutated_id.0 as usize]
                 .alias_of

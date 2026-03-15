@@ -14,6 +14,7 @@ pub mod taa;
 pub mod tone_mapping;
 pub mod transmission_copy;
 pub mod transparent;
+pub mod utils;
 
 pub use bloom::BloomFeature;
 pub use compute::{BrdfLutFeature, IblComputeFeature};

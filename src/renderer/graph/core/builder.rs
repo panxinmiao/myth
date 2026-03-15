@@ -28,22 +28,33 @@ impl PassBuilder<'_, '_> {
     }
 
 
-    pub fn import_external_texture(
+    pub fn read_external_texture(
         &mut self,
         name: &'static str,
         desc: TextureDesc,
         view: &Tracked<wgpu::TextureView>,
     ) -> TextureNodeId {
         let id = self.graph.import_external_resource(name, desc, view);
-        // self.write_texture(id) 
-        id
+        self.read_texture(id)
     }
 
-    pub fn read_texture(&mut self, id: TextureNodeId) {
+    pub fn write_external_texture(
+        &mut self,
+        name: &'static str,
+        desc: TextureDesc,
+        view: &Tracked<wgpu::TextureView>,
+    ) -> TextureNodeId {
+        let id = self.graph.import_external_resource(name, desc, view);
+        self.write_texture(id)
+    }
+
+
+    pub fn read_texture(&mut self, id: TextureNodeId) -> TextureNodeId {
         self.graph.storage.passes[self.pass_index].reads.push(id);
         self.graph.storage.resources[id.0 as usize]
             .consumers
             .push(self.pass_index);
+        id
     }
 
     pub fn write_texture(&mut self, id: TextureNodeId) -> TextureNodeId {

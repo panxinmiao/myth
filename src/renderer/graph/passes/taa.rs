@@ -34,6 +34,7 @@ use crate::renderer::graph::core::{
     ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc,
     TextureNodeId,
 };
+use crate::renderer::graph::passes::utils::CopyTextureNode;
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
@@ -288,41 +289,54 @@ impl TaaFeature {
         // Register the write-side history buffer as an external RDG resource
         // so the graph compiler handles barriers and downstream reads.
         // let fc = ctx.frame_config;
-        let resolved_desc = TextureDesc::new_2d(
+        let desc = TextureDesc::new_2d(
             history_view.texture().width(),
             history_view.texture().height(),
             HDR_TEXTURE_FORMAT,
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
         );
         
-        let resolved_id = ctx.graph.add_pass("TAA_Resolve", |builder| {
-            let history_in  = builder.import_external_texture(
-                "TAA_History", 
-                resolved_desc,
+        let resolved_color = ctx.graph.add_pass("TAA_Resolve", |builder| {
+            builder.read_external_texture(
+                "TAA_History_Read", 
+                desc,
                 history_view
             );
 
-            let _history_out = builder.mutate_and_export(history_in, "TAA_History_Write");
-            // builder.write_texture(history_id);
             builder.read_texture(active_color);
             builder.read_texture(velocity_buffer);
             
-            let resolved_id = builder.create_and_export("TAA_Resolved", resolved_desc);
+            let resolved_color = builder.create_and_export("TAA_Resolved", desc);
 
             let node = TaaPassNode {
                 current_color: active_color,
                 velocity: velocity_buffer,
-                output: resolved_id,
+                output: resolved_color,
                 history_view,
                 pipeline,
                 layout,
                 params_buffer,
                 transient_bg: None,
             };
-            (node, resolved_id)
+            (node, resolved_color)
         });
 
-        resolved_id
+        // data diversion
+        ctx.graph.add_pass("TAA_Save_History", |builder| {
+            builder.read_texture(resolved_color); 
+            let history_out  = builder.write_external_texture(
+                "TAA_History_Write", 
+                desc,
+                history_view
+            );
+            
+            (CopyTextureNode {
+                src: resolved_color,
+                dst: history_out,
+            }, ())
+        });
+
+        resolved_color
     }
 
 
@@ -432,27 +446,27 @@ impl<'a> PassNode<'a> for TaaPassNode<'a> {
             rpass.draw(0..3, 0..1);
         }
 
-        let view = ctx.get_texture_view(self.output);
+        // let view = ctx.get_texture_view(self.output);
 
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: view.texture(),
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: self.history_view.texture(),
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: view.texture().width(),
-                height: view.texture().height(),
-                depth_or_array_layers: 1,
-            },
-        );
+        // encoder.copy_texture_to_texture(
+        //     wgpu::TexelCopyTextureInfo {
+        //         texture: view.texture(),
+        //         mip_level: 0,
+        //         origin: wgpu::Origin3d::ZERO,
+        //         aspect: wgpu::TextureAspect::All,
+        //     },
+        //     wgpu::TexelCopyTextureInfo {
+        //         texture: self.history_view.texture(),
+        //         mip_level: 0,
+        //         origin: wgpu::Origin3d::ZERO,
+        //         aspect: wgpu::TextureAspect::All,
+        //     },
+        //     wgpu::Extent3d {
+        //         width: view.texture().width(),
+        //         height: view.texture().height(),
+        //         depth_or_array_layers: 1,
+        //     },
+        // );
         
     }
 }
