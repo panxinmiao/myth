@@ -404,7 +404,8 @@ impl ToneMappingFeature {
 
         ctx.graph.add_pass("ToneMap_Pass", |builder| {
             builder.read_texture(input_hdr);
-            let output = builder.mutate_and_export(target_ldr, "Surface_ToneMapped");
+
+            let output = builder.write_texture(target_ldr);
 
             let node = ToneMapPassNode {
                 input_tex: input_hdr,

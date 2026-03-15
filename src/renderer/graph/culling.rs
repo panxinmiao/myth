@@ -202,6 +202,7 @@ fn prepare_main_camera_commands(
                 instance_variants: item.item_variant_flags,
                 global_state_id: gpu_world.id,
                 scene_variants: extracted_scene.scene_variants,
+                render_path: wgpu_ctx.render_path,
                 pipeline_settings_version,
             };
 
@@ -235,7 +236,12 @@ fn prepare_main_camera_commands(
                 let is_opaque_item =
                     material.alpha_mode() != AlphaMode::Blend && !material.use_transmission();
 
-                if taa_enabled && is_opaque_item {
+                let is_velocity_output = match wgpu_ctx.render_path {
+                    RenderPath::HighFidelity => taa_enabled && is_opaque_item,
+                    RenderPath::BasicForward => false,
+                };
+
+                if is_velocity_output {
                     options.add_define("HAS_VELOCITY_TARGET", "1");
                 }
 
@@ -299,7 +305,7 @@ fn prepare_main_camera_commands(
                         wgpu::FrontFace::Ccw
                     },
                     is_specular_split,
-                    is_velocity_output: taa_enabled && is_opaque_item,
+                    is_velocity_output,
                 };
 
                 let id = pipeline_cache.get_or_create_graphics(

@@ -1635,6 +1635,39 @@ impl GltfViewer {
                                     });
                             });
 
+                            match self.aa_mode {
+                                AntiAliasingMode::FXAA| AntiAliasingMode::MSAA_FXAA(_) => {
+                                    ui.horizontal(|ui| {
+                                        ui.label("FXAA Quality:");
+                                        let current_quality = scene.fxaa.quality();
+                                        egui::ComboBox::from_id_salt("fxaa_quality")
+                                            .width(100.0)
+                                            .selected_text(current_quality.name())
+                                            .show_ui(ui, |ui| {
+                                                for quality in FxaaQuality::all() {
+                                                    if ui
+                                                        .selectable_label(
+                                                            current_quality == *quality,
+                                                            quality.name(),
+                                                        )
+                                                        .clicked()
+                                                    {
+                                                        scene.fxaa.set_quality(*quality);
+                                                    }
+                                                }
+                                            });
+                                 
+                                    });
+                                }
+                                AntiAliasingMode::TAA => {
+                                    ui.horizontal(|ui| {
+                                        ui.label("Feedback Weight:");
+                                        ui.add(egui::Slider::new(&mut scene.taa.feedback_weight, 0.0..=1.0).step_by(0.01));
+                                    });
+                                }
+                                _ => {}
+                            }
+
                             // if is_hf {
                             //     // ===== FXAA 抗锯齿 =====
                             //     ui.horizontal(|ui| {

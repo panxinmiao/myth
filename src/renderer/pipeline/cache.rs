@@ -27,6 +27,7 @@
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
+use crate::RenderPath;
 use crate::assets::{GeometryHandle, MaterialHandle};
 use crate::renderer::core::BindGroupContext;
 use crate::renderer::core::gpu::{GpuGlobalState, GpuMaterial, Tracked};
@@ -52,6 +53,7 @@ pub struct FastPipelineKey {
     pub instance_variants: u32,
     pub global_state_id: u32,
     pub scene_variants: SceneFeatures,
+    pub render_path: RenderPath,
     pub pipeline_settings_version: u64,
 }
 

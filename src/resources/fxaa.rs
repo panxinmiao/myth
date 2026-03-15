@@ -109,4 +109,9 @@ impl FxaaSettings {
     pub fn quality(&self) -> FxaaQuality {
         self.quality
     }
+
+    #[inline]
+    pub fn set_quality(&mut self, quality: FxaaQuality) {
+        self.quality = quality;
+    }
 }

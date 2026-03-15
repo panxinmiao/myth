@@ -181,7 +181,12 @@ impl GraphStorage {
         .unwrap();
         writeln!(
             &mut out,
-            "    classDef external fill:#5a2b3c,stroke:#9f4a6f,stroke-width:2px,color:#fff;"
+            "    classDef external_out fill:#5a2b3c,stroke:#9f4a6f,stroke-width:2px,color:#fff;"
+        )
+        .unwrap();
+        writeln!(
+            &mut out,
+            "    classDef external_in fill:#3c5a2b,stroke:#6f9f4a,stroke-width:2px,color:#fff;"
         )
         .unwrap();
 
@@ -297,13 +302,48 @@ impl GraphStorage {
         }
 
         writeln!(&mut out, "\n    %% --- Data Flow (Edges) ---").unwrap();
+
+        for (i, res) in self.resources.iter().enumerate() {
+            if res.is_external {
+                if res.producer.is_none() {
+                    writeln!(
+                        &mut out,
+                        "    IN_{i}[\\\"{name}\"\\]:::external_in",
+                        name = res.name
+                    )
+                    .unwrap();
+                }
+                if res.consumers.is_empty() {
+                    writeln!(
+                        &mut out,
+                        "    OUT_{i}[/\"{name}\"/]:::external_out",
+                        name = res.name
+                    )
+                    .unwrap();
+                }
+            }
+        }
+
         for (pass_idx, pass) in self.passes.iter().enumerate() {
+
+            // External resources (read)
+            for &read_id in &pass.reads {
+                let res = &self.resources[read_id.0 as usize];
+                if res.is_external && res.producer.is_none() {
+                    writeln!(
+                        &mut out,
+                        "    IN_{id} -.-> P{pass_idx};",
+                        id = read_id.0,
+                    )
+                    .unwrap();
+                }
+            }
+
             for &write_id in &pass.writes {
                 let res = &self.resources[write_id.0 as usize];
 
                 for &consumer_idx in &res.consumers {
                     let edge_style = if res.alias_of.is_some() { "==>" } else { "-->" };
-
                     writeln!(
                         &mut out,
                         "    P{pass_idx} {edge_style}|\"{}\"| P{consumer_idx};",
@@ -315,15 +355,8 @@ impl GraphStorage {
                 if res.consumers.is_empty() && res.is_external {
                     writeln!(
                         &mut out,
-                        "    OUT_{id}[/\"{name}\"/]:::external",
-                        id = write_id.0,
-                        name = res.name
-                    )
-                    .unwrap();
-                    writeln!(
-                        &mut out,
-                        "    P{pass_idx} -->|\"{}\"| OUT_{};",
-                        res.name, write_id.0
+                        "    P{pass_idx} --> OUT_{};",
+                        write_id.0
                     )
                     .unwrap();
                 }

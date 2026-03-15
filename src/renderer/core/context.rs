@@ -133,7 +133,7 @@ impl WgpuContext {
         };
 
         surface.configure(&device, &config);
-
+        println!("WGPU Context initialized with surface format: {:?}", config.format);
         Ok(Self {
             device,
             queue,
@@ -143,8 +143,8 @@ impl WgpuContext {
             surface_view_format: view_format,
             msaa_samples: settings.msaa_sample_count(),
             render_path: settings.path,
-            taa_enabled: settings.is_taa_enabled(),
-            fxaa_enabled: settings.is_fxaa_enabled(),
+            taa_enabled: settings.is_taa_enabled() && settings.path.supports_post_processing(),
+            fxaa_enabled: settings.is_fxaa_enabled() && settings.path.supports_post_processing(),
             pipeline_settings_version: 0,
         })
     }

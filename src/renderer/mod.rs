@@ -555,7 +555,8 @@ impl Renderer {
             self.settings.aa_mode = mode;
             if let Some(state) = &mut self.context {
                 state.wgpu_ctx.msaa_samples = self.settings.msaa_sample_count();
-                state.wgpu_ctx.taa_enabled = self.settings.is_taa_enabled();
+                state.wgpu_ctx.taa_enabled = self.settings.is_taa_enabled() && state.wgpu_ctx.render_path.supports_post_processing();
+                state.wgpu_ctx.fxaa_enabled = self.settings.is_fxaa_enabled() && state.wgpu_ctx.render_path.supports_post_processing();
                 state.wgpu_ctx.pipeline_settings_version += 1;
             }
         }
