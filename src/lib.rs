@@ -153,8 +153,8 @@ pub mod prelude {
     // Resources
     pub use crate::resources::{
         AlphaMode, BloomSettings, FxaaQuality, FxaaSettings, Geometry, Image, Material,
-        MaterialType, Mesh, PhongMaterial, PhysicalMaterial, Side, SsaoSettings, Texture,
-        TextureSlot, UnlitMaterial,
+        MaterialType, Mesh, PhongMaterial, PhysicalMaterial, Side, SsaoSettings, TaaSettings,
+        Texture, TextureSlot, UnlitMaterial,
     };
 
     // Assets
@@ -332,6 +332,8 @@ pub use resources::{
     // Tone mapping
     ToneMappingMode,
     ToneMappingSettings,
+    // TAA
+    TaaSettings,
     UnlitMaterial,
 };
 

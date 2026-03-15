@@ -441,9 +441,14 @@ impl Renderer {
                 }
 
                 if taa_enabled {
+                    let feedback_weight = self
+                        .settings
+                        .aa_mode
+                        .taa_settings()
+                        .map_or(0.90, |s| s.feedback_weight);
                     state.taa_pass.extract_and_prepare(
                         &mut extract_ctx,
-                        scene.taa.feedback_weight,
+                        feedback_weight,
                         HDR_TEXTURE_FORMAT,
                     );
                 }
@@ -540,26 +545,43 @@ impl Renderer {
         self.settings.msaa_sample_count()
     }
 
-    /// Returns the active [`AntiAliasingMode`].
+    /// Returns a reference to the active [`AntiAliasingMode`].
     #[inline]
-    pub fn aa_mode(&self) -> crate::renderer::settings::AntiAliasingMode {
-        self.settings.aa_mode
+    pub fn aa_mode(&self) -> &crate::renderer::settings::AntiAliasingMode {
+        &self.settings.aa_mode
     }
 
-    /// Sets the anti-aliasing mode at runtime.
+    /// Synchronises the renderer's pipeline state with the given AA mode.
     ///
-    /// Simultaneously updates MSAA sample count, FXAA state, and TAA state.
-    /// The change takes effect on the **next frame**.
-    pub fn set_aa_mode(&mut self, mode: crate::renderer::settings::AntiAliasingMode) {
-        if self.settings.aa_mode != mode {
-            self.settings.aa_mode = mode;
-            if let Some(state) = &mut self.context {
-                state.wgpu_ctx.msaa_samples = self.settings.msaa_sample_count();
-                state.wgpu_ctx.taa_enabled = self.settings.is_taa_enabled() && state.wgpu_ctx.render_path.supports_post_processing();
-                state.wgpu_ctx.fxaa_enabled = self.settings.is_fxaa_enabled() && state.wgpu_ctx.render_path.supports_post_processing();
+    /// Typically called once per frame with the active camera's
+    /// [`AntiAliasingMode`].  Updates MSAA sample count, FXAA / TAA
+    /// enablement flags, and FXAA quality on the GPU context so that
+    /// the correct passes and pipelines are selected.
+    pub fn sync_aa_mode(&mut self, mode: &crate::renderer::settings::AntiAliasingMode) {
+        if let Some(state) = &mut self.context {
+            let new_msaa = mode.msaa_sample_count();
+            let pp = state.wgpu_ctx.render_path.supports_post_processing();
+            let new_taa = mode.is_taa() && pp;
+            let new_fxaa = mode.is_fxaa() && pp;
+
+            let changed = state.wgpu_ctx.msaa_samples != new_msaa
+                || state.wgpu_ctx.taa_enabled != new_taa
+                || state.wgpu_ctx.fxaa_enabled != new_fxaa;
+
+            if changed {
+                state.wgpu_ctx.msaa_samples = new_msaa;
+                state.wgpu_ctx.taa_enabled = new_taa;
+                state.wgpu_ctx.fxaa_enabled = new_fxaa;
                 state.wgpu_ctx.pipeline_settings_version += 1;
             }
+
+            // Sync FXAA quality to the feature pass.
+            if let Some(fxaa) = mode.fxaa_settings() {
+                state.fxaa_pass.target_quality = fxaa.quality();
+            }
         }
+
+        self.settings.aa_mode = mode.clone();
     }
 
     /// Returns a reference to the current renderer settings.

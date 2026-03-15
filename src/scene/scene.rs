@@ -7,13 +7,11 @@ use crate::animation::{AnimationAction, AnimationMixer, AnimationSystem, Binder}
 use crate::assets::prefab::Prefab;
 use crate::resources::bloom::BloomSettings;
 use crate::resources::buffer::CpuBuffer;
-use crate::resources::fxaa::FxaaSettings;
 use crate::resources::geometry::Geometry;
 use crate::resources::mesh::Mesh;
 use crate::resources::screen_space::ScreenSpaceSettings;
 use crate::resources::shader_defines::ShaderDefines;
 use crate::resources::ssao::SsaoSettings;
-use crate::resources::taa::TaaSettings;
 use crate::resources::tone_mapping::ToneMappingSettings;
 use crate::resources::uniforms::{EnvironmentUniforms, GpuLightStorage};
 use crate::resources::{BoundingBox, Input};
@@ -148,12 +146,8 @@ pub struct Scene {
     pub tone_mapping: ToneMappingSettings,
     /// Bloom post-processing settings
     pub bloom: BloomSettings,
-    /// FXAA (Fast Approximate Anti-Aliasing) settings
-    pub fxaa: FxaaSettings,
     /// SSAO (Screen Space Ambient Occlusion) settings
     pub ssao: SsaoSettings,
-    /// TAA (Temporal Anti-Aliasing) settings
-    pub taa: TaaSettings,
     /// Screen space effects settings (SSS, SSR)
     pub screen_space: ScreenSpaceSettings,
     /// Background rendering settings (mode + skybox uniform buffer)
@@ -209,9 +203,7 @@ impl Scene {
             environment: Environment::new(),
             tone_mapping: ToneMappingSettings::default(),
             bloom: BloomSettings::default(),
-            fxaa: FxaaSettings::default(),
             ssao: SsaoSettings::default(),
-            taa: TaaSettings::default(),
             screen_space: ScreenSpaceSettings::default(),
             background: BackgroundSettings::default(),
 

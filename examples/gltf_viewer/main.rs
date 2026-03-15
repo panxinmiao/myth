@@ -167,6 +167,82 @@ struct TextureInfo {
 }
 
 // ============================================================================
+// Anti-Aliasing Inspector Cache
+// ============================================================================
+
+/// Lightweight discriminant for the AA mode combo-box (no payload).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(non_camel_case_types)]
+enum AaModeType {
+    None,
+    FXAA,
+    MSAA,
+    MSAA_FXAA,
+    TAA,
+}
+
+impl AaModeType {
+    const fn label(self) -> &'static str {
+        match self {
+            Self::None => "Off",
+            Self::FXAA => "FXAA",
+            Self::MSAA => "MSAA 4x",
+            Self::MSAA_FXAA => "MSAA+FXAA",
+            Self::TAA => "TAA",
+        }
+    }
+
+    /// All variants, in display order.
+    const ALL: &[Self] = &[
+        Self::None,
+        Self::FXAA,
+        Self::MSAA,
+        Self::MSAA_FXAA,
+        Self::TAA,
+    ];
+
+    /// Post-process variants that require the HighFidelity path.
+    fn requires_post_processing(self) -> bool {
+        matches!(self, Self::FXAA | Self::MSAA_FXAA | Self::TAA)
+    }
+}
+
+/// Caches the per-technique settings so that switching modes in the UI does
+/// not lose the user's tuned parameters.
+struct InspectorAaCache {
+    current: AaModeType,
+    msaa_samples: u32,
+    fxaa: FxaaSettings,
+    taa: TaaSettings,
+}
+
+impl Default for InspectorAaCache {
+    fn default() -> Self {
+        Self {
+            current: AaModeType::TAA,
+            msaa_samples: 4,
+            fxaa: FxaaSettings::default(),
+            taa: TaaSettings::default(),
+        }
+    }
+}
+
+impl InspectorAaCache {
+    /// Assemble the full [`AntiAliasingMode`] from the cached parameters.
+    fn build_mode(&self) -> AntiAliasingMode {
+        match self.current {
+            AaModeType::None => AntiAliasingMode::None,
+            AaModeType::FXAA => AntiAliasingMode::FXAA(self.fxaa.clone()),
+            AaModeType::MSAA => AntiAliasingMode::MSAA(self.msaa_samples),
+            AaModeType::MSAA_FXAA => {
+                AntiAliasingMode::MSAA_FXAA(self.msaa_samples, self.fxaa.clone())
+            }
+            AaModeType::TAA => AntiAliasingMode::TAA(self.taa.clone()),
+        }
+    }
+}
+
+// ============================================================================
 // glTF Viewer Main Structure
 // ============================================================================
 
@@ -244,8 +320,8 @@ struct GltfViewer {
     light_node: NodeHandle,
     /// HDR rendering toggle (cached from renderer)
     render_path: RenderPath,
-    /// Active anti-aliasing mode (cached from renderer)
-    aa_mode: AntiAliasingMode,
+    /// Anti-aliasing inspector cache (preserves per-technique settings)
+    aa_cache: InspectorAaCache,
 
     vignette_breathing: bool,
 
@@ -427,7 +503,7 @@ impl AppHandler for GltfViewer {
             ibl_enabled: true,
             light_node: light_node,
             render_path: RenderPath::default(), // Default: HighFidelity path
-            aa_mode: AntiAliasingMode::default(),   // Default: TAA
+            aa_cache: InspectorAaCache::default(), // Default: TAA
 
             vignette_breathing: false,
 
@@ -1599,107 +1675,106 @@ impl GltfViewer {
 
                             ui.separator();
 
-                            // --- Anti-Aliasing mode selector ---
-                            ui.horizontal(|ui| {
-                                ui.label("AA:");
-                                let aa_label = match self.aa_mode {
-                                    AntiAliasingMode::None => "Off",
-                                    AntiAliasingMode::FXAA => "FXAA",
-                                    AntiAliasingMode::MSAA(_) => "MSAA",
-                                    AntiAliasingMode::MSAA_FXAA(_) => "MSAA+FXAA",
-                                    AntiAliasingMode::TAA => "TAA",
-                                };
-                                egui::ComboBox::from_id_salt("aa_selector")
-                                    .width(90.0)
-                                    .selected_text(aa_label)
-                                    .show_ui(ui, |ui| {
-                                        let modes: &[(AntiAliasingMode, &str)] = &[
-                                            (AntiAliasingMode::None, "Off"),
-                                            (AntiAliasingMode::FXAA, "FXAA"),
-                                            (AntiAliasingMode::MSAA(4), "MSAA 4x"),
-                                            (AntiAliasingMode::MSAA_FXAA(4), "MSAA+FXAA"),
-                                            (AntiAliasingMode::TAA, "TAA"),
-                                        ];
-                                        for &(mode, label) in modes {
+                            // --- Anti-Aliasing mode selector (render-path aware) ---
+                            {
+                                let is_basic_forward = !is_hf;
+
+                                // Safety fallback: if we're on BasicForward but have a
+                                // post-process mode selected, downgrade.
+                                if is_basic_forward
+                                    && self.aa_cache.current.requires_post_processing()
+                                {
+                                    self.aa_cache.current = AaModeType::MSAA;
+                                }
+
+                                let mut changed = false;
+
+                                ui.horizontal(|ui| {
+                                    ui.label("AA:");
+                                    egui::ComboBox::from_id_salt("aa_selector")
+                                        .width(90.0)
+                                        .selected_text(self.aa_cache.current.label())
+                                        .show_ui(ui, |ui| {
+                                            for &mode in AaModeType::ALL {
+                                                if is_basic_forward
+                                                    && mode.requires_post_processing()
+                                                {
+                                                    continue;
+                                                }
+                                                if ui
+                                                    .selectable_value(
+                                                        &mut self.aa_cache.current,
+                                                        mode,
+                                                        mode.label(),
+                                                    )
+                                                    .changed()
+                                                {
+                                                    changed = true;
+                                                }
+                                            }
+                                        });
+                                });
+
+                                // Detail panels for the selected mode.
+                                match self.aa_cache.current {
+                                    AaModeType::FXAA | AaModeType::MSAA_FXAA => {
+                                        ui.horizontal(|ui| {
+                                            ui.label("FXAA Quality:");
+                                            let cur = self.aa_cache.fxaa.quality();
+                                            egui::ComboBox::from_id_salt("fxaa_quality")
+                                                .width(100.0)
+                                                .selected_text(cur.name())
+                                                .show_ui(ui, |ui| {
+                                                    for quality in FxaaQuality::all() {
+                                                        if ui
+                                                            .selectable_label(
+                                                                cur == *quality,
+                                                                quality.name(),
+                                                            )
+                                                            .clicked()
+                                                        {
+                                                            self.aa_cache
+                                                                .fxaa
+                                                                .set_quality(*quality);
+                                                            changed = true;
+                                                        }
+                                                    }
+                                                });
+                                        });
+                                    }
+                                    AaModeType::TAA => {
+                                        ui.horizontal(|ui| {
+                                            ui.label("Feedback Weight:");
                                             if ui
-                                                .selectable_value(
-                                                    &mut self.aa_mode,
-                                                    mode,
-                                                    label,
+                                                .add(
+                                                    egui::Slider::new(
+                                                        &mut self.aa_cache.taa.feedback_weight,
+                                                        0.0..=1.0,
+                                                    )
+                                                    .step_by(0.01),
                                                 )
                                                 .changed()
                                             {
-                                                renderer.set_aa_mode(self.aa_mode);
+                                                changed = true;
                                             }
+                                        });
+                                    }
+                                    _ => {}
+                                }
+
+                                // Synchronise the assembled mode to the active camera.
+                                if changed {
+                                    let mode = self.aa_cache.build_mode();
+                                    if let Some(cam_handle) = scene.active_camera {
+                                        if let Some(cam) =
+                                            scene.cameras.get_mut(cam_handle)
+                                        {
+                                            cam.set_aa_mode(mode.clone());
                                         }
-                                    });
-                            });
-
-                            match self.aa_mode {
-                                AntiAliasingMode::FXAA| AntiAliasingMode::MSAA_FXAA(_) => {
-                                    ui.horizontal(|ui| {
-                                        ui.label("FXAA Quality:");
-                                        let current_quality = scene.fxaa.quality();
-                                        egui::ComboBox::from_id_salt("fxaa_quality")
-                                            .width(100.0)
-                                            .selected_text(current_quality.name())
-                                            .show_ui(ui, |ui| {
-                                                for quality in FxaaQuality::all() {
-                                                    if ui
-                                                        .selectable_label(
-                                                            current_quality == *quality,
-                                                            quality.name(),
-                                                        )
-                                                        .clicked()
-                                                    {
-                                                        scene.fxaa.set_quality(*quality);
-                                                    }
-                                                }
-                                            });
-                                 
-                                    });
+                                    }
+                                    renderer.sync_aa_mode(&mode);
                                 }
-                                AntiAliasingMode::TAA => {
-                                    ui.horizontal(|ui| {
-                                        ui.label("Feedback Weight:");
-                                        ui.add(egui::Slider::new(&mut scene.taa.feedback_weight, 0.0..=1.0).step_by(0.01));
-                                    });
-                                }
-                                _ => {}
                             }
-
-                            // if is_hf {
-                            //     // ===== FXAA 抗锯齿 =====
-                            //     ui.horizontal(|ui| {
-                            //         let mut fxaa_enabled = scene.fxaa.enabled;
-                            //         if ui.checkbox(&mut fxaa_enabled, "FXAA").changed() {
-                            //             scene.fxaa.set_enabled(fxaa_enabled);
-                            //         }
-
-                            //         ui.add_enabled_ui(fxaa_enabled, |ui| {
-                            //             ui.horizontal(|ui| {
-                            //                 ui.label("Quality:");
-                            //                 let current_quality = scene.fxaa.quality();
-                            //                 egui::ComboBox::from_id_salt("fxaa_quality")
-                            //                     .width(100.0)
-                            //                     .selected_text(current_quality.name())
-                            //                     .show_ui(ui, |ui| {
-                            //                         for quality in FxaaQuality::all() {
-                            //                             if ui
-                            //                                 .selectable_label(
-                            //                                     current_quality == *quality,
-                            //                                     quality.name(),
-                            //                                 )
-                            //                                 .clicked()
-                            //                             {
-                            //                                 scene.fxaa.set_quality(*quality);
-                            //                             }
-                            //                         }
-                            //                     });
-                            //             });
-                            //         });
-                            //     });
-                            // }
 
                             ui.separator();
 

@@ -199,10 +199,9 @@ impl Engine {
         }
     }
 
-    /// Syncs the active camera’s TAA state with the renderer settings and
-    /// advances the temporal jitter sequence.
+    /// Syncs the active camera's AA state with the renderer and advances the
+    /// temporal jitter sequence.
     fn step_camera_frame(&mut self) {
-        let taa = self.renderer.settings().is_taa_enabled();
         let Some(scene) = self.scene_manager.active_scene_mut() else {
             return;
         };
@@ -210,8 +209,10 @@ impl Engine {
             return;
         };
         if let Some(cam) = scene.cameras.get_mut(cam_handle) {
-            cam.set_taa_enabled(taa);
-            cam.step_frame();
+            self.renderer.sync_aa_mode(&cam.aa_mode);
+            if self.renderer.render_path().supports_post_processing() {
+                cam.step_frame();
+            }
         }
     }
 

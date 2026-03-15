@@ -2,6 +2,7 @@ use glam::{Affine3A, Mat4, Vec2, Vec3, Vec3A, Vec4};
 use std::borrow::Cow;
 use uuid::Uuid;
 
+use crate::renderer::settings::AntiAliasingMode;
 use crate::resources::BoundingBox;
 
 /// Generates a value from the Halton low-discrepancy sequence.
@@ -60,8 +61,11 @@ pub struct Camera {
     far: f32,
     ortho_size: f32,
 
+    // === Anti-Aliasing ===
+    /// Per-camera anti-aliasing mode carrying its own payload.
+    pub aa_mode: AntiAliasingMode,
+
     // === TAA temporal state ===
-    taa_enabled: bool,
     frame_index: u32,
     viewport_size: Vec2,
 
@@ -194,7 +198,7 @@ impl Camera {
             far: f32::INFINITY,
             ortho_size: 10.0,
 
-            taa_enabled: false,
+            aa_mode: AntiAliasingMode::default(),
             frame_index: 0,
             viewport_size: Vec2::new(1.0, 1.0),
 
@@ -212,7 +216,7 @@ impl Camera {
     }
 
     // ========================================================================
-    // TAA control
+    // Anti-Aliasing helpers
     // ========================================================================
 
     /// Sets the viewport dimensions.  TAA needs the true pixel resolution to
@@ -222,16 +226,33 @@ impl Camera {
         self.set_aspect(width / height.max(1.0));
     }
 
-    /// Enables or disables temporal anti-aliasing.
+    /// Returns `true` when the current AA mode is TAA.
+    #[inline]
+    #[must_use]
+    pub fn is_taa_enabled(&self) -> bool {
+        self.aa_mode.is_taa()
+    }
+
+    /// Returns the MSAA sample count implied by the current AA mode.
+    #[inline]
+    #[must_use]
+    pub fn msaa_samples(&self) -> u32 {
+        self.aa_mode.msaa_sample_count()
+    }
+
+    /// Replaces the current anti-aliasing mode.
     ///
-    /// When disabled the jitter is cleared and the projection matrix reverts
-    /// to the clean (unjittered) version.
-    pub fn set_taa_enabled(&mut self, enabled: bool) {
-        if self.taa_enabled != enabled {
-            self.taa_enabled = enabled;
-            if !enabled {
-                self.frame_index = 0;
-            }
+    /// When switching away from TAA the jitter is cleared and the
+    /// projection matrix reverts to the clean (unjittered) version.
+    pub fn set_aa_mode(&mut self, mode: AntiAliasingMode) {
+        let was_taa = self.aa_mode.is_taa();
+        let is_taa = mode.is_taa();
+        self.aa_mode = mode;
+
+        if was_taa && !is_taa {
+            self.frame_index = 0;
+            self.update_projection_matrix();
+        } else if !was_taa && is_taa {
             self.update_projection_matrix();
         }
     }
@@ -239,7 +260,7 @@ impl Camera {
     /// Advances the TAA frame counter.  **Must** be called once per frame
     /// before rendering so the Halton jitter sequence progresses.
     pub fn step_frame(&mut self) {
-        if self.taa_enabled {
+        if self.aa_mode.is_taa() {
             self.frame_index = (self.frame_index + 1) % 16;
             self.update_projection_matrix();
         }
@@ -263,7 +284,7 @@ impl Camera {
         };
 
         // 2. Apply sub-pixel jitter when TAA is active.
-        if self.taa_enabled {
+        if self.aa_mode.is_taa() {
             let jitter_x = halton(self.frame_index + 1, 2) - 0.5;
             let jitter_y = halton(self.frame_index + 1, 3) - 0.5;
 

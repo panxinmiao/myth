@@ -29,6 +29,9 @@
 //!     .run::<MyApp>()?;
 //! ```
 
+use crate::resources::fxaa::FxaaSettings;
+use crate::resources::taa::TaaSettings;
+
 // ---------------------------------------------------------------------------
 // RenderPath
 // ---------------------------------------------------------------------------
@@ -129,27 +132,84 @@ impl RenderPath {
 
 /// Unified anti-aliasing mode for the rendering pipeline.
 ///
-/// Controls which anti-aliasing technique(s) are active.  The engine
-/// automatically manages MSAA render targets, FXAA post-process passes,
-/// and TAA temporal state based on the selected mode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+/// Each variant carries its own configuration payload, forming an algebraic
+/// data type (ADT) that eliminates "ghost state" — only the settings for
+/// the currently active technique exist in memory.
+///
+/// The engine automatically manages MSAA render targets, FXAA post-process
+/// passes, and TAA temporal state based on the selected mode.
+#[derive(Debug, Clone)]
 #[allow(non_camel_case_types)]
 pub enum AntiAliasingMode {
     /// No anti-aliasing.  Maximum performance.
     None,
     /// FXAA only.  Minimal overhead — smooths high-frequency noise but
     /// produces softer geometric edges.  Good for low-end / Web targets.
-    FXAA,
+    FXAA(FxaaSettings),
     /// Hardware multi-sampling (e.g. 4×).  Crisp geometric edges but may
     /// exhibit PBR specular flickering.  Best for non-PBR / toon styles.
     MSAA(u32),
     /// MSAA + FXAA.  MSAA resolves geometric edges, FXAA removes specular
     /// shimmer.  Best static image quality with zero temporal ghosting.
-    MSAA_FXAA(u32),
+    MSAA_FXAA(u32, FxaaSettings),
     /// Temporal Anti-Aliasing — the **recommended default** for PBR.
     /// Resolves all aliasing categories with slight temporal softening.
-    #[default]
-    TAA,
+    TAA(TaaSettings),
+}
+
+impl Default for AntiAliasingMode {
+    fn default() -> Self {
+        Self::TAA(TaaSettings::default())
+    }
+}
+
+impl AntiAliasingMode {
+    /// Returns the hardware MSAA sample count implied by this AA mode.
+    ///
+    /// Only [`MSAA`](Self::MSAA) and [`MSAA_FXAA`](Self::MSAA_FXAA)
+    /// produce a value greater than 1.  All other modes rasterize at 1×.
+    #[inline]
+    #[must_use]
+    pub fn msaa_sample_count(&self) -> u32 {
+        match self {
+            Self::MSAA(s) | Self::MSAA_FXAA(s, _) => *s,
+            _ => 1,
+        }
+    }
+
+    /// Returns `true` when TAA is the active technique.
+    #[inline]
+    #[must_use]
+    pub fn is_taa(&self) -> bool {
+        matches!(self, Self::TAA(_))
+    }
+
+    /// Returns `true` when FXAA is active (standalone or combined with MSAA).
+    #[inline]
+    #[must_use]
+    pub fn is_fxaa(&self) -> bool {
+        matches!(self, Self::FXAA(_) | Self::MSAA_FXAA(..)) 
+    }
+
+    /// Returns the [`FxaaSettings`] if the current mode uses FXAA.
+    #[inline]
+    #[must_use]
+    pub fn fxaa_settings(&self) -> Option<&FxaaSettings> {
+        match self {
+            Self::FXAA(s) | Self::MSAA_FXAA(_, s) => Some(s),
+            _ => Option::None,
+        }
+    }
+
+    /// Returns the [`TaaSettings`] if the current mode is TAA.
+    #[inline]
+    #[must_use]
+    pub fn taa_settings(&self) -> Option<&TaaSettings> {
+        match self {
+            Self::TAA(s) => Some(s),
+            _ => Option::None,
+        }
+    }
 }
 
 
@@ -267,33 +327,24 @@ impl Default for RendererSettings {
 
 impl RendererSettings {
     /// Returns the hardware MSAA sample count implied by the current AA mode.
-    ///
-    /// Only [`AntiAliasingMode::MSAA`] and [`AntiAliasingMode::MSAA_FXAA`]
-    /// produce a value greater than 1.  All other modes rasterize at 1×.
     #[inline]
     #[must_use]
     pub fn msaa_sample_count(&self) -> u32 {
-        match self.aa_mode {
-            AntiAliasingMode::MSAA(samples) | AntiAliasingMode::MSAA_FXAA(samples) => samples,
-            _ => 1,
-        }
+        self.aa_mode.msaa_sample_count()
     }
 
     /// Returns `true` when TAA is the active anti-aliasing mode.
     #[inline]
     #[must_use]
     pub fn is_taa_enabled(&self) -> bool {
-        matches!(self.aa_mode, AntiAliasingMode::TAA)
+        self.aa_mode.is_taa()
     }
 
     /// Returns `true` when FXAA is active (either standalone or combined with MSAA).
     #[inline]
     #[must_use]
     pub fn is_fxaa_enabled(&self) -> bool {
-        matches!(
-            self.aa_mode,
-            AntiAliasingMode::FXAA | AntiAliasingMode::MSAA_FXAA(_)
-        )
+        self.aa_mode.is_fxaa()
     }
 }
 
