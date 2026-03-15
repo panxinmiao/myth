@@ -27,8 +27,6 @@
 //! | 4       | sampler           | Nearest clamp sampler      |
 //! | 5       | uniform           | TaaParams (feedback_weight)|
 
-use std::cell::Cell;
-
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::composer::GraphBuilderContext;
@@ -49,10 +47,9 @@ use crate::renderer::HDR_TEXTURE_FORMAT;
 /// pipeline, bind-group layout, and a small uniform buffer.
 pub struct TaaFeature {
     // ─── History Ping-Pong ─────────────────────────────────────────
-    history_textures: Option<[wgpu::Texture; 2]>,
-    history_views: Option<[Tracked<wgpu::TextureView>; 2]>,
-    /// Tracks which buffer is the *write* target this frame (0 or 1).
-    frame_parity: Cell<usize>,
+    // history_textures: Option<[wgpu::Texture; 2]>,
+    history_view: Option<Tracked<wgpu::TextureView>>,
+
     /// Cached dimensions for resize detection.
     history_size: (u32, u32),
 
@@ -75,9 +72,7 @@ impl TaaFeature {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            history_textures: None,
-            history_views: None,
-            frame_parity: Cell::new(0),
+            history_view: None,
             history_size: (0, 0),
             pipeline_id: None,
             bind_group_layout: None,
@@ -91,7 +86,7 @@ impl TaaFeature {
     /// Ensures history buffers exist and match the given dimensions.
     /// Must be called before `add_to_graph` each frame.
     pub fn ensure_history_buffers(&mut self, device: &wgpu::Device, width: u32, height: u32) {
-        if self.history_size == (width, height) && self.history_textures.is_some() {
+        if self.history_size == (width, height) && self.history_view.is_some() {
             return;
         }
 
@@ -106,19 +101,15 @@ impl TaaFeature {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HDR_TEXTURE_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         };
 
-        let tex_a = device.create_texture(&desc);
-        let tex_b = device.create_texture(&desc);
-        let view_a = Tracked::new(tex_a.create_view(&wgpu::TextureViewDescriptor::default()));
-        let view_b = Tracked::new(tex_b.create_view(&wgpu::TextureViewDescriptor::default()));
+        let tex = device.create_texture(&desc);
+        let view = Tracked::new(tex.create_view(&wgpu::TextureViewDescriptor::default()));
 
-        self.history_textures = Some([tex_a, tex_b]);
-        self.history_views = Some([view_a, view_b]);
+        self.history_view = Some(view);
         self.history_size = (width, height);
-        self.frame_parity.set(0);
     }
 
     // ─── Extract & Prepare (pre-RDG) ───────────────────────────────────
@@ -292,31 +283,37 @@ impl TaaFeature {
         let layout = self.bind_group_layout.as_ref().unwrap();
         let params_buffer = self.params_buffer.as_ref().unwrap();
 
-        let _write_idx = self.frame_parity.get();
-        let read_idx = 1 - self.frame_parity.get();
-        let history_read_view = &self.history_views.as_ref().unwrap()[read_idx];
+        let history_view = self.history_view.as_ref().expect("TAA history view not initialized");
 
         // Register the write-side history buffer as an external RDG resource
         // so the graph compiler handles barriers and downstream reads.
-        let fc = ctx.frame_config;
+        // let fc = ctx.frame_config;
         let resolved_desc = TextureDesc::new_2d(
-            fc.width,
-            fc.height,
+            history_view.texture().width(),
+            history_view.texture().height(),
             HDR_TEXTURE_FORMAT,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
         );
-        let resolved_id = ctx.graph.register_resource("TAA_Resolved", resolved_desc, true);
+        
+        let resolved_id = ctx.graph.add_pass("TAA_Resolve", |builder| {
+            let history_id  = builder.import_external_texture(
+                "TAA_History", 
+                resolved_desc,
+                history_view
+            );
 
-        ctx.graph.add_pass("TAA_Resolve", |builder| {
+            builder.read_texture(history_id);
+            builder.write_texture(history_id);
             builder.read_texture(active_color);
             builder.read_texture(velocity_buffer);
-            builder.write_texture(resolved_id);
+            
+            let resolved_id = builder.create_and_export("TAA_Resolved", resolved_desc);
 
             let node = TaaPassNode {
                 current_color: active_color,
                 velocity: velocity_buffer,
                 output: resolved_id,
-                history_read: history_read_view,
+                history_view,
                 pipeline,
                 layout,
                 params_buffer,
@@ -325,28 +322,14 @@ impl TaaFeature {
             (node, resolved_id)
         });
 
-        // Step parity for next frame
-        self.frame_parity.set(1 - self.frame_parity.get());
-
         resolved_id
     }
 
-    /// Returns the [`Tracked<TextureView>`] of the current write-side history
-    /// buffer.  The Composer must inject this into `external_resources` /
-    /// `external_views` so the RDG can resolve the "TAA_Resolved" node.
-    ///
-    /// Call **after** `add_to_graph` (parity has already been stepped, so the
-    /// *previous* write index is `1 - frame_parity`).
-    #[must_use]
-    pub fn current_write_view(&self) -> &Tracked<wgpu::TextureView> {
-        let write_idx = 1 - self.frame_parity.get(); // parity was already flipped
-        &self.history_views.as_ref().unwrap()[write_idx]
-    }
 
     /// Returns `true` if the TAA history buffers have been allocated.
     #[must_use]
     pub fn has_history(&self) -> bool {
-        self.history_views.is_some()
+        self.history_view.is_some()
     }
 }
 
@@ -359,7 +342,7 @@ struct TaaPassNode<'a> {
     velocity: TextureNodeId,
     output: TextureNodeId,
     /// Direct reference to the history read view (not in the RDG pool).
-    history_read: &'a Tracked<wgpu::TextureView>,
+    history_view: &'a Tracked<wgpu::TextureView>,
     pipeline: &'a wgpu::RenderPipeline,
     layout: &'a Tracked<wgpu::BindGroupLayout>,
     params_buffer: &'a Tracked<wgpu::Buffer>,
@@ -384,14 +367,14 @@ impl<'a> PassNode<'a> for TaaPassNode<'a> {
 
         let key = BindGroupKey::new(self.layout.id())
             .with_resource(current_view.id())
-            .with_resource(self.history_read.id())
+            .with_resource(self.history_view.id())
             .with_resource(velocity_view.id())
             .with_resource(linear_sampler.id())
             .with_resource(nearest_sampler.id())
             .with_resource(self.params_buffer.id());
 
         let layout = self.layout;
-        let history_view = self.history_read;
+        let history_view = self.history_view;
         let params_buf = self.params_buffer;
 
         let bg = cache.get_or_create_bg(key, || {
@@ -434,17 +417,42 @@ impl<'a> PassNode<'a> for TaaPassNode<'a> {
 
         let rtt = ctx.get_color_attachment(self.output, RenderTargetOps::DontCare, None);
 
-        let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("TAA Resolve Pass"),
-            color_attachments: &[rtt],
-            depth_stencil_attachment: None,
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
+        {
+            let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("TAA Resolve Pass"),
+                color_attachments: &[rtt],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
 
-        rpass.set_pipeline(self.pipeline);
-        rpass.set_bind_group(0, bind_group, &[]);
-        rpass.draw(0..3, 0..1);
+            rpass.set_pipeline(self.pipeline);
+            rpass.set_bind_group(0, bind_group, &[]);
+            rpass.draw(0..3, 0..1);
+        }
+
+        let view = ctx.get_texture_view(self.output);
+
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: view.texture(),
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyTextureInfo {
+                texture: self.history_view.texture(),
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::Extent3d {
+                width: view.texture().width(),
+                height: view.texture().height(),
+                depth_or_array_layers: 1,
+            },
+        );
+        
     }
 }

@@ -1,3 +1,5 @@
+use crate::renderer::core::gpu::Tracked;
+
 use super::graph::RenderGraph;
 use super::types::{TextureDesc, TextureNodeId};
 
@@ -23,6 +25,18 @@ impl PassBuilder<'_, '_> {
     #[inline]
     pub fn create_and_export(&mut self, name: &'static str, desc: TextureDesc) -> TextureNodeId {
         self.create_texture(name, desc)
+    }
+
+
+    pub fn import_external_texture(
+        &mut self,
+        name: &'static str,
+        desc: TextureDesc,
+        view: &Tracked<wgpu::TextureView>,
+    ) -> TextureNodeId {
+        let id = self.graph.import_external_resource(name, desc, view);
+        // self.write_texture(id) 
+        id
     }
 
     pub fn read_texture(&mut self, id: TextureNodeId) {

@@ -22,7 +22,9 @@
 
 struct TaaParams {
     feedback_weight: f32,
-    _padding: vec3<f32>,
+    _padding0: f32,
+    _padding1: f32,
+    _padding2: f32,
 };
 @group(0) @binding(5) var<uniform> u_params: TaaParams;
 
