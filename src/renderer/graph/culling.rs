@@ -232,10 +232,14 @@ fn prepare_main_camera_commands(
                     options.add_define("HDR", "1");
                 }
 
-                let shader_hash = options.compute_hash();
-
                 let is_opaque_item =
                     material.alpha_mode() != AlphaMode::Blend && !material.use_transmission();
+
+                if taa_enabled && is_opaque_item {
+                    options.add_define("HAS_VELOCITY_TARGET", "1");
+                }
+
+                let shader_hash = options.compute_hash();
 
                 let is_specular_split = match wgpu_ctx.render_path {
                     RenderPath::HighFidelity => {

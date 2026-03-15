@@ -34,8 +34,15 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 
     let world_pos = u_model.world_matrix * local_pos;
 
-    out.position = u_render_state.view_projection * world_pos;
+    let clip_pos = u_render_state.view_projection * world_pos;
+    out.position = clip_pos;
+    out.clip_position = clip_pos;
     out.world_position = world_pos.xyz / world_pos.w;
+
+    $$ if HAS_VELOCITY_TARGET is defined
+    let prev_world_pos = u_model.previous_world_matrix * local_pos;
+    out.prev_clip_position = u_render_state.prev_view_projection * prev_world_pos;
+    $$ endif
 
     $$ if HAS_COLOR
         out.color = in.color;
@@ -58,8 +65,19 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     return out;
 }
 
+$$ if HAS_VELOCITY_TARGET is defined
+struct FragmentOutput {
+    @location(0) color: vec4<f32>,
+    @location(1) velocity: vec2<f32>,
+};
+$$ endif
+
 @fragment
+$$ if HAS_VELOCITY_TARGET is defined
+fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+$$ else
 fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+$$ endif
     var normal = normalize(varyings.normal);
     $$ if FLAT_SHADING
         let u = dpdx(varyings.world_position);
@@ -155,5 +173,16 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     $$ endif
     out_color += emissive_color;
 
+    $$ if HAS_VELOCITY_TARGET is defined
+    var out: FragmentOutput;
+    out.color = vec4<f32>(out_color, diffuse_color.a);
+    let ndc_curr = varyings.clip_position.xy / varyings.clip_position.w;
+    let ndc_prev = varyings.prev_clip_position.xy / varyings.prev_clip_position.w;
+    let ndc_curr_unjittered = ndc_curr - u_render_state.jitter;
+    let ndc_prev_unjittered = ndc_prev - u_render_state.prev_jitter;
+    out.velocity = (ndc_curr_unjittered - ndc_prev_unjittered) * vec2<f32>(0.5, -0.5);
+    return out;
+    $$ else
     return vec4<f32>(out_color, diffuse_color.a);
+    $$ endif
 }
