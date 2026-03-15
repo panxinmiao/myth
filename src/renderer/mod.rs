@@ -61,7 +61,7 @@ use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::{
     BloomFeature, BrdfLutFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
     PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
-    ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+    TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
 };
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
@@ -119,6 +119,7 @@ struct RendererState {
 
     // Post-processing passes
     pub(crate) fxaa_pass: FxaaFeature,
+    pub(crate) taa_pass: TaaFeature,
     pub(crate) tone_map_pass: ToneMappingFeature,
     pub(crate) bloom_pass: BloomFeature,
     pub(crate) ssao_pass: SsaoFeature,
@@ -214,6 +215,7 @@ impl Renderer {
             transient_pool: TransientPool::new(),
             frame_arena: FrameArena::new(),
             fxaa_pass: FxaaFeature::new(),
+            taa_pass: TaaFeature::new(),
             tone_map_pass: ToneMappingFeature::new(),
             bloom_pass: BloomFeature::new(),
             ssao_pass: SsaoFeature::new(),
@@ -353,6 +355,7 @@ impl Renderer {
             let needs_normal = ssao_enabled || needs_feature_id;
             let needs_skybox = scene.background.needs_skybox_pass();
             let bloom_enabled = scene.bloom.enabled && is_hf;
+            let taa_enabled = state.wgpu_ctx.taa_enabled && is_hf;
             let fxaa_enabled = state.wgpu_ctx.fxaa_enabled && is_hf;
 
             let mut extract_ctx = ExtractContext {
@@ -436,6 +439,14 @@ impl Renderer {
                         .fxaa_pass
                         .extract_and_prepare(&mut extract_ctx, view_format);
                 }
+
+                if taa_enabled {
+                    state.taa_pass.extract_and_prepare(
+                        &mut extract_ctx,
+                        scene.taa.feedback_weight,
+                        HDR_TEXTURE_FORMAT,
+                    );
+                }
             }
         }
 
@@ -464,6 +475,7 @@ impl Renderer {
             sampler_registry: &mut state.sampler_registry,
             frame_arena: &state.frame_arena,
             fxaa_pass: &mut state.fxaa_pass,
+            taa_pass: &mut state.taa_pass,
             tone_map_pass: &mut state.tone_map_pass,
             bloom_pass: &mut state.bloom_pass,
             ssao_pass: &mut state.ssao_pass,

@@ -65,7 +65,7 @@ use crate::renderer::graph::frame::{PreparedSkyboxDraw, RenderLists};
 use crate::renderer::graph::passes::{
     BloomFeature, BrdfLutFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
     PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
-    ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+    TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
 };
 use crate::renderer::pipeline::PipelineCache;
 use crate::renderer::pipeline::ShaderManager;
@@ -100,6 +100,7 @@ pub struct ComposerContext<'a> {
     // ─── RDG Features ────────────────────────────────────────────────────
     // Post-processing
     pub fxaa_pass: &'a mut FxaaFeature,
+    pub taa_pass: &'a mut TaaFeature,
     pub tone_map_pass: &'a mut ToneMappingFeature,
     pub bloom_pass: &'a mut BloomFeature,
     pub ssao_pass: &'a mut SsaoFeature,
@@ -356,6 +357,7 @@ impl<'a> FrameComposer<'a> {
         let mut bb_scene_depth = surface_out;
 
         let mut current_surface = surface_out;
+        let mut taa_resolved_id: Option<TextureNodeId> = None;
 
         if is_high_fidelity {
             // ────────────────────────────────────────────────────────────
@@ -364,7 +366,7 @@ impl<'a> FrameComposer<'a> {
 
             // ── Scene Rendering Group ──────────────────────────────────
 
-            let (post_transparent_color, prepass_depth, _ssao_output) =
+            let (post_transparent_color, prepass_depth, _ssao_output, velocity_buffer) =
                 graph_ctx.with_group("Scene", |c| {
                     // 1. Prepass
                     let prepass_out =
@@ -456,7 +458,7 @@ impl<'a> FrameComposer<'a> {
                         shadow_tex,
                     );
 
-                    (post_transparent_color, prepass_out.scene_depth, ssao_output)
+                    (post_transparent_color, prepass_out.scene_depth, ssao_output, opaque_out.velocity_buffer)
                 });
 
             bb_scene_color = post_transparent_color;
@@ -478,6 +480,29 @@ impl<'a> FrameComposer<'a> {
                 }
             }
 
+            // ── TAA Resolve ────────────────────────────────────────────
+            // Resolve temporal anti-aliasing before bloom/tone-mapping.
+            // The resolved colour replaces post_transparent_color for
+            // downstream post-processing.
+            let post_taa_color = if taa_enabled {
+                if let Some(velocity) = velocity_buffer {
+                    self.ctx.taa_pass.ensure_history_buffers(
+                        &self.ctx.wgpu_ctx.device,
+                        width,
+                        height,
+                    );
+                    let resolved = self.ctx
+                        .taa_pass
+                        .add_to_graph(&mut graph_ctx, post_transparent_color, velocity);
+                    taa_resolved_id = Some(resolved);
+                    resolved
+                } else {
+                    post_transparent_color
+                }
+            } else {
+                post_transparent_color
+            };
+
             // ── Post-Processing Group ──────────────────────────────────
 
             current_surface = graph_ctx.with_group("PostProcess", |ctx| {
@@ -485,12 +510,12 @@ impl<'a> FrameComposer<'a> {
                 let tonemap_input = if bloom_enabled {
                     self.ctx.bloom_pass.add_to_graph(
                         ctx,
-                        post_transparent_color,
+                        post_taa_color,
                         self.ctx.scene.bloom.karis_average,
                         self.ctx.scene.bloom.max_mip_levels(),
                     )
                 } else {
-                    post_transparent_color
+                    post_taa_color
                 };
 
                 // ToneMapping: HDR → LDR
@@ -573,6 +598,14 @@ impl<'a> FrameComposer<'a> {
         // (scene_color, scene_depth, etc.) are RDG transient resources.
         self.external_res.clear();
 
+        // Inject TAA history write view as external resource.
+        if taa_enabled && self.ctx.taa_pass.has_history() {
+            if let Some(taa_write_id) = taa_resolved_id {
+                self.external_res
+                    .insert(taa_write_id, self.ctx.taa_pass.current_write_view());
+            }
+        }
+
         let mut prepare_ctx = PrepareContext {
             views: ViewResolver {
                 resources: &graph.storage.resources,
@@ -615,6 +648,14 @@ impl<'a> FrameComposer<'a> {
         // ─── 3d. Execute ───────────────────────────────────────────────
         let mut ext_views: FxHashMap<_, &wgpu::TextureView> = FxHashMap::default();
         ext_views.insert(surface_out, &surface_view);
+
+        // Inject TAA history write view for execute phase.
+        if taa_enabled && self.ctx.taa_pass.has_history() {
+            if let Some(taa_write_id) = taa_resolved_id {
+                let view: &wgpu::TextureView = self.ctx.taa_pass.current_write_view();
+                ext_views.insert(taa_write_id, view);
+            }
+        }
 
         let mut execute_ctx = ExecuteContext {
             resources: &graph.storage.resources,
