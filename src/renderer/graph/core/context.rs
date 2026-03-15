@@ -289,10 +289,16 @@ impl ExecuteContext<'_> {
         let root_id = resolve_root_id(self.resources, id);
         let res = &self.resources[root_id.0 as usize];
 
-        let physical_index = res
-            .physical_index
-            .expect("Resource has no physical memory!");
-        self.pool.get_tracked_view(physical_index)
+        if res.is_external {
+            let ptr = res.external_view_ptr.expect("External resource missing view pointer!");
+            let tracked_view = unsafe { &*ptr };
+            tracked_view
+        } else {
+            let physical_index = res
+                .physical_index
+                .expect("Resource has no physical memory!");
+            self.pool.get_tracked_view(physical_index)
+        }
     }
 
     /// Returns the raw [`wgpu::Texture`] handle for the given node.
@@ -303,10 +309,17 @@ impl ExecuteContext<'_> {
     pub fn get_texture(&self, id: TextureNodeId) -> &wgpu::Texture {
         let root_id = resolve_root_id(self.resources, id);
         let res = &self.resources[root_id.0 as usize];
-        let physical_index = res
-            .physical_index
-            .expect("Transient resource has no physical memory assigned!");
-        self.pool.get_texture(physical_index)
+
+        if res.is_external {
+            let ptr = res.external_view_ptr.expect("External resource missing view pointer!");
+            let tracked_view = unsafe { &*ptr };
+            tracked_view.texture() 
+        } else {
+            let physical_index = res
+                .physical_index
+                .expect("Transient resource has no physical memory assigned!");
+            self.pool.get_texture(physical_index)
+        }
     }
 
     /// Safely resolve a [`TextureNodeId`] to its physical [`TextureView`].
