@@ -3,23 +3,23 @@
 //! This module defines the rendering pipeline configuration for the engine.
 //!
 //! [`RenderPath`] determines the pipeline **topology** (which passes are
-//! assembled, whether HDR targets are used, etc.) while the **rasterization
-//! state** (MSAA sample count) is configured independently via
-//! [`RendererSettings::msaa_samples`].  This orthogonal design allows each
-//! axis to be changed without affecting the other.
+//! assembled, whether HDR targets are used, etc.), while anti-aliasing is
+//! configured via [`RendererSettings::aa_mode`] using the unified
+//! [`AntiAliasingMode`] enum.  This orthogonal design allows each axis to
+//! be changed without affecting the other.
 //!
 //! # Quick Start
 //!
 //! ```rust,ignore
-//! use myth::render::{RendererSettings, RenderPath};
+//! use myth::render::{RendererSettings, RenderPath, AntiAliasingMode};
 //!
-//! // Default: High-fidelity modern pipeline (HDR + post-processing)
+//! // Default: HighFidelity + TAA (recommended for PBR)
 //! let settings = RendererSettings::default();
 //!
 //! // Lightweight forward pipeline with 4× MSAA for simple scenes
 //! let settings = RendererSettings {
 //!     path: RenderPath::BasicForward,
-//!     msaa_samples: 4,
+//!     aa_mode: AntiAliasingMode::MSAA(4),
 //!     vsync: false,
 //!     ..Default::default()
 //! };
@@ -37,10 +37,9 @@
 /// whether HDR intermediates are allocated, and which post-processing chain
 /// is available.
 ///
-/// MSAA sample count is configured **independently** via
-/// [`RendererSettings::msaa_samples`], keeping rasterization state orthogonal
-/// to topology selection.  Both paths support hardware MSAA when
-/// `msaa_samples > 1`.
+/// Anti-aliasing is configured **independently** via
+/// [`RendererSettings::aa_mode`], keeping rasterization state orthogonal
+/// to topology selection.
 ///
 /// # Path Comparison
 ///
@@ -51,6 +50,7 @@
 /// | Bloom                   | ❌                | ✅                      |
 /// | Tone Mapping            | ❌                | ✅                      |
 /// | FXAA (post-process AA)  | ❌                | ✅                      |
+/// | TAA                     | ❌                | ✅                      |
 /// | Depth-Normal Prepass    | ❌                | ✅ (auto-skipped w/ MSAA)|
 /// | SSAO                    | ❌                | ✅                      |
 /// | SSSS                    | ❌                | ✅                      |
@@ -70,12 +70,12 @@ pub enum RenderPath {
     /// High-fidelity hybrid rendering pipeline.
     ///
     /// Uses HDR floating-point render targets and a full post-processing chain
-    /// (Bloom → Tone Mapping → FXAA). When MSAA is enabled
-    /// (`RendererSettings::msaa_samples > 1`), scene-drawing passes render
-    /// into multi-sampled intermediates that are resolved at the appropriate
+    /// (Bloom → Tone Mapping → FXAA / TAA).  When MSAA is enabled via
+    /// [`AntiAliasingMode::MSAA`], scene-drawing passes render into
+    /// multi-sampled intermediates that are resolved at the appropriate
     /// pipeline stages.
     ///
-    /// Includes Depth-Normal Prepass (auto-managed), SSAO, and SSSS.
+    /// Includes Depth-Normal Prepass (auto-managed), SSAO, SSSS, and TAA.
     ///
     /// Best suited for:
     /// - Desktop / high-end mobile with modern GPUs
@@ -125,6 +125,34 @@ impl RenderPath {
     }
 }
 
+
+
+/// Unified anti-aliasing mode for the rendering pipeline.
+///
+/// Controls which anti-aliasing technique(s) are active.  The engine
+/// automatically manages MSAA render targets, FXAA post-process passes,
+/// and TAA temporal state based on the selected mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[allow(non_camel_case_types)]
+pub enum AntiAliasingMode {
+    /// No anti-aliasing.  Maximum performance.
+    None,
+    /// FXAA only.  Minimal overhead — smooths high-frequency noise but
+    /// produces softer geometric edges.  Good for low-end / Web targets.
+    FXAA,
+    /// Hardware multi-sampling (e.g. 4×).  Crisp geometric edges but may
+    /// exhibit PBR specular flickering.  Best for non-PBR / toon styles.
+    MSAA(u32),
+    /// MSAA + FXAA.  MSAA resolves geometric edges, FXAA removes specular
+    /// shimmer.  Best static image quality with zero temporal ghosting.
+    MSAA_FXAA(u32),
+    /// Temporal Anti-Aliasing — the **recommended default** for PBR.
+    /// Resolves all aliasing categories with slight temporal softening.
+    #[default]
+    TAA,
+}
+
+
 // ---------------------------------------------------------------------------
 // RendererSettings
 // ---------------------------------------------------------------------------
@@ -132,16 +160,16 @@ impl RenderPath {
 /// Global configuration for renderer initialization.
 ///
 /// Consumed once during [`Renderer::init`] to set up the GPU context and
-/// allocate pipeline-level resources.  Both `path` and `msaa_samples` can
-/// be changed at runtime via [`Renderer::set_render_path`] and
-/// [`Renderer::set_msaa_samples`] respectively.
+/// allocate pipeline-level resources.  `path` and `aa_mode` can be changed
+/// at runtime via [`Renderer::set_render_path`] and
+/// [`Renderer::set_aa_mode`] respectively.
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use myth::render::{RendererSettings, RenderPath};
+/// use myth::render::{RendererSettings, RenderPath, AntiAliasingMode};
 ///
-/// // High-performance gaming setup
+/// // High-performance gaming setup (TAA is the default)
 /// let game = RendererSettings {
 ///     path: RenderPath::HighFidelity,
 ///     vsync: false,
@@ -151,7 +179,7 @@ impl RenderPath {
 /// // Battery-friendly mobile setup with 4× MSAA
 /// let mobile = RendererSettings {
 ///     path: RenderPath::BasicForward,
-///     msaa_samples: 4,
+///     aa_mode: AntiAliasingMode::MSAA(4),
 ///     power_preference: wgpu::PowerPreference::LowPower,
 ///     vsync: true,
 ///     ..Default::default()
@@ -166,11 +194,9 @@ pub struct RendererSettings {
     /// post-processing effects are available.  See [`RenderPath`].
     pub path: RenderPath,
 
-    /// Hardware MSAA sample count (1 = disabled, common values: 2, 4, 8).
-    ///
-    /// Orthogonal to `path` — both `BasicForward` and `HighFidelity`
-    /// support hardware multi-sampling when this value is > 1.
-    pub msaa_samples: u32,
+    /// Anti-aliasing mode.  Controls MSAA, FXAA and TAA in a unified way.
+    /// See [`AntiAliasingMode`] for available options.
+    pub aa_mode: AntiAliasingMode,
 
     /// Enable vertical synchronization (VSync).
     ///
@@ -222,7 +248,7 @@ impl Default for RendererSettings {
     fn default() -> Self {
         Self {
             path: RenderPath::default(),
-            msaa_samples: 1,
+            aa_mode: AntiAliasingMode::default(),
             vsync: true,
             backends: None,
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -240,15 +266,25 @@ impl Default for RendererSettings {
 }
 
 impl RendererSettings {
-    /// Returns the effective MSAA sample count.
+    /// Returns the hardware MSAA sample count implied by the current AA mode.
+    ///
+    /// Only [`AntiAliasingMode::MSAA`] and [`AntiAliasingMode::MSAA_FXAA`]
+    /// produce a value greater than 1.  All other modes rasterize at 1×.
     #[inline]
     #[must_use]
-    pub fn msaa_samples(&self) -> u32 {
-        self.msaa_samples
+    pub fn msaa_sample_count(&self) -> u32 {
+        match self.aa_mode {
+            AntiAliasingMode::MSAA(samples) | AntiAliasingMode::MSAA_FXAA(samples) => samples,
+            _ => 1,
+        }
+    }
+
+    /// Returns `true` when TAA is the active anti-aliasing mode.
+    #[inline]
+    #[must_use]
+    pub fn is_taa_enabled(&self) -> bool {
+        matches!(self.aa_mode, AntiAliasingMode::TAA)
     }
 }
 
-// Backward-compatible type alias — prefer `RendererSettings` in new code.
-#[doc(hidden)]
-#[deprecated(since = "0.2.0", note = "Renamed to `RendererSettings`")]
-pub type RenderSettings = RendererSettings;
+

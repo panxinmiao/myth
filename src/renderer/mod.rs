@@ -509,13 +509,9 @@ impl Renderer {
     /// Switches the active render path at runtime.
     ///
     /// Changes the pipeline topology between [`RenderPath::BasicForward`]
-    /// and [`RenderPath::HighFidelity`].  The MSAA sample count is
-    /// unaffected — use [`set_msaa_samples`](Self::set_msaa_samples) to
-    /// change it independently.  The change takes effect on the **next frame**.
-    ///
-    /// Internally this:
-    /// 1. Updates the stored settings and derived `WgpuContext` state.
-    /// 2. Increments the pipeline settings version (invalidates the L1 cache).
+    /// and [`RenderPath::HighFidelity`].  The AA mode is unaffected — use
+    /// [`set_aa_mode`](Self::set_aa_mode) to change it independently.
+    /// The change takes effect on the **next frame**.
     pub fn set_render_path(&mut self, path: RenderPath) {
         if self.settings.path != path {
             self.settings.path = path;
@@ -526,26 +522,28 @@ impl Renderer {
         }
     }
 
-    /// Returns the effective MSAA sample count.
+    /// Returns the effective MSAA sample count derived from the current AA mode.
     #[inline]
     pub fn msaa_samples(&self) -> u32 {
-        self.settings.msaa_samples()
+        self.settings.msaa_sample_count()
     }
 
-    /// Sets the MSAA sample count at runtime.
+    /// Returns the active [`AntiAliasingMode`].
+    #[inline]
+    pub fn aa_mode(&self) -> crate::renderer::settings::AntiAliasingMode {
+        self.settings.aa_mode
+    }
+
+    /// Sets the anti-aliasing mode at runtime.
     ///
-    /// Works for both [`RenderPath::BasicForward`] and
-    /// [`RenderPath::HighFidelity`].  In HighFidelity mode, setting
-    /// `msaa_samples > 1` trades Depth-Prepass Early-Z savings for
-    /// hardware multi-sample edge quality.
-    ///
-    /// Common values: 1 (disabled), 4, 8.
-    pub fn set_msaa_samples(&mut self, samples: u32) {
-        let samples = samples.clamp(1, 8);
-        if self.settings.msaa_samples != samples {
-            self.settings.msaa_samples = samples;
+    /// Simultaneously updates MSAA sample count, FXAA state, and TAA state.
+    /// The change takes effect on the **next frame**.
+    pub fn set_aa_mode(&mut self, mode: crate::renderer::settings::AntiAliasingMode) {
+        if self.settings.aa_mode != mode {
+            self.settings.aa_mode = mode;
             if let Some(state) = &mut self.context {
-                state.wgpu_ctx.msaa_samples = samples;
+                state.wgpu_ctx.msaa_samples = self.settings.msaa_sample_count();
+                state.wgpu_ctx.taa_enabled = self.settings.is_taa_enabled();
                 state.wgpu_ctx.pipeline_settings_version += 1;
             }
         }

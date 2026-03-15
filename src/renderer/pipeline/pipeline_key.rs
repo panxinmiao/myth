@@ -191,6 +191,8 @@ pub struct GraphicsPipelineKey {
     pub sample_count: u32,
     pub alpha_to_coverage: bool,
     pub is_specular_split: bool,
+    /// When `true`, an extra `Rg16Float` color target is appended for\n    /// screen-space velocity output (TAA / motion blur).
+    pub is_velocity_output: bool,
 }
 
 /// L2 cache key for non-material render pipelines.

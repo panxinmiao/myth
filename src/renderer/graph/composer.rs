@@ -325,6 +325,7 @@ impl<'a> FrameComposer<'a> {
         let has_transmission = self.ctx.render_lists.use_transmission;
         let bloom_enabled = self.ctx.scene.bloom.enabled && is_high_fidelity;
         let fxaa_enabled = self.ctx.scene.fxaa.enabled && is_high_fidelity;
+        let taa_enabled = self.ctx.wgpu_ctx.taa_enabled && is_high_fidelity;
 
         // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
         graph_ctx.with_group("Compute", |c| {
@@ -394,6 +395,7 @@ impl<'a> FrameComposer<'a> {
                         opaque_has_prepass,
                         self.ctx.extracted_scene.background.clear_color(),
                         ssss_enabled,
+                        taa_enabled,
                         ssao_output,
                         shadow_tex,
                     );

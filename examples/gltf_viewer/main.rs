@@ -244,8 +244,8 @@ struct GltfViewer {
     light_node: NodeHandle,
     /// HDR rendering toggle (cached from renderer)
     render_path: RenderPath,
-    /// MSAA sample count (cached from renderer)
-    msaa_samples: u32,
+    /// Active anti-aliasing mode (cached from renderer)
+    aa_mode: AntiAliasingMode,
 
     vignette_breathing: bool,
 
@@ -427,7 +427,7 @@ impl AppHandler for GltfViewer {
             ibl_enabled: true,
             light_node: light_node,
             render_path: RenderPath::default(), // Default: HighFidelity path
-            msaa_samples: 1,                    // MSAA disabled in HighFidelity mode
+            aa_mode: AntiAliasingMode::default(),   // Default: TAA
 
             vignette_breathing: false,
 
@@ -1599,33 +1599,37 @@ impl GltfViewer {
 
                             ui.separator();
 
-                            // --- MSAA 抗锯齿 (available for both paths) ---
+                            // --- Anti-Aliasing mode selector ---
                             ui.horizontal(|ui| {
-                                ui.label("MSAA:");
-                                let msaa_options = [1u32, 4];
-                                egui::ComboBox::from_id_salt("msaa_selector")
-                                    .width(60.0)
-                                    .selected_text(if self.msaa_samples == 1 {
-                                        "Off".to_string()
-                                    } else {
-                                        format!("{}x", self.msaa_samples)
-                                    })
+                                ui.label("AA:");
+                                let aa_label = match self.aa_mode {
+                                    AntiAliasingMode::None => "Off",
+                                    AntiAliasingMode::FXAA => "FXAA",
+                                    AntiAliasingMode::MSAA(_) => "MSAA",
+                                    AntiAliasingMode::MSAA_FXAA(_) => "MSAA+FXAA",
+                                    AntiAliasingMode::TAA => "TAA",
+                                };
+                                egui::ComboBox::from_id_salt("aa_selector")
+                                    .width(90.0)
+                                    .selected_text(aa_label)
                                     .show_ui(ui, |ui| {
-                                        for &samples in &msaa_options {
-                                            let label = if samples == 1 {
-                                                "Off".to_string()
-                                            } else {
-                                                format!("{}x", samples)
-                                            };
+                                        let modes: &[(AntiAliasingMode, &str)] = &[
+                                            (AntiAliasingMode::None, "Off"),
+                                            (AntiAliasingMode::FXAA, "FXAA"),
+                                            (AntiAliasingMode::MSAA(4), "MSAA 4x"),
+                                            (AntiAliasingMode::MSAA_FXAA(4), "MSAA+FXAA"),
+                                            (AntiAliasingMode::TAA, "TAA"),
+                                        ];
+                                        for &(mode, label) in modes {
                                             if ui
                                                 .selectable_value(
-                                                    &mut self.msaa_samples,
-                                                    samples,
+                                                    &mut self.aa_mode,
+                                                    mode,
                                                     label,
                                                 )
                                                 .changed()
                                             {
-                                                renderer.set_msaa_samples(self.msaa_samples);
+                                                renderer.set_aa_mode(self.aa_mode);
                                             }
                                         }
                                     });
