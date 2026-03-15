@@ -285,6 +285,16 @@ impl RendererSettings {
     pub fn is_taa_enabled(&self) -> bool {
         matches!(self.aa_mode, AntiAliasingMode::TAA)
     }
+
+    /// Returns `true` when FXAA is active (either standalone or combined with MSAA).
+    #[inline]
+    #[must_use]
+    pub fn is_fxaa_enabled(&self) -> bool {
+        matches!(
+            self.aa_mode,
+            AntiAliasingMode::FXAA | AntiAliasingMode::MSAA_FXAA(_)
+        )
+    }
 }
 
 

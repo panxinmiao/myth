@@ -324,7 +324,7 @@ impl<'a> FrameComposer<'a> {
         let ssss_enabled = self.ctx.scene.screen_space.enable_sss;
         let has_transmission = self.ctx.render_lists.use_transmission;
         let bloom_enabled = self.ctx.scene.bloom.enabled && is_high_fidelity;
-        let fxaa_enabled = self.ctx.scene.fxaa.enabled && is_high_fidelity;
+        let fxaa_enabled = self.ctx.wgpu_ctx.fxaa_enabled && is_high_fidelity;
         let taa_enabled = self.ctx.wgpu_ctx.taa_enabled && is_high_fidelity;
 
         // ── 2c. Wire Compute + Shadow Passes ───────────────────────────

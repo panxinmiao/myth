@@ -41,6 +41,9 @@ pub struct WgpuContext {
     /// and pipeline variant selection.
     pub taa_enabled: bool,
 
+    /// Whether FXAA is currently active. Drives pipeline variant selection.
+    pub fxaa_enabled: bool,
+
     /// Version counter for pipeline-affecting settings (HDR, MSAA, RenderPath).
     /// Incremented when these settings change, used to invalidate L1 pipeline cache.
     pub pipeline_settings_version: u64,
@@ -141,6 +144,7 @@ impl WgpuContext {
             msaa_samples: settings.msaa_sample_count(),
             render_path: settings.path,
             taa_enabled: settings.is_taa_enabled(),
+            fxaa_enabled: settings.is_fxaa_enabled(),
             pipeline_settings_version: 0,
         })
     }

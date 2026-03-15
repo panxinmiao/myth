@@ -80,14 +80,10 @@ impl FxaaQuality {
 ///
 /// ```rust,ignore
 /// let fxaa = &mut scene.fxaa;
-/// fxaa.enabled = true;
 /// fxaa.set_quality(FxaaQuality::High);
 /// ```
 #[derive(Debug, Clone)]
 pub struct FxaaSettings {
-    /// Whether FXAA is enabled.
-    pub enabled: bool,
-
     /// Quality preset controlling edge exploration iterations.
     quality: FxaaQuality,
 }
@@ -95,7 +91,6 @@ pub struct FxaaSettings {
 impl Default for FxaaSettings {
     fn default() -> Self {
         Self {
-            enabled: true,
             quality: FxaaQuality::default(),
         }
     }
@@ -113,17 +108,5 @@ impl FxaaSettings {
     #[must_use]
     pub fn quality(&self) -> FxaaQuality {
         self.quality
-    }
-
-    /// Sets the quality preset.
-    ///
-    /// Changing the quality will trigger shader recompilation on the next frame.
-    pub fn set_quality(&mut self, quality: FxaaQuality) {
-        self.quality = quality;
-    }
-
-    /// Sets whether FXAA is enabled.
-    pub fn set_enabled(&mut self, enabled: bool) {
-        self.enabled = enabled;
     }
 }
