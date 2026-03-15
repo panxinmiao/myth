@@ -27,9 +27,9 @@ use super::types::TextureNodeId;
 #[derive(Clone, Copy)]
 pub struct GraphBlackboard {
     /// HDR scene colour render target (written by Opaque / Skybox / Transparent).
-    pub scene_color: TextureNodeId,
+    pub scene_color: Option<TextureNodeId>,
     /// Main depth buffer (reverse-Z, written by scene passes).
-    pub scene_depth: TextureNodeId,
+    pub scene_depth: Option<TextureNodeId>,
     /// Final swap-chain output target.  UI and overlays should write here.
     pub surface_out: TextureNodeId,
 }
