@@ -37,13 +37,6 @@ pub struct WgpuContext {
     /// The active render path. Stored for runtime branching in the frame graph.
     pub render_path: RenderPath,
 
-    /// Whether TAA is currently active.  Drives velocity buffer allocation
-    /// and pipeline variant selection.
-    pub taa_enabled: bool,
-
-    /// Whether FXAA is currently active. Drives pipeline variant selection.
-    pub fxaa_enabled: bool,
-
     /// Version counter for pipeline-affecting settings (HDR, MSAA, RenderPath).
     /// Incremented when these settings change, used to invalidate L1 pipeline cache.
     pub pipeline_settings_version: u64,
@@ -141,10 +134,8 @@ impl WgpuContext {
             config,
             depth_format: settings.depth_format,
             surface_view_format: view_format,
-            msaa_samples: settings.msaa_sample_count(),
+            msaa_samples: 1,
             render_path: settings.path,
-            taa_enabled: settings.is_taa_enabled() && settings.path.supports_post_processing(),
-            fxaa_enabled: settings.is_fxaa_enabled() && settings.path.supports_post_processing(),
             pipeline_settings_version: 0,
         })
     }

@@ -16,7 +16,7 @@
 //! ```
 
 /// TAA settings exposed to the user.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct TaaSettings {
     /// History frame blend weight (`0.0..=1.0`).
     ///

@@ -48,6 +48,7 @@
 //! ```
 
 use crate::assets::AssetServer;
+use crate::prelude::AntiAliasingMode;
 use crate::render::RenderState;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::gpu::{SamplerRegistry, Tracked};
@@ -323,8 +324,8 @@ impl<'a> FrameComposer<'a> {
         let ssss_enabled = self.ctx.scene.screen_space.enable_sss;
         let has_transmission = self.ctx.render_lists.use_transmission;
         let bloom_enabled = self.ctx.scene.bloom.enabled && is_high_fidelity;
-        let fxaa_enabled = self.ctx.wgpu_ctx.fxaa_enabled && is_high_fidelity;
-        let taa_enabled = self.ctx.wgpu_ctx.taa_enabled && is_high_fidelity;
+        // let fxaa_enabled = self.ctx.wgpu_ctx.fxaa_enabled && is_high_fidelity;
+        // let taa_enabled = self.ctx.wgpu_ctx.taa_enabled && is_high_fidelity;
 
         // ── 2c. Wire Compute + Shadow Passes ───────────────────────────
         graph_ctx.with_group("Compute", |c| {
@@ -363,6 +364,10 @@ impl<'a> FrameComposer<'a> {
             // ────────────────────────────────────────────────────────────
 
             // ── Scene Rendering Group ──────────────────────────────────
+
+            let taa_enabled = matches!(self.ctx.camera.aa_mode, AntiAliasingMode::TAA { .. });
+
+            let fxaa_enabled = matches!(self.ctx.camera.aa_mode, AntiAliasingMode::FXAA { .. } | AntiAliasingMode::MSAA_FXAA { .. });
 
             let (mut active_color, mut scene_depth) =
 
@@ -436,13 +441,7 @@ impl<'a> FrameComposer<'a> {
                     // The resolved colour replaces post_transparent_color for
                     // downstream post-processing.
                     if taa_enabled {
-                        // Not Msaa.
                         if let Some(velocity) = opaque_out.velocity_buffer {
-                            self.ctx.taa_pass.ensure_history_buffers(
-                                &self.ctx.wgpu_ctx.device,
-                                width,
-                                height,
-                            );
                             active_color = self.ctx
                                 .taa_pass
                                 .add_to_graph(c, active_color, velocity)

@@ -1772,7 +1772,6 @@ impl GltfViewer {
                                             cam.set_aa_mode(mode.clone());
                                         }
                                     }
-                                    renderer.sync_aa_mode(&mode);
                                 }
                             }
 

@@ -64,7 +64,6 @@ fn main() -> myth::Result<()> {
     App::new()
         .with_settings(RendererSettings {
             path: RenderPath::BasicForward,
-            aa_mode: AntiAliasingMode::None,
             vsync: false,
             clear_color: wgpu::Color {
                 r: 0.03,

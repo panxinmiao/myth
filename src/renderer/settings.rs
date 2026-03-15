@@ -138,7 +138,7 @@ impl RenderPath {
 ///
 /// The engine automatically manages MSAA render targets, FXAA post-process
 /// passes, and TAA temporal state based on the selected mode.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 #[allow(non_camel_case_types)]
 pub enum AntiAliasingMode {
     /// No anti-aliasing.  Maximum performance.
@@ -159,7 +159,7 @@ pub enum AntiAliasingMode {
 
 impl Default for AntiAliasingMode {
     fn default() -> Self {
-        Self::TAA(TaaSettings::default())
+        Self::None
     }
 }
 
@@ -254,10 +254,6 @@ pub struct RendererSettings {
     /// post-processing effects are available.  See [`RenderPath`].
     pub path: RenderPath,
 
-    /// Anti-aliasing mode.  Controls MSAA, FXAA and TAA in a unified way.
-    /// See [`AntiAliasingMode`] for available options.
-    pub aa_mode: AntiAliasingMode,
-
     /// Enable vertical synchronization (VSync).
     ///
     /// When `true`, the frame rate is capped to the display refresh rate,
@@ -308,7 +304,6 @@ impl Default for RendererSettings {
     fn default() -> Self {
         Self {
             path: RenderPath::default(),
-            aa_mode: AntiAliasingMode::default(),
             vsync: true,
             backends: None,
             power_preference: wgpu::PowerPreference::HighPerformance,
@@ -325,27 +320,27 @@ impl Default for RendererSettings {
     }
 }
 
-impl RendererSettings {
-    /// Returns the hardware MSAA sample count implied by the current AA mode.
-    #[inline]
-    #[must_use]
-    pub fn msaa_sample_count(&self) -> u32 {
-        self.aa_mode.msaa_sample_count()
-    }
+// impl RendererSettings {
+//     /// Returns the hardware MSAA sample count implied by the current AA mode.
+//     #[inline]
+//     #[must_use]
+//     pub fn msaa_sample_count(&self) -> u32 {
+//         self.aa_mode.msaa_sample_count()
+//     }
 
-    /// Returns `true` when TAA is the active anti-aliasing mode.
-    #[inline]
-    #[must_use]
-    pub fn is_taa_enabled(&self) -> bool {
-        self.aa_mode.is_taa()
-    }
+//     /// Returns `true` when TAA is the active anti-aliasing mode.
+//     #[inline]
+//     #[must_use]
+//     pub fn is_taa_enabled(&self) -> bool {
+//         self.aa_mode.is_taa()
+//     }
 
-    /// Returns `true` when FXAA is active (either standalone or combined with MSAA).
-    #[inline]
-    #[must_use]
-    pub fn is_fxaa_enabled(&self) -> bool {
-        self.aa_mode.is_fxaa()
-    }
-}
+//     /// Returns `true` when FXAA is active (either standalone or combined with MSAA).
+//     #[inline]
+//     #[must_use]
+//     pub fn is_fxaa_enabled(&self) -> bool {
+//         self.aa_mode.is_fxaa()
+//     }
+// }
 
 

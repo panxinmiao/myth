@@ -319,7 +319,6 @@ impl<H: AppHandler> AppRunner<H> {
 
         // Sync the camera's AA mode to the renderer and advance TAA jitter.
         if let Some(cam) = scene.cameras.get_mut(camera_node) {
-            engine.renderer.sync_aa_mode(&cam.aa_mode);
             // Only advance the TAA jitter sequence when the render path
             // actually supports post-processing (TAA resolve).
             if engine.renderer.render_path().supports_post_processing() {

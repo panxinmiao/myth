@@ -46,6 +46,9 @@ pub struct RenderCamera {
     pub jitter: Vec2,
     pub near: f32,
     pub far: f32,
+
+    /// Anti-aliasing mode (MSAA sample count, TAA feedback weight, etc.).
+    pub aa_mode: AntiAliasingMode,
 }
 
 #[derive(Debug, Clone)]
@@ -340,6 +343,7 @@ impl Camera {
             jitter: self.jitter,
             near: self.near,
             far: self.far,
+            aa_mode: self.aa_mode,
         }
     }
 

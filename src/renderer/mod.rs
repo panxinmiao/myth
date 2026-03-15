@@ -51,6 +51,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::assets::AssetServer;
 use crate::errors::Result;
+use crate::prelude::AntiAliasingMode;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::gpu::SamplerRegistry;
 use crate::renderer::graph::composer::ComposerContext;
@@ -349,14 +350,19 @@ impl Renderer {
             let render_state_id = state.render_frame.render_state.id;
             let global_state_key = (render_state_id, scene_id_val);
 
+            let requested_msaa = camera.aa_mode.msaa_sample_count();
+
+            if state.wgpu_ctx.msaa_samples != requested_msaa {
+                state.wgpu_ctx.msaa_samples = requested_msaa;
+                state.wgpu_ctx.pipeline_settings_version += 1;
+            }
+
             let ssao_enabled = scene.ssao.enabled && is_hf;
             let needs_feature_id =
                 is_hf && (scene.screen_space.enable_sss || scene.screen_space.enable_ssr);
             let needs_normal = ssao_enabled || needs_feature_id;
             let needs_skybox = scene.background.needs_skybox_pass();
             let bloom_enabled = scene.bloom.enabled && is_hf;
-            let taa_enabled = state.wgpu_ctx.taa_enabled && is_hf;
-            let fxaa_enabled = state.wgpu_ctx.fxaa_enabled && is_hf;
 
             let mut extract_ctx = ExtractContext {
                 device: &state.wgpu_ctx.device,
@@ -395,6 +401,24 @@ impl Renderer {
             }
 
             if is_hf {
+
+                match &camera.aa_mode {
+                    AntiAliasingMode::TAA(settings) => {
+                        state.taa_pass.extract_and_prepare(
+                            &mut extract_ctx,
+                            settings.feedback_weight,
+                            self.size,
+                            HDR_TEXTURE_FORMAT,
+                        );
+                    }
+                    AntiAliasingMode::FXAA(settings) | AntiAliasingMode::MSAA_FXAA(_, settings) => {
+                        state.fxaa_pass.target_quality = settings.quality();
+                        state.fxaa_pass.extract_and_prepare(&mut extract_ctx, view_format);
+                    }
+                    _ => {}
+                }
+
+
                 state
                     .prepass
                     .extract_and_prepare(&mut extract_ctx, needs_normal, needs_feature_id);
@@ -433,25 +457,6 @@ impl Renderer {
                     &scene.tone_mapping.uniforms,
                     scene.tone_mapping.lut_texture,
                 );
-
-                if fxaa_enabled {
-                    state
-                        .fxaa_pass
-                        .extract_and_prepare(&mut extract_ctx, view_format);
-                }
-
-                if taa_enabled {
-                    let feedback_weight = self
-                        .settings
-                        .aa_mode
-                        .taa_settings()
-                        .map_or(0.90, |s| s.feedback_weight);
-                    state.taa_pass.extract_and_prepare(
-                        &mut extract_ctx,
-                        feedback_weight,
-                        HDR_TEXTURE_FORMAT,
-                    );
-                }
             }
         }
 
@@ -539,50 +544,6 @@ impl Renderer {
         }
     }
 
-    /// Returns the effective MSAA sample count derived from the current AA mode.
-    #[inline]
-    pub fn msaa_samples(&self) -> u32 {
-        self.settings.msaa_sample_count()
-    }
-
-    /// Returns a reference to the active [`AntiAliasingMode`].
-    #[inline]
-    pub fn aa_mode(&self) -> &crate::renderer::settings::AntiAliasingMode {
-        &self.settings.aa_mode
-    }
-
-    /// Synchronises the renderer's pipeline state with the given AA mode.
-    ///
-    /// Typically called once per frame with the active camera's
-    /// [`AntiAliasingMode`].  Updates MSAA sample count, FXAA / TAA
-    /// enablement flags, and FXAA quality on the GPU context so that
-    /// the correct passes and pipelines are selected.
-    pub fn sync_aa_mode(&mut self, mode: &crate::renderer::settings::AntiAliasingMode) {
-        if let Some(state) = &mut self.context {
-            let new_msaa = mode.msaa_sample_count();
-            let pp = state.wgpu_ctx.render_path.supports_post_processing();
-            let new_taa = mode.is_taa() && pp;
-            let new_fxaa = mode.is_fxaa() && pp;
-
-            let changed = state.wgpu_ctx.msaa_samples != new_msaa
-                || state.wgpu_ctx.taa_enabled != new_taa
-                || state.wgpu_ctx.fxaa_enabled != new_fxaa;
-
-            if changed {
-                state.wgpu_ctx.msaa_samples = new_msaa;
-                state.wgpu_ctx.taa_enabled = new_taa;
-                state.wgpu_ctx.fxaa_enabled = new_fxaa;
-                state.wgpu_ctx.pipeline_settings_version += 1;
-            }
-
-            // Sync FXAA quality to the feature pass.
-            if let Some(fxaa) = mode.fxaa_settings() {
-                state.fxaa_pass.target_quality = fxaa.quality();
-            }
-        }
-
-        self.settings.aa_mode = mode.clone();
-    }
 
     /// Returns a reference to the current renderer settings.
     #[inline]

@@ -120,6 +120,7 @@ impl TaaFeature {
         &mut self,
         ctx: &mut ExtractContext,
         feedback_weight: f32,
+        size: (u32, u32),
         output_format: wgpu::TextureFormat,
     ) {
         // ── 1. Bind group layout (once) ────────────────────────────────
@@ -222,6 +223,12 @@ impl TaaFeature {
             );
             self.last_feedback_weight = feedback_weight;
         }
+
+        self.ensure_history_buffers(
+            ctx.device,
+            size.0,
+            size.1,
+        );
 
         // ── 3. Pipeline (compile on format change) ─────────────────────
         if self.pipeline_id.is_none() {

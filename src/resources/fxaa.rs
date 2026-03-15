@@ -82,7 +82,7 @@ impl FxaaQuality {
 /// let fxaa = &mut scene.fxaa;
 /// fxaa.set_quality(FxaaQuality::High);
 /// ```
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FxaaSettings {
     /// Quality preset controlling edge exploration iterations.
     quality: FxaaQuality,

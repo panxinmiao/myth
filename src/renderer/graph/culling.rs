@@ -28,6 +28,7 @@ use slotmap::Key;
 
 use crate::RenderPath;
 use crate::assets::AssetServer;
+use crate::prelude::AntiAliasingMode;
 use crate::renderer::core::view::ViewTarget;
 use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::extracted::{ExtractedScene, SceneFeatures};
@@ -136,7 +137,7 @@ fn prepare_main_camera_commands(
     let render_state_id = render_state.id;
     let scene_id = extracted_scene.scene_id;
     let pipeline_settings_version = wgpu_ctx.pipeline_settings_version;
-    let taa_enabled = wgpu_ctx.taa_enabled;
+    let taa_enabled = matches!(camera.aa_mode, AntiAliasingMode::TAA { .. });
     let camera_frustum = camera.frustum;
     let camera_pos = camera.position;
 

@@ -9,6 +9,7 @@
 
 use glam::{Mat4, Vec2, Vec3, Vec3A};
 
+use myth::prelude::AntiAliasingMode;
 use myth::renderer::graph::shadow_utils::*;
 use myth::scene::camera::{Frustum, RenderCamera};
 use myth::scene::light::SpotLight;
@@ -135,6 +136,7 @@ fn make_render_camera(
         far: f32::INFINITY,
         unjittered_projection: proj,
         jitter: Vec2::ZERO,
+        aa_mode: AntiAliasingMode::None,
     }
 }
 
