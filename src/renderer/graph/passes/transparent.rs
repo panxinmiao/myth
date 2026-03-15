@@ -88,13 +88,13 @@ impl TransparentFeature {
             .expect("TransparentFeature: screen_info not set");
 
         ctx.graph.add_pass("Transparent_Pass", |builder| {
-            let color_output = builder.mutate_and_export(color_target, "Scene_Color_Transparent");
+            let color_output = builder.mutate_texture(color_target, "Scene_Color_Transparent");
 
             let resolve_target = if fc.msaa_samples > 1 {
                 let desc = fc.create_render_target_desc(
                     wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
                 );
-                Some(builder.create_and_export("Scene_Color_HDR_Final", desc))
+                Some(builder.create_texture("Scene_Color_HDR_Final", desc))
             } else {
                 None
             };

@@ -273,7 +273,7 @@ fn bench_diamond_dag(c: &mut Criterion) {
 // Simulates the engine's relay rendering pattern:
 //   Opaque → Skybox (mutate) → Transparent (mutate) → ... → ToneMap
 //
-// Each pass uses `mutate_and_export` to create an alias that shares
+// Each pass uses `mutate_texture` to create an alias that shares
 // physical memory. Tests the alias propagation and lifetime unification
 // paths in the compiler.
 
@@ -304,7 +304,7 @@ fn bench_alias_relay_chain(c: &mut Criterion) {
                     for i in 1..count {
                         let prev = current;
                         current = graph.add_pass("Relay", |builder: &mut PassBuilder| {
-                            let out = builder.mutate_and_export(prev, "SceneColor_vN");
+                            let out = builder.mutate_texture(prev, "SceneColor_vN");
                             (MockNode { tag: i as u32 }, out)
                         });
                     }
@@ -659,7 +659,7 @@ fn bench_high_fidelity_pipeline(c: &mut Criterion) {
 
             // 6. Skybox (relay: mutate scene color)
             let scene_color_sky = graph.add_pass("Skybox", |builder: &mut PassBuilder| {
-                let out = builder.mutate_and_export(scene_color, "Scene_Color_Sky");
+                let out = builder.mutate_texture(scene_color, "Scene_Color_Sky");
                 (MockNode { tag: 6 }, out)
             });
 
@@ -673,7 +673,7 @@ fn bench_high_fidelity_pipeline(c: &mut Criterion) {
             // 8. Transparent (relay: mutate scene color, reads transmission + depth)
             let scene_color_transparent =
                 graph.add_pass("Transparent", |builder: &mut PassBuilder| {
-                    let out = builder.mutate_and_export(scene_color_sky, "Scene_Color_Transparent");
+                    let out = builder.mutate_texture(scene_color_sky, "Scene_Color_Transparent");
                     builder.read_texture(transmission);
                     builder.read_texture(depth);
                     (MockNode { tag: 8 }, out)

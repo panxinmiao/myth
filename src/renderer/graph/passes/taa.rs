@@ -296,43 +296,45 @@ impl TaaFeature {
                 | wgpu::TextureUsages::COPY_SRC,
         );
 
-        let resolved_color = ctx.graph.add_pass("TAA_Resolve", |builder| {
-            builder.read_external_texture("TAA_History_Read", desc, history_view);
+        ctx.with_group("TAA_System", |ctx| {
+            let resolved_color = ctx.graph.add_pass("TAA_Resolve", |builder| {
+                builder.read_external_texture("TAA_History_Read", desc, history_view);
 
-            builder.read_texture(active_color);
-            builder.read_texture(velocity_buffer);
+                builder.read_texture(active_color);
+                builder.read_texture(velocity_buffer);
 
-            let resolved_color = builder.create_and_export("TAA_Resolved", desc);
+                let resolved_color = builder.create_texture("TAA_Resolved", desc);
 
-            let node = TaaPassNode {
-                current_color: active_color,
-                velocity: velocity_buffer,
-                output: resolved_color,
-                history_view,
-                pipeline,
-                layout,
-                params_buffer,
-                transient_bg: None,
-            };
-            (node, resolved_color)
-        });
+                let node = TaaPassNode {
+                    current_color: active_color,
+                    velocity: velocity_buffer,
+                    output: resolved_color,
+                    history_view,
+                    pipeline,
+                    layout,
+                    params_buffer,
+                    transient_bg: None,
+                };
+                (node, resolved_color)
+            });
 
-        // data diversion
-        ctx.graph.add_pass("TAA_Save_History", |builder| {
-            builder.read_texture(resolved_color);
-            let history_out =
-                builder.write_external_texture("TAA_History_Write", desc, history_view);
+            // data diversion
+            ctx.graph.add_pass("TAA_Save_History", |builder| {
+                builder.read_texture(resolved_color);
+                let history_out =
+                    builder.write_external_texture("TAA_History_Write", desc, history_view);
 
-            (
-                CopyTextureNode {
-                    src: resolved_color,
-                    dst: history_out,
-                },
-                (),
-            )
-        });
+                (
+                    CopyTextureNode {
+                        src: resolved_color,
+                        dst: history_out,
+                    },
+                    (),
+                )
+            });
 
-        resolved_color
+            resolved_color
+        })
     }
 
     /// Returns `true` if the TAA history buffers have been allocated.

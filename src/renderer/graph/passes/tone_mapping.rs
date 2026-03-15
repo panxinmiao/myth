@@ -383,7 +383,7 @@ impl ToneMappingFeature {
     /// Build the ephemeral pass node and insert it into the graph.
     ///
     /// Accepts the HDR input and the target LDR texture, performs an SSA
-    /// relay on `target_ldr` (via `mutate_and_export`), and returns the
+    /// relay on `target_ldr` (via `mutate_texture`), and returns the
     /// updated target handle. This enforces a pure dataflow chain where
     /// every Feature explicitly produces a new resource version.
     pub fn add_to_graph<'a>(

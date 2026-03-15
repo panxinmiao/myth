@@ -438,7 +438,7 @@ impl SsaoFeature {
             let raw_tex: TextureNodeId = ctx.graph.add_pass("SSAO_Raw", |builder| {
                 builder.read_texture(scene_depth);
                 builder.read_texture(scene_normals);
-                let out = builder.create_and_export("SSAO_Raw_Tex", raw_desc);
+                let out = builder.create_texture("SSAO_Raw_Tex", raw_desc);
                 let node = SsaoRawNode {
                     depth_tex: scene_depth,
                     normal_tex: scene_normals,
@@ -464,7 +464,7 @@ impl SsaoFeature {
                 builder.read_texture(raw_tex);
                 builder.read_texture(scene_depth);
                 builder.read_texture(scene_normals);
-                let out = builder.create_and_export("SSAO_Output", output_desc);
+                let out = builder.create_texture("SSAO_Output", output_desc);
                 let node = SsaoBlurNode {
                     raw_tex,
                     depth_tex: scene_depth,

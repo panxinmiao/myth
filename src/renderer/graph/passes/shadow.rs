@@ -251,7 +251,7 @@ impl ShadowFeature {
         );
 
         let shadow_array_id = ctx.graph.add_pass("Shadow_Pass", |builder| {
-            let shadow_array_id = builder.create_and_export("Shadow_Array_Map", desc);
+            let shadow_array_id = builder.create_texture("Shadow_Array_Map", desc);
 
             let node = ShadowPassNode {
                 bind_group: &self.bind_group,

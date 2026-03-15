@@ -618,7 +618,7 @@ impl BloomFeature {
 
             let mut current_mip: TextureNodeId = ctx.graph.add_pass("Bloom_Extract", |builder| {
                 builder.read_texture(input_color);
-                let out = builder.create_and_export("Bloom_Mip_0", mip0_desc);
+                let out = builder.create_texture("Bloom_Mip_0", mip0_desc);
                 let node = BloomDownsampleNode {
                     input_tex: input_color,
                     output_tex: out,
@@ -654,7 +654,7 @@ impl BloomFeature {
 
                 current_mip = ctx.graph.add_pass(label, |builder| {
                     builder.read_texture(input);
-                    let out = builder.create_and_export(out_label, desc);
+                    let out = builder.create_texture(out_label, desc);
                     let node = BloomDownsampleNode {
                         input_tex: input,
                         output_tex: out,
@@ -679,7 +679,7 @@ impl BloomFeature {
 
                 current_mip = ctx.graph.add_pass(label, |builder| {
                     builder.read_texture(coarser);
-                    let out = builder.mutate_and_export(finer, out_label);
+                    let out = builder.mutate_texture(finer, out_label);
                     let node = BloomUpsampleNode {
                         coarser_tex: coarser,
                         output_tex: out,
@@ -705,7 +705,7 @@ impl BloomFeature {
                     wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 );
 
-                let out = builder.create_and_export("Scene_Color_Bloom", out_desc);
+                let out = builder.create_texture("Scene_Color_Bloom", out_desc);
 
                 let node = BloomCompositeNode {
                     original_tex: input_color,

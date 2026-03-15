@@ -480,7 +480,7 @@ impl SkyboxFeature {
             .map(|id| ctx.pipeline_cache.get_render_pipeline(id));
         let bind_group = self.current_bind_group.as_ref();
         ctx.graph.add_pass("Skybox_Pass", |builder| {
-            let out_color = builder.mutate_and_export(scene_color, "Scene_Color_Skybox");
+            let out_color = builder.mutate_texture(scene_color, "Scene_Color_Skybox");
             builder.read_texture(scene_depth);
             let node = SkyboxPassNode {
                 out_color,

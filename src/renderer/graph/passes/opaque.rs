@@ -133,14 +133,14 @@ impl OpaqueFeature {
                     wgpu::TextureUsages::RENDER_ATTACHMENT,
                 );
 
-                let msaa_color = builder.create_and_export("Scene_Color_MSAA", msaa_color_desc);
-                let msaa_depth = builder.create_and_export("Scene_Depth_MSAA", msaa_depth_desc);
-                let scene_hdr = builder.create_and_export("Scene_Color_HDR", hdr_desc);
+                let msaa_color = builder.create_texture("Scene_Color_MSAA", msaa_color_desc);
+                let msaa_depth = builder.create_texture("Scene_Depth_MSAA", msaa_depth_desc);
+                let scene_hdr = builder.create_texture("Scene_Color_HDR", hdr_desc);
 
                 (msaa_color, msaa_depth, Some(scene_hdr), scene_hdr, None)
             } else {
-                let scene_hdr = builder.create_and_export("Scene_Color_HDR", hdr_desc);
-                let depth_alias = builder.mutate_and_export(scene_depth_ss, "Scene_Depth_Opaque");
+                let scene_hdr = builder.create_texture("Scene_Color_HDR", hdr_desc);
+                let depth_alias = builder.mutate_texture(scene_depth_ss, "Scene_Depth_Opaque");
                 (
                     scene_hdr,
                     depth_alias,
@@ -160,7 +160,7 @@ impl OpaqueFeature {
                         | wgpu::TextureUsages::TEXTURE_BINDING
                         | wgpu::TextureUsages::COPY_SRC,
                 );
-                let specular_single = builder.create_and_export("Specular_MRT", spec_desc);
+                let specular_single = builder.create_texture("Specular_MRT", spec_desc);
 
                 if is_msaa {
                     let msaa_spec_desc = TextureDesc::new(
@@ -174,8 +174,7 @@ impl OpaqueFeature {
                         wgpu::TextureUsages::RENDER_ATTACHMENT
                             | wgpu::TextureUsages::TEXTURE_BINDING,
                     );
-                    let specular_msaa =
-                        builder.create_and_export("Specular_MRT_MSAA", msaa_spec_desc);
+                    let specular_msaa = builder.create_texture("Specular_MRT_MSAA", msaa_spec_desc);
                     (specular_msaa, Some(specular_single))
                 } else {
                     (specular_single, None)
@@ -192,7 +191,7 @@ impl OpaqueFeature {
                     wgpu::TextureFormat::Rg16Float,
                     wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 );
-                Some(builder.create_and_export("Velocity_Buffer", vel_desc))
+                Some(builder.create_texture("Velocity_Buffer", vel_desc))
             } else {
                 None
             };

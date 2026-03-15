@@ -39,7 +39,7 @@
 //! renderer.begin_frame(scene, &camera, assets, time)?
 //!     .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
 //!         let new_surface = rdg.add_pass("UI_Pass", |builder| {
-//!             let out = builder.mutate_and_export(bb.surface_out, "Surface_With_UI");
+//!             let out = builder.mutate_texture(bb.surface_out, "Surface_With_UI");
 //!             (ui_node, out)
 //!         });
 //!         GraphBlackboard { surface_out: new_surface, ..bb }
@@ -234,7 +234,7 @@ impl<'a> FrameComposer<'a> {
     /// composer
     ///     .add_custom_pass(HookStage::AfterPostProcess, |rdg, bb| {
     ///         let new_surface = rdg.add_pass("MyPass", |builder| {
-    ///             let out = builder.mutate_and_export(bb.surface_out, "Surface_MyPass");
+    ///             let out = builder.mutate_texture(bb.surface_out, "Surface_MyPass");
     ///             (MyPassNode { target: out }, out)
     ///         });
     ///         GraphBlackboard { surface_out: new_surface, ..bb }

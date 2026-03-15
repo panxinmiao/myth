@@ -81,7 +81,7 @@ impl SimpleForwardFeature {
 
         ctx.graph.add_pass("SimpleForward_Pass", |builder| {
             builder.write_texture(surface_out);
-            let scene_depth = builder.create_and_export("Scene_Depth", depth_desc);
+            let scene_depth = builder.create_texture("Scene_Depth", depth_desc);
 
             if let Some(shadow) = shadow_tex {
                 builder.read_texture(shadow);

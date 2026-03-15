@@ -849,13 +849,13 @@ mod tests {
             let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
             let scene_color = graph.add_pass("Opaque", |builder| {
-                let out = builder.create_and_export("SceneColor", dummy_desc());
+                let out = builder.create_texture("SceneColor", dummy_desc());
                 (MockExec, out)
             });
 
             let bloom_tex = graph.add_pass("Bloom", |builder| {
                 builder.read_texture(scene_color);
-                let out = builder.create_and_export("BloomTex", dummy_desc());
+                let out = builder.create_texture("BloomTex", dummy_desc());
                 (MockExec, out)
             });
 
@@ -904,8 +904,8 @@ mod tests {
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
         let (color, motion) = graph.add_pass("GBuffer", |builder| {
-            let color = builder.create_and_export("Color", dummy_desc());
-            let motion = builder.create_and_export("MotionVec", dummy_desc());
+            let color = builder.create_texture("Color", dummy_desc());
+            let motion = builder.create_texture("MotionVec", dummy_desc());
             (MockExec, (color, motion))
         });
 
@@ -943,7 +943,7 @@ mod tests {
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
         let internal = graph.add_pass("MacroNode", |builder| {
-            let internal = builder.create_and_export("Internal", dummy_desc());
+            let internal = builder.create_texture("Internal", dummy_desc());
             builder.read_texture(internal);
             builder.write_texture(backbuffer);
             (MockExec, internal)
@@ -966,13 +966,13 @@ mod tests {
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
         let color = graph.add_pass("Opaque", |builder| {
-            let out = builder.create_and_export("Color", dummy_desc());
+            let out = builder.create_texture("Color", dummy_desc());
             (MockExec, out)
         });
 
         let bloom = graph.add_pass("Bloom", |builder| {
             builder.read_texture(color);
-            let out = builder.create_and_export("Bloom", dummy_desc());
+            let out = builder.create_texture("Bloom", dummy_desc());
             (MockExec, out)
         });
 
@@ -1015,7 +1015,7 @@ mod tests {
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
         let color_v0 = graph.add_pass("Opaque", |builder| {
-            let out = builder.create_and_export("SceneColor_v0", dummy_desc());
+            let out = builder.create_texture("SceneColor_v0", dummy_desc());
             (MockExec, out)
         });
 
@@ -1027,7 +1027,7 @@ mod tests {
         );
 
         let color_v1 = graph.add_pass("Skybox", |builder| {
-            let out = builder.mutate_and_export(color_v0, "SceneColor_v1");
+            let out = builder.mutate_texture(color_v0, "SceneColor_v1");
             (MockExec, out)
         });
 
@@ -1038,7 +1038,7 @@ mod tests {
         );
 
         let color_v2 = graph.add_pass("Transparent", |builder| {
-            let out = builder.mutate_and_export(color_v1, "SceneColor_v2");
+            let out = builder.mutate_texture(color_v1, "SceneColor_v2");
             (MockExec, out)
         });
 
@@ -1080,7 +1080,7 @@ mod tests {
     }
 
     #[test]
-    fn test_mutate_and_export_api() {
+    fn test_mutate_texture_api() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
         let mut graph = begin_test_frame(&mut storage, &arena);
@@ -1088,12 +1088,12 @@ mod tests {
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
         let color = graph.add_pass("Writer", |builder| {
-            let out = builder.create_and_export("Color", dummy_desc());
+            let out = builder.create_texture("Color", dummy_desc());
             (MockExec, out)
         });
 
         let mutated_id = graph.add_pass("Mutator", |builder| {
-            let out = builder.mutate_and_export(color, "Color_Mutated");
+            let out = builder.mutate_texture(color, "Color_Mutated");
             (MockExec, out)
         });
 
@@ -1137,12 +1137,12 @@ mod tests {
 
         let scene_color = ctx.with_group("Scene", |ctx| {
             let opaque_out = ctx.graph.add_pass("Opaque", |builder| {
-                let out = builder.create_and_export("SceneColor", dummy_desc());
+                let out = builder.create_texture("SceneColor", dummy_desc());
                 (MockExec, out)
             });
 
             let skybox_out = ctx.graph.add_pass("Skybox", |builder| {
-                let out = builder.mutate_and_export(opaque_out, "SceneColor_Sky");
+                let out = builder.mutate_texture(opaque_out, "SceneColor_Sky");
                 (MockExec, out)
             });
 
@@ -1180,13 +1180,13 @@ mod tests {
 
         let bloom_out = graph.with_group("Bloom_System", |g| {
             let extract_out = g.add_pass("Bloom_Extract", |builder| {
-                let out = builder.create_and_export("Bloom_Mip0", dummy_desc());
+                let out = builder.create_texture("Bloom_Mip0", dummy_desc());
                 (MockExec, out)
             });
 
             g.add_pass("Bloom_Composite", |builder| {
                 builder.read_texture(extract_out);
-                let out = builder.create_and_export("Bloom_Final", dummy_desc());
+                let out = builder.create_texture("Bloom_Final", dummy_desc());
                 (MockExec, out)
             })
         });

@@ -22,11 +22,6 @@ impl PassBuilder<'_, '_> {
         self.write_texture(id)
     }
 
-    #[inline]
-    pub fn create_and_export(&mut self, name: &'static str, desc: TextureDesc) -> TextureNodeId {
-        self.create_texture(name, desc)
-    }
-
     pub fn read_external_texture(
         &mut self,
         name: &'static str,
@@ -61,7 +56,7 @@ impl PassBuilder<'_, '_> {
         if let Some(existing_producer) = res.producer {
             panic!(
                 "SSA Violation in Pass '{}': Texture '{}' already has a producer (Pass '{}'). \
-                 Use `builder.mutate_and_export()` to create a new version (alias).",
+                 Use `builder.mutate_texture()` to create a new version (alias).",
                 self.graph.storage.passes[self.pass_index].name,
                 res.name,
                 self.graph.storage.passes[existing_producer].name
@@ -74,7 +69,7 @@ impl PassBuilder<'_, '_> {
     }
 
     #[must_use = "The returned TextureNodeId must be used for downstream wiring"]
-    pub fn mutate_and_export(
+    pub fn mutate_texture(
         &mut self,
         input_id: TextureNodeId,
         new_name: &'static str,

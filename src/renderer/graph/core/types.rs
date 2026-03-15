@@ -29,7 +29,7 @@ pub enum RenderTargetOps {
     /// Preserve existing content (maps to `LoadOp::Load`).
     ///
     /// Only legal when the resource was already written in the current frame
-    /// (e.g. an SSA alias produced by `mutate_and_export`).  The RDG will
+    /// (e.g. an SSA alias produced by `mutate_texture`).  The RDG will
     /// panic if this is used on a freshly created transient resource that
     /// has never been written.
     Load,
@@ -130,7 +130,7 @@ pub struct ResourceRecord {
     pub external_view_ptr: Option<*const Tracked<wgpu::TextureView>>,
 
     /// If this resource is a versioned alias produced by
-    /// [`PassBuilder::mutate_and_export`], points to the root (non-alias)
+    /// [`PassBuilder::mutate_texture`], points to the root (non-alias)
     /// resource.  Aliased resources share the same physical GPU memory as
     /// their root ancestor, enabling in-place relay rendering (e.g.
     /// Opaque → Skybox → Transparent) without ambiguous read-write edges.

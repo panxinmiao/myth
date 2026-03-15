@@ -58,7 +58,7 @@ pub enum HookStage {
 /// ```rust,ignore
 /// renderer.add_custom_pass_hook(HookStage::AfterPostProcess, |graph, cursor| {
 ///     let new_surface = graph.add_pass("UI_Pass", |builder| {
-///         let exported = builder.mutate_and_export(cursor.surface_out, "Surface_With_UI");
+///         let exported = builder.mutate_texture(cursor.surface_out, "Surface_With_UI");
 ///         let ui_node = UiPassNode { target_tex: exported, .. };
 ///         (ui_node, exported)
 ///     });

@@ -328,7 +328,7 @@ impl SsssFeature {
                 builder.read_texture(scene_depth);
                 builder.read_texture(scene_normals);
                 builder.read_texture(feature_id);
-                let out = builder.create_and_export("SSSS_Temp", temp_desc);
+                let out = builder.create_texture("SSSS_Temp", temp_desc);
                 let node = SsssHorizontalNode {
                     scene_color_in: scene_color,
                     temp_blur: out,
@@ -351,7 +351,7 @@ impl SsssFeature {
                 builder.read_texture(scene_normals);
                 builder.read_texture(feature_id);
                 builder.read_texture(specular_tex);
-                let out = builder.mutate_and_export(scene_color, "Scene_Color_SSSS");
+                let out = builder.mutate_texture(scene_color, "Scene_Color_SSSS");
                 let node = SsssVerticalNode {
                     scene_color_out: out,
                     temp_blur,
@@ -506,7 +506,7 @@ impl<'a> PassNode<'a> for SsssHorizontalNode<'a> {
 /// Ephemeral per-frame node for the vertical SSS scatter pass.
 ///
 /// Reads the `temp_blur` scratch texture and writes back to the scene colour
-/// alias (via `mutate_and_export`). Uses stencil test to preserve non-SSS pixels.
+/// alias (via `mutate_texture`). Uses stencil test to preserve non-SSS pixels.
 struct SsssVerticalNode<'a> {
     scene_color_out: TextureNodeId,
     temp_blur: TextureNodeId,

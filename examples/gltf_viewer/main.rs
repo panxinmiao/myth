@@ -431,7 +431,12 @@ impl AppHandler for GltfViewer {
         }
 
         // 4. 设置相机
-        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
+        let mut camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
+
+        camera.set_aa_mode(AntiAliasingMode::TAA(TaaSettings {
+            feedback_weight: 0.9,
+        }));
+
         let cam_node_id = scene.add_camera(camera);
         if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 1.0, 5.0);
@@ -648,7 +653,7 @@ impl AppHandler for GltfViewer {
             composer
                 .add_custom_pass(HookStage::AfterPostProcess, move |rdg, bb| {
                     let new_surface = rdg.add_pass("UI_Pass", |builder| {
-                        let out = builder.mutate_and_export(bb.surface_out, "Surface_With_UI");
+                        let out = builder.mutate_texture(bb.surface_out, "Surface_With_UI");
                         let node = ui_pass::UiPassNode {
                             pass: ui_pass_ref,
                             target_tex: out,

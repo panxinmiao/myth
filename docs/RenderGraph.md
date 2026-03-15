@@ -68,7 +68,7 @@ In traditional rendering, a Pass might simply "bind a texture and draw to it." B
 
 **But what if multiple Passes need to render to the same screen buffer?**
 
-To avoid in-place modifications that would break the DAG topology, I introduced the concept of **Aliasing** (`mutate_and_export`).
+To avoid in-place modifications that would break the DAG topology, I introduced the concept of **Aliasing** (`mutate_texture`).
 
 When a Pass needs to perform a "read-modify-write" operation, it consumes the previous logical version and produces a **new** logical version. The graph compiler understands this topological chain and guarantees that, at the physical level, **they alias to the exact same block of physical GPU memory.**
 
@@ -83,10 +83,10 @@ let pass_out = graph.add_pass("Some_Pass", |builder| {
     builder.read_texture(input_id);
 
     // Create a brand new resource.
-    let output_texture = builder.create_and_export("Some_Out_Res", TextureDesc::new(...));
+    let output_texture = builder.create_texture("Some_Out_Res", TextureDesc::new(...));
 
     // Declare a new logical resource that aliases an input resource. (Read-Modify-Write)
-    let output_texture_2 = builder.mutate_and_export(input_id_2, "Some_Out_Res2", TextureDesc::new(...));
+    let output_texture_2 = builder.mutate_texture(input_id_2, "Some_Out_Res2", TextureDesc::new(...));
 
     let node = SomePassNode {
         input_texture: input_id,
@@ -104,7 +104,7 @@ let pass_out = graph.add_pass("Some_Pass", |builder| {
 
 The RDG's lifecycle is strictly divided into distinct phases, ensuring Passes only access the exact data they need, precisely when they need it:
 
-1. **Setup (Topology Building):** In this phase, Passes are merely data packets. They declare dependencies using methods like `builder.read_texture()` and `builder.create_and_export()`. At this point, zero physical GPU resources exist.
+1. **Setup (Topology Building):** In this phase, Passes are merely data packets. They declare dependencies using methods like `builder.read_texture()` and `builder.create_texture()`. At this point, zero physical GPU resources exist.
 2. **Compilation (The Magic):** The graph compiler takes over. It performs a topological sort, calculates precise resource lifecycles, culls dead passes, and allocates physical memory using aggressive aliasing strategies. All necessary memory barriers are automatically deduced.
 3. **Preparation (Late Binding):** Physical memory is now available. Passes fetch their physical `wgpu::TextureView`s and assemble transient BindGroups. For instance, the `ShadowPass` dynamically creates its layer-based array views at this exact moment, perfectly decoupling from the static resource manager.
 4. **Execution (Command Recording):** Passes record commands into the `wgpu::CommandEncoder`. Because all dependencies and barriers were flawlessly resolved during compilation, the execution phase is completely lock-free and blazing fast.
@@ -271,7 +271,7 @@ flowchart
     P7 -->|"LDR_Intermediate"| P8;
     P8 ==>|"Surface_After_FXAA"| P9;
     OUT_16[/"Surface_With_UI"/]:::external
-    P9 -->|"Surface_With_UI"| OUT_16;
+    P9 --> OUT_16;
 
 ```
 
@@ -309,7 +309,7 @@ flowchart
     P5 -->|"LDR_Intermediate"| P6;
     P6 ==>|"Surface_After_FXAA"| P7;
     OUT_11[/"Surface_With_UI"/]:::external
-    P7 -->|"Surface_With_UI"| OUT_11;
+    P7 --> OUT_11;
 
 ```
 
@@ -339,7 +339,8 @@ Here is a live dump of Myth Engine rendering a complex scene:
 flowchart TD
     classDef alive fill:#2b3c5a,stroke:#4a6f9f,stroke-width:2px,color:#fff,rx:5,ry:5;
     classDef dead fill:#222,stroke:#555,stroke-width:2px,stroke-dasharray: 5 5,color:#777,rx:5,ry:5;
-    classDef external fill:#5a2b3c,stroke:#9f4a6f,stroke-width:2px,color:#fff;
+    classDef external_out fill:#5a2b3c,stroke:#9f4a6f,stroke-width:2px,color:#fff;
+    classDef external_in fill:#3c5a2b,stroke:#6f9f4a,stroke-width:2px,color:#fff;
     P24(["UI_Pass"]):::alive
     subgraph Shadow ["Shadow"]
         direction TB
@@ -350,9 +351,8 @@ flowchart TD
         direction TB
         P1(["Pre_Pass"]):::alive
         P4(["Opaque_Pass"]):::alive
-        P7(["Msaa_Sync_Pass"]):::alive
-        P8(["Skybox_Pass"]):::alive
-        P9(["Transparent_Pass"]):::alive
+        P7(["Skybox_Pass"]):::alive
+        P10(["Transparent_Pass"]):::alive
         subgraph SSAO_System ["SSAO_System"]
             direction TB
             P2(["SSAO_Raw"]):::alive
@@ -365,36 +365,45 @@ flowchart TD
             P6(["SSSS_Blur_V"]):::alive
         end
         style SSSS_System fill:#10b98114,stroke:#10b981,stroke-width:2px,stroke-dasharray: 5 5,color:#fff,rx:10,ry:10
+        subgraph TAA_System ["TAA_System"]
+            direction TB
+            P8(["TAA_Resolve"]):::alive
+            P9(["TAA_Save_History"]):::alive
+        end
+        style TAA_System fill:#8b5cf614,stroke:#8b5cf6,stroke-width:2px,stroke-dasharray: 5 5,color:#fff,rx:10,ry:10
     end
     style Scene fill:#ef444414,stroke:#ef4444,stroke-width:2px,stroke-dasharray: 5 5,color:#fff,rx:10,ry:10
     subgraph PostProcess ["PostProcess"]
         direction TB
-        P22(["ToneMap_Pass"]):::alive
-        P23(["FXAA_Pass"]):::alive
+        P23(["ToneMap_Pass"]):::alive
         subgraph Bloom_System ["Bloom_System"]
             direction TB
-            P10(["Bloom_Extract"]):::alive
-            P11(["Bloom_Downsample_1"]):::alive
-            P12(["Bloom_Downsample_2"]):::alive
-            P13(["Bloom_Downsample_3"]):::alive
-            P14(["Bloom_Downsample_4"]):::alive
-            P15(["Bloom_Downsample_5"]):::alive
-            P16(["Bloom_Upsample_4"]):::alive
-            P17(["Bloom_Upsample_3"]):::alive
-            P18(["Bloom_Upsample_2"]):::alive
-            P19(["Bloom_Upsample_1"]):::alive
-            P20(["Bloom_Upsample_0"]):::alive
-            P21(["Bloom_Composite"]):::alive
+            P11(["Bloom_Extract"]):::alive
+            P12(["Bloom_Downsample_1"]):::alive
+            P13(["Bloom_Downsample_2"]):::alive
+            P14(["Bloom_Downsample_3"]):::alive
+            P15(["Bloom_Downsample_4"]):::alive
+            P16(["Bloom_Downsample_5"]):::alive
+            P17(["Bloom_Upsample_4"]):::alive
+            P18(["Bloom_Upsample_3"]):::alive
+            P19(["Bloom_Upsample_2"]):::alive
+            P20(["Bloom_Upsample_1"]):::alive
+            P21(["Bloom_Upsample_0"]):::alive
+            P22(["Bloom_Composite"]):::alive
         end
         style Bloom_System fill:#06b6d414,stroke:#06b6d4,stroke-width:2px,stroke-dasharray: 5 5,color:#fff,rx:10,ry:10
     end
     style PostProcess fill:#8b5cf614,stroke:#8b5cf6,stroke-width:2px,stroke-dasharray: 5 5,color:#fff,rx:10,ry:10
 
     %% --- Data Flow (Edges) ---
+    IN_14[\"TAA_History_Read"\]:::external_in
+    OUT_16[/"TAA_History_Write"/]:::external_out
+    OUT_30[/"Surface_With_UI"/]:::external_out
     P0 -->|"Shadow_Array_Map"| P4;
-    P0 -->|"Shadow_Array_Map"| P9;
+    P0 -->|"Shadow_Array_Map"| P10;
     P1 -->|"Scene_Depth"| P2;
     P1 -->|"Scene_Depth"| P3;
+    P1 -->|"Scene_Depth"| P4;
     P1 -->|"Scene_Depth"| P5;
     P1 -->|"Scene_Depth"| P6;
     P1 -->|"Scene_Normals"| P2;
@@ -405,40 +414,41 @@ flowchart TD
     P1 -->|"Feature_ID"| P6;
     P2 -->|"SSAO_Raw_Tex"| P3;
     P3 -->|"SSAO_Output"| P4;
-    P3 -->|"SSAO_Output"| P9;
-    P4 -->|"Scene_Depth_MSAA"| P8;
-    P4 -->|"Scene_Depth_MSAA"| P9;
+    P3 -->|"SSAO_Output"| P10;
     P4 -->|"Scene_Color_HDR"| P5;
     P4 -->|"Scene_Color_HDR"| P6;
+    P4 ==>|"Scene_Depth_Opaque"| P7;
+    P4 ==>|"Scene_Depth_Opaque"| P10;
     P4 -->|"Specular_MRT"| P6;
+    P4 -->|"Velocity_Buffer"| P8;
     P5 -->|"SSSS_Temp"| P6;
     P6 ==>|"Scene_Color_SSSS"| P7;
-    P7 -->|"Scene_Color_MSAA_Sync"| P8;
-    P8 ==>|"Scene_Color_Skybox"| P9;
-    P9 -->|"Scene_Color_HDR_Final"| P10;
-    P9 -->|"Scene_Color_HDR_Final"| P21;
-    P10 -->|"Bloom_Mip_0"| P11;
-    P10 -->|"Bloom_Mip_0"| P20;
-    P11 -->|"Bloom_Mip_1"| P12;
-    P11 -->|"Bloom_Mip_1"| P19;
-    P12 -->|"Bloom_Mip_2"| P13;
-    P12 -->|"Bloom_Mip_2"| P18;
-    P13 -->|"Bloom_Mip_3"| P14;
-    P13 -->|"Bloom_Mip_3"| P17;
-    P14 -->|"Bloom_Mip_4"| P15;
-    P14 -->|"Bloom_Mip_4"| P16;
-    P15 -->|"Bloom_Mip_5"| P16;
-    P16 ==>|"Bloom_Up_4"| P17;
-    P17 ==>|"Bloom_Up_3"| P18;
-    P18 ==>|"Bloom_Up_2"| P19;
-    P19 ==>|"Bloom_Up_1"| P20;
-    P20 ==>|"Bloom_Up_0"| P21;
-    P21 -->|"Scene_Color_Bloom"| P22;
-    P22 ==>|"Surface_ToneMapped"| P23;
-    P23 ==>|"Surface_FXAA"| P24;
-    OUT_33[/"Surface_With_UI"/]:::external
-    P24 -->|"Surface_With_UI"| OUT_33;
-
+    P7 ==>|"Scene_Color_Skybox"| P8;
+    IN_14 -.-> P8;
+    P8 -->|"TAA_Resolved"| P9;
+    P8 -->|"TAA_Resolved"| P10;
+    P9 --> OUT_16;
+    P10 ==>|"Scene_Color_Transparent"| P11;
+    P10 ==>|"Scene_Color_Transparent"| P22;
+    P11 -->|"Bloom_Mip_0"| P12;
+    P11 -->|"Bloom_Mip_0"| P21;
+    P12 -->|"Bloom_Mip_1"| P13;
+    P12 -->|"Bloom_Mip_1"| P20;
+    P13 -->|"Bloom_Mip_2"| P14;
+    P13 -->|"Bloom_Mip_2"| P19;
+    P14 -->|"Bloom_Mip_3"| P15;
+    P14 -->|"Bloom_Mip_3"| P18;
+    P15 -->|"Bloom_Mip_4"| P16;
+    P15 -->|"Bloom_Mip_4"| P17;
+    P16 -->|"Bloom_Mip_5"| P17;
+    P17 ==>|"Bloom_Up_4"| P18;
+    P18 ==>|"Bloom_Up_3"| P19;
+    P19 ==>|"Bloom_Up_2"| P20;
+    P20 ==>|"Bloom_Up_1"| P21;
+    P21 ==>|"Bloom_Up_0"| P22;
+    P22 -->|"Scene_Color_Bloom"| P23;
+    P23 -->|"Surface_View"| P24;
+    P24 --> OUT_30;
 ```
 
 *(Legend: Single-line arrows --> indicate logical data dependencies; double-line arrows ==> indicate physical memory aliasing/in-place reuse)*
@@ -513,7 +523,7 @@ All 12 benchmarks were written using the **Criterion** framework and run on the 
 | 100 | 6.76 µs | 67.6 ns |
 | 200 | 14.0 µs | 70.2 ns |
 
-**Conclusion**: The `mutate_and_export` path is completely linear with no added complexity.
+**Conclusion**: The `mutate_texture` path is completely linear with no added complexity.
 
 #### 5. Dead Pass Culling (Dead-Pass Culling)
 
