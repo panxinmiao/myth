@@ -296,14 +296,14 @@ impl TaaFeature {
         );
         
         let resolved_id = ctx.graph.add_pass("TAA_Resolve", |builder| {
-            let history_id  = builder.import_external_texture(
+            let history_in  = builder.import_external_texture(
                 "TAA_History", 
                 resolved_desc,
                 history_view
             );
 
-            builder.read_texture(history_id);
-            builder.write_texture(history_id);
+            let _history_out = builder.mutate_and_export(history_in, "TAA_History_Write");
+            // builder.write_texture(history_id);
             builder.read_texture(active_color);
             builder.read_texture(velocity_buffer);
             

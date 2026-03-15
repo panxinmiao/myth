@@ -293,8 +293,9 @@ impl<'a> FrameComposer<'a> {
             wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
         );
 
-        let surface_out = graph.import_external_resource("Surface_View", surface_desc, &Tracked::with_id(surface_view, 0));
+        let surface_view_tracked = Tracked::with_id(surface_view, 0);
 
+        let surface_out = graph.import_external_resource("Surface_View", surface_desc, &surface_view_tracked);
 
         let mut graph_ctx = GraphBuilderContext {
             graph: &mut graph,
@@ -350,10 +351,11 @@ impl<'a> FrameComposer<'a> {
         // no blackboard lookups remain for mutable resources.
 
         // Track scene_color / scene_depth for the GraphBlackboard (hooks).
-        let mut bb_scene_color = surface_out;
-        let mut bb_scene_depth = surface_out;
+        let mut bb_scene_color = None;
+        let mut bb_scene_depth = None;
 
         let mut current_surface = surface_out;
+
 
         if is_high_fidelity {
             // ────────────────────────────────────────────────────────────
@@ -362,7 +364,8 @@ impl<'a> FrameComposer<'a> {
 
             // ── Scene Rendering Group ──────────────────────────────────
 
-            let (post_transparent_color, prepass_depth, velocity_buffer) =
+            let (mut active_color, mut scene_depth) =
+
                 graph_ctx.with_group("Scene", |c| {
                     // 1. Prepass
                     let prepass_out =
@@ -370,12 +373,14 @@ impl<'a> FrameComposer<'a> {
                             .prepass
                             .add_to_graph(c, needs_normal, needs_feature_id);
 
+                    let scene_depth = prepass_out.scene_depth;
+
                     // 2. SSAO
                     let ssao_output = if ssao_enabled {
                         Some(
                             self.ctx.ssao_pass.add_to_graph(
                                 c,
-                                prepass_out.scene_depth,
+                                scene_depth,
                                 prepass_out
                                     .scene_normals
                                     .expect("SSAO requires scene normals from Prepass"),
@@ -389,7 +394,7 @@ impl<'a> FrameComposer<'a> {
                     let opaque_has_prepass = !is_msaa;
                     let opaque_out = self.ctx.opaque_pass.add_to_graph(
                         c,
-                        prepass_out.scene_depth,
+                        scene_depth,
                         opaque_has_prepass,
                         self.ctx.extracted_scene.background.clear_color(),
                         ssss_enabled,
@@ -399,14 +404,12 @@ impl<'a> FrameComposer<'a> {
                     );
 
                     let mut active_color = opaque_out.active_color;
-                    let active_depth = opaque_out.active_depth;
-                    let mut scene_color_hdr = opaque_out.scene_color_hdr;
 
                     // 4. SSSS
                     if ssss_enabled {
-                        scene_color_hdr = self.ctx.ssss_pass.add_to_graph(
+                        active_color = self.ctx.ssss_pass.add_to_graph(
                             c,
-                            scene_color_hdr,
+                            opaque_out.scene_color_hdr,  //Ensure single sample input for SSSS, even with MSAA (input is internally resolved if needed)
                             prepass_out.scene_depth,
                             prepass_out.scene_normals.unwrap(),
                             prepass_out.feature_id.unwrap(),
@@ -414,9 +417,9 @@ impl<'a> FrameComposer<'a> {
                         );
 
                         if is_msaa {
-                            active_color = self.ctx.msaa_sync_pass.add_to_graph(c, scene_color_hdr);
-                        } else {
-                            active_color = scene_color_hdr;
+                            // If MSAA is enabled, synchronize the SSSS output back to an MSAA texture for downstream passes (Skybox, Transparent) that expect MSAA input. 
+                            // This avoids redundant MSAA resolve + re-multisample operations.
+                            active_color = self.ctx.msaa_sync_pass.add_to_graph(c, active_color);
                         }
                     }
 
@@ -425,13 +428,31 @@ impl<'a> FrameComposer<'a> {
                         active_color =
                             self.ctx
                                 .skybox_pass
-                                .add_to_graph(c, active_color, active_depth);
+                                .add_to_graph(c, active_color,  opaque_out.active_depth);
                     }
 
-                    // 6. Transmission Copy
+                    // ── 6. TAA Resolve ────────────────────────────────────────────
+                    // Resolve temporal anti-aliasing before bloom/tone-mapping.
+                    // The resolved colour replaces post_transparent_color for
+                    // downstream post-processing.
+                    if taa_enabled {
+                        // Not Msaa.
+                        if let Some(velocity) = opaque_out.velocity_buffer {
+                            self.ctx.taa_pass.ensure_history_buffers(
+                                &self.ctx.wgpu_ctx.device,
+                                width,
+                                height,
+                            );
+                            active_color = self.ctx
+                                .taa_pass
+                                .add_to_graph(c, active_color, velocity)
+                        }
+                    }
+
+                    // 7. Transmission Copy
                     let transmission_tex = if has_transmission {
                         let tx_source = if is_msaa {
-                            scene_color_hdr
+                            opaque_out.scene_color_hdr
                         } else {
                             active_color
                         };
@@ -444,27 +465,24 @@ impl<'a> FrameComposer<'a> {
                         None
                     };
 
-                    // 7. Transparent
-                    let post_transparent_color = self.ctx.transparent_pass.add_to_graph(
+                    // 8. Transparent
+                    let active_color = self.ctx.transparent_pass.add_to_graph(
                         c,
                         active_color,
-                        active_depth,
+                        opaque_out.active_depth,
                         transmission_tex,
                         ssao_output,
                         shadow_tex,
                     );
 
-                    (post_transparent_color, prepass_out.scene_depth, opaque_out.velocity_buffer)
+                    (active_color, scene_depth)
                 });
-
-            bb_scene_color = post_transparent_color;
-            bb_scene_depth = prepass_depth;
 
             // ── Before-Post-Process Hooks ──────────────────────────────
             {
                 let mut blackboard = GraphBlackboard {
-                    scene_color: post_transparent_color,
-                    scene_depth: prepass_depth,
+                    scene_color: Some(active_color),
+                    scene_depth: Some(scene_depth),
                     surface_out,
                 };
                 for (stage, hook_opt) in &mut self.hooks {
@@ -474,42 +492,21 @@ impl<'a> FrameComposer<'a> {
                         blackboard = hook(graph_ctx.graph, blackboard);
                     }
                 }
+                
+                active_color = blackboard.scene_color.unwrap_or(active_color);
+                scene_depth = blackboard.scene_depth.unwrap_or(scene_depth);
             }
 
-            // ── TAA Resolve ────────────────────────────────────────────
-            // Resolve temporal anti-aliasing before bloom/tone-mapping.
-            // The resolved colour replaces post_transparent_color for
-            // downstream post-processing.
-            let post_taa_color = if taa_enabled {
-                if let Some(velocity) = velocity_buffer {
-                    self.ctx.taa_pass.ensure_history_buffers(
-                        &self.ctx.wgpu_ctx.device,
-                        width,
-                        height,
-                    );
-                    self.ctx
-                        .taa_pass
-                        .add_to_graph(&mut graph_ctx, post_transparent_color, velocity)
-                } else {
-                    post_transparent_color
-                }
-            } else {
-                post_transparent_color
-            };
-
             // ── Post-Processing Group ──────────────────────────────────
-
             current_surface = graph_ctx.with_group("PostProcess", |ctx| {
                 // Bloom (internally flattened into Bloom_System subgroup)
-                let tonemap_input = if bloom_enabled {
-                    self.ctx.bloom_pass.add_to_graph(
+                if bloom_enabled {
+                    active_color = self.ctx.bloom_pass.add_to_graph(
                         ctx,
-                        post_taa_color,
+                        active_color,
                         self.ctx.scene.bloom.karis_average,
                         self.ctx.scene.bloom.max_mip_levels(),
                     )
-                } else {
-                    post_taa_color
                 };
 
                 // ToneMapping: HDR → LDR
@@ -518,11 +515,11 @@ impl<'a> FrameComposer<'a> {
                     let ldr = ctx
                         .graph
                         .register_resource("LDR_Intermediate", surface_desc, false);
-                    self.ctx.tone_map_pass.add_to_graph(ctx, tonemap_input, ldr)
+                    self.ctx.tone_map_pass.add_to_graph(ctx, active_color, ldr)
                 } else {
                     self.ctx
                         .tone_map_pass
-                        .add_to_graph(ctx, tonemap_input, current_surface)
+                        .add_to_graph(ctx, active_color, current_surface)
                 };
 
                 // FXAA: anti-alias the LDR result onto the surface
@@ -533,6 +530,9 @@ impl<'a> FrameComposer<'a> {
                             .fxaa_pass
                             .add_to_graph(ctx, ldr_intermediate, current_surface);
                 }
+
+                bb_scene_color = Some(active_color);
+                bb_scene_depth = Some(scene_depth);
 
                 surface
             });
