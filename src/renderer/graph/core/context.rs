@@ -7,7 +7,6 @@ use crate::renderer::core::gpu::{SamplerRegistry, ScreenBindGroupInfo, Tracked};
 use crate::renderer::graph::frame::{BakedRenderLists, RenderLists};
 use crate::renderer::graph::{ExtractedScene, RenderState};
 use crate::renderer::pipeline::{PipelineCache, ShaderManager};
-use rustc_hash::FxHashMap;
 use wgpu::{Device, Queue, TextureView};
 
 use super::allocator::{SubViewKey, TransientPool};
@@ -74,7 +73,6 @@ pub struct PrepareContext<'a> {
 pub struct ViewResolver<'a> {
     pub resources: &'a [ResourceRecord],
     pub pool: &'a mut TransientPool,
-    pub external_resources: &'a FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
 }
 
 #[must_use]
@@ -96,9 +94,8 @@ impl ViewResolver<'_> {
         let res = &self.resources[root_id.0 as usize];
 
         if res.is_external {
-            self.external_resources
-                .get(&root_id)
-                .unwrap_or_else(|| panic!("External {} resource missing!", res.name))
+            let ptr = res.external_view_ptr.expect("External resource missing view pointer!");
+            unsafe { &*ptr }
         } else {
             let physical_index = res.physical_index.expect("No physical memory!");
             self.pool.get_tracked_view(physical_index)
@@ -242,8 +239,7 @@ pub struct ExecuteContext<'a> {
     pub queue: &'a Queue,
     pub pipeline_cache: &'a PipelineCache,
     pub global_bind_group_cache: &'a GlobalBindGroupCache,
-    /// External views (e.g. swapchain backbuffer) injected before the execute loop.
-    pub external_views: &'a FxHashMap<TextureNodeId, &'a TextureView>,
+
     // ─── Scene Data (Phase 3: full RDG integration) ──────────────────
     /// GPU resource manager (read-only) — used by compute, post-processing,
     /// and skybox passes that have not yet been migrated to baked commands.
@@ -276,9 +272,9 @@ impl ExecuteContext<'_> {
         let res = &self.resources[root_id.0 as usize];
 
         if res.is_external {
-            self.external_views
-                .get(&root_id)
-                .expect("External view was not provided to ExecuteContext!")
+            let ptr = res.external_view_ptr.expect("External resource missing view pointer!");
+            let tracked = unsafe { &*ptr };
+            &**tracked // Deref Tracked 获得 wgpu::TextureView
         } else {
             let physical_index = res
                 .physical_index
@@ -325,7 +321,9 @@ impl ExecuteContext<'_> {
         let res = &self.resources[root_id.0 as usize];
 
         if res.is_external {
-            self.external_views.get(&root_id).copied()
+            let ptr = res.external_view_ptr?;
+            let tracked = unsafe { &*ptr };
+            Some(&**tracked) // Deref Tracked 获得 wgpu::TextureView
         } else {
             res.physical_index.map(|idx| self.pool.get_view(idx))
         }

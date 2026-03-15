@@ -1,5 +1,7 @@
 use smallvec::SmallVec;
 
+use crate::renderer::core::gpu::Tracked;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct TextureNodeId(pub u32);
 
@@ -121,6 +123,11 @@ pub struct ResourceRecord {
     pub first_use: usize,
     pub last_use: usize,
     pub physical_index: Option<usize>,
+
+    /// 外部资源的物理视图指针 (类型擦除生命周期)
+    /// 仅在 is_external == true 时有效。
+    /// 安全性保证: GraphStorage 每帧 clear，指针不会逃逸到下一帧。
+    pub external_view_ptr: Option<*const Tracked<wgpu::TextureView>>,
 
     /// If this resource is a versioned alias produced by
     /// [`PassBuilder::mutate_and_export`], points to the root (non-alias)

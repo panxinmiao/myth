@@ -47,8 +47,6 @@
 //!     .render();
 //! ```
 
-use rustc_hash::FxHashMap;
-
 use crate::assets::AssetServer;
 use crate::render::RenderState;
 use crate::renderer::core::binding::GlobalBindGroupCache;
@@ -59,7 +57,7 @@ use crate::renderer::graph::core::GraphStorage;
 use crate::renderer::graph::core::graph::FrameConfig;
 use crate::renderer::graph::core::{
     ExecuteContext, FrameArena, GraphBlackboard, HookStage, PrepareContext, RenderGraph,
-    TextureDesc, TextureNodeId, TransientPool, ViewResolver,
+    TextureDesc, TransientPool, ViewResolver,
 };
 use crate::renderer::graph::frame::{PreparedSkyboxDraw, RenderLists};
 use crate::renderer::graph::passes::{
@@ -173,7 +171,6 @@ impl GraphBuilderContext<'_, '_> {
 pub struct FrameComposer<'a> {
     ctx: ComposerContext<'a>,
     frame_config: FrameConfig,
-    external_res: FxHashMap<TextureNodeId, &'a Tracked<wgpu::TextureView>>,
     #[allow(clippy::type_complexity)]
     hooks: smallvec::SmallVec<
         [(
@@ -198,7 +195,6 @@ impl<'a> FrameComposer<'a> {
         Self {
             ctx,
             frame_config,
-            external_res: FxHashMap::default(),
             hooks: smallvec::SmallVec::new(),
         }
     }
@@ -290,6 +286,16 @@ impl<'a> FrameComposer<'a> {
 
         let mut graph = RenderGraph::new(self.ctx.graph_storage, self.ctx.frame_arena);
 
+        let surface_desc = TextureDesc::new_2d(
+            width,
+            height,
+            view_format,
+            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+        );
+
+        let surface_out = graph.import_external_resource("Surface_View", surface_desc, &Tracked::with_id(surface_view, 0));
+
+
         let mut graph_ctx = GraphBuilderContext {
             graph: &mut graph,
             pipeline_cache: self.ctx.pipeline_cache,
@@ -304,16 +310,7 @@ impl<'a> FrameComposer<'a> {
         let msaa_samples = self.ctx.wgpu_ctx.msaa_samples;
         let is_msaa = msaa_samples > 1;
 
-        let surface_desc = TextureDesc::new_2d(
-            width,
-            height,
-            view_format,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-        );
 
-        let surface_out = graph_ctx
-            .graph
-            .register_resource("Surface_Out", surface_desc, true);
 
         // ── 2b. Scene Configuration ────────────────────────────────────
 
@@ -357,7 +354,6 @@ impl<'a> FrameComposer<'a> {
         let mut bb_scene_depth = surface_out;
 
         let mut current_surface = surface_out;
-        let mut taa_resolved_id: Option<TextureNodeId> = None;
 
         if is_high_fidelity {
             // ────────────────────────────────────────────────────────────
@@ -366,7 +362,7 @@ impl<'a> FrameComposer<'a> {
 
             // ── Scene Rendering Group ──────────────────────────────────
 
-            let (post_transparent_color, prepass_depth, _ssao_output, velocity_buffer) =
+            let (post_transparent_color, prepass_depth, velocity_buffer) =
                 graph_ctx.with_group("Scene", |c| {
                     // 1. Prepass
                     let prepass_out =
@@ -458,7 +454,7 @@ impl<'a> FrameComposer<'a> {
                         shadow_tex,
                     );
 
-                    (post_transparent_color, prepass_out.scene_depth, ssao_output, opaque_out.velocity_buffer)
+                    (post_transparent_color, prepass_out.scene_depth, opaque_out.velocity_buffer)
                 });
 
             bb_scene_color = post_transparent_color;
@@ -491,11 +487,9 @@ impl<'a> FrameComposer<'a> {
                         width,
                         height,
                     );
-                    let resolved = self.ctx
+                    self.ctx
                         .taa_pass
-                        .add_to_graph(&mut graph_ctx, post_transparent_color, velocity);
-                    taa_resolved_id = Some(resolved);
-                    resolved
+                        .add_to_graph(&mut graph_ctx, post_transparent_color, velocity)
                 } else {
                     post_transparent_color
                 }
@@ -596,21 +590,11 @@ impl<'a> FrameComposer<'a> {
         //
         // Only the swapchain surface is truly external — all other textures
         // (scene_color, scene_depth, etc.) are RDG transient resources.
-        self.external_res.clear();
-
-        // Inject TAA history write view as external resource.
-        if taa_enabled && self.ctx.taa_pass.has_history() {
-            if let Some(taa_write_id) = taa_resolved_id {
-                self.external_res
-                    .insert(taa_write_id, self.ctx.taa_pass.current_write_view());
-            }
-        }
 
         let mut prepare_ctx = PrepareContext {
             views: ViewResolver {
                 resources: &graph.storage.resources,
                 pool: self.ctx.transient_pool,
-                external_resources: &self.external_res,
             },
             device: &self.ctx.wgpu_ctx.device,
             queue: &self.ctx.wgpu_ctx.queue,
@@ -646,16 +630,6 @@ impl<'a> FrameComposer<'a> {
         );
 
         // ─── 3d. Execute ───────────────────────────────────────────────
-        let mut ext_views: FxHashMap<_, &wgpu::TextureView> = FxHashMap::default();
-        ext_views.insert(surface_out, &surface_view);
-
-        // Inject TAA history write view for execute phase.
-        if taa_enabled && self.ctx.taa_pass.has_history() {
-            if let Some(taa_write_id) = taa_resolved_id {
-                let view: &wgpu::TextureView = self.ctx.taa_pass.current_write_view();
-                ext_views.insert(taa_write_id, view);
-            }
-        }
 
         let mut execute_ctx = ExecuteContext {
             resources: &graph.storage.resources,
@@ -664,7 +638,6 @@ impl<'a> FrameComposer<'a> {
             queue: &self.ctx.wgpu_ctx.queue,
             pipeline_cache: self.ctx.pipeline_cache,
             global_bind_group_cache: self.ctx.global_bind_group_cache,
-            external_views: &ext_views,
             mipmap_generator: &self.ctx.resource_manager.mipmap_generator,
             baked_lists: &baked_lists,
             wgpu_ctx: &*self.ctx.wgpu_ctx,

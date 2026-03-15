@@ -25,6 +25,10 @@ impl<T> Tracked<T> {
         }
     }
 
+    pub fn with_id(inner: T, id: u64) -> Self {
+        Self { inner, id }
+    }
+
     /// Get the unique ID (used as a key for `BindGroup` cache)
     #[inline]
     pub fn id(&self) -> u64 {

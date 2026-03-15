@@ -1,6 +1,7 @@
 use std::cmp::Ordering;
 use std::collections::BinaryHeap;
 
+use crate::renderer::core::gpu::Tracked;
 use crate::renderer::graph::core::allocator::TransientPool;
 use crate::renderer::graph::core::arena::FrameArena;
 use crate::renderer::graph::core::types::TextureDesc;
@@ -420,9 +421,22 @@ impl<'a> RenderGraph<'a> {
             first_use: usize::MAX,
             last_use: 0,
             physical_index: None,
+            external_view_ptr: None,
             alias_of: None,
         });
         self.storage.resource_registry.insert(name, id);
+        id
+    }
+
+
+    pub fn import_external_resource(
+        &mut self,
+        name: &'static str,
+        desc: TextureDesc,
+        view: &Tracked<wgpu::TextureView>,
+    ) -> TextureNodeId {
+        let id = self.register_resource(name, desc, true);
+        self.storage.resources[id.0 as usize].external_view_ptr = Some(view as *const _);
         id
     }
 
