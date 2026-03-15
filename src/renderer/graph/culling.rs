@@ -34,6 +34,7 @@ use crate::renderer::core::{ResourceManager, WgpuContext};
 use crate::renderer::graph::extracted::{ExtractedScene, SceneFeatures};
 use crate::renderer::graph::frame::{RenderCommand, RenderKey, RenderLists, ShadowRenderCommand};
 use crate::renderer::graph::render_state::RenderState;
+use crate::renderer::pipeline::pipeline_key::PipelineFlags;
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::renderer::pipeline::{
     BlendStateKey, DepthStencilKey, FastPipelineKey, FastShadowPipelineKey, GraphicsPipelineKey,
@@ -203,7 +204,7 @@ fn prepare_main_camera_commands(
                 instance_variants: item.item_variant_flags,
                 global_state_id: gpu_world.id,
                 scene_variants: extracted_scene.scene_variants,
-                render_path: wgpu_ctx.render_path,
+                taa_enabled,
                 pipeline_settings_version,
             };
 
@@ -213,6 +214,8 @@ fn prepare_main_camera_commands(
             } else {
                 let geo_defines = geometry.shader_defines();
                 let mat_defines = material.shader_defines();
+
+                let mut flags = PipelineFlags::empty();
 
                 let final_a2c_enable = match material.alpha_mode() {
                     AlphaMode::Mask(_, a2c) => a2c,
@@ -228,6 +231,7 @@ fn prepare_main_camera_commands(
 
                 if final_a2c_enable {
                     options.add_define("ALPHA_TO_COVERAGE", "1");
+                    flags |= PipelineFlags::ALPHA_TO_COVERAGE;
                 }
 
                 if wgpu_ctx.render_path.supports_post_processing() {
@@ -244,6 +248,7 @@ fn prepare_main_camera_commands(
 
                 if is_velocity_output {
                     options.add_define("HAS_VELOCITY_TARGET", "1");
+                    flags |= PipelineFlags::VELOCITY_OUTPUT;
                 }
 
                 let shader_hash = options.compute_hash();
@@ -258,11 +263,19 @@ fn prepare_main_camera_commands(
                     RenderPath::BasicForward => false,
                 };
 
+                if is_specular_split {
+                    flags |= PipelineFlags::SPECULAR_SPLIT;
+                }
+
                 let depth_write = if is_opaque_item && use_depth_pre {
                     false
                 } else {
                     material.depth_write()
                 };
+
+                if depth_write {
+                    flags |= PipelineFlags::DEPTH_WRITE;
+                }
 
                 let depth_compare = if material.depth_test() {
                     if is_opaque_item && use_depth_pre {
@@ -289,7 +302,6 @@ fn prepare_main_camera_commands(
                         Side::Back => Some(wgpu::Face::Front),
                         Side::Double => None,
                     },
-                    depth_write,
                     depth_compare,
                     blend_state: if material.alpha_mode() == AlphaMode::Blend {
                         Some(BlendStateKey::from(wgpu::BlendState::ALPHA_BLENDING))
@@ -299,14 +311,12 @@ fn prepare_main_camera_commands(
                     color_format,
                     depth_format,
                     sample_count,
-                    alpha_to_coverage: final_a2c_enable,
                     front_face: if item.item_variant_flags & 0x1 != 0 {
                         wgpu::FrontFace::Cw
                     } else {
                         wgpu::FrontFace::Ccw
                     },
-                    is_specular_split,
-                    is_velocity_output,
+                    flags,
                 };
 
                 let id = pipeline_cache.get_or_create_graphics(

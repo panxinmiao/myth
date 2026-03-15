@@ -128,8 +128,6 @@ impl RenderPath {
     }
 }
 
-
-
 /// Unified anti-aliasing mode for the rendering pipeline.
 ///
 /// Each variant carries its own configuration payload, forming an algebraic
@@ -140,8 +138,10 @@ impl RenderPath {
 /// passes, and TAA temporal state based on the selected mode.
 #[derive(Debug, Clone, Copy)]
 #[allow(non_camel_case_types)]
+#[derive(Default)]
 pub enum AntiAliasingMode {
     /// No anti-aliasing.  Maximum performance.
+    #[default]
     None,
     /// FXAA only.  Minimal overhead — smooths high-frequency noise but
     /// produces softer geometric edges.  Good for low-end / Web targets.
@@ -155,12 +155,6 @@ pub enum AntiAliasingMode {
     /// Temporal Anti-Aliasing — the **recommended default** for PBR.
     /// Resolves all aliasing categories with slight temporal softening.
     TAA(TaaSettings),
-}
-
-impl Default for AntiAliasingMode {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl AntiAliasingMode {
@@ -188,7 +182,7 @@ impl AntiAliasingMode {
     #[inline]
     #[must_use]
     pub fn is_fxaa(&self) -> bool {
-        matches!(self, Self::FXAA(_) | Self::MSAA_FXAA(..)) 
+        matches!(self, Self::FXAA(_) | Self::MSAA_FXAA(..))
     }
 
     /// Returns the [`FxaaSettings`] if the current mode uses FXAA.
@@ -211,7 +205,6 @@ impl AntiAliasingMode {
         }
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // RendererSettings
@@ -342,5 +335,3 @@ impl Default for RendererSettings {
 //         self.aa_mode.is_fxaa()
 //     }
 // }
-
-

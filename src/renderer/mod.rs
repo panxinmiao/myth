@@ -322,6 +322,12 @@ impl Renderer {
             surface_size,
         );
 
+        let requested_msaa = camera.aa_mode.msaa_sample_count();
+        if state.wgpu_ctx.msaa_samples != requested_msaa {
+            state.wgpu_ctx.msaa_samples = requested_msaa;
+            state.wgpu_ctx.pipeline_settings_version += 1;
+        }
+
         // ── Phase 2: Cull + sort + command generation ───────────────────
         crate::renderer::graph::culling::cull_and_sort(
             &state.render_frame.extracted_scene,
@@ -349,13 +355,6 @@ impl Renderer {
             let scene_id_val = scene.id();
             let render_state_id = state.render_frame.render_state.id;
             let global_state_key = (render_state_id, scene_id_val);
-
-            let requested_msaa = camera.aa_mode.msaa_sample_count();
-
-            if state.wgpu_ctx.msaa_samples != requested_msaa {
-                state.wgpu_ctx.msaa_samples = requested_msaa;
-                state.wgpu_ctx.pipeline_settings_version += 1;
-            }
 
             let ssao_enabled = scene.ssao.enabled && is_hf;
             let needs_feature_id =
@@ -401,7 +400,6 @@ impl Renderer {
             }
 
             if is_hf {
-
                 match &camera.aa_mode {
                     AntiAliasingMode::TAA(settings) => {
                         state.taa_pass.extract_and_prepare(
@@ -413,11 +411,12 @@ impl Renderer {
                     }
                     AntiAliasingMode::FXAA(settings) | AntiAliasingMode::MSAA_FXAA(_, settings) => {
                         state.fxaa_pass.target_quality = settings.quality();
-                        state.fxaa_pass.extract_and_prepare(&mut extract_ctx, view_format);
+                        state
+                            .fxaa_pass
+                            .extract_and_prepare(&mut extract_ctx, view_format);
                     }
                     _ => {}
                 }
-
 
                 state
                     .prepass
@@ -543,7 +542,6 @@ impl Renderer {
             }
         }
     }
-
 
     /// Returns a reference to the current renderer settings.
     #[inline]

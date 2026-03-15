@@ -27,7 +27,6 @@ impl PassBuilder<'_, '_> {
         self.create_texture(name, desc)
     }
 
-
     pub fn read_external_texture(
         &mut self,
         name: &'static str,
@@ -47,7 +46,6 @@ impl PassBuilder<'_, '_> {
         let id = self.graph.import_external_resource(name, desc, view);
         self.write_texture(id)
     }
-
 
     pub fn read_texture(&mut self, id: TextureNodeId) -> TextureNodeId {
         self.graph.storage.passes[self.pass_index].reads.push(id);

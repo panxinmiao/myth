@@ -27,15 +27,14 @@
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use crate::RenderPath;
 use crate::assets::{GeometryHandle, MaterialHandle};
 use crate::renderer::core::BindGroupContext;
 use crate::renderer::core::gpu::{GpuGlobalState, GpuMaterial, Tracked};
 use crate::renderer::graph::extracted::SceneFeatures;
 use crate::renderer::pipeline::pipeline_id::{ComputePipelineId, RenderPipelineId};
 use crate::renderer::pipeline::pipeline_key::{
-    ComputePipelineKey, FullscreenPipelineKey, GraphicsPipelineKey, SimpleGeometryPipelineKey,
-    fx_hash_key,
+    ComputePipelineKey, FullscreenPipelineKey, GraphicsPipelineKey, PipelineFlags,
+    SimpleGeometryPipelineKey, fx_hash_key,
 };
 use crate::renderer::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::renderer::pipeline::shader_manager::ShaderManager;
@@ -53,7 +52,7 @@ pub struct FastPipelineKey {
     pub instance_variants: u32,
     pub global_state_id: u32,
     pub scene_variants: SceneFeatures,
-    pub render_path: RenderPath,
+    pub taa_enabled: bool,
     pub pipeline_settings_version: u64,
 }
 
@@ -317,29 +316,23 @@ impl PipelineCache {
                     },
                 });
 
-        let mut color_targets = if canonical_key.is_specular_split {
-            vec![
-                Some(wgpu::ColorTargetState {
-                    format: canonical_key.color_format,
-                    blend: blend_state,
-                    write_mask: wgpu::ColorWrites::ALL,
-                }),
-                Some(wgpu::ColorTargetState {
-                    format: canonical_key.color_format,
-                    blend: blend_state,
-                    write_mask: wgpu::ColorWrites::ALL,
-                }),
-            ]
-        } else {
-            vec![Some(wgpu::ColorTargetState {
+        let mut color_targets = vec![Some(wgpu::ColorTargetState {
+            format: canonical_key.color_format,
+            blend: blend_state,
+            write_mask: wgpu::ColorWrites::ALL,
+        })];
+
+        // Specular split requires a second render target for the specular output, which is appended after the main color target.
+        if canonical_key.flags.contains(PipelineFlags::SPECULAR_SPLIT) {
+            color_targets.push(Some(wgpu::ColorTargetState {
                 format: canonical_key.color_format,
                 blend: blend_state,
                 write_mask: wgpu::ColorWrites::ALL,
-            })]
-        };
+            }));
+        }
 
         // Velocity MRT for TAA — appended after the specular target (if any).
-        if canonical_key.is_velocity_output {
+        if canonical_key.flags.contains(PipelineFlags::VELOCITY_OUTPUT) {
             color_targets.push(Some(wgpu::ColorTargetState {
                 format: wgpu::TextureFormat::Rg16Float,
                 blend: None,
@@ -370,7 +363,7 @@ impl PipelineCache {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: canonical_key.depth_format,
-                depth_write_enabled: canonical_key.depth_write,
+                depth_write_enabled: canonical_key.flags.contains(PipelineFlags::DEPTH_WRITE),
                 depth_compare: canonical_key.depth_compare,
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
@@ -378,7 +371,9 @@ impl PipelineCache {
             multisample: wgpu::MultisampleState {
                 count: canonical_key.sample_count,
                 mask: !0,
-                alpha_to_coverage_enabled: canonical_key.alpha_to_coverage,
+                alpha_to_coverage_enabled: canonical_key
+                    .flags
+                    .contains(PipelineFlags::ALPHA_TO_COVERAGE),
             },
             multiview_mask: None,
             cache: None,

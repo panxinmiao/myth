@@ -11,6 +11,7 @@ use crate::resources::BoundingBox;
 /// distributes samples more evenly than simple random noise, reducing
 /// visible patterns across frames.
 #[inline]
+#[must_use]
 pub fn halton(index: u32, base: u32) -> f32 {
     let mut f = 1.0_f32;
     let mut r = 0.0_f32;

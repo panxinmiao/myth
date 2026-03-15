@@ -13,6 +13,7 @@
 //! - [`SimpleGeometryPipelineKey`] — simplified geometry passes (prepass, shadow).
 //! - [`ComputePipelineKey`] — compute shader pipelines (BRDF LUT, IBL).
 
+use bitflags::bitflags;
 use std::hash::{Hash, Hasher};
 
 // ─── Hashable Mirror Types ────────────────────────────────────────────────────
@@ -169,6 +170,23 @@ impl From<wgpu::MultisampleState> for MultisampleKey {
 
 // ─── Pipeline Keys ────────────────────────────────────────────────────────────
 
+bitflags! {
+    /// Bitmask representation of boolean graphics pipeline states.
+    /// This ensures efficient hashing and avoids excessive boolean fields.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub struct PipelineFlags: u32 {
+        /// Enables depth writing.
+        const DEPTH_WRITE         = 1 << 0;
+        /// Enables Alpha-to-Coverage for multisampling.
+        const ALPHA_TO_COVERAGE   = 1 << 1;
+        /// Indicates if specular is split into a separate buffer.
+        const SPECULAR_SPLIT      = 1 << 2;
+        /// Indicates if an extra `Rg16Float` color target is appended for
+        /// screen-space velocity output (TAA / motion blur).
+        const VELOCITY_OUTPUT     = 1 << 3;
+    }
+}
+
 /// L2 cache key for material-driven scene geometry pipelines.
 ///
 /// This is the successor to the old `PipelineKey`. It fully describes all
@@ -183,16 +201,13 @@ pub struct GraphicsPipelineKey {
     pub topology: wgpu::PrimitiveTopology,
     pub cull_mode: Option<wgpu::Face>,
     pub front_face: wgpu::FrontFace,
-    pub depth_write: bool,
     pub depth_compare: wgpu::CompareFunction,
     pub blend_state: Option<BlendStateKey>,
     pub color_format: wgpu::TextureFormat,
     pub depth_format: wgpu::TextureFormat,
     pub sample_count: u32,
-    pub alpha_to_coverage: bool,
-    pub is_specular_split: bool,
-    /// When `true`, an extra `Rg16Float` color target is appended for\n    /// screen-space velocity output (TAA / motion blur).
-    pub is_velocity_output: bool,
+
+    pub flags: PipelineFlags,
 }
 
 /// L2 cache key for non-material render pipelines.

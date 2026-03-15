@@ -408,9 +408,9 @@ macro_rules! define_gpu_data_struct {
 define_gpu_data_struct!(
     /// Dynamic Model Uniforms (updated per object, 256 bytes)
     struct DynamicModelUniforms {
-        pub world_matrix: Mat4,         //64
-        pub world_matrix_inverse: Mat4, //64
-        pub normal_matrix: Mat3Uniform, //48
+        pub world_matrix: Mat4,           //64
+        pub world_matrix_inverse: Mat4,   //64
+        pub normal_matrix: Mat3Uniform,   //48
         pub previous_world_matrix: Mat4,  //64
         pub(crate) __instance_tint: Vec4, //16
     }

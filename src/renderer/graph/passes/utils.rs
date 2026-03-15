@@ -5,10 +5,9 @@ pub struct CopyTextureNode {
     pub dst: TextureNodeId,
 }
 
-impl<'a> PassNode<'a> for CopyTextureNode {
-
+impl PassNode<'_> for CopyTextureNode {
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let src_texture = ctx.get_texture(self.src); 
+        let src_texture = ctx.get_texture(self.src);
         let dst_texture = ctx.get_texture(self.dst);
 
         encoder.copy_texture_to_texture(
@@ -31,5 +30,4 @@ impl<'a> PassNode<'a> for CopyTextureNode {
             },
         );
     }
-
 }

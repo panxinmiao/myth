@@ -51,9 +51,11 @@ pub struct OpaqueOutputs {
     pub scene_color_hdr: TextureNodeId,
     /// Resolved specular texture for SSSS (`None` when specular is
     /// not enabled).
-    pub specular_mrt: Option<TextureNodeId>,    /// Screen-space velocity buffer for TAA reprojection (`None` when
+    pub specular_mrt: Option<TextureNodeId>,
+    /// Screen-space velocity buffer for TAA reprojection (`None` when
     /// TAA is not active).  Format: `Rg16Float`.
-    pub velocity_buffer: Option<TextureNodeId>,}
+    pub velocity_buffer: Option<TextureNodeId>,
+}
 
 // ─── Feature ───────────────────────────────────────────────────────────
 
@@ -188,8 +190,7 @@ impl OpaqueFeature {
                     fc.width,
                     fc.height,
                     wgpu::TextureFormat::Rg16Float,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
                 );
                 Some(builder.create_and_export("Velocity_Buffer", vel_desc))
             } else {

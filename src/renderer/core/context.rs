@@ -126,7 +126,10 @@ impl WgpuContext {
         };
 
         surface.configure(&device, &config);
-        println!("WGPU Context initialized with surface format: {:?}", config.format);
+        println!(
+            "WGPU Context initialized with surface format: {:?}",
+            config.format
+        );
         Ok(Self {
             device,
             queue,

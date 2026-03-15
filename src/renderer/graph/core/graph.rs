@@ -325,17 +325,11 @@ impl GraphStorage {
         }
 
         for (pass_idx, pass) in self.passes.iter().enumerate() {
-
             // External resources (read)
             for &read_id in &pass.reads {
                 let res = &self.resources[read_id.0 as usize];
                 if res.is_external && res.producer.is_none() {
-                    writeln!(
-                        &mut out,
-                        "    IN_{id} -.-> P{pass_idx};",
-                        id = read_id.0,
-                    )
-                    .unwrap();
+                    writeln!(&mut out, "    IN_{id} -.-> P{pass_idx};", id = read_id.0,).unwrap();
                 }
             }
 
@@ -353,12 +347,7 @@ impl GraphStorage {
                 }
 
                 if res.consumers.is_empty() && res.is_external {
-                    writeln!(
-                        &mut out,
-                        "    P{pass_idx} --> OUT_{};",
-                        write_id.0
-                    )
-                    .unwrap();
+                    writeln!(&mut out, "    P{pass_idx} --> OUT_{};", write_id.0).unwrap();
                 }
             }
         }
@@ -460,7 +449,6 @@ impl<'a> RenderGraph<'a> {
         id
     }
 
-
     pub fn import_external_resource(
         &mut self,
         name: &'static str,
@@ -468,16 +456,9 @@ impl<'a> RenderGraph<'a> {
         view: &Tracked<wgpu::TextureView>,
     ) -> TextureNodeId {
         let id = self.register_resource(name, desc, true);
-        self.storage.resources[id.0 as usize].external_view_ptr = Some(view as *const _);
+        self.storage.resources[id.0 as usize].external_view_ptr = Some(std::ptr::from_ref(view));
         id
     }
-
-    /// Looks up a resource by name.
-    // #[inline]
-    // #[must_use]
-    // pub fn find_resource(&self, name: &str) -> Option<TextureNodeId> {
-    //     self.storage.resource_registry.get(name).copied()
-    // }
 
     /// Creates a versioned alias of `input_id` that shares the same physical
     /// GPU memory.

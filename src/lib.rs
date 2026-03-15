@@ -326,14 +326,14 @@ pub use resources::{
     // Geometry primitives
     ShaderDefines,
     Side,
+    // TAA
+    TaaSettings,
     Texture,
     TextureSlot,
     TextureTransform,
     // Tone mapping
     ToneMappingMode,
     ToneMappingSettings,
-    // TAA
-    TaaSettings,
     UnlitMaterial,
 };
 

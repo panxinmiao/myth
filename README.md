@@ -57,7 +57,7 @@ Inspired by the ergonomic simplicity of **Three.js** and built on the modern pow
         * **HDR Bloom**: Physically-based bloom.
         * **Color Grading**: 3D LUT-based color grading.
         * **Stylization**: Adjustable contrast/saturation, film grain, chromatic aberration, and vignette effects.
-    * **Anti-Aliasing**: Built-in MSAA (hardware multi-sampling) and FXAA (post-process) support.
+    * **Anti-Aliasing**: MXAA, FXAA, TAA.
 
 * **Assets & Tooling**
     * **Full glTF 2.0 Support**: Comprehensive support for the glTF 2.0 specification, including PBR materials, skeletal animations, morph targets, and scene hierarchy.

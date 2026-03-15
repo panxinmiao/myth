@@ -296,7 +296,8 @@ impl<'a> FrameComposer<'a> {
 
         let surface_view_tracked = Tracked::with_id(surface_view, 0);
 
-        let surface_out = graph.import_external_resource("Surface_View", surface_desc, &surface_view_tracked);
+        let surface_out =
+            graph.import_external_resource("Surface_View", surface_desc, &surface_view_tracked);
 
         let mut graph_ctx = GraphBuilderContext {
             graph: &mut graph,
@@ -311,8 +312,6 @@ impl<'a> FrameComposer<'a> {
         let is_high_fidelity = self.ctx.wgpu_ctx.render_path.supports_post_processing();
         let msaa_samples = self.ctx.wgpu_ctx.msaa_samples;
         let is_msaa = msaa_samples > 1;
-
-
 
         // ── 2b. Scene Configuration ────────────────────────────────────
 
@@ -357,7 +356,6 @@ impl<'a> FrameComposer<'a> {
 
         let mut current_surface = surface_out;
 
-
         if is_high_fidelity {
             // ────────────────────────────────────────────────────────────
             // HighFidelity pipeline: separate passes, explicit wiring.
@@ -367,115 +365,112 @@ impl<'a> FrameComposer<'a> {
 
             let taa_enabled = matches!(self.ctx.camera.aa_mode, AntiAliasingMode::TAA { .. });
 
-            let fxaa_enabled = matches!(self.ctx.camera.aa_mode, AntiAliasingMode::FXAA { .. } | AntiAliasingMode::MSAA_FXAA { .. });
+            let fxaa_enabled = matches!(
+                self.ctx.camera.aa_mode,
+                AntiAliasingMode::FXAA { .. } | AntiAliasingMode::MSAA_FXAA { .. }
+            );
 
-            let (mut active_color, mut scene_depth) =
+            let (mut active_color, mut scene_depth) = graph_ctx.with_group("Scene", |c| {
+                // 1. Prepass
+                let prepass_out = self
+                    .ctx
+                    .prepass
+                    .add_to_graph(c, needs_normal, needs_feature_id);
 
-                graph_ctx.with_group("Scene", |c| {
-                    // 1. Prepass
-                    let prepass_out =
-                        self.ctx
-                            .prepass
-                            .add_to_graph(c, needs_normal, needs_feature_id);
+                let scene_depth = prepass_out.scene_depth;
 
-                    let scene_depth = prepass_out.scene_depth;
-
-                    // 2. SSAO
-                    let ssao_output = if ssao_enabled {
-                        Some(
-                            self.ctx.ssao_pass.add_to_graph(
-                                c,
-                                scene_depth,
-                                prepass_out
-                                    .scene_normals
-                                    .expect("SSAO requires scene normals from Prepass"),
-                            ),
-                        )
-                    } else {
-                        None
-                    };
-
-                    // 3. Opaque
-                    let opaque_has_prepass = !is_msaa;
-                    let opaque_out = self.ctx.opaque_pass.add_to_graph(
-                        c,
-                        scene_depth,
-                        opaque_has_prepass,
-                        self.ctx.extracted_scene.background.clear_color(),
-                        ssss_enabled,
-                        taa_enabled,
-                        ssao_output,
-                        shadow_tex,
-                    );
-
-                    let mut active_color = opaque_out.active_color;
-
-                    // 4. SSSS
-                    if ssss_enabled {
-                        active_color = self.ctx.ssss_pass.add_to_graph(
+                // 2. SSAO
+                let ssao_output = if ssao_enabled {
+                    Some(
+                        self.ctx.ssao_pass.add_to_graph(
                             c,
-                            opaque_out.scene_color_hdr,  //Ensure single sample input for SSSS, even with MSAA (input is internally resolved if needed)
-                            prepass_out.scene_depth,
-                            prepass_out.scene_normals.unwrap(),
-                            prepass_out.feature_id.unwrap(),
-                            opaque_out.specular_mrt.unwrap(),
-                        );
+                            scene_depth,
+                            prepass_out
+                                .scene_normals
+                                .expect("SSAO requires scene normals from Prepass"),
+                        ),
+                    )
+                } else {
+                    None
+                };
 
-                        if is_msaa {
-                            // If MSAA is enabled, synchronize the SSSS output back to an MSAA texture for downstream passes (Skybox, Transparent) that expect MSAA input. 
-                            // This avoids redundant MSAA resolve + re-multisample operations.
-                            active_color = self.ctx.msaa_sync_pass.add_to_graph(c, active_color);
-                        }
-                    }
+                // 3. Opaque
+                let opaque_has_prepass = !is_msaa;
+                let opaque_out = self.ctx.opaque_pass.add_to_graph(
+                    c,
+                    scene_depth,
+                    opaque_has_prepass,
+                    self.ctx.extracted_scene.background.clear_color(),
+                    ssss_enabled,
+                    taa_enabled,
+                    ssao_output,
+                    shadow_tex,
+                );
 
-                    // 5. Skybox
-                    if needs_skybox {
-                        active_color =
-                            self.ctx
-                                .skybox_pass
-                                .add_to_graph(c, active_color,  opaque_out.active_depth);
-                    }
+                let mut active_color = opaque_out.active_color;
 
-                    // ── 6. TAA Resolve ────────────────────────────────────────────
-                    // Resolve temporal anti-aliasing before bloom/tone-mapping.
-                    // The resolved colour replaces post_transparent_color for
-                    // downstream post-processing.
-                    if taa_enabled {
-                        if let Some(velocity) = opaque_out.velocity_buffer {
-                            active_color = self.ctx
-                                .taa_pass
-                                .add_to_graph(c, active_color, velocity)
-                        }
-                    }
-
-                    // 7. Transmission Copy
-                    let transmission_tex = if has_transmission {
-                        let tx_source = if is_msaa {
-                            opaque_out.scene_color_hdr
-                        } else {
-                            active_color
-                        };
-                        Some(
-                            self.ctx
-                                .transmission_copy_pass
-                                .add_to_graph(c, tx_source, true),
-                        )
-                    } else {
-                        None
-                    };
-
-                    // 8. Transparent
-                    let active_color = self.ctx.transparent_pass.add_to_graph(
+                // 4. SSSS
+                if ssss_enabled {
+                    active_color = self.ctx.ssss_pass.add_to_graph(
                         c,
-                        active_color,
-                        opaque_out.active_depth,
-                        transmission_tex,
-                        ssao_output,
-                        shadow_tex,
+                        opaque_out.scene_color_hdr, //Ensure single sample input for SSSS, even with MSAA (input is internally resolved if needed)
+                        prepass_out.scene_depth,
+                        prepass_out.scene_normals.unwrap(),
+                        prepass_out.feature_id.unwrap(),
+                        opaque_out.specular_mrt.unwrap(),
                     );
 
-                    (active_color, scene_depth)
-                });
+                    if is_msaa {
+                        // If MSAA is enabled, synchronize the SSSS output back to an MSAA texture for downstream passes (Skybox, Transparent) that expect MSAA input.
+                        // This avoids redundant MSAA resolve + re-multisample operations.
+                        active_color = self.ctx.msaa_sync_pass.add_to_graph(c, active_color);
+                    }
+                }
+
+                // 5. Skybox
+                if needs_skybox {
+                    active_color =
+                        self.ctx
+                            .skybox_pass
+                            .add_to_graph(c, active_color, opaque_out.active_depth);
+                }
+
+                // ── 6. TAA Resolve ────────────────────────────────────────────
+                // Resolve temporal anti-aliasing before bloom/tone-mapping.
+                // The resolved colour replaces post_transparent_color for
+                // downstream post-processing.
+                if taa_enabled && let Some(velocity) = opaque_out.velocity_buffer {
+                    active_color = self.ctx.taa_pass.add_to_graph(c, active_color, velocity);
+                }
+
+                // 7. Transmission Copy
+                let transmission_tex = if has_transmission {
+                    let tx_source = if is_msaa {
+                        opaque_out.scene_color_hdr
+                    } else {
+                        active_color
+                    };
+                    Some(
+                        self.ctx
+                            .transmission_copy_pass
+                            .add_to_graph(c, tx_source, true),
+                    )
+                } else {
+                    None
+                };
+
+                // 8. Transparent
+                let active_color = self.ctx.transparent_pass.add_to_graph(
+                    c,
+                    active_color,
+                    opaque_out.active_depth,
+                    transmission_tex,
+                    ssao_output,
+                    shadow_tex,
+                );
+
+                (active_color, scene_depth)
+            });
 
             // ── Before-Post-Process Hooks ──────────────────────────────
             {
@@ -491,7 +486,7 @@ impl<'a> FrameComposer<'a> {
                         blackboard = hook(graph_ctx.graph, blackboard);
                     }
                 }
-                
+
                 active_color = blackboard.scene_color.unwrap_or(active_color);
                 scene_depth = blackboard.scene_depth.unwrap_or(scene_depth);
             }
@@ -505,8 +500,8 @@ impl<'a> FrameComposer<'a> {
                         active_color,
                         self.ctx.scene.bloom.karis_average,
                         self.ctx.scene.bloom.max_mip_levels(),
-                    )
-                };
+                    );
+                }
 
                 // ToneMapping: HDR → LDR
                 let mut surface = if fxaa_enabled {

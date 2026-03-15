@@ -27,6 +27,7 @@
 //! | 4       | sampler           | Nearest clamp sampler      |
 //! | 5       | uniform           | TaaParams (feedback_weight)|
 
+use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::composer::GraphBuilderContext;
@@ -38,7 +39,6 @@ use crate::renderer::graph::passes::utils::CopyTextureNode;
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
-use crate::renderer::HDR_TEXTURE_FORMAT;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Feature (long-lived, stored in RendererState)
@@ -102,7 +102,9 @@ impl TaaFeature {
             sample_count: 1,
             dimension: wgpu::TextureDimension::D2,
             format: HDR_TEXTURE_FORMAT,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::COPY_DST,
             view_formats: &[],
         };
 
@@ -125,81 +127,71 @@ impl TaaFeature {
     ) {
         // ── 1. Bind group layout (once) ────────────────────────────────
         if self.bind_group_layout.is_none() {
-            let layout =
-                ctx.device
-                    .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-                        label: Some("TAA BindGroup Layout"),
-                        entries: &[
-                            // binding 0: current colour
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 0,
-                                visibility: wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Texture {
-                                    sample_type: wgpu::TextureSampleType::Float {
-                                        filterable: true,
-                                    },
-                                    view_dimension: wgpu::TextureViewDimension::D2,
-                                    multisampled: false,
-                                },
-                                count: None,
+            let layout = ctx
+                .device
+                .create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                    label: Some("TAA BindGroup Layout"),
+                    entries: &[
+                        // binding 0: current colour
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 0,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
                             },
-                            // binding 1: history colour
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 1,
-                                visibility: wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Texture {
-                                    sample_type: wgpu::TextureSampleType::Float {
-                                        filterable: true,
-                                    },
-                                    view_dimension: wgpu::TextureViewDimension::D2,
-                                    multisampled: false,
-                                },
-                                count: None,
+                            count: None,
+                        },
+                        // binding 1: history colour
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 1,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
                             },
-                            // binding 2: velocity
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 2,
-                                visibility: wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Texture {
-                                    sample_type: wgpu::TextureSampleType::Float {
-                                        filterable: false,
-                                    },
-                                    view_dimension: wgpu::TextureViewDimension::D2,
-                                    multisampled: false,
-                                },
-                                count: None,
+                            count: None,
+                        },
+                        // binding 2: velocity
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 2,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Texture {
+                                sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                                view_dimension: wgpu::TextureViewDimension::D2,
+                                multisampled: false,
                             },
-                            // binding 3: linear sampler
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 3,
-                                visibility: wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Sampler(
-                                    wgpu::SamplerBindingType::Filtering,
-                                ),
-                                count: None,
+                            count: None,
+                        },
+                        // binding 3: linear sampler
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 3,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                            count: None,
+                        },
+                        // binding 4: nearest sampler
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 4,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
+                            count: None,
+                        },
+                        // binding 5: TaaParams uniform
+                        wgpu::BindGroupLayoutEntry {
+                            binding: 5,
+                            visibility: wgpu::ShaderStages::FRAGMENT,
+                            ty: wgpu::BindingType::Buffer {
+                                ty: wgpu::BufferBindingType::Uniform,
+                                has_dynamic_offset: false,
+                                min_binding_size: wgpu::BufferSize::new(16),
                             },
-                            // binding 4: nearest sampler
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 4,
-                                visibility: wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Sampler(
-                                    wgpu::SamplerBindingType::NonFiltering,
-                                ),
-                                count: None,
-                            },
-                            // binding 5: TaaParams uniform
-                            wgpu::BindGroupLayoutEntry {
-                                binding: 5,
-                                visibility: wgpu::ShaderStages::FRAGMENT,
-                                ty: wgpu::BindingType::Buffer {
-                                    ty: wgpu::BufferBindingType::Uniform,
-                                    has_dynamic_offset: false,
-                                    min_binding_size: wgpu::BufferSize::new(16),
-                                },
-                                count: None,
-                            },
-                        ],
-                    });
+                            count: None,
+                        },
+                    ],
+                });
             self.bind_group_layout = Some(Tracked::new(layout));
         }
 
@@ -224,11 +216,7 @@ impl TaaFeature {
             self.last_feedback_weight = feedback_weight;
         }
 
-        self.ensure_history_buffers(
-            ctx.device,
-            size.0,
-            size.1,
-        );
+        self.ensure_history_buffers(ctx.device, size.0, size.1);
 
         // ── 3. Pipeline (compile on format change) ─────────────────────
         if self.pipeline_id.is_none() {
@@ -291,7 +279,10 @@ impl TaaFeature {
         let layout = self.bind_group_layout.as_ref().unwrap();
         let params_buffer = self.params_buffer.as_ref().unwrap();
 
-        let history_view = self.history_view.as_ref().expect("TAA history view not initialized");
+        let history_view = self
+            .history_view
+            .as_ref()
+            .expect("TAA history view not initialized");
 
         // Register the write-side history buffer as an external RDG resource
         // so the graph compiler handles barriers and downstream reads.
@@ -300,19 +291,17 @@ impl TaaFeature {
             history_view.texture().width(),
             history_view.texture().height(),
             HDR_TEXTURE_FORMAT,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
         );
-        
+
         let resolved_color = ctx.graph.add_pass("TAA_Resolve", |builder| {
-            builder.read_external_texture(
-                "TAA_History_Read", 
-                desc,
-                history_view
-            );
+            builder.read_external_texture("TAA_History_Read", desc, history_view);
 
             builder.read_texture(active_color);
             builder.read_texture(velocity_buffer);
-            
+
             let resolved_color = builder.create_and_export("TAA_Resolved", desc);
 
             let node = TaaPassNode {
@@ -330,22 +319,21 @@ impl TaaFeature {
 
         // data diversion
         ctx.graph.add_pass("TAA_Save_History", |builder| {
-            builder.read_texture(resolved_color); 
-            let history_out  = builder.write_external_texture(
-                "TAA_History_Write", 
-                desc,
-                history_view
-            );
-            
-            (CopyTextureNode {
-                src: resolved_color,
-                dst: history_out,
-            }, ())
+            builder.read_texture(resolved_color);
+            let history_out =
+                builder.write_external_texture("TAA_History_Write", desc, history_view);
+
+            (
+                CopyTextureNode {
+                    src: resolved_color,
+                    dst: history_out,
+                },
+                (),
+            )
         });
 
         resolved_color
     }
-
 
     /// Returns `true` if the TAA history buffers have been allocated.
     #[must_use]
@@ -474,6 +462,5 @@ impl<'a> PassNode<'a> for TaaPassNode<'a> {
         //         depth_or_array_layers: 1,
         //     },
         // );
-        
     }
 }

@@ -94,7 +94,9 @@ impl ViewResolver<'_> {
         let res = &self.resources[root_id.0 as usize];
 
         if res.is_external {
-            let ptr = res.external_view_ptr.expect("External resource missing view pointer!");
+            let ptr = res
+                .external_view_ptr
+                .expect("External resource missing view pointer!");
             unsafe { &*ptr }
         } else {
             let physical_index = res.physical_index.expect("No physical memory!");
@@ -272,9 +274,10 @@ impl ExecuteContext<'_> {
         let res = &self.resources[root_id.0 as usize];
 
         if res.is_external {
-            let ptr = res.external_view_ptr.expect("External resource missing view pointer!");
-            let tracked = unsafe { &*ptr };
-            &**tracked // Deref Tracked 获得 wgpu::TextureView
+            let ptr = res
+                .external_view_ptr
+                .expect("External resource missing view pointer!");
+            unsafe { &*ptr }
         } else {
             let physical_index = res
                 .physical_index
@@ -290,9 +293,11 @@ impl ExecuteContext<'_> {
         let res = &self.resources[root_id.0 as usize];
 
         if res.is_external {
-            let ptr = res.external_view_ptr.expect("External resource missing view pointer!");
-            let tracked_view = unsafe { &*ptr };
-            tracked_view
+            let ptr = res
+                .external_view_ptr
+                .expect("External resource missing view pointer!");
+
+            (unsafe { &*ptr }) as _
         } else {
             let physical_index = res
                 .physical_index
@@ -311,9 +316,11 @@ impl ExecuteContext<'_> {
         let res = &self.resources[root_id.0 as usize];
 
         if res.is_external {
-            let ptr = res.external_view_ptr.expect("External resource missing view pointer!");
+            let ptr = res
+                .external_view_ptr
+                .expect("External resource missing view pointer!");
             let tracked_view = unsafe { &*ptr };
-            tracked_view.texture() 
+            tracked_view.texture()
         } else {
             let physical_index = res
                 .physical_index

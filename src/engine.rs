@@ -208,10 +208,10 @@ impl Engine {
         let Some(cam_handle) = scene.active_camera else {
             return;
         };
-        if let Some(cam) = scene.cameras.get_mut(cam_handle) {
-            if self.renderer.render_path().supports_post_processing() {
-                cam.step_frame();
-            }
+        if let Some(cam) = scene.cameras.get_mut(cam_handle)
+            && self.renderer.render_path().supports_post_processing()
+        {
+            cam.step_frame();
         }
     }
 

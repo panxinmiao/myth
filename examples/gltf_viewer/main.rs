@@ -1766,9 +1766,7 @@ impl GltfViewer {
                                 if changed {
                                     let mode = self.aa_cache.build_mode();
                                     if let Some(cam_handle) = scene.active_camera {
-                                        if let Some(cam) =
-                                            scene.cameras.get_mut(cam_handle)
-                                        {
+                                        if let Some(cam) = scene.cameras.get_mut(cam_handle) {
                                             cam.set_aa_mode(mode.clone());
                                         }
                                     }
