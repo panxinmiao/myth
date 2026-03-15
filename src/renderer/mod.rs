@@ -353,7 +353,7 @@ impl Renderer {
             let needs_normal = ssao_enabled || needs_feature_id;
             let needs_skybox = scene.background.needs_skybox_pass();
             let bloom_enabled = scene.bloom.enabled && is_hf;
-            let fxaa_enabled = scene.fxaa.enabled && is_hf;
+            let fxaa_enabled = state.wgpu_ctx.fxaa_enabled && is_hf;
 
             let mut extract_ctx = ExtractContext {
                 device: &state.wgpu_ctx.device,
