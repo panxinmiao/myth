@@ -346,14 +346,7 @@ impl TaaFeature {
             .as_ref()
             .expect("TAA history depth view not initialized");
 
-        let color_desc = TextureDesc::new_2d(
-            history_view.texture().width(),
-            history_view.texture().height(),
-            HDR_TEXTURE_FORMAT,
-            wgpu::TextureUsages::RENDER_ATTACHMENT
-                | wgpu::TextureUsages::TEXTURE_BINDING
-                | wgpu::TextureUsages::COPY_SRC,
-        );
+        
 
         let depth_desc = TextureDesc::new(
             history_depth_view.texture().width(),
@@ -367,8 +360,15 @@ impl TaaFeature {
         );
 
         ctx.with_group("TAA_System", |ctx| {
-            let resolved_color = ctx.graph.add_pass("TAA_Resolve", |builder| {
-                builder.read_external_texture("TAA_History_Color_Read", color_desc, history_view);
+            let resolved_color: TextureNodeId = ctx.graph.add_pass("TAA_Resolve", |builder| {
+                let history_color_desc = TextureDesc::new_2d(
+                    history_view.texture().width(),
+                    history_view.texture().height(),
+                    HDR_TEXTURE_FORMAT,
+                        wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_DST,
+                );
+                builder.read_external_texture("TAA_History_Color_Read", history_color_desc, history_view);
                 builder.read_external_texture(
                     "TAA_History_Depth_Read",
                     depth_desc,
@@ -378,6 +378,15 @@ impl TaaFeature {
                 builder.read_texture(active_color);
                 builder.read_texture(velocity_buffer);
                 builder.read_texture(scene_depth);
+
+                let color_desc = TextureDesc::new_2d(
+                    history_view.texture().width(),
+                    history_view.texture().height(),
+                    HDR_TEXTURE_FORMAT,
+                    wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC,
+                );
 
                 let resolved_color = builder.create_texture("TAA_Resolved", color_desc);
 
@@ -399,9 +408,16 @@ impl TaaFeature {
             // Archive resolved colour → persistent history colour buffer.
             ctx.graph.add_pass("TAA_Save_History_Color", |builder| {
                 builder.read_texture(resolved_color);
+                let history_color_desc = TextureDesc::new_2d(
+                    history_view.texture().width(),
+                    history_view.texture().height(),
+                    HDR_TEXTURE_FORMAT,
+                        wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_DST,
+                );
                 let history_out = builder.write_external_texture(
                     "TAA_History_Color_Write",
-                    color_desc,
+                    history_color_desc,
                     history_view,
                 );
                 (

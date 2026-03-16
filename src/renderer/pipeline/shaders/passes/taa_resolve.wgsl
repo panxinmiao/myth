@@ -169,7 +169,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Depth rejection: compare current linear depth with history linear depth.
     // Uses camera near plane = 0.1 as a reasonable default for reverse-Z.
     let current_z = closest_depth;
-    let history_z = textureSampleLevel(t_history_depth, s_nearest, history_uv, 0.0);
+    let history_z = textureSampleLevel(t_history_depth, s_nearest, history_uv, 0);
     let current_linear = depth_to_linear(current_z, 0.1);
     let history_linear = depth_to_linear(history_z, 0.1);
     let depth_diff = abs(current_linear - history_linear) / max(current_linear, 0.0001);
@@ -235,11 +235,13 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     weight = mix(weight, 0.5, saturate(speed * 0.02));
 
     // Luminance-based weighting: reduce temporal weight for very bright pixels
-    let lum_current = luminance(current_tm);
-    let lum_history = luminance(clipped_history);
-    let unbiased_weight = weight * lum_history / max(lum_current + lum_history * weight, 0.0001);
+    // let lum_current = luminance(current_tm);
+    // let lum_history = luminance(clipped_history);
+    // let unbiased_weight = weight * lum_history / max(lum_current + lum_history * weight, 0.0001);
 
-    let resolved_tm = mix(current_tm, clipped_history, unbiased_weight);
+    // let resolved_tm = mix(current_tm, clipped_history, unbiased_weight);
+
+    let resolved_tm = mix(current_tm, clipped_history, weight);
 
     // ════════════════════════════════════════════════════════════════════
     // 7. Inverse Tonemap → HDR output
