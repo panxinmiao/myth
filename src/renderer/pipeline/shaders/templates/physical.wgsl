@@ -286,8 +286,9 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         let v = normalize(u_render_state.camera_position - pos);
         let n = surface_normal;
         let model_matrix = u_model.world_matrix;
-        // let view_matrix = u_render_state.view_matrix;
-        let view_projection_matrix = u_render_state.view_projection;
+
+        // IMPORTANT: use unjittered view projection for refraction to avoid temporal instability. 
+        let view_projection_matrix = u_render_state.unjittered_view_projection;
 
         let transmitted = getIBLVolumeRefraction(
             n, v, material.roughness, material.diffuse_color, material.specular_color, material.specular_f90,
