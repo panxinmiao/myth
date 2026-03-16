@@ -468,15 +468,7 @@ impl<'a> FrameComposer<'a> {
                         // ── 6b. CAS (Contrast Adaptive Sharpening) ────────────
                         // Recover fine detail lost to temporal filtering.
                         if cas_enabled {
-                            let cas_desc = TextureDesc::new_2d(
-                                c.frame_config.width,
-                                c.frame_config.height,
-                                crate::renderer::HDR_TEXTURE_FORMAT,
-                                wgpu::TextureUsages::RENDER_ATTACHMENT
-                                    | wgpu::TextureUsages::TEXTURE_BINDING,
-                            );
-                            active_color =
-                                self.ctx.cas_pass.add_to_graph(c, active_color, cas_desc);
+                            active_color = self.ctx.cas_pass.add_to_graph(c, active_color);
                         }
                     });
                 }
@@ -484,15 +476,12 @@ impl<'a> FrameComposer<'a> {
                 // 7. Transmission Copy
                 let transmission_tex = if has_transmission {
                     let tx_source = if is_msaa {
+                        // todo MSAA Resolve Pass
                         opaque_out.scene_color_hdr
                     } else {
                         active_color
                     };
-                    Some(
-                        self.ctx
-                            .transmission_copy_pass
-                            .add_to_graph(c, tx_source, true),
-                    )
+                    Some(self.ctx.transmission_copy_pass.add_to_graph(c, tx_source))
                 } else {
                     None
                 };

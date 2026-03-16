@@ -24,9 +24,12 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 
     let world_pos = u_model.world_matrix * local_pos;
 
-    let clip_pos = u_render_state.view_projection * world_pos;
-    out.position = clip_pos;
-    out.clip_position = clip_pos;
+    $$ if IN_TRANSPARENT_PASS is defined
+        out.position = u_render_state.unjittered_view_projection * world_pos;
+    $$ else
+        out.position = u_render_state.view_projection * world_pos;
+    $$ endif
+
     out.world_position = world_pos.xyz / world_pos.w;
 
     $$ if HAS_COLOR

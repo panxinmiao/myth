@@ -1,7 +1,6 @@
 struct VertexOutput {
     @builtin(position) @invariant position: vec4<f32>,
     @location({{ loc.next() }}) world_position: vec3<f32>,
-    @location({{ loc.next() }}) clip_position: vec4<f32>,
     $$ if HAS_UV
     @location({{ loc.next() }}) uv: vec2<f32>,
     $$ endif

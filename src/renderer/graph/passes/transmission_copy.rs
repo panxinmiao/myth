@@ -39,12 +39,16 @@ impl TransmissionCopyFeature {
         &self,
         ctx: &mut GraphBuilderContext<'_, '_>,
         scene_color: TextureNodeId,
-        active: bool,
     ) -> TextureNodeId {
         let fc = ctx.frame_config;
-        let desc = TextureDesc::new_2d(
+        let mip_count = (fc.width.max(fc.height) as f32).log2().floor() as u32 + 1;
+        let desc = TextureDesc::new(
             fc.width,
             fc.height,
+            1,
+            mip_count,
+            1,
+            wgpu::TextureDimension::D2,
             fc.hdr_format,
             wgpu::TextureUsages::RENDER_ATTACHMENT
                 | wgpu::TextureUsages::TEXTURE_BINDING
@@ -55,7 +59,6 @@ impl TransmissionCopyFeature {
         let node = TransmissionCopyPassNode {
             scene_color,
             transmission_tex,
-            active,
         };
         ctx.graph.add_pass("TransmissionCopy_Pass", |builder| {
             builder.write_texture(transmission_tex);
@@ -76,18 +79,10 @@ pub struct TransmissionCopyPassNode {
     // ─── RDG Resource Slots (explicit wiring from add_to_graph) ────
     pub scene_color: TextureNodeId,
     pub transmission_tex: TextureNodeId,
-
-    // ─── Push Parameters ───────────────────────────────────────────
-    /// Whether any materials in the scene use transmission.
-    pub active: bool,
 }
 
 impl PassNode<'_> for TransmissionCopyPassNode {
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        if !self.active {
-            return;
-        }
-
         let src_view = ctx.get_texture_view(self.scene_color);
         let src_texture = src_view.texture();
         let src_size = src_texture.size();

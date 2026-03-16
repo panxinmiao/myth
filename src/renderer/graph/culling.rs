@@ -156,7 +156,7 @@ fn prepare_main_camera_commands(
         render_lists.gpu_global_bind_group = Some(gpu_world.bind_group.clone());
     }
 
-    let mut use_transmission = false;
+    let mut has_transmission = false;
     {
         let geo_guard = assets.geometries.read_lock();
         let mat_guard = assets.materials.read_lock();
@@ -240,6 +240,10 @@ fn prepare_main_camera_commands(
 
                 let is_opaque_item =
                     material.alpha_mode() != AlphaMode::Blend && !material.use_transmission();
+
+                if !is_opaque_item {
+                    options.add_define("IN_TRANSPARENT_PASS", "1");
+                }
 
                 let shader_hash = options.compute_hash();
 
@@ -328,12 +332,12 @@ fn prepare_main_camera_commands(
 
             let mat_id = item.material.data().as_ffi() as u32;
 
-            let has_transmission = material.use_transmission();
-            if has_transmission {
-                use_transmission = true;
+            let use_transmission = material.use_transmission();
+            if use_transmission {
+                has_transmission = true;
             }
 
-            let is_transparent = material.alpha_mode() == AlphaMode::Blend || has_transmission;
+            let is_transparent = material.alpha_mode() == AlphaMode::Blend || use_transmission;
 
             let item_pos = Vec3A::from(item.world_matrix.w_axis.truncate());
             let distance_sq = camera_pos.distance_squared(item_pos);
@@ -367,7 +371,7 @@ fn prepare_main_camera_commands(
         }
     }
 
-    render_lists.use_transmission = use_transmission;
+    render_lists.use_transmission = has_transmission;
     render_lists.sort();
 }
 

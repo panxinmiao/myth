@@ -46,10 +46,12 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 
     let world_pos = u_model.world_matrix * local_pos;
 
-    let clip_pos = u_render_state.view_projection * world_pos;
+    $$ if IN_TRANSPARENT_PASS is defined
+        out.position = u_render_state.unjittered_view_projection * world_pos;
+    $$ else
+        out.position = u_render_state.view_projection * world_pos;
+    $$ endif
 
-    out.position = clip_pos;
-    out.clip_position = clip_pos;
     out.world_position = world_pos.xyz / world_pos.w;
 
     $$ if HAS_COLOR
@@ -243,10 +245,8 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     var ambient_occlusion = 1.0;
     $$ if HDR and USE_SSAO
     // Sample screen-space AO
-    let screen_ndc = varyings.clip_position.xy / varyings.clip_position.w;
+    let screen_ndc = varyings.osition.xy / varyings.position.w;
 
-    // let screen_clip = u_render_state.view_projection * vec4<f32>(varyings.world_position, 1.0);
-    // let screen_ndc = screen_clip.xyz / screen_clip.w;
     let screen_uv = vec2<f32>(
         screen_ndc.x * 0.5 + 0.5,
         screen_ndc.y * -0.5 + 0.5

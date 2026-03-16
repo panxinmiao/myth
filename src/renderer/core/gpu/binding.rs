@@ -173,13 +173,6 @@ impl ResourceManager {
         Some(binding_data)
     }
 
-    // pub fn get_model_buffer_binding(&self) -> Option<wgpu::BindingResource> {
-    //     let logical_id = self.model_allocator.buffer_id();
-    //     let handle = self.buffer_index.get(&logical_id)?;
-    //     let gpu_buf = self.gpu_buffers.get(*handle)?;
-    //     Some(gpu_buf.buffer.as_entire_binding())
-    // }
-
     fn create_object_bind_group_internal(
         &mut self,
         assets: &AssetServer,
@@ -191,8 +184,6 @@ impl ResourceManager {
         let min_binding_size = ModelBufferAllocator::uniform_stride();
 
         let model_buffer_ref = self.model_allocator.buffer_handle();
-
-        // let model_binding = self.get_model_buffer_binding()?;
 
         let mut builder = ResourceBuilder::new();
         builder.add_dynamic_uniform::<DynamicModelUniforms>(

@@ -185,16 +185,24 @@ impl CasFeature {
         &'a self,
         ctx: &mut GraphBuilderContext<'a, '_>,
         input_color: TextureNodeId,
-        output_desc: TextureDesc,
     ) -> TextureNodeId {
         let pipeline_id = self.pipeline_id.expect("CasFeature not prepared");
         let pipeline = ctx.pipeline_cache.get_render_pipeline(pipeline_id);
         let layout = self.bind_group_layout.as_ref().unwrap();
         let params_buffer = self.params_buffer.as_ref().unwrap();
 
+        let cas_desc = TextureDesc::new_2d(
+            ctx.frame_config.width,
+            ctx.frame_config.height,
+            crate::renderer::HDR_TEXTURE_FORMAT,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
+        );
+
         ctx.graph.add_pass("CAS_Pass", |builder| {
             builder.read_texture(input_color);
-            let output = builder.create_texture("CAS_Output", output_desc);
+            let output = builder.create_texture("CAS_Output", cas_desc);
 
             let node = CasPassNode {
                 input_tex: input_color,

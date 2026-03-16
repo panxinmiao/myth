@@ -150,6 +150,7 @@ pub fn preload_common_macros() {
         "BLEND",
         "ALPHA_TO_COVERAGE",
         "HDR",
+        "IN_TRANSPARENT_PASS",
         // Post-processing effects
         "TONE_MAPPING_MODE",
         "NEUTRAL",
