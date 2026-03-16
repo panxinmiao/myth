@@ -416,7 +416,6 @@ impl Renderer {
                         state.taa_pass.extract_and_prepare(
                             &mut extract_ctx,
                             settings.feedback_weight,
-                            camera.jitter,
                             self.size,
                             HDR_TEXTURE_FORMAT,
                         );

@@ -22,9 +22,9 @@
 
 struct TaaParams {
     feedback_weight: f32,
-    jitter_x: f32,
-    jitter_y: f32,
-    _padding: f32,
+    _padding0: f32,
+    _padding1: f32,
+    _padding2: f32,
 };
 @group(0) @binding(7) var<uniform> u_params: TaaParams;
 
@@ -167,9 +167,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // ════════════════════════════════════════════════════════════════════
     // 2. Reprojection + Depth Rejection
     // ════════════════════════════════════════════════════════════════════
-    // let jitter_uv = vec2<f32>(u_params.jitter_x, u_params.jitter_y) * vec2<f32>(0.5, -0.5);
-    // let unjittered_uv = uv - jitter_uv;
-    // let history_uv = unjittered_uv - velocity;
 
     let history_uv = uv - velocity;
 
@@ -178,29 +175,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(textureSampleLevel(t_current_color, s_nearest, uv, 0.0).rgb, 1.0);
     }
 
-    // Depth rejection: compare current linear depth with history linear depth.
-    // Uses camera near plane = 0.1 as a reasonable default for reverse-Z.
-
-    let history_z = textureSampleLevel(t_history_depth, s_nearest, history_uv, 0);
-    let current_linear = depth_to_linear(center_depth, 0.1);
-    let history_linear = depth_to_linear(history_z, 0.1);
-    let depth_diff = abs(current_linear - history_linear) / max(current_linear, 0.0001);
-    let depth_rejection_weight = saturate((0.1 - depth_diff) / 0.05);
-
-
-
-    // let is_disoccluded = depth_diff > DEPTH_REJECTION_TOLERANCE;
-
     // // ════════════════════════════════════════════════════════════════════
     // // 3. Sample current frame colour (center pixel)
     // // ════════════════════════════════════════════════════════════════════
 
     let current_color_hdr = textureSampleLevel(t_current_color, s_nearest, uv, 0.0).rgb;
-
-    // // If disoccluded, output current frame directly — zero ghosting.
-    // if (is_disoccluded) {
-    //     return vec4<f32>(current_color_hdr, 1.0);
-    // }
 
     // ════════════════════════════════════════════════════════════════════
     // 4. Catmull-Rom 5-Tap history sampling (high-quality bicubic)
@@ -248,8 +227,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Dynamic feedback: reduce history weight with motion speed
     let speed = length(velocity * tex_dim);
     var weight = u_params.feedback_weight;
-
-    weight *= depth_rejection_weight;
 
     weight = mix(weight, 0.1, saturate(speed * 0.1));
 
