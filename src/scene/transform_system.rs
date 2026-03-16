@@ -141,7 +141,6 @@ pub fn update_hierarchy_batched(
 
             // Update current node
             if let Some(node) = nodes.get_mut(node_handle) {
-
                 node.transform.previous_world_matrix = node.transform.world_matrix;
 
                 let local_changed = node.transform.update_local_matrix();

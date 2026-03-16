@@ -31,12 +31,10 @@ impl ResourceManager {
     // Skeleton management
     // ========================================================================
 
-    /// Upload skeleton data to GPU
+    /// Upload skeleton data (current and previous frame joints) to GPU.
     pub fn prepare_skeleton(&mut self, skeleton: &Skeleton) {
         let buffer_ref = skeleton.joint_matrices.handle();
-
         let buffer_guard = skeleton.joint_matrices.read();
-
         Self::write_buffer_internal(
             &self.device,
             &self.queue,
@@ -45,6 +43,18 @@ impl ResourceManager {
             self.frame_index,
             &buffer_ref,
             bytemuck::cast_slice(buffer_guard.as_slice()),
+        );
+
+        let prev_buffer_ref = skeleton.prev_joint_matrices.handle();
+        let prev_buffer_guard = skeleton.prev_joint_matrices.read();
+        Self::write_buffer_internal(
+            &self.device,
+            &self.queue,
+            &mut self.gpu_buffers,
+            &mut self.buffer_index,
+            self.frame_index,
+            &prev_buffer_ref,
+            bytemuck::cast_slice(prev_buffer_guard.as_slice()),
         );
     }
 
@@ -144,10 +154,11 @@ impl ResourceManager {
         let geometry = assets.geometries.get(mesh.geometry)?;
 
         // === Collect phase: gather all resource IDs ===
-        let mut current_ids = super::ResourceIdSet::with_capacity(4);
+        let mut current_ids = super::ResourceIdSet::with_capacity(6);
         current_ids.push(self.model_allocator.buffer_handle().id());
         current_ids.push(morph_result.resource_id);
         current_ids.push_optional(skeleton.map(|s| s.joint_matrices.handle().id));
+        current_ids.push_optional(skeleton.map(|s| s.prev_joint_matrices.handle().id));
 
         let cache_key = current_ids.hash_value();
 
@@ -198,6 +209,14 @@ impl ResourceManager {
             builder.add_storage_buffer(
                 "skins",
                 &skeleton.joint_matrices.handle(),
+                None,
+                true,
+                ShaderStages::VERTEX,
+                Some(WgslStructName::Name("mat4x4<f32>".into())),
+            );
+            builder.add_storage_buffer(
+                "prev_skins",
+                &skeleton.prev_joint_matrices.handle(),
                 None,
                 true,
                 ShaderStages::VERTEX,

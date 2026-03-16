@@ -241,16 +241,6 @@ fn prepare_main_camera_commands(
                 let is_opaque_item =
                     material.alpha_mode() != AlphaMode::Blend && !material.use_transmission();
 
-                let is_velocity_output = match wgpu_ctx.render_path {
-                    RenderPath::HighFidelity => taa_enabled && is_opaque_item,
-                    RenderPath::BasicForward => false,
-                };
-
-                if is_velocity_output {
-                    options.add_define("HAS_VELOCITY_TARGET", "1");
-                    flags |= PipelineFlags::VELOCITY_OUTPUT;
-                }
-
                 let shader_hash = options.compute_hash();
 
                 let is_specular_split = match wgpu_ctx.render_path {

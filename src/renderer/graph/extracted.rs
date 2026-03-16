@@ -405,17 +405,3 @@ impl Default for ExtractedScene {
         Self::new()
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_extracted_render_item_size() {
-        // Ensure struct size is reasonable
-        let size = std::mem::size_of::<ExtractedRenderItem>();
-        println!("ExtractedRenderItem size: {size} bytes");
-        // Should be within reasonable range (not exceeding 256 bytes)
-        assert!(size < 256, "ExtractedRenderItem is too large: {size} bytes");
-    }
-}

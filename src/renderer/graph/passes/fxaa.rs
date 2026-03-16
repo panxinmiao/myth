@@ -136,7 +136,7 @@ impl FxaaFeature {
     /// Build the ephemeral pass node and insert it into the graph.
     ///
     /// Accepts the LDR input and the target surface, performs an SSA relay
-    /// on `target_surface` (via `mutate_texture`), and returns the
+    /// on `target_surface` (via `write_texture`), and returns the
     /// updated surface handle. This enforces a pure dataflow chain where
     /// every Feature explicitly produces a new resource version.
     pub fn add_to_graph<'a>(
@@ -151,7 +151,7 @@ impl FxaaFeature {
 
         ctx.graph.add_pass("FXAA_Pass", |builder| {
             builder.read_texture(input_ldr);
-            let output = builder.mutate_texture(target_surface, "Surface_FXAA");
+            let output = builder.write_texture(target_surface);
 
             let node = FxaaPassNode {
                 input_tex: input_ldr,

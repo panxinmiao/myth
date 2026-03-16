@@ -1,4 +1,3 @@
-    
 $$ if HAS_SKINNING and SUPPORT_SKINNING
     let skin_index = vec4<u32>(in.joints);
     let skin_weight = in.weights;
@@ -10,6 +9,16 @@ $$ if HAS_SKINNING and SUPPORT_SKINNING
         skin_weight.w * st_skins[skin_index.w];
 
     local_pos = bone_mat * local_pos;
+
+    $$ if HAS_VELOCITY_TARGET is defined
+    let prev_bone_mat =
+        skin_weight.x * st_prev_skins[skin_index.x] +
+        skin_weight.y * st_prev_skins[skin_index.y] +
+        skin_weight.z * st_prev_skins[skin_index.z] +
+        skin_weight.w * st_prev_skins[skin_index.w];
+
+    prev_local_pos = prev_bone_mat * prev_local_pos;
+    $$ endif
 
     $$ if HAS_NORMAL and not SHADOW_PASS and (OUTPUT_NORMAL or not IS_PREPASS)
     let skin_normal_mat = mat3x3<f32>(

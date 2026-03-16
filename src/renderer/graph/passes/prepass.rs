@@ -12,6 +12,7 @@
 //! - `scene_depth`: Scene depth buffer (created & returned by `add_to_graph`)
 //! - `scene_normals`: Optional normal buffer (created & returned by `add_to_graph`)
 //! - `feature_id`: Optional feature-ID buffer (created & returned by `add_to_graph`)
+//! - `velocity_buffer`: Optional velocity buffer for TAA (created & returned by `add_to_graph`)
 
 use rustc_hash::FxHashMap;
 
@@ -32,6 +33,9 @@ pub(crate) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8
 /// Feature ID texture format — Rg8Uint.
 pub(crate) const FEATURE_ID_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg8Uint;
 
+/// Velocity buffer format — Rg16Float (2-component half-precision motion vectors).
+pub(crate) const VELOCITY_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rg16Float;
+
 /// Outputs produced by the Prepass, returned to the Composer for
 /// explicit downstream wiring.
 #[must_use = "SSA Graph: You must use the outputs of prepass to wire downstream passes!"]
@@ -42,6 +46,9 @@ pub struct PrepassOutputs {
     pub scene_normals: Option<TextureNodeId>,
     /// Feature-ID colour attachment (if SSS/SSR require it).
     pub feature_id: Option<TextureNodeId>,
+    /// Screen-space velocity buffer for TAA reprojection (`None` when
+    /// TAA is not active).  Format: `Rg16Float`.
+    pub velocity_buffer: Option<TextureNodeId>,
 }
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -57,10 +64,11 @@ pub struct PrepassFeature {
     // ─── Push Parameters (set before extract_and_prepare) ──────────
     needs_normal: bool,
     needs_feature_id: bool,
+    taa_enabled: bool,
 
     // ─── Internal Cache ────────────────────────────────────────────
-    /// Pipeline cache: (main_pipeline_id, needs_normal, needs_feature_id) → prepass pipeline.
-    local_cache: FxHashMap<(RenderPipelineId, bool, bool), RenderPipelineId>,
+    /// Pipeline cache: (main_pipeline_id, needs_normal, needs_feature_id, taa_enabled) → prepass pipeline.
+    local_cache: FxHashMap<(RenderPipelineId, bool, bool, bool), RenderPipelineId>,
 }
 
 impl Default for PrepassFeature {
@@ -75,6 +83,7 @@ impl PrepassFeature {
         Self {
             needs_normal: false,
             needs_feature_id: false,
+            taa_enabled: false,
             local_cache: FxHashMap::default(),
         }
     }
@@ -82,7 +91,9 @@ impl PrepassFeature {
     /// Returns the prepass pipeline cache (for baking prepass draw commands).
     #[inline]
     #[must_use]
-    pub fn local_cache(&self) -> &FxHashMap<(RenderPipelineId, bool, bool), RenderPipelineId> {
+    pub fn local_cache(
+        &self,
+    ) -> &FxHashMap<(RenderPipelineId, bool, bool, bool), RenderPipelineId> {
         &self.local_cache
     }
 
@@ -100,6 +111,13 @@ impl PrepassFeature {
         self.needs_feature_id
     }
 
+    /// Whether the prepass outputs velocity vectors for TAA.
+    #[inline]
+    #[must_use]
+    pub fn taa_enabled(&self) -> bool {
+        self.taa_enabled
+    }
+
     /// Pre-RDG resource preparation: compile prepass pipelines for every
     /// unique `pipeline_id` in the opaque command list.
     pub fn extract_and_prepare(
@@ -107,9 +125,11 @@ impl PrepassFeature {
         ctx: &mut ExtractContext,
         needs_normal: bool,
         needs_feature_id: bool,
+        taa_enabled: bool,
     ) {
         self.needs_normal = needs_normal;
         self.needs_feature_id = needs_feature_id;
+        self.taa_enabled = taa_enabled;
         self.prepare_pipelines(ctx);
     }
 
@@ -138,6 +158,7 @@ impl PrepassFeature {
                 cmd.pipeline_id,
                 self.needs_normal,
                 self.needs_feature_id,
+                self.taa_enabled,
             )) {
                 continue;
             }
@@ -186,6 +207,9 @@ impl PrepassFeature {
             options.add_define("IS_PREPASS", "1");
             if self.needs_normal {
                 options.add_define("OUTPUT_NORMAL", "1");
+            }
+            if self.taa_enabled {
+                options.add_define("HAS_VELOCITY_TARGET", "1");
             }
 
             // ── Shader generation ──────────────────────────────────────
@@ -237,28 +261,29 @@ impl PrepassFeature {
             };
 
             // ── Color targets ──────────────────────────────────────────
-            let color_targets: smallvec::SmallVec<[ColorTargetKey; 2]> = if self.needs_feature_id {
-                smallvec::smallvec![
-                    ColorTargetKey::from(wgpu::ColorTargetState {
-                        format: NORMAL_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                    ColorTargetKey::from(wgpu::ColorTargetState {
-                        format: FEATURE_ID_FORMAT,
-                        blend: None,
-                        write_mask: wgpu::ColorWrites::ALL,
-                    }),
-                ]
-            } else if self.needs_normal {
-                smallvec::smallvec![ColorTargetKey::from(wgpu::ColorTargetState {
+            let mut color_targets: smallvec::SmallVec<[ColorTargetKey; 3]> = smallvec::smallvec![];
+
+            if self.needs_normal {
+                color_targets.push(ColorTargetKey::from(wgpu::ColorTargetState {
                     format: NORMAL_FORMAT,
                     blend: None,
                     write_mask: wgpu::ColorWrites::ALL,
-                })]
-            } else {
-                smallvec::smallvec![]
-            };
+                }));
+            }
+            if self.needs_feature_id {
+                color_targets.push(ColorTargetKey::from(wgpu::ColorTargetState {
+                    format: FEATURE_ID_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                }));
+            }
+            if self.taa_enabled {
+                color_targets.push(ColorTargetKey::from(wgpu::ColorTargetState {
+                    format: VELOCITY_FORMAT,
+                    blend: None,
+                    write_mask: wgpu::ColorWrites::ALL,
+                }));
+            }
 
             let prepass_key = SimpleGeometryPipelineKey {
                 shader_hash,
@@ -287,7 +312,12 @@ impl PrepassFeature {
             );
 
             self.local_cache.insert(
-                (cmd.pipeline_id, self.needs_normal, self.needs_feature_id),
+                (
+                    cmd.pipeline_id,
+                    self.needs_normal,
+                    self.needs_feature_id,
+                    self.taa_enabled,
+                ),
                 pipeline_id,
             );
         }
@@ -304,6 +334,7 @@ impl PrepassFeature {
         ctx: &mut GraphBuilderContext<'_, '_>,
         needs_normal: bool,
         needs_feature_id: bool,
+        taa_enabled: bool,
     ) -> PrepassOutputs {
         let fc = ctx.frame_config;
 
@@ -349,12 +380,26 @@ impl PrepassFeature {
             None
         };
 
+        let velocity_buffer = if taa_enabled {
+            let desc = TextureDesc::new_2d(
+                fc.width,
+                fc.height,
+                VELOCITY_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            );
+            Some(ctx.graph.register_resource("Velocity_Buffer", desc, false))
+        } else {
+            None
+        };
+
         let node = PrepassPassNode {
             scene_depth,
             scene_normals: scene_normals.unwrap_or(TextureNodeId(0)),
             feature_id: feature_id.unwrap_or(TextureNodeId(0)),
+            velocity_buffer: velocity_buffer.unwrap_or(TextureNodeId(0)),
             needs_normal,
             needs_feature_id,
+            taa_enabled,
         };
         ctx.graph.add_pass("Pre_Pass", |builder| {
             builder.write_texture(scene_depth);
@@ -364,6 +409,9 @@ impl PrepassFeature {
             if let Some(f) = feature_id {
                 builder.write_texture(f);
             }
+            if let Some(v) = velocity_buffer {
+                builder.write_texture(v);
+            }
             (node, ())
         });
 
@@ -371,6 +419,7 @@ impl PrepassFeature {
             scene_depth,
             scene_normals,
             feature_id,
+            velocity_buffer,
         }
     }
 }
@@ -389,23 +438,21 @@ pub struct PrepassPassNode {
     scene_depth: TextureNodeId,
     scene_normals: TextureNodeId,
     feature_id: TextureNodeId,
+    velocity_buffer: TextureNodeId,
 
     // ─── Push Parameters ───────────────────────────────────────────
     needs_normal: bool,
     needs_feature_id: bool,
+    taa_enabled: bool,
 }
 
 impl PassNode<'_> for PrepassPassNode {
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
         let gpu_global_bind_group = ctx.baked_lists.global_bind_group;
 
-        // ── Color attachments: auto-deduced ops for normals / feature-ID ──
-        // Resources that survive the graph compiler get Clear on first use
-        // and Discard on last use (if non-external).  Culled resources
-        // return None, naturally shrinking the MRT.
         let mut color_attachments: smallvec::SmallVec<
-            [Option<wgpu::RenderPassColorAttachment>; 2],
-        > = smallvec::SmallVec::with_capacity(2);
+            [Option<wgpu::RenderPassColorAttachment>; 3],
+        > = smallvec::SmallVec::with_capacity(3);
 
         let normal_clear = wgpu::Color {
             r: 0.5,
@@ -431,11 +478,20 @@ impl PassNode<'_> for PrepassPassNode {
         {
             color_attachments.push(Some(att));
         }
+        if self.taa_enabled
+            && let Some(att) = ctx.get_color_attachment(
+                self.velocity_buffer,
+                RenderTargetOps::Clear(wgpu::Color::TRANSPARENT),
+                None,
+            )
+        {
+            color_attachments.push(Some(att));
+        }
 
         let dtt = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Depth-Normal Prepass"),
+            label: Some("Depth-Normal-Velocity Prepass"),
             color_attachments: &color_attachments,
             depth_stencil_attachment: dtt,
             timestamp_writes: None,

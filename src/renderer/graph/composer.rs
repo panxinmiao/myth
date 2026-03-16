@@ -392,10 +392,10 @@ impl<'a> FrameComposer<'a> {
 
             let (mut active_color, mut scene_depth) = graph_ctx.with_group("Scene", |c| {
                 // 1. Prepass
-                let prepass_out = self
-                    .ctx
-                    .prepass
-                    .add_to_graph(c, needs_normal, needs_feature_id);
+                let prepass_out =
+                    self.ctx
+                        .prepass
+                        .add_to_graph(c, needs_normal, needs_feature_id, taa_enabled);
 
                 let scene_depth = prepass_out.scene_depth;
 
@@ -422,7 +422,6 @@ impl<'a> FrameComposer<'a> {
                     opaque_has_prepass,
                     self.ctx.extracted_scene.background.clear_color(),
                     ssss_enabled,
-                    taa_enabled,
                     ssao_output,
                     shadow_tex,
                 );
@@ -459,24 +458,27 @@ impl<'a> FrameComposer<'a> {
                 // Resolve temporal anti-aliasing before bloom/tone-mapping.
                 // The resolved colour replaces post_transparent_color for
                 // downstream post-processing.
-                if taa_enabled && let Some(velocity) = opaque_out.velocity_buffer {
-                    active_color =
-                        self.ctx
-                            .taa_pass
-                            .add_to_graph(c, active_color, velocity, scene_depth);
+                if taa_enabled && let Some(velocity) = prepass_out.velocity_buffer {
+                    c.with_group("TAA_System", |c| {
+                        active_color =
+                            self.ctx
+                                .taa_pass
+                                .add_to_graph(c, active_color, velocity, scene_depth);
 
-                    // ── 6b. CAS (Contrast Adaptive Sharpening) ────────────
-                    // Recover fine detail lost to temporal filtering.
-                    if cas_enabled {
-                        let cas_desc = TextureDesc::new_2d(
-                            c.frame_config.width,
-                            c.frame_config.height,
-                            crate::renderer::HDR_TEXTURE_FORMAT,
-                            wgpu::TextureUsages::RENDER_ATTACHMENT
-                                | wgpu::TextureUsages::TEXTURE_BINDING,
-                        );
-                        active_color = self.ctx.cas_pass.add_to_graph(c, active_color, cas_desc);
-                    }
+                        // ── 6b. CAS (Contrast Adaptive Sharpening) ────────────
+                        // Recover fine detail lost to temporal filtering.
+                        if cas_enabled {
+                            let cas_desc = TextureDesc::new_2d(
+                                c.frame_config.width,
+                                c.frame_config.height,
+                                crate::renderer::HDR_TEXTURE_FORMAT,
+                                wgpu::TextureUsages::RENDER_ATTACHMENT
+                                    | wgpu::TextureUsages::TEXTURE_BINDING,
+                            );
+                            active_color =
+                                self.ctx.cas_pass.add_to_graph(c, active_color, cas_desc);
+                        }
+                    });
                 }
 
                 // 7. Transmission Copy
@@ -509,7 +511,7 @@ impl<'a> FrameComposer<'a> {
                 #[cfg(feature = "debug_view")]
                 {
                     dbg_normals = prepass_out.scene_normals;
-                    dbg_velocity = opaque_out.velocity_buffer;
+                    dbg_velocity = prepass_out.velocity_buffer;
                     dbg_ssao = ssao_output;
                 }
 
@@ -693,6 +695,7 @@ impl<'a> FrameComposer<'a> {
                 local_cache: self.ctx.prepass.local_cache(),
                 needs_normal: self.ctx.prepass.needs_normal(),
                 needs_feature_id: self.ctx.prepass.needs_feature_id(),
+                taa_enabled: self.ctx.prepass.taa_enabled(),
             })
         } else {
             None

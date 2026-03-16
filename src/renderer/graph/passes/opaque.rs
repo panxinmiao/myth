@@ -52,9 +52,6 @@ pub struct OpaqueOutputs {
     /// Resolved specular texture for SSSS (`None` when specular is
     /// not enabled).
     pub specular_mrt: Option<TextureNodeId>,
-    /// Screen-space velocity buffer for TAA reprojection (`None` when
-    /// TAA is not active).  Format: `Rg16Float`.
-    pub velocity_buffer: Option<TextureNodeId>,
 }
 
 // ─── Feature ───────────────────────────────────────────────────────────
@@ -88,7 +85,6 @@ impl OpaqueFeature {
         has_prepass: bool,
         clear_color: wgpu::Color,
         needs_specular: bool,
-        taa_enabled: bool,
         ssao_tex: Option<TextureNodeId>,
         shadow_tex: Option<TextureNodeId>,
     ) -> OpaqueOutputs {
@@ -183,19 +179,6 @@ impl OpaqueFeature {
                 (TextureNodeId(0), None)
             };
 
-            // ── Velocity buffer (TAA) ──────────────────────────────────
-            let velocity_tex = if taa_enabled {
-                let vel_desc = TextureDesc::new_2d(
-                    fc.width,
-                    fc.height,
-                    wgpu::TextureFormat::Rg16Float,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
-                );
-                Some(builder.create_texture("Velocity_Buffer", vel_desc))
-            } else {
-                None
-            };
-
             // ── Read dependencies ──────────────────────────────────────
             if let Some(ssao) = ssao_tex {
                 builder.read_texture(ssao);
@@ -217,7 +200,6 @@ impl OpaqueFeature {
                 specular_tex,
                 specular_resolved,
                 screen_info,
-                velocity_tex,
             );
 
             let specular_mrt = if needs_specular {
@@ -233,7 +215,6 @@ impl OpaqueFeature {
                     active_depth: depth_target,
                     scene_color_hdr,
                     specular_mrt,
-                    velocity_buffer: velocity_tex,
                 },
             )
         })
@@ -256,7 +237,6 @@ pub struct OpaquePassNode<'a> {
     pub resolve_target: Option<TextureNodeId>,
     pub specular_tex: TextureNodeId,
     pub specular_resolve_target: Option<TextureNodeId>,
-    pub velocity_tex: Option<TextureNodeId>,
 
     // ─── Push Parameters ───────────────────────────────────────────
     pub has_prepass: bool,
@@ -285,7 +265,6 @@ impl<'a> OpaquePassNode<'a> {
         specular_tex: TextureNodeId,
         specular_resolve_target: Option<TextureNodeId>,
         screen_info: &'a ScreenBindGroupInfo,
-        velocity_tex: Option<TextureNodeId>,
     ) -> Self {
         Self {
             color_target,
@@ -294,7 +273,6 @@ impl<'a> OpaquePassNode<'a> {
             resolve_target,
             specular_tex,
             specular_resolve_target,
-            velocity_tex,
             has_prepass,
             clear_color,
             needs_specular,
@@ -359,17 +337,6 @@ impl<'a> PassNode<'a> for OpaquePassNode<'a> {
                 self.specular_tex,
                 RenderTargetOps::Clear(wgpu::Color::TRANSPARENT),
                 self.specular_resolve_target,
-            )
-        {
-            color_attachments.push(Some(att));
-        }
-
-        // Velocity MRT — appended when TAA is active.
-        if let Some(vel_id) = self.velocity_tex
-            && let Some(att) = ctx.get_color_attachment(
-                vel_id,
-                RenderTargetOps::Clear(wgpu::Color::TRANSPARENT),
-                None,
             )
         {
             color_attachments.push(Some(att));

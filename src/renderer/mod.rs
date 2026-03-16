@@ -436,9 +436,12 @@ impl Renderer {
                     _ => {}
                 }
 
-                state
-                    .prepass
-                    .extract_and_prepare(&mut extract_ctx, needs_normal, needs_feature_id);
+                state.prepass.extract_and_prepare(
+                    &mut extract_ctx,
+                    needs_normal,
+                    needs_feature_id,
+                    matches!(camera.aa_mode, AntiAliasingMode::TAA(..)),
+                );
 
                 if ssao_enabled {
                     state

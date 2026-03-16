@@ -358,97 +358,91 @@ impl TaaFeature {
             wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
         );
 
-        ctx.with_group("TAA_System", |ctx| {
-            let resolved_color: TextureNodeId = ctx.graph.add_pass("TAA_Resolve", |builder| {
-                let history_color_desc = TextureDesc::new_2d(
-                    history_view.texture().width(),
-                    history_view.texture().height(),
-                    HDR_TEXTURE_FORMAT,
-                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                );
-                builder.read_external_texture(
-                    "TAA_History_Color_Read",
-                    history_color_desc,
-                    history_view,
-                );
-                builder.read_external_texture(
-                    "TAA_History_Depth_Read",
-                    depth_desc,
-                    history_depth_view,
-                );
+        let resolved_color: TextureNodeId = ctx.graph.add_pass("TAA_Resolve", |builder| {
+            let history_color_desc = TextureDesc::new_2d(
+                history_view.texture().width(),
+                history_view.texture().height(),
+                HDR_TEXTURE_FORMAT,
+                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            );
+            builder.read_external_texture(
+                "TAA_History_Color_Read",
+                history_color_desc,
+                history_view,
+            );
+            builder.read_external_texture("TAA_History_Depth_Read", depth_desc, history_depth_view);
 
-                builder.read_texture(active_color);
-                builder.read_texture(velocity_buffer);
-                builder.read_texture(scene_depth);
+            builder.read_texture(active_color);
+            builder.read_texture(velocity_buffer);
+            builder.read_texture(scene_depth);
 
-                let color_desc = TextureDesc::new_2d(
-                    history_view.texture().width(),
-                    history_view.texture().height(),
-                    HDR_TEXTURE_FORMAT,
-                    wgpu::TextureUsages::RENDER_ATTACHMENT
-                        | wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::COPY_SRC,
-                );
+            let color_desc = TextureDesc::new_2d(
+                history_view.texture().width(),
+                history_view.texture().height(),
+                HDR_TEXTURE_FORMAT,
+                wgpu::TextureUsages::RENDER_ATTACHMENT
+                    | wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_SRC,
+            );
 
-                let resolved_color = builder.create_texture("TAA_Resolved", color_desc);
+            let resolved_color = builder.create_texture("TAA_Resolved", color_desc);
 
-                let node = TaaPassNode {
-                    current_color: active_color,
-                    velocity: velocity_buffer,
-                    scene_depth,
-                    output: resolved_color,
-                    history_view,
-                    history_depth_view,
-                    pipeline,
-                    layout,
-                    params_buffer,
-                    transient_bg: None,
-                };
-                (node, resolved_color)
-            });
+            let node = TaaPassNode {
+                current_color: active_color,
+                velocity: velocity_buffer,
+                scene_depth,
+                output: resolved_color,
+                history_view,
+                history_depth_view,
+                pipeline,
+                layout,
+                params_buffer,
+                transient_bg: None,
+            };
+            (node, resolved_color)
+        });
 
-            // Archive resolved colour → persistent history colour buffer.
-            ctx.graph.add_pass("TAA_Save_History_Color", |builder| {
-                builder.read_texture(resolved_color);
-                let history_color_desc = TextureDesc::new_2d(
-                    history_view.texture().width(),
-                    history_view.texture().height(),
-                    HDR_TEXTURE_FORMAT,
-                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                );
-                let history_out = builder.write_external_texture(
-                    "TAA_History_Color_Write",
-                    history_color_desc,
-                    history_view,
-                );
-                (
-                    CopyTextureNode {
-                        src: resolved_color,
-                        dst: history_out,
-                    },
-                    (),
-                )
-            });
+        // Archive resolved colour → persistent history colour buffer.
+        ctx.graph.add_pass("TAA_Save_History_Color", |builder| {
+            builder.read_texture(resolved_color);
+            let history_color_desc = TextureDesc::new_2d(
+                history_view.texture().width(),
+                history_view.texture().height(),
+                HDR_TEXTURE_FORMAT,
+                wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            );
+            let history_out = builder.write_external_texture(
+                "TAA_History_Color_Write",
+                history_color_desc,
+                history_view,
+            );
+            (
+                CopyTextureNode {
+                    src: resolved_color,
+                    dst: history_out,
+                },
+                (),
+            )
+        });
 
-            // Archive scene depth → persistent history depth buffer.
-            ctx.graph.add_pass("TAA_Save_History_Depth", |builder| {
-                builder.read_texture(scene_depth);
-                let depth_out = builder.write_external_texture(
-                    "TAA_History_Depth_Write",
-                    depth_desc,
-                    history_depth_view,
-                );
-                (
-                    CopyTextureNode {
-                        src: scene_depth,
-                        dst: depth_out,
-                    },
-                    (),
-                )
-            });
+        // Archive scene depth → persistent history depth buffer.
+        ctx.graph.add_pass("TAA_Save_History_Depth", |builder| {
+            builder.read_texture(scene_depth);
+            let depth_out = builder.write_external_texture(
+                "TAA_History_Depth_Write",
+                depth_desc,
+                history_depth_view,
+            );
+            (
+                CopyTextureNode {
+                    src: scene_depth,
+                    dst: depth_out,
+                },
+                (),
+            )
+        });
 
-            resolved_color
-        })
+        resolved_color
     }
 
     /// Returns `true` if the TAA history buffers have been allocated.

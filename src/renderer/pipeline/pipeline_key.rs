@@ -181,9 +181,6 @@ bitflags! {
         const ALPHA_TO_COVERAGE   = 1 << 1;
         /// Indicates if specular is split into a separate buffer.
         const SPECULAR_SPLIT      = 1 << 2;
-        /// Indicates if an extra `Rg16Float` color target is appended for
-        /// screen-space velocity output (TAA / motion blur).
-        const VELOCITY_OUTPUT     = 1 << 3;
     }
 }
 
@@ -272,7 +269,7 @@ pub struct SimpleGeometryPipelineKey {
     pub shader_hash: u128,
     /// Distinguishes different vertex buffer layouts (static, skinned, morphed…).
     pub vertex_layout_id: u64,
-    pub color_targets: smallvec::SmallVec<[ColorTargetKey; 2]>,
+    pub color_targets: smallvec::SmallVec<[ColorTargetKey; 3]>,
     pub depth_stencil: DepthStencilKey,
     pub topology: wgpu::PrimitiveTopology,
     pub cull_mode: Option<wgpu::Face>,

@@ -32,12 +32,14 @@ use super::frame::{
 /// Passed as `Some(...)` in the HighFidelity render path and `None` when
 /// the prepass is disabled (BasicForward).
 pub struct PrepassBakeConfig<'a> {
-    /// Pipeline remapping table: `(main_pipeline, needs_normal, needs_fid) → prepass_pipeline`.
-    pub local_cache: &'a FxHashMap<(RenderPipelineId, bool, bool), RenderPipelineId>,
+    /// Pipeline remapping table: `(main_pipeline, needs_normal, needs_fid, taa) → prepass_pipeline`.
+    pub local_cache: &'a FxHashMap<(RenderPipelineId, bool, bool, bool), RenderPipelineId>,
     /// Whether the prepass outputs view-space normals.
     pub needs_normal: bool,
     /// Whether the prepass outputs a feature-ID stencil mask.
     pub needs_feature_id: bool,
+    /// Whether the prepass outputs velocity vectors for TAA.
+    pub taa_enabled: bool,
 }
 
 /// Bake all render lists into pre-resolved [`DrawCommand`] lists.
@@ -146,10 +148,12 @@ fn bake_prepass_commands<'a>(
     let mut out = Vec::with_capacity(opaque_commands.len());
 
     for cmd in opaque_commands {
-        let Some(&prepass_pipeline_id) =
-            cfg.local_cache
-                .get(&(cmd.pipeline_id, cfg.needs_normal, cfg.needs_feature_id))
-        else {
+        let Some(&prepass_pipeline_id) = cfg.local_cache.get(&(
+            cmd.pipeline_id,
+            cfg.needs_normal,
+            cfg.needs_feature_id,
+            cfg.taa_enabled,
+        )) else {
             continue;
         };
 

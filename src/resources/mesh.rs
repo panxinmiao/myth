@@ -98,7 +98,8 @@ impl Mesh {
 
     /// Calls this at the end of each frame to latch current morph target influences into the "previous" cache.
     pub fn latch_previous_morph_weights(&mut self) {
-        self.prev_morph_target_influences.clone_from(&self.morph_target_influences);
+        self.prev_morph_target_influences
+            .clone_from(&self.morph_target_influences);
     }
 
     /// set influence for a single morph target
@@ -166,7 +167,8 @@ impl Mesh {
                 uniforms.weights[vec_idx][component] = *weight;
                 uniforms.indices[vec_idx][component] = *target_idx as u32;
 
-                let prev_weight = self.prev_morph_target_influences
+                let prev_weight = self
+                    .prev_morph_target_influences
                     .get(*target_idx)
                     .copied()
                     .unwrap_or(0.0);

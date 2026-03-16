@@ -2155,14 +2155,12 @@ impl GltfViewer {
                                         let bloom_on = scene.bloom.enabled;
 
                                         // Build available targets dynamically.
-                                        let mut targets = vec![
-                                            DebugViewTarget::None,
-                                            DebugViewTarget::SceneNormal,
-                                        ];
+                                        let mut targets = vec![DebugViewTarget::None];
                                         if taa_on {
                                             targets.push(DebugViewTarget::Velocity);
                                         }
                                         if ssao_on {
+                                            targets.push(DebugViewTarget::SceneNormal);
                                             targets.push(DebugViewTarget::SsaoRaw);
                                         }
                                         if bloom_on {

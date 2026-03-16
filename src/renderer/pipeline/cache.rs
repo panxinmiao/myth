@@ -331,15 +331,6 @@ impl PipelineCache {
             }));
         }
 
-        // Velocity MRT for TAA — appended after the specular target (if any).
-        if canonical_key.flags.contains(PipelineFlags::VELOCITY_OUTPUT) {
-            color_targets.push(Some(wgpu::ColorTargetState {
-                format: wgpu::TextureFormat::Rg16Float,
-                blend: None,
-                write_mask: wgpu::ColorWrites::ALL,
-            }));
-        }
-
         let pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("Scene Render Pipeline"),
             layout: Some(&layout),
