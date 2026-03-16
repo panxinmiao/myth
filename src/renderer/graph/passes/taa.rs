@@ -27,6 +27,8 @@
 //! | 6       | `sampler`                 | Nearest clamp sampler        |
 //! | 7       | `uniform`                 | TaaParams                    |
 
+use glam::Vec2;
+
 use crate::renderer::HDR_TEXTURE_FORMAT;
 use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
@@ -39,6 +41,15 @@ use crate::renderer::graph::passes::utils::CopyTextureNode;
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+struct TaaParams {
+    feedback_weight: f32,
+    jitter_x: f32,
+    jitter_y: f32,
+    _padding: f32,
+}
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 // Feature (long-lived, stored in RendererState)
@@ -62,7 +73,6 @@ pub struct TaaFeature {
 
     // ─── Uniform Buffer ────────────────────────────────────────────
     params_buffer: Option<Tracked<wgpu::Buffer>>,
-    last_feedback_weight: f32,
 }
 
 impl Default for TaaFeature {
@@ -82,7 +92,6 @@ impl TaaFeature {
             pipeline_id: None,
             bind_group_layout: None,
             params_buffer: None,
-            last_feedback_weight: -1.0, // force first upload
         }
     }
 
@@ -156,6 +165,7 @@ impl TaaFeature {
         &mut self,
         ctx: &mut ExtractContext,
         feedback_weight: f32,
+        jitter: Vec2,
         size: (u32, u32),
         output_format: wgpu::TextureFormat,
     ) {
@@ -264,15 +274,17 @@ impl TaaFeature {
             self.params_buffer = Some(Tracked::new(buffer));
         }
 
-        if (self.last_feedback_weight - feedback_weight).abs() > f32::EPSILON {
-            let data: [f32; 4] = [feedback_weight, 0.0, 0.0, 0.0];
-            ctx.queue.write_buffer(
-                self.params_buffer.as_ref().unwrap(),
-                0,
-                bytemuck::cast_slice(&data),
-            );
-            self.last_feedback_weight = feedback_weight;
-        }
+        let data = TaaParams {
+            feedback_weight,
+            jitter_x: jitter.x,
+            jitter_y: jitter.y,
+            _padding: 0.0,
+        };
+        ctx.queue.write_buffer(
+            self.params_buffer.as_ref().unwrap(),
+            0,
+            bytemuck::cast_slice(&[data]),
+        );
 
         self.ensure_history_buffers(ctx.device, size.0, size.1, depth_format);
 
