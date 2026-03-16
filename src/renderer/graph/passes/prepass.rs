@@ -325,6 +325,7 @@ impl PrepassFeature {
         let fc = ctx.frame_config;
 
         // Single-sample scene depth (always created).
+        // COPY_SRC is required so TAA can archive scene depth to history.
         let depth_desc = TextureDesc::new(
             fc.width,
             fc.height,
@@ -333,7 +334,9 @@ impl PrepassFeature {
             1,
             wgpu::TextureDimension::D2,
             fc.depth_format,
-            wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC,
         );
         let scene_depth = ctx
             .graph

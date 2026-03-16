@@ -437,9 +437,7 @@ impl AppHandler for GltfViewer {
         // 4. 设置相机
         let mut camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
 
-        camera.set_aa_mode(AntiAliasingMode::TAA(TaaSettings {
-            feedback_weight: 0.9,
-        }));
+        camera.set_aa_mode(AntiAliasingMode::TAA(TaaSettings::default()));
 
         let cam_node_id = scene.add_camera(camera);
         if let Some(node) = scene.get_node_mut(cam_node_id) {

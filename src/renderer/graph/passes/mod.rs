@@ -1,4 +1,5 @@
 pub mod bloom;
+pub mod cas;
 pub mod compute;
 #[cfg(feature = "debug_view")]
 pub mod debug_view;
@@ -19,6 +20,7 @@ pub mod transparent;
 pub mod utils;
 
 pub use bloom::BloomFeature;
+pub use cas::CasFeature;
 pub use compute::{BrdfLutFeature, IblComputeFeature};
 #[cfg(feature = "debug_view")]
 pub use debug_view::DebugViewFeature;

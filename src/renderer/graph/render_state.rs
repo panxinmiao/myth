@@ -83,6 +83,8 @@ pub struct RenderState {
     prev_view_projection: glam::Mat4,
     /// Previous frame's jitter (for TAA de-jitter).
     prev_jitter: glam::Vec2,
+    /// Previous frame's jitter-free VP matrix (for velocity calculation).
+    prev_unjittered_vp: glam::Mat4,
     /// Active debug-view target (semantic intent, resolved per-frame).
     #[cfg(feature = "debug_view")]
     pub debug_view_target: DebugViewTarget,
@@ -105,6 +107,7 @@ impl RenderState {
             ),
             prev_view_projection: glam::Mat4::IDENTITY,
             prev_jitter: glam::Vec2::ZERO,
+            prev_unjittered_vp: glam::Mat4::IDENTITY,
             #[cfg(feature = "debug_view")]
             debug_view_target: DebugViewTarget::None,
         }
@@ -123,6 +126,9 @@ impl RenderState {
     pub fn update(&mut self, camera: &RenderCamera, time: f32) {
         let prev_vp = self.prev_view_projection;
         let prev_j = self.prev_jitter;
+        let prev_unjittered_vp = self.prev_unjittered_vp;
+
+        let unjittered_vp = camera.unjittered_projection * camera.view_matrix;
 
         let mut u = self.uniforms_mut();
         u.view_projection = camera.view_projection_matrix;
@@ -131,14 +137,19 @@ impl RenderState {
         u.projection_inverse = camera.projection_matrix.inverse();
         u.view_matrix = camera.view_matrix;
         u.prev_view_projection = prev_vp;
+        u.unjittered_view_projection = unjittered_vp;
+        u.prev_unjittered_view_projection = prev_unjittered_vp;
         u.camera_position = camera.position.into();
         u.time = time;
         u.jitter = camera.jitter;
         u.prev_jitter = prev_j;
+        u.camera_near = camera.near;
+        u.camera_far = camera.far;
         drop(u);
 
         // Latch current values for next frame.
         self.prev_view_projection = camera.view_projection_matrix;
         self.prev_jitter = camera.jitter;
+        self.prev_unjittered_vp = unjittered_vp;
     }
 }

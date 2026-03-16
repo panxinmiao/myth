@@ -23,12 +23,20 @@ pub struct TaaSettings {
     /// Higher values produce smoother results but increase ghosting on
     /// fast-moving objects.  Typical range: `0.85..=0.95`.
     pub feedback_weight: f32,
+
+    /// Contrast Adaptive Sharpening intensity (`0.0..=1.0`).
+    ///
+    /// Applied after TAA resolve to recover fine detail lost to temporal
+    /// filtering.  `0.0` disables sharpening; `1.0` is maximum.
+    /// Typical range: `0.4..=0.8`.
+    pub sharpen_intensity: f32,
 }
 
 impl Default for TaaSettings {
     fn default() -> Self {
         Self {
             feedback_weight: 0.90,
+            sharpen_intensity: 0.5,
         }
     }
 }

@@ -62,9 +62,10 @@ use crate::renderer::graph::core::{
 };
 use crate::renderer::graph::frame::{PreparedSkyboxDraw, RenderLists};
 use crate::renderer::graph::passes::{
-    BloomFeature, BrdfLutFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
-    PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
-    TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+    BloomFeature, BrdfLutFeature, CasFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature,
+    OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature,
+    SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature, TransmissionCopyFeature,
+    TransparentFeature,
 };
 use crate::renderer::pipeline::PipelineCache;
 use crate::renderer::pipeline::ShaderManager;
@@ -100,6 +101,7 @@ pub struct ComposerContext<'a> {
     // Post-processing
     pub fxaa_pass: &'a mut FxaaFeature,
     pub taa_pass: &'a mut TaaFeature,
+    pub cas_pass: &'a mut CasFeature,
     pub tone_map_pass: &'a mut ToneMappingFeature,
     pub bloom_pass: &'a mut BloomFeature,
     pub ssao_pass: &'a mut SsaoFeature,
@@ -379,6 +381,11 @@ impl<'a> FrameComposer<'a> {
 
             let taa_enabled = matches!(self.ctx.camera.aa_mode, AntiAliasingMode::TAA { .. });
 
+            let cas_enabled = matches!(
+                &self.ctx.camera.aa_mode,
+                AntiAliasingMode::TAA(s) if s.sharpen_intensity > 0.0
+            );
+
             let fxaa_enabled = matches!(
                 self.ctx.camera.aa_mode,
                 AntiAliasingMode::FXAA { .. } | AntiAliasingMode::MSAA_FXAA { .. }
@@ -454,7 +461,24 @@ impl<'a> FrameComposer<'a> {
                 // The resolved colour replaces post_transparent_color for
                 // downstream post-processing.
                 if taa_enabled && let Some(velocity) = opaque_out.velocity_buffer {
-                    active_color = self.ctx.taa_pass.add_to_graph(c, active_color, velocity);
+                    active_color =
+                        self.ctx
+                            .taa_pass
+                            .add_to_graph(c, active_color, velocity, scene_depth);
+
+                    // ── 6b. CAS (Contrast Adaptive Sharpening) ────────────
+                    // Recover fine detail lost to temporal filtering.
+                    if cas_enabled {
+                        let cas_desc = TextureDesc::new_2d(
+                            c.frame_config.width,
+                            c.frame_config.height,
+                            crate::renderer::HDR_TEXTURE_FORMAT,
+                            wgpu::TextureUsages::RENDER_ATTACHMENT
+                                | wgpu::TextureUsages::TEXTURE_BINDING,
+                        );
+                        active_color =
+                            self.ctx.cas_pass.add_to_graph(c, active_color, cas_desc);
+                    }
                 }
 
                 // 7. Transmission Copy

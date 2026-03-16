@@ -435,10 +435,15 @@ define_gpu_data_struct!(
 
         pub prev_view_projection: Mat4 = Mat4::IDENTITY,
 
+        pub unjittered_view_projection: Mat4 = Mat4::IDENTITY,
+        pub prev_unjittered_view_projection: Mat4 = Mat4::IDENTITY,
+
         pub camera_position: Vec3 = Vec3::ZERO,
         pub time: f32 = 0.0,
         pub jitter: Vec2 = Vec2::ZERO,
         pub prev_jitter: Vec2 = Vec2::ZERO,
+        pub camera_near: f32 = 0.1,
+        pub camera_far: f32 = 1000.0,
     }
 );
 

@@ -62,9 +62,10 @@ use crate::renderer::graph::frame::RenderLists;
 #[cfg(feature = "debug_view")]
 use crate::renderer::graph::passes::DebugViewFeature;
 use crate::renderer::graph::passes::{
-    BloomFeature, BrdfLutFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
-    PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
-    TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+    BloomFeature, BrdfLutFeature, CasFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature,
+    OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature,
+    SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature, TransmissionCopyFeature,
+    TransparentFeature,
 };
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;
@@ -123,6 +124,7 @@ struct RendererState {
     // Post-processing passes
     pub(crate) fxaa_pass: FxaaFeature,
     pub(crate) taa_pass: TaaFeature,
+    pub(crate) cas_pass: CasFeature,
     pub(crate) tone_map_pass: ToneMappingFeature,
     pub(crate) bloom_pass: BloomFeature,
     pub(crate) ssao_pass: SsaoFeature,
@@ -223,6 +225,7 @@ impl Renderer {
             frame_arena: FrameArena::new(),
             fxaa_pass: FxaaFeature::new(),
             taa_pass: TaaFeature::new(),
+            cas_pass: CasFeature::new(),
             tone_map_pass: ToneMappingFeature::new(),
             bloom_pass: BloomFeature::new(),
             ssao_pass: SsaoFeature::new(),
@@ -417,6 +420,13 @@ impl Renderer {
                             self.size,
                             HDR_TEXTURE_FORMAT,
                         );
+                        if settings.sharpen_intensity > 0.0 {
+                            state.cas_pass.extract_and_prepare(
+                                &mut extract_ctx,
+                                settings.sharpen_intensity,
+                                HDR_TEXTURE_FORMAT,
+                            );
+                        }
                     }
                     AntiAliasingMode::FXAA(settings) | AntiAliasingMode::MSAA_FXAA(_, settings) => {
                         state.fxaa_pass.target_quality = settings.quality();
@@ -508,6 +518,7 @@ impl Renderer {
             frame_arena: &state.frame_arena,
             fxaa_pass: &mut state.fxaa_pass,
             taa_pass: &mut state.taa_pass,
+            cas_pass: &mut state.cas_pass,
             tone_map_pass: &mut state.tone_map_pass,
             bloom_pass: &mut state.bloom_pass,
             ssao_pass: &mut state.ssao_pass,

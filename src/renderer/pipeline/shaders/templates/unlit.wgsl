@@ -31,7 +31,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 
     $$ if HAS_VELOCITY_TARGET is defined
     let prev_world_pos = u_model.previous_world_matrix * local_pos;
-    out.prev_clip_position = u_render_state.prev_view_projection * prev_world_pos;
+    out.prev_clip_position = u_render_state.prev_unjittered_view_projection * prev_world_pos;
     $$ endif
 
     $$ if HAS_COLOR
@@ -76,11 +76,10 @@ $$ endif
     $$ if HAS_VELOCITY_TARGET is defined
     var out: FragmentOutput;
     out.color = diffuse_color;
-    let ndc_curr = in.clip_position.xy / in.clip_position.w;
+    let unjittered_clip = u_render_state.unjittered_view_projection * vec4<f32>(in.world_position, 1.0);
+    let ndc_curr = unjittered_clip.xy / unjittered_clip.w;
     let ndc_prev = in.prev_clip_position.xy / in.prev_clip_position.w;
-    let ndc_curr_unjittered = ndc_curr - u_render_state.jitter;
-    let ndc_prev_unjittered = ndc_prev - u_render_state.prev_jitter;
-    out.velocity = (ndc_curr_unjittered - ndc_prev_unjittered) * vec2<f32>(0.5, -0.5);
+    out.velocity = (ndc_curr - ndc_prev) * vec2<f32>(0.5, -0.5);
     return out;
     $$ else
     return diffuse_color;
