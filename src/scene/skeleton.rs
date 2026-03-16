@@ -51,6 +51,9 @@ pub struct Skeleton {
     // Final computed matrix array, updated every frame
     // Data flow: data here -> copy to GPU Uniform Buffer
     pub(crate) joint_matrices: CpuBuffer<Vec<Mat4>>,
+
+    // Previous frame's joint matrices (used for velocity calculation in TAA)
+    pub(crate) prev_joint_matrices: CpuBuffer<Vec<Mat4>>,
 }
 
 impl Skeleton {
@@ -69,6 +72,12 @@ impl Skeleton {
             Some(&format!("SkeletonJointMatrices_{name}")),
         );
 
+        let prev_joint_matrices = CpuBuffer::new(
+            vec![Mat4::IDENTITY; count],
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            Some(&format!("SkeletonPrevJointMatrices_{name}")),
+        );
+
         Self {
             id: Uuid::new_v4(),
             name: name.to_string(),
@@ -77,7 +86,14 @@ impl Skeleton {
             local_bounds: None,
             root_bone_index,
             joint_matrices,
+            prev_joint_matrices,
         }
+    }
+
+    #[inline]
+    pub fn latch_previous_matrices(&mut self) {
+        let curr = self.joint_matrices.read().clone();
+        *self.prev_joint_matrices.write() = curr;
     }
 
     /// Gets the local space bounding box (lazy computed)
@@ -178,6 +194,9 @@ impl Skeleton {
         nodes: &SlotMap<NodeHandle, Node>,
         root_matrix_inv: Affine3A,
     ) {
+        // Latch current joint matrices to previous before updating
+        self.latch_previous_matrices();
+
         for (i, &bone_handle) in self.bones.iter().enumerate() {
             // 1. Get current bone's world transform for this frame (computed by scene graph system)
             let Some(bone_node) = nodes.get(bone_handle) else {
