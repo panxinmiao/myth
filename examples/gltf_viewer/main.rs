@@ -365,6 +365,10 @@ struct GltfViewer {
         String,
         myth::resources::screen_space::SssProfile,
     )>,
+
+    // === Debug View (compile-time gated) ===
+    #[cfg(feature = "debug_view")]
+    debug_target: myth::prelude::DebugViewTarget,
 }
 
 /// Async Prefab load result
@@ -532,6 +536,9 @@ impl AppHandler for GltfViewer {
             lut_tx,
 
             sss_profiles: Vec::new(),
+
+            #[cfg(feature = "debug_view")]
+            debug_target: Default::default(),
         };
 
         // 6. 启动加载远程模型列表
@@ -2136,6 +2143,54 @@ impl GltfViewer {
                                         "Screen-Space Subsurface Scattering (SSSS)",
                                     )
                                 });
+
+                                // ===== Debug View (compile-time gated) =====
+                                #[cfg(feature = "debug_view")]
+                                {
+                                    use myth::prelude::DebugViewTarget;
+                                    ui.separator();
+                                    ui.horizontal(|ui| {
+                                        ui.label("Debug View:");
+                                        let taa_on =
+                                            matches!(self.aa_cache.current, AaModeType::TAA);
+                                        let ssao_on = scene.ssao.enabled;
+                                        let bloom_on = scene.bloom.enabled;
+
+                                        // Build available targets dynamically.
+                                        let mut targets = vec![
+                                            DebugViewTarget::None,
+                                            DebugViewTarget::SceneNormal,
+                                        ];
+                                        if taa_on {
+                                            targets.push(DebugViewTarget::Velocity);
+                                        }
+                                        if ssao_on {
+                                            targets.push(DebugViewTarget::SsaoRaw);
+                                        }
+                                        if bloom_on {
+                                            targets.push(DebugViewTarget::BloomMip0);
+                                        }
+
+                                        // Reset to None if current target is unavailable.
+                                        if !targets.contains(&self.debug_target) {
+                                            self.debug_target = DebugViewTarget::None;
+                                        }
+
+                                        egui::ComboBox::from_id_salt("debug_view_selector")
+                                            .width(140.0)
+                                            .selected_text(self.debug_target.label())
+                                            .show_ui(ui, |ui| {
+                                                for &t in &targets {
+                                                    ui.selectable_value(
+                                                        &mut self.debug_target,
+                                                        t,
+                                                        t.label(),
+                                                    );
+                                                }
+                                            });
+                                    });
+                                    renderer.set_debug_view_target(self.debug_target);
+                                }
                             }
                         });
 

@@ -8,6 +8,72 @@ use crate::resources::buffer::CpuBuffer;
 use crate::resources::uniforms::RenderStateUniforms;
 use crate::scene::camera::RenderCamera;
 
+// ─── Debug View Target (compile-time gated) ─────────────────────────────────
+
+/// Semantic identifier for an intermediate render texture to visualise.
+///
+/// This enum lives in the **state layer** — it carries no frame-specific
+/// physical IDs (`TextureNodeId`).  The [`FrameComposer`] resolves it each
+/// frame into a concrete RDG resource, safely handling cases where the
+/// target texture was not produced (e.g. SSAO disabled).
+#[cfg(feature = "debug_view")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DebugViewTarget {
+    /// No debug overlay — show the final tonemapped image.
+    None,
+    /// Main scene depth buffer (reverse-Z, linearised for display).
+    SceneDepth,
+    /// View-space normals from the geometry prepass.
+    SceneNormal,
+    /// Screen-space velocity buffer (TAA reprojection vectors).
+    Velocity,
+    /// Raw SSAO term before spatial blur.
+    SsaoRaw,
+    /// First mip level of the Bloom downsample chain.
+    BloomMip0,
+}
+
+#[cfg(feature = "debug_view")]
+impl Default for DebugViewTarget {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+#[cfg(feature = "debug_view")]
+impl DebugViewTarget {
+    /// Display label for the UI combo box.
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None => "Final Image",
+            Self::SceneDepth => "Scene Depth",
+            Self::SceneNormal => "Scene Normal",
+            Self::Velocity => "Velocity Buffer",
+            Self::SsaoRaw => "SSAO Raw",
+            Self::BloomMip0 => "Bloom Mip 0",
+        }
+    }
+
+    /// WGSL `view_mode` uniform value for the debug shader.
+    ///
+    /// | Mode | Mapping |
+    /// |------|---------|
+    /// | 0    | RGB pass-through |
+    /// | 1    | Single-channel R → grayscale |
+    /// | 2    | Signed vector `[-1,1]` → `[0,1]` |
+    /// | 3    | Linear depth visualisation |
+    pub const fn view_mode(self) -> u32 {
+        match self {
+            Self::None => 0,
+            Self::SceneDepth => 3,
+            Self::SceneNormal => 2,
+            Self::Velocity => 2,
+            Self::SsaoRaw => 1,
+            Self::BloomMip0 => 0,
+        }
+    }
+}
+
 static NEXT_RENDER_STATE_ID: AtomicU32 = AtomicU32::new(0);
 
 pub struct RenderState {
@@ -17,6 +83,9 @@ pub struct RenderState {
     prev_view_projection: glam::Mat4,
     /// Previous frame's jitter (for TAA de-jitter).
     prev_jitter: glam::Vec2,
+    /// Active debug-view target (semantic intent, resolved per-frame).
+    #[cfg(feature = "debug_view")]
+    pub debug_view_target: DebugViewTarget,
 }
 
 impl Default for RenderState {
@@ -36,6 +105,8 @@ impl RenderState {
             ),
             prev_view_projection: glam::Mat4::IDENTITY,
             prev_jitter: glam::Vec2::ZERO,
+            #[cfg(feature = "debug_view")]
+            debug_view_target: DebugViewTarget::None,
         }
     }
 

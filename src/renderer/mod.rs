@@ -59,6 +59,8 @@ use crate::renderer::graph::core::allocator::TransientPool;
 use crate::renderer::graph::core::arena::FrameArena;
 use crate::renderer::graph::core::graph::GraphStorage;
 use crate::renderer::graph::frame::RenderLists;
+#[cfg(feature = "debug_view")]
+use crate::renderer::graph::passes::DebugViewFeature;
 use crate::renderer::graph::passes::{
     BloomFeature, BrdfLutFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature, OpaqueFeature,
     PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature, SsssFeature,
@@ -139,6 +141,10 @@ struct RendererState {
     pub(crate) shadow_pass: ShadowFeature,
     pub(crate) brdf_pass: BrdfLutFeature,
     pub(crate) ibl_pass: IblComputeFeature,
+
+    // Debug view (compile-time gated)
+    #[cfg(feature = "debug_view")]
+    pub(crate) debug_view_pass: DebugViewFeature,
 }
 
 impl Renderer {
@@ -235,6 +241,9 @@ impl Renderer {
             shadow_pass,
             brdf_pass,
             ibl_pass,
+
+            #[cfg(feature = "debug_view")]
+            debug_view_pass: DebugViewFeature::new(),
         });
 
         // Propagate screen bind group info to features that need it.
@@ -456,6 +465,20 @@ impl Renderer {
                     &scene.tone_mapping.uniforms,
                     scene.tone_mapping.lut_texture,
                 );
+
+                // Debug View — prepare pipeline & uniforms when active
+                #[cfg(feature = "debug_view")]
+                {
+                    use crate::renderer::graph::render_state::DebugViewTarget;
+                    let target = state.render_frame.render_state.debug_view_target;
+                    if target != DebugViewTarget::None {
+                        state.debug_view_pass.extract_and_prepare(
+                            &mut extract_ctx,
+                            view_format,
+                            target.view_mode(),
+                        );
+                    }
+                }
             }
         }
 
@@ -501,6 +524,9 @@ impl Renderer {
             shadow_pass: &mut state.shadow_pass,
             brdf_pass: &mut state.brdf_pass,
             ibl_pass: &mut state.ibl_pass,
+
+            #[cfg(feature = "debug_view")]
+            debug_view_pass: &mut state.debug_view_pass,
         };
 
         // Return FrameComposer, defer Surface acquisition to render() call
@@ -547,6 +573,30 @@ impl Renderer {
     #[inline]
     pub fn settings(&self) -> &RendererSettings {
         &self.settings
+    }
+
+    /// Sets the active debug view target.
+    ///
+    /// When set to anything other than `None`, the FrameComposer will
+    /// replace the post-process output with a fullscreen visualisation
+    /// of the selected intermediate texture (if available).
+    #[cfg(feature = "debug_view")]
+    pub fn set_debug_view_target(
+        &mut self,
+        target: crate::renderer::graph::render_state::DebugViewTarget,
+    ) {
+        if let Some(state) = &mut self.context {
+            state.render_frame.render_state.debug_view_target = target;
+        }
+    }
+
+    /// Returns the current debug view target.
+    #[cfg(feature = "debug_view")]
+    pub fn debug_view_target(&self) -> crate::renderer::graph::render_state::DebugViewTarget {
+        self.context
+            .as_ref()
+            .map(|s| s.render_frame.render_state.debug_view_target)
+            .unwrap_or_default()
     }
 
     // === Public Methods: For External Plugins (e.g., UI Pass) ===

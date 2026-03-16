@@ -176,6 +176,8 @@ pub mod prelude {
     pub use crate::utils::orbit_control::OrbitControls;
 
     // Renderer (limited exposure)
+    #[cfg(feature = "debug_view")]
+    pub use crate::renderer::graph::DebugViewTarget;
     pub use crate::renderer::graph::FrameComposer;
     pub use crate::renderer::settings::{AntiAliasingMode, RenderPath, RendererSettings};
 

@@ -30,4 +30,6 @@ pub use extracted::{ExtractedRenderItem, ExtractedScene, ExtractedSkeleton};
 pub use frame::{
     BakedRenderLists, DrawCommand, RenderCommand, RenderFrame, RenderKey, RenderLists,
 };
+#[cfg(feature = "debug_view")]
+pub use render_state::DebugViewTarget;
 pub use render_state::RenderState;

@@ -117,6 +117,10 @@ pub struct ComposerContext<'a> {
     pub shadow_pass: &'a mut ShadowFeature,
     pub brdf_pass: &'a mut BrdfLutFeature,
     pub ibl_pass: &'a mut IblComputeFeature,
+
+    // Debug view (compile-time gated)
+    #[cfg(feature = "debug_view")]
+    pub debug_view_pass: &'a mut crate::renderer::graph::passes::DebugViewFeature,
 }
 
 pub struct GraphBuilderContext<'a, 'g> {
@@ -354,6 +358,16 @@ impl<'a> FrameComposer<'a> {
         let mut bb_scene_color = None;
         let mut bb_scene_depth = None;
 
+        // Debug view: capture intermediate texture IDs for safe resolution.
+        #[cfg(feature = "debug_view")]
+        let mut dbg_normals: Option<crate::renderer::graph::core::TextureNodeId> = None;
+        #[cfg(feature = "debug_view")]
+        let mut dbg_velocity: Option<crate::renderer::graph::core::TextureNodeId> = None;
+        #[cfg(feature = "debug_view")]
+        let mut dbg_ssao: Option<crate::renderer::graph::core::TextureNodeId> = None;
+        #[cfg(feature = "debug_view")]
+        let mut dbg_bloom_color: Option<crate::renderer::graph::core::TextureNodeId> = None;
+
         let mut current_surface = surface_out;
 
         if is_high_fidelity {
@@ -469,6 +483,14 @@ impl<'a> FrameComposer<'a> {
                     shadow_tex,
                 );
 
+                // Capture intermediate IDs for debug view resolution.
+                #[cfg(feature = "debug_view")]
+                {
+                    dbg_normals = prepass_out.scene_normals;
+                    dbg_velocity = opaque_out.velocity_buffer;
+                    dbg_ssao = ssao_output;
+                }
+
                 (active_color, scene_depth)
             });
 
@@ -503,6 +525,15 @@ impl<'a> FrameComposer<'a> {
                     );
                 }
 
+                #[cfg(feature = "debug_view")]
+                {
+                    dbg_bloom_color = if bloom_enabled {
+                        Some(active_color)
+                    } else {
+                        None
+                    };
+                }
+
                 // ToneMapping: HDR → LDR
                 let mut surface = if fxaa_enabled {
                     // Route through an intermediate LDR texture for FXAA input
@@ -530,6 +561,35 @@ impl<'a> FrameComposer<'a> {
 
                 surface
             });
+
+            // ── Debug View Override ────────────────────────────────────
+            // Resolve the semantic DebugViewTarget to a concrete
+            // TextureNodeId, then blit it onto the surface.  Targets
+            // whose producer was disabled (e.g. SSAO off) safely
+            // resolve to None — no pass is injected.
+            #[cfg(feature = "debug_view")]
+            {
+                use crate::renderer::graph::render_state::DebugViewTarget;
+                let target = self.ctx.render_state.debug_view_target;
+                let source: Option<crate::renderer::graph::core::TextureNodeId> = match target {
+                    DebugViewTarget::None => None,
+                    // SceneDepth is Depth32Float — incompatible with float
+                    // texture sampling.  A dedicated depth-copy-to-color
+                    // pass will be added in a future iteration.
+                    DebugViewTarget::SceneDepth => None,
+                    DebugViewTarget::SceneNormal => dbg_normals,
+                    DebugViewTarget::Velocity => dbg_velocity,
+                    DebugViewTarget::SsaoRaw => dbg_ssao,
+                    DebugViewTarget::BloomMip0 => dbg_bloom_color,
+                };
+
+                if let Some(src) = source {
+                    current_surface =
+                        self.ctx
+                            .debug_view_pass
+                            .add_to_graph(&mut graph_ctx, src, current_surface);
+                }
+            }
         } else {
             // BasicForward pipeline: single-pass LDR rendering.
 

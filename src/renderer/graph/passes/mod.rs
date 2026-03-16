@@ -1,5 +1,7 @@
 pub mod bloom;
 pub mod compute;
+#[cfg(feature = "debug_view")]
+pub mod debug_view;
 pub mod draw;
 pub mod fxaa;
 pub mod msaa_sync;
@@ -18,6 +20,8 @@ pub mod utils;
 
 pub use bloom::BloomFeature;
 pub use compute::{BrdfLutFeature, IblComputeFeature};
+#[cfg(feature = "debug_view")]
+pub use debug_view::DebugViewFeature;
 pub use fxaa::FxaaFeature;
 pub use msaa_sync::MsaaSyncFeature;
 pub use opaque::OpaqueFeature;

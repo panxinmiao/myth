@@ -170,6 +170,10 @@ gltf = ["dep:gltf"]
 # Enable Render Graph inspection: retains logical group metadata per pass
 # and supports Mermaid subgraph dumping for visual debugging.
 rdg_inspector = []
+# Enable intermediate render-texture visualisation (debug overlay).
+# Allows inspecting transient RDG resources (depth, normals, SSAO, velocity, etc.)
+# at runtime via a UI selector.  Compile-time gated for zero overhead in release.
+debug_view = []
 # Enable meshopt decompression for glTF models using EXT_meshopt_compression.
 # Note: This pulls in the meshopt C library, which requires an LLVM/Clang
 # toolchain when compiling for WASM targets.
