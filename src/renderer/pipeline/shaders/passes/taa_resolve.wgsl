@@ -114,13 +114,20 @@ fn sample_catmull_rom_5tap(tex: texture_2d<f32>, samp: sampler, uv: vec2<f32>, t
     let tc3 = (tc + 2.0) / tex_size;
 
     // 5 bilinear taps weighted to approximate 16-tap Catmull-Rom
+    let weight0 = w12.x * w12.y;
+    let weight1 = w0.x  * w12.y;
+    let weight2 = w3.x  * w12.y;
+    let weight3 = w12.x * w0.y;
+    let weight4 = w12.x * w3.y;
+    let weight_sum = weight0 + weight1 + weight2 + weight3 + weight4;
+
     var color = textureSampleLevel(tex, samp, vec2<f32>(tc12.x, tc12.y), 0.0).rgb * (w12.x * w12.y);
     color += textureSampleLevel(tex, samp, vec2<f32>(tc0.x,  tc12.y), 0.0).rgb * (w0.x  * w12.y);
     color += textureSampleLevel(tex, samp, vec2<f32>(tc3.x,  tc12.y), 0.0).rgb * (w3.x  * w12.y);
     color += textureSampleLevel(tex, samp, vec2<f32>(tc12.x, tc0.y),  0.0).rgb * (w12.x * w0.y);
     color += textureSampleLevel(tex, samp, vec2<f32>(tc12.x, tc3.y),  0.0).rgb * (w12.x * w3.y);
 
-    return max(color, vec3<f32>(0.0));
+    return max(color / weight_sum, vec3<f32>(0.0));
 }
 
 // ── Fragment Shader ─────────────────────────────────────────────────────
@@ -160,9 +167,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // ════════════════════════════════════════════════════════════════════
     // 2. Reprojection + Depth Rejection
     // ════════════════════════════════════════════════════════════════════
-    let jitter_uv = vec2<f32>(u_params.jitter_x, u_params.jitter_y) * vec2<f32>(0.5, -0.5);
-    let unjittered_uv = uv - jitter_uv;
-    let history_uv = unjittered_uv - velocity;
+    // let jitter_uv = vec2<f32>(u_params.jitter_x, u_params.jitter_y) * vec2<f32>(0.5, -0.5);
+    // let unjittered_uv = uv - jitter_uv;
+    // let history_uv = unjittered_uv - velocity;
+
+    let history_uv = uv - velocity;
 
     // Reject out-of-screen history immediately
     if (history_uv.x < 0.0 || history_uv.x > 1.0 || history_uv.y < 0.0 || history_uv.y > 1.0) {
@@ -172,12 +181,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Depth rejection: compare current linear depth with history linear depth.
     // Uses camera near plane = 0.1 as a reasonable default for reverse-Z.
 
-    let history_z = textureSampleLevel(t_history_depth, s_nearest, history_uv, 0);
-    let current_linear = depth_to_linear(center_depth, 0.1);
-    let history_linear = depth_to_linear(history_z, 0.1);
-    let depth_diff = abs(current_linear - history_linear) / max(current_linear, 0.0001);
-
-    let depth_rejection_weight = saturate((0.1 - depth_diff) / 0.05);
+    // let history_z = textureSampleLevel(t_history_depth, s_nearest, history_uv, 0);
+    // let current_linear = depth_to_linear(center_depth, 0.1);
+    // let history_linear = depth_to_linear(history_z, 0.1);
+    // let depth_diff = abs(current_linear - history_linear) / max(current_linear, 0.0001);
+    // let depth_rejection_weight = saturate((0.1 - depth_diff) / 0.05);
 
 
 
@@ -241,9 +249,9 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let speed = length(velocity * tex_dim);
     var weight = u_params.feedback_weight;
 
-    weight *= depth_rejection_weight;
+    // weight *= depth_rejection_weight;
 
-    weight = mix(weight, 0.5, saturate(speed * 0.02));
+    weight = mix(weight, 0.1, saturate(speed * 0.1));
 
     let resolved_tm = mix(current_tm, clipped_history, weight);
 

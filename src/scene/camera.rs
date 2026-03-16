@@ -300,8 +300,10 @@ impl Camera {
             let mut jittered = self.unjittered_projection;
             match self.projection_type {
                 ProjectionType::Perspective => {
-                    jittered.z_axis.x += self.jitter.x;
-                    jittered.z_axis.y += self.jitter.y;
+                    // For perspective projection, we apply jitter by modifying the projection center.
+                    // Reverse-Z projection maps NDC z=1 to the near plane.
+                    jittered.z_axis.x -= self.jitter.x;
+                    jittered.z_axis.y -= self.jitter.y;
                 }
                 ProjectionType::Orthographic => {
                     jittered.w_axis.x += self.jitter.x;
