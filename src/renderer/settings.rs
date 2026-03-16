@@ -155,6 +155,10 @@ pub enum AntiAliasingMode {
     /// Temporal Anti-Aliasing — the **recommended default** for PBR.
     /// Resolves all aliasing categories with slight temporal softening.
     TAA(TaaSettings),
+
+    /// TAA + FXAA.  TAA handles temporal aliasing, But for transparent objects
+    /// or extreme cases where TAA alone isn't sufficient, FXAA can provide an extra layer of smoothing.  
+    TAA_FXAA(TaaSettings, FxaaSettings),
 }
 
 impl AntiAliasingMode {
@@ -175,14 +179,17 @@ impl AntiAliasingMode {
     #[inline]
     #[must_use]
     pub fn is_taa(&self) -> bool {
-        matches!(self, Self::TAA(_))
+        matches!(self, Self::TAA(_) | Self::TAA_FXAA(..))
     }
 
     /// Returns `true` when FXAA is active (standalone or combined with MSAA).
     #[inline]
     #[must_use]
     pub fn is_fxaa(&self) -> bool {
-        matches!(self, Self::FXAA(_) | Self::MSAA_FXAA(..))
+        matches!(
+            self,
+            Self::FXAA(_) | Self::MSAA_FXAA(..) | Self::TAA_FXAA(..)
+        )
     }
 
     /// Returns the [`FxaaSettings`] if the current mode uses FXAA.
@@ -190,7 +197,7 @@ impl AntiAliasingMode {
     #[must_use]
     pub fn fxaa_settings(&self) -> Option<&FxaaSettings> {
         match self {
-            Self::FXAA(s) | Self::MSAA_FXAA(_, s) => Some(s),
+            Self::FXAA(s) | Self::MSAA_FXAA(_, s) | Self::TAA_FXAA(_, s) => Some(s),
             _ => Option::None,
         }
     }
@@ -200,7 +207,7 @@ impl AntiAliasingMode {
     #[must_use]
     pub fn taa_settings(&self) -> Option<&TaaSettings> {
         match self {
-            Self::TAA(s) => Some(s),
+            Self::TAA(s) | Self::TAA_FXAA(s, _) => Some(s),
             _ => Option::None,
         }
     }

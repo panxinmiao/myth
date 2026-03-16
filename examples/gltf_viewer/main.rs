@@ -179,6 +179,7 @@ enum AaModeType {
     MSAA,
     MSAA_FXAA,
     TAA,
+    TAA_FXAA,
 }
 
 impl AaModeType {
@@ -189,6 +190,7 @@ impl AaModeType {
             Self::MSAA => "MSAA 4x",
             Self::MSAA_FXAA => "MSAA+FXAA",
             Self::TAA => "TAA",
+            Self::TAA_FXAA => "TAA+FXAA",
         }
     }
 
@@ -199,11 +201,15 @@ impl AaModeType {
         Self::MSAA,
         Self::MSAA_FXAA,
         Self::TAA,
+        Self::TAA_FXAA,
     ];
 
     /// Post-process variants that require the HighFidelity path.
     fn requires_post_processing(self) -> bool {
-        matches!(self, Self::FXAA | Self::MSAA_FXAA | Self::TAA)
+        matches!(
+            self,
+            Self::FXAA | Self::MSAA_FXAA | Self::TAA | Self::TAA_FXAA
+        )
     }
 }
 
@@ -219,7 +225,7 @@ struct InspectorAaCache {
 impl Default for InspectorAaCache {
     fn default() -> Self {
         Self {
-            current: AaModeType::TAA,
+            current: AaModeType::TAA_FXAA,
             msaa_samples: 4,
             fxaa: FxaaSettings::default(),
             taa: TaaSettings::default(),
@@ -238,6 +244,7 @@ impl InspectorAaCache {
                 AntiAliasingMode::MSAA_FXAA(self.msaa_samples, self.fxaa.clone())
             }
             AaModeType::TAA => AntiAliasingMode::TAA(self.taa.clone()),
+            AaModeType::TAA_FXAA => AntiAliasingMode::TAA_FXAA(self.taa.clone(), self.fxaa.clone()),
         }
     }
 }
@@ -437,7 +444,10 @@ impl AppHandler for GltfViewer {
         // 4. 设置相机
         let mut camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
 
-        camera.set_aa_mode(AntiAliasingMode::TAA(TaaSettings::default()));
+        camera.set_aa_mode(AntiAliasingMode::TAA_FXAA(
+            TaaSettings::default(),
+            FxaaSettings::default(),
+        ));
 
         let cam_node_id = scene.add_camera(camera);
         if let Some(node) = scene.get_node_mut(cam_node_id) {
@@ -1727,7 +1737,9 @@ impl GltfViewer {
 
                                 // Detail panels for the selected mode.
                                 match self.aa_cache.current {
-                                    AaModeType::FXAA | AaModeType::MSAA_FXAA => {
+                                    AaModeType::FXAA
+                                    | AaModeType::MSAA_FXAA
+                                    | AaModeType::TAA_FXAA => {
                                         ui.horizontal(|ui| {
                                             ui.label("FXAA Quality:");
                                             let cur = self.aa_cache.fxaa.quality();
@@ -1752,7 +1764,11 @@ impl GltfViewer {
                                                 });
                                         });
                                     }
-                                    AaModeType::TAA => {
+                                    _ => {}
+                                }
+
+                                match self.aa_cache.current {
+                                    AaModeType::TAA | AaModeType::TAA_FXAA => {
                                         ui.horizontal(|ui| {
                                             ui.label("Feedback Weight:");
                                             if ui

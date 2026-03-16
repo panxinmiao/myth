@@ -64,10 +64,10 @@ pub struct PrepassFeature {
     // ─── Push Parameters (set before extract_and_prepare) ──────────
     needs_normal: bool,
     needs_feature_id: bool,
-    taa_enabled: bool,
+    needs_velocity: bool,
 
     // ─── Internal Cache ────────────────────────────────────────────
-    /// Pipeline cache: (main_pipeline_id, needs_normal, needs_feature_id, taa_enabled) → prepass pipeline.
+    /// Pipeline cache: (main_pipeline_id, needs_normal, needs_feature_id, needs_velocity) → prepass pipeline.
     local_cache: FxHashMap<(RenderPipelineId, bool, bool, bool), RenderPipelineId>,
 }
 
@@ -83,7 +83,7 @@ impl PrepassFeature {
         Self {
             needs_normal: false,
             needs_feature_id: false,
-            taa_enabled: false,
+            needs_velocity: false,
             local_cache: FxHashMap::default(),
         }
     }
@@ -114,8 +114,8 @@ impl PrepassFeature {
     /// Whether the prepass outputs velocity vectors for TAA.
     #[inline]
     #[must_use]
-    pub fn taa_enabled(&self) -> bool {
-        self.taa_enabled
+    pub fn needs_velocity(&self) -> bool {
+        self.needs_velocity
     }
 
     /// Pre-RDG resource preparation: compile prepass pipelines for every
@@ -125,11 +125,11 @@ impl PrepassFeature {
         ctx: &mut ExtractContext,
         needs_normal: bool,
         needs_feature_id: bool,
-        taa_enabled: bool,
+        needs_velocity: bool,
     ) {
         self.needs_normal = needs_normal;
         self.needs_feature_id = needs_feature_id;
-        self.taa_enabled = taa_enabled;
+        self.needs_velocity = needs_velocity;
         self.prepare_pipelines(ctx);
     }
 
@@ -158,7 +158,7 @@ impl PrepassFeature {
                 cmd.pipeline_id,
                 self.needs_normal,
                 self.needs_feature_id,
-                self.taa_enabled,
+                self.needs_velocity,
             )) {
                 continue;
             }
@@ -205,11 +205,15 @@ impl PrepassFeature {
             );
 
             options.add_define("IS_PREPASS", "1");
+
             if self.needs_normal {
                 options.add_define("OUTPUT_NORMAL", "1");
             }
-            if self.taa_enabled {
+            if self.needs_velocity {
                 options.add_define("HAS_VELOCITY_TARGET", "1");
+            }
+            if self.needs_feature_id {
+                options.add_define("OUTPUT_FEATURE_ID", "1");
             }
 
             // ── Shader generation ──────────────────────────────────────
@@ -277,7 +281,7 @@ impl PrepassFeature {
                     write_mask: wgpu::ColorWrites::ALL,
                 }));
             }
-            if self.taa_enabled {
+            if self.needs_velocity {
                 color_targets.push(ColorTargetKey::from(wgpu::ColorTargetState {
                     format: VELOCITY_FORMAT,
                     blend: None,
@@ -316,7 +320,7 @@ impl PrepassFeature {
                     cmd.pipeline_id,
                     self.needs_normal,
                     self.needs_feature_id,
-                    self.taa_enabled,
+                    self.needs_velocity,
                 ),
                 pipeline_id,
             );

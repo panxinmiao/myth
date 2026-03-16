@@ -35,9 +35,9 @@ pub enum FxaaQuality {
     /// 4 iterations — suitable for mobile and low-end GPUs.
     Low,
     /// 8 iterations — good balance of quality and performance (default).
-    #[default]
     Medium,
     /// 12 iterations — maximum edge exploration quality.
+    #[default]
     High,
 }
 

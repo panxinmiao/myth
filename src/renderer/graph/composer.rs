@@ -48,7 +48,6 @@
 //! ```
 
 use crate::assets::AssetServer;
-use crate::prelude::AntiAliasingMode;
 use crate::render::RenderState;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::gpu::{SamplerRegistry, Tracked};
@@ -378,17 +377,15 @@ impl<'a> FrameComposer<'a> {
 
             // ── Scene Rendering Group ──────────────────────────────────
 
-            let taa_enabled = matches!(self.ctx.camera.aa_mode, AntiAliasingMode::TAA { .. });
+            let taa_enabled = self.ctx.camera.aa_mode.is_taa();
 
-            let cas_enabled = matches!(
-                &self.ctx.camera.aa_mode,
-                AntiAliasingMode::TAA(s) if s.sharpen_intensity > 0.0
-            );
+            let cas_enabled = if let Some(s) = self.ctx.camera.aa_mode.taa_settings() {
+                s.sharpen_intensity > 0.0
+            } else {
+                false
+            };
 
-            let fxaa_enabled = matches!(
-                self.ctx.camera.aa_mode,
-                AntiAliasingMode::FXAA { .. } | AntiAliasingMode::MSAA_FXAA { .. }
-            );
+            let fxaa_enabled = self.ctx.camera.aa_mode.is_fxaa();
 
             let (mut active_color, mut scene_depth) = graph_ctx.with_group("Scene", |c| {
                 // 1. Prepass
@@ -684,7 +681,7 @@ impl<'a> FrameComposer<'a> {
                 local_cache: self.ctx.prepass.local_cache(),
                 needs_normal: self.ctx.prepass.needs_normal(),
                 needs_feature_id: self.ctx.prepass.needs_feature_id(),
-                taa_enabled: self.ctx.prepass.taa_enabled(),
+                needs_velocity: self.ctx.prepass.needs_velocity(),
             })
         } else {
             None

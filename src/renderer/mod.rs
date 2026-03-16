@@ -51,7 +51,6 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::assets::AssetServer;
 use crate::errors::Result;
-use crate::prelude::AntiAliasingMode;
 use crate::renderer::core::binding::GlobalBindGroupCache;
 use crate::renderer::core::gpu::SamplerRegistry;
 use crate::renderer::graph::composer::ComposerContext;
@@ -411,36 +410,35 @@ impl Renderer {
             }
 
             if is_hf {
-                match &camera.aa_mode {
-                    AntiAliasingMode::TAA(settings) => {
-                        state.taa_pass.extract_and_prepare(
+                if let Some(taa_settins) = camera.aa_mode.taa_settings() {
+                    state.taa_pass.extract_and_prepare(
+                        &mut extract_ctx,
+                        taa_settins.feedback_weight,
+                        self.size,
+                        HDR_TEXTURE_FORMAT,
+                    );
+
+                    if taa_settins.sharpen_intensity > 0.0 {
+                        state.cas_pass.extract_and_prepare(
                             &mut extract_ctx,
-                            settings.feedback_weight,
-                            self.size,
+                            taa_settins.sharpen_intensity,
                             HDR_TEXTURE_FORMAT,
                         );
-                        if settings.sharpen_intensity > 0.0 {
-                            state.cas_pass.extract_and_prepare(
-                                &mut extract_ctx,
-                                settings.sharpen_intensity,
-                                HDR_TEXTURE_FORMAT,
-                            );
-                        }
                     }
-                    AntiAliasingMode::FXAA(settings) | AntiAliasingMode::MSAA_FXAA(_, settings) => {
-                        state.fxaa_pass.target_quality = settings.quality();
-                        state
-                            .fxaa_pass
-                            .extract_and_prepare(&mut extract_ctx, view_format);
-                    }
-                    _ => {}
+                }
+
+                if let Some(fxaa_settings) = camera.aa_mode.fxaa_settings() {
+                    state.fxaa_pass.target_quality = fxaa_settings.quality();
+                    state
+                        .fxaa_pass
+                        .extract_and_prepare(&mut extract_ctx, view_format);
                 }
 
                 state.prepass.extract_and_prepare(
                     &mut extract_ctx,
                     needs_normal,
                     needs_feature_id,
-                    matches!(camera.aa_mode, AntiAliasingMode::TAA(..)),
+                    camera.aa_mode.is_taa(),
                 );
 
                 if ssao_enabled {
