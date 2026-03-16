@@ -40,15 +40,10 @@ use crate::renderer::graph::passes::draw::submit_draw_commands;
 #[must_use = "SSA Graph: You must use the outputs of opaque pass to wire downstream passes!"]
 pub struct OpaqueOutputs {
     /// Drawing surface for subsequent MSAA passes (Skybox, Transparent).
-    /// In non-MSAA mode this IS `scene_color_hdr`.
     pub active_color: TextureNodeId,
     /// Depth surface for subsequent draws.  In MSAA mode this is a
     /// multi-sampled depth; in non-MSAA mode this is the Prepass's depth.
     pub active_depth: TextureNodeId,
-    /// Single-sample HDR scene color (resolve target in MSAA, direct
-    /// color target in non-MSAA).  Used by screen-space effects and
-    /// the post-processing chain.
-    pub scene_color_hdr: TextureNodeId,
     /// Resolved specular texture for SSSS (`None` when specular is
     /// not enabled).
     pub specular_mrt: Option<TextureNodeId>,
@@ -82,7 +77,6 @@ impl OpaqueFeature {
         &'a self,
         ctx: &mut GraphBuilderContext<'a, '_>,
         scene_depth_ss: TextureNodeId,
-        has_prepass: bool,
         clear_color: wgpu::Color,
         needs_specular: bool,
         ssao_tex: Option<TextureNodeId>,
@@ -106,8 +100,7 @@ impl OpaqueFeature {
 
         ctx.graph.add_pass("Opaque_Pass", |builder| {
             // ── Create color / depth / resolve targets ─────────────────
-            let (color_target, depth_target, resolve_target, scene_color_hdr, in_depth) = if is_msaa
-            {
+            let (color_target, depth_target) = if is_msaa {
                 let msaa_color_desc = TextureDesc::new(
                     fc.width,
                     fc.height,
@@ -131,19 +124,12 @@ impl OpaqueFeature {
 
                 let msaa_color = builder.create_texture("Scene_Color_MSAA", msaa_color_desc);
                 let msaa_depth = builder.create_texture("Scene_Depth_MSAA", msaa_depth_desc);
-                let scene_hdr = builder.create_texture("Scene_Color_HDR", hdr_desc);
 
-                (msaa_color, msaa_depth, Some(scene_hdr), scene_hdr, None)
+                (msaa_color, msaa_depth)
             } else {
                 let scene_hdr = builder.create_texture("Scene_Color_HDR", hdr_desc);
-                let depth_alias = builder.mutate_texture(scene_depth_ss, "Scene_Depth_Opaque");
-                (
-                    scene_hdr,
-                    depth_alias,
-                    None,
-                    scene_hdr,
-                    Some(scene_depth_ss),
-                )
+                let depth = builder.read_texture(scene_depth_ss);
+                (scene_hdr, depth)
             };
 
             // ── Specular MRT (conditionally created) ───────────────────
@@ -190,11 +176,9 @@ impl OpaqueFeature {
             let node = OpaquePassNode::new(
                 color_target,
                 depth_target,
-                in_depth,
-                has_prepass,
+                // in_depth,
                 clear_color,
                 needs_specular,
-                resolve_target,
                 ssao_tex,
                 shadow_tex,
                 specular_tex,
@@ -213,7 +197,6 @@ impl OpaqueFeature {
                 OpaqueOutputs {
                     active_color: color_target,
                     active_depth: depth_target,
-                    scene_color_hdr,
                     specular_mrt,
                 },
             )
@@ -233,13 +216,11 @@ pub struct OpaquePassNode<'a> {
     // ─── RDG Resource Slots ────────────────────────────────────────
     pub color_target: TextureNodeId,
     pub depth_target: TextureNodeId,
-    pub in_depth: Option<TextureNodeId>,
-    pub resolve_target: Option<TextureNodeId>,
+    // pub in_depth: Option<TextureNodeId>,
     pub specular_tex: TextureNodeId,
     pub specular_resolve_target: Option<TextureNodeId>,
 
     // ─── Push Parameters ───────────────────────────────────────────
-    pub has_prepass: bool,
     pub clear_color: wgpu::Color,
     pub needs_specular: bool,
     pub ssao_input: Option<TextureNodeId>,
@@ -255,11 +236,9 @@ impl<'a> OpaquePassNode<'a> {
     pub fn new(
         color_target: TextureNodeId,
         depth_target: TextureNodeId,
-        in_depth: Option<TextureNodeId>,
-        has_prepass: bool,
+        // in_depth: Option<TextureNodeId>,
         clear_color: wgpu::Color,
         needs_specular: bool,
-        resolve_target: Option<TextureNodeId>,
         ssao_input: Option<TextureNodeId>,
         shadow_input: Option<TextureNodeId>,
         specular_tex: TextureNodeId,
@@ -269,11 +248,9 @@ impl<'a> OpaquePassNode<'a> {
         Self {
             color_target,
             depth_target,
-            in_depth,
-            resolve_target,
+            // in_depth,
             specular_tex,
             specular_resolve_target,
-            has_prepass,
             clear_color,
             needs_specular,
             ssao_input,
@@ -326,7 +303,7 @@ impl<'a> PassNode<'a> for OpaquePassNode<'a> {
         > = smallvec::smallvec![ctx.get_color_attachment(
             self.color_target,
             RenderTargetOps::Clear(self.clear_color),
-            self.resolve_target
+            None
         )];
 
         // Specular MRT — may have been culled if no downstream consumer

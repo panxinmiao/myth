@@ -349,6 +349,21 @@ impl ExecuteContext<'_> {
         }
     }
 
+    #[must_use]
+    pub fn try_get_base_mip_view(&self, id: TextureNodeId) -> Option<&TextureView> {
+        let root_id = resolve_root_id(self.resources, id);
+        let res = &self.resources[root_id.0 as usize];
+
+        if res.is_external {
+            let ptr = res.external_view_ptr?;
+            let tracked = unsafe { &*ptr };
+            Some(&**tracked) // Deref Tracked 获得 wgpu::TextureView
+        } else {
+            res.physical_index
+                .map(|idx| self.pool.get_base_mip_view(idx))
+        }
+    }
+
     /// Returns `true` if the resource is backed by physical GPU memory.
     ///
     /// Equivalent to [`RdgViewResolver::is_resource_allocated`] but
@@ -398,7 +413,8 @@ impl ExecuteContext<'_> {
         ops: RenderTargetOps,
         resolve_target: Option<TextureNodeId>,
     ) -> Option<wgpu::RenderPassColorAttachment<'_>> {
-        let view = self.try_get_texture_view(id)?;
+        let view = self.try_get_base_mip_view(id)?;
+
         let res = &self.resources[id.0 as usize];
         let ti = self.current_timeline_index;
 
@@ -434,7 +450,7 @@ impl ExecuteContext<'_> {
             wgpu::StoreOp::Store
         };
 
-        let resolve_view = resolve_target.and_then(|rt| self.try_get_texture_view(rt));
+        let resolve_view = resolve_target.and_then(|rt| self.try_get_base_mip_view(rt));
 
         Some(wgpu::RenderPassColorAttachment {
             view,

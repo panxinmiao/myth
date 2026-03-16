@@ -77,6 +77,8 @@ pub(crate) struct PhysicalTexture {
     pub(crate) texture: wgpu::Texture,
     /// Full-texture default view (all mips, all layers, aspect = All).
     pub(crate) default_view: Tracked<wgpu::TextureView>,
+    /// Optional cached view for the first mip level.
+    pub(crate) base_mip_view: Option<Tracked<wgpu::TextureView>>,
     /// Lazily-populated sub-view cache.
     pub(crate) sub_views: FxHashMap<SubViewKey, Tracked<wgpu::TextureView>>,
     /// Frame index of the last access (acquire or sub-view retrieval). Used for eviction.
@@ -226,14 +228,35 @@ impl TransientPool {
             view_formats: &[],
         });
         let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+        let default_view = Tracked::new(view);
 
         self.uid_counter += 1;
+
+        // Optional cached view for the first mip level (common case for render targets).
+        let base_mip = if texture.mip_level_count() > 1 {
+            Some(Tracked::new(texture.create_view(
+                &wgpu::TextureViewDescriptor {
+                    label: Some("Mip0 View"),
+                    format: None,
+                    dimension: None,
+                    usage: None,
+                    aspect: wgpu::TextureAspect::All,
+                    base_mip_level: 0,
+                    mip_level_count: Some(1),
+                    base_array_layer: 0,
+                    array_layer_count: None,
+                },
+            )))
+        } else {
+            None
+        };
 
         let physical_tex = PhysicalTexture {
             uid: self.uid_counter,
             desc: *desc,
             texture,
-            default_view: Tracked::new(view),
+            default_view,
+            base_mip_view: base_mip,
             sub_views: FxHashMap::default(),
             last_accessed_frame: self.current_frame_index,
         };
@@ -283,6 +306,13 @@ impl TransientPool {
     #[must_use]
     pub fn get_view(&self, index: usize) -> &TextureView {
         &self.get_tex(index).default_view
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn get_base_mip_view(&self, index: usize) -> &TextureView {
+        let tex = &self.get_tex(index);
+        tex.base_mip_view.as_ref().unwrap_or(&tex.default_view)
     }
 
     /// Returns the tracked default view (carries a unique ID for state dedup).

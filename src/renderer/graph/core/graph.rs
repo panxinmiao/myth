@@ -445,7 +445,6 @@ impl<'a> RenderGraph<'a> {
             external_view_ptr: None,
             alias_of: None,
         });
-        // self.storage.resource_registry.insert(name, id);
         id
     }
 

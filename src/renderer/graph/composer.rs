@@ -60,6 +60,7 @@ use crate::renderer::graph::core::{
     TextureDesc, TransientPool, ViewResolver,
 };
 use crate::renderer::graph::frame::{PreparedSkyboxDraw, RenderLists};
+use crate::renderer::graph::passes::utils::add_msaa_resolve_pass;
 use crate::renderer::graph::passes::{
     BloomFeature, BrdfLutFeature, CasFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature,
     OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature,
@@ -412,11 +413,9 @@ impl<'a> FrameComposer<'a> {
                 };
 
                 // 3. Opaque
-                let opaque_has_prepass = !is_msaa;
                 let opaque_out = self.ctx.opaque_pass.add_to_graph(
                     c,
                     scene_depth,
-                    opaque_has_prepass,
                     self.ctx.extracted_scene.background.clear_color(),
                     ssss_enabled,
                     ssao_output,
@@ -427,9 +426,22 @@ impl<'a> FrameComposer<'a> {
 
                 // 4. SSSS
                 if ssss_enabled {
+                    if is_msaa {
+                        let hdr_desc = TextureDesc::new_2d(
+                            c.frame_config.width,
+                            c.frame_config.height,
+                            crate::renderer::HDR_TEXTURE_FORMAT,
+                            wgpu::TextureUsages::RENDER_ATTACHMENT
+                                | wgpu::TextureUsages::TEXTURE_BINDING
+                                | wgpu::TextureUsages::COPY_SRC,
+                        );
+                        // If MSAA is enabled, resolve the opaque output to an intermediate non-MSAA texture for SSSS input.
+                        active_color = add_msaa_resolve_pass(c, active_color, hdr_desc);
+                    }
+
                     active_color = self.ctx.ssss_pass.add_to_graph(
                         c,
-                        opaque_out.scene_color_hdr, //Ensure single sample input for SSSS, even with MSAA (input is internally resolved if needed)
+                        active_color,
                         prepass_out.scene_depth,
                         prepass_out.scene_normals.unwrap(),
                         prepass_out.feature_id.unwrap(),
@@ -472,13 +484,11 @@ impl<'a> FrameComposer<'a> {
 
                 // 7. Transmission Copy
                 let transmission_tex = if has_transmission {
-                    let tx_source = if is_msaa {
-                        // todo MSAA Resolve Pass
-                        opaque_out.scene_color_hdr
-                    } else {
-                        active_color
-                    };
-                    Some(self.ctx.transmission_copy_pass.add_to_graph(c, tx_source))
+                    Some(
+                        self.ctx
+                            .transmission_copy_pass
+                            .add_to_graph(c, active_color),
+                    )
                 } else {
                     None
                 };

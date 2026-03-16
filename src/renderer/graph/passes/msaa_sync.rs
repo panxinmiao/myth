@@ -172,7 +172,7 @@ impl MsaaSyncFeature {
 
         let dst_msaa = ctx
             .graph
-            .register_resource("Scene_Color_MSAA_Sync", msaa_color_desc, false);
+            .register_resource("Scene_Color_MSAA", msaa_color_desc, false);
 
         let pipeline_id = self.pipeline_id.expect("MsaaSyncFeature not prepared");
         let pipeline = ctx.pipeline_cache.get_render_pipeline(pipeline_id);

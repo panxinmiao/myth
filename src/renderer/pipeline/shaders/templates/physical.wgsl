@@ -245,13 +245,12 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     var ambient_occlusion = 1.0;
     $$ if HDR and USE_SSAO
     // Sample screen-space AO
-    let screen_ndc = varyings.osition.xy / varyings.position.w;
+    let screen_ndc = varyings.position.xy / varyings.position.w;
 
     let screen_uv = vec2<f32>(
         screen_ndc.x * 0.5 + 0.5,
         screen_ndc.y * -0.5 + 0.5
     );
-
 
     ambient_occlusion = textureSampleLevel(t_ssao, s_screen_sampler, screen_uv, 0.0).r;
     $$ endif

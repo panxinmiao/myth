@@ -16,7 +16,10 @@
 
 use crate::renderer::graph::{
     composer::GraphBuilderContext,
-    core::{ExecuteContext, PassNode, TextureDesc, TextureNodeId},
+    core::{TextureDesc, TextureNodeId},
+    passes::utils::{
+        add_copy_texture_pass_into, add_generate_mipmap_pass, add_msaa_resolve_pass_into,
+    },
 };
 
 // ─── Feature ───────────────────────────────────────────────────────────
@@ -56,62 +59,15 @@ impl TransmissionCopyFeature {
         );
         let transmission_tex = ctx.graph.register_resource("Transmission_Tex", desc, false);
 
-        let node = TransmissionCopyPassNode {
-            scene_color,
-            transmission_tex,
-        };
-        ctx.graph.add_pass("TransmissionCopy_Pass", |builder| {
-            builder.write_texture(transmission_tex);
-            builder.read_texture(scene_color);
-            (node, ())
-        });
-        transmission_tex
-    }
-}
+        let is_msaa = fc.msaa_samples > 1;
 
-// ─── Pass Node ─────────────────────────────────────────────────────────
-
-/// RDG Transmission Copy Pass.
-///
-/// Copies scene color to the transmission texture and generates mipmaps.
-/// Conditionally skipped if no materials use Transmission this frame.
-pub struct TransmissionCopyPassNode {
-    // ─── RDG Resource Slots (explicit wiring from add_to_graph) ────
-    pub scene_color: TextureNodeId,
-    pub transmission_tex: TextureNodeId,
-}
-
-impl PassNode<'_> for TransmissionCopyPassNode {
-    fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let src_view = ctx.get_texture_view(self.scene_color);
-        let src_texture = src_view.texture();
-        let src_size = src_texture.size();
-
-        let dst_view = ctx.get_texture_view(self.transmission_tex);
-        let dst_texture = dst_view.texture();
-
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: src_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: dst_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: src_size.width,
-                height: src_size.height,
-                depth_or_array_layers: 1,
-            },
-        );
-
-        // Generate mipmaps for LOD-based transmission blur
-        ctx.mipmap_generator
-            .generate(ctx.device, encoder, dst_texture);
+        ctx.with_group("Transmission_Map", |ctx| {
+            let out = if is_msaa {
+                add_msaa_resolve_pass_into(ctx, scene_color, transmission_tex)
+            } else {
+                add_copy_texture_pass_into(ctx, scene_color, transmission_tex)
+            };
+            add_generate_mipmap_pass(ctx, out, "Transmission_Tex_Mipmapped")
+        })
     }
 }
