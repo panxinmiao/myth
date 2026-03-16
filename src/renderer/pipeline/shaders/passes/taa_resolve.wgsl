@@ -181,11 +181,11 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // Depth rejection: compare current linear depth with history linear depth.
     // Uses camera near plane = 0.1 as a reasonable default for reverse-Z.
 
-    // let history_z = textureSampleLevel(t_history_depth, s_nearest, history_uv, 0);
-    // let current_linear = depth_to_linear(center_depth, 0.1);
-    // let history_linear = depth_to_linear(history_z, 0.1);
-    // let depth_diff = abs(current_linear - history_linear) / max(current_linear, 0.0001);
-    // let depth_rejection_weight = saturate((0.1 - depth_diff) / 0.05);
+    let history_z = textureSampleLevel(t_history_depth, s_nearest, history_uv, 0);
+    let current_linear = depth_to_linear(center_depth, 0.1);
+    let history_linear = depth_to_linear(history_z, 0.1);
+    let depth_diff = abs(current_linear - history_linear) / max(current_linear, 0.0001);
+    let depth_rejection_weight = saturate((0.1 - depth_diff) / 0.05);
 
 
 
@@ -249,7 +249,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let speed = length(velocity * tex_dim);
     var weight = u_params.feedback_weight;
 
-    // weight *= depth_rejection_weight;
+    weight *= depth_rejection_weight;
 
     weight = mix(weight, 0.1, saturate(speed * 0.1));
 

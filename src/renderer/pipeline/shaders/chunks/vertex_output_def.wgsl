@@ -3,6 +3,7 @@ struct VertexOutput {
     @location({{ loc.next() }}) world_position: vec3<f32>,
     @location({{ loc.next() }}) clip_position: vec4<f32>,
     $$ if HAS_VELOCITY_TARGET is defined
+    @location({{ loc.next() }}) curr_unjittered_clip_position: vec4<f32>,
     @location({{ loc.next() }}) prev_clip_position: vec4<f32>,
     $$ endif
     $$ if HAS_UV
