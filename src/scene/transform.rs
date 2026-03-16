@@ -42,6 +42,8 @@ pub struct Transform {
     pub(crate) local_matrix: Affine3A,
     pub(crate) world_matrix: Affine3A,
 
+    pub(crate) previous_world_matrix: Affine3A,
+
     // Dirty checking state
     last_position: Vec3,
     last_rotation: Quat,
@@ -60,6 +62,8 @@ impl Transform {
 
             local_matrix: Affine3A::IDENTITY,
             world_matrix: Affine3A::IDENTITY,
+
+            previous_world_matrix: Affine3A::IDENTITY,
 
             last_position: Vec3::ZERO,
             last_rotation: Quat::IDENTITY,

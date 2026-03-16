@@ -356,6 +356,7 @@ fn prepare_main_camera_commands(
                 world_matrix: item.world_matrix,
                 world_matrix_inverse,
                 normal_matrix,
+                previous_world_matrix: item.prev_world_matrix,
                 ..Default::default()
             });
 

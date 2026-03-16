@@ -37,6 +37,9 @@ pub struct ExtractedRenderItem {
     /// World transform matrix (64 bytes)
     pub world_matrix: Mat4,
 
+    /// Previous frame's world transform matrix (64 bytes)
+    pub prev_world_matrix: Mat4,
+
     pub object_bind_group: BindGroupContext,
     /// Geometry handle (8 bytes)
     pub geometry: GeometryHandle,
@@ -116,6 +119,7 @@ struct CollectedMesh {
     pub skeleton: Option<SkeletonKey>,
 
     pub world_matrix: Mat4,
+    pub prev_world_matrix: Mat4,
     pub world_aabb: BoundingBox,
     pub item_variant_flags: u32,
     pub cast_shadows: bool,
@@ -281,6 +285,7 @@ impl ExtractedScene {
                 // 2. prepare basic data
                 let node_world = node.transform.world_matrix;
                 let world_matrix = Mat4::from(node_world);
+                let prev_world_matrix = Mat4::from(node.transform.previous_world_matrix);
                 let skin_binding = scene.skins.get(node_handle);
                 let skeleton_key = skin_binding.map(|s| s.skeleton);
 
@@ -307,6 +312,7 @@ impl ExtractedScene {
                     node_handle,
                     skeleton: skeleton_key,
                     world_matrix,
+                    prev_world_matrix,
                     world_aabb,
                     item_variant_flags,
                     cast_shadows: mesh.cast_shadows,
@@ -358,6 +364,7 @@ impl ExtractedScene {
             self.render_items.push(ExtractedRenderItem {
                 node_handle: item.node_handle,
                 world_matrix: item.world_matrix,
+                prev_world_matrix: item.prev_world_matrix,
                 object_bind_group,
                 geometry: mesh.geometry,
                 material: mesh.material,

@@ -141,6 +141,9 @@ pub fn update_hierarchy_batched(
 
             // Update current node
             if let Some(node) = nodes.get_mut(node_handle) {
+
+                node.transform.previous_world_matrix = node.transform.world_matrix;
+
                 let local_changed = node.transform.update_local_matrix();
                 let parent_changed = level > 0;
 
@@ -203,6 +206,8 @@ pub fn update_hierarchy_iterative(
                 continue;
             };
 
+            node.transform.previous_world_matrix = node.transform.world_matrix;
+
             let local_changed = node.transform.update_local_matrix();
             let world_needs_update = local_changed || parent_changed;
 
@@ -243,6 +248,8 @@ fn update_transform_recursive(
         let Some(node) = nodes.get_mut(node_handle) else {
             return;
         };
+
+        node.transform.previous_world_matrix = node.transform.world_matrix;
 
         // 1. Smartly update local matrix
         let local_changed = node.transform.update_local_matrix();
