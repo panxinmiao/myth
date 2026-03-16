@@ -31,8 +31,8 @@ use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, SubViewKey,
-    TextureDesc, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc,
+    TextureNodeId,
 };
 use crate::renderer::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
@@ -514,14 +514,7 @@ impl<'a> PassNode<'a> for SsaoRawNode<'a> {
         } = ctx;
         let device = *device;
 
-        let depth_key = SubViewKey {
-            aspect: wgpu::TextureAspect::DepthOnly,
-            ..Default::default()
-        };
-        views.get_or_create_sub_view(self.depth_tex, &depth_key);
-        let depth_only_view = views
-            .get_sub_view(self.depth_tex, &depth_key)
-            .expect("SSAO Raw: depth-only view must exist");
+        let depth_view = views.get_texture_view(self.depth_tex);
 
         let normal_view = views.get_texture_view(self.normal_tex);
         let noise_view: &Tracked<wgpu::TextureView> = self.noise_texture_view;
@@ -533,7 +526,7 @@ impl<'a> PassNode<'a> for SsaoRawNode<'a> {
         let layout = self.raw_layout;
 
         let key = BindGroupKey::new(layout.id())
-            .with_resource(depth_only_view.id())
+            .with_resource(depth_view.id())
             .with_resource(normal_view.id())
             .with_resource(noise_view.id())
             .with_resource(linear_sampler.id())
@@ -547,7 +540,7 @@ impl<'a> PassNode<'a> for SsaoRawNode<'a> {
                 entries: &[
                     wgpu::BindGroupEntry {
                         binding: 0,
-                        resource: wgpu::BindingResource::TextureView(depth_only_view),
+                        resource: wgpu::BindingResource::TextureView(depth_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
@@ -629,14 +622,7 @@ impl<'a> PassNode<'a> for SsaoBlurNode<'a> {
         } = ctx;
         let device = *device;
 
-        let depth_key = SubViewKey {
-            aspect: wgpu::TextureAspect::DepthOnly,
-            ..Default::default()
-        };
-        views.get_or_create_sub_view(self.depth_tex, &depth_key);
-        let depth_only_view = views
-            .get_sub_view(self.depth_tex, &depth_key)
-            .expect("SSAO Blur: depth-only view must exist");
+        let depth_view = views.get_texture_view(self.depth_tex);
 
         let raw_view = views.get_texture_view(self.raw_tex);
         let normal_view = views.get_texture_view(self.normal_tex);
@@ -648,7 +634,7 @@ impl<'a> PassNode<'a> for SsaoBlurNode<'a> {
 
         let key = BindGroupKey::new(layout.id())
             .with_resource(raw_view.id())
-            .with_resource(depth_only_view.id())
+            .with_resource(depth_view.id())
             .with_resource(normal_view.id())
             .with_resource(linear_sampler.id())
             .with_resource(point_sampler.id());
@@ -664,7 +650,7 @@ impl<'a> PassNode<'a> for SsaoBlurNode<'a> {
                     },
                     wgpu::BindGroupEntry {
                         binding: 1,
-                        resource: wgpu::BindingResource::TextureView(depth_only_view),
+                        resource: wgpu::BindingResource::TextureView(depth_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,

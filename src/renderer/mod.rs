@@ -63,9 +63,8 @@ use crate::renderer::graph::frame::RenderLists;
 use crate::renderer::graph::passes::DebugViewFeature;
 use crate::renderer::graph::passes::{
     BloomFeature, BrdfLutFeature, CasFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature,
-    OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature,
-    SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature, TransmissionCopyFeature,
-    TransparentFeature,
+    OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature,
+    SsssFeature, TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
 };
 use crate::scene::Scene;
 use crate::scene::camera::RenderCamera;

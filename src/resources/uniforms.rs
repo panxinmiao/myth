@@ -444,6 +444,7 @@ define_gpu_data_struct!(
         pub prev_jitter: Vec2 = Vec2::ZERO,
         pub camera_near: f32 = 0.1,
         pub camera_far: f32 = 1000.0,
+        pub(crate) __padding: Vec2 = Vec2::ZERO, // Padding to make total size a multiple of 16 bytes
     }
 );
 

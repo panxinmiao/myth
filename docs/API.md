@@ -1124,7 +1124,7 @@ let settings = RendererSettings {
     path: RenderPath::HighFidelity,                         // Default
     vsync: true,                                             // Default
     clear_color: wgpu::Color::BLACK,                        // Default
-    depth_format: wgpu::TextureFormat::Depth24PlusStencil8, // Default
+    depth_format: wgpu::TextureFormat::Depth32Float,         // Default
     power_preference: wgpu::PowerPreference::HighPerformance,
     backends: None,       // Auto-detect
     required_features: wgpu::Features::empty(),

@@ -1,9 +1,6 @@
 use glam::Vec3;
 use std::num::NonZeroU8;
 
-pub const STENCIL_FEATURE_SSS: u32 = 1 << 0;
-pub const STENCIL_FEATURE_SSR: u32 = 1 << 1;
-pub const STENCIL_WRITE_MASK: u32 = 0x0F;
 // ============================================================================
 // 1. Basic Types: Globally Stable 8-bit ID
 // ============================================================================

@@ -23,7 +23,7 @@ pub struct FrameConfig {
     pub width: u32,
     /// Framebuffer height in pixels.
     pub height: u32,
-    /// Device depth-stencil format (e.g. `Depth24PlusStencil8`).
+    /// Device depth format (e.g. `Depth32Float`).
     pub depth_format: wgpu::TextureFormat,
     /// MSAA sample count (1 = disabled).
     pub msaa_samples: u32,
@@ -800,7 +800,7 @@ mod tests {
         FrameConfig {
             width: 1920,
             height: 1080,
-            depth_format: wgpu::TextureFormat::Depth24PlusStencil8,
+            depth_format: wgpu::TextureFormat::Depth32Float,
             msaa_samples: 1,
             surface_format: wgpu::TextureFormat::Bgra8UnormSrgb,
             hdr_format: wgpu::TextureFormat::Rgba16Float,

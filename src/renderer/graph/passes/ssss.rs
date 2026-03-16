@@ -6,9 +6,11 @@
 //! - **`SsssHorizontalNode`** / **`SsssVerticalNode`** (ephemeral per-frame):
 //!   two independent RDG passes created by `SsssFeature::add_to_graph()`.
 //!
-//! Implements a separable Gaussian blur for SSS materials identified via the
-//! **Thin G-Buffer** stencil channel.  Two sequential render passes are
-//! executed (H then V) to reconstruct a 2-D scatter kernel.
+//! Implements a separable Gaussian blur for SSS materials identified via
+//! a **data-driven soft mask**: the `Feature_ID` colour attachment written
+//! by the Prepass carries per-pixel `sss_id` / `ssr_id`.  The shader reads
+//! this texture and performs an early-out for non-SSS pixels, replacing the
+//! former hardware stencil test with zero cross-platform compatibility cost.
 //!
 //! # Data Flow (explicit wiring)
 //!
@@ -40,14 +42,13 @@ use crate::renderer::core::binding::BindGroupKey;
 use crate::renderer::core::gpu::{CommonSampler, Tracked};
 use crate::renderer::graph::composer::GraphBuilderContext;
 use crate::renderer::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, SubViewKey,
-    TextureDesc, TextureNodeId,
+    ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc,
+    TextureNodeId,
 };
 use crate::renderer::pipeline::{
-    ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, RenderPipelineId,
-    ShaderCompilationOptions,
+    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
-use crate::resources::screen_space::{STENCIL_FEATURE_SSS, SssProfileData};
+use crate::resources::screen_space::SssProfileData;
 use std::mem::size_of;
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -219,30 +220,12 @@ impl SsssFeature {
                 write_mask: wgpu::ColorWrites::ALL,
             });
 
-            let stencil_face = wgpu::StencilFaceState {
-                compare: wgpu::CompareFunction::Equal,
-                fail_op: wgpu::StencilOperation::Keep,
-                depth_fail_op: wgpu::StencilOperation::Keep,
-                pass_op: wgpu::StencilOperation::Keep,
-            };
-
-            let depth_stencil = DepthStencilKey::from(wgpu::DepthStencilState {
-                format: wgpu::TextureFormat::Depth24PlusStencil8,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::Always,
-                stencil: wgpu::StencilState {
-                    front: stencil_face,
-                    back: stencil_face,
-                    read_mask: STENCIL_FEATURE_SSS,
-                    write_mask: 0x00,
-                },
-                bias: wgpu::DepthBiasState::default(),
-            });
-
+            // No depth-stencil state — pixel filtering uses the soft mask
+            // (Feature_ID texture) inside the fragment shader.
             let hor_key = FullscreenPipelineKey::fullscreen(
                 hor_hash,
                 smallvec::smallvec![color_target.clone()],
-                Some(depth_stencil),
+                None,
             );
 
             self.horizontal_pipeline = Some(ctx.pipeline_cache.get_or_create_fullscreen(
@@ -268,7 +251,7 @@ impl SsssFeature {
             let vert_key = FullscreenPipelineKey::fullscreen(
                 vert_hash,
                 smallvec::smallvec![color_target],
-                Some(depth_stencil),
+                None,
             );
 
             self.vertical_pipeline = Some(ctx.pipeline_cache.get_or_create_fullscreen(
@@ -379,7 +362,7 @@ impl SsssFeature {
 /// Ephemeral per-frame node for the horizontal SSS scatter pass.
 ///
 /// Reads scene colour and writes to the scratch `temp_blur` texture.
-/// Uses stencil test to only scatter pixels marked with `STENCIL_FEATURE_SSS`.
+/// Non-SSS pixels are skipped via shader early-out on `Feature_ID`.
 struct SsssHorizontalNode<'a> {
     scene_color_in: TextureNodeId,
     temp_blur: TextureNodeId,
@@ -406,15 +389,7 @@ impl<'a> PassNode<'a> for SsssHorizontalNode<'a> {
         } = ctx;
         let device = *device;
 
-        let depth_sub_key = SubViewKey {
-            aspect: wgpu::TextureAspect::DepthOnly,
-            ..Default::default()
-        };
-        views.get_or_create_sub_view(self.depth_in, &depth_sub_key);
-
-        let depth_only_view = views
-            .get_sub_view(self.depth_in, &depth_sub_key)
-            .expect("SSSS H: depth-only view must exist");
+        let depth_view = views.get_texture_view(self.depth_in);
         let color_in_view = views.get_texture_view(self.scene_color_in);
         let normal_view = views.get_texture_view(self.normal_in);
         let feature_view = views.get_texture_view(self.feature_id);
@@ -427,7 +402,7 @@ impl<'a> PassNode<'a> for SsssHorizontalNode<'a> {
         let key = BindGroupKey::new(layout.id())
             .with_resource(color_in_view.id())
             .with_resource(normal_view.id())
-            .with_resource(depth_only_view.id())
+            .with_resource(depth_view.id())
             .with_resource(profiles_buffer.id())
             .with_resource(sampler.id())
             .with_resource(feature_view.id())
@@ -448,7 +423,7 @@ impl<'a> PassNode<'a> for SsssHorizontalNode<'a> {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(depth_only_view),
+                        resource: wgpu::BindingResource::TextureView(depth_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
@@ -473,8 +448,6 @@ impl<'a> PassNode<'a> for SsssHorizontalNode<'a> {
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let depth_stencil_view = ctx.get_texture_view(self.depth_in);
-
         let rtt = ctx.get_color_attachment(
             self.temp_blur,
             RenderTargetOps::Clear(wgpu::Color::TRANSPARENT),
@@ -484,16 +457,11 @@ impl<'a> PassNode<'a> for SsssHorizontalNode<'a> {
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("SSSS Horizontal"),
             color_attachments: &[rtt],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_stencil_view,
-                depth_ops: None,
-                stencil_ops: None,
-            }),
+            depth_stencil_attachment: None,
             ..Default::default()
         });
 
         rpass.set_pipeline(self.pipeline);
-        rpass.set_stencil_reference(STENCIL_FEATURE_SSS);
         rpass.set_bind_group(0, self.bind_group.unwrap(), &[]);
         rpass.draw(0..3, 0..1);
     }
@@ -506,7 +474,8 @@ impl<'a> PassNode<'a> for SsssHorizontalNode<'a> {
 /// Ephemeral per-frame node for the vertical SSS scatter pass.
 ///
 /// Reads the `temp_blur` scratch texture and writes back to the scene colour
-/// alias (via `mutate_texture`). Uses stencil test to preserve non-SSS pixels.
+/// alias (via `mutate_texture`).  Non-SSS pixels pass through unchanged
+/// thanks to the shader soft-mask on `Feature_ID`.
 struct SsssVerticalNode<'a> {
     scene_color_out: TextureNodeId,
     temp_blur: TextureNodeId,
@@ -533,15 +502,7 @@ impl<'a> PassNode<'a> for SsssVerticalNode<'a> {
         } = ctx;
         let device = *device;
 
-        let depth_sub_key = SubViewKey {
-            aspect: wgpu::TextureAspect::DepthOnly,
-            ..Default::default()
-        };
-        views.get_or_create_sub_view(self.depth_in, &depth_sub_key);
-
-        let depth_only_view = views
-            .get_sub_view(self.depth_in, &depth_sub_key)
-            .expect("SSSS V: depth-only view must exist");
+        let depth_view = views.get_texture_view(self.depth_in);
         let temp_blur_view = views.get_texture_view(self.temp_blur);
         let normal_view = views.get_texture_view(self.normal_in);
         let feature_view = views.get_texture_view(self.feature_id);
@@ -554,7 +515,7 @@ impl<'a> PassNode<'a> for SsssVerticalNode<'a> {
         let key = BindGroupKey::new(layout.id())
             .with_resource(temp_blur_view.id())
             .with_resource(normal_view.id())
-            .with_resource(depth_only_view.id())
+            .with_resource(depth_view.id())
             .with_resource(profiles_buffer.id())
             .with_resource(sampler.id())
             .with_resource(feature_view.id())
@@ -575,7 +536,7 @@ impl<'a> PassNode<'a> for SsssVerticalNode<'a> {
                     },
                     wgpu::BindGroupEntry {
                         binding: 2,
-                        resource: wgpu::BindingResource::TextureView(depth_only_view),
+                        resource: wgpu::BindingResource::TextureView(depth_view),
                     },
                     wgpu::BindGroupEntry {
                         binding: 3,
@@ -600,23 +561,16 @@ impl<'a> PassNode<'a> for SsssVerticalNode<'a> {
     }
 
     fn execute(&self, ctx: &ExecuteContext, encoder: &mut wgpu::CommandEncoder) {
-        let depth_stencil_view = ctx.get_texture_view(self.depth_in);
-
         let rtt = ctx.get_color_attachment(self.scene_color_out, RenderTargetOps::Load, None);
 
         let mut rpass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("SSSS Vertical"),
             color_attachments: &[rtt],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: depth_stencil_view,
-                depth_ops: None,
-                stencil_ops: None,
-            }),
+            depth_stencil_attachment: None,
             ..Default::default()
         });
 
         rpass.set_pipeline(self.pipeline);
-        rpass.set_stencil_reference(STENCIL_FEATURE_SSS);
         rpass.set_bind_group(0, self.bind_group.unwrap(), &[]);
         rpass.draw(0..3, 0..1);
     }

@@ -286,10 +286,11 @@ pub struct RendererSettings {
 
     /// Depth buffer texture format.
     ///
-    /// Defaults to `Depth24PlusStencil8` which provides both depth precision
-    /// and a stencil buffer (needed for SSS feature IDs, etc.).
-    /// Use [`Depth32Float`](wgpu::TextureFormat::Depth32Float) if you only
-    /// need depth and want maximum precision.
+    /// Defaults to `Depth32Float` — pure 32-bit floating-point depth with
+    /// maximum precision and full `COPY_SRC`/`COPY_DST` support on all
+    /// backends (including WebGPU).  Screen-space feature filtering (SSS,
+    /// SSR) uses the `Feature_ID` colour attachment instead of a hardware
+    /// stencil channel.
     pub depth_format: wgpu::TextureFormat,
 }
 
@@ -308,7 +309,7 @@ impl Default for RendererSettings {
             },
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
-            depth_format: wgpu::TextureFormat::Depth24PlusStencil8,
+            depth_format: wgpu::TextureFormat::Depth32Float,
         }
     }
 }

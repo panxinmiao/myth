@@ -346,8 +346,6 @@ impl TaaFeature {
             .as_ref()
             .expect("TAA history depth view not initialized");
 
-        
-
         let depth_desc = TextureDesc::new(
             history_depth_view.texture().width(),
             history_depth_view.texture().height(),
@@ -365,10 +363,13 @@ impl TaaFeature {
                     history_view.texture().width(),
                     history_view.texture().height(),
                     HDR_TEXTURE_FORMAT,
-                        wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::COPY_DST,
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 );
-                builder.read_external_texture("TAA_History_Color_Read", history_color_desc, history_view);
+                builder.read_external_texture(
+                    "TAA_History_Color_Read",
+                    history_color_desc,
+                    history_view,
+                );
                 builder.read_external_texture(
                     "TAA_History_Depth_Read",
                     depth_desc,
@@ -412,8 +413,7 @@ impl TaaFeature {
                     history_view.texture().width(),
                     history_view.texture().height(),
                     HDR_TEXTURE_FORMAT,
-                        wgpu::TextureUsages::TEXTURE_BINDING
-                        | wgpu::TextureUsages::COPY_DST,
+                    wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 );
                 let history_out = builder.write_external_texture(
                     "TAA_History_Color_Write",

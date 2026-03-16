@@ -55,8 +55,6 @@ pub struct RenderCommand {
     pub sort_key: RenderKey,
     /// Dynamic uniform offset
     pub dynamic_offset: u32,
-    /// Screen Space Feature Mask (for stencil writing in Prepass)
-    pub ss_feature_mask: u32,
 }
 
 pub struct ShadowRenderCommand {

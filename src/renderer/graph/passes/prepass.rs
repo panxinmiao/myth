@@ -25,7 +25,6 @@ use crate::renderer::pipeline::{
     SimpleGeometryPipelineKey,
 };
 use crate::resources::material::{AlphaMode, Side};
-use crate::resources::screen_space::STENCIL_WRITE_MASK;
 
 /// Normal texture format — Rgba8Unorm ([-1,1] → [0,1] mapping).
 pub(crate) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -41,7 +40,7 @@ pub struct PrepassOutputs {
     pub scene_depth: TextureNodeId,
     /// View-space normals (if screen-space effects require them).
     pub scene_normals: Option<TextureNodeId>,
-    /// Feature-ID stencil mask (if SSS/SSR require it).
+    /// Feature-ID colour attachment (if SSS/SSR require it).
     pub feature_id: Option<TextureNodeId>,
 }
 
@@ -94,7 +93,7 @@ impl PrepassFeature {
         self.needs_normal
     }
 
-    /// Whether the prepass outputs a feature-ID stencil mask.
+    /// Whether the prepass outputs a feature-ID colour target.
     #[inline]
     #[must_use]
     pub fn needs_feature_id(&self) -> bool {
@@ -237,17 +236,6 @@ impl PrepassFeature {
                 wgpu::FrontFace::Ccw
             };
 
-            let stencil_state = if self.needs_feature_id {
-                Some(wgpu::StencilFaceState {
-                    compare: wgpu::CompareFunction::Always,
-                    fail_op: wgpu::StencilOperation::Keep,
-                    depth_fail_op: wgpu::StencilOperation::Keep,
-                    pass_op: wgpu::StencilOperation::Replace,
-                })
-            } else {
-                None
-            };
-
             // ── Color targets ──────────────────────────────────────────
             let color_targets: smallvec::SmallVec<[ColorTargetKey; 2]> = if self.needs_feature_id {
                 smallvec::smallvec![
@@ -280,18 +268,13 @@ impl PrepassFeature {
                     format: depth_format,
                     depth_write_enabled: true,
                     depth_compare: wgpu::CompareFunction::Greater,
-                    stencil: wgpu::StencilState {
-                        front: stencil_state.unwrap_or_default(),
-                        back: stencil_state.unwrap_or_default(),
-                        read_mask: 0xFF,
-                        write_mask: STENCIL_WRITE_MASK,
-                    },
+                    stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),
                 topology: geometry.topology,
                 cull_mode,
                 front_face,
-                sample_count: 1, // Prepass always uses sample_count = 1 (single-sample depth for SSAO/SSSS)
+                sample_count: 1,
             };
 
             let pipeline_id = ctx.pipeline_cache.get_or_create_simple_geometry(
@@ -449,20 +432,7 @@ impl PassNode<'_> for PrepassPassNode {
             color_attachments.push(Some(att));
         }
 
-        // ── Depth/stencil: manual construction for stencil-op support ───
-        let dtt = if let Some(mut dtt) = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0) {
-            dtt.stencil_ops = if self.needs_feature_id {
-                Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(0),
-                    store: wgpu::StoreOp::Store,
-                })
-            } else {
-                None
-            };
-            Some(dtt)
-        } else {
-            None
-        };
+        let dtt = ctx.get_depth_stencil_attachment(self.scene_depth, 0.0);
 
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Depth-Normal Prepass"),

@@ -63,9 +63,8 @@ use crate::renderer::graph::core::{
 use crate::renderer::graph::frame::{PreparedSkyboxDraw, RenderLists};
 use crate::renderer::graph::passes::{
     BloomFeature, BrdfLutFeature, CasFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature,
-    OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature,
-    SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature, TransmissionCopyFeature,
-    TransparentFeature,
+    OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature,
+    SsssFeature, TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
 };
 use crate::renderer::pipeline::PipelineCache;
 use crate::renderer::pipeline::ShaderManager;
@@ -476,8 +475,7 @@ impl<'a> FrameComposer<'a> {
                             wgpu::TextureUsages::RENDER_ATTACHMENT
                                 | wgpu::TextureUsages::TEXTURE_BINDING,
                         );
-                        active_color =
-                            self.ctx.cas_pass.add_to_graph(c, active_color, cas_desc);
+                        active_color = self.ctx.cas_pass.add_to_graph(c, active_color, cas_desc);
                     }
                 }
 

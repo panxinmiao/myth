@@ -349,8 +349,6 @@ fn prepare_main_camera_commands(
             let distance_sq = camera_pos.distance_squared(item_pos);
             let sort_key = RenderKey::new(pipeline_id, mat_id, distance_sq, is_transparent);
 
-            let ss_feature_mask = material.ss_feature_mask();
-
             let world_matrix_inverse = item.world_matrix.inverse();
             let normal_matrix = Mat3Uniform::from_mat4(world_matrix_inverse.transpose());
 
@@ -366,10 +364,8 @@ fn prepare_main_camera_commands(
                 geometry_handle: item.geometry,
                 material_handle: item.material,
                 pipeline_id,
-                // model_matrix: item.world_matrix,
                 sort_key,
                 dynamic_offset,
-                ss_feature_mask,
             };
 
             if is_transparent {

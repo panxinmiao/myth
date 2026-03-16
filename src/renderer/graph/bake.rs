@@ -169,12 +169,6 @@ fn bake_prepass_commands<'a>(
             .as_ref()
             .map(|(buf, fmt, count, _id)| (buf as &wgpu::Buffer, *fmt, *count));
 
-        let stencil_reference = if cfg.needs_feature_id {
-            Some(cmd.ss_feature_mask)
-        } else {
-            None
-        };
-
         out.push(DrawCommand {
             sort_key: cmd.sort_key.bits(),
             pipeline,
@@ -183,7 +177,7 @@ fn bake_prepass_commands<'a>(
             bind_group_1: Some(&gpu_mat.bind_group),
             bind_group_2: (&cmd.object_bind_group.bind_group, cmd.dynamic_offset),
             bind_group_3: None,
-            stencil_reference,
+            stencil_reference: None,
             vertex_range: gpu_geom.draw_range.clone(),
             instance_range: gpu_geom.instance_range.clone(),
         });
