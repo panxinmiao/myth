@@ -52,7 +52,8 @@ fn decode_data_uri(uri: &str) -> Result<Vec<u8>> {
 
         if header.ends_with(";base64") {
             use base64::{Engine as _, engine::general_purpose};
-            let bytes = general_purpose::STANDARD.decode(data)?;
+            let bytes = general_purpose::STANDARD.decode(data)
+                .map_err(|e| Error::Asset(AssetError::Base64Decode(e.to_string())))?;
             Ok(bytes)
         } else {
             Err(Error::Asset(AssetError::Format(
@@ -117,10 +118,12 @@ fn sanitize_gltf_data(data: &[u8]) -> Result<Cow<'_, [u8]>> {
 
 #[allow(dead_code)]
 fn sanitize_json(data: &[u8]) -> Result<Cow<'_, [u8]>> {
-    let mut root: Value = serde_json::from_slice(data)?;
+    let mut root: Value = serde_json::from_slice(data)
+        .map_err(|e| Error::Asset(AssetError::Format(format!("JSON error: {e}"))))?;
 
     if patch_json_value(&mut root) {
-        let patched = serde_json::to_vec(&root)?;
+        let patched = serde_json::to_vec(&root)
+            .map_err(|e| Error::Asset(AssetError::Format(format!("JSON error: {e}"))))?;
         Ok(Cow::Owned(patched))
     } else {
         Ok(Cow::Borrowed(data))
@@ -158,12 +161,14 @@ fn sanitize_glb(data: &[u8]) -> Result<Cow<'_, [u8]>> {
 
     let json_bytes = &data[20..20 + chunk0_len];
 
-    let mut root: Value = serde_json::from_slice(json_bytes)?;
+    let mut root: Value = serde_json::from_slice(json_bytes)
+        .map_err(|e| Error::Asset(AssetError::Format(format!("JSON error: {e}"))))?;
     if !patch_json_value(&mut root) {
         return Ok(Cow::Borrowed(data));
     }
 
-    let new_json_bytes = serde_json::to_vec(&root)?;
+    let new_json_bytes = serde_json::to_vec(&root)
+        .map_err(|e| Error::Asset(AssetError::Format(format!("JSON error: {e}"))))?;
     let padding = (4 - (new_json_bytes.len() % 4)) % 4;
     let new_chunk0_len = new_json_bytes.len() + padding;
 
@@ -983,7 +988,8 @@ impl GltfLoader {
                 let img_data = tokio::task::spawn_blocking(move || {
                     Self::decode_image_cpu_work(&img_bytes, index)
                 })
-                .await??;
+                .await
+                .map_err(|e| Error::Asset(AssetError::TaskJoin(e.to_string())))??;
 
                 #[cfg(target_arch = "wasm32")]
                 let img_data = Self::decode_image_cpu_work(&img_bytes, index)?;

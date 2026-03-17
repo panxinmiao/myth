@@ -145,7 +145,7 @@ pub struct ToneMappingSettings {
     /// Selected tone mapping algorithm
     pub mode: ToneMappingMode,
 
-    pub(crate) uniforms: CpuBuffer<ToneMappingUniforms>,
+    #[doc(hidden)] pub uniforms: CpuBuffer<ToneMappingUniforms>,
     /// Exposure multiplier (default: 1.0)
     // pub exposure: f32,
 

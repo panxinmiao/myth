@@ -7,14 +7,13 @@
 //! - SceneNode wrapper convenience API
 
 use glam::Vec3;
-use myth::assets::AssetServer;
 use myth::scene::camera::Camera;
 use myth::scene::light::{Light, LightKind};
 use myth::scene::node::Node;
-use myth::scene::scene::Scene;
+use myth::scene::Scene;
 
 fn new_scene() -> Scene {
-    Scene::new(AssetServer::new())
+    Scene::new()
 }
 
 // ============================================================================

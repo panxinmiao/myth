@@ -355,7 +355,7 @@ impl MaterialSettings {
     ///
     /// This is called internally by the rendering system to configure
     /// shader compilation based on material settings.
-    pub(crate) fn generate_shader_defines(&self, defines: &mut ShaderDefines) {
+    pub fn generate_shader_defines(&self, defines: &mut ShaderDefines) {
         // Alpha Mode
         match self.alpha_mode {
             AlphaMode::Opaque => {
@@ -674,17 +674,17 @@ impl Material {
 
     // Proxy methods
     #[inline]
-    pub(crate) fn shader_name(&self) -> &'static str {
+    pub fn shader_name(&self) -> &'static str {
         self.data.shader_name()
     }
 
     #[inline]
-    pub(crate) fn shader_defines(&self) -> ShaderDefines {
+    pub fn shader_defines(&self) -> ShaderDefines {
         self.data.shader_defines()
     }
 
     #[inline]
-    pub(crate) fn settings(&self) -> MaterialSettings {
+    pub fn settings(&self) -> MaterialSettings {
         self.data.settings()
     }
 
@@ -741,7 +741,7 @@ impl Material {
     }
 
     #[inline]
-    pub(crate) fn use_transmission(&self) -> bool {
+    pub fn use_transmission(&self) -> bool {
         match &self.data {
             MaterialType::Physical(m) => m.features.read().contains(PhysicalFeatures::TRANSMISSION),
             _ => false,

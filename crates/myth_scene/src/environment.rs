@@ -10,7 +10,7 @@ use myth_resources::texture::TextureSource;
 #[derive(Clone, Debug)]
 pub struct Environment {
     /// User-set original environment map (may be 2D HDR or Cube)
-    pub(crate) source_env_map: Option<TextureSource>,
+    #[doc(hidden)] pub source_env_map: Option<TextureSource>,
     /// Environment light intensity
     pub intensity: f32,
     /// Environment map rotation angle (radians)

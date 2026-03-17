@@ -12,7 +12,7 @@ use glam::{Affine3A, EulerRot, Mat4, Quat, Vec3};
 use myth::scene::NodeHandle;
 use myth::scene::camera::Camera;
 use myth::scene::node::Node;
-use myth::scene::transform::Transform;
+use myth::scene::Transform;
 use myth::scene::transform_system::*;
 use slotmap::{SlotMap, SparseSecondaryMap};
 use std::f32::consts::{FRAC_PI_2, FRAC_PI_4};

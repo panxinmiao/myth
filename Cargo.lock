@@ -2030,6 +2030,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui-winit",
+ "env_logger",
  "glam",
  "log",
  "myth_animation",
@@ -2039,8 +2040,17 @@ dependencies = [
  "myth_render",
  "myth_resources",
  "myth_scene",
+ "reqwest",
  "rfd",
+ "rustc-hash 2.1.1",
+ "serde",
+ "serde_json",
+ "slotmap",
+ "tokio",
+ "uuid",
  "wasm-bindgen-test",
+ "wgpu",
+ "winit",
 ]
 
 [[package]]
@@ -2076,6 +2086,7 @@ dependencies = [
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",
+ "web-time",
  "winit",
 ]
 
@@ -2147,6 +2158,7 @@ dependencies = [
  "raw-window-handle",
  "rust-embed",
  "rustc-hash 2.1.1",
+ "serde",
  "slotmap",
  "smallvec",
  "wgpu",

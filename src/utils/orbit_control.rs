@@ -31,9 +31,11 @@
 //! }
 //! ```
 
-use crate::resources::input::{Input, MouseButton};
-use crate::scene::transform::Transform;
-use crate::{NodeHandle, Scene};
+use myth_resources::input::{Input, MouseButton};
+use myth_assets::AssetServer;
+use myth_core::Transform;
+use myth_core::NodeHandle;
+use myth_scene::Scene;
 use glam::Vec3;
 
 /// Internal spherical coordinate representation.
@@ -306,9 +308,12 @@ impl OrbitControls {
     }
 
     /// Instantly resets the camera to look at the target from a specific position.
-    pub fn fit(&mut self, scene: &mut Scene, node_handle: NodeHandle) {
+    pub fn fit(&mut self, scene: &mut Scene, assets: &AssetServer, node_handle: NodeHandle) {
         scene.update_matrix_world();
-        if let Some(bbox) = scene.get_bbox_of_node(node_handle) {
+        let bbox = scene.get_bbox_of_node(node_handle, &|h| {
+            assets.geometries.get(h).map(|g| g.bounding_box)
+        });
+        if let Some(bbox) = bbox {
             let center = bbox.center();
             let radius = bbox.size().length() * 0.5;
 
@@ -318,15 +323,4 @@ impl OrbitControls {
     }
 }
 
-impl Transform {
-    /// Returns the local coordinate axes based on current rotation.
-    ///
-    /// Returns (right, up, forward) vectors in world space.
-    #[must_use]
-    pub fn rotation_basis(&self) -> (Vec3, Vec3, Vec3) {
-        let right = self.rotation * Vec3::X;
-        let up = self.rotation * Vec3::Y;
-        let forward = self.rotation * Vec3::Z;
-        (right, up, forward)
-    }
-}
+

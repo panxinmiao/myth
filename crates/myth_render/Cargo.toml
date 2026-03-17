@@ -27,6 +27,7 @@ half = { workspace = true }
 raw-window-handle = { workspace = true }
 paste = { workspace = true }
 bitflags = { workspace = true }
+serde = { workspace = true }
 
 # Templating for shader generation
 minijinja = { workspace = true }

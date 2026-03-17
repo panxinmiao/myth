@@ -10,6 +10,7 @@ new_key_type! {
 pub struct SceneManager {
     scenes: SlotMap<SceneHandle, Scene>,
     active_scene: Option<SceneHandle>,
+    #[allow(dead_code)]
     assets: AssetServer,
 }
 

@@ -48,7 +48,7 @@ impl AppHandler for BloomDemo {
 
         let mut controls = OrbitControls::new(Vec3::new(0.0, 0.0, 3.0), Vec3::ZERO);
 
-        controls.fit(scene, gltf_node);
+        controls.fit(scene, &engine.assets, gltf_node);
 
         // Configure bloom
         scene.bloom.set_enabled(true);

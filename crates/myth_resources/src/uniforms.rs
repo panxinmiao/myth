@@ -412,7 +412,7 @@ define_gpu_data_struct!(
         pub world_matrix_inverse: Mat4,   //64
         pub normal_matrix: Mat3Uniform,   //48
         pub previous_world_matrix: Mat4,  //64
-        pub(crate) __instance_tint: Vec4, //16
+        pub __instance_tint: Vec4, //16
     }
 );
 

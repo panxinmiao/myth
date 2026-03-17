@@ -12,6 +12,7 @@ pub mod loaders;
 pub mod manager;
 pub mod prefab;
 pub mod resolve;
+pub mod scene_ext;
 pub mod server;
 pub mod skeleton_asset;
 pub mod storage;
@@ -26,6 +27,7 @@ pub use loaders::GltfLoader;
 pub use manager::{SceneHandle, SceneManager};
 pub use prefab::{Prefab, PrefabNode, PrefabSkeleton, SharedPrefab};
 pub use resolve::{ResolveGeometry, ResolveMaterial};
+pub use scene_ext::SceneExt;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use io::FileAssetReader;

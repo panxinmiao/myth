@@ -170,6 +170,16 @@ log  = { workspace = true }
 [dev-dependencies]
 anyhow = { workspace = true }
 rfd    = { workspace = true }
+env_logger = { workspace = true }
+wgpu = { workspace = true }
+winit = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+rustc-hash = { workspace = true }
+reqwest = { workspace = true }
+slotmap = { workspace = true }
+uuid = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }

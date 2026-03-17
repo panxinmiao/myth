@@ -83,9 +83,9 @@ pub struct PhysicalTextureSet {
 
 #[derive(Debug)]
 pub struct PhysicalMaterial {
-    pub(crate) uniforms: CpuBuffer<PhysicalUniforms>,
-    pub(crate) settings: RwLock<MaterialSettings>,
-    pub(crate) textures: RwLock<PhysicalTextureSet>,
+    #[doc(hidden)] pub uniforms: CpuBuffer<PhysicalUniforms>,
+    #[doc(hidden)] pub settings: RwLock<MaterialSettings>,
+    #[doc(hidden)] pub textures: RwLock<PhysicalTextureSet>,
 
     pub(crate) features: RwLock<PhysicalFeatures>,
 

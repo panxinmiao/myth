@@ -62,7 +62,7 @@ impl FxaaQuality {
     ///
     /// Used by `FxaaPass` to select the correct shader variant.
     #[must_use]
-    pub(crate) const fn define_key(self) -> &'static str {
+    pub const fn define_key(self) -> &'static str {
         match self {
             Self::Low => "FXAA_QUALITY_LOW",
             Self::Medium => "FXAA_QUALITY_MEDIUM",

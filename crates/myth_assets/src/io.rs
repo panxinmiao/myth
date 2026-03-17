@@ -63,7 +63,8 @@ pub struct HttpAssetReader {
 #[cfg(feature = "http")]
 impl HttpAssetReader {
     pub fn new(url_str: &str) -> Result<Self> {
-        let url = reqwest::Url::parse(url_str)?;
+        let url = reqwest::Url::parse(url_str)
+            .map_err(|e| Error::Asset(AssetError::Format(format!("URL parse error: {e}"))))?;
         let root_url = if url.path().ends_with('/') {
             url
         } else {
@@ -83,7 +84,8 @@ impl HttpAssetReader {
 
         Ok(Self {
             root_url,
-            client: client.build()?,
+            client: client.build()
+                .map_err(|e| Error::Asset(AssetError::Network(e.to_string())))?,
         })
     }
 
@@ -97,14 +99,17 @@ impl HttpAssetReader {
 #[cfg(feature = "http")]
 impl AssetReader for HttpAssetReader {
     async fn read_bytes(&self, uri: &str) -> Result<Vec<u8>> {
-        let url = self.root_url.join(uri)?;
-        let resp = self.client.get(url).send().await?;
+        let url = self.root_url.join(uri)
+            .map_err(|e| Error::Asset(AssetError::Format(format!("URL join error: {e}"))))?;
+        let resp = self.client.get(url).send().await
+            .map_err(|e| Error::Asset(AssetError::Network(e.to_string())))?;
         if !resp.status().is_success() {
             return Err(Error::Asset(AssetError::HttpResponse {
                 status: resp.status().as_u16(),
             }));
         }
-        let bytes = resp.bytes().await?;
+        let bytes = resp.bytes().await
+            .map_err(|e| Error::Asset(AssetError::Network(e.to_string())))?;
         Ok(bytes.to_vec())
     }
 }

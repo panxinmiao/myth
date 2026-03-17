@@ -65,3 +65,6 @@ pub use texture::{Texture, TextureSampler};
 pub use tone_mapping::{ToneMappingMode, ToneMappingSettings};
 pub use uniforms::{Mat3Uniform, WgslType};
 
+// Re-export binding/builder types for myth_render
+pub use binding::BindingResource;
+pub use builder::{ResourceBuilder, WgslStructName};

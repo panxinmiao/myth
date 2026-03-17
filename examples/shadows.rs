@@ -51,6 +51,7 @@ impl AppHandler for SkinningDemo {
             30.0,
             30.0,
             PhongMaterial::new(Vec4::new(0.2, 0.3, 0.4, 1.0)).with_side(Side::Double),
+            &engine.assets,
         );
         scene
             .node(&ground_node)

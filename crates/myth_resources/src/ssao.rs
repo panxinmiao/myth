@@ -83,7 +83,7 @@ pub struct SsaoSettings {
 
     /// GPU uniform buffer containing sample kernel and parameters.
     /// Updated via setter methods — version tracking is automatic.
-    pub(crate) uniforms: CpuBuffer<SsaoUniforms>,
+    #[doc(hidden)] pub uniforms: CpuBuffer<SsaoUniforms>,
 }
 
 impl Default for SsaoSettings {

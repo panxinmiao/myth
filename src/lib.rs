@@ -5,8 +5,6 @@
 //!
 //! ## Quick Start
 //!
-//! For the simplest way to get started, use the [`prelude`] module:
-//!
 //! ```rust,ignore
 //! use myth::prelude::*;
 //!
@@ -14,10 +12,7 @@
 //!
 //! impl AppHandler for MyApp {
 //!     fn init(engine: &mut Engine, window: &dyn Window) -> Self {
-//!         // Create a scene with a mesh
 //!         let scene = engine.scene_manager.create_active();
-//!         
-//!         // Add a cube
 //!         let geometry = Geometry::new_box(1.0, 1.0, 1.0);
 //!         let material = Material::new_unlit(Vec4::new(1.0, 0.5, 0.2, 1.0));
 //!         let mesh = Mesh::new(
@@ -25,15 +20,12 @@
 //!             engine.assets.materials.add(material),
 //!         );
 //!         scene.add_mesh(mesh);
-//!         
-//!         // Setup camera
 //!         let camera = Camera::new_perspective(60.0, 16.0/9.0, 0.1);
 //!         let cam_node = scene.add_camera(camera);
 //!         scene.active_camera = Some(cam_node);
-//!         
 //!         MyApp
 //!     }
-//!     
+//!
 //!     fn update(&mut self, engine: &mut Engine, _: &dyn Window, frame: &FrameState) {
 //!         // Update logic here
 //!     }
@@ -44,50 +36,6 @@
 //! }
 //! ```
 //!
-//! ## Architecture Overview
-//!
-//! The engine follows a layered architecture designed for modularity and performance:
-//!
-//! ```text
-//! ┌─────────────────────────────────────────────────────────────┐
-//! │                         App Layer                          │
-//! │               (Winit integration, event loop)              │
-//! ├─────────────────────────────────────────────────────────────┤
-//! │                       Engine Layer                         │
-//! │              (Engine, SceneManager)                   │
-//! ├─────────────────────────────────────────────────────────────┤
-//! │   Scene Graph   │    Renderer     │      Animation        │
-//! │  (Node, Camera, │  (Core, Graph,  │  (Mixer, Clip, Track) │
-//! │   Light, etc.)  │    Pipeline)    │                       │
-//! ├─────────────────────────────────────────────────────────────┤
-//! │                      Resources Layer                       │
-//! │         (Geometry, Material, Texture, Mesh, etc.)          │
-//! ├─────────────────────────────────────────────────────────────┤
-//! │                       wgpu / WebGPU                        │
-//! └─────────────────────────────────────────────────────────────┘
-//! ```
-//!
-//! ## Module Organization
-//!
-//! This crate uses a **progressive disclosure** pattern:
-//!
-//! - **High-level API**: Use [`prelude`] for common types and traits
-//! - **Domain modules**: Access organized APIs via [`scene`], [`resources`], [`assets`], etc.
-//! - **Low-level access**: Advanced users can access [`renderer`] internals
-//!
-//! ### Core Modules
-//!
-//! | Module | Description |
-//! |--------|-------------|
-//! | [`app`] | Application lifecycle and window management |
-//! | [`engine`] | Core engine instance ([`Engine`]) |
-//! | [`scene`] | Scene graph with nodes, cameras, and lights |
-//! | [`resources`] | Resource definitions (geometry, material, texture) |
-//! | [`assets`] | Asset loading and management (glTF, images) |
-//! | [`animation`] | Skeletal and morph target animation system |
-//! | [`math`] | Re-exported math types from `glam` |
-//! | [`render`] | Rendering configuration and advanced APIs |
-//!
 //! ## Feature Flags
 //!
 //! | Feature | Default | Description |
@@ -95,278 +43,189 @@
 //! | `winit` | **yes** | Window management via winit |
 //! | `gltf` | **yes** | glTF 2.0 model loading |
 //! | `http` | **yes** | HTTP asset loading (native only) |
-//! | `gltf-meshopt` | no | Meshopt decompression for `EXT_meshopt_compression` glTF models. Requires LLVM/Clang for WASM builds. |
-//!
-//! ## Design Principles
-//!
-//! - **Performance First**: Cache-friendly data layouts, GPU resource pooling
-//! - **Progressive Disclosure**: Simple API for beginners, full control for experts
-//! - **Type Safety**: `SlotMap` handles for safe resource references
-//! - **Cross-Platform**: WebGPU/Vulkan/Metal/DX12 via wgpu
+//! | `gltf-meshopt` | no | Meshopt decompression for glTF |
 
 // ============================================================================
-// Internal Module Declarations
+// Sub-crate re-exports (facade modules matching the old monolith paths)
 // ============================================================================
 
-pub mod animation;
-pub mod app;
-pub mod assets;
-pub mod engine;
-pub mod errors;
-pub mod renderer;
-pub mod resources;
-pub mod scene;
-pub mod utils;
+/// Error types and `Result` alias.
+pub mod errors {
+    pub use myth_core::errors::*;
+}
+
+/// Scene graph – nodes, cameras, lights, transforms.
+pub use myth_scene as scene;
+
+/// GPU resource definitions – geometry, material, texture, mesh, etc.
+pub use myth_resources as resources;
+
+/// Animation system – clips, mixers, tracks, skeletal / morph-target.
+pub use myth_animation as animation;
+
+/// Asset loading – server, storage, glTF loaders.
+pub use myth_assets as assets;
+
+/// Renderer internals – core, graph, pipeline.
+pub use myth_render as renderer;
+
+/// Application framework – engine, handlers, windowing.
+#[cfg(feature = "winit")]
+pub use myth_app as app;
+
+/// Engine core without windowing (always available even without `winit`).
+pub mod engine {
+    pub use myth_app::engine::*;
+}
 
 // ============================================================================
-// Prelude - Common imports for everyday use
+// Local utilities (not in any sub-crate)
 // ============================================================================
 
-/// Prelude module for convenient imports.
-///
-/// Import everything you need for basic usage with a single line:
-///
-/// ```rust,ignore
-/// use myth::prelude::*;
-/// ```
-///
-/// This includes:
-/// - Application types: [`App`], [`AppHandler`], [`Engine`], [`FrameState`]
-/// - Scene types: [`Scene`], [`Node`], [`NodeHandle`], [`Camera`], [`Light`]
-/// - Resource types: [`Mesh`], [`Geometry`], [`Material`], [`Texture`]
-/// - Common math types from `glam`
-/// - Asset loading: [`AssetServer`]
+pub mod utils {
+    pub mod orbit_control;
+    pub use orbit_control::OrbitControls;
+    pub use myth_core::utils::FpsCounter;
+    pub mod fps_counter {
+        pub use myth_core::utils::FpsCounter;
+    }
+}
+
+// ============================================================================
+// Math module – re-exported glam types
+// ============================================================================
+
+pub mod math {
+    pub use glam::*;
+}
+
+// ============================================================================
+// Render module – high-level rendering API alias
+// ============================================================================
+
+pub mod render {
+    pub use myth_render::renderer::Renderer;
+    pub use myth_render::graph::{FrameComposer, RenderState};
+    pub use myth_render::settings::{RenderPath, RendererSettings};
+
+    #[doc(hidden)]
+    #[deprecated(since = "0.2.0", note = "Renamed to `RendererSettings`")]
+    pub type RenderSettings = RendererSettings;
+
+    /// Low-level GPU context access.
+    pub mod core {
+        pub use myth_render::core::ResourceManager;
+        pub use myth_render::core::WgpuContext;
+        pub use myth_render::core::{BindingResource, Bindings, ResourceBuilder};
+    }
+}
+
+// ============================================================================
+// Prelude – common imports for everyday use
+// ============================================================================
+
 pub mod prelude {
     // Application
     #[cfg(feature = "winit")]
-    pub use crate::app::winit::App;
-    pub use crate::app::{AppHandler, Window};
-    pub use crate::engine::{Engine, FrameState};
+    pub use myth_app::winit::App;
+    pub use myth_app::{AppHandler, Window};
+    pub use myth_app::{Engine, FrameState};
 
     // Scene graph
-    pub use crate::scene::{
+    pub use myth_scene::{
         BackgroundMapping, BackgroundMode, BackgroundSettings, Camera, Light, LightKind, Node,
-        NodeHandle, ProjectionType, ResolveGeometry, ResolveMaterial, Scene, SceneLogic, SceneNode,
-        SkeletonKey, Transform,
+        Scene, SceneLogic, SceneNode,
     };
+    pub use myth_core::{NodeHandle, SkeletonKey, Transform};
+    pub use myth_scene::camera::ProjectionType;
 
     // Resources
-    pub use crate::resources::{
+    pub use myth_resources::{
         AlphaMode, BloomSettings, FxaaQuality, FxaaSettings, Geometry, Image, Material,
         MaterialType, Mesh, PhongMaterial, PhysicalMaterial, Side, SsaoSettings, TaaSettings,
         Texture, TextureSlot, UnlitMaterial,
     };
 
     // Assets
-    pub use crate::assets::GltfLoader;
-    pub use crate::assets::{
-        AssetServer, ColorSpace, GeometryHandle, MaterialHandle, TextureHandle,
-    };
+    pub use myth_assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
+    pub use myth_assets::SceneExt;
+    #[cfg(feature = "gltf")]
+    pub use myth_assets::loaders::gltf::GltfLoader;
+    pub use myth_assets::ColorSpace;
 
     // Animation
-    pub use crate::animation::{
+    pub use myth_animation::{
         AnimationAction, AnimationClip, AnimationEvent, AnimationMixer, ClipBinding, FiredEvent,
         LoopMode, Rig,
     };
 
-    // Math (re-export common glam types)
+    // Math
     pub use glam::{Affine3A, EulerRot, Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
 
     // Utilities
-    pub use crate::utils::orbit_control::OrbitControls;
+    pub use crate::utils::OrbitControls;
 
-    // Renderer (limited exposure)
+    // Renderer
     #[cfg(feature = "debug_view")]
-    pub use crate::renderer::graph::DebugViewTarget;
-    pub use crate::renderer::graph::FrameComposer;
-    pub use crate::renderer::settings::{AntiAliasingMode, RenderPath, RendererSettings};
+    pub use myth_render::graph::DebugViewTarget;
+    pub use myth_render::graph::FrameComposer;
+    pub use myth_render::settings::{AntiAliasingMode, RenderPath, RendererSettings};
 
-    // Backward compatibility
     #[doc(hidden)]
     #[deprecated(since = "0.2.0", note = "Renamed to `RendererSettings`")]
     pub type RenderSettings = RendererSettings;
 }
 
 // ============================================================================
-// Math Module - Re-exported glam types
-// ============================================================================
-
-/// Math types re-exported from the `glam` crate.
-///
-/// Using this module ensures version compatibility between your code
-/// and the engine's internal math operations.
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use myth::math::{Vec3, Quat, Mat4};
-///
-/// let position = Vec3::new(1.0, 2.0, 3.0);
-/// let rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
-/// ```
-///
-/// # Available Types
-///
-/// ## Vectors
-/// - [`Vec2`], [`Vec3`], [`Vec4`] - Float vectors
-/// - [`IVec2`], [`IVec3`], [`IVec4`] - Integer vectors
-/// - [`UVec2`], [`UVec3`], [`UVec4`] - Unsigned integer vectors
-///
-/// ## Matrices
-/// - [`Mat2`], [`Mat3`], [`Mat4`] - Square matrices
-/// - [`Affine2`], [`Affine3A`] - Affine transformation matrices
-///
-/// ## Quaternions
-/// - [`Quat`] - Unit quaternion for rotations
-///
-/// ## Other
-/// - [`EulerRot`] - Euler rotation order enumeration
-pub mod math {
-    pub use glam::*;
-}
-
-// ============================================================================
-// Render Module - Advanced rendering API (alias for renderer)
-// ============================================================================
-
-/// Rendering system configuration and advanced APIs.
-///
-/// Most users only need [`RendererSettings`](renderer::settings::RendererSettings)
-/// to configure basic options. Advanced users can access the render graph
-/// system for custom passes.
-///
-/// # Basic Usage
-///
-/// ```rust,ignore
-/// use myth::render::{RendererSettings, RenderPath};
-///
-/// let settings = RendererSettings {
-///     vsync: true,
-///     ..Default::default()
-/// };
-///
-/// App::new()
-///     .with_settings(settings)
-///     .run::<MyApp>()?;
-/// ```
-///
-/// # Advanced: Custom Render Passes
-///
-/// Implement [`PassNode`](renderer::graph::core::node::PassNode) to add custom
-/// rendering passes:
-///
-/// ```rust,ignore
-/// use myth::render::FrameComposer;
-/// use myth::renderer::graph::core::blackboard::HookStage;
-///
-/// impl AppHandler for MyApp {
-///     fn compose_frame<'a>(&'a mut self, composer: FrameComposer<'a>) {
-///         composer
-///             .add_custom_pass(HookStage::AfterPostProcess, |graph, bb| {
-///                 my_pass.target_tex = bb.surface_out;
-///                 graph.add_pass(&mut my_pass);
-///             })
-///             .render();
-///     }
-/// }
-/// ```
-pub mod render {
-    pub use crate::renderer::Renderer;
-    pub use crate::renderer::graph::{FrameComposer, RenderState};
-    pub use crate::renderer::settings::{RenderPath, RendererSettings};
-
-    // Backward compatibility
-    #[doc(hidden)]
-    #[deprecated(since = "0.2.0", note = "Renamed to `RendererSettings`")]
-    pub type RenderSettings = RendererSettings;
-
-    /// Low-level GPU context access.
-    ///
-    /// These types are for advanced users who need direct GPU access.
-    /// Most applications should not need to use these directly.
-    pub mod core {
-        pub use crate::renderer::core::ResourceManager;
-        pub use crate::renderer::core::WgpuContext;
-        // Advanced: GPU binding system
-        pub use crate::renderer::core::{BindingResource, Bindings, ResourceBuilder};
-    }
-}
-
-// ============================================================================
-// Top-Level Re-exports for Convenience
+// Top-level re-exports for convenience
 // ============================================================================
 
 // Application
 #[cfg(feature = "winit")]
-pub use app::winit::App;
-pub use app::{AppHandler, Window};
-pub use engine::{Engine, FrameState};
+pub use myth_app::winit::App;
+pub use myth_app::{AppHandler, Window};
+pub use myth_app::{Engine, FrameState};
 
-// Scene (most common types)
-pub use scene::{
-    BackgroundMapping, BackgroundMode, BackgroundSettings, Camera, Light, Node, NodeHandle, Scene,
-    Transform,
+// Scene
+pub use myth_scene::{
+    BackgroundMapping, BackgroundMode, BackgroundSettings, Camera, Light, Node, Scene,
 };
+pub use myth_core::{NodeHandle, Transform};
 
-// Resources (most common types)
-pub use resources::{
-    AlphaMode,
-    Attribute,
-    // FXAA
-    FxaaQuality,
-    FxaaSettings,
-    Geometry,
-    Image,
-    Material,
-    // Advanced: Material trait for custom materials
-    MaterialTrait,
-    MaterialType,
-    Mesh,
-    PhongMaterial,
-    PhysicalMaterial,
-    RenderableMaterialTrait,
-    // Geometry primitives
-    ShaderDefines,
-    Side,
-    // TAA
-    TaaSettings,
-    Texture,
-    TextureSlot,
-    TextureTransform,
-    // Tone mapping
-    ToneMappingMode,
-    ToneMappingSettings,
-    UnlitMaterial,
+// Resources
+pub use myth_resources::{
+    AlphaMode, Attribute, FxaaQuality, FxaaSettings, Geometry, Image, Material, MaterialTrait,
+    MaterialType, Mesh, PhongMaterial, PhysicalMaterial, RenderableMaterialTrait, ShaderDefines,
+    Side, TaaSettings, Texture, TextureSlot, TextureTransform, ToneMappingMode,
+    ToneMappingSettings, UnlitMaterial,
 };
-
-// Primitives - Geometry creation functions
-pub use resources::primitives::{
+pub use myth_resources::primitives::{
     PlaneOptions, SphereOptions, create_box, create_plane, create_sphere,
 };
 
 // Assets
-pub use assets::{AssetServer, ColorSpace, GeometryHandle, MaterialHandle, TextureHandle};
+pub use myth_assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
+pub use myth_assets::{ColorSpace, SceneExt, ResolveGeometry, ResolveMaterial};
 
 // Animation
-pub use animation::{
+pub use myth_animation::{
     AnimationAction, AnimationClip, AnimationEvent, AnimationMixer, AnimationSystem, Binder,
     ClipBinding, FiredEvent, InterpolationMode, LoopMode, Rig, Track, TrackBinding, TrackData,
     TrackMeta,
 };
 
 // Renderer
-pub use renderer::Renderer;
-pub use renderer::graph::FrameComposer;
-pub use renderer::settings::{RenderPath, RendererSettings};
+pub use myth_render::Renderer;
+pub use myth_render::graph::FrameComposer;
+pub use myth_render::settings::{RenderPath, RendererSettings};
 
-// Backward compatibility
 #[doc(hidden)]
 #[deprecated(since = "0.2.0", note = "Renamed to `RendererSettings`")]
 pub type RenderSettings = RendererSettings;
 
 // Errors
-pub use errors::{AssetError, Error, PlatformError, RenderError, Result};
+pub use myth_core::{AssetError, Error, PlatformError, RenderError, Result};
 
 // Utilities
-pub use utils::interner;
-pub use utils::orbit_control::OrbitControls;
+pub use myth_core::utils::interner;
+pub use utils::OrbitControls;

@@ -49,10 +49,10 @@ pub struct Skeleton {
     // === Runtime Data ===
     // Final computed matrix array, updated every frame
     // Data flow: data here -> copy to GPU Uniform Buffer
-    pub(crate) joint_matrices: CpuBuffer<Vec<Mat4>>,
+    #[doc(hidden)] pub joint_matrices: CpuBuffer<Vec<Mat4>>,
 
     // Previous frame's joint matrices (used for velocity calculation in TAA)
-    pub(crate) prev_joint_matrices: CpuBuffer<Vec<Mat4>>,
+    #[doc(hidden)] pub prev_joint_matrices: CpuBuffer<Vec<Mat4>>,
 }
 
 impl Skeleton {

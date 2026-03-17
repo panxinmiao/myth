@@ -191,6 +191,17 @@ impl Transform {
     pub fn mark_dirty(&mut self) {
         self.force_update = true;
     }
+
+    /// Returns the local coordinate axes based on current rotation.
+    ///
+    /// Returns (right, up, forward) vectors in world space.
+    #[must_use]
+    pub fn rotation_basis(&self) -> (Vec3, Vec3, Vec3) {
+        let right = self.rotation * Vec3::X;
+        let up = self.rotation * Vec3::Y;
+        let forward = self.rotation * Vec3::Z;
+        (right, up, forward)
+    }
 }
 
 impl Default for Transform {

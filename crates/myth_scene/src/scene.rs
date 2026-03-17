@@ -98,7 +98,7 @@ pub struct Scene {
 
     // === Core Node Storage ===
     /// All nodes in the scene (`SlotMap` for O(1) access)
-    pub(crate) nodes: SlotMap<NodeHandle, Node>,
+    #[doc(hidden)] pub nodes: SlotMap<NodeHandle, Node>,
     /// Root-level nodes (no parent)
     root_nodes: Vec<NodeHandle>,
 
@@ -146,8 +146,8 @@ pub struct Scene {
     pub active_camera: Option<NodeHandle>,
 
     // === GPU Resource Descriptors ===
-    pub(crate) light_storage_buffer: CpuBuffer<Vec<GpuLightStorage>>,
-    pub(crate) uniforms_buffer: CpuBuffer<EnvironmentUniforms>,
+    #[doc(hidden)] pub light_storage_buffer: CpuBuffer<Vec<GpuLightStorage>>,
+    #[doc(hidden)] pub uniforms_buffer: CpuBuffer<EnvironmentUniforms>,
     light_data_cache: Vec<GpuLightStorage>,
 
     shader_defines: ShaderDefines,
@@ -234,6 +234,11 @@ impl Scene {
     #[must_use]
     pub fn root_nodes(&self) -> &[NodeHandle] {
         &self.root_nodes
+    }
+
+    /// Registers a node as a root-level node (no parent).
+    pub fn push_root_node(&mut self, handle: NodeHandle) {
+        self.root_nodes.push(handle);
     }
 
     /// Returns a read-only reference to the node storage.
@@ -917,6 +922,72 @@ impl Scene {
         } else {
             log::info!("No animation mixer found for node {node_handle:?}");
         }
+    }
+
+    // ========================================================================
+    // Bounding Box Queries
+    // ========================================================================
+
+    /// Computes the world-space bounding box of a single node (not including children).
+    ///
+    /// `get_geometry_bbox` maps a [`GeometryHandle`] to its local-space [`BoundingBox`].
+    /// Pass a closure that reads from your geometry storage, e.g.:
+    /// ```rust,ignore
+    /// |h| assets.geometries.get(h).map(|g| g.bounding_box)
+    /// ```
+    fn get_bbox_of_one_node<F>(
+        &self,
+        node_handle: NodeHandle,
+        get_geometry_bbox: &F, 
+    ) -> Option<myth_resources::BoundingBox>
+    where
+        F: Fn(myth_resources::GeometryHandle) -> Option<myth_resources::BoundingBox>,
+    {
+        let node = self.get_node(node_handle)?;
+        if !node.visible {
+            return None;
+        }
+        let mesh = self.meshes.get(node_handle)?;
+        if !mesh.visible {
+            return None;
+        }
+
+        // When there's a skeleton binding, use the skeleton's bounding box
+        if let Some(skeleton_binding) = self.skins.get(node_handle)
+            && let Some(skeleton) = self.skeleton_pool.get(skeleton_binding.skeleton)
+        {
+            return skeleton.compute_tight_world_bounds(&self.nodes);
+        }
+
+        // Otherwise compute from the geometry's static bounding box
+        let local_bbox = get_geometry_bbox(mesh.geometry)?;
+        Some(local_bbox.transform(&node.transform.world_matrix))
+    }
+
+    /// Recursively computes the world-space bounding box enclosing a node and all its descendants.
+    ///
+    /// `get_geometry_bbox` maps a [`GeometryHandle`] to its local-space bounding box.
+    pub fn get_bbox_of_node<F>(
+        &self,
+        node_handle: NodeHandle,
+        get_geometry_bbox: &F,
+    ) -> Option<myth_resources::BoundingBox>
+    where
+        F: Fn(myth_resources::GeometryHandle) -> Option<myth_resources::BoundingBox>,
+    {
+        let mut combined_bbox = self.get_bbox_of_one_node(node_handle, get_geometry_bbox);
+
+        let node = self.get_node(node_handle)?;
+        for &child_handle in &node.children {
+            if let Some(child_bbox) = self.get_bbox_of_node(child_handle, get_geometry_bbox) {
+                combined_bbox = match combined_bbox {
+                    Some(existing) => Some(existing.union(&child_bbox)),
+                    None => Some(child_bbox),
+                };
+            }
+        }
+
+        combined_bbox
     }
 }
 

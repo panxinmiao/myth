@@ -33,7 +33,7 @@ pub struct Mesh {
     prev_morph_target_influences: Vec<f32>,
 
     /// Morph Uniform Buffer (used by GPU, updated every frame)
-    pub(crate) morph_uniforms: CpuBuffer<MorphUniforms>,
+    #[doc(hidden)] pub morph_uniforms: CpuBuffer<MorphUniforms>,
 
     // pub(crate) morph_dirty: bool,
     pub(crate) morph_update_frames: u8,
