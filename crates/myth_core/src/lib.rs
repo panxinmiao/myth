@@ -17,3 +17,6 @@ pub use errors::{AssetError, Error, PlatformError, RenderError, Result};
 pub use handles::{NodeHandle, SkeletonKey};
 pub use transform::Transform;
 pub use utils::interner::Symbol;
+
+/// Maximum number of morph targets supported per mesh.
+pub const MAX_MORPH_TARGETS: usize = 128;
