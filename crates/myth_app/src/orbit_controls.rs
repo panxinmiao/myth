@@ -32,10 +32,8 @@
 //! ```
 
 use myth_resources::input::{Input, MouseButton};
-use myth_assets::AssetServer;
+use myth_resources::BoundingBox;
 use myth_core::Transform;
-use myth_core::NodeHandle;
-use myth_scene::Scene;
 use glam::Vec3;
 
 /// Internal spherical coordinate representation.
@@ -307,20 +305,15 @@ impl OrbitControls {
         self.target_radius = self.spherical.radius;
     }
 
-    /// Instantly resets the camera to look at the target from a specific position.
-    pub fn fit(&mut self, scene: &mut Scene, assets: &AssetServer, node_handle: NodeHandle) {
-        scene.update_matrix_world();
-        let bbox = scene.get_bbox_of_node(node_handle, &|h| {
-            assets.geometries.get(h).map(|g| g.bounding_box)
-        });
-        if let Some(bbox) = bbox {
-            let center = bbox.center();
-            let radius = bbox.size().length() * 0.5;
+    /// Frames the camera to fit a pre-computed bounding box.
+    ///
+    /// Positions the camera so the entire bounding box is visible,
+    /// looking at its center from an appropriate distance.
+    pub fn fit(&mut self, bbox: &BoundingBox) {
+        let center = bbox.center();
+        let radius = bbox.size().length() * 0.5;
 
-            self.set_target(center);
-            self.set_position(center + Vec3::new(0.0, 0.0, radius * 2.5));
-        }
+        self.set_target(center);
+        self.set_position(center + Vec3::new(0.0, 0.0, radius * 2.5));
     }
 }
-
-

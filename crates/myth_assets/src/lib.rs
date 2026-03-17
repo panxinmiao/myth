@@ -28,6 +28,7 @@ pub use manager::{SceneHandle, SceneManager};
 pub use prefab::{Prefab, PrefabNode, PrefabSkeleton, SharedPrefab};
 pub use resolve::{ResolveGeometry, ResolveMaterial};
 pub use scene_ext::SceneExt;
+pub use myth_scene::GeometryQuery;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use io::FileAssetReader;

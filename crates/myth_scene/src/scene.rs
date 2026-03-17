@@ -930,18 +930,12 @@ impl Scene {
 
     /// Computes the world-space bounding box of a single node (not including children).
     ///
-    /// `get_geometry_bbox` maps a [`GeometryHandle`] to its local-space [`BoundingBox`].
-    /// Pass a closure that reads from your geometry storage, e.g.:
-    /// ```rust,ignore
-    /// |h| assets.geometries.get(h).map(|g| g.bounding_box)
-    /// ```
-    fn get_bbox_of_one_node<F>(
+    /// `query` implements [`GeometryQuery`] to map geometry handles to local-space bounding boxes.
+    fn get_bbox_of_one_node(
         &self,
         node_handle: NodeHandle,
-        get_geometry_bbox: &F, 
+        query: &impl crate::GeometryQuery,
     ) -> Option<myth_resources::BoundingBox>
-    where
-        F: Fn(myth_resources::GeometryHandle) -> Option<myth_resources::BoundingBox>,
     {
         let node = self.get_node(node_handle)?;
         if !node.visible {
@@ -960,26 +954,24 @@ impl Scene {
         }
 
         // Otherwise compute from the geometry's static bounding box
-        let local_bbox = get_geometry_bbox(mesh.geometry)?;
+        let local_bbox = query.get_geometry_bbox(mesh.geometry)?;
         Some(local_bbox.transform(&node.transform.world_matrix))
     }
 
     /// Recursively computes the world-space bounding box enclosing a node and all its descendants.
     ///
-    /// `get_geometry_bbox` maps a [`GeometryHandle`] to its local-space bounding box.
-    pub fn get_bbox_of_node<F>(
+    /// `query` implements [`GeometryQuery`] to map geometry handles to local-space bounding boxes.
+    pub fn get_bbox_of_node(
         &self,
         node_handle: NodeHandle,
-        get_geometry_bbox: &F,
+        query: &impl crate::GeometryQuery,
     ) -> Option<myth_resources::BoundingBox>
-    where
-        F: Fn(myth_resources::GeometryHandle) -> Option<myth_resources::BoundingBox>,
     {
-        let mut combined_bbox = self.get_bbox_of_one_node(node_handle, get_geometry_bbox);
+        let mut combined_bbox = self.get_bbox_of_one_node(node_handle, query);
 
         let node = self.get_node(node_handle)?;
         for &child_handle in &node.children {
-            if let Some(child_bbox) = self.get_bbox_of_node(child_handle, get_geometry_bbox) {
+            if let Some(child_bbox) = self.get_bbox_of_node(child_handle, query) {
                 combined_bbox = match combined_bbox {
                     Some(existing) => Some(existing.union(&child_bbox)),
                     None => Some(child_bbox),

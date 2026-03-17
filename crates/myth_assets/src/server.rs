@@ -562,3 +562,12 @@ impl AssetServer {
         ))
     }
 }
+
+impl myth_scene::GeometryQuery for AssetServer {
+    fn get_geometry_bbox(
+        &self,
+        handle: GeometryHandle,
+    ) -> Option<myth_resources::BoundingBox> {
+        self.geometries.get(handle).map(|g| g.bounding_box)
+    }
+}

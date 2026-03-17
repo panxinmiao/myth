@@ -875,9 +875,7 @@ impl GltfViewer {
         scene.update_subtree(gltf_node);
 
         // 调整相机以适应模型
-        if let Some(bbox) = scene.get_bbox_of_node(gltf_node, &|h| {
-            assets.geometries.get(h).map(|g| g.bounding_box)
-        }) {
+        if let Some(bbox) = scene.get_bbox_of_node(gltf_node, assets) {
             let center = bbox.center();
             let radius = bbox.size().length() * 0.5;
             if let Some((_transform, camera)) = scene.query_main_camera_bundle() {

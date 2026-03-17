@@ -190,9 +190,7 @@ impl ShowcaseApp {
         }
 
         // 4. Calculate bounding box and focus camera
-        if let Some(bbox) = scene.get_bbox_of_node(root_node, &|h| {
-            assets.geometries.get(h).map(|g| g.bounding_box)
-        }) {
+        if let Some(bbox) = scene.get_bbox_of_node(root_node, assets) {
             let center = bbox.center();
             let radius = bbox.size().length() * 0.5;
 

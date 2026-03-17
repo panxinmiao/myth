@@ -79,12 +79,11 @@ pub mod engine {
 }
 
 // ============================================================================
-// Local utilities (not in any sub-crate)
+// Local utilities (re-exports from sub-crates)
 // ============================================================================
 
 pub mod utils {
-    pub mod orbit_control;
-    pub use orbit_control::OrbitControls;
+    pub use myth_app::OrbitControls;
     pub use myth_core::utils::FpsCounter;
     pub mod fps_counter {
         pub use myth_core::utils::FpsCounter;
@@ -163,7 +162,7 @@ pub mod prelude {
     pub use glam::{Affine3A, EulerRot, Mat3, Mat4, Quat, Vec2, Vec3, Vec4};
 
     // Utilities
-    pub use crate::utils::OrbitControls;
+    pub use myth_app::OrbitControls;
 
     // Renderer
     #[cfg(feature = "debug_view")]
@@ -205,7 +204,7 @@ pub use myth_resources::primitives::{
 
 // Assets
 pub use myth_assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
-pub use myth_assets::{ColorSpace, SceneExt, ResolveGeometry, ResolveMaterial};
+pub use myth_assets::{ColorSpace, GeometryQuery, ResolveGeometry, ResolveMaterial, SceneExt};
 
 // Animation
 pub use myth_animation::{
@@ -228,4 +227,4 @@ pub use myth_core::{AssetError, Error, PlatformError, RenderError, Result};
 
 // Utilities
 pub use myth_core::utils::interner;
-pub use utils::OrbitControls;
+pub use myth_app::OrbitControls;
