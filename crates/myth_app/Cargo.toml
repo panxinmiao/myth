@@ -25,7 +25,12 @@ winit = { workspace = true, optional = true }
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wasm-bindgen = { workspace = true }
 wasm-bindgen-futures = { workspace = true }
-web-sys = { workspace = true }
+web-sys = { workspace = true , features = [
+    "Document", "Window", "Element", "DomTokenList", "HtmlCanvasElement", "HtmlInputElement",
+    "Location", "Request", "RequestInit", "RequestMode", "Response", "Headers",
+    "File", "FileList", "FileReader", "Blob", "ProgressEvent", "console",
+    "UrlSearchParams",
+]}
 web-time = { workspace = true }
 console_error_panic_hook = { workspace = true }
 console_log = { workspace = true }

@@ -76,18 +76,13 @@ futures = "0.3.32"
 bitflags = "2.11.0"
 
 # Templating
-minijinja = { version = "2.17.1", features = ["loader", "custom_syntax"] }
+minijinja = { version = "2.18.0", features = ["loader", "custom_syntax"] }
 rust-embed = "8.11.0"
 
 # WASM
 wasm-bindgen = "0.2.114"
 wasm-bindgen-futures = "0.4.64"
-web-sys = { version = "0.3.91", features = [
-    "Document", "Window", "Element", "DomTokenList", "HtmlCanvasElement", "HtmlInputElement",
-    "Location", "Request", "RequestInit", "RequestMode", "Response", "Headers",
-    "File", "FileList", "FileReader", "Blob", "ProgressEvent", "console",
-    "UrlSearchParams",
-] }
+web-sys = "0.3.91"
 js-sys = "0.3.91"
 web-time = "1.1"
 console_error_panic_hook = "0.1.7"
@@ -95,7 +90,7 @@ console_log = "1.0"
 getrandom = { version = "0.4.2", features = ["wasm_js"] }
 
 # Async runtime
-tokio = { version = "1.50.0", features = ["fs", "rt-multi-thread", "macros"] }
+tokio = { version = "1.50.0", default-features = false }
 
 # Dev / Test / Bench
 anyhow = "1.0.102"
@@ -171,13 +166,9 @@ log  = { workspace = true }
 anyhow = { workspace = true }
 rfd    = { workspace = true }
 env_logger = { workspace = true }
-wgpu = { workspace = true }
-winit = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
-tokio = { workspace = true }
 rustc-hash = { workspace = true }
-reqwest = { workspace = true }
 slotmap = { workspace = true }
 uuid = { workspace = true }
 
@@ -186,6 +177,10 @@ criterion = { workspace = true, features = ["html_reports"] }
 egui      = { workspace = true }
 egui-wgpu = { workspace = true, features = ["winit"] }
 egui-winit = { workspace = true }
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
+reqwest = { workspace = true, features = ["default-tls", "stream"] }
+wgpu = { workspace = true }
+winit = { workspace = true }
 
 [target.'cfg(target_arch = "wasm32")'.dev-dependencies]
 wasm-bindgen-test = { workspace = true }
@@ -193,6 +188,14 @@ criterion = { workspace = true, default-features = false }
 egui      = { workspace = true }
 egui-wgpu = { workspace = true, features = ["winit"] }
 egui-winit = { workspace = true, default-features = false, features = ["links"] }
+wasm-bindgen = { workspace = true }
+wasm-bindgen-futures = { workspace = true }
+console_error_panic_hook = { workspace = true }
+console_log = { workspace = true }
+tokio = { workspace = true, features = ["macros", "sync", "rt", "time"] }
+reqwest = { workspace = true }
+wgpu = { workspace = true, features = ["webgpu"] }
+winit = { workspace = true }
 
 [[bench]]
 name = "render_graph_bench"

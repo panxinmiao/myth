@@ -181,9 +181,21 @@ impl AssetReaderVariant {
                     )))
                 })?;
 
-                let base = reqwest::Url::parse(&href)?;
+                let base = reqwest::Url::parse(&href).map_err(|e| {
+                    Error::Platform(myth_core::PlatformError::Wasm(format!(
+                        "Invalid base URL: {}",
+                        e
+                    )))
+                })?;
 
-                base.join(&uri)?.to_string()
+                base.join(&uri)
+                    .map_err(|e| {
+                        Error::Platform(myth_core::PlatformError::Wasm(format!(
+                            "Failed to join URL: {}",
+                            e
+                        )))
+                    })?
+                    .to_string()
             } else {
                 uri.to_string()
             };

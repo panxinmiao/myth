@@ -107,10 +107,6 @@ pub mod render {
     pub use myth_render::renderer::Renderer;
     pub use myth_render::settings::{RenderPath, RendererSettings};
 
-    #[doc(hidden)]
-    #[deprecated(since = "0.2.0", note = "Renamed to `RendererSettings`")]
-    pub type RenderSettings = RendererSettings;
-
     /// Low-level GPU context access.
     pub mod core {
         pub use myth_render::core::ResourceManager;
@@ -169,10 +165,6 @@ pub mod prelude {
     pub use myth_render::graph::DebugViewTarget;
     pub use myth_render::graph::FrameComposer;
     pub use myth_render::settings::{AntiAliasingMode, RenderPath, RendererSettings};
-
-    #[doc(hidden)]
-    #[deprecated(since = "0.2.0", note = "Renamed to `RendererSettings`")]
-    pub type RenderSettings = RendererSettings;
 }
 
 // ============================================================================
@@ -217,10 +209,6 @@ pub use myth_animation::{
 pub use myth_render::Renderer;
 pub use myth_render::graph::FrameComposer;
 pub use myth_render::settings::{RenderPath, RendererSettings};
-
-#[doc(hidden)]
-#[deprecated(since = "0.2.0", note = "Renamed to `RendererSettings`")]
-pub type RenderSettings = RendererSettings;
 
 // Errors
 pub use myth_core::{AssetError, Error, PlatformError, RenderError, Result};
