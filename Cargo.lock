@@ -2084,9 +2084,11 @@ name = "myth_assets"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "bytemuck",
  "futures",
  "glam",
  "gltf",
+ "half",
  "image",
  "js-sys",
  "log",
@@ -2097,9 +2099,11 @@ dependencies = [
  "myth_scene",
  "parking_lot",
  "reqwest",
+ "rustc-hash 2.1.1",
  "serde",
  "serde_json",
  "slotmap",
+ "smallvec",
  "tokio",
  "url",
  "uuid",
@@ -2161,6 +2165,7 @@ dependencies = [
  "myth_core",
  "parking_lot",
  "paste",
+ "rand 0.10.0",
  "rustc-hash 2.1.1",
  "serde",
  "slotmap",
@@ -2183,6 +2188,7 @@ dependencies = [
  "rustc-hash 2.1.1",
  "slotmap",
  "uuid",
+ "wgpu",
 ]
 
 [[package]]

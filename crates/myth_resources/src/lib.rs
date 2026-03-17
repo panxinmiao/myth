@@ -17,6 +17,7 @@
 //! - [`handles`] - Strongly-typed resource handles
 //! - [`binding`] - GPU binding resource descriptions
 
+pub mod anti_aliasing;
 pub mod binding;
 pub mod bloom;
 pub mod buffer;
@@ -50,6 +51,7 @@ pub use material::{
 };
 pub use mesh::Mesh;
 
+pub use anti_aliasing::AntiAliasingMode;
 pub use bloom::BloomSettings;
 pub use buffer::BufferRef;
 pub use fxaa::{FxaaQuality, FxaaSettings};

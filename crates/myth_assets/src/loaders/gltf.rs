@@ -1,0 +1,2673 @@
+use myth_animation::{
+    AnimationClip, InterpolationMode, KeyframeTrack, MorphWeightData, TargetPath, Track,
+    TrackData, TrackMeta,
+};
+use crate::io::{AssetReaderVariant, AssetSource};
+use crate::prefab::{Prefab, PrefabNode, PrefabSkeleton};
+use crate::AssetServer;
+use myth_resources::{GeometryHandle, MaterialHandle, TextureHandle};
+use myth_core::{AssetError, Error, Result};
+use myth_resources::buffer::BufferRef;
+use myth_resources::geometry::{Attribute, Geometry};
+use myth_resources::BoundingBox;
+use myth_resources::material::AlphaMode;
+use myth_resources::texture::Texture;
+use myth_resources::{
+    Material, PhysicalFeatures, PhysicalMaterial, TextureSampler, TextureSlot, TextureTransform,
+};
+use futures::future::try_join_all;
+use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
+use gltf::accessor::{DataType, Dimensions};
+#[cfg(feature = "gltf-meshopt")]
+use gltf::json::extensions::buffer::{MeshoptCompressionFilter, MeshoptCompressionMode};
+use serde_json::Value;
+use smallvec::SmallVec;
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::Arc;
+use wgpu::{BufferUsages, PrimitiveTopology, TextureFormat, VertexFormat, VertexStepMode};
+
+#[cfg(not(target_arch = "wasm32"))]
+use tokio::runtime::Runtime;
+
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::OnceLock;
+
+#[cfg(not(target_arch = "wasm32"))]
+// Global runtime used only for synchronous loading.
+fn get_global_runtime() -> &'static Runtime {
+    static RUNTIME: OnceLock<Runtime> = OnceLock::new();
+    RUNTIME.get_or_init(|| Runtime::new().expect("Failed to create global asset loader runtime"))
+}
+
+fn decode_data_uri(uri: &str) -> Result<Vec<u8>> {
+    if uri.starts_with("data:") {
+        let comma = uri.find(',').ok_or_else(|| {
+            Error::Asset(AssetError::Format(
+                "Invalid Data URI: missing comma".to_string(),
+            ))
+        })?;
+        let header = &uri[0..comma];
+        let data = &uri[comma + 1..];
+
+        if header.ends_with(";base64") {
+            use base64::{Engine as _, engine::general_purpose};
+            let bytes = general_purpose::STANDARD.decode(data)?;
+            Ok(bytes)
+        } else {
+            Err(Error::Asset(AssetError::Format(
+                "Unsupported Data URI encoding (only base64 supported)".to_string(),
+            )))
+        }
+    } else {
+        Err(Error::Asset(AssetError::Format(
+            "Not a Data URI".to_string(),
+        )))
+    }
+}
+
+fn parse_transform_from_json(texture_slot: &mut TextureSlot, transform_val: &Value) {
+    if let Some(offset) = transform_val.get("offset").and_then(|v| v.as_array()) {
+        let x = offset
+            .first()
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as f32;
+        let y = offset
+            .get(1)
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as f32;
+        texture_slot.transform.offset = Vec2::new(x, y);
+    }
+
+    if let Some(scale) = transform_val.get("scale").and_then(|v| v.as_array()) {
+        let x = scale
+            .first()
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(1.0) as f32;
+        let y = scale
+            .get(1)
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(1.0) as f32;
+        texture_slot.transform.scale = Vec2::new(x, y);
+    }
+
+    if let Some(rotation) = transform_val
+        .get("rotation")
+        .and_then(serde_json::Value::as_f64)
+    {
+        texture_slot.transform.rotation = rotation as f32;
+    }
+
+    if let Some(tex_coord) = transform_val
+        .get("texCoord")
+        .and_then(serde_json::Value::as_u64)
+    {
+        texture_slot.channel = tex_coord as u8;
+    }
+}
+
+#[allow(dead_code)]
+fn sanitize_gltf_data(data: &[u8]) -> Result<Cow<'_, [u8]>> {
+    if data.starts_with(b"glTF") {
+        sanitize_glb(data)
+    } else {
+        sanitize_json(data)
+    }
+}
+
+#[allow(dead_code)]
+fn sanitize_json(data: &[u8]) -> Result<Cow<'_, [u8]>> {
+    let mut root: Value = serde_json::from_slice(data)?;
+
+    if patch_json_value(&mut root) {
+        let patched = serde_json::to_vec(&root)?;
+        Ok(Cow::Owned(patched))
+    } else {
+        Ok(Cow::Borrowed(data))
+    }
+}
+
+#[allow(dead_code)]
+fn sanitize_glb(data: &[u8]) -> Result<Cow<'_, [u8]>> {
+    if data.len() < 12 {
+        return Ok(Cow::Borrowed(data));
+    }
+
+    let version = u32::from_le_bytes(
+        data[4..8]
+            .try_into()
+            .map_err(|_| Error::Asset(AssetError::Format("Invalid GLB header".to_string())))?,
+    );
+    if version != 2 {
+        return Ok(Cow::Borrowed(data));
+    }
+
+    let chunk0_len =
+        u32::from_le_bytes(data[12..16].try_into().map_err(|_| {
+            Error::Asset(AssetError::Format("Invalid GLB chunk header".to_string()))
+        })?) as usize;
+    let chunk0_type = u32::from_le_bytes(
+        data[16..20]
+            .try_into()
+            .map_err(|_| Error::Asset(AssetError::Format("Invalid GLB chunk type".to_string())))?,
+    );
+
+    if chunk0_type != 0x4E4F_534A {
+        return Ok(Cow::Borrowed(data));
+    }
+
+    let json_bytes = &data[20..20 + chunk0_len];
+
+    let mut root: Value = serde_json::from_slice(json_bytes)?;
+    if !patch_json_value(&mut root) {
+        return Ok(Cow::Borrowed(data));
+    }
+
+    let new_json_bytes = serde_json::to_vec(&root)?;
+    let padding = (4 - (new_json_bytes.len() % 4)) % 4;
+    let new_chunk0_len = new_json_bytes.len() + padding;
+
+    let mut new_glb = Vec::with_capacity(
+        data.len() + (new_chunk0_len.cast_signed() - chunk0_len.cast_signed()).unsigned_abs(),
+    );
+
+    new_glb.extend_from_slice(&data[0..8]);
+    new_glb.extend_from_slice(&[0, 0, 0, 0]);
+
+    new_glb.extend_from_slice(&(new_chunk0_len as u32).to_le_bytes());
+    new_glb.extend_from_slice(&chunk0_type.to_le_bytes());
+
+    new_glb.extend_from_slice(&new_json_bytes);
+    new_glb.extend(std::iter::repeat_n(0x20, padding));
+
+    let rest_offset = 20 + chunk0_len;
+    if rest_offset < data.len() {
+        new_glb.extend_from_slice(&data[rest_offset..]);
+    }
+
+    let total_len = new_glb.len() as u32;
+    new_glb[8..12].copy_from_slice(&total_len.to_le_bytes());
+
+    Ok(Cow::Owned(new_glb))
+}
+
+#[allow(dead_code)]
+fn patch_json_value(root: &mut Value) -> bool {
+    let mut changed = false;
+
+    if let Some(anims) = root.get_mut("animations").and_then(|v| v.as_array_mut()) {
+        for anim in anims {
+            if let Some(channels) = anim.get_mut("channels").and_then(|v| v.as_array_mut()) {
+                let old_len = channels.len();
+                channels.retain(|ch| ch.get("target").and_then(|t| t.get("node")).is_some());
+                if channels.len() != old_len {
+                    changed = true;
+                    log::warn!(
+                        "Sanitizer: Removed {} invalid animation channels (missing node)",
+                        old_len - channels.len()
+                    );
+                }
+            }
+        }
+    }
+
+    changed
+}
+
+/// Builds logical buffers by decompressing `EXT_meshopt_compression` data in-place
+/// (when the `gltf-meshopt` feature is enabled).
+///
+/// Scans all buffer views for the meshopt extension. When the `gltf-meshopt` feature
+/// is active, decodes compressed vertex/index data using the meshopt C FFI, applies
+/// post-decode filters (Octahedral, Quaternion, Exponential), and writes the results
+/// to the correct logical offsets.
+///
+/// # Graceful Degradation
+///
+/// If the `gltf-meshopt` feature is **not** enabled and a buffer view with meshopt
+/// compression is encountered, the function returns an [`AssetError::Format`] error
+/// with a user-friendly message explaining how to enable the feature. The engine
+/// remains running 鈥?only the current model load is aborted.
+///
+/// # Errors
+///
+/// Returns an error if:
+/// - A meshopt-compressed buffer view is found but the `gltf-meshopt` feature is
+///   disabled (graceful degradation).
+/// - A meshopt-compressed buffer view references an out-of-range source buffer.
+fn build_logical_buffers(gltf: &gltf::Gltf, raw_buffers: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
+    #[allow(unused_mut)] // mut is only needed when gltf-meshopt feature is enabled
+    let mut logical = raw_buffers.to_vec();
+
+    for view in gltf.views() {
+        let Some(ext) = view.meshopt_compression() else {
+            continue;
+        };
+
+        // 鈹€鈹€ Feature not enabled: graceful degradation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        #[cfg(not(feature = "gltf-meshopt"))]
+        {
+            let _ = &ext; // suppress unused-variable warning
+            log::error!(
+                "Myth Engine: Attempted to load a model with EXT_meshopt_compression, \
+                 but the 'gltf-meshopt' feature is not enabled.\n\
+                 To fix this, enable the feature in your Cargo.toml:\n\
+                 \n\
+                 myth-engine = {{ version = \"*\", features = [\"gltf-meshopt\"] }}\n\
+                 \n\
+                 Note: Enabling this feature requires an LLVM/Clang toolchain for WASM builds."
+            );
+            return Err(myth_core::AssetError::Format(
+                "Model requires EXT_meshopt_compression but the 'gltf-meshopt' feature is \
+                     not enabled. Enable it with: myth-engine = { features = [\"gltf-meshopt\"] }"
+                    .into(),
+            )
+            .into());
+        }
+
+        // 鈹€鈹€ Feature enabled: full meshopt decompression 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        #[cfg(feature = "gltf-meshopt")]
+        {
+            let src_buffer_idx = ext.buffer.value();
+            let src_offset = ext.byte_offset.map_or(0, |v| v.0 as usize);
+            let src_length = ext.byte_length.0 as usize;
+            let stride = ext.byte_stride as usize;
+            let count = ext.count as usize;
+
+            let Some(src_buf) = raw_buffers.get(src_buffer_idx) else {
+                log::error!(
+                    "meshopt: buffer view {} references invalid source buffer {}",
+                    view.index(),
+                    src_buffer_idx
+                );
+                continue;
+            };
+
+            let src_end = src_offset + src_length;
+            if src_end > src_buf.len() {
+                log::error!(
+                    "meshopt: buffer view {} source range {}..{} exceeds buffer length {}",
+                    view.index(),
+                    src_offset,
+                    src_end,
+                    src_buf.len()
+                );
+                continue;
+            }
+            let encoded = &src_buf[src_offset..src_end];
+
+            let decoded_size = count * stride;
+            let mut decoded = vec![0u8; decoded_size];
+
+            let ok = match ext.mode {
+                MeshoptCompressionMode::Attributes => {
+                    let rc = unsafe {
+                        meshopt::ffi::meshopt_decodeVertexBuffer(
+                            decoded.as_mut_ptr().cast(),
+                            count,
+                            stride,
+                            encoded.as_ptr(),
+                            encoded.len(),
+                        )
+                    };
+                    rc == 0
+                }
+                MeshoptCompressionMode::Triangles => {
+                    let rc = unsafe {
+                        meshopt::ffi::meshopt_decodeIndexBuffer(
+                            decoded.as_mut_ptr().cast(),
+                            count,
+                            stride,
+                            encoded.as_ptr(),
+                            encoded.len(),
+                        )
+                    };
+                    rc == 0
+                }
+                MeshoptCompressionMode::Indices => {
+                    let rc = unsafe {
+                        meshopt::ffi::meshopt_decodeIndexSequence(
+                            decoded.as_mut_ptr().cast(),
+                            count,
+                            stride,
+                            encoded.as_ptr(),
+                            encoded.len(),
+                        )
+                    };
+                    rc == 0
+                }
+            };
+
+            if !ok {
+                log::error!(
+                    "meshopt: failed to decode buffer view {} (mode={:?}, count={}, stride={})",
+                    view.index(),
+                    ext.mode,
+                    count,
+                    stride
+                );
+                continue;
+            }
+
+            // Apply post-decode filter (in-place on the decoded buffer).
+            if let Some(filter) = ext.filter {
+                match filter {
+                    MeshoptCompressionFilter::None => {}
+                    MeshoptCompressionFilter::Octahedral => unsafe {
+                        meshopt::ffi::meshopt_decodeFilterOct(
+                            decoded.as_mut_ptr().cast(),
+                            count,
+                            stride,
+                        );
+                    },
+                    MeshoptCompressionFilter::Quaternion => unsafe {
+                        meshopt::ffi::meshopt_decodeFilterQuat(
+                            decoded.as_mut_ptr().cast(),
+                            count,
+                            stride,
+                        );
+                    },
+                    MeshoptCompressionFilter::Exponential => unsafe {
+                        meshopt::ffi::meshopt_decodeFilterExp(
+                            decoded.as_mut_ptr().cast(),
+                            count,
+                            stride,
+                        );
+                    },
+                }
+            }
+
+            // Write decompressed data at the logical offset described by the buffer view.
+            let dst_buffer_idx = view.buffer().index();
+            let dst_offset = view.offset();
+            let dst_end = dst_offset + decoded_size;
+
+            if dst_buffer_idx >= logical.len() {
+                logical.resize_with(dst_buffer_idx + 1, Vec::new);
+            }
+
+            let dst = &mut logical[dst_buffer_idx];
+            if dst_end > dst.len() {
+                dst.resize(dst_end, 0);
+            }
+            dst[dst_offset..dst_end].copy_from_slice(&decoded);
+
+            log::trace!(
+                "meshopt: decoded view {} -> buffer[{}][{}..{}] (mode={:?}, count={}, stride={})",
+                view.index(),
+                dst_buffer_idx,
+                dst_offset,
+                dst_end,
+                ext.mode,
+                count,
+                stride
+            );
+        }
+    }
+
+    Ok(logical)
+}
+
+/// Pads vertex data from an arbitrary stride to a 4-byte-aligned stride.
+///
+/// WebGPU requires `array_stride` to be a multiple of 4. When the source data has
+/// a non-aligned stride (e.g. `vec3<i16>` = 6 bytes), this function inserts zero
+/// padding bytes after each vertex element to reach the next multiple of 4.
+fn pad_to_4_byte_alignment(raw: &[u8], count: usize, src_stride: usize) -> Vec<u8> {
+    let dst_stride = (src_stride + 3) & !3;
+    if dst_stride == src_stride {
+        return raw.to_vec();
+    }
+
+    let mut out = vec![0u8; count * dst_stride];
+    for i in 0..count {
+        let src_start = i * src_stride;
+        let dst_start = i * dst_stride;
+
+        let remaining_bytes = raw.len().saturating_sub(src_start);
+        if remaining_bytes == 0 {
+            break;
+        }
+
+        let copy_len = src_stride.min(raw.len() - src_start);
+        out[dst_start..dst_start + copy_len].copy_from_slice(&raw[src_start..src_start + copy_len]);
+    }
+    out
+}
+
+/// Maps a glTF accessor's component type and dimension to the best matching `VertexFormat`.
+///
+/// For quantized data (`KHR_mesh_quantization` / `EXT_meshopt_compression`), returns
+/// a compact GPU-native format (e.g. `Snorm16x4`) instead of converting to `f32`,
+/// cutting vertex bandwidth in half. The format is always 4-byte-aligned by promoting
+/// 3-component types to 4-component equivalents.
+fn map_quantized_vertex_format(
+    data_type: DataType,
+    dimensions: Dimensions,
+    normalized: bool,
+) -> VertexFormat {
+    match (data_type, dimensions, normalized) {
+        // --- Float passthrough (standard, non-quantized) ---
+        (DataType::F32, Dimensions::Scalar, _) => VertexFormat::Float32,
+        (DataType::F32, Dimensions::Vec2, _) => VertexFormat::Float32x2,
+        (DataType::F32, Dimensions::Vec3, _) => VertexFormat::Float32x3,
+
+        // --- Signed 16-bit (quantized positions / normals) ---
+        (DataType::I16, Dimensions::Vec2, true) => VertexFormat::Snorm16x2,
+        (DataType::I16, Dimensions::Vec3 | Dimensions::Vec4, true) => VertexFormat::Snorm16x4,
+        (DataType::I16, Dimensions::Vec2, false) => VertexFormat::Sint16x2,
+        (DataType::I16, Dimensions::Vec3 | Dimensions::Vec4, false) => VertexFormat::Sint16x4,
+
+        // --- Unsigned 16-bit (quantized UVs) ---
+        (DataType::U16, Dimensions::Vec2, true) => VertexFormat::Unorm16x2,
+        (DataType::U16, Dimensions::Vec3 | Dimensions::Vec4, true) => VertexFormat::Unorm16x4,
+        (DataType::U16, Dimensions::Vec2, false) => VertexFormat::Uint16x2,
+        (DataType::U16, Dimensions::Vec3 | Dimensions::Vec4, false) => VertexFormat::Uint16x4,
+
+        // --- Signed 8-bit (quantized normals / tangents) ---
+        (DataType::I8, Dimensions::Vec2, true) => VertexFormat::Snorm8x2,
+        (DataType::I8, Dimensions::Vec3 | Dimensions::Vec4, true) => VertexFormat::Snorm8x4,
+        (DataType::I8, Dimensions::Vec2, false) => VertexFormat::Sint8x2,
+        (DataType::I8, Dimensions::Vec3 | Dimensions::Vec4, false) => VertexFormat::Sint8x4,
+
+        // --- Unsigned 8-bit ---
+        (DataType::U8, Dimensions::Vec2, true) => VertexFormat::Unorm8x2,
+        (DataType::U8, Dimensions::Vec3 | Dimensions::Vec4, true) => VertexFormat::Unorm8x4,
+        (DataType::U8, Dimensions::Vec2, false) => VertexFormat::Uint8x2,
+        (DataType::U8, Dimensions::Vec3 | Dimensions::Vec4, false) => VertexFormat::Uint8x4,
+
+        // --- Fallback ---
+        _ => VertexFormat::Float32x4,
+    }
+}
+
+/// Determines the effective byte stride for a buffer view / accessor pair.
+///
+/// If the buffer view declares an explicit stride it is used directly; otherwise the
+/// stride is inferred from the accessor's component size 脳 dimension count.
+fn effective_stride(accessor: &gltf::Accessor) -> usize {
+    accessor
+        .view()
+        .and_then(|v| v.stride())
+        .unwrap_or_else(|| accessor.size())
+}
+
+/// Returns `true` when the accessor uses a non-float component type, indicating
+/// that `KHR_mesh_quantization` or `EXT_meshopt_compression` quantised encoding
+/// is active and the data should be sent to the GPU as raw bytes.
+fn is_quantized(accessor: &gltf::Accessor) -> bool {
+    !matches!(accessor.data_type(), DataType::F32)
+}
+
+/// Extracts a raw byte slice from a logical buffer for the given accessor.
+///
+/// Returns the byte slice, the per-vertex stride (already 4-byte-aligned when
+/// necessary), and the `VertexFormat` ready for GPU consumption.
+fn extract_raw_attribute(
+    accessor: &gltf::Accessor,
+    logical_buffers: &[Vec<u8>],
+) -> Option<(Vec<u8>, usize, VertexFormat)> {
+    let view = accessor.view()?;
+    let buffer_idx = view.buffer().index();
+    let stride = effective_stride(accessor);
+    let count = accessor.count();
+
+    let base_offset = view.offset() + accessor.offset();
+    let total_len = if count > 0 {
+        (count - 1) * stride + accessor.size()
+    } else {
+        0
+    };
+
+    let buf = logical_buffers.get(buffer_idx)?;
+    let end = base_offset + total_len;
+    if end > buf.len() {
+        log::error!(
+            "Accessor byte range {}..{} exceeds buffer[{}] length {}",
+            base_offset,
+            end,
+            buffer_idx,
+            buf.len()
+        );
+        return None;
+    }
+
+    let raw = &buf[base_offset..end];
+    let format = map_quantized_vertex_format(
+        accessor.data_type(),
+        accessor.dimensions(),
+        accessor.normalized(),
+    );
+
+    // Ensure 4-byte aligned stride for WebGPU.
+    let aligned_stride = (stride + 3) & !3;
+    let bytes = if aligned_stride == stride {
+        raw.to_vec()
+    } else {
+        pad_to_4_byte_alignment(raw, count, stride)
+    };
+
+    Some((bytes, aligned_stride, format))
+}
+
+/// Parses the `min`/`max` JSON values from a glTF accessor into a `Vec3`.
+///
+/// The glTF specification guarantees that position accessor min/max are stored as
+/// true floating-point world-space coordinates, even when the underlying data uses
+/// quantised integer types.
+fn parse_accessor_bounds(accessor: &gltf::Accessor) -> Option<(Vec3, Vec3)> {
+    let parse_vec3 = |val: serde_json::Value| -> Option<Vec3> {
+        let arr = val.as_array()?;
+        if arr.len() >= 3 {
+            Some(Vec3::new(
+                arr[0].as_f64()? as f32,
+                arr[1].as_f64()? as f32,
+                arr[2].as_f64()? as f32,
+            ))
+        } else {
+            None
+        }
+    };
+
+    let min = parse_vec3(accessor.min()?)?;
+    let max = parse_vec3(accessor.max()?)?;
+    Some((min, max))
+}
+
+struct IntermediateTexture {
+    name: Option<String>,
+    image_data: Vec<u8>,
+    width: u32,
+    height: u32,
+    sampler: TextureSampler,
+    generate_mipmaps: bool,
+}
+
+#[derive(Hash, PartialEq, Eq, Clone)]
+struct TextureCacheKey {
+    gltf_texture_index: usize,
+    is_srgb: bool,
+}
+
+// Helper struct for passing decoded results.
+struct DecodedImage {
+    width: u32,
+    height: u32,
+    data: Vec<u8>,
+}
+struct InterleaveChannel {
+    name: String,
+    data: Vec<u8>,
+    format: VertexFormat,
+    item_size: usize,
+}
+
+impl InterleaveChannel {
+    fn from_iter<T, I>(name: &str, iter: I, format: VertexFormat) -> Self
+    where
+        T: bytemuck::Pod,
+        I: Iterator<Item = T>,
+    {
+        let data: Vec<u8> = iter.flat_map(|v| bytemuck::bytes_of(&v).to_vec()).collect();
+
+        let item_size = std::mem::size_of::<T>();
+
+        Self {
+            name: name.to_string(),
+            data,
+            format,
+            item_size,
+        }
+    }
+}
+
+pub struct LoadContext<'a, 'b> {
+    pub assets: &'a AssetServer,
+    pub material_map: &'a [MaterialHandle],
+    intermediate_textures: &'a [IntermediateTexture],
+    created_textures: &'a mut HashMap<TextureCacheKey, TextureHandle>,
+    _phantom: std::marker::PhantomData<&'b ()>,
+}
+
+pub trait GltfExtensionParser {
+    fn name(&self) -> &str;
+
+    #[allow(unused_variables)]
+    fn on_load_material(
+        &mut self,
+        ctx: &mut LoadContext,
+        gltf_mat: &gltf::Material,
+        engine_mat: &PhysicalMaterial,
+        extension_value: &Value,
+    ) -> Result<()> {
+        Ok(())
+    }
+
+    fn setup_texture_map_from_extension(
+        &mut self,
+        ctx: &mut LoadContext,
+        tex_info: &Value,
+        texture_slot: &mut TextureSlot,
+        is_srgb: bool,
+    ) {
+        if let Some(index) = tex_info.get("index").and_then(serde_json::Value::as_u64) {
+            let Some(tex_handle) = ctx.get_or_create_texture(index as usize, is_srgb).ok() else {
+                return;
+            };
+            texture_slot.texture = Some(tex_handle);
+            texture_slot.channel = tex_info
+                .get("texCoord")
+                .and_then(serde_json::Value::as_u64)
+                .unwrap_or(0) as u8;
+
+            if let Some(transform) = tex_info
+                .get("extensions")
+                .and_then(|exts| exts.get("KHR_texture_transform"))
+            {
+                parse_transform_from_json(texture_slot, transform);
+            }
+        }
+    }
+}
+
+impl LoadContext<'_, '_> {
+    pub fn get_or_create_texture(
+        &mut self,
+        gltf_texture_index: usize,
+        is_srgb: bool,
+    ) -> Result<TextureHandle> {
+        let key = TextureCacheKey {
+            gltf_texture_index,
+            is_srgb,
+        };
+
+        if let Some(&handle) = self.created_textures.get(&key) {
+            return Ok(handle);
+        }
+
+        let raw = self
+            .intermediate_textures
+            .get(gltf_texture_index)
+            .ok_or_else(|| {
+                Error::Asset(AssetError::InvalidData(format!(
+                    "Texture index out of bounds: {gltf_texture_index}"
+                )))
+            })?;
+
+        let format = if is_srgb {
+            TextureFormat::Rgba8UnormSrgb
+        } else {
+            TextureFormat::Rgba8Unorm
+        };
+
+        let mut engine_tex = Texture::new_2d(
+            raw.name.as_deref(),
+            raw.width,
+            raw.height,
+            Some(raw.image_data.clone()),
+            format,
+        );
+
+        engine_tex.sampler = raw.sampler;
+        engine_tex.generate_mipmaps = raw.generate_mipmaps;
+
+        let handle = self.assets.textures.add(engine_tex);
+        self.created_textures.insert(key, handle);
+
+        Ok(handle)
+    }
+}
+
+/// glTF Loader
+///
+/// Supports synchronous and asynchronous loading, outputs `Prefab` data structure,
+/// instantiated into the scene via `Scene::instantiate()`.
+pub struct GltfLoader {
+    assets: Arc<AssetServer>,
+    reader: AssetReaderVariant,
+
+    intermediate_textures: Vec<IntermediateTexture>,
+    created_textures: HashMap<TextureCacheKey, TextureHandle>,
+    material_map: Vec<MaterialHandle>,
+    default_material: Option<MaterialHandle>,
+    extensions: HashMap<String, Box<dyn GltfExtensionParser + Send>>,
+
+    prefab_nodes: Vec<PrefabNode>,
+    prefab_skeletons: Vec<PrefabSkeleton>,
+}
+
+impl GltfLoader {
+    fn new_loader(assets: Arc<AssetServer>, reader: AssetReaderVariant, gltf: &gltf::Gltf) -> Self {
+        let mut loader = Self {
+            assets,
+            reader,
+            intermediate_textures: Vec::new(),
+            created_textures: HashMap::new(),
+            material_map: Vec::new(),
+            extensions: HashMap::new(),
+            default_material: None,
+            prefab_nodes: Vec::with_capacity(gltf.nodes().count()),
+            prefab_skeletons: Vec::new(),
+        };
+
+        // Register core extensions
+        loader.register_extension(Box::new(KhrMaterialsPbrSpecularGlossiness));
+        loader.register_extension(Box::new(KhrMaterialsClearcoat));
+        loader.register_extension(Box::new(KhrMaterialsSheen));
+        loader.register_extension(Box::new(KhrMaterialsIridescence));
+        loader.register_extension(Box::new(KhrMaterialsAnisotropy));
+        loader.register_extension(Box::new(KhrMaterialsTransmission));
+        loader.register_extension(Box::new(KhrMaterialsVolume));
+        loader.register_extension(Box::new(KhrMaterialsDispersion));
+
+        // Validation / Logging
+        let mut supported_ext = loader.extensions.keys().cloned().collect::<Vec<_>>();
+        supported_ext.extend([
+            "KHR_materials_emissive_strength".to_string(),
+            "KHR_materials_ior".to_string(),
+            "KHR_materials_specular".to_string(),
+            "KHR_texture_transform".to_string(),
+            "KHR_mesh_quantization".to_string(),
+            "EXT_meshopt_compression".to_string(),
+            "EXT_texture_webp".to_string(),
+        ]);
+
+        let require_not_supported: Vec<_> = gltf
+            .extensions_required()
+            .filter(|ext| !supported_ext.contains(&ext.to_string()))
+            .collect();
+
+        if !require_not_supported.is_empty() {
+            log::warn!("glTF file requires unsupported extensions: {require_not_supported:?}");
+        }
+
+        let used_not_supported: Vec<_> = gltf
+            .extensions_used()
+            .filter(|ext| !supported_ext.contains(&ext.to_string()))
+            .collect();
+
+        if !used_not_supported.is_empty() {
+            log::warn!(
+                "glTF uses unsupported extensions: {used_not_supported:?}, display may not be correct"
+            );
+        }
+
+        loader
+    }
+
+    fn register_extension(&mut self, ext: Box<dyn GltfExtensionParser + Send>) {
+        self.extensions.insert(ext.name().to_string(), ext);
+    }
+
+    async fn load_inner(mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> Result<Arc<Prefab>> {
+        // Pre-process: decompress all EXT_meshopt_compression buffer views and
+        // reconstruct logical buffers that both geometry and animation pipelines
+        // can consume transparently.
+        let logical_buffers = build_logical_buffers(gltf, buffers)?;
+
+        self.load_textures_async(gltf, &logical_buffers).await?;
+        self.load_materials(gltf)?;
+        let prefab = self.build_prefab(gltf, &logical_buffers);
+        Ok(Arc::new(prefab))
+    }
+
+    /// Synchronous load entry point (backwards compatible) - Native only
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load(
+        source: impl AssetSource,
+        assets: impl Into<Arc<AssetServer>>,
+    ) -> Result<Arc<Prefab>> {
+        Self::load_sync(source, assets)
+    }
+
+    /// Synchronous load (creates runtime internally) - Native only
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn load_sync(
+        source: impl AssetSource,
+        assets: impl Into<Arc<AssetServer>>,
+    ) -> Result<Arc<Prefab>> {
+        let rt = get_global_runtime();
+        rt.block_on(Self::load_async(source, assets))
+    }
+
+    /// Load asynchronously from a source URI (File path or HTTP URL)
+    pub async fn load_async(
+        source: impl AssetSource,
+        assets: impl Into<Arc<AssetServer>>,
+    ) -> Result<Arc<Prefab>> {
+        let reader = AssetReaderVariant::new(&source)?;
+        let filename = source
+            .filename()
+            .unwrap_or(std::borrow::Cow::Borrowed("unknown"));
+
+        let gltf_bytes = reader.read_bytes(&filename).await.map_err(|e| {
+            Error::Asset(AssetError::Format(format!(
+                "Failed to read glTF file '{}': {}",
+                source.uri(),
+                e
+            )))
+        })?;
+
+        // 1. Parse glTF
+        let gltf = Self::parse_gltf_bytes(&gltf_bytes)?;
+
+        // 2. Load Buffers
+        let buffers = Self::load_buffers_async(&gltf, &reader).await?;
+
+        // 3. Init Loader
+        let loader = Self::new_loader(assets.into(), reader, &gltf);
+
+        // 4. Execute common loading pipeline
+        loader.load_inner(&gltf, &buffers).await
+    }
+
+    /// Load from in-memory bytes (GLB or JSON)
+    pub async fn load_from_bytes(
+        gltf_bytes: Vec<u8>,
+        assets: impl Into<Arc<AssetServer>>,
+    ) -> Result<Arc<Prefab>> {
+        // 1. Parse glTF
+        let gltf = Self::parse_gltf_bytes(&gltf_bytes)?;
+
+        // 2. Create a dummy reader.
+        // For load_from_bytes, we generally expect resources to be embedded (GLB) or Data URIs.
+        // (unless we are in a context where "." makes sense).
+        let s = ".".to_string();
+        let reader = AssetReaderVariant::new(&s)?;
+
+        // 3. Load Buffers (Using common async logic)
+        let buffers = Self::load_buffers_async(&gltf, &reader).await?;
+
+        // 4. Init Loader
+        let loader = Self::new_loader(assets.into(), reader, &gltf);
+
+        // 5. Execute common loading pipeline
+        loader.load_inner(&gltf, &buffers).await
+    }
+
+    fn parse_gltf_bytes(bytes: &[u8]) -> Result<gltf::Gltf> {
+        match gltf::Gltf::from_slice_without_validation(bytes) {
+            Ok(g) => Ok(g),
+            Err(err) => {
+                log::error!("GLTF Parse Error Details: {err:?}");
+                Err(Error::Asset(AssetError::Format(format!(
+                    "Failed to parse glTF: {err}"
+                ))))
+            }
+        }
+    }
+
+    fn get_default_material(&mut self) -> MaterialHandle {
+        if let Some(mat) = &self.default_material {
+            *mat
+        } else {
+            let mat = self.assets.materials.add(Material::new_physical(Vec4::ONE));
+            self.default_material = Some(mat);
+            mat
+        }
+    }
+
+    /// Load buffers asynchronously
+    async fn load_buffers_async(
+        gltf: &gltf::Gltf,
+        reader: &AssetReaderVariant,
+    ) -> Result<Vec<Vec<u8>>> {
+        let mut tasks = Vec::new();
+
+        for buffer in gltf.buffers() {
+            let reader = reader.clone();
+            let blob = gltf.blob.clone();
+
+            let future = async move {
+                match buffer.source() {
+                    gltf::buffer::Source::Bin => blob.ok_or_else(|| {
+                        Error::Asset(AssetError::Format("Missing GLB blob".to_string()))
+                    }),
+                    gltf::buffer::Source::Uri(uri) => {
+                        if uri.starts_with("data:") {
+                            decode_data_uri(uri)
+                        } else {
+                            reader.read_bytes(uri).await
+                        }
+                    }
+                }
+            };
+            tasks.push(future);
+        }
+
+        try_join_all(tasks).await
+    }
+
+    /// Load textures asynchronously - Native version using `tokio::spawn`
+    async fn load_textures_async(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> Result<()> {
+        let mut futures = Vec::new();
+
+        for (index, texture) in gltf.textures().enumerate() {
+            let (engine_sampler, generate_mipmaps) = Self::create_texture_sampler(&texture);
+
+            let name = texture.name().map(std::string::ToString::to_string);
+            let reader = self.reader.clone();
+
+            let img_source = texture.source().source();
+
+            let uri_opt = match img_source {
+                gltf::image::Source::Uri { uri, .. } => Some(uri.to_string()),
+                gltf::image::Source::View { .. } => None,
+            };
+
+            let buffer_view_data = match img_source {
+                gltf::image::Source::View { view, .. } => {
+                    let start = view.offset();
+                    let end = start + view.length();
+                    Some(buffers[view.buffer().index()][start..end].to_vec())
+                }
+                gltf::image::Source::Uri { .. } => None,
+            };
+
+            // Create loading and decoding task
+            let future = async move {
+                // 1. Fetch byte stream (IO)
+                let img_bytes = if let Some(uri) = uri_opt {
+                    if uri.starts_with("data:") {
+                        decode_data_uri(&uri)?
+                    } else {
+                        reader.read_bytes(&uri).await?
+                    }
+                } else {
+                    buffer_view_data.unwrap()
+                };
+
+                // 2. Decode image (CPU intensive)
+                // Native: Offload to blocking thread pool
+                #[cfg(not(target_arch = "wasm32"))]
+                let img_data = tokio::task::spawn_blocking(move || {
+                    Self::decode_image_cpu_work(&img_bytes, index)
+                })
+                .await??;
+
+                #[cfg(target_arch = "wasm32")]
+                let img_data = Self::decode_image_cpu_work(&img_bytes, index)?;
+
+                Ok::<IntermediateTexture, Error>(IntermediateTexture {
+                    name,
+                    width: img_data.width,
+                    height: img_data.height,
+                    image_data: img_data.data,
+                    sampler: engine_sampler,
+                    generate_mipmaps,
+                })
+            };
+
+            futures.push(future);
+        }
+
+        let results = try_join_all(futures).await?;
+
+        for res in results {
+            self.intermediate_textures.push(res);
+        }
+
+        Ok(())
+    }
+
+    // Pure CPU decoding logic, extracted for reuse across different contexts.
+    fn decode_image_cpu_work(img_bytes: &[u8], index: usize) -> Result<DecodedImage> {
+        let img = image::load_from_memory(img_bytes).map_err(|e| {
+            Error::Asset(AssetError::Format(format!(
+                "Failed to decode texture {index}: {e}"
+            )))
+        })?;
+        let rgba = img.to_rgba8();
+        Ok(DecodedImage {
+            width: rgba.width(),
+            height: rgba.height(),
+            data: rgba.into_vec(),
+        })
+    }
+
+    /// Helper function to create texture sampler from glTF texture
+    fn create_texture_sampler(texture: &gltf::Texture) -> (TextureSampler, bool) {
+        let sampler = texture.sampler();
+
+        let mut generate_mipmaps = false;
+
+        // Todo: for Normal and MetallicRoughness map,
+        // For now, use a simple linear mipmap for normal and metallic-roughness maps,
+        // it can cause distant objects to look more "wet/smooth" than they actually are,
+        // requiring some advanced generation algorithm (like Normal-Distribution-Function (NDF) filtering) to achieve a more correct appearance.
+        if let Some(min_filter) = sampler.min_filter() {
+            if matches!(
+                min_filter,
+                gltf::texture::MinFilter::NearestMipmapNearest
+                    | gltf::texture::MinFilter::NearestMipmapLinear
+                    | gltf::texture::MinFilter::LinearMipmapNearest
+                    | gltf::texture::MinFilter::LinearMipmapLinear
+            ) {
+                generate_mipmaps = true;
+            }
+        } else {
+            // If min_filter is not specified, it defaults to `Linear` which does not use mipmaps.
+            // However, many glTF files omit the sampler settings, and in practice mipmaps are often desirable for better quality.
+            // Therefore, we enable mipmap generation by default when min_filter is not set.
+            generate_mipmaps = true;
+        }
+
+        let engine_sampler = TextureSampler {
+            mag_filter: match sampler.mag_filter() {
+                Some(gltf::texture::MagFilter::Nearest) => wgpu::FilterMode::Nearest,
+                _ => wgpu::FilterMode::Linear,
+            },
+            min_filter: match sampler.min_filter() {
+                Some(
+                    gltf::texture::MinFilter::Nearest
+                    | gltf::texture::MinFilter::NearestMipmapNearest
+                    | gltf::texture::MinFilter::NearestMipmapLinear,
+                ) => wgpu::FilterMode::Nearest,
+                _ => wgpu::FilterMode::Linear,
+            },
+            address_mode_u: match sampler.wrap_s() {
+                gltf::texture::WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+                gltf::texture::WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+                gltf::texture::WrappingMode::Repeat => wgpu::AddressMode::Repeat,
+            },
+            address_mode_v: match sampler.wrap_t() {
+                gltf::texture::WrappingMode::ClampToEdge => wgpu::AddressMode::ClampToEdge,
+                gltf::texture::WrappingMode::MirroredRepeat => wgpu::AddressMode::MirrorRepeat,
+                gltf::texture::WrappingMode::Repeat => wgpu::AddressMode::Repeat,
+            },
+            address_mode_w: wgpu::AddressMode::ClampToEdge,
+            mipmap_filter: match sampler.min_filter() {
+                Some(
+                    gltf::texture::MinFilter::NearestMipmapNearest
+                    | gltf::texture::MinFilter::LinearMipmapNearest,
+                ) => wgpu::MipmapFilterMode::Nearest,
+                _ => wgpu::MipmapFilterMode::Linear,
+            },
+            ..Default::default()
+        };
+
+        (engine_sampler, generate_mipmaps)
+    }
+
+    fn get_or_create_texture(
+        &mut self,
+        gltf_texture_index: usize,
+        is_srgb: bool,
+    ) -> Result<TextureHandle> {
+        let key = TextureCacheKey {
+            gltf_texture_index,
+            is_srgb,
+        };
+
+        if let Some(&handle) = self.created_textures.get(&key) {
+            return Ok(handle);
+        }
+
+        let raw = self
+            .intermediate_textures
+            .get(gltf_texture_index)
+            .ok_or_else(|| {
+                Error::Asset(AssetError::InvalidData(format!(
+                    "Texture index out of bounds: {gltf_texture_index}"
+                )))
+            })?;
+
+        let format = if is_srgb {
+            TextureFormat::Rgba8UnormSrgb
+        } else {
+            TextureFormat::Rgba8Unorm
+        };
+
+        let mut engine_tex = Texture::new_2d(
+            raw.name.as_deref(),
+            raw.width,
+            raw.height,
+            Some(raw.image_data.clone()),
+            format,
+        );
+
+        engine_tex.sampler = raw.sampler;
+        engine_tex.generate_mipmaps = raw.generate_mipmaps;
+
+        let handle = self.assets.textures.add(engine_tex);
+        self.created_textures.insert(key, handle);
+
+        Ok(handle)
+    }
+
+    fn setup_texture_map(
+        &mut self,
+        texture_slot: &mut TextureSlot,
+        info: &gltf::texture::Info,
+        is_srgb: bool,
+    ) -> Result<()> {
+        let tex_handle = self.get_or_create_texture(info.texture().index(), is_srgb)?;
+        texture_slot.texture = Some(tex_handle);
+        texture_slot.channel = info.tex_coord() as u8;
+        if let Some(transform) = info.texture_transform() {
+            texture_slot.transform.offset = Vec2::from_array(transform.offset());
+            texture_slot.transform.scale = Vec2::from_array(transform.scale());
+            texture_slot.transform.rotation = transform.rotation();
+
+            if let Some(tex_coord) = transform.tex_coord() {
+                texture_slot.channel = tex_coord as u8;
+            }
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn load_materials(&mut self, gltf: &gltf::Gltf) -> Result<()> {
+        for material in gltf.materials() {
+            let pbr = material.pbr_metallic_roughness();
+            let base_color_factor = Vec4::from_array(pbr.base_color_factor());
+            let mat = PhysicalMaterial::new(base_color_factor);
+
+            {
+                let mut uniforms = mat.uniforms.write();
+                let mut textures = mat.textures.write();
+                let mut settings = mat.settings.write();
+
+                uniforms.metalness = pbr.metallic_factor();
+                uniforms.roughness = pbr.roughness_factor();
+                uniforms.emissive = Vec3::from_array(material.emissive_factor());
+
+                if let Some(info) = pbr.base_color_texture() {
+                    self.setup_texture_map(&mut textures.map, &info, true)?;
+                }
+
+                if let Some(info) = pbr.metallic_roughness_texture() {
+                    self.setup_texture_map(&mut textures.roughness_map, &info, false)?;
+                    self.setup_texture_map(&mut textures.metalness_map, &info, false)?;
+                }
+
+                if let Some(info) = material.normal_texture() {
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
+                    textures.normal_map.texture = Some(tex_handle);
+                    textures.normal_map.channel = info.tex_coord() as u8;
+                    uniforms.normal_scale = Vec2::splat(info.scale());
+
+                    if let Some(transform) = info.texture_transform() {
+                        textures.normal_map.transform.offset = Vec2::from_array(transform.offset());
+                        textures.normal_map.transform.scale = Vec2::from_array(transform.scale());
+                        textures.normal_map.transform.rotation = transform.rotation();
+
+                        if let Some(tex_coord) = transform.tex_coord() {
+                            textures.normal_map.channel = tex_coord as u8;
+                        }
+                    }
+
+                    let json_material = material
+                        .index()
+                        .and_then(|i| gltf.document.materials().nth(i));
+
+                    if let Some(json_mat) = json_material
+                        && let Some(json_normal) = &json_mat.normal_texture()
+                        && let Some(transform_val) = json_normal
+                            .extensions()
+                            .and_then(|exts| exts.get("KHR_texture_transform"))
+                    {
+                        parse_transform_from_json(&mut textures.normal_map, transform_val);
+                    }
+                }
+
+                if let Some(info) = material.occlusion_texture() {
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
+                    textures.ao_map.texture = Some(tex_handle);
+                    textures.ao_map.channel = info.tex_coord() as u8;
+                    uniforms.ao_map_intensity = info.strength();
+
+                    if let Some(transform) = info.texture_transform() {
+                        textures.ao_map.transform.offset = Vec2::from_array(transform.offset());
+                        textures.ao_map.transform.scale = Vec2::from_array(transform.scale());
+                        textures.ao_map.transform.rotation = transform.rotation();
+
+                        if let Some(tex_coord) = transform.tex_coord() {
+                            textures.ao_map.channel = tex_coord as u8;
+                        }
+                    }
+
+                    let json_material = material
+                        .index()
+                        .and_then(|i| gltf.document.materials().nth(i));
+
+                    if let Some(json_mat) = json_material
+                        && let Some(json_occlusion) = &json_mat.occlusion_texture()
+                        && let Some(transform_val) = json_occlusion
+                            .extensions()
+                            .and_then(|exts| exts.get("KHR_texture_transform"))
+                    {
+                        parse_transform_from_json(&mut textures.ao_map, transform_val);
+                    }
+                }
+
+                if let Some(info) = material.emissive_texture() {
+                    self.setup_texture_map(&mut textures.emissive_map, &info, true)?;
+                }
+
+                settings.side = if material.double_sided() {
+                    myth_resources::material::Side::Double
+                } else {
+                    myth_resources::material::Side::Front
+                };
+
+                let alpha_mode = match material.alpha_mode() {
+                    gltf::material::AlphaMode::Opaque => AlphaMode::Opaque,
+                    gltf::material::AlphaMode::Mask => {
+                        let cut_off = material.alpha_cutoff().unwrap_or(0.5);
+                        uniforms.alpha_test = cut_off;
+                        AlphaMode::Mask(cut_off, false)
+                    }
+                    gltf::material::AlphaMode::Blend => {
+                        settings.depth_write = false;
+                        AlphaMode::Blend
+                    }
+                };
+
+                settings.alpha_mode = alpha_mode;
+
+                if let Some(info) = material.emissive_strength() {
+                    uniforms.emissive_intensity = info;
+                }
+
+                if let Some(info) = material.ior() {
+                    uniforms.ior = info;
+                }
+
+                if let Some(specular) = material.specular() {
+                    uniforms.specular_color = Vec3::from_array(specular.specular_color_factor());
+                    uniforms.specular_intensity = specular.specular_factor();
+
+                    if let Some(info) = specular.specular_color_texture() {
+                        self.setup_texture_map(&mut textures.specular_map, &info, true)?;
+                    }
+
+                    if let Some(info) = specular.specular_texture() {
+                        self.setup_texture_map(&mut textures.specular_intensity_map, &info, false)?;
+                    }
+                }
+            }
+
+            if material.pbr_specular_glossiness().is_some()
+                && let Some(handler) = self
+                    .extensions
+                    .get_mut("KHR_materials_pbrSpecularGlossiness")
+            {
+                let mut ctx = LoadContext {
+                    assets: &self.assets,
+                    material_map: &self.material_map,
+                    intermediate_textures: &self.intermediate_textures,
+                    created_textures: &mut self.created_textures,
+                    _phantom: std::marker::PhantomData,
+                };
+                handler.on_load_material(&mut ctx, &material, &mat, &Value::Null)?;
+            }
+
+            if let Some(extensions_map) = material.extensions() {
+                let mut ctx = LoadContext {
+                    assets: &self.assets,
+                    material_map: &self.material_map,
+                    intermediate_textures: &self.intermediate_textures,
+                    created_textures: &mut self.created_textures,
+                    _phantom: std::marker::PhantomData,
+                };
+
+                for (name, value) in extensions_map {
+                    if let Some(handler) = self.extensions.get_mut(name) {
+                        handler.on_load_material(&mut ctx, &material, &mat, value)?;
+                    }
+                }
+            }
+
+            mat.flush_texture_transforms();
+            mat.notify_pipeline_dirty();
+
+            let mut engine_mat = Material::from(mat);
+            engine_mat.name = material.name().map(|s| Cow::Owned(s.to_string()));
+
+            let handle = self.assets.materials.add(engine_mat);
+            self.material_map.push(handle);
+        }
+        Ok(())
+    }
+
+    fn build_prefab(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) -> Prefab {
+        for node in gltf.nodes() {
+            let prefab_node = Self::create_prefab_node(&node);
+            self.prefab_nodes.push(prefab_node);
+        }
+
+        for node in gltf.nodes() {
+            let parent_idx = node.index();
+            for child in node.children() {
+                self.prefab_nodes[parent_idx]
+                    .children_indices
+                    .push(child.index());
+            }
+        }
+
+        self.load_skins(gltf, buffers);
+
+        for node in gltf.nodes() {
+            self.bind_node_mesh_and_skin(&node, buffers);
+        }
+
+        let root_indices: Vec<usize> =
+            if let Some(default_scene) = gltf.default_scene().or_else(|| gltf.scenes().next()) {
+                default_scene.nodes().map(|n| n.index()).collect()
+            } else {
+                Vec::new()
+            };
+
+        // Build node_index 鈫?relative-path map for animation track metadata.
+        let node_paths = Self::build_node_paths(&self.prefab_nodes, &root_indices);
+
+        let animations = Self::load_animations(gltf, buffers, &node_paths);
+
+        Prefab {
+            nodes: std::mem::take(&mut self.prefab_nodes),
+            root_indices,
+            skeletons: std::mem::take(&mut self.prefab_skeletons),
+            animations,
+        }
+    }
+
+    /// Computes a mapping from glTF node index to hierarchical path segments
+    /// relative to the virtual `gltf_root` node created during instantiation.
+    fn build_node_paths(
+        prefab_nodes: &[PrefabNode],
+        root_indices: &[usize],
+    ) -> HashMap<usize, Vec<String>> {
+        fn walk(
+            prefab_nodes: &[PrefabNode],
+            idx: usize,
+            current_path: &mut Vec<String>,
+            out: &mut HashMap<usize, Vec<String>>,
+        ) {
+            out.insert(idx, current_path.clone());
+            for &child_idx in &prefab_nodes[idx].children_indices {
+                let child_name = prefab_nodes[child_idx]
+                    .name
+                    .as_deref()
+                    .unwrap_or("unnamed")
+                    .to_string();
+
+                current_path.push(child_name);
+                walk(prefab_nodes, child_idx, current_path, out);
+                current_path.pop();
+            }
+        }
+
+        let mut paths = HashMap::new();
+        for &root_idx in root_indices {
+            let root_name = prefab_nodes[root_idx]
+                .name
+                .as_deref()
+                .unwrap_or("unnamed")
+                .to_string();
+            let mut initial_path = vec![root_name];
+            walk(prefab_nodes, root_idx, &mut initial_path, &mut paths);
+        }
+        paths
+    }
+
+    fn create_prefab_node(node: &gltf::Node) -> PrefabNode {
+        let node_name = node.name().map_or_else(
+            || format!("Node_{}", node.index()),
+            std::string::ToString::to_string,
+        );
+
+        let mut prefab_node = PrefabNode::new();
+        prefab_node.name = Some(node_name);
+
+        let (t, r, s) = node.transform().decomposed();
+        prefab_node.transform.position = Vec3::from_array(t);
+        prefab_node.transform.rotation = Quat::from_array(r);
+        prefab_node.transform.scale = Vec3::from_array(s);
+
+        prefab_node
+    }
+
+    fn load_skins(&mut self, gltf: &gltf::Gltf, buffers: &[Vec<u8>]) {
+        for skin in gltf.skins() {
+            let name = skin.name().unwrap_or("Skeleton").to_string();
+
+            let reader = skin.reader(|buffer| Some(&buffers[buffer.index()]));
+            let ibms: Vec<Affine3A> = if let Some(iter) = reader.read_inverse_bind_matrices() {
+                iter.map(|m| {
+                    let mat = Mat4::from_cols_array_2d(&m);
+                    Affine3A::from_mat4(mat)
+                })
+                .collect()
+            } else {
+                vec![Affine3A::IDENTITY; skin.joints().count()]
+            };
+
+            let bone_indices: Vec<usize> = skin.joints().map(|node| node.index()).collect();
+
+            let joints: Vec<_> = skin.joints().collect();
+            let joint_indices: std::collections::HashSet<usize> =
+                joints.iter().map(gltf::Node::index).collect();
+
+            let mut child_joint_indices = std::collections::HashSet::new();
+            for node in &joints {
+                for child in node.children() {
+                    if joint_indices.contains(&child.index()) {
+                        child_joint_indices.insert(child.index());
+                    }
+                }
+            }
+
+            let root_bone_index = 'block: {
+                if let Some(skeleton_root) = skin.skeleton()
+                    && let Some(index) = joints
+                        .iter()
+                        .position(|n| n.index() == skeleton_root.index())
+                {
+                    break 'block index;
+                }
+
+                for (i, node) in joints.iter().enumerate() {
+                    if !child_joint_indices.contains(&node.index()) {
+                        break 'block i;
+                    }
+                }
+
+                0
+            };
+
+            self.prefab_skeletons.push(PrefabSkeleton {
+                name,
+                root_bone_index,
+                bone_indices,
+                inverse_bind_matrices: ibms,
+            });
+        }
+    }
+
+    fn build_engine_mesh(
+        &mut self,
+        primitive: &gltf::Primitive,
+        buffers: &[Vec<u8>],
+    ) -> myth_resources::mesh::Mesh {
+        let geo_handle = self.load_primitive_geometry(primitive, buffers);
+
+        let mat_idx = primitive.material().index();
+        let mat_handle = if let Some(idx) = mat_idx {
+            self.material_map[idx]
+        } else {
+            self.get_default_material()
+        };
+
+        let mut engine_mesh = myth_resources::mesh::Mesh::new(geo_handle, mat_handle);
+
+        if let Some(geometry) = self.assets.geometries.get(geo_handle)
+            && geometry.has_morph_targets()
+        {
+            engine_mesh
+                .init_morph_targets(geometry.morph_target_count(), geometry.morph_vertex_count());
+        }
+
+        engine_mesh
+    }
+
+    fn bind_node_mesh_and_skin(&mut self, node: &gltf::Node, buffers: &[Vec<u8>]) {
+        let node_idx = node.index();
+
+        let skin_index = node.skin().map(|s| s.index());
+
+        let initial_weights = if let Some(weights) = node.weights() {
+            Some(weights.to_vec())
+        } else if let Some(mesh) = node.mesh() {
+            mesh.weights().map(<[f32]>::to_vec)
+        } else {
+            None
+        };
+
+        self.prefab_nodes[node_idx].morph_weights = initial_weights;
+        self.prefab_nodes[node_idx].skin_index = skin_index;
+
+        if let Some(mesh) = node.mesh() {
+            let primitives: Vec<_> = mesh.primitives().collect();
+
+            match primitives.len() {
+                0 => {}
+                1 => {
+                    let engine_mesh = self.build_engine_mesh(&primitives[0], buffers);
+                    self.prefab_nodes[node_idx].mesh = Some(engine_mesh);
+                }
+                _ => {
+                    let base_idx = self.prefab_nodes.len();
+                    let parent_name = self.prefab_nodes[node_idx].name.clone();
+
+                    for (i, primitive) in primitives.iter().enumerate() {
+                        let engine_mesh = self.build_engine_mesh(primitive, buffers);
+
+                        let mut sub_node = PrefabNode::new();
+                        sub_node.name = Some(format!(
+                            "{}_{}",
+                            parent_name.as_deref().unwrap_or("node"),
+                            i
+                        ));
+                        sub_node.mesh = Some(engine_mesh);
+
+                        sub_node.is_split_primitive = true;
+
+                        sub_node.skin_index = skin_index;
+
+                        // TODO: make sure if we need also to clone weights for each sub-node?
+                        // sub_node.morph_weights = initial_weights.clone();
+
+                        self.prefab_nodes.push(sub_node);
+                    }
+
+                    for i in 0..primitives.len() {
+                        self.prefab_nodes[node_idx]
+                            .children_indices
+                            .push(base_idx + i);
+                    }
+                }
+            }
+        }
+    }
+
+    fn build_interleaved_buffer(
+        label: &str,
+        channels: Vec<InterleaveChannel>,
+        vertex_count: usize,
+    ) -> Option<(BufferRef, Vec<(String, Attribute)>)> {
+        if channels.is_empty() || vertex_count == 0 {
+            return None;
+        }
+
+        let total_stride: usize = channels.iter().map(|c| c.item_size).sum();
+        let buffer_size = total_stride * vertex_count;
+
+        let mut interleaved_data = vec![0u8; buffer_size];
+
+        let mut offsets = Vec::with_capacity(channels.len());
+        let mut current_offset = 0;
+        for ch in &channels {
+            offsets.push(current_offset);
+            current_offset += ch.item_size;
+        }
+
+        for i in 0..vertex_count {
+            let vertex_start = i * total_stride;
+            for (ch_idx, channel) in channels.iter().enumerate() {
+                let src_start = i * channel.item_size;
+                let src_end = src_start + channel.item_size;
+
+                if src_end <= channel.data.len() {
+                    let dest_start = vertex_start + offsets[ch_idx];
+                    interleaved_data[dest_start..dest_start + channel.item_size]
+                        .copy_from_slice(&channel.data[src_start..src_end]);
+                }
+            }
+        }
+
+        let buffer = BufferRef::new(
+            buffer_size,
+            BufferUsages::VERTEX | BufferUsages::COPY_DST,
+            Some(label),
+        );
+        let data_arc = Some(Arc::new(interleaved_data));
+
+        let mut attributes = Vec::new();
+        for (i, channel) in channels.into_iter().enumerate() {
+            attributes.push((
+                channel.name,
+                Attribute::new_interleaved(
+                    buffer.clone(),
+                    data_arc.clone(),
+                    channel.format,
+                    offsets[i] as u64,
+                    vertex_count as u32,
+                    total_stride as u64,
+                    VertexStepMode::Vertex,
+                ),
+            ));
+        }
+
+        Some((buffer, attributes))
+    }
+
+    /// Loads a single primitive's geometry using a hybrid pipeline.
+    ///
+    /// **Quantised path** (raw bytes 鈫?GPU): When the position accessor uses a non-float
+    /// type (`KHR_mesh_quantization` / `EXT_meshopt_compression`), the vertex data is
+    /// extracted as raw bytes, 4-byte-aligned, and uploaded directly. The bounding volume
+    /// is read from the JSON `min`/`max` fields.
+    ///
+    /// **Classic path** (f32 鈫?GPU): For standard `Float32` accessors, the `gltf::Reader`
+    /// is used to decode all attributes.
+    #[allow(clippy::too_many_lines)]
+    fn load_primitive_geometry(
+        &mut self,
+        primitive: &gltf::Primitive,
+        buffers: &[Vec<u8>],
+    ) -> GeometryHandle {
+        let mut geometry = Geometry::new();
+
+        let Some(pos_accessor) = primitive.get(&gltf::Semantic::Positions) else {
+            return self.assets.geometries.add(geometry);
+        };
+
+        let vertex_count = pos_accessor.count();
+        if vertex_count == 0 {
+            return self.assets.geometries.add(geometry);
+        }
+
+        let quantized_positions = is_quantized(&pos_accessor);
+
+        // --- Position attribute ---
+        if quantized_positions {
+            if let Some((bytes, stride, format)) = extract_raw_attribute(&pos_accessor, buffers) {
+                geometry.set_attribute(
+                    "position",
+                    Attribute::new_from_owned_bytes(bytes, format, stride, vertex_count as u32),
+                );
+            }
+            // AABB from JSON min/max (required for quantised data).
+            if let Some((min, max)) = parse_accessor_bounds(&pos_accessor) {
+                geometry.set_bounding_volume(BoundingBox { min, max });
+            } else {
+                log::warn!(
+                    "Quantised position accessor is missing min/max; bounding volume will be zero"
+                );
+            }
+        } else {
+            let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+            let positions: Vec<[f32; 3]> = reader
+                .read_positions()
+                .map(std::iter::Iterator::collect)
+                .unwrap_or_default();
+            geometry.set_attribute(
+                "position",
+                Attribute::new_planar(&positions, VertexFormat::Float32x3),
+            );
+        }
+
+        // --- Indices ---
+        {
+            let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+            if let Some(iter) = reader.read_indices() {
+                let indices: Vec<u32> = iter.into_u32().collect();
+                geometry.set_indices_u32(&indices);
+            }
+        }
+
+        // --- Surface attributes (normal, tangent, uv, color) ---
+        self.load_surface_attributes(
+            primitive,
+            buffers,
+            &mut geometry,
+            vertex_count,
+            quantized_positions,
+        );
+
+        // --- Skinning attributes (joints, weights) ---
+        self.load_skinning_attributes(primitive, buffers, &mut geometry, vertex_count);
+
+        // --- Morph targets (always f32) ---
+        self.load_morph_targets(primitive, buffers, &mut geometry);
+
+        geometry.topology = match primitive.mode() {
+            gltf::mesh::Mode::Points => PrimitiveTopology::PointList,
+            gltf::mesh::Mode::Lines | gltf::mesh::Mode::LineLoop => PrimitiveTopology::LineList,
+            gltf::mesh::Mode::LineStrip => PrimitiveTopology::LineStrip,
+            gltf::mesh::Mode::Triangles | gltf::mesh::Mode::TriangleFan => {
+                PrimitiveTopology::TriangleList
+            }
+            gltf::mesh::Mode::TriangleStrip => PrimitiveTopology::TriangleStrip,
+        };
+
+        geometry.build_morph_storage_buffers();
+
+        // Only compute bounding volume from positions if we used the classic f32 path.
+        if !quantized_positions {
+            geometry.compute_bounding_volume();
+        }
+
+        self.assets.geometries.add(geometry)
+    }
+
+    /// Loads normal, tangent, UV, and color attributes for a primitive.
+    ///
+    /// When the geometry uses quantised positions, non-position surface attributes are
+    /// also loaded via raw-byte extraction when they are quantised; otherwise the
+    /// `gltf::Reader` f32 path is used. When normals are absent and quantised data is
+    /// in use, the loader emits a warning instead of auto-computing them (since CPU
+    /// normal computation is not possible on quantised vertex data).
+    #[allow(clippy::unused_self)]
+    fn load_surface_attributes(
+        &self,
+        primitive: &gltf::Primitive,
+        buffers: &[Vec<u8>],
+        geometry: &mut Geometry,
+        vertex_count: usize,
+        quantized_positions: bool,
+    ) {
+        // Normal
+        if let Some(normal_accessor) = primitive.get(&gltf::Semantic::Normals) {
+            if is_quantized(&normal_accessor) {
+                if let Some((bytes, stride, format)) =
+                    extract_raw_attribute(&normal_accessor, buffers)
+                {
+                    geometry.set_attribute(
+                        "normal",
+                        Attribute::new_from_owned_bytes(bytes, format, stride, vertex_count as u32),
+                    );
+                }
+            } else {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                if let Some(iter) = reader.read_normals() {
+                    let data: Vec<[f32; 3]> = iter.collect();
+                    geometry.set_attribute(
+                        "normal",
+                        Attribute::new_planar(&data, VertexFormat::Float32x3),
+                    );
+                }
+            }
+        } else if quantized_positions {
+            log::warn!(
+                "Quantised geometry is missing normals. Auto-computation is not supported \
+                 for non-float vertex data. Please ensure the model includes normal data."
+            );
+        } else {
+            geometry.compute_vertex_normals();
+        }
+
+        // Tangent
+        if let Some(tangent_accessor) = primitive.get(&gltf::Semantic::Tangents) {
+            if is_quantized(&tangent_accessor) {
+                if let Some((bytes, stride, format)) =
+                    extract_raw_attribute(&tangent_accessor, buffers)
+                {
+                    geometry.set_attribute(
+                        "tangent",
+                        Attribute::new_from_owned_bytes(bytes, format, stride, vertex_count as u32),
+                    );
+                }
+            } else {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                if let Some(iter) = reader.read_tangents() {
+                    let data: Vec<[f32; 4]> = iter.collect();
+                    geometry.set_attribute(
+                        "tangent",
+                        Attribute::new_planar(&data, VertexFormat::Float32x4),
+                    );
+                }
+            }
+        }
+
+        // UV channels
+        for i in 0..4u32 {
+            if let Some(uv_accessor) = primitive.get(&gltf::Semantic::TexCoords(i)) {
+                let name = if i == 0 {
+                    "uv".to_string()
+                } else {
+                    format!("uv{i}")
+                };
+                if is_quantized(&uv_accessor) {
+                    if let Some((bytes, stride, format)) =
+                        extract_raw_attribute(&uv_accessor, buffers)
+                    {
+                        geometry.set_attribute(
+                            &name,
+                            Attribute::new_from_owned_bytes(
+                                bytes,
+                                format,
+                                stride,
+                                vertex_count as u32,
+                            ),
+                        );
+                    }
+                } else {
+                    let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                    if let Some(iter) = reader
+                        .read_tex_coords(i)
+                        .map(gltf::mesh::util::ReadTexCoords::into_f32)
+                    {
+                        let data: Vec<[f32; 2]> = iter.collect();
+                        geometry.set_attribute(
+                            &name,
+                            Attribute::new_planar(&data, VertexFormat::Float32x2),
+                        );
+                    }
+                }
+            }
+        }
+
+        // Vertex color
+        if let Some(color_accessor) = primitive.get(&gltf::Semantic::Colors(0)) {
+            if is_quantized(&color_accessor) {
+                if let Some((bytes, stride, format)) =
+                    extract_raw_attribute(&color_accessor, buffers)
+                {
+                    geometry.set_attribute(
+                        "color",
+                        Attribute::new_from_owned_bytes(bytes, format, stride, vertex_count as u32),
+                    );
+                }
+            } else {
+                let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+                if let Some(iter) = reader
+                    .read_colors(0)
+                    .map(gltf::mesh::util::ReadColors::into_rgba_f32)
+                {
+                    let data: Vec<[f32; 4]> = iter.collect();
+                    geometry.set_attribute(
+                        "color",
+                        Attribute::new_planar(&data, VertexFormat::Float32x4),
+                    );
+                }
+            }
+        }
+    }
+
+    /// Loads joint indices and weights for GPU skinning.
+    ///
+    /// Skinning attributes always go through the `gltf::Reader` path since the
+    /// animation system expects standard u16/f32 data and the skinning shader
+    /// consumes them at known formats.
+    #[allow(clippy::unused_self)]
+    fn load_skinning_attributes(
+        &self,
+        primitive: &gltf::Primitive,
+        buffers: &[Vec<u8>],
+        geometry: &mut Geometry,
+        vertex_count: usize,
+    ) {
+        let reader = primitive.reader(|buffer| Some(&buffers[buffer.index()]));
+
+        let mut skin_channels = Vec::new();
+
+        if let Some(iter) = reader
+            .read_joints(0)
+            .map(gltf::mesh::util::ReadJoints::into_u16)
+        {
+            skin_channels.push(InterleaveChannel::from_iter(
+                "joints",
+                iter,
+                VertexFormat::Uint16x4,
+            ));
+        }
+
+        if let Some(iter) = reader
+            .read_weights(0)
+            .map(gltf::mesh::util::ReadWeights::into_f32)
+        {
+            skin_channels.push(InterleaveChannel::from_iter(
+                "weights",
+                iter,
+                VertexFormat::Float32x4,
+            ));
+        }
+
+        if let Some((_, attrs)) =
+            Self::build_interleaved_buffer("SkinningBuffer", skin_channels, vertex_count)
+        {
+            for (name, attr) in attrs {
+                geometry.set_attribute(&name, attr);
+            }
+        }
+    }
+
+    /// Loads morph target displacement data via the `gltf::Reader` (always f32).
+    ///
+    /// Morph targets are always decoded to `Float32x3` because the CPU animation
+    /// mixer performs arithmetic on them directly.
+    #[allow(clippy::unused_self)]
+    fn load_morph_targets(
+        &self,
+        primitive: &gltf::Primitive,
+        buffers: &[Vec<u8>],
+        geometry: &mut Geometry,
+    ) {
+        let get_buffer_data = |buffer: gltf::Buffer| -> Option<&[u8]> {
+            buffers.get(buffer.index()).map(std::vec::Vec::as_slice)
+        };
+
+        for target in primitive.morph_targets() {
+            if let Some(accessor) = target.positions()
+                && let Some(iter) = gltf::accessor::Iter::<[f32; 3]>::new(accessor, get_buffer_data)
+            {
+                let data: Vec<[f32; 3]> = iter.collect();
+                let attr = Attribute::new_planar(&data, VertexFormat::Float32x3);
+                geometry
+                    .morph_attributes
+                    .entry("position".to_string())
+                    .or_default()
+                    .push(attr);
+            }
+
+            if let Some(accessor) = target.normals()
+                && let Some(iter) = gltf::accessor::Iter::<[f32; 3]>::new(accessor, get_buffer_data)
+            {
+                let data: Vec<[f32; 3]> = iter.collect();
+                let attr = Attribute::new_planar(&data, VertexFormat::Float32x3);
+                geometry
+                    .morph_attributes
+                    .entry("normal".to_string())
+                    .or_default()
+                    .push(attr);
+            }
+
+            if let Some(accessor) = target.tangents()
+                && let Some(iter) = gltf::accessor::Iter::<[f32; 3]>::new(accessor, get_buffer_data)
+            {
+                let data: Vec<[f32; 3]> = iter.collect();
+                let attr = Attribute::new_planar(&data, VertexFormat::Float32x3);
+                geometry
+                    .morph_attributes
+                    .entry("tangent".to_string())
+                    .or_default()
+                    .push(attr);
+            }
+        }
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn load_animations(
+        gltf: &gltf::Gltf,
+        buffers: &[Vec<u8>],
+        node_paths: &HashMap<usize, Vec<String>>,
+    ) -> Vec<AnimationClip> {
+        let mut animations = Vec::new();
+
+        for anim in gltf.animations() {
+            let mut tracks = Vec::new();
+
+            for channel in anim.channels() {
+                let reader = channel.reader(|buffer| Some(&buffers[buffer.index()]));
+                let target = channel.target();
+                let Some(gltf_node) = target.node() else {
+                    log::warn!(
+                        "Animation target node is missing(Maybe use\"KHR_animation_pointer\"),  skipping channel for now."
+                    );
+                    continue;
+                };
+
+                // Build hierarchical path for this node.
+                let path = if let Some(p) = node_paths.get(&gltf_node.index()) {
+                    p.clone()
+                } else {
+                    let fallback = gltf_node.name().map_or_else(
+                        || format!("Node_{}", gltf_node.index()),
+                        std::string::ToString::to_string,
+                    );
+                    vec![fallback]
+                };
+
+                let times: Vec<f32> = reader.read_inputs().unwrap().collect();
+
+                let interpolation = match channel.sampler().interpolation() {
+                    gltf::animation::Interpolation::Linear => InterpolationMode::Linear,
+                    gltf::animation::Interpolation::Step => InterpolationMode::Step,
+                    gltf::animation::Interpolation::CubicSpline => InterpolationMode::CubicSpline,
+                };
+
+                let track = match target.property() {
+                    gltf::animation::Property::Translation => {
+                        let outputs = match reader.read_outputs().unwrap() {
+                            gltf::animation::util::ReadOutputs::Translations(iter) => {
+                                iter.map(Vec3::from_array).collect::<Vec<_>>()
+                            }
+                            _ => continue,
+                        };
+
+                        Track {
+                            meta: TrackMeta {
+                                path: path.clone(),
+                                target: TargetPath::Translation,
+                            },
+                            data: TrackData::Vector3(KeyframeTrack::new(
+                                times,
+                                outputs,
+                                interpolation,
+                            )),
+                        }
+                    }
+                    gltf::animation::Property::Rotation => {
+                        let outputs = match reader.read_outputs().unwrap() {
+                            gltf::animation::util::ReadOutputs::Rotations(iter) => {
+                                iter.into_f32().map(Quat::from_array).collect::<Vec<_>>()
+                            }
+                            _ => continue,
+                        };
+
+                        Track {
+                            meta: TrackMeta {
+                                path: path.clone(),
+                                target: TargetPath::Rotation,
+                            },
+                            data: TrackData::Quaternion(KeyframeTrack::new(
+                                times,
+                                outputs,
+                                interpolation,
+                            )),
+                        }
+                    }
+                    gltf::animation::Property::Scale => {
+                        let outputs = match reader.read_outputs().unwrap() {
+                            gltf::animation::util::ReadOutputs::Scales(iter) => {
+                                iter.map(Vec3::from_array).collect::<Vec<_>>()
+                            }
+                            _ => continue,
+                        };
+
+                        Track {
+                            meta: TrackMeta {
+                                path: path.clone(),
+                                target: TargetPath::Scale,
+                            },
+                            data: TrackData::Vector3(KeyframeTrack::new(
+                                times,
+                                outputs,
+                                interpolation,
+                            )),
+                        }
+                    }
+                    gltf::animation::Property::MorphTargetWeights => {
+                        let outputs: Vec<f32> = match reader.read_outputs().unwrap() {
+                            gltf::animation::util::ReadOutputs::MorphTargetWeights(iter) => {
+                                iter.into_f32().collect()
+                            }
+                            _ => continue,
+                        };
+
+                        let weights_per_frame = if times.is_empty() {
+                            0
+                        } else {
+                            outputs.len() / times.len()
+                        };
+
+                        let mut pod_outputs = Vec::with_capacity(times.len());
+                        for i in 0..times.len() {
+                            let mut pod = MorphWeightData::default();
+                            let start = i * weights_per_frame;
+                            let end = start + weights_per_frame;
+                            pod.weights = SmallVec::from_slice(&outputs[start..end]);
+
+                            pod_outputs.push(pod);
+                        }
+
+                        Track {
+                            meta: TrackMeta {
+                                path,
+                                target: TargetPath::Weights,
+                            },
+                            data: TrackData::MorphWeights(KeyframeTrack::new(
+                                times,
+                                pod_outputs,
+                                interpolation,
+                            )),
+                        }
+                    }
+                };
+
+                tracks.push(track);
+            }
+
+            let clip = AnimationClip::new(anim.name().unwrap_or("anim").to_string(), tracks);
+            animations.push(clip);
+        }
+
+        animations
+    }
+}
+
+struct KhrMaterialsPbrSpecularGlossiness;
+
+impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
+    fn name(&self) -> &'static str {
+        "KHR_materials_pbrSpecularGlossiness"
+    }
+
+    fn on_load_material(
+        &mut self,
+        ctx: &mut LoadContext,
+        gltf_mat: &gltf::Material,
+        physical_mat: &PhysicalMaterial,
+        _extension_value: &Value,
+    ) -> Result<()> {
+        let sg = gltf_mat.pbr_specular_glossiness().ok_or_else(|| {
+            Error::Asset(AssetError::Format(
+                "Material missing pbr_specular_glossiness data".to_string(),
+            ))
+        })?;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.metalness = 0.0;
+            uniforms.roughness = 1.0;
+            uniforms.ior = 1000.0;
+            uniforms.specular_color = Vec3::from_array(sg.specular_factor());
+            uniforms.specular_intensity = 1.0;
+            uniforms.color = Vec4::from_array(sg.diffuse_factor());
+        }
+
+        if let Some(diffuse_tex) = sg.diffuse_texture() {
+            let tex_handle = ctx.get_or_create_texture(diffuse_tex.texture().index(), true)?;
+            physical_mat.textures.write().map.texture = Some(tex_handle);
+        }
+
+        if let Some(sg_tex_info) = sg.specular_glossiness_texture() {
+            let tex_index = sg_tex_info.texture().index();
+            let glossiness_factor = sg.glossiness_factor();
+
+            let raw = ctx.intermediate_textures.get(tex_index).ok_or_else(|| {
+                Error::Asset(AssetError::InvalidData(format!(
+                    "Texture index out of bounds: {tex_index}"
+                )))
+            })?;
+
+            let width = raw.width;
+            let height = raw.height;
+            let data = &raw.image_data;
+            let pixel_count = (width * height) as usize;
+
+            let mut specular_data = Vec::with_capacity(pixel_count * 4);
+            let mut roughness_data = Vec::with_capacity(pixel_count * 4);
+
+            for i in 0..pixel_count {
+                let offset = i * 4;
+                let r = data[offset];
+                let g = data[offset + 1];
+                let b = data[offset + 2];
+                let glossiness = data[offset + 3];
+
+                specular_data.push(r);
+                specular_data.push(g);
+                specular_data.push(b);
+                specular_data.push(255);
+
+                let glossiness_normalized = (f32::from(glossiness) / 255.0) * glossiness_factor;
+                let roughness_normalized = 1.0 - glossiness_normalized;
+                // SAFETY: roughness_normalized is clamped to [0, 1] by the formula
+                let roughness_byte = (roughness_normalized * 255.0) as u8;
+
+                roughness_data.push(0);
+                roughness_data.push(roughness_byte);
+                roughness_data.push(0);
+                roughness_data.push(255);
+            }
+
+            let specular_texture = Texture::new_2d(
+                Some("sg_specular"),
+                width,
+                height,
+                Some(specular_data),
+                TextureFormat::Rgba8UnormSrgb,
+            );
+
+            let roughness_texture = Texture::new_2d(
+                Some("sg_roughness"),
+                width,
+                height,
+                Some(roughness_data),
+                TextureFormat::Rgba8Unorm,
+            );
+
+            let specular_handle = ctx.assets.textures.add(specular_texture);
+            let roughness_handle = ctx.assets.textures.add(roughness_texture);
+
+            let mut uv_channel = sg_tex_info.tex_coord();
+
+            let transform = if let Some(tex_transform) = sg_tex_info.texture_transform() {
+                uv_channel = tex_transform.tex_coord().unwrap_or(uv_channel);
+                TextureTransform {
+                    offset: Vec2::from_array(tex_transform.offset()),
+                    scale: Vec2::from_array(tex_transform.scale()),
+                    rotation: tex_transform.rotation(),
+                }
+            } else {
+                TextureTransform::default()
+            };
+
+            let mut textures_set = physical_mat.textures.write();
+
+            textures_set.specular_map.texture = Some(specular_handle);
+            textures_set.specular_map.channel = uv_channel as u8;
+            textures_set.specular_map.transform = transform;
+            textures_set.roughness_map.texture = Some(roughness_handle);
+            textures_set.roughness_map.channel = uv_channel as u8;
+            textures_set.roughness_map.transform = transform;
+
+            textures_set.metalness_map.texture = Some(roughness_handle);
+            textures_set.metalness_map.channel = uv_channel as u8;
+            textures_set.metalness_map.transform = transform;
+        } else {
+            let glossiness_factor = sg.glossiness_factor();
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.roughness = 1.0 - glossiness_factor;
+        }
+
+        Ok(())
+    }
+}
+
+struct KhrMaterialsClearcoat;
+
+impl GltfExtensionParser for KhrMaterialsClearcoat {
+    fn name(&self) -> &'static str {
+        "KHR_materials_clearcoat"
+    }
+
+    fn on_load_material(
+        &mut self,
+        ctx: &mut LoadContext,
+        _gltf_mat: &gltf::Material,
+        physical_mat: &PhysicalMaterial,
+        extension_value: &Value,
+    ) -> Result<()> {
+        let clearcoat_info = extension_value.as_object().ok_or_else(|| {
+            Error::Asset(AssetError::Format(
+                "Invalid clearcoat extension data".to_string(),
+            ))
+        })?;
+
+        let clearcoat_factor = clearcoat_info
+            .get("clearcoatFactor")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as f32;
+
+        let clearcoat_roughness = clearcoat_info
+            .get("clearcoatRoughnessFactor")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as f32;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.clearcoat = clearcoat_factor;
+            uniforms.clearcoat_roughness = clearcoat_roughness;
+        }
+
+        let mut textures = physical_mat.textures.write();
+
+        if let Some(clearcoat_tex_info) = clearcoat_info.get("clearcoatTexture") {
+            self.setup_texture_map_from_extension(
+                ctx,
+                clearcoat_tex_info,
+                &mut textures.clearcoat_map,
+                false,
+            );
+        }
+
+        if let Some(clearcoat_roughness_tex_info) = clearcoat_info.get("clearcoatRoughnessTexture")
+        {
+            self.setup_texture_map_from_extension(
+                ctx,
+                clearcoat_roughness_tex_info,
+                &mut textures.clearcoat_roughness_map,
+                false,
+            );
+        }
+
+        if let Some(clearcoat_normal_tex_info) = clearcoat_info.get("clearcoatNormalTexture") {
+            self.setup_texture_map_from_extension(
+                ctx,
+                clearcoat_normal_tex_info,
+                &mut textures.clearcoat_normal_map,
+                false,
+            );
+        }
+
+        physical_mat.enable_feature(PhysicalFeatures::CLEARCOAT);
+
+        Ok(())
+    }
+}
+
+struct KhrMaterialsSheen;
+
+impl GltfExtensionParser for KhrMaterialsSheen {
+    fn name(&self) -> &'static str {
+        "KHR_materials_sheen"
+    }
+
+    fn on_load_material(
+        &mut self,
+        ctx: &mut LoadContext,
+        _gltf_mat: &gltf::Material,
+        physical_mat: &PhysicalMaterial,
+        extension_value: &Value,
+    ) -> Result<()> {
+        let sheen_info = extension_value.as_object().ok_or_else(|| {
+            Error::Asset(AssetError::Format(
+                "Invalid sheen extension data".to_string(),
+            ))
+        })?;
+
+        let sheen_color_factor = sheen_info
+            .get("sheenColorFactor")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| {
+                if arr.len() == 3 {
+                    Some(Vec3::new(
+                        arr[0].as_f64().unwrap_or(0.0) as f32,
+                        arr[1].as_f64().unwrap_or(0.0) as f32,
+                        arr[2].as_f64().unwrap_or(0.0) as f32,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(Vec3::ZERO);
+
+        let sheen_roughness_factor = sheen_info
+            .get("sheenRoughnessFactor")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as f32;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.sheen_color = sheen_color_factor;
+            uniforms.sheen_roughness = sheen_roughness_factor;
+        }
+
+        let mut textures = physical_mat.textures.write();
+
+        if let Some(sheen_color_tex_info) = sheen_info.get("sheenColorTexture") {
+            self.setup_texture_map_from_extension(
+                ctx,
+                sheen_color_tex_info,
+                &mut textures.sheen_color_map,
+                true,
+            );
+        }
+
+        if let Some(sheen_roughness_tex_info) = sheen_info.get("sheenRoughnessTexture") {
+            self.setup_texture_map_from_extension(
+                ctx,
+                sheen_roughness_tex_info,
+                &mut textures.sheen_roughness_map,
+                false,
+            );
+        }
+
+        physical_mat.enable_feature(PhysicalFeatures::SHEEN);
+
+        Ok(())
+    }
+}
+
+struct KhrMaterialsIridescence;
+
+impl GltfExtensionParser for KhrMaterialsIridescence {
+    fn name(&self) -> &'static str {
+        "KHR_materials_iridescence"
+    }
+
+    fn on_load_material(
+        &mut self,
+        ctx: &mut LoadContext,
+        _gltf_mat: &gltf::Material,
+        physical_mat: &PhysicalMaterial,
+        extension_value: &Value,
+    ) -> Result<()> {
+        let iridescence_info = extension_value.as_object().ok_or_else(|| {
+            Error::Asset(AssetError::Format(
+                "Invalid iridescence extension data".to_string(),
+            ))
+        })?;
+
+        let iridescence_factor = iridescence_info
+            .get("iridescenceFactor")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as f32;
+
+        let iridescence_ior = iridescence_info
+            .get("iridescenceIor")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(1.3) as f32;
+
+        let iridescence_thickness_min = iridescence_info
+            .get("iridescenceThicknessMin")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(100.0) as f32;
+
+        let iridescence_thickness_max = iridescence_info
+            .get("iridescenceThicknessMax")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(400.0) as f32;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.iridescence = iridescence_factor;
+            uniforms.iridescence_ior = iridescence_ior;
+            uniforms.iridescence_thickness_min = iridescence_thickness_min;
+            uniforms.iridescence_thickness_max = iridescence_thickness_max;
+        }
+
+        let mut textures = physical_mat.textures.write();
+
+        if let Some(iridescence_tex_info) = iridescence_info.get("iridescenceTexture") {
+            self.setup_texture_map_from_extension(
+                ctx,
+                iridescence_tex_info,
+                &mut textures.iridescence_map,
+                false,
+            );
+        }
+
+        if let Some(iridescence_thickness_tex_info) =
+            iridescence_info.get("iridescenceThicknessTexture")
+        {
+            self.setup_texture_map_from_extension(
+                ctx,
+                iridescence_thickness_tex_info,
+                &mut textures.iridescence_thickness_map,
+                false,
+            );
+        }
+
+        physical_mat.enable_feature(PhysicalFeatures::IRIDESCENCE);
+
+        Ok(())
+    }
+}
+
+struct KhrMaterialsAnisotropy;
+
+impl GltfExtensionParser for KhrMaterialsAnisotropy {
+    fn name(&self) -> &'static str {
+        "KHR_materials_anisotropy"
+    }
+
+    fn on_load_material(
+        &mut self,
+        ctx: &mut LoadContext,
+        _gltf_mat: &gltf::Material,
+        physical_mat: &PhysicalMaterial,
+        extension_value: &Value,
+    ) -> Result<()> {
+        let anisotropy_info = extension_value.as_object().ok_or_else(|| {
+            Error::Asset(AssetError::Format(
+                "Invalid anisotropy extension data".to_string(),
+            ))
+        })?;
+
+        let anisotropy_strength = anisotropy_info
+            .get("anisotropyStrength")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as f32;
+
+        let anisotropy_rotation = anisotropy_info
+            .get("anisotropyRotation")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as f32;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            let direction = Vec2::new(anisotropy_rotation.cos(), anisotropy_rotation.sin())
+                * anisotropy_strength;
+            uniforms.anisotropy_vector = direction;
+        }
+
+        let mut textures = physical_mat.textures.write();
+
+        if let Some(anisotropy_tex_info) = anisotropy_info.get("anisotropyTexture") {
+            self.setup_texture_map_from_extension(
+                ctx,
+                anisotropy_tex_info,
+                &mut textures.anisotropy_map,
+                false,
+            );
+        }
+
+        physical_mat.enable_feature(PhysicalFeatures::ANISOTROPY);
+
+        Ok(())
+    }
+}
+
+struct KhrMaterialsTransmission;
+
+impl GltfExtensionParser for KhrMaterialsTransmission {
+    fn name(&self) -> &'static str {
+        "KHR_materials_transmission"
+    }
+
+    fn on_load_material(
+        &mut self,
+        ctx: &mut LoadContext,
+        _gltf_mat: &gltf::Material,
+        physical_mat: &PhysicalMaterial,
+        extension_value: &Value,
+    ) -> Result<()> {
+        let transmission_info = extension_value.as_object().ok_or_else(|| {
+            Error::Asset(AssetError::Format(
+                "Invalid transmission extension data".to_string(),
+            ))
+        })?;
+
+        let transmission_factor = transmission_info
+            .get("transmissionFactor")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as f32;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.transmission = transmission_factor;
+        }
+
+        let mut textures = physical_mat.textures.write();
+
+        if let Some(transmission_tex_info) = transmission_info.get("transmissionTexture") {
+            self.setup_texture_map_from_extension(
+                ctx,
+                transmission_tex_info,
+                &mut textures.transmission_map,
+                false,
+            );
+        }
+        physical_mat.enable_feature(PhysicalFeatures::TRANSMISSION);
+        Ok(())
+    }
+}
+
+struct KhrMaterialsVolume;
+
+impl GltfExtensionParser for KhrMaterialsVolume {
+    fn name(&self) -> &'static str {
+        "KHR_materials_volume"
+    }
+
+    fn on_load_material(
+        &mut self,
+        ctx: &mut LoadContext,
+        _gltf_mat: &gltf::Material,
+        physical_mat: &PhysicalMaterial,
+        extension_value: &Value,
+    ) -> Result<()> {
+        let volume_info = extension_value.as_object().ok_or_else(|| {
+            Error::Asset(AssetError::Format(
+                "Invalid volume extension data".to_string(),
+            ))
+        })?;
+
+        let thickness_factor = volume_info
+            .get("thicknessFactor")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as f32;
+
+        let attenuation_color = volume_info
+            .get("attenuationColor")
+            .and_then(|v| v.as_array())
+            .and_then(|arr| {
+                if arr.len() == 3 {
+                    Some(Vec3::new(
+                        arr[0].as_f64().unwrap_or(1.0) as f32,
+                        arr[1].as_f64().unwrap_or(1.0) as f32,
+                        arr[2].as_f64().unwrap_or(1.0) as f32,
+                    ))
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(Vec3::ONE);
+
+        let attenuation_distance = volume_info
+            .get("attenuationDistance")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(-1.0_f64) as f32;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.thickness = thickness_factor;
+            uniforms.attenuation_color = attenuation_color;
+            uniforms.attenuation_distance = attenuation_distance;
+        }
+
+        let mut textures = physical_mat.textures.write();
+
+        if let Some(thickness_tex_info) = volume_info.get("thicknessTexture") {
+            self.setup_texture_map_from_extension(
+                ctx,
+                thickness_tex_info,
+                &mut textures.thickness_map,
+                false,
+            );
+        }
+
+        Ok(())
+    }
+}
+
+struct KhrMaterialsDispersion;
+
+impl GltfExtensionParser for KhrMaterialsDispersion {
+    fn name(&self) -> &'static str {
+        "KHR_materials_dispersion"
+    }
+
+    fn on_load_material(
+        &mut self,
+        _ctx: &mut LoadContext,
+        _gltf_mat: &gltf::Material,
+        physical_mat: &PhysicalMaterial,
+        extension_value: &Value,
+    ) -> Result<()> {
+        let dispersion_info = extension_value.as_object().ok_or_else(|| {
+            Error::Asset(AssetError::Format(
+                "Invalid dispersion extension data".to_string(),
+            ))
+        })?;
+
+        let dispersion_factor = dispersion_info
+            .get("dispersionFactor")
+            .and_then(serde_json::Value::as_f64)
+            .unwrap_or(0.0) as f32;
+
+        {
+            let mut uniforms = physical_mat.uniforms_mut();
+            uniforms.dispersion = dispersion_factor;
+        }
+
+        physical_mat.enable_feature(PhysicalFeatures::DISPERSION);
+
+        Ok(())
+    }
+}

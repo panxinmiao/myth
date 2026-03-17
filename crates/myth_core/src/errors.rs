@@ -128,5 +128,15 @@ pub enum RenderError {
     Graph(String),
 }
 
+// ============================================================================
+// Convenient conversion: std::io::Error → Error (via AssetError)
+// ============================================================================
+
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::Asset(AssetError::from(err))
+    }
+}
+
 /// Alias for `Result<T, Error>`.
 pub type Result<T> = std::result::Result<T, Error>;
