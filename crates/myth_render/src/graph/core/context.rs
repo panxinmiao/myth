@@ -1,4 +1,3 @@
-use myth_assets::AssetServer;
 use crate::core::ResourceManager;
 use crate::core::WgpuContext;
 use crate::core::binding::{BindGroupKey, GlobalBindGroupCache};
@@ -7,6 +6,7 @@ use crate::core::gpu::{SamplerRegistry, ScreenBindGroupInfo, Tracked};
 use crate::graph::frame::{BakedRenderLists, RenderLists};
 use crate::graph::{ExtractedScene, RenderState};
 use crate::pipeline::{PipelineCache, ShaderManager};
+use myth_assets::AssetServer;
 use wgpu::{Device, Queue, TextureView};
 
 use super::allocator::{SubViewKey, TransientPool};

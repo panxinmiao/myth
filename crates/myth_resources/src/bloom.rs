@@ -26,9 +26,9 @@
 //! - [Physically Based Bloom (LearnOpenGL)](https://learnopengl.com/Guest-Articles/2022/Phys.-Based-Bloom)
 //! - *Next Generation Post Processing in Call of Duty: Advanced Warfare* (SIGGRAPH 2014)
 
-use crate::define_gpu_data_struct;
 use crate::WgslType;
 use crate::buffer::CpuBuffer;
+use crate::define_gpu_data_struct;
 use crate::uniforms::UniformArray;
 
 // ============================================================================
@@ -103,11 +103,13 @@ pub struct BloomSettings {
 
     /// Upsample filter uniforms (`filter_radius`).
     /// Updated via `set_radius()` — version tracking is automatic.
-    #[doc(hidden)] pub upsample_uniforms: CpuBuffer<UpsampleUniforms>,
+    #[doc(hidden)]
+    pub upsample_uniforms: CpuBuffer<UpsampleUniforms>,
 
     /// Composite blend uniforms (`bloom_strength`).
     /// Updated via `set_strength()` — version tracking is automatic.
-    #[doc(hidden)] pub composite_uniforms: CpuBuffer<CompositeUniforms>,
+    #[doc(hidden)]
+    pub composite_uniforms: CpuBuffer<CompositeUniforms>,
 }
 
 impl Default for BloomSettings {

@@ -1,5 +1,5 @@
-use crate::{TextureHandle, SamplerHandle};
 use crate::image::Image;
+use crate::{SamplerHandle, TextureHandle};
 use std::borrow::Cow;
 use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;

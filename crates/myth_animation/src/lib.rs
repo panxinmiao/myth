@@ -1,4 +1,4 @@
-﻿//! # Myth Animation
+//! # Myth Animation
 //!
 //! Animation system for the Myth engine. Provides keyframe-based animation
 //! with support for skeletal animation, morph targets, and blending.
@@ -29,4 +29,3 @@ pub use system::AnimationSystem;
 pub use target::AnimationTarget;
 pub use tracks::{InterpolationMode, KeyframeTrack};
 pub use values::{Interpolatable, MorphWeightData};
-

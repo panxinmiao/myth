@@ -8,9 +8,9 @@
 
 use std::sync::atomic::Ordering;
 
+use crate::core::gpu::generate_gpu_resource_id;
 use myth_assets::SamplerHandle;
 use myth_assets::{AssetServer, TextureHandle};
-use crate::core::gpu::generate_gpu_resource_id;
 use myth_resources::image::{Image, ImageInner};
 use myth_resources::texture::{SamplerSource, TextureSampler};
 

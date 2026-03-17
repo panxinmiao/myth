@@ -16,8 +16,8 @@
 //! 3. **Pipeline state (`RenderPipeline`)**: Tracked by `Material.version()`
 //!    - Depth write/transparency/double-sided rendering changes -> switch Pipeline
 
-use myth_assets::{AssetServer, MaterialHandle};
 use crate::core::gpu::EnsureResult;
+use myth_assets::{AssetServer, MaterialHandle};
 use myth_resources::material::{Material, RenderableMaterialTrait};
 
 use myth_resources::ResourceBuilder;

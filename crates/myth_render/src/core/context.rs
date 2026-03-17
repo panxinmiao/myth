@@ -5,8 +5,8 @@
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
-use myth_core::{Error, PlatformError, Result};
 use crate::settings::{RenderPath, RendererSettings};
+use myth_core::{Error, PlatformError, Result};
 
 /// Core wgpu context holding GPU handles.
 ///
@@ -105,7 +105,9 @@ impl WgpuContext {
                 ..Default::default()
             })
             .await
-            .map_err(|e| Error::Render(myth_core::RenderError::RequestDeviceFailed(e.to_string())))?;
+            .map_err(|e| {
+                Error::Render(myth_core::RenderError::RequestDeviceFailed(e.to_string()))
+            })?;
 
         let view_format = surface_format.add_srgb_suffix();
 

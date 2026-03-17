@@ -10,7 +10,7 @@ use myth_resources::geometry::Geometry;
 use myth_resources::material::Material;
 use myth_resources::screen_space::SssRegistry;
 use myth_resources::texture::{Sampler, Texture};
-use myth_resources::{GeometryHandle, MaterialHandle, TextureHandle, SamplerHandle};
+use myth_resources::{GeometryHandle, MaterialHandle, SamplerHandle, TextureHandle};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
@@ -77,8 +77,7 @@ impl AssetServer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let mut texture =
-                crate::load_texture_from_file(source.uri().to_string(), color_space)?;
+            let mut texture = crate::load_texture_from_file(source.uri().to_string(), color_space)?;
             texture.generate_mipmaps = generate_mipmaps;
             let handle = self.textures.add(texture);
             Ok(handle)
@@ -354,7 +353,9 @@ impl AssetServer {
             // Native: Offload to blocking thread
             tokio::task::spawn_blocking(move || Self::decode_image_cpu(&bytes, color_space, &label))
                 .await
-                .map_err(|e| myth_core::Error::Asset(myth_core::AssetError::TaskJoin(e.to_string())))?
+                .map_err(|e| {
+                    myth_core::Error::Asset(myth_core::AssetError::TaskJoin(e.to_string()))
+                })?
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -400,7 +401,9 @@ impl AssetServer {
         {
             tokio::task::spawn_blocking(move || Self::decode_hdr_cpu(&bytes))
                 .await
-                .map_err(|e| myth_core::Error::Asset(myth_core::AssetError::TaskJoin(e.to_string())))?
+                .map_err(|e| {
+                    myth_core::Error::Asset(myth_core::AssetError::TaskJoin(e.to_string()))
+                })?
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -453,7 +456,9 @@ impl AssetServer {
         {
             tokio::task::spawn_blocking(move || Self::decode_cube_cpu(&bytes))
                 .await
-                .map_err(|e| myth_core::Error::Asset(myth_core::AssetError::TaskJoin(e.to_string())))?
+                .map_err(|e| {
+                    myth_core::Error::Asset(myth_core::AssetError::TaskJoin(e.to_string()))
+                })?
         }
         #[cfg(target_arch = "wasm32")]
         {
@@ -564,10 +569,7 @@ impl AssetServer {
 }
 
 impl myth_scene::GeometryQuery for AssetServer {
-    fn get_geometry_bbox(
-        &self,
-        handle: GeometryHandle,
-    ) -> Option<myth_resources::BoundingBox> {
+    fn get_geometry_bbox(&self, handle: GeometryHandle) -> Option<myth_resources::BoundingBox> {
         self.geometries.get(handle).map(|g| g.bounding_box)
     }
 }

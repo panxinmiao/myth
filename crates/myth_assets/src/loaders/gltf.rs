@@ -1,25 +1,25 @@
-use myth_animation::{
-    AnimationClip, InterpolationMode, KeyframeTrack, MorphWeightData, TargetPath, Track,
-    TrackData, TrackMeta,
-};
+use crate::AssetServer;
 use crate::io::{AssetReaderVariant, AssetSource};
 use crate::prefab::{Prefab, PrefabNode, PrefabSkeleton};
-use crate::AssetServer;
-use myth_resources::{GeometryHandle, MaterialHandle, TextureHandle};
-use myth_core::{AssetError, Error, Result};
-use myth_resources::buffer::BufferRef;
-use myth_resources::geometry::{Attribute, Geometry};
-use myth_resources::BoundingBox;
-use myth_resources::material::AlphaMode;
-use myth_resources::texture::Texture;
-use myth_resources::{
-    Material, PhysicalFeatures, PhysicalMaterial, TextureSampler, TextureSlot, TextureTransform,
-};
 use futures::future::try_join_all;
 use glam::{Affine3A, Mat4, Quat, Vec2, Vec3, Vec4};
 use gltf::accessor::{DataType, Dimensions};
 #[cfg(feature = "gltf-meshopt")]
 use gltf::json::extensions::buffer::{MeshoptCompressionFilter, MeshoptCompressionMode};
+use myth_animation::{
+    AnimationClip, InterpolationMode, KeyframeTrack, MorphWeightData, TargetPath, Track, TrackData,
+    TrackMeta,
+};
+use myth_core::{AssetError, Error, Result};
+use myth_resources::BoundingBox;
+use myth_resources::buffer::BufferRef;
+use myth_resources::geometry::{Attribute, Geometry};
+use myth_resources::material::AlphaMode;
+use myth_resources::texture::Texture;
+use myth_resources::{GeometryHandle, MaterialHandle, TextureHandle};
+use myth_resources::{
+    Material, PhysicalFeatures, PhysicalMaterial, TextureSampler, TextureSlot, TextureTransform,
+};
 use serde_json::Value;
 use smallvec::SmallVec;
 use std::borrow::Cow;
@@ -52,7 +52,8 @@ fn decode_data_uri(uri: &str) -> Result<Vec<u8>> {
 
         if header.ends_with(";base64") {
             use base64::{Engine as _, engine::general_purpose};
-            let bytes = general_purpose::STANDARD.decode(data)
+            let bytes = general_purpose::STANDARD
+                .decode(data)
                 .map_err(|e| Error::Asset(AssetError::Base64Decode(e.to_string())))?;
             Ok(bytes)
         } else {

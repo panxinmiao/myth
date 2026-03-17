@@ -16,9 +16,9 @@
 use glam::Mat4;
 use rustc_hash::FxHashMap;
 
-use myth_assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::core::{BindGroupContext, RenderView, ResourceManager};
 use crate::pipeline::RenderPipelineId;
+use myth_assets::{AssetServer, GeometryHandle, MaterialHandle};
 use myth_scene::Scene;
 use myth_scene::camera::RenderCamera;
 

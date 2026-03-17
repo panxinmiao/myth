@@ -1,4 +1,4 @@
-﻿//! # Myth Scene
+//! # Myth Scene
 //!
 //! Hierarchical scene graph for the Myth engine.
 //!
@@ -33,11 +33,10 @@ pub trait GeometryQuery {
 
 // Re-exports from this crate
 pub use background::{BackgroundMapping, BackgroundMode, BackgroundSettings};
-pub use camera::{Camera, ProjectionType, Frustum, RenderCamera};
+pub use camera::{Camera, Frustum, ProjectionType, RenderCamera};
 pub use environment::Environment;
 pub use light::{DirectionalLight, Light, LightKind, PointLight, ShadowConfig, SpotLight};
 pub use node::Node;
 pub use scene::{CallbackLogic, NodeBuilder, Scene, SceneLogic, SplitPrimitiveTag};
 pub use skeleton::{BindMode, Skeleton, SkinBinding};
 pub use wrapper::SceneNode;
-

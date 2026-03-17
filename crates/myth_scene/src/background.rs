@@ -20,9 +20,9 @@
 
 use glam::Vec4;
 
-use myth_resources::define_gpu_data_struct;
 use myth_resources::WgslType;
 use myth_resources::buffer::CpuBuffer;
+use myth_resources::define_gpu_data_struct;
 use myth_resources::texture::TextureSource;
 
 // ============================================================================
@@ -237,11 +237,13 @@ impl BackgroundMode {
 #[derive(Debug, Clone)]
 pub struct BackgroundSettings {
     /// The current background rendering mode.
-    #[doc(hidden)] pub mode: BackgroundMode,
+    #[doc(hidden)]
+    pub mode: BackgroundMode,
 
     /// Skybox parameters uniform buffer (version-tracked).
     /// Updated via setter methods; render pass only reads.
-    #[doc(hidden)] pub uniforms: CpuBuffer<SkyboxParamsUniforms>,
+    #[doc(hidden)]
+    pub uniforms: CpuBuffer<SkyboxParamsUniforms>,
 }
 
 impl Default for BackgroundSettings {

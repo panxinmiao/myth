@@ -11,8 +11,11 @@ impl AppHandler for ShadowSpotDemo {
         let scene = engine.scene_manager.create_active();
 
         // Sphere
-        let sphere_node =
-            scene.spawn_sphere(1.0, PhysicalMaterial::new(Vec4::new(0.2, 0.7, 1.0, 1.0)), &engine.assets);
+        let sphere_node = scene.spawn_sphere(
+            1.0,
+            PhysicalMaterial::new(Vec4::new(0.2, 0.7, 1.0, 1.0)),
+            &engine.assets,
+        );
         scene
             .node(&sphere_node)
             .set_position(0.0, 1.0, 0.0)

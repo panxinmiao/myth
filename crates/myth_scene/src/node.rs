@@ -1,5 +1,5 @@
-use myth_core::{NodeHandle, Transform};
 use glam::Affine3A;
+use myth_core::{NodeHandle, Transform};
 
 /// A minimal scene node containing only essential hot data.
 ///

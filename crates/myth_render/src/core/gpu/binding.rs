@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use wgpu::ShaderStages;
 
-use myth_resources::Mesh;
 use myth_assets::{AssetServer, TextureHandle};
+use myth_resources::Mesh;
 use myth_resources::geometry::Geometry;
 use myth_resources::texture::{SamplerSource, TextureSource};
 use myth_resources::uniforms::DynamicModelUniforms;
@@ -16,8 +16,8 @@ use myth_scene::Scene;
 use myth_scene::skeleton::Skeleton;
 
 use crate::core::binding::Bindings;
-use myth_resources::{BindingResource, ResourceBuilder, WgslStructName};
 use crate::graph::RenderState;
+use myth_resources::{BindingResource, ResourceBuilder, WgslStructName};
 
 use super::{
     BindGroupContext, GpuBuffer, GpuGlobalState, ModelBufferAllocator, ObjectBindGroupKey,

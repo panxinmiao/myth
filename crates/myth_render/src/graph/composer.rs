@@ -47,12 +47,11 @@
 //!     .render();
 //! ```
 
-use myth_assets::AssetServer;
-use crate::graph::RenderState;
 use crate::core::binding::GlobalBindGroupCache;
 use crate::core::gpu::{SamplerRegistry, Tracked};
 use crate::core::{ResourceManager, WgpuContext};
 use crate::graph::ExtractedScene;
+use crate::graph::RenderState;
 use crate::graph::core::GraphStorage;
 use crate::graph::core::graph::FrameConfig;
 use crate::graph::core::{
@@ -68,6 +67,7 @@ use crate::graph::passes::{
 };
 use crate::pipeline::PipelineCache;
 use crate::pipeline::ShaderManager;
+use myth_assets::AssetServer;
 use myth_scene::Scene;
 use myth_scene::camera::RenderCamera;
 

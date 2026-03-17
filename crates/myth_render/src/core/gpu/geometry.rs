@@ -2,9 +2,9 @@
 
 use std::ops::Range;
 
-use myth_assets::{AssetServer, GeometryHandle};
 use crate::core::gpu::generate_gpu_resource_id;
 use crate::pipeline::vertex::GeneratedVertexLayout;
+use myth_assets::{AssetServer, GeometryHandle};
 use myth_resources::geometry::Geometry;
 
 use super::ResourceManager;

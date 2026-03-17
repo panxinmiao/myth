@@ -29,7 +29,6 @@
 //!     .run::<MyApp>()?;
 //! ```
 
-
 // Re-export AntiAliasingMode from myth_resources so downstream code can
 // reference it via `myth_render::settings::AntiAliasingMode`.
 pub use myth_resources::AntiAliasingMode;

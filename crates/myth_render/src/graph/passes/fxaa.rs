@@ -5,7 +5,6 @@
 //! - **`FxaaPassNode`** (ephemeral per-frame): carries lightweight IDs and
 //!   a transient bind-group slot.  Created by `FxaaFeature::add_to_graph()`.
 
-use myth_resources::FxaaQuality;
 use crate::core::binding::BindGroupKey;
 use crate::core::gpu::{CommonSampler, Tracked};
 use crate::graph::composer::GraphBuilderContext;
@@ -15,6 +14,7 @@ use crate::graph::core::{
 use crate::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
+use myth_resources::FxaaQuality;
 use wgpu::CommandEncoder;
 
 type FxaaL1CacheKey = (FxaaQuality, wgpu::TextureFormat);

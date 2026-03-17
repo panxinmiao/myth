@@ -13,9 +13,9 @@
 //! ```
 
 use crate::AssetServer;
-use myth_resources::{GeometryHandle, MaterialHandle};
 use myth_resources::geometry::Geometry;
 use myth_resources::material::{Material, PhongMaterial, PhysicalMaterial, UnlitMaterial};
+use myth_resources::{GeometryHandle, MaterialHandle};
 
 // ---------------------------------------------------------------------------
 // Material resolution

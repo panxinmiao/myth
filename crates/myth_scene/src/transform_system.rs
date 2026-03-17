@@ -18,9 +18,9 @@
 use glam::Affine3A;
 use slotmap::{SlotMap, SparseSecondaryMap};
 
-use myth_core::NodeHandle;
 use crate::camera::Camera;
 use crate::node::Node;
+use myth_core::NodeHandle;
 
 /// Level-order batch information for parallelization.
 #[derive(Debug, Default)]

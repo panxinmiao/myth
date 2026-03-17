@@ -19,8 +19,8 @@
 #![allow(clippy::must_use_candidate)]
 use glam::{Quat, Vec3};
 
-use myth_core::NodeHandle;
 use crate::scene::Scene;
+use myth_core::NodeHandle;
 
 /// Temporary mutable borrow of a scene node for chainable operations.
 pub struct SceneNode<'a> {

@@ -27,7 +27,6 @@
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use myth_assets::{GeometryHandle, MaterialHandle};
 use crate::core::BindGroupContext;
 use crate::core::gpu::{GpuGlobalState, GpuMaterial, Tracked};
 use crate::graph::extracted::SceneFeatures;
@@ -39,6 +38,7 @@ use crate::pipeline::pipeline_key::{
 use crate::pipeline::shader_gen::ShaderCompilationOptions;
 use crate::pipeline::shader_manager::ShaderManager;
 use crate::pipeline::vertex::GeneratedVertexLayout;
+use myth_assets::{GeometryHandle, MaterialHandle};
 
 // ─── L1 Fast Keys ────────────────────────────────────────────────────────────
 

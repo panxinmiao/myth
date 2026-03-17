@@ -10,12 +10,12 @@ use myth_animation::{AnimationAction, Binder};
 use myth_core::{NodeHandle, SkeletonKey};
 use myth_resources::geometry::Geometry;
 use myth_resources::mesh::Mesh;
-use myth_scene::skeleton::{BindMode, Skeleton};
 use myth_scene::Scene;
+use myth_scene::skeleton::{BindMode, Skeleton};
 
+use crate::AssetServer;
 use crate::prefab::Prefab;
 use crate::resolve::{ResolveGeometry, ResolveMaterial};
-use crate::AssetServer;
 
 /// Extension trait that adds asset-aware helper methods to [`Scene`].
 pub trait SceneExt {

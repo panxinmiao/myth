@@ -34,9 +34,7 @@ use glam::Mat4;
 
 use crate::core::view::ViewTarget;
 use crate::graph::composer::GraphBuilderContext;
-use crate::graph::core::{
-    ExecuteContext, ExtractContext, PassNode, TextureDesc, TextureNodeId,
-};
+use crate::graph::core::{ExecuteContext, ExtractContext, PassNode, TextureDesc, TextureNodeId};
 use crate::graph::frame::ShadowLightInstance;
 use crate::graph::passes::draw::submit_draw_commands;
 

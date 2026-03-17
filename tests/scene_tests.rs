@@ -7,10 +7,10 @@
 //! - SceneNode wrapper convenience API
 
 use glam::Vec3;
+use myth::scene::Scene;
 use myth::scene::camera::Camera;
 use myth::scene::light::{Light, LightKind};
 use myth::scene::node::Node;
-use myth::scene::Scene;
 
 fn new_scene() -> Scene {
     Scene::new()

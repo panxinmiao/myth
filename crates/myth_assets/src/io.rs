@@ -2,9 +2,9 @@
 use std::path::{Path, PathBuf};
 use std::{borrow::Cow, sync::Arc};
 
-use myth_core::{Error, Result};
 #[cfg(feature = "http")]
 use myth_core::AssetError;
+use myth_core::{Error, Result};
 
 /// Asset reader trait.
 /// Supports asynchronous reading of local files and network resources.
@@ -84,7 +84,8 @@ impl HttpAssetReader {
 
         Ok(Self {
             root_url,
-            client: client.build()
+            client: client
+                .build()
                 .map_err(|e| Error::Asset(AssetError::Network(e.to_string())))?,
         })
     }
@@ -99,16 +100,24 @@ impl HttpAssetReader {
 #[cfg(feature = "http")]
 impl AssetReader for HttpAssetReader {
     async fn read_bytes(&self, uri: &str) -> Result<Vec<u8>> {
-        let url = self.root_url.join(uri)
+        let url = self
+            .root_url
+            .join(uri)
             .map_err(|e| Error::Asset(AssetError::Format(format!("URL join error: {e}"))))?;
-        let resp = self.client.get(url).send().await
+        let resp = self
+            .client
+            .get(url)
+            .send()
+            .await
             .map_err(|e| Error::Asset(AssetError::Network(e.to_string())))?;
         if !resp.status().is_success() {
             return Err(Error::Asset(AssetError::HttpResponse {
                 status: resp.status().as_u16(),
             }));
         }
-        let bytes = resp.bytes().await
+        let bytes = resp
+            .bytes()
+            .await
             .map_err(|e| Error::Asset(AssetError::Network(e.to_string())))?;
         Ok(bytes.to_vec())
     }

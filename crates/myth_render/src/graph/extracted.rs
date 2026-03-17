@@ -16,8 +16,8 @@ use glam::{Mat4, Vec3};
 
 use bitflags::{Flags, bitflags};
 
-use myth_assets::{AssetServer, GeometryHandle, MaterialHandle};
 use crate::core::{BindGroupContext, ResourceManager};
+use myth_assets::{AssetServer, GeometryHandle, MaterialHandle};
 use myth_resources::BoundingBox;
 use myth_resources::shader_defines::ShaderDefines;
 use myth_scene::background::BackgroundMode;

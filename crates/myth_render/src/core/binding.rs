@@ -10,12 +10,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
-use myth_resources::ResourceBuilder;
 use crate::graph::RenderState;
+use myth_resources::Mesh;
+use myth_resources::ResourceBuilder;
 use myth_resources::geometry::Geometry;
 use myth_resources::material::{Material, RenderableMaterialTrait};
 use myth_resources::uniforms::{MorphUniforms, RenderStateUniforms};
-use myth_resources::Mesh;
 use myth_scene::Scene;
 
 /// Binding resource Trait
@@ -43,9 +43,7 @@ impl Bindings for Geometry {
                     Some(data),
                     true,
                     wgpu::ShaderStages::VERTEX,
-                    Some(myth_resources::WgslStructName::Name(
-                        "f32".into(),
-                    )),
+                    Some(myth_resources::WgslStructName::Name("f32".into())),
                 );
             }
 
@@ -59,9 +57,7 @@ impl Bindings for Geometry {
                     Some(data),
                     true,
                     wgpu::ShaderStages::VERTEX,
-                    Some(myth_resources::WgslStructName::Name(
-                        "f32".into(),
-                    )),
+                    Some(myth_resources::WgslStructName::Name("f32".into())),
                 );
             }
 
@@ -75,9 +71,7 @@ impl Bindings for Geometry {
                     Some(data),
                     true,
                     wgpu::ShaderStages::VERTEX,
-                    Some(myth_resources::WgslStructName::Name(
-                        "f32".into(),
-                    )),
+                    Some(myth_resources::WgslStructName::Name("f32".into())),
                 );
             }
         }

@@ -6,8 +6,8 @@ use std::collections::BTreeMap;
 use std::hash::{Hash, Hasher};
 
 use super::shader_manager::{LocationAllocator, get_env};
-use myth_resources::shader_defines::ShaderDefines;
 use minijinja::value::Value;
+use myth_resources::shader_defines::ShaderDefines;
 use serde::Serialize;
 
 /// Shader compilation options.

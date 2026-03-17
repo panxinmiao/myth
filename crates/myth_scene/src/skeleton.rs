@@ -2,10 +2,10 @@ use glam::{Affine3A, Mat4, Vec3};
 use slotmap::SlotMap;
 use uuid::Uuid;
 
-use myth_resources::BoundingBox;
-use myth_core::{NodeHandle, SkeletonKey};
-use myth_resources::buffer::CpuBuffer;
 use crate::node::Node;
+use myth_core::{NodeHandle, SkeletonKey};
+use myth_resources::BoundingBox;
+use myth_resources::buffer::CpuBuffer;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum BindMode {
@@ -49,10 +49,12 @@ pub struct Skeleton {
     // === Runtime Data ===
     // Final computed matrix array, updated every frame
     // Data flow: data here -> copy to GPU Uniform Buffer
-    #[doc(hidden)] pub joint_matrices: CpuBuffer<Vec<Mat4>>,
+    #[doc(hidden)]
+    pub joint_matrices: CpuBuffer<Vec<Mat4>>,
 
     // Previous frame's joint matrices (used for velocity calculation in TAA)
-    #[doc(hidden)] pub prev_joint_matrices: CpuBuffer<Vec<Mat4>>,
+    #[doc(hidden)]
+    pub prev_joint_matrices: CpuBuffer<Vec<Mat4>>,
 }
 
 impl Skeleton {

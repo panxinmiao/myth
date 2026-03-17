@@ -3,6 +3,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use myth_animation::{AnimationMixer, AnimationTarget};
 use myth_core::{NodeHandle, SkeletonKey, Transform};
+use myth_resources::Input;
 use myth_resources::bloom::BloomSettings;
 use myth_resources::buffer::CpuBuffer;
 use myth_resources::mesh::Mesh;
@@ -11,7 +12,6 @@ use myth_resources::shader_defines::ShaderDefines;
 use myth_resources::ssao::SsaoSettings;
 use myth_resources::tone_mapping::ToneMappingSettings;
 use myth_resources::uniforms::{EnvironmentUniforms, GpuLightStorage};
-use myth_resources::Input;
 
 use crate::background::{BackgroundMode, BackgroundSettings};
 use crate::camera::Camera;
@@ -98,7 +98,8 @@ pub struct Scene {
 
     // === Core Node Storage ===
     /// All nodes in the scene (`SlotMap` for O(1) access)
-    #[doc(hidden)] pub nodes: SlotMap<NodeHandle, Node>,
+    #[doc(hidden)]
+    pub nodes: SlotMap<NodeHandle, Node>,
     /// Root-level nodes (no parent)
     root_nodes: Vec<NodeHandle>,
 
@@ -146,8 +147,10 @@ pub struct Scene {
     pub active_camera: Option<NodeHandle>,
 
     // === GPU Resource Descriptors ===
-    #[doc(hidden)] pub light_storage_buffer: CpuBuffer<Vec<GpuLightStorage>>,
-    #[doc(hidden)] pub uniforms_buffer: CpuBuffer<EnvironmentUniforms>,
+    #[doc(hidden)]
+    pub light_storage_buffer: CpuBuffer<Vec<GpuLightStorage>>,
+    #[doc(hidden)]
+    pub uniforms_buffer: CpuBuffer<EnvironmentUniforms>,
     light_data_cache: Vec<GpuLightStorage>,
 
     shader_defines: ShaderDefines,
@@ -935,8 +938,7 @@ impl Scene {
         &self,
         node_handle: NodeHandle,
         query: &impl crate::GeometryQuery,
-    ) -> Option<myth_resources::BoundingBox>
-    {
+    ) -> Option<myth_resources::BoundingBox> {
         let node = self.get_node(node_handle)?;
         if !node.visible {
             return None;
@@ -965,8 +967,7 @@ impl Scene {
         &self,
         node_handle: NodeHandle,
         query: &impl crate::GeometryQuery,
-    ) -> Option<myth_resources::BoundingBox>
-    {
+    ) -> Option<myth_resources::BoundingBox> {
         let mut combined_bbox = self.get_bbox_of_one_node(node_handle, query);
 
         let node = self.get_node(node_handle)?;
@@ -1063,9 +1064,7 @@ impl AnimationTarget for Scene {
     }
 
     fn node_name(&self, handle: NodeHandle) -> Option<String> {
-        self.names
-            .get(handle)
-            .map(|n| n.as_ref().to_string())
+        self.names.get(handle).map(|n| n.as_ref().to_string())
     }
 
     fn node_transform(&self, handle: NodeHandle) -> Option<Transform> {

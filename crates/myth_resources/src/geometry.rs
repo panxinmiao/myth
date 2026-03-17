@@ -328,16 +328,20 @@ pub struct Geometry {
     attributes: FxHashMap<String, Attribute>,
     index_attribute: Option<Attribute>,
 
-    #[doc(hidden)] pub morph_attributes: FxHashMap<String, Vec<Attribute>>,
+    #[doc(hidden)]
+    pub morph_attributes: FxHashMap<String, Vec<Attribute>>,
 
     pub(crate) morph_target_names: Vec<String>,
 
     /// Morph Target Storage Buffers (compact f32 storage)
     /// Layout: [ Target 0 all vertices | Target 1 all vertices | ... ]
     /// Each vertex stores 3 f32 values (Position/Normal/Tangent displacement)
-    #[doc(hidden)] pub morph_position_buffer: Option<BufferRef>,
-    #[doc(hidden)] pub morph_normal_buffer: Option<BufferRef>,
-    #[doc(hidden)] pub morph_tangent_buffer: Option<BufferRef>,
+    #[doc(hidden)]
+    pub morph_position_buffer: Option<BufferRef>,
+    #[doc(hidden)]
+    pub morph_normal_buffer: Option<BufferRef>,
+    #[doc(hidden)]
+    pub morph_tangent_buffer: Option<BufferRef>,
 
     /// Morph Target data (kept on CPU side to support uploading)
     morph_position_data: Option<Vec<f32>>,

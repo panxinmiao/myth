@@ -27,8 +27,6 @@ use log::{error, warn};
 use slotmap::Key;
 
 use crate::RenderPath;
-use myth_assets::AssetServer;
-use myth_resources::AntiAliasingMode;
 use crate::core::view::ViewTarget;
 use crate::core::{ResourceManager, WgpuContext};
 use crate::graph::extracted::{ExtractedScene, SceneFeatures};
@@ -40,6 +38,8 @@ use crate::pipeline::{
     BlendStateKey, DepthStencilKey, FastPipelineKey, FastShadowPipelineKey, GraphicsPipelineKey,
     PipelineCache, ShaderManager, SimpleGeometryPipelineKey,
 };
+use myth_assets::AssetServer;
+use myth_resources::AntiAliasingMode;
 use myth_resources::material::{AlphaMode, Side};
 use myth_resources::uniforms::{DynamicModelUniforms, Mat3Uniform};
 use myth_scene::camera::RenderCamera;

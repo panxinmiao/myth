@@ -117,9 +117,7 @@ impl RenderState {
         &self.uniforms
     }
 
-    pub fn uniforms_mut(
-        &mut self,
-    ) -> myth_resources::buffer::BufferGuard<'_, RenderStateUniforms> {
+    pub fn uniforms_mut(&mut self) -> myth_resources::buffer::BufferGuard<'_, RenderStateUniforms> {
         self.uniforms.write()
     }
 

@@ -3,8 +3,8 @@ use std::sync::Arc;
 use glam::Affine3A;
 
 use myth_animation::AnimationClip;
-use myth_resources::Mesh;
 use myth_core::Transform;
+use myth_resources::Mesh;
 
 /// Prefab node: contains only data, uses indices to reference child nodes
 #[derive(Debug, Clone)]

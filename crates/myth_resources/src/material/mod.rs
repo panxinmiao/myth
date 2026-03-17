@@ -16,8 +16,8 @@ use std::{
 };
 
 use crate::TextureHandle;
-use crate::builder::ResourceBuilder;
 use crate::buffer::BufferRef;
+use crate::builder::ResourceBuilder;
 use crate::shader_defines::ShaderDefines;
 use crate::texture::TextureSource;
 use crate::uniforms::Mat3Uniform;

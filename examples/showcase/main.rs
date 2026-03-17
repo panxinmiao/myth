@@ -173,7 +173,12 @@ impl AppHandler for ShowcaseApp {
 }
 
 impl ShowcaseApp {
-    fn instantiate_and_focus(&mut self, scene: &mut Scene, assets: &AssetServer, prefab: &SharedPrefab) {
+    fn instantiate_and_focus(
+        &mut self,
+        scene: &mut Scene,
+        assets: &AssetServer,
+        prefab: &SharedPrefab,
+    ) {
         // 1. Instantiate model
         let root_node = scene.instantiate(prefab);
 

@@ -1,8 +1,8 @@
 use uuid::Uuid;
 
-use crate::{GeometryHandle, MaterialHandle};
 use crate::buffer::{BufferReadGuard, CpuBuffer};
 use crate::uniforms::MorphUniforms;
+use crate::{GeometryHandle, MaterialHandle};
 
 pub const MAX_MORPH_TARGETS: usize = 128;
 pub const MORPH_WEIGHT_THRESHOLD: f32 = 0.0000;
@@ -33,7 +33,8 @@ pub struct Mesh {
     prev_morph_target_influences: Vec<f32>,
 
     /// Morph Uniform Buffer (used by GPU, updated every frame)
-    #[doc(hidden)] pub morph_uniforms: CpuBuffer<MorphUniforms>,
+    #[doc(hidden)]
+    pub morph_uniforms: CpuBuffer<MorphUniforms>,
 
     // pub(crate) morph_dirty: bool,
     pub(crate) morph_update_frames: u8,
@@ -77,9 +78,7 @@ impl Mesh {
         self.morph_uniforms.read()
     }
 
-    pub fn morph_uniforms_mut(
-        &mut self,
-    ) -> crate::buffer::BufferGuard<'_, MorphUniforms> {
+    pub fn morph_uniforms_mut(&mut self) -> crate::buffer::BufferGuard<'_, MorphUniforms> {
         self.morph_uniforms.write()
     }
 

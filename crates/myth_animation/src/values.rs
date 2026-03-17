@@ -1,5 +1,5 @@
-use myth_core::MAX_MORPH_TARGETS;
 use glam::{Quat, Vec3, Vec4};
+use myth_core::MAX_MORPH_TARGETS;
 use smallvec::{SmallVec, smallvec};
 
 /// Trait for types that support keyframe interpolation.

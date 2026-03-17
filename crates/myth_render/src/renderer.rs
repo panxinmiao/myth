@@ -4,8 +4,6 @@
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
-use myth_assets::AssetServer;
-use myth_core::Result;
 use crate::core::binding::GlobalBindGroupCache;
 use crate::core::gpu::SamplerRegistry;
 use crate::graph::composer::ComposerContext;
@@ -20,6 +18,8 @@ use crate::graph::passes::{
     OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature,
     SsssFeature, TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
 };
+use myth_assets::AssetServer;
+use myth_core::Result;
 use myth_scene::Scene;
 use myth_scene::camera::RenderCamera;
 
@@ -199,10 +199,9 @@ impl Renderer {
 
         // Propagate screen bind group info to features that need it.
         if let Some(ref mut state) = self.context {
-            let screen_info =
-                crate::core::gpu::ScreenBindGroupInfo::from_resource_manager(
-                    &state.resource_manager,
-                );
+            let screen_info = crate::core::gpu::ScreenBindGroupInfo::from_resource_manager(
+                &state.resource_manager,
+            );
             state.opaque_pass.set_screen_info(screen_info.clone());
             state.transparent_pass.set_screen_info(screen_info.clone());
             state.simple_forward_pass.set_screen_info(screen_info);
@@ -542,10 +541,7 @@ impl Renderer {
     /// replace the post-process output with a fullscreen visualisation
     /// of the selected intermediate texture (if available).
     #[cfg(feature = "debug_view")]
-    pub fn set_debug_view_target(
-        &mut self,
-        target: crate::graph::render_state::DebugViewTarget,
-    ) {
+    pub fn set_debug_view_target(&mut self, target: crate::graph::render_state::DebugViewTarget) {
         if let Some(state) = &mut self.context {
             state.render_frame.render_state.debug_view_target = target;
         }

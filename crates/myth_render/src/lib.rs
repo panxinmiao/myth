@@ -1,4 +1,4 @@
-﻿//! Myth Render — Core rendering system for the Myth engine.
+//! Myth Render — Core rendering system for the Myth engine.
 //!
 //! This crate provides the complete GPU rendering pipeline, including:
 //!
@@ -21,4 +21,3 @@ pub use settings::{RenderPath, RendererSettings};
 
 /// HDR texture format used for high dynamic range render targets.
 pub const HDR_TEXTURE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
-

@@ -33,7 +33,6 @@
 //!   → Bloom_Composite (Scene HDR + Up_0 → Output)
 //! ```
 
-use myth_resources::define_gpu_data_struct;
 use crate::HDR_TEXTURE_FORMAT;
 use crate::core::binding::BindGroupKey;
 use crate::core::gpu::{CommonSampler, Tracked};
@@ -48,6 +47,7 @@ use crate::pipeline::{
 use myth_resources::WgslType;
 use myth_resources::bloom::{CompositeUniforms, UpsampleUniforms};
 use myth_resources::buffer::CpuBuffer;
+use myth_resources::define_gpu_data_struct;
 use myth_resources::uniforms::{UniformArray, WgslStruct};
 
 define_gpu_data_struct!(

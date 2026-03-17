@@ -29,9 +29,9 @@
 
 use glam::Vec4;
 
-use crate::define_gpu_data_struct;
 use crate::WgslType;
 use crate::buffer::{BufferGuard, BufferReadGuard, CpuBuffer};
+use crate::define_gpu_data_struct;
 use crate::uniforms::UniformArray;
 
 // ============================================================================
@@ -83,7 +83,8 @@ pub struct SsaoSettings {
 
     /// GPU uniform buffer containing sample kernel and parameters.
     /// Updated via setter methods — version tracking is automatic.
-    #[doc(hidden)] pub uniforms: CpuBuffer<SsaoUniforms>,
+    #[doc(hidden)]
+    pub uniforms: CpuBuffer<SsaoUniforms>,
 }
 
 impl Default for SsaoSettings {

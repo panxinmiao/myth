@@ -37,9 +37,7 @@ use crate::graph::core::{
     ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc,
     TextureNodeId,
 };
-use crate::pipeline::{
-    ColorTargetKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
-};
+use crate::pipeline::{ColorTargetKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId};
 use wgpu::CommandEncoder;
 
 /// L1 cache key: pipeline depends on destination MSAA sample count.

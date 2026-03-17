@@ -103,8 +103,8 @@ pub mod math {
 // ============================================================================
 
 pub mod render {
-    pub use myth_render::renderer::Renderer;
     pub use myth_render::graph::{FrameComposer, RenderState};
+    pub use myth_render::renderer::Renderer;
     pub use myth_render::settings::{RenderPath, RendererSettings};
 
     #[doc(hidden)]
@@ -131,12 +131,12 @@ pub mod prelude {
     pub use myth_app::{Engine, FrameState};
 
     // Scene graph
+    pub use myth_core::{NodeHandle, SkeletonKey, Transform};
+    pub use myth_scene::camera::ProjectionType;
     pub use myth_scene::{
         BackgroundMapping, BackgroundMode, BackgroundSettings, Camera, Light, LightKind, Node,
         Scene, SceneLogic, SceneNode,
     };
-    pub use myth_core::{NodeHandle, SkeletonKey, Transform};
-    pub use myth_scene::camera::ProjectionType;
 
     // Resources
     pub use myth_resources::{
@@ -146,11 +146,11 @@ pub mod prelude {
     };
 
     // Assets
-    pub use myth_assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
+    pub use myth_assets::ColorSpace;
     pub use myth_assets::SceneExt;
     #[cfg(feature = "gltf")]
     pub use myth_assets::loaders::gltf::GltfLoader;
-    pub use myth_assets::ColorSpace;
+    pub use myth_assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
 
     // Animation
     pub use myth_animation::{
@@ -186,20 +186,20 @@ pub use myth_app::{AppHandler, Window};
 pub use myth_app::{Engine, FrameState};
 
 // Scene
+pub use myth_core::{NodeHandle, Transform};
 pub use myth_scene::{
     BackgroundMapping, BackgroundMode, BackgroundSettings, Camera, Light, Node, Scene,
 };
-pub use myth_core::{NodeHandle, Transform};
 
 // Resources
+pub use myth_resources::primitives::{
+    PlaneOptions, SphereOptions, create_box, create_plane, create_sphere,
+};
 pub use myth_resources::{
     AlphaMode, Attribute, FxaaQuality, FxaaSettings, Geometry, Image, Material, MaterialTrait,
     MaterialType, Mesh, PhongMaterial, PhysicalMaterial, RenderableMaterialTrait, ShaderDefines,
     Side, TaaSettings, Texture, TextureSlot, TextureTransform, ToneMappingMode,
     ToneMappingSettings, UnlitMaterial,
-};
-pub use myth_resources::primitives::{
-    PlaneOptions, SphereOptions, create_box, create_plane, create_sphere,
 };
 
 // Assets
@@ -226,5 +226,5 @@ pub type RenderSettings = RendererSettings;
 pub use myth_core::{AssetError, Error, PlatformError, RenderError, Result};
 
 // Utilities
-pub use myth_core::utils::interner;
 pub use myth_app::OrbitControls;
+pub use myth_core::utils::interner;

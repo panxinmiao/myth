@@ -1,4 +1,4 @@
-﻿//! # Myth Assets
+//! # Myth Assets
 //!
 //! Asset loading and management for the Myth engine.
 //!
@@ -17,18 +17,18 @@ pub mod server;
 pub mod skeleton_asset;
 pub mod storage;
 
-pub use server::AssetServer;
 pub use myth_resources::{GeometryHandle, MaterialHandle, SamplerHandle, TextureHandle};
+pub use server::AssetServer;
 
 pub use handle::{AssetTracker, StrongHandle, TrackedAsset, WeakHandle};
 pub use io::{AssetReader, AssetReaderVariant};
 #[cfg(feature = "gltf")]
 pub use loaders::GltfLoader;
 pub use manager::{SceneHandle, SceneManager};
+pub use myth_scene::GeometryQuery;
 pub use prefab::{Prefab, PrefabNode, PrefabSkeleton, SharedPrefab};
 pub use resolve::{ResolveGeometry, ResolveMaterial};
 pub use scene_ext::SceneExt;
-pub use myth_scene::GeometryQuery;
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use io::FileAssetReader;
@@ -36,8 +36,8 @@ pub use io::FileAssetReader;
 #[cfg(feature = "http")]
 pub use io::HttpAssetReader;
 
-use myth_core::{AssetError, Error, Result};
 use image::GenericImageView;
+use myth_core::{AssetError, Error, Result};
 use std::path::Path;
 
 pub fn load_image_from_file(path: impl AsRef<Path>) -> Result<(Vec<u8>, u32, u32)> {

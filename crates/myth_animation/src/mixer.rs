@@ -318,9 +318,7 @@ impl AnimationMixer {
         for (&node_handle, props) in self.blend_state.iter_nodes() {
             self.animated_last_frame.insert(node_handle);
 
-            let rest_transform = target
-                .rest_transform(node_handle)
-                .unwrap_or_default();
+            let rest_transform = target.rest_transform(node_handle).unwrap_or_default();
 
             for (t, entry) in props {
                 match (t, entry) {
@@ -380,7 +378,12 @@ impl AnimationMixer {
 
 /// Applies blended morph weights to the target, mixing with the rest pose
 /// when the total accumulated weight is below 1.0.
-fn apply_morph_weights(target: &mut dyn AnimationTarget, node: NodeHandle, weights: &[f32], total_weight: f32) {
+fn apply_morph_weights(
+    target: &mut dyn AnimationTarget,
+    node: NodeHandle,
+    weights: &[f32],
+    total_weight: f32,
+) {
     let dst = target.morph_weights_mut(node);
     if dst.len() < weights.len() {
         dst.resize(weights.len(), 0.0);

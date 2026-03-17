@@ -31,10 +31,10 @@
 //! }
 //! ```
 
-use myth_resources::input::{Input, MouseButton};
-use myth_resources::BoundingBox;
-use myth_core::Transform;
 use glam::Vec3;
+use myth_core::Transform;
+use myth_resources::BoundingBox;
+use myth_resources::input::{Input, MouseButton};
 
 /// Internal spherical coordinate representation.
 #[derive(Clone, Copy, Debug)]
