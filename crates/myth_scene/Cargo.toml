@@ -1,0 +1,25 @@
+[package]
+name = "myth_scene"
+version = "0.1.0"
+edition = "2024"
+description = "Hierarchical scene graph for the Myth engine."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+myth_core      = { workspace = true }
+myth_resources = { workspace = true }
+myth_animation = { workspace = true }
+
+glam = { workspace = true }
+slotmap = { workspace = true }
+uuid = { workspace = true }
+log = { workspace = true }
+bytemuck = { workspace = true }
+parking_lot = { workspace = true }
+rustc-hash = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+parking_lot = { workspace = true, features = ["deadlock_detection"] }
+
+[lints]
+workspace = true

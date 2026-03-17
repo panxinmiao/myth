@@ -1,0 +1,22 @@
+[package]
+name = "myth_core"
+version = "0.1.0"
+edition = "2024"
+description = "Core utilities and foundational types for the Myth engine."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+glam = { workspace = true }
+slotmap = { workspace = true }
+thiserror = { workspace = true }
+log = { workspace = true }
+lasso = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+lasso = { workspace = true, features = ["multi-threaded"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+web-time = { workspace = true }
+
+[lints]
+workspace = true

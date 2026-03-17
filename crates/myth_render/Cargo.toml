@@ -1,0 +1,47 @@
+[package]
+name = "myth_render"
+version = "0.1.0"
+edition = "2024"
+description = "Core rendering system for the Myth engine (render graph, pipeline, GPU management)."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+myth_core      = { workspace = true }
+myth_resources = { workspace = true }
+myth_animation = { workspace = true }
+myth_scene     = { workspace = true }
+myth_assets    = { workspace = true }
+
+wgpu = { workspace = true }
+glam = { workspace = true }
+bytemuck = { workspace = true }
+bumpalo = { workspace = true }
+parking_lot = { workspace = true }
+rustc-hash = { workspace = true }
+slotmap = { workspace = true }
+smallvec = { workspace = true }
+xxhash-rust = { workspace = true }
+log = { workspace = true }
+rand = { workspace = true }
+half = { workspace = true }
+raw-window-handle = { workspace = true }
+paste = { workspace = true }
+bitflags = { workspace = true }
+
+# Templating for shader generation
+minijinja = { workspace = true }
+rust-embed = { workspace = true }
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+parking_lot = { workspace = true, features = ["deadlock_detection"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+wgpu = { workspace = true, features = ["webgpu"] }
+
+[features]
+default = []
+rdg_inspector = []
+debug_view = []
+
+[lints]
+workspace = true

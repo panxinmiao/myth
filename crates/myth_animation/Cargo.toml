@@ -1,0 +1,18 @@
+[package]
+name = "myth_animation"
+version = "0.1.0"
+edition = "2024"
+description = "Animation system for the Myth engine (skeletal, morph target, property)."
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+myth_core = { workspace = true }
+
+glam = { workspace = true }
+slotmap = { workspace = true }
+rustc-hash = { workspace = true }
+log = { workspace = true }
+smallvec = { workspace = true }
+
+[lints]
+workspace = true

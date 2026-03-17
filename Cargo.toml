@@ -1,3 +1,134 @@
+# =============================================================================
+# Myth Engine — Cargo Workspace Root
+# =============================================================================
+
+[workspace]
+resolver = "2"
+members = [
+    "crates/myth_core",
+    "crates/myth_resources",
+    "crates/myth_animation",
+    "crates/myth_scene",
+    "crates/myth_assets",
+    "crates/myth_render",
+    "crates/myth_app",
+]
+
+# =============================================================================
+# Workspace-wide dependency versions (single source of truth)
+# =============================================================================
+
+[workspace.dependencies]
+# Internal crates
+myth_core      = { path = "crates/myth_core" }
+myth_resources = { path = "crates/myth_resources" }
+myth_animation = { path = "crates/myth_animation" }
+myth_scene     = { path = "crates/myth_scene" }
+myth_assets    = { path = "crates/myth_assets" }
+myth_render    = { path = "crates/myth_render" }
+myth_app       = { path = "crates/myth_app" }
+
+# Graphics and Math
+wgpu = { version = "28.0", features = ["wgsl"] }
+glam = { version = "0.32.1", features = ["bytemuck", "scalar-math"] }
+bumpalo = "3.20.2"
+bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
+rand = "0.10.0"
+
+# Windowing and Input
+winit = { version = "0.30.13" }
+raw-window-handle = "0.6"
+
+# Resources and Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "hdr", "exr", "webp"] }
+gltf = { git = "https://github.com/panxinmiao/gltf.git", features = [
+    "extensions", "KHR_materials_pbrSpecularGlossiness",
+    "KHR_materials_specular", "KHR_materials_emissive_strength", "EXT_texture_webp",
+    "KHR_materials_ior", "KHR_texture_transform", "allow_empty_animation_target_node",
+    "EXT_meshopt_compression", "KHR_mesh_quantization",
+] }
+base64 = "0.22"
+
+# Meshopt Compression (for glTF EXT_meshopt_compression)
+meshopt = { version = "0.6" }
+
+# Networking (HTTP)
+reqwest = { version = "0.13.2", default-features = false }
+url = "2.5"
+
+# Utilities
+thiserror = "2.0"
+log = "0.4"
+env_logger = "0.11.9"
+pollster = "0.4"
+paste = "1.0"
+uuid = { version = "1.22.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
+slotmap = { version = "1.1.1", features = ["serde"] }
+smallvec = "1.15"
+half = "2.7"
+rustc-hash = "2.1"
+lasso = "0.7"
+parking_lot = "0.12"
+futures = "0.3.32"
+bitflags = "2.11.0"
+
+# Templating
+minijinja = { version = "2.17.1", features = ["loader", "custom_syntax"] }
+rust-embed = "8.11.0"
+
+# WASM
+wasm-bindgen = "0.2.114"
+wasm-bindgen-futures = "0.4.64"
+web-sys = { version = "0.3.91", features = [
+    "Document", "Window", "Element", "DomTokenList", "HtmlCanvasElement", "HtmlInputElement",
+    "Location", "Request", "RequestInit", "RequestMode", "Response", "Headers",
+    "File", "FileList", "FileReader", "Blob", "ProgressEvent", "console",
+    "UrlSearchParams",
+] }
+js-sys = "0.3.91"
+web-time = "1.1"
+console_error_panic_hook = "0.1.7"
+console_log = "1.0"
+getrandom = { version = "0.4.2", features = ["wasm_js"] }
+
+# Async runtime
+tokio = { version = "1.50.0", features = ["fs", "rt-multi-thread", "macros"] }
+
+# Dev / Test / Bench
+anyhow = "1.0.102"
+rfd = "0.17.2"
+criterion = { version = "0.8.2", default-features = false, features = ["html_reports"] }
+wasm-bindgen-test = "0.3"
+
+# Egui (dev-dependencies, pinned rev)
+egui = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67" }
+egui-wgpu = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67" }
+egui-winit = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67", default-features = false }
+
+# Shared lint configuration
+[workspace.lints.rust]
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# Graphics engine exceptions
+cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
+cast_sign_loss = "allow"
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+too_many_arguments = "allow"
+doc_markdown = "allow"
+too_many_lines = "allow"
+
+# =============================================================================
+# Umbrella Crate — `myth`
+# =============================================================================
+
 [package]
 name = "myth-engine"
 version = "0.1.0"
@@ -12,11 +143,11 @@ keywords = ["3d", "wgpu", "graphics", "gamedev", "engine"]
 categories = ["game-development", "graphics", "rendering::engine"]
 
 exclude = [
-    "examples/assets/*", 
-    "examples/gltf_viewer/web/assets/*", 
+    "examples/assets/*",
+    "examples/gltf_viewer/web/assets/*",
     "docs/images/*",
     ".github/*",
-    ".gitignore"
+    ".gitignore",
 ]
 
 [lib]
@@ -24,178 +155,47 @@ name = "myth"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
-# =================================================================
-# Core Dependencies
-# =================================================================
 [dependencies]
-# Graphics and Math
-wgpu = { version = "28.0", features = ["wgsl"] } #
-glam = { version = "0.32.1", features = ["bytemuck", "scalar-math"] }
-bumpalo = "3.20.2"
-bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
-rand = "0.10.0"
+myth_core      = { workspace = true }
+myth_resources = { workspace = true }
+myth_animation = { workspace = true }
+myth_scene     = { workspace = true }
+myth_assets    = { workspace = true }
+myth_render    = { workspace = true }
+myth_app       = { workspace = true, optional = true }
 
-# Windowing and Input
-winit = { version = "0.30.13", optional = true }
-raw-window-handle = "0.6"
+glam = { workspace = true }
+log  = { workspace = true }
 
-# Resources and Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "hdr", "exr", "webp"] }
-gltf = {git = "https://github.com/panxinmiao/gltf.git", features = [
-    "extensions", "KHR_materials_pbrSpecularGlossiness", 
-    "KHR_materials_specular", "KHR_materials_emissive_strength", "EXT_texture_webp",
-    "KHR_materials_ior", "KHR_texture_transform", "allow_empty_animation_target_node",
-    "EXT_meshopt_compression", "KHR_mesh_quantization",
-], optional = true }
-base64 = "0.22"
-
-# Meshopt Compression (for glTF EXT_meshopt_compression)
-meshopt = { version = "0.6", optional = true }
-
-# Networking (HTTP)
-reqwest = { version = "0.13.2", default-features = false, optional = true }
-url = { version = "2.5", optional = true }
-
-# Utilities
-thiserror = "2.0"
-log = "0.4"
-env_logger = "0.11.9"
-pollster = "0.4"
-paste = "1.0"
-uuid = { version = "1.22.0", features = ["v4", "fast-rng", "macro-diagnostics", "js"] }
-xxhash-rust = { version = "0.8", features = ["xxh3"] }
-slotmap = { version = "1.1.1", features = ["serde"] } 
-smallvec = "1.15"
-half = "2.7"
-rustc-hash = "2.1" 
-lasso = "0.7"
-parking_lot = "0.12"
-futures = "0.3.32"
-bitflags = "2.11.0"
-
-# Templating
-minijinja = { version = "2.17.1", features = ["loader", "custom_syntax"] }
-rust-embed = "8.11.0"
-
-# =================================================================
-# Native Platform (Windows, Linux, macOS)
-# =================================================================
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { version = "1.50.0", features = ["fs", "rt-multi-thread", "macros"] }
-reqwest = { version = "0.13", features = ["default-tls", "stream"]} 
-lasso = { version = "0.7", features = ["multi-threaded"] }
-parking_lot = { version = "0.12", features = ["deadlock_detection"] }
-
-# =================================================================
-# Web (WASM) Platform
-# =================================================================
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-# Web Specific Libraries
-wasm-bindgen = "0.2.114"
-wasm-bindgen-futures = "0.4.64"
-web-sys = { version = "0.3.91", features = [
-    "Document", "Window", "Element", "DomTokenList", "HtmlCanvasElement", "HtmlInputElement",
-    "Location", "Request", "RequestInit", "RequestMode", "Response", "Headers",
-    "File", "FileList", "FileReader", "Blob", "ProgressEvent", "console",
-    "UrlSearchParams"
-]}
-js-sys = "0.3.91"
-web-time = "1.1"
-
-# Logging and Panic Handling
-console_error_panic_hook = "0.1.7"
-console_log = "1.0"
-
-getrandom = { version = "0.4.2", features = ["wasm_js"] }
-wgpu = { version = "28.0", features = ["webgpu"] }
-
-
-# =================================================================
-# Development Dependencies & Egui
-# =================================================================
 [dev-dependencies]
-anyhow = "1.0.102"
-rfd = { version = "0.17.2" }
+anyhow = { workspace = true }
+rfd    = { workspace = true }
 
-# Native Dev Dependencies
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
-criterion = { version = "0.8.2", features = ["html_reports"] }
+criterion = { workspace = true, features = ["html_reports"] }
+egui      = { workspace = true }
+egui-wgpu = { workspace = true, features = ["winit"] }
+egui-winit = { workspace = true }
+
+[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+wasm-bindgen-test = { workspace = true }
+criterion = { workspace = true, default-features = false }
+egui      = { workspace = true }
+egui-wgpu = { workspace = true, features = ["winit"] }
+egui-winit = { workspace = true, default-features = false, features = ["links"] }
 
 [[bench]]
 name = "render_graph_bench"
 harness = false
 
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
-wasm-bindgen-test = "0.3"
-criterion = { version = "0.8.2", default-features = false }
-
-# --- Egui Configuration ---
-
-# Native Egui
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.egui]
-git = "https://github.com/emilk/egui.git"
-rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67"
-
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.egui-wgpu]
-git = "https://github.com/emilk/egui.git"
-rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67"
-features = ["winit"]
-
-[target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies.egui-winit]
-git = "https://github.com/emilk/egui.git"
-rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67"
-
-# WASM Egui
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies.egui]
-git = "https://github.com/emilk/egui.git"
-rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67"
-
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies.egui-wgpu]
-git = "https://github.com/emilk/egui.git"
-rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67"
-features = ["winit"]
-
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies.egui-winit]
-git = "https://github.com/emilk/egui.git"
-rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67"
-default-features = false
-features = ["links"]
-
 [features]
 default = ["winit", "gltf", "http"]
-winit = ["dep:winit"]
-gltf = ["dep:gltf"]
-# Enable Render Graph inspection: retains logical group metadata per pass
-# and supports Mermaid subgraph dumping for visual debugging.
-rdg_inspector = []
-# Enable intermediate render-texture visualisation (debug overlay).
-# Allows inspecting transient RDG resources (depth, normals, SSAO, velocity, etc.)
-# at runtime via a UI selector.  Compile-time gated for zero overhead in release.
-debug_view = []
-# Enable meshopt decompression for glTF models using EXT_meshopt_compression.
-# Note: This pulls in the meshopt C library, which requires an LLVM/Clang
-# toolchain when compiling for WASM targets.
-gltf-meshopt = ["gltf", "dep:meshopt"]
-http = ["dep:reqwest", "dep:url"]
+winit = ["dep:myth_app", "myth_app?/winit"]
+gltf = ["myth_assets/gltf"]
+rdg_inspector = ["myth_render/rdg_inspector"]
+debug_view = ["myth_render/debug_view"]
+gltf-meshopt = ["gltf", "myth_assets/gltf-meshopt"]
+http = ["myth_assets/http"]
 
-[lints.rust]
-
-[lints.clippy]
-all = { level = "warn", priority = -1 }
-
-pedantic = { level = "warn", priority = -1 }
-
-# special exceptions for graphics engine
-cast_precision_loss = "allow"
-cast_possible_truncation = "allow"
-cast_sign_loss = "allow"
-
-module_name_repetitions = "allow"
-
-missing_errors_doc = "allow"
-missing_panics_doc = "allow"
-too_many_arguments = "allow"
-doc_markdown = "allow"
-too_many_lines = "allow"
+[lints]
+workspace = true
