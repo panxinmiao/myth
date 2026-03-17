@@ -14,6 +14,7 @@ glam = { workspace = true }
 slotmap = { workspace = true }
 uuid = { workspace = true }
 log = { workspace = true }
+wgpu = { workspace = true }
 bytemuck = { workspace = true }
 parking_lot = { workspace = true }
 rustc-hash = { workspace = true }

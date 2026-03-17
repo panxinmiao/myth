@@ -457,7 +457,7 @@ define_gpu_data_struct!(
         pub env_map_intensity: f32 = 1.0,
         pub env_map_rotation: f32 = 0.0,
         pub env_map_max_mip_level: f32 = 0.0,
-        pub(crate) __padding: f32 = 0.0, // Padding to make total size a multiple of 16 bytes
+        pub __padding: f32 = 0.0, // Padding to make total size a multiple of 16 bytes
     }
 );
 
@@ -621,7 +621,7 @@ define_gpu_data_struct!(
         pub shadow_bias: f32,
         pub shadow_normal_bias: f32,
         pub cascade_count: u32,
-        pub(crate) __shadow_pad: f32,
+        pub __shadow_pad: f32,
 
         // Cascade split distances (view-space depth thresholds)
         pub cascade_splits: Vec4,
