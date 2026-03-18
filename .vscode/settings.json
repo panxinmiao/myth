@@ -1,0 +1,20 @@
+{
+    // "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
+    "rust-analyzer.cargo.allTargets": true,
+    "rust-analyzer.cargo.features": "all",
+    "rust-analyzer.linkedProjects": [
+        "Cargo.toml",
+        "bindings/python/Cargo.toml"
+    ],
+    "editor.semanticTokenColorCustomizations": {
+        "rules": {
+            "*.unsafe:rust": "#eb5046"
+        }
+    },
+
+    "python.analysis.extraPaths": [
+        "examples",
+        "bindings/python/examples"
+    ]
+
+}

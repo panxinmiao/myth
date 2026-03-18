@@ -969,7 +969,6 @@ impl Scene {
         query: &impl crate::GeometryQuery,
     ) -> Option<myth_resources::BoundingBox> {
         let mut combined_bbox = self.get_bbox_of_one_node(node_handle, query);
-
         let node = self.get_node(node_handle)?;
         for &child_handle in &node.children {
             if let Some(child_bbox) = self.get_bbox_of_node(child_handle, query) {

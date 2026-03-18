@@ -1,3 +1,10 @@
 /target
-.vscode/
 /debug
+
+# Python bindings (bindings/python/)
+bindings/python/target/
+bindings/python/.venv/
+bindings/python/myth/*.pyd
+bindings/python/myth/*.so
+bindings/python/myth/__pycache__/
+*.pyc

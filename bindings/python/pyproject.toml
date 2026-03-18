@@ -1,0 +1,38 @@
+[build-system]
+requires = ["maturin>=1.7,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "myth-py"
+version = "0.1.0"
+description = "Python bindings for Myth Engine — a high-performance 3D rendering engine built on wgpu"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+keywords = ["3d", "rendering", "wgpu", "graphics", "engine"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Rust",
+    "Programming Language :: Python :: Implementation :: CPython",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Multimedia :: Graphics :: 3D Rendering",
+]
+
+[project.urls]
+Repository = "https://github.com/panxinmiao/myth-engine"
+
+[tool.maturin]
+# "extension-module" tells pyo3 we're building a Python extension
+features = ["pyo3/extension-module"]
+# Module name matches lib.name in Cargo.toml
+module-name = "myth.myth_binding"
+# Include Python source (stubs, __init__.py)
+python-source = "."
+# Strip debug symbols for smaller wheel
+strip = true
