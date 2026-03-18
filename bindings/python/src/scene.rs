@@ -82,7 +82,7 @@ impl PyScene {
                 };
                 let scene = engine.scene_manager.active_scene_mut().unwrap();
                 let mut cam = Camera::new_perspective(persp.fov, aspect, persp.near);
-                cam.set_aa_mode(persp.anti_aliasing.mode.clone());
+                cam.set_aa_mode(persp.anti_aliasing.mode);
                 let h = scene.add_camera(cam);
                 if let Some(node) = scene.get_node_mut(h) {
                     node.transform.position =
@@ -97,11 +97,8 @@ impl PyScene {
                 let (w, h) = engine.size();
                 let aspect = if h > 0 { w as f32 / h as f32 } else { 1.0 };
                 let scene = engine.scene_manager.active_scene_mut().unwrap();
-                let mut cam = Camera::new_perspective(60.0, aspect, ortho.near);
-                cam.set_projection_type(myth_engine::scene::camera::ProjectionType::Orthographic);
-                cam.set_ortho_size(ortho.size);
-                cam.set_far(ortho.far);
-                cam.set_aa_mode(ortho.anti_aliasing.mode.clone());
+                let mut cam = Camera::new_orthographic(ortho.size, aspect, ortho.near, ortho.far);
+                cam.set_aa_mode(ortho.anti_aliasing.mode);
                 let h = scene.add_camera(cam);
                 if let Some(node) = scene.get_node_mut(h) {
                     node.transform.position =

@@ -40,15 +40,10 @@ pub struct PyDirectionalLight {
 #[pymethods]
 impl PyDirectionalLight {
     #[new]
-    #[pyo3(signature = (color=vec![1.0, 1.0, 1.0], intensity=1.0, cast_shadows=false))]
-    fn new(color: Vec<f32>, intensity: f32, cast_shadows: bool) -> Self {
-        let c = if color.len() >= 3 {
-            [color[0], color[1], color[2]]
-        } else {
-            [1.0, 1.0, 1.0]
-        };
+    #[pyo3(signature = (color=[1.0, 1.0, 1.0], intensity=1.0, cast_shadows=false))]
+    fn new(color: [f32; 3], intensity: f32, cast_shadows: bool) -> Self {
         Self {
-            color: c,
+            color,
             intensity,
             cast_shadows,
         }
@@ -93,15 +88,10 @@ pub struct PyPointLight {
 #[pymethods]
 impl PyPointLight {
     #[new]
-    #[pyo3(signature = (color=vec![1.0, 1.0, 1.0], intensity=1.0, range=10.0, cast_shadows=false))]
-    fn new(color: Vec<f32>, intensity: f32, range: f32, cast_shadows: bool) -> Self {
-        let c = if color.len() >= 3 {
-            [color[0], color[1], color[2]]
-        } else {
-            [1.0, 1.0, 1.0]
-        };
+    #[pyo3(signature = (color=[1.0, 1.0, 1.0], intensity=1.0, range=10.0, cast_shadows=false))]
+    fn new(color: [f32; 3], intensity: f32, range: f32, cast_shadows: bool) -> Self {
         Self {
-            color: c,
+            color,
             intensity,
             range,
             cast_shadows,
@@ -154,22 +144,17 @@ pub struct PySpotLight {
 #[pymethods]
 impl PySpotLight {
     #[new]
-    #[pyo3(signature = (color=vec![1.0, 1.0, 1.0], intensity=1.0, range=10.0, inner_cone=0.3, outer_cone=0.5, cast_shadows=false))]
+    #[pyo3(signature = (color=[1.0, 1.0, 1.0], intensity=1.0, range=10.0, inner_cone=0.3, outer_cone=0.5, cast_shadows=false))]
     fn new(
-        color: Vec<f32>,
+        color: [f32; 3],
         intensity: f32,
         range: f32,
         inner_cone: f32,
         outer_cone: f32,
         cast_shadows: bool,
     ) -> Self {
-        let c = if color.len() >= 3 {
-            [color[0], color[1], color[2]]
-        } else {
-            [1.0, 1.0, 1.0]
-        };
         Self {
-            color: c,
+            color,
             intensity,
             range,
             inner_cone,

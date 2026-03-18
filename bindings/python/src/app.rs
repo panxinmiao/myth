@@ -1,7 +1,6 @@
 //! PyApp — Application entry point and Python ↔ Engine bridge.
 
 use std::cell::RefCell;
-use std::ffi::c_int;
 
 use pyo3::prelude::*;
 
@@ -12,16 +11,6 @@ use myth_engine::engine::FrameState;
 use crate::engine_proxy::PyEngine;
 use crate::scene::PyFrameState;
 use crate::{clear_engine_ptr, set_engine_ptr};
-
-// ---------------------------------------------------------------------------
-// Raw FFI for GIL management (PyO3 0.28 removed with_gil / allow_threads)
-// ---------------------------------------------------------------------------
-unsafe extern "C" {
-    fn PyEval_SaveThread() -> *mut std::ffi::c_void;
-    fn PyEval_RestoreThread(state: *mut std::ffi::c_void);
-    fn PyGILState_Ensure() -> c_int;
-    fn PyGILState_Release(state: c_int);
-}
 
 // ---------------------------------------------------------------------------
 // Pending callbacks (collected during compose_frame, called with GIL)
@@ -70,20 +59,17 @@ impl AppHandler for PythonHandler {
                 set_engine_ptr(engine);
                 crate::set_window_context(window);
 
-                let gstate = unsafe { PyGILState_Ensure() };
+                Python::attach(|py| {
+                    let ctx = Py::new(py, PyEngine::new()).unwrap();
+                    let result = init_fn.call1(py, (ctx,));
 
-                let py = unsafe { Python::assume_attached() };
-                let ctx = Py::new(py, PyEngine::new()).unwrap();
-                let result = init_fn.call1(py, (ctx,));
+                    if let Err(e) = result {
+                        e.print(py);
+                    }
 
-                if let Err(e) = result {
-                    e.print(py);
-                }
-                drain_callbacks();
+                    drain_callbacks();
+                });
 
-                unsafe {
-                    PyGILState_Release(gstate);
-                }
                 crate::clear_window_context();
                 clear_engine_ptr();
             }
@@ -99,25 +85,23 @@ impl AppHandler for PythonHandler {
                 set_engine_ptr(engine);
                 crate::set_window_context(window);
 
-                let gstate = unsafe { PyGILState_Ensure() };
+                Python::attach(|py| {
+                    let ctx = Py::new(py, PyEngine::new()).unwrap();
+                    let py_frame = Py::new(
+                        py,
+                        PyFrameState::new(frame.time, frame.dt, frame.frame_count),
+                    )
+                    .unwrap();
 
-                let py = unsafe { Python::assume_attached() };
-                let ctx = Py::new(py, PyEngine::new()).unwrap();
-                let py_frame = Py::new(
-                    py,
-                    PyFrameState::new(frame.time, frame.dt, frame.frame_count),
-                )
-                .unwrap();
-                let result = update_fn.call1(py, (ctx, py_frame));
+                    let result = update_fn.call1(py, (ctx, py_frame));
 
-                if let Err(e) = result {
-                    e.print(py);
-                }
-                drain_callbacks();
+                    if let Err(e) = result {
+                        e.print(py);
+                    }
 
-                unsafe {
-                    PyGILState_Release(gstate);
-                }
+                    drain_callbacks();
+                });
+
                 crate::clear_window_context();
                 clear_engine_ptr();
             }
@@ -221,18 +205,12 @@ impl PyApp {
 
         let title = self.title.clone();
 
-        // Release the GIL before entering the blocking event loop.
-        let saved = unsafe { PyEval_SaveThread() };
-
-        let result = myth_engine::App::new()
-            .with_title(title)
-            .with_settings(settings)
-            .run::<PythonHandler>();
-
-        // Restore the GIL.
-        unsafe {
-            PyEval_RestoreThread(saved);
-        }
+        let result = py.detach(|| {
+            myth_engine::App::new()
+                .with_title(title)
+                .with_settings(settings)
+                .run::<PythonHandler>()
+        });
 
         // Clean up thread-locals.
         INIT_FN.with(|cell| *cell.borrow_mut() = None);

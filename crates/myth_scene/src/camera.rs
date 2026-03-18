@@ -219,6 +219,35 @@ impl Camera {
         cam
     }
 
+    #[must_use]
+    pub fn new_orthographic(ortho_size: f32, aspect: f32, near: f32, far: f32) -> Self {
+        let mut cam = Self {
+            uuid: Uuid::new_v4(),
+            name: Cow::Owned("Camera".to_string()),
+            projection_type: ProjectionType::Orthographic,
+            fov: std::f32::consts::FRAC_PI_3,
+            aspect,
+            near,
+            far,
+            ortho_size,
+
+            aa_mode: AntiAliasingMode::default(),
+            frame_index: 0,
+            viewport_size: Vec2::new(1.0, 1.0),
+
+            world_matrix: Affine3A::IDENTITY,
+            unjittered_projection: Mat4::IDENTITY,
+            projection_matrix: Mat4::IDENTITY,
+            view_matrix: Mat4::IDENTITY,
+            view_projection_matrix: Mat4::IDENTITY,
+            frustum: Frustum::default(),
+            jitter: Vec2::ZERO,
+        };
+
+        cam.update_projection_matrix();
+        cam
+    }
+
     // ========================================================================
     // Anti-Aliasing helpers
     // ========================================================================

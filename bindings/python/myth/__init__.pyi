@@ -565,14 +565,27 @@ class Object3D:
     light, and mesh data attached to this node.
     """
 
-    position: list[float]
-    """Position as ``[x, y, z]``."""
+    @property
+    def position(self) -> list[float]:
+        """Position as ``[x, y, z]``."""
+        ...
 
-    rotation: list[float]
-    """Euler rotation in radians as ``[x, y, z]`` (XYZ order)."""
+    @position.setter
+    def position(self, val: Vec3Input) -> None: ...
+    @property
+    def rotation(self) -> list[float]:
+        """Euler rotation in radians as ``[x, y, z]`` (XYZ order)."""
+        ...
 
-    scale: list[float]
-    """Scale as ``[x, y, z]``."""
+    @rotation.setter
+    def rotation(self, val: Vec3Input) -> None: ...
+    @property
+    def scale(self) -> list[float]:
+        """Scale as ``[x, y, z]``."""
+        ...
+
+    @scale.setter
+    def scale(self, val: Vec3Input) -> None: ...
 
     visible: bool
     """Whether this object is visible."""
@@ -586,9 +599,13 @@ class Object3D:
     name: Optional[str]
     """Node name."""
 
-    rotation_euler: list[float]
-    """Euler rotation in degrees as ``[x, y, z]`` (XYZ order)."""
+    @property
+    def rotation_euler(self) -> list[float]:
+        """Euler rotation in radians as ``[x, y, z]`` (XYZ order)."""
+        ...
 
+    @rotation_euler.setter
+    def rotation_euler(self, val: Vec3Input) -> None: ...
     def set_uniform_scale(self, s: float) -> None:
         """Set uniform scale (same value for x, y, z)."""
         ...

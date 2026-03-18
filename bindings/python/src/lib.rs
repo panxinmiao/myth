@@ -50,7 +50,7 @@ pub(crate) fn clear_engine_ptr() {
 }
 
 // ---------------------------------------------------------------------------
-// Window pointer (safe thread-local with no transmute)
+// Window pointer
 // ---------------------------------------------------------------------------
 //
 // We store a raw `*const dyn Window` in a `RefCell`.  The pointer is set
@@ -63,11 +63,11 @@ thread_local! {
 }
 
 pub(crate) fn set_window_context(window: &dyn myth_engine::app::Window) {
-    let ptr = window as *const dyn myth_engine::app::Window;
+    let ptr = window as *const (dyn myth_engine::app::Window + '_);
     // SAFETY: We erase the borrow lifetime from the fat pointer.  The pointer
     // is only stored for the duration of the callback (set before, cleared
     // after), so it never outlives the referent.
-    let ptr: *const dyn myth_engine::app::Window = unsafe { std::mem::transmute(ptr) };
+    let ptr: *const (dyn myth_engine::app::Window + 'static) = unsafe { std::mem::transmute(ptr) };
     WINDOW_PTR.with(|cell| {
         *cell.borrow_mut() = Some(ptr);
     });
