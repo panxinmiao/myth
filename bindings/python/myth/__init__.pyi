@@ -491,8 +491,13 @@ class DirectionalLightComponent:
     Obtained via ``node.light`` when the node carries a directional light.
     """
 
-    color: list[float]
-    """Light color as ``[r, g, b]``."""
+    @property
+    def color(self) -> list[float]:
+        """Light color as ``[r, g, b]``."""
+        ...
+    @color.setter
+    def color(self, val: ColorInput) -> None: ...
+
     intensity: float
     """Light intensity in lux."""
     cast_shadows: bool
@@ -504,8 +509,13 @@ class PointLightComponent:
     Obtained via ``node.light`` when the node carries a point light.
     """
 
-    color: list[float]
-    """Light color as ``[r, g, b]``."""
+    @property
+    def color(self) -> list[float]:
+        """Light color as ``[r, g, b]``."""
+        ...
+    @color.setter
+    def color(self, val: ColorInput) -> None: ...
+
     intensity: float
     """Light intensity in candela."""
     range: float
@@ -519,8 +529,13 @@ class SpotLightComponent:
     Obtained via ``node.light`` when the node carries a spot light.
     """
 
-    color: list[float]
-    """Light color as ``[r, g, b]``."""
+    @property
+    def color(self) -> list[float]:
+        """Light color as ``[r, g, b]``."""
+        ...
+    @color.setter
+    def color(self, val: ColorInput) -> None: ...
+
     intensity: float
     """Light intensity in candela."""
     range: float

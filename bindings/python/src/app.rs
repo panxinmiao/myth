@@ -65,6 +65,8 @@ impl AppHandler for PythonHandler {
 
                     if let Err(e) = result {
                         e.print(py);
+                        // If init callback fails, we can't continue — exit immediately.
+                        std::process::exit(1);
                     }
 
                     drain_callbacks();
@@ -97,6 +99,9 @@ impl AppHandler for PythonHandler {
 
                     if let Err(e) = result {
                         e.print(py);
+                        // If update callback fails, we can't continue — exit immediately.
+                        // todo: make sure this is correct.
+                        std::process::exit(1);
                     }
 
                     drain_callbacks();
