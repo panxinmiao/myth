@@ -35,7 +35,7 @@ pub struct Rig {
 /// Maps a single animation track to a logical bone in a [`Rig`].
 #[derive(Debug, Clone)]
 pub struct TrackBinding {
-    /// Index into [`AnimationClip::tracks`].
+    /// Index into [`crate::clip::AnimationClip::tracks`].
     pub track_index: usize,
     /// Index into [`Rig::bones`], giving O(1) node handle lookup at runtime.
     pub bone_index: usize,
@@ -43,10 +43,10 @@ pub struct TrackBinding {
     pub target: TargetPath,
 }
 
-/// Precomputed mapping from an [`AnimationClip`] to a [`Rig`].
+/// Precomputed mapping from an [`crate::clip::AnimationClip`] to a [`Rig`].
 ///
 /// Built once when a clip is first associated with a rig (see
-/// [`Binder::build_clip_binding`]). The mapping is valid for any entity
+/// [`crate::binder::Binder::build_clip_binding`]). The mapping is valid for any entity
 /// that shares the same rig topology, enabling cross-model animation
 /// retargeting without per-frame string comparisons.
 #[derive(Debug, Clone)]

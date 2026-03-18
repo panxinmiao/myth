@@ -1,9 +1,10 @@
 [package]
 name = "myth_app"
-version = "0.1.0"
-edition = "2024"
 description = "Application framework and windowing integration for the Myth engine."
-license = "MIT OR Apache-2.0"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
 
 [dependencies]
 myth_core      = { workspace = true }

@@ -1172,25 +1172,30 @@ mod tests {
     fn test_dump_mermaid_subgraphs() {
         let mut storage = GraphStorage::new();
         let arena = FrameArena::new();
-        let pc = PipelineCache::new();
-        let mut graph = begin_test_frame(&mut storage, &arena, &pc);
+        let mut graph = begin_test_frame(&mut storage, &arena);
 
         let backbuffer = graph.register_resource("Backbuffer", dummy_desc(), true);
 
-        let bloom_out = graph.with_group("Bloom_System", |g| {
-            let extract_out = g.add_pass("Bloom_Extract", |builder| {
+        let mut ctx = GraphBuilderContext {
+            graph: &mut graph,
+            pipeline_cache: &dummy_pipeline_cache(),
+            frame_config: &dummy_config(),
+        };
+
+        let bloom_out = ctx.with_group("Bloom_System", |ctx| {
+            let extract_out = ctx.graph.add_pass("Bloom_Extract", |builder| {
                 let out = builder.create_texture("Bloom_Mip0", dummy_desc());
                 (MockExec, out)
             });
 
-            g.add_pass("Bloom_Composite", |builder| {
+            ctx.graph.add_pass("Bloom_Composite", |builder| {
                 builder.read_texture(extract_out);
                 let out = builder.create_texture("Bloom_Final", dummy_desc());
                 (MockExec, out)
             })
         });
 
-        graph.add_pass("ToneMap", |builder| {
+        ctx.graph.add_pass("ToneMap", |builder| {
             builder.read_texture(bloom_out);
             builder.write_texture(backbuffer);
             (MockExec, ())

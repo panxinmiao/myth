@@ -962,7 +962,7 @@ impl Scene {
 
     /// Recursively computes the world-space bounding box enclosing a node and all its descendants.
     ///
-    /// `query` implements [`GeometryQuery`] to map geometry handles to local-space bounding boxes.
+    /// `query` implements [`crate::GeometryQuery`] to map geometry handles to local-space bounding boxes.
     pub fn get_bbox_of_node(
         &self,
         node_handle: NodeHandle,

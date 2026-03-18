@@ -1,6 +1,6 @@
 //! # Myth - A High-Performance WebGPU Rendering Engine
 //!
-//! Myth-Engine is a modern 3D rendering engine built with Rust and wgpu, inspired by Three.js.
+//! Myth-Engine is a modern 3D rendering engine built with Rust and wgpu.
 //! It provides a flexible, high-performance foundation for real-time graphics applications.
 //!
 //! ## Quick Start
@@ -44,6 +44,9 @@
 //! | `gltf` | **yes** | glTF 2.0 model loading |
 //! | `http` | **yes** | HTTP asset loading (native only) |
 //! | `gltf-meshopt` | no | Meshopt decompression for glTF |
+//! | `debug_view` | no | Render graph debug view targets |
+//! | `rdg_inspector` | no | Render graph inspector |
+//!
 
 // ============================================================================
 // Sub-crate re-exports (facade modules matching the old monolith paths)

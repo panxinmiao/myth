@@ -64,7 +64,7 @@ impl Node {
         &self.children
     }
 
-    /// Sets the parent of this node. Prefer using [`Scene::attach`] which
+    /// Sets the parent of this node. Prefer using [`crate::Scene::attach`] which
     /// keeps both parent and child in sync. This is exposed for low-level
     /// construction (e.g., building hierarchies outside of a `Scene`).
     #[inline]
@@ -72,7 +72,7 @@ impl Node {
         self.parent = parent;
     }
 
-    /// Appends a child handle. Prefer using [`Scene::attach`] which keeps
+    /// Appends a child handle. Prefer using [`crate::Scene::attach`] which keeps
     /// both parent and child in sync. This is exposed for low-level
     /// construction (e.g., building hierarchies outside of a `Scene`).
     #[inline]

@@ -18,8 +18,8 @@ use std::ops::{Deref, DerefMut};
 // So we create our own type that's always 48 bytes on all platforms.
 // ============================================================================
 
-/// A mat3x3<f32> representation with correct GPU alignment (48 bytes total).
-/// Each column is stored as a Vec4 (only xyz used, w is padding).
+/// A `mat3x3<f32>` representation with correct GPU alignment (48 bytes total).
+/// Each column is stored as a `Vec4` (only xyz used, w is padding).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Mat3Padded {

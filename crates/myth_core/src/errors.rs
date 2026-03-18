@@ -2,7 +2,7 @@
 //!
 //! # Hierarchy
 //!
-//! - [`Error`] — top-level enum delegating to sub-categories
+//! - [`enum@Error`] — top-level enum delegating to sub-categories
 //!   - [`PlatformError`] — window system and adapter errors
 //!   - [`AssetError`] — I/O, network, parsing errors
 //!   - [`RenderError`] — GPU device and shader errors

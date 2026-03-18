@@ -8,7 +8,7 @@
 //! The framework consists of:
 //!
 //! - [`App`]: Builder for configuring and launching applications
-//! - [`AppHandler`](super::AppHandler): Trait that users implement to define application behavior
+//! - [`AppHandler`]: Trait that users implement to define application behavior
 //! - [`AppRunner`]: Internal event loop handler (not exposed publicly)
 
 use std::sync::Arc;

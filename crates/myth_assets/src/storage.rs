@@ -38,14 +38,14 @@ impl<H: Key, T> AssetStorage<H, T> {
         }
     }
 
-    /// [Write] Adds a resource and returns a Handle.
+    /// \[Write\] Adds a resource and returns a Handle.
     /// Note: `&mut self` is no longer required.
     pub fn add(&self, asset: impl Into<T>) -> H {
         let mut guard = self.inner.write();
         guard.map.insert(Arc::new(asset.into()))
     }
 
-    /// [Write] Adds a resource with a UUID (used for file-load deduplication).
+    /// \[Write\] Adds a resource with a UUID (used for file-load deduplication).
     pub fn add_with_uuid(&self, uuid: Uuid, asset: impl Into<T>) -> H {
         let mut guard = self.inner.write();
         if let Some(&handle) = guard.lookup.get(&uuid) {
@@ -56,7 +56,7 @@ impl<H: Key, T> AssetStorage<H, T> {
         handle
     }
 
-    /// [Read] Gets a single resource.
+    /// \[Read\] Gets a single resource.
     /// Returns `Arc<T>` with minimal overhead.
     pub fn get(&self, handle: H) -> Option<Arc<T>> {
         let guard = self.inner.read();
@@ -75,7 +75,7 @@ impl<H: Key, T> AssetStorage<H, T> {
         guard.lookup.get(uuid).copied()
     }
 
-    /// [Read - Advanced] Acquires a read-lock guard.
+    /// \[Read - Advanced\] Acquires a read-lock guard.
     /// Used for batch access in the render loop to avoid acquiring the lock multiple times.
     pub fn read_lock(&self) -> RwLockReadGuard<'_, StorageInner<H, T>> {
         self.inner.read()

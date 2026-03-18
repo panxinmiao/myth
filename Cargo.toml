@@ -15,7 +15,19 @@ members = [
 ]
 
 # =============================================================================
-# Workspace-wide dependency versions (single source of truth)
+# Workspace-wide package properties
+# =============================================================================
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+authors = ["Pan Xinmiao <pan_xinmiao@163.com>"]
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/panxinmiao/myth"
+homepage = "https://github.com/panxinmiao/myth"
+
+# =============================================================================
+# Workspace-wide dependency versions
 # =============================================================================
 
 [workspace.dependencies]
@@ -126,16 +138,16 @@ too_many_lines = "allow"
 
 [package]
 name = "myth-engine"
-version = "0.1.0"
-edition = "2024"
-authors = ["Pan Xinmiao <pan_xinmiao@163.com>"]
 description = "A developer-friendly, high-performance 3D rendering engine written in Rust."
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/panxinmiao/myth"
-homepage = "https://github.com/panxinmiao/myth"
 readme = "README.md"
-keywords = ["3d", "wgpu", "graphics", "gamedev", "engine"]
-categories = ["game-development", "graphics", "rendering::engine"]
+keywords = ["3d", "wgpu", "graphics", "gamedev", "engine", "rendering", "renderer", "webgpu"]
+categories = ["game-development", "graphics", "rendering::engine", "rendering::renderer"]
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 exclude = [
     "examples/assets/*",

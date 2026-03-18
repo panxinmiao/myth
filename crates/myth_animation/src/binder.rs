@@ -65,7 +65,7 @@ impl Binder {
 
     /// Builds a [`ClipBinding`] mapping clip tracks to rig bone indices.
     ///
-    /// For every track whose [`TrackMeta::path`] matches a bone path in the
+    /// For every track whose [`crate::clip::TrackMeta::path`] matches a bone path in the
     /// rig, a [`TrackBinding`] is emitted. Nodes receiving their first
     /// animation binding get their current transform lazily recorded as
     /// the rest pose.

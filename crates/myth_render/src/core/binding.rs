@@ -1,6 +1,6 @@
 //! Bind-group cache and the [`Bindings`] trait.
 //!
-//! The [`BindingResource`] and [`ResourceBuilder`] data types live in
+//! The [`myth_resources::BindingResource`] and [`ResourceBuilder`] data types live in
 //! `myth_resources`; this module provides the **trait** that connects
 //! domain objects (Material, Geometry, Mesh, etc.) to the builder, plus
 //! a frame-based bind-group cache with TTL eviction.

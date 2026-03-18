@@ -25,7 +25,7 @@ use myth_core::NodeHandle;
 /// Level-order batch information for parallelization.
 #[derive(Debug, Default)]
 pub struct LevelOrderBatches {
-    /// Node lists per level. batches[0] contains root nodes, batches[1] contains first-level children, etc.
+    /// Node lists per level. batches\[0\] contains root nodes, batches\[1\] contains first-level children, etc.
     pub batches: Vec<Vec<NodeHandle>>,
     /// Parent node handle for each node (used to lookup parent world matrix).
     pub parent_indices: Vec<Option<NodeHandle>>,

@@ -10,7 +10,7 @@ use crate::buffer::BufferRef;
 use crate::primitives;
 use crate::shader_defines::ShaderDefines;
 
-/// Attribute holds CPU-side data (Option<Arc<Vec<u8>>>) and metadata.
+/// Attribute holds CPU-side data (`Option<Arc<Vec<u8>>>`) and metadata.
 #[derive(Debug, Clone)]
 pub struct Attribute {
     pub buffer: BufferRef,

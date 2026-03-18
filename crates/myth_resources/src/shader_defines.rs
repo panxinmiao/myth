@@ -27,7 +27,7 @@
 //!
 //! # Integration with Materials
 //!
-//! Materials implement [`RenderableMaterialTrait::shader_defines`] to declare
+//! Materials implement [`crate::RenderableMaterialTrait::shader_defines`] to declare
 //! their required shader macros based on current state (e.g., enabled textures).
 
 use std::collections::BTreeMap;

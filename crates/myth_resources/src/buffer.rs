@@ -270,7 +270,7 @@ impl<T: GpuData> CpuBuffer<T> {
     ///
     /// Returns `None` when no GPU buffer has been assigned yet (first frame).
     /// Uses `Acquire` ordering to pair with the `Release` store in
-    /// [`set_gpu_handle`].
+    /// [`Self::set_gpu_handle`].
     #[inline]
     pub fn gpu_handle(&self) -> Option<GpuBufferHandle> {
         GpuBufferHandle::from_bits(self.cached_gpu_handle.load(Ordering::Acquire))
@@ -278,9 +278,6 @@ impl<T: GpuData> CpuBuffer<T> {
 
     /// Store a [`GpuBufferHandle`], making it visible to future
     /// `gpu_handle()` calls on any thread.
-    ///
-    /// Called by [`ResourceManager::ensure_buffer`] after allocating the
-    /// GPU-side resource.
     #[inline]
     pub fn set_gpu_handle(&self, handle: GpuBufferHandle) {
         self.cached_gpu_handle

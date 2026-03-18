@@ -28,7 +28,7 @@ new_key_type! {
 /// # Blending
 ///
 /// When multiple actions are active simultaneously, their contributions
-/// are combined using weight-based accumulation (see [`FrameBlendState`]).
+/// are combined using weight-based accumulation.
 /// If the total accumulated weight for a property is less than 1.0, the
 /// rest pose value fills the remainder.
 ///
@@ -221,7 +221,7 @@ impl AnimationMixer {
     ///    events that fall within the `[t_prev, t_curr]` window are collected.
     /// 2. **Sampling & accumulation**: Active actions sample their tracks and
     ///    accumulate weighted results into the blend buffer. Track-to-node
-    ///    mapping uses [`ClipBinding`] + [`Rig`] for O(1) lookup.
+    ///    mapping uses [`crate::binding::ClipBinding`] + [`Rig`] for O(1) lookup.
     /// 3. **Application**: Blended values are mixed with the rest pose and
     ///    written to scene nodes.
     /// 4. **Restoration**: Nodes that were animated last frame but received no
