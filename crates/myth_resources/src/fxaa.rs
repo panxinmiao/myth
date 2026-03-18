@@ -85,7 +85,7 @@ impl FxaaQuality {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct FxaaSettings {
     /// Quality preset controlling edge exploration iterations.
-    quality: FxaaQuality,
+    pub quality: FxaaQuality,
 }
 
 impl FxaaSettings {

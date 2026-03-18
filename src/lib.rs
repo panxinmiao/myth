@@ -191,9 +191,9 @@ pub use myth_resources::primitives::{
     PlaneOptions, SphereOptions, create_box, create_plane, create_sphere,
 };
 pub use myth_resources::{
-    AlphaMode, Attribute, FxaaQuality, FxaaSettings, Geometry, Image, Material, MaterialTrait,
-    MaterialType, Mesh, PhongMaterial, PhysicalMaterial, RenderableMaterialTrait, ShaderDefines,
-    Side, TaaSettings, Texture, TextureSlot, TextureTransform, ToneMappingMode,
+    AlphaMode, AntiAliasingMode, Attribute, FxaaQuality, FxaaSettings, Geometry, Image, Material,
+    MaterialTrait, MaterialType, Mesh, PhongMaterial, PhysicalMaterial, RenderableMaterialTrait,
+    ShaderDefines, Side, TaaSettings, Texture, TextureSlot, TextureTransform, ToneMappingMode,
     ToneMappingSettings, UnlitMaterial,
 };
 

@@ -25,7 +25,7 @@ pub enum AntiAliasingMode {
     /// MSAA + FXAA.  MSAA resolves geometric edges, FXAA removes specular
     /// shimmer.  Best static image quality with zero temporal ghosting.
     MSAA_FXAA(u32, FxaaSettings),
-    /// Temporal Anti-Aliasing — the **recommended default** for PBR.
+    /// Temporal Anti-Aliasing.
     /// Resolves all aliasing categories with slight temporal softening.
     TAA(TaaSettings),
     /// TAA + FXAA.  TAA handles temporal aliasing, FXAA provides extra smoothing.

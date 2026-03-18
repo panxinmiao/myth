@@ -504,38 +504,6 @@ define_gpu_data_struct!(
     }
 );
 
-// Standard PBR Material
-define_gpu_data_struct!(
-    struct MeshStandardUniforms {
-        pub color: Vec4 = Vec4::ONE,           // 16
-
-        pub emissive: Vec3 = Vec3::ZERO,        // 12
-        pub emissive_intensity: f32 = 1.0,    // 4
-
-        pub roughness: f32 = 1.0,            // 4  
-        pub metalness: f32 = 0.0,           // 4
-        pub opacity: f32 = 1.0,            // 4
-        pub alpha_test: f32 = 0.0,              // 4 (8+4+4=16)
-
-        pub normal_scale: Vec2 = Vec2::ONE,    // 8
-        pub ao_map_intensity: f32 = 1.0,     // 4
-        pub(crate) __padding: f32,   // 4 (8+4+4=16)
-
-        pub specular: Vec3 = Vec3::ONE,               // 12
-        pub specular_intensity: f32 = 1.0,    // 4
-
-        // Using optimized Mat3Uniform (48 bytes)
-        pub map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
-        pub normal_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
-        pub roughness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
-        pub metalness_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
-        pub emissive_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
-        pub ao_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
-        pub specular_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
-        pub specular_intensity_map_transform: Mat3Uniform = Mat3Uniform::IDENTITY,
-    }
-);
-
 define_gpu_data_struct!(
     struct PhysicalUniforms {
         pub color: Vec4 = Vec4::ONE,          // 16
@@ -664,7 +632,7 @@ mod tests {
     #[test]
     fn test_alignment() {
         assert_eq!(
-            mem::size_of::<MeshStandardUniforms>() % 16,
+            mem::size_of::<PhysicalUniforms>() % 16,
             0,
             "Standard Uniforms not aligned to 16 bytes"
         );
@@ -677,10 +645,10 @@ mod tests {
 
     #[test]
     fn test_wgsl_generation() {
-        let standard_wgsl = MeshStandardUniforms::wgsl_struct_def("MeshStandardUniforms");
-        let standard_default = MeshStandardUniforms::default();
-        println!("WGSL for MeshStandardUniforms:\n{standard_wgsl}");
-        println!("Default Standard Uniforms: {standard_default:?}");
+        let physical_wgsl = PhysicalUniforms::wgsl_struct_def("PhysicalUniforms");
+        let physical_default = PhysicalUniforms::default();
+        println!("WGSL for PhysicalUniforms:\n{physical_wgsl}");
+        println!("Default Physical Uniforms: {physical_default:?}");
 
         let basic_wgsl = DynamicModelUniforms::wgsl_struct_def("DynamicModelUniforms");
         let basic_default = DynamicModelUniforms::default();
