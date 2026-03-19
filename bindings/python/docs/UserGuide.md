@@ -1186,15 +1186,6 @@ def on_update(ctx, frame):
 
 ## FAQ
 
-### Q: Running examples gives "module not found"
-
-Make sure you have built and installed in the virtual environment:
-
-```bash
-.venv\Scripts\activate.bat
-maturin develop --release
-```
-
 ### Q: Window appears but the screen is black
 
 Check that you've set an active camera:
@@ -1245,14 +1236,4 @@ ground = scene.add_mesh(
     myth.PhysicalMaterial(color="#666666"),
 )
 ground.rotation_euler = [-90, 0, 0]
-```
-
-### Q: Must myth-engine source be in a sibling directory?
-
-Yes, the build depends on `../myth-engine`. Your directory structure should be:
-
-```
-your-workspace/
-├── myth-python/
-└── myth-engine/
 ```

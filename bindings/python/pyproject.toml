@@ -4,6 +4,9 @@ build-backend = "maturin"
 
 [project]
 name = "myth-py"
+authors = [
+    { name = "Pan Xinmiao", email = "pan_xinmiao@163.com" },
+]
 version = "0.1.0"
 description = "Python bindings for Myth Engine — a high-performance 3D rendering engine built on wgpu"
 requires-python = ">=3.9"

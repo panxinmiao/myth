@@ -1,7 +1,7 @@
 [workspace]
 
 [package]
-name = "myth-python"
+name = "myth-py"
 version = "0.1.0"
 edition = "2024"
 
@@ -12,7 +12,8 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.28.1", features = ["extension-module"] }
 # Standalone / CI: use the git dependency instead:
-myth_engine = { git = "https://github.com/panxinmiao/myth.git", tag = "v0.1.0", package = "myth-engine" }
+# myth_engine = { git = "https://github.com/panxinmiao/myth.git", tag = "v0.1.0", package = "myth-engine" }
+myth_engine = { path = "../../", package = "myth-engine" }
 
 slotmap = "1"
 glam = { version = "0.32.0", features = ["scalar-math"] }
@@ -24,5 +25,5 @@ log = "0.4"
 env_logger = "0.11.9"
 
 
-[patch."https://github.com/panxinmiao/myth.git"]
-myth-engine = { path = "../../" }
+# [patch."https://github.com/panxinmiao/myth.git"]
+# myth-engine = { path = "../../" }

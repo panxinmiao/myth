@@ -1186,15 +1186,6 @@ def on_update(ctx, frame):
 
 ## 常见问题
 
-### Q: 运行示例报错 "module not found"
-
-确保已在虚拟环境中构建并安装：
-
-```bash
-.venv\Scripts\activate.bat
-maturin develop --release
-```
-
 ### Q: 窗口出现但一片黑色
 
 检查是否设置了活跃相机：
@@ -1245,14 +1236,4 @@ ground = scene.add_mesh(
     myth.PhysicalMaterial(color="#666666"),
 )
 ground.rotation_euler = [-90, 0, 0]
-```
-
-### Q: myth-engine 源码必须在兄弟目录吗？
-
-是的，构建依赖于 `../myth-engine`。项目目录结构应为：
-
-```
-your-workspace/
-├── myth-python/
-└── myth-engine/
 ```
