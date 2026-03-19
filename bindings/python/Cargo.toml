@@ -16,8 +16,6 @@ pyo3 = { version = "0.28.1", features = ["extension-module"] }
 myth_engine = { path = "../../", package = "myth-engine" }
 
 slotmap = "1"
-glam = { version = "0.32.0", features = ["scalar-math"] }
-wgpu = "28"
 raw-window-handle = "0.6"
 pollster = "0.4"
 bytemuck = { version = "1.25", features = ["derive"] }

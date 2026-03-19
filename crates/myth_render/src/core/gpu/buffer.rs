@@ -281,68 +281,31 @@ impl ResourceManager {
     // ────────────────────────────────────────────────────────────────────────
 
     /// Ensure the GPU buffer for a geometry attribute is created and current.
-    pub fn prepare_attribute_buffer(
+    pub fn prepare_attribute(
         &mut self,
         attr: &myth_resources::geometry::Attribute,
     ) -> EnsureResult {
-        let cpu_id = attr.buffer.id();
-
-        // ── Existing buffer ────────────────────────────────────────
-        if let Some(&handle) = self.buffer_index.get(&cpu_id) {
-            if let Some(gpu_buf) = self.gpu_buffers.get_mut(handle) {
-                let mut was_recreated = false;
-
-                if attr.version > gpu_buf.last_uploaded_version
-                    && let Some(data) = &attr.data
-                {
-                    let bytes: &[u8] = data.as_ref();
-                    was_recreated = gpu_buf.write_to_gpu(&self.device, &self.queue, bytes);
-                    gpu_buf.last_uploaded_version = attr.version;
-                }
-                gpu_buf.last_used_frame = self.frame_index;
-                return EnsureResult::new(gpu_buf.id, was_recreated);
+        match &attr.data {
+            Some(d) => {
+                self.ensure_buffer_ref(&attr.buffer, d).1
+            },
+            None => {
+                self.ensure_buffer_ref(&attr.buffer, &[0u8]).1
             }
-            // Stale handle
-            self.buffer_index.remove(&cpu_id);
         }
+    }
 
-        // ── New buffer ─────────────────────────────────────────────
-        if let Some(data) = &attr.data {
-            let bytes: &[u8] = data.as_ref();
-            let mut gpu_buf = GpuBuffer::new(
-                &self.device,
-                bytes,
-                attr.buffer.usage(),
-                attr.buffer.label(),
-            );
-            gpu_buf.last_uploaded_version = attr.version;
-            gpu_buf.last_used_frame = self.frame_index;
-            let phys_id = gpu_buf.id;
-            let handle = self.gpu_buffers.insert(gpu_buf);
-            self.buffer_index.insert(cpu_id, handle);
-            EnsureResult::created(phys_id)
-        } else {
-            log::error!(
-                "Geometry attribute buffer {:?} missing CPU data!",
-                attr.buffer.label()
-            );
-            // Re-check after logging (fallback for race with late uploads)
-            if let Some(&h) = self.buffer_index.get(&cpu_id)
-                && let Some(g) = self.gpu_buffers.get(h)
-            {
-                return EnsureResult::existing(g.id);
+    pub fn prepare_index(
+        &mut self,
+        indices: &myth_resources::geometry::IndexAttribute,
+    ) -> EnsureResult {
+        match &indices.data {
+            Some(d) => {
+                self.ensure_buffer_ref(&indices.buffer, d).1
+            },
+            None => {
+                self.ensure_buffer_ref(&indices.buffer, &[0u8]).1
             }
-            let dummy_data = [0u8; 1];
-            let gpu_buf = GpuBuffer::new(
-                &self.device,
-                &dummy_data,
-                attr.buffer.usage(),
-                Some("Dummy Fallback Buffer"),
-            );
-            let phys_id = gpu_buf.id;
-            let handle = self.gpu_buffers.insert(gpu_buf);
-            self.buffer_index.insert(cpu_id, handle);
-            EnsureResult::created(phys_id)
         }
     }
 

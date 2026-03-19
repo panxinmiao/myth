@@ -65,12 +65,6 @@ fn main() -> myth::Result<()> {
         .with_settings(RendererSettings {
             path: RenderPath::BasicForward,
             vsync: false,
-            clear_color: wgpu::Color {
-                r: 0.03,
-                g: 0.03,
-                b: 0.03,
-                a: 1.0,
-            },
             ..Default::default()
         })
         .run::<HelmetGltf>()

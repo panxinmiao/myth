@@ -53,7 +53,9 @@ pub use anti_aliasing::AntiAliasingMode;
 pub use bloom::BloomSettings;
 pub use buffer::BufferRef;
 pub use fxaa::{FxaaQuality, FxaaSettings};
-pub use geometry::{Attribute, BoundingBox, BoundingSphere, Geometry};
+pub use geometry::{
+    Attribute, BoundingBox, BoundingSphere, Geometry, IndexAttribute, IndexFormat, VertexFormat,
+};
 pub use image::{Image, ImageDescriptor};
 pub use input::{ButtonState, Input, Key, MouseButton};
 pub use shader_defines::ShaderDefines;

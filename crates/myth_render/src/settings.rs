@@ -191,13 +191,6 @@ pub struct RendererSettings {
     /// - `LowPower`: Prefer integrated GPU (better battery life)
     pub power_preference: wgpu::PowerPreference,
 
-    // === Rendering Defaults ===
-    /// Background clear color for the main render target.
-    ///
-    /// Used to clear the framebuffer at the start of each frame.
-    /// May be overridden at runtime by the active scene's background settings.
-    pub clear_color: wgpu::Color,
-
     /// Required wgpu features that must be supported by the adapter.
     ///
     /// The engine will fail to initialize if these features are unavailable.
@@ -224,12 +217,6 @@ impl Default for RendererSettings {
             vsync: true,
             backends: None,
             power_preference: wgpu::PowerPreference::HighPerformance,
-            clear_color: wgpu::Color {
-                r: 0.0,
-                g: 0.0,
-                b: 0.0,
-                a: 1.0,
-            },
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             depth_format: wgpu::TextureFormat::Depth32Float,

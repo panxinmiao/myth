@@ -3,7 +3,7 @@
 use pyo3::prelude::*;
 use slotmap::Key;
 
-use glam::{Vec2, Vec4};
+use myth_engine::math::{Vec2, Vec3, Vec4};
 
 use myth_engine::MaterialHandle;
 
@@ -18,10 +18,10 @@ fn parse_color(py: Python<'_>, obj: &Bound<'_, PyAny>) -> PyResult<[f32; 3]> {
     if let Ok(s) = obj.extract::<String>() {
         return hex_to_rgb(&s);
     }
-    if let Ok(list) = obj.extract::<Vec<f32>>() {
-        if list.len() >= 3 {
-            return Ok([list[0], list[1], list[2]]);
-        }
+    if let Ok(list) = obj.extract::<Vec<f32>>()
+        && list.len() >= 3
+    {
+        return Ok([list[0], list[1], list[2]]);
     }
     if let Ok((r, g, b)) = obj.extract::<(f32, f32, f32)>() {
         return Ok([r, g, b]);
@@ -141,10 +141,10 @@ impl PyUnlitMaterial {
         if let Some(h) = self.handle {
             let c = self.color;
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(unlit) = mat.as_unlit() {
-                        unlit.set_color(Vec4::new(c[0], c[1], c[2], self.opacity));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(unlit) = mat.as_unlit()
+                {
+                    unlit.set_color(Vec4::new(c[0], c[1], c[2], self.opacity));
                 }
             })?;
         }
@@ -161,10 +161,10 @@ impl PyUnlitMaterial {
         if let Some(h) = self.handle {
             let c = self.color;
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(unlit) = mat.as_unlit() {
-                        unlit.set_color(Vec4::new(c[0], c[1], c[2], val));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(unlit) = mat.as_unlit()
+                {
+                    unlit.set_color(Vec4::new(c[0], c[1], c[2], val));
                 }
             })?;
         }
@@ -177,10 +177,10 @@ impl PyUnlitMaterial {
         self.map = Some(th);
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(unlit) = mat.as_unlit() {
-                        unlit.set_map(Some(th));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(unlit) = mat.as_unlit()
+                {
+                    unlit.set_map(Some(th));
                 }
             })?;
         }
@@ -244,8 +244,8 @@ impl PyPhongMaterial {
         let h = with_engine(|engine| {
             let mat =
                 myth_engine::PhongMaterial::new(Vec4::new(color[0], color[1], color[2], opacity));
-            mat.set_specular(glam::Vec3::from(specular));
-            mat.set_emissive(glam::Vec3::from(emissive));
+            mat.set_specular(Vec3::from(specular));
+            mat.set_emissive(Vec3::from(emissive));
             mat.set_emissive_intensity(emissive_intensity);
             mat.set_shininess(shininess);
             mat.set_side(parse_side(&side));
@@ -286,6 +286,7 @@ impl PyPhongMaterial {
         alpha_mode = "opaque",
         depth_write = true,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
         color: Option<&Bound<'_, PyAny>>,
@@ -340,10 +341,10 @@ impl PyPhongMaterial {
             let c = self.color;
             let o = self.opacity;
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phong) = mat.as_phong() {
-                        phong.set_color(Vec4::new(c[0], c[1], c[2], o));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phong) = mat.as_phong()
+                {
+                    phong.set_color(Vec4::new(c[0], c[1], c[2], o));
                 }
             })?;
         }
@@ -359,10 +360,10 @@ impl PyPhongMaterial {
         self.shininess = val;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phong) = mat.as_phong() {
-                        phong.set_shininess(val);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phong) = mat.as_phong()
+                {
+                    phong.set_shininess(val);
                 }
             })?;
         }
@@ -379,10 +380,10 @@ impl PyPhongMaterial {
         if let Some(h) = self.handle {
             let c = self.color;
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phong) = mat.as_phong() {
-                        phong.set_color(Vec4::new(c[0], c[1], c[2], val));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phong) = mat.as_phong()
+                {
+                    phong.set_color(Vec4::new(c[0], c[1], c[2], val));
                 }
             })?;
         }
@@ -394,10 +395,10 @@ impl PyPhongMaterial {
         self.map = Some(th);
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phong) = mat.as_phong() {
-                        phong.set_map(Some(th));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phong) = mat.as_phong()
+                {
+                    phong.set_map(Some(th));
                 }
             })?;
         }
@@ -415,11 +416,11 @@ impl PyPhongMaterial {
         self.normal_scale = ns;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phong) = mat.as_phong() {
-                        phong.set_normal_map(Some(th));
-                        phong.set_normal_scale(Vec2::new(ns[0], ns[1]));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phong) = mat.as_phong()
+                {
+                    phong.set_normal_map(Some(th));
+                    phong.set_normal_scale(Vec2::new(ns[0], ns[1]));
                 }
             })?;
         }
@@ -431,10 +432,10 @@ impl PyPhongMaterial {
         self.specular_map = Some(th);
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phong) = mat.as_phong() {
-                        phong.set_specular_map(Some(th));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phong) = mat.as_phong()
+                {
+                    phong.set_specular_map(Some(th));
                 }
             })?;
         }
@@ -446,10 +447,10 @@ impl PyPhongMaterial {
         self.emissive_map = Some(th);
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phong) = mat.as_phong() {
-                        phong.set_emissive_map(Some(th));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phong) = mat.as_phong()
+                {
+                    phong.set_emissive_map(Some(th));
                 }
             })?;
         }
@@ -468,10 +469,10 @@ impl PyPhongMaterial {
         if let Some(h) = self.handle {
             let s = self.specular;
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phong) = mat.as_phong() {
-                        phong.set_specular(glam::Vec3::from(s));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phong) = mat.as_phong()
+                {
+                    phong.set_specular(Vec3::from(s));
                 }
             })?;
         }
@@ -488,10 +489,10 @@ impl PyPhongMaterial {
         if let Some(h) = self.handle {
             let e = self.emissive;
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phong) = mat.as_phong() {
-                        phong.set_emissive(glam::Vec3::from(e));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phong) = mat.as_phong()
+                {
+                    phong.set_emissive(Vec3::from(e));
                 }
             })?;
         }
@@ -507,10 +508,10 @@ impl PyPhongMaterial {
         self.emissive_intensity = v;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phong) = mat.as_phong() {
-                        phong.set_emissive_intensity(v);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phong) = mat.as_phong()
+                {
+                    phong.set_emissive_intensity(v);
                 }
             })?;
         }
@@ -529,10 +530,10 @@ impl PyPhongMaterial {
         if let Some(h) = self.handle {
             let am = parse_alpha_mode(mode);
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phong) = mat.as_phong() {
-                        phong.set_alpha_mode(am);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phong) = mat.as_phong()
+                {
+                    phong.set_alpha_mode(am);
                 }
             })?;
         }
@@ -548,10 +549,10 @@ impl PyPhongMaterial {
         self.depth_write = v;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phong) = mat.as_phong() {
-                        phong.set_depth_write(v);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phong) = mat.as_phong()
+                {
+                    phong.set_depth_write(v);
                 }
             })?;
         }
@@ -616,7 +617,7 @@ impl PyPhysicalMaterial {
             let mat = myth_engine::PhysicalMaterial::new(Vec4::new(c[0], c[1], c[2], o))
                 .with_roughness(self.roughness)
                 .with_metalness(self.metalness)
-                .with_emissive(glam::Vec3::from(self.emissive), self.emissive_intensity)
+                .with_emissive(Vec3::from(self.emissive), self.emissive_intensity)
                 .with_normal_scale(Vec2::splat(self.normal_scale));
 
             mat.set_side(parse_side(&self.side));
@@ -632,7 +633,7 @@ impl PyPhysicalMaterial {
                 mat.set_ior(self.ior);
             }
             if self.sheen_color != [0.0; 3] {
-                mat.set_sheen_color(glam::Vec3::from(self.sheen_color));
+                mat.set_sheen_color(Vec3::from(self.sheen_color));
                 mat.set_sheen_roughness(self.sheen_roughness);
             }
 
@@ -678,6 +679,7 @@ impl PyPhysicalMaterial {
         alpha_mode = "opaque",
         depth_write = true,
     ))]
+    #[allow(clippy::too_many_arguments)]
     fn new(
         py: Python<'_>,
         color: Option<&Bound<'_, PyAny>>,
@@ -736,10 +738,10 @@ impl PyPhysicalMaterial {
             let c = self.color;
             let o = self.opacity;
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_color(Vec4::new(c[0], c[1], c[2], o));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_color(Vec4::new(c[0], c[1], c[2], o));
                 }
             })?;
         }
@@ -755,10 +757,10 @@ impl PyPhysicalMaterial {
         self.metalness = v;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_metalness(v);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_metalness(v);
                 }
             })?;
         }
@@ -774,10 +776,10 @@ impl PyPhysicalMaterial {
         self.roughness = v;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_roughness(v);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_roughness(v);
                 }
             })?;
         }
@@ -793,10 +795,10 @@ impl PyPhysicalMaterial {
         self.emissive_intensity = v;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_emissive_intensity(v);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_emissive_intensity(v);
                 }
             })?;
         }
@@ -813,10 +815,10 @@ impl PyPhysicalMaterial {
         if let Some(h) = self.handle {
             let c = self.color;
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_color(Vec4::new(c[0], c[1], c[2], v));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_color(Vec4::new(c[0], c[1], c[2], v));
                 }
             })?;
         }
@@ -832,10 +834,10 @@ impl PyPhysicalMaterial {
         self.clearcoat = v;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_clearcoat(v);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_clearcoat(v);
                 }
             })?;
         }
@@ -851,10 +853,10 @@ impl PyPhysicalMaterial {
         self.clearcoat_roughness = v;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_clearcoat_roughness(v);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_clearcoat_roughness(v);
                 }
             })?;
         }
@@ -870,10 +872,10 @@ impl PyPhysicalMaterial {
         self.transmission = v;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_transmission(v);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_transmission(v);
                 }
             })?;
         }
@@ -889,10 +891,10 @@ impl PyPhysicalMaterial {
         self.ior = v;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_ior(v);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_ior(v);
                 }
             })?;
         }
@@ -911,10 +913,10 @@ impl PyPhysicalMaterial {
         if let Some(h) = self.handle {
             let am = parse_alpha_mode(mode);
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_alpha_mode(am);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_alpha_mode(am);
                 }
             })?;
         }
@@ -930,10 +932,10 @@ impl PyPhysicalMaterial {
         self.depth_write = v;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_depth_write(v);
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_depth_write(v);
                 }
             })?;
         }
@@ -947,10 +949,10 @@ impl PyPhysicalMaterial {
         self.map = Some(th);
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_map(Some(th));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_map(Some(th));
                 }
             })?;
         }
@@ -964,11 +966,11 @@ impl PyPhysicalMaterial {
         self.normal_scale = s;
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_normal_map(Some(th));
-                        phys.set_normal_scale(Vec2::splat(s));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_normal_map(Some(th));
+                    phys.set_normal_scale(Vec2::splat(s));
                 }
             })?;
         }
@@ -980,10 +982,10 @@ impl PyPhysicalMaterial {
         self.roughness_map = Some(th);
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_roughness_map(Some(th));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_roughness_map(Some(th));
                 }
             })?;
         }
@@ -995,10 +997,10 @@ impl PyPhysicalMaterial {
         self.metalness_map = Some(th);
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_metalness_map(Some(th));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_metalness_map(Some(th));
                 }
             })?;
         }
@@ -1010,10 +1012,10 @@ impl PyPhysicalMaterial {
         self.emissive_map = Some(th);
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_emissive_map(Some(th));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_emissive_map(Some(th));
                 }
             })?;
         }
@@ -1025,10 +1027,10 @@ impl PyPhysicalMaterial {
         self.ao_map = Some(th);
         if let Some(h) = self.handle {
             with_engine(|engine| {
-                if let Some(mat) = engine.assets.materials.get(h) {
-                    if let Some(phys) = mat.as_physical() {
-                        phys.set_ao_map(Some(th));
-                    }
+                if let Some(mat) = engine.assets.materials.get(h)
+                    && let Some(phys) = mat.as_physical()
+                {
+                    phys.set_ao_map(Some(th));
                 }
             })?;
         }

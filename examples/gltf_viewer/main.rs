@@ -2987,12 +2987,6 @@ fn main() -> myth::Result<()> {
         .with_title("glTF Viewer")
         .with_settings(RendererSettings {
             vsync: false,
-            clear_color: wgpu::Color {
-                r: 0.03,
-                g: 0.03,
-                b: 0.03,
-                a: 1.0,
-            },
             ..Default::default()
         })
         .run::<GltfViewer>()

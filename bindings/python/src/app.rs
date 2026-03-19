@@ -41,8 +41,8 @@ fn drain_callbacks() {
 // ---------------------------------------------------------------------------
 
 thread_local! {
-    static INIT_FN: RefCell<Option<Py<PyAny>>> = RefCell::new(None);
-    static UPDATE_FN: RefCell<Option<Py<PyAny>>> = RefCell::new(None);
+    static INIT_FN: RefCell<Option<Py<PyAny>>> = const { RefCell::new(None) };
+    static UPDATE_FN: RefCell<Option<Py<PyAny>>> = const { RefCell::new(None) };
 }
 
 // ---------------------------------------------------------------------------
@@ -198,7 +198,7 @@ impl PyApp {
 
     /// Run the application (blocking).
     fn run(&self, py: Python<'_>) -> PyResult<()> {
-        let settings = build_settings(&self.render_path, self.vsync, self.clear_color);
+        let settings = build_settings(&self.render_path, self.vsync);
 
         // Store callbacks in thread-locals so PythonHandler can access them.
         if let Some(ref f) = self.init_fn {

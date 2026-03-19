@@ -84,15 +84,7 @@ pub(crate) fn clear_window_context() {
 pub(crate) fn with_window<R>(f: impl FnOnce(&dyn myth_engine::app::Window) -> R) -> Option<R> {
     WINDOW_PTR.with(|cell| {
         let borrow = cell.borrow();
-        match *borrow {
-            Some(ptr) => {
-                // SAFETY: the pointer was set by `set_window_context` from a
-                // valid `&dyn Window` reference and is only accessed while the
-                // callback is running (the Window is alive on the stack).
-                Some(unsafe { f(&*ptr) })
-            }
-            None => None,
-        }
+        (*borrow).map(|ptr| unsafe { f(&*ptr) })
     })
 }
 

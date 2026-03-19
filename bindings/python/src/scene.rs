@@ -1,8 +1,8 @@
 //! Scene, Object3D, MeshComponent, FrameState — high-level wrappers around
 //! `myth_engine::Scene`.
 
-use glam::{Quat, Vec3};
 use myth_engine::NodeHandle;
+use myth_engine::math::{Quat, Vec3};
 use myth_engine::resources::tone_mapping::AgxLook;
 use pyo3::prelude::*;
 
@@ -428,7 +428,10 @@ impl PyObject3D {
             scene
                 .get_node(self.handle)
                 .map(|n| {
-                    let (x, y, z) = n.transform.rotation.to_euler(glam::EulerRot::XYZ);
+                    let (x, y, z) = n
+                        .transform
+                        .rotation
+                        .to_euler(myth_engine::math::EulerRot::XYZ);
                     [x, y, z]
                 })
                 .unwrap_or([0.0; 3])
@@ -441,7 +444,7 @@ impl PyObject3D {
         with_active_scene(|scene| {
             if let Some(node) = scene.get_node_mut(self.handle) {
                 node.transform.rotation =
-                    Quat::from_euler(glam::EulerRot::XYZ, rot[0], rot[1], rot[2]);
+                    Quat::from_euler(myth_engine::math::EulerRot::XYZ, rot[0], rot[1], rot[2]);
             }
         })?;
         Ok(())
@@ -579,7 +582,7 @@ impl PyObject3D {
     #[getter]
     fn get_visible(&self) -> PyResult<bool> {
         let result =
-            with_active_scene(|scene| scene.get_node(self.handle).map_or(true, |n| n.visible))?;
+            with_active_scene(|scene| scene.get_node(self.handle).is_none_or(|n| n.visible))?;
         Ok(result)
     }
 
@@ -603,7 +606,7 @@ impl PyObject3D {
             scene
                 .meshes
                 .get(self.handle)
-                .map_or(false, |m| m.cast_shadows)
+                .is_some_and(|m| m.cast_shadows)
         })?;
         Ok(result)
     }
@@ -624,7 +627,7 @@ impl PyObject3D {
             scene
                 .meshes
                 .get(self.handle)
-                .map_or(false, |m| m.receive_shadows)
+                .is_some_and(|m| m.receive_shadows)
         })?;
         Ok(result)
     }

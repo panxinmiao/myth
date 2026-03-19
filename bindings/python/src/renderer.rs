@@ -186,11 +186,7 @@ pub(crate) fn parse_render_path(obj: &Bound<'_, pyo3::PyAny>) -> PyResult<String
 // build_settings (shared with app.rs)
 // ---------------------------------------------------------------------------
 
-pub(crate) fn build_settings(
-    render_path: &str,
-    vsync: bool,
-    clear_color: [f32; 4],
-) -> RendererSettings {
+pub(crate) fn build_settings(render_path: &str, vsync: bool) -> RendererSettings {
     let path = match render_path {
         "hdr" | "high" | "high_fidelity" | "HighFidelity" => myth_engine::RenderPath::HighFidelity,
         _ => myth_engine::RenderPath::BasicForward,
@@ -198,12 +194,6 @@ pub(crate) fn build_settings(
     RendererSettings {
         path,
         vsync,
-        clear_color: wgpu::Color {
-            r: clear_color[0] as f64,
-            g: clear_color[1] as f64,
-            b: clear_color[2] as f64,
-            a: clear_color[3] as f64,
-        },
         ..Default::default()
     }
 }
@@ -244,7 +234,6 @@ pub struct PyMythRenderer {
     engine: Option<Box<Engine>>,
     render_path: String,
     vsync: bool,
-    clear_color: [f32; 4],
     start_time: std::time::Instant,
     last_frame_time: std::time::Instant,
 }
@@ -255,13 +244,8 @@ impl PyMythRenderer {
     #[pyo3(signature = (
         render_path = None,
         vsync = true,
-        clear_color = [0.1, 0.1, 0.1, 1.0],
     ))]
-    fn new(
-        render_path: Option<&Bound<'_, PyAny>>,
-        vsync: bool,
-        clear_color: [f32; 4],
-    ) -> PyResult<Self> {
+    fn new(render_path: Option<&Bound<'_, PyAny>>, vsync: bool) -> PyResult<Self> {
         let rp = match render_path {
             Some(obj) => parse_render_path(obj)?,
             None => "basic".to_string(),
@@ -270,7 +254,6 @@ impl PyMythRenderer {
             engine: None,
             render_path: rp,
             vsync,
-            clear_color,
             start_time: std::time::Instant::now(),
             last_frame_time: std::time::Instant::now(),
         })
@@ -293,7 +276,7 @@ impl PyMythRenderer {
         }
 
         let raw_window = build_raw_window(window_handle)?;
-        let settings = build_settings(&self.render_path, self.vsync, self.clear_color);
+        let settings = build_settings(&self.render_path, self.vsync);
 
         let mut engine = Engine::new(settings);
         pollster::block_on(engine.init(raw_window, width, height)).map_err(|e| {

@@ -1,6 +1,6 @@
 //! OrbitControls — Three.js-style orbit camera controller.
 
-use glam::Vec3;
+use myth_engine::math::Vec3;
 use pyo3::prelude::*;
 
 use crate::scene::PyObject3D;

@@ -2,13 +2,22 @@ use core::ops::Range;
 use glam::{Affine3A, Vec3, Vec4};
 use rustc_hash::FxHashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
 use uuid::Uuid;
-use wgpu::{BufferUsages, PrimitiveTopology, VertexFormat, VertexStepMode};
+use wgpu::{BufferUsages, PrimitiveTopology, VertexStepMode};
 
 use crate::buffer::BufferRef;
 use crate::primitives;
 use crate::shader_defines::ShaderDefines;
+
+pub use wgpu::{IndexFormat, VertexFormat};
+
+#[derive(Debug, Clone)]
+pub struct IndexAttribute {
+    pub buffer: BufferRef,
+    pub data: Option<Arc<Vec<u8>>>,
+    pub format: IndexFormat,
+    pub count: u32,
+}
 
 /// Attribute holds CPU-side data (`Option<Arc<Vec<u8>>>`) and metadata.
 #[derive(Debug, Clone)]
@@ -17,18 +26,12 @@ pub struct Attribute {
 
     /// CPU-side data shared via Arc (supports interleaved buffers)
     pub data: Option<Arc<Vec<u8>>>,
-
-    /// Data version for change detection
-    pub version: u64,
-
     pub format: VertexFormat,
     pub offset: u64,
     pub count: u32,
     pub stride: u64,
     pub step_mode: VertexStepMode,
 }
-
-static NEXT_ATTR_VERSION: AtomicU64 = AtomicU64::new(1);
 
 impl Attribute {
     /// Creates a Planar (non-interleaved) attribute
@@ -46,7 +49,7 @@ impl Attribute {
         Self {
             buffer: buffer_ref,
             data: Some(Arc::new(raw_data)),
-            version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
+            // version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
             format,
             offset: 0,
             count: data.len() as u32,
@@ -77,7 +80,7 @@ impl Attribute {
         Self {
             buffer: buffer_ref,
             data: Some(Arc::new(data)),
-            version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
+            // version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
             format,
             offset: 0,
             count,
@@ -100,7 +103,7 @@ impl Attribute {
         Self {
             buffer: buffer_ref,
             data: Some(Arc::new(raw_data)),
-            version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
+            // version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
             format,
             offset: 0,
             count: data.len() as u32,
@@ -123,7 +126,7 @@ impl Attribute {
         Self {
             buffer,
             data,
-            version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
+            // version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
             format,
             offset,
             count,
@@ -149,7 +152,8 @@ impl Attribute {
 
             // Update metadata
             self.count = new_data.len() as u32;
-            self.version = NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed);
+            self.buffer.version = self.buffer.version.wrapping_add(1);
+            // self.version = NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed);
         }
     }
 
@@ -165,7 +169,8 @@ impl Attribute {
             // Bounds check
             if end <= vec.len() {
                 vec[start..end].copy_from_slice(bytes);
-                self.version = NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed);
+                self.buffer.version = self.buffer.version.wrapping_add(1);
+                // self.version = NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed);
             }
         }
     }
@@ -326,7 +331,7 @@ pub struct Geometry {
     data_version: u64,
 
     attributes: FxHashMap<String, Attribute>,
-    index_attribute: Option<Attribute>,
+    index_attribute: Option<IndexAttribute>,
 
     #[doc(hidden)]
     pub morph_attributes: FxHashMap<String, Vec<Attribute>>,
@@ -448,11 +453,11 @@ impl Geometry {
 
     // Index attribute accessors
     #[must_use]
-    pub fn index_attribute(&self) -> Option<&Attribute> {
+    pub fn index_attribute(&self) -> Option<&IndexAttribute> {
         self.index_attribute.as_ref()
     }
 
-    pub fn index_attribute_mut(&mut self) -> &mut Option<Attribute> {
+    pub fn index_attribute_mut(&mut self) -> &mut Option<IndexAttribute> {
         self.structure_version = self.structure_version.wrapping_add(1);
         self.data_version = self.data_version.wrapping_add(1);
         &mut self.index_attribute
@@ -647,16 +652,25 @@ impl Geometry {
             Some("IndexBuffer"),
         );
 
-        self.index_attribute = Some(Attribute {
+        // self.index_attribute = Some(Attribute {
+        //     buffer: buffer_ref,
+        //     data: Some(Arc::new(raw_data)),
+        //     version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
+        //     format: VertexFormat::Uint16,
+        //     offset: 0,
+        //     count: indices.len() as u32,
+        //     stride: 2,
+        //     step_mode: VertexStepMode::Vertex,
+        // });
+
+        self.index_attribute = Some(IndexAttribute {
             buffer: buffer_ref,
             data: Some(Arc::new(raw_data)),
-            version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
-            format: VertexFormat::Uint16,
-            offset: 0,
+            // version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
+            format: IndexFormat::Uint16,
             count: indices.len() as u32,
-            stride: 2,
-            step_mode: VertexStepMode::Vertex,
         });
+
         self.structure_version = self.structure_version.wrapping_add(1);
         self.data_version = self.data_version.wrapping_add(1);
     }
@@ -671,16 +685,25 @@ impl Geometry {
             Some("IndexBuffer"),
         );
 
-        self.index_attribute = Some(Attribute {
+        // self.index_attribute = Some(Attribute {
+        //     buffer: buffer_ref,
+        //     data: Some(Arc::new(raw_data)),
+        //     version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
+        //     format: VertexFormat::Uint32,
+        //     offset: 0,
+        //     count: indices.len() as u32,
+        //     stride: 4,
+        //     step_mode: VertexStepMode::Vertex,
+        // });
+
+        self.index_attribute = Some(IndexAttribute {
             buffer: buffer_ref,
             data: Some(Arc::new(raw_data)),
-            version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
-            format: VertexFormat::Uint32,
-            offset: 0,
+            // version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
+            format: IndexFormat::Uint32,
             count: indices.len() as u32,
-            stride: 4,
-            step_mode: VertexStepMode::Vertex,
         });
+
         self.structure_version = self.structure_version.wrapping_add(1);
         self.data_version = self.data_version.wrapping_add(1);
     }
@@ -748,7 +771,7 @@ impl Geometry {
                 let index_bytes = index_bytes.as_ref();
 
                 match index_attr.format {
-                    VertexFormat::Uint16 => {
+                    IndexFormat::Uint16 => {
                         let u16s: &[u16] = bytemuck::cast_slice(index_bytes);
                         for chunk in u16s.chunks_exact(3) {
                             accumulate_triangle(
@@ -758,7 +781,7 @@ impl Geometry {
                             );
                         }
                     }
-                    VertexFormat::Uint32 => {
+                    IndexFormat::Uint32 => {
                         let u32s: &[u32] = bytemuck::cast_slice(index_bytes);
                         for chunk in u32s.chunks_exact(3) {
                             accumulate_triangle(
@@ -768,7 +791,6 @@ impl Geometry {
                             );
                         }
                     }
-                    _ => {} // Unsupported index format
                 }
             }
         } else {
@@ -912,7 +934,7 @@ impl Geometry {
                 buffer: shared_buffer_ref.clone(),
                 data: Some(shared_data.clone()),
 
-                version: 0,
+                // version: 0,
                 format,
                 offset,
                 stride,

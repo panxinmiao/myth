@@ -65,7 +65,7 @@ impl ResourceManager {
         let mut new_vertex_ids = Vec::new();
 
         for attr in geometry.attributes().values() {
-            let result = self.prepare_attribute_buffer(attr);
+            let result = self.prepare_attribute(attr);
             new_vertex_ids.push(result.resource_id);
             if result.was_recreated {
                 any_buffer_recreated = true;
@@ -74,7 +74,7 @@ impl ResourceManager {
 
         let mut new_index_id = None;
         if let Some(indices) = geometry.index_attribute() {
-            let result = self.prepare_attribute_buffer(indices);
+            let result = self.prepare_index(indices);
             new_index_id = Some(result.resource_id);
             if result.was_recreated {
                 any_buffer_recreated = true;
@@ -131,11 +131,12 @@ impl ResourceManager {
             let gpu_buf = self
                 .get_gpu_buffer_by_cpu_id(indices.buffer.id())
                 .expect("Index buffer should be prepared");
-            let format = match indices.format {
-                wgpu::VertexFormat::Uint32 => wgpu::IndexFormat::Uint32,
-                _ => wgpu::IndexFormat::Uint16,
-            };
-            Some((gpu_buf.buffer.clone(), format, indices.count, gpu_buf.id))
+            Some((
+                gpu_buf.buffer.clone(),
+                indices.format,
+                indices.count,
+                gpu_buf.id,
+            ))
         } else {
             None
         };

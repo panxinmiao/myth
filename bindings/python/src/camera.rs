@@ -358,10 +358,8 @@ impl PyPerspectiveCameraComponent {
         with_active_scene(|scene| {
             scene
                 .get_camera(self.handle)
-                .map(|c| PyAntiAliasing {
-                    mode: c.aa_mode.clone(),
-                })
-                .unwrap_or_else(|| PyAntiAliasing::none())
+                .map(|c| PyAntiAliasing { mode: c.aa_mode })
+                .unwrap_or_else(PyAntiAliasing::none)
         })
     }
 
@@ -453,10 +451,8 @@ impl PyOrthographicCameraComponent {
         with_active_scene(|scene| {
             scene
                 .get_camera(self.handle)
-                .map(|c| PyAntiAliasing {
-                    mode: c.aa_mode.clone(),
-                })
-                .unwrap_or_else(|| PyAntiAliasing::none())
+                .map(|c| PyAntiAliasing { mode: c.aa_mode })
+                .unwrap_or_else(PyAntiAliasing::none)
         })
     }
 

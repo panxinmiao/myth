@@ -252,7 +252,7 @@ impl PyCustomGeometry {
                     "position",
                     myth_engine::Attribute::new_planar::<[f32; 3]>(
                         bytemuck::cast_slice(positions),
-                        wgpu::VertexFormat::Float32x3,
+                        myth_engine::VertexFormat::Float32x3,
                     ),
                 );
             }
@@ -262,7 +262,7 @@ impl PyCustomGeometry {
                     "normal",
                     myth_engine::Attribute::new_planar::<[f32; 3]>(
                         bytemuck::cast_slice(normals),
-                        wgpu::VertexFormat::Float32x3,
+                        myth_engine::VertexFormat::Float32x3,
                     ),
                 );
             }
@@ -272,7 +272,7 @@ impl PyCustomGeometry {
                     "uv",
                     myth_engine::Attribute::new_planar::<[f32; 2]>(
                         bytemuck::cast_slice(uvs),
-                        wgpu::VertexFormat::Float32x2,
+                        myth_engine::VertexFormat::Float32x2,
                     ),
                 );
             }

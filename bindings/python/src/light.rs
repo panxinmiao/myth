@@ -6,8 +6,8 @@
 //!   `SpotLightComponent`) — lightweight handles that read/write the *live*
 //!   light component attached to a scene node via `node.light`.
 
-use glam::Vec3;
 use myth_engine::NodeHandle;
+use myth_engine::math::Vec3;
 use myth_engine::scene::light::LightKind;
 use pyo3::prelude::*;
 
@@ -326,10 +326,10 @@ impl PyPointLightComponent {
     #[setter]
     fn set_range(&self, val: f32) -> PyResult<()> {
         with_active_scene(|scene| {
-            if let Some(light) = scene.get_light_mut(self.handle) {
-                if let LightKind::Point(ref mut p) = light.kind {
-                    p.range = val;
-                }
+            if let Some(light) = scene.get_light_mut(self.handle)
+                && let LightKind::Point(ref mut p) = light.kind
+            {
+                p.range = val;
             }
         })
     }
@@ -422,10 +422,10 @@ impl PySpotLightComponent {
     #[setter]
     fn set_range(&self, val: f32) -> PyResult<()> {
         with_active_scene(|scene| {
-            if let Some(light) = scene.get_light_mut(self.handle) {
-                if let LightKind::Spot(ref mut s) = light.kind {
-                    s.range = val;
-                }
+            if let Some(light) = scene.get_light_mut(self.handle)
+                && let LightKind::Spot(ref mut s) = light.kind
+            {
+                s.range = val;
             }
         })
     }
@@ -446,10 +446,10 @@ impl PySpotLightComponent {
     #[setter]
     fn set_inner_cone(&self, val: f32) -> PyResult<()> {
         with_active_scene(|scene| {
-            if let Some(light) = scene.get_light_mut(self.handle) {
-                if let LightKind::Spot(ref mut s) = light.kind {
-                    s.inner_cone = val;
-                }
+            if let Some(light) = scene.get_light_mut(self.handle)
+                && let LightKind::Spot(ref mut s) = light.kind
+            {
+                s.inner_cone = val;
             }
         })
     }
@@ -470,10 +470,10 @@ impl PySpotLightComponent {
     #[setter]
     fn set_outer_cone(&self, val: f32) -> PyResult<()> {
         with_active_scene(|scene| {
-            if let Some(light) = scene.get_light_mut(self.handle) {
-                if let LightKind::Spot(ref mut s) = light.kind {
-                    s.outer_cone = val;
-                }
+            if let Some(light) = scene.get_light_mut(self.handle)
+                && let LightKind::Spot(ref mut s) = light.kind
+            {
+                s.outer_cone = val;
             }
         })
     }
