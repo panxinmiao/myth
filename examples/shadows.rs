@@ -25,7 +25,7 @@ impl AppHandler for SkinningDemo {
         let gltf_path = Path::new(gltf_path_str);
 
         // Load environment map
-        let map_path = "examples/assets/royal_esplanade_2k.hdr.jpg";
+        let map_path = "examples/assets/envs/royal_esplanade_2k.hdr.jpg";
         let env_texture_handle = engine
             .assets
             .load_texture(map_path, ColorSpace::Srgb, false)

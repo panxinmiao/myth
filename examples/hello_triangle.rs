@@ -12,7 +12,7 @@ impl AppHandler for HelloTriangle {
             "position",
             myth::Attribute::new_planar(
                 &[[0.0f32, 0.5, 0.0], [-0.5, -0.5, 0.0], [0.5, -0.5, 0.0]],
-                wgpu::VertexFormat::Float32x3,
+                myth::VertexFormat::Float32x3,
             ),
         );
 
@@ -20,7 +20,7 @@ impl AppHandler for HelloTriangle {
             "uv",
             myth::Attribute::new_planar(
                 &[[0.5f32, 1.0], [0.0, 0.0], [1.0, 0.0]],
-                wgpu::VertexFormat::Float32x2,
+                myth::VertexFormat::Float32x2,
             ),
         );
 

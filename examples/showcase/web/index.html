@@ -3,279 +3,329 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Myth Engine Showcase</title>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600&family=JetBrains+Mono:wght@400&display=swap" rel="stylesheet">
+    <title>Myth Engine — Showcase</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
     <style>
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
         :root {
-            --bg-color: #0a0a0e;
-            --card-bg: #16161e;
-            --text-main: #ffffff;
-            --text-muted: #a9b1d6;
+            --bg: #050507;
+            --glass-bg: rgba(16, 16, 22, 0.55);
+            --glass-border: rgba(255, 255, 255, 0.08);
+            --text: #e8e8ee;
+            --text-muted: #8b8fa3;
             --accent: #7aa2f7;
-            --accent-glow: rgba(122, 162, 247, 0.4);
-            --border: #24283b;
+            --accent-glow: rgba(122, 162, 247, 0.25);
+            --radius: 16px;
+            --transition: 0.35s cubic-bezier(0.25, 0.8, 0.25, 1);
         }
 
-        * { box-sizing: border-box; }
-
-        body {
-            margin: 0;
-            background-color: var(--bg-color);
-            color: var(--text-main);
-            font-family: 'Inter', sans-serif;
-            overflow-x: hidden;
-        }
-
-        /* === Header Section === */
-        header {
-            background: radial-gradient(circle at 50% 0%, #1f2335 0%, var(--bg-color) 100%);
-            padding: 80px 20px 60px;
-            text-align: center;
-            border-bottom: 1px solid var(--border);
-        }
-
-        h1 {
-            font-size: 3.5rem;
-            margin: 0;
-            background: linear-gradient(135deg, #fff 0%, #7aa2f7 100%);
-            -webkit-background-clip: text;
-            background-clip: text;
-            -webkit-text-fill-color: transparent;
-            letter-spacing: -1px;
-        }
-
-        .subtitle {
-            margin-top: 15px;
-            color: var(--text-muted);
-            font-size: 1.2rem;
-            max-width: 600px;
-            margin-left: auto;
-            margin-right: auto;
-            line-height: 1.6;
-        }
-
-        .engine-badge {
-            display: inline-block;
-            margin-top: 20px;
-            background: rgba(122, 162, 247, 0.1);
-            color: var(--accent);
-            padding: 6px 16px;
-            border-radius: 20px;
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.9rem;
-            border: 1px solid rgba(122, 162, 247, 0.2);
-        }
-
-        /* === Grid Section === */
-        .container {
-            max-width: 1400px;
-            margin: 0 auto;
-            padding: 60px 20px;
-        }
-
-        .gallery-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-            gap: 30px;
-        }
-
-        /* === Card Design === */
-        .model-card {
-            background-color: var(--card-bg);
-            border: 1px solid var(--border);
-            border-radius: 16px;
+        html, body {
+            width: 100%; height: 100%;
             overflow: hidden;
-            text-decoration: none;
-            transition: all 0.4s cubic-bezier(0.25, 0.8, 0.25, 1);
-            position: relative;
+            background: var(--bg);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+            color: var(--text);
+            -webkit-font-smoothing: antialiased;
+        }
+
+        /* ── Canvas ─────────────────────────────────────────── */
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            outline: none;
+        }
+
+        /* ── Loading Overlay ────────────────────────────────── */
+        #loading-overlay {
+            position: fixed;
+            inset: 0;
+            z-index: 1000;
+            background: var(--bg);
             display: flex;
             flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 28px;
+            transition: opacity 1s ease, visibility 1s ease;
         }
 
-        .model-card:hover {
-            transform: translateY(-10px);
-            box-shadow: 0 20px 40px -5px rgba(0, 0, 0, 0.5);
-            border-color: var(--accent);
+        #loading-overlay.fade-out {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
         }
 
-        /* Image Container */
-        .card-image-wrapper {
-            width: 100%;
-            height: 220px;
-            overflow: hidden;
-            background: #000;
-            position: relative;
-        }
-
-        .card-image {
-            width: 100%;
-            height: 100%;
-            object-fit: cover;
-            transition: transform 0.6s ease;
-            opacity: 0.9;
-        }
-
-        .model-card:hover .card-image {
-            transform: scale(1.05);
-            opacity: 1;
-        }
-
-        /* Overlay Icon on Hover */
-        .play-icon {
-            position: absolute;
-            top: 50%; left: 50%;
-            transform: translate(-50%, -50%) scale(0.5);
-            width: 50px; height: 50px;
-            background: rgba(0,0,0,0.6);
+        .loader-ring {
+            width: 48px; height: 48px;
+            border: 2px solid rgba(255,255,255,0.06);
+            border-top-color: var(--accent);
             border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+        }
+
+        .loader-label {
+            font-size: 0.8rem;
+            font-weight: 500;
+            letter-spacing: 3px;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            animation: pulse 2s ease-in-out infinite;
+        }
+
+        .loader-brand {
+            position: absolute;
+            bottom: 40px;
+            font-size: 0.7rem;
+            letter-spacing: 1.5px;
+            color: rgba(255,255,255,0.15);
+            text-transform: uppercase;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+
+        /* ── Top Bar ────────────────────────────────────────── */
+        .top-bar {
+            position: fixed;
+            top: 0; left: 0; right: 0;
+            z-index: 50;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 28px;
+            pointer-events: none;
+            opacity: 0;
+            transform: translateY(-8px);
+            transition: opacity 0.6s ease 0.3s, transform 0.6s ease 0.3s;
+        }
+
+        .top-bar.visible {
+            opacity: 1;
+            transform: translateY(0);
+        }
+
+        .brand {
+            pointer-events: auto;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            text-decoration: none;
+            color: var(--text);
+        }
+
+        .brand-icon {
+            width: 28px; height: 28px;
+            background: linear-gradient(135deg, var(--accent), #bb9af7);
+            border-radius: 7px;
             display: flex;
             align-items: center;
             justify-content: center;
-            opacity: 0;
-            transition: all 0.3s ease;
-            backdrop-filter: blur(4px);
-            border: 1px solid rgba(255,255,255,0.2);
-        }
-        
-        .play-icon::after {
-            content: '';
-            border-style: solid;
-            border-width: 8px 0 8px 14px;
-            border-color: transparent transparent transparent #fff;
-            margin-left: 4px;
+            font-size: 14px;
+            font-weight: 700;
+            color: #000;
         }
 
-        .model-card:hover .play-icon {
-            opacity: 1;
-            transform: translate(-50%, -50%) scale(1);
-        }
-
-        /* Info Section */
-        .card-info {
-            padding: 20px;
-            flex-grow: 1;
-            display: flex;
-            flex-direction: column;
-            justify-content: space-between;
-        }
-
-        .card-title {
-            color: var(--text-main);
-            font-size: 1.15rem;
+        .brand-text {
+            font-size: 0.85rem;
             font-weight: 600;
-            margin-bottom: 8px;
+            letter-spacing: 0.5px;
         }
 
-        .card-meta {
+        .github-link {
+            pointer-events: auto;
             display: flex;
-            justify-content: space-between;
             align-items: center;
-            margin-top: 15px;
-        }
-
-        .tag {
-            font-size: 0.75rem;
+            gap: 6px;
             color: var(--text-muted);
-            background: #1f2335;
-            padding: 4px 10px;
-            border-radius: 6px;
-            font-weight: 500;
+            text-decoration: none;
+            font-size: 0.8rem;
+            font-weight: 400;
+            padding: 6px 14px;
+            border-radius: 20px;
+            border: 1px solid var(--glass-border);
+            background: var(--glass-bg);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            transition: color var(--transition), border-color var(--transition);
         }
 
-        .arrow {
-            color: var(--accent);
+        .github-link:hover {
+            color: var(--text);
+            border-color: rgba(255,255,255,0.2);
+        }
+
+        .github-link svg {
+            width: 16px; height: 16px;
+            fill: currentColor;
+        }
+
+        /* ── Bottom Controls ────────────────────────────────── */
+        .controls {
+            position: fixed;
+            bottom: 32px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 50;
+            display: flex;
+            gap: 4px;
+            padding: 5px;
+            background: var(--glass-bg);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid var(--glass-border);
+            border-radius: 28px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
             opacity: 0;
-            transform: translateX(-10px);
-            transition: all 0.3s ease;
+            transform: translateX(-50%) translateY(12px);
+            transition: opacity 0.6s ease 0.5s, transform 0.6s ease 0.5s;
         }
 
-        .model-card:hover .arrow {
+        .controls.visible {
             opacity: 1;
-            transform: translateX(0);
+            transform: translateX(-50%) translateY(0);
+        }
+
+        .preset-btn {
+            position: relative;
+            appearance: none;
+            border: none;
+            background: transparent;
+            color: var(--text-muted);
+            font-family: inherit;
+            font-size: 0.82rem;
+            font-weight: 500;
+            padding: 10px 26px;
+            border-radius: 22px;
+            cursor: pointer;
+            transition: color var(--transition), background var(--transition),
+                        box-shadow var(--transition);
+            white-space: nowrap;
+            user-select: none;
+        }
+
+        .preset-btn:hover {
+            color: var(--text);
+            background: rgba(255,255,255,0.04);
+        }
+
+        .preset-btn.active {
+            color: #fff;
+            background: rgba(255,255,255,0.12);
+            box-shadow: 0 2px 12px var(--accent-glow);
+        }
+
+        /* ── Hint ───────────────────────────────────────────── */
+        .hint {
+            position: fixed;
+            bottom: 90px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 40;
+            font-size: 0.7rem;
+            color: rgba(255,255,255,0.2);
+            letter-spacing: 1px;
+            opacity: 0;
+            transition: opacity 3s ease 2s;
+            pointer-events: none;
+        }
+
+        .hint.visible { opacity: 1; }
+
+        /* ── Responsive ─────────────────────────────────────── */
+        @media (max-width: 600px) {
+            .top-bar { padding: 14px 16px; }
+            .brand-text { display: none; }
+            .preset-btn { padding: 8px 16px; font-size: 0.75rem; }
+            .controls { bottom: 20px; }
+            .hint { bottom: 72px; }
         }
     </style>
 </head>
 <body>
-
-    <header>
-        <div class="engine-badge">MYTH ENGINE v0.1.0</div>
-        <h1>High Performance Rendering</h1>
-        <p class="subtitle">
-            A Rust-based real-time 3D rendering engine. 
-            Featuring PBR pipeline, glTF support, and efficient resource management.
-        </p>
-    </header>
-
-    <div class="container">
-        <div class="gallery-grid" id="gallery">
-            </div>
+    <!-- Loading Overlay -->
+    <div id="loading-overlay">
+        <div class="loader-ring"></div>
+        <div class="loader-label">Preparing Scene</div>
+        <div class="loader-brand">Myth Engine</div>
     </div>
 
-    <script>
-        const BASE_URL= "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/";
-        
-        const models = [
-            { name: "Damaged Helmet", path: "DamagedHelmet", type: "glb" },
-            { name: "Sci-Fi Game Board", path: "ABeautifulGame", type: "glb" },
-            { name: "Chronograph Watch", path: "ChronographWatch", type: "glb" },
-            { name: "Glass Hurricane", path: "GlassHurricaneCandleHolder", type: "glb" },
-            { name: "Vintage Fridge", path: "CommercialRefrigerator", type: "glb" },
-            { name: "Iridescence Lamp", path: "IridescenceLamp", type: "glb" },
-            { name: "Olives Dish", path: "IridescentDishWithOlives", type: "glb" },
-            { name: "Mosquito Amber", path: "MosquitoInAmber", type: "glb" },
-            { name: "Velvet Chair", path: "SheenChair", type: "glb" },
-            { name: "Khronos Sunglasses", path: "SunglassesKhronos", type: "glb" },
-            { name: "Toy Car", path: "ToyCar", type: "glb" },
-            { name: "Sheen Cloth", path: "SheenCloth", type: "gltf" },
-            { name: "Stained Glass Lamp", path: "StainedGlassLamp", type: "gltf" },
-            { name: "Silk Pouf", path: "SpecularSilkPouf", type: "glb" },
-            { name: "Concept Car", path: "CarConcept", type: "glb" },
-            { name: "Pot Of Coals", path: "PotOfCoals", type: "glb" },
-        ];
+    <!-- WebGPU Canvas -->
+    <canvas id="myth-canvas"></canvas>
 
-        const container = document.getElementById('gallery');
+    <!-- Top Bar -->
+    <div class="top-bar" id="top-bar">
+        <a class="brand" href="#">
+            <div class="brand-icon">M</div>
+            <span class="brand-text">Myth Engine</span>
+        </a>
+        <a class="github-link" href="https://github.com/panxinmiao/myth" target="_blank" rel="noopener">
+            <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+            GitHub
+        </a>
+    </div>
 
-        models.forEach(model => {
+    <!-- Preset Controls -->
+    <div class="controls" id="controls">
+        <button class="preset-btn active" data-preset="0">Daylight</button>
+        <button class="preset-btn" data-preset="1">Studio</button>
+        <button class="preset-btn" data-preset="2">Cinematic</button>
+    </div>
 
-            if (model.type === undefined) {
-                model.type = "glb";
+    <!-- Interaction Hint -->
+    <div class="hint" id="hint">Drag to orbit &middot; Scroll to zoom</div>
+
+    <script type="module">
+        import init, { switch_preset } from './pkg/showcase.js';
+
+        async function run() {
+            try {
+                await init();
+                console.log('[Myth] WASM initialized');
+            } catch (e) {
+                console.error('[Myth] Init failed:', e);
+                const label = document.querySelector('.loader-label');
+                if (label) {
+                    label.textContent = 'WebGPU is required';
+                    label.style.color = '#f7768e';
+                }
+                document.querySelector('.loader-ring')?.remove();
+                return;
             }
 
-            let variant = "glTF-Binary";
+            // Reveal UI after loading overlay fades out
+            const observer = new MutationObserver(() => {
+                const overlay = document.getElementById('loading-overlay');
+                if (overlay && overlay.classList.contains('fade-out')) {
+                    document.getElementById('top-bar')?.classList.add('visible');
+                    document.getElementById('controls')?.classList.add('visible');
+                    document.getElementById('hint')?.classList.add('visible');
+                    observer.disconnect();
+                    // Auto-hide hint after a few seconds
+                    setTimeout(() => {
+                        const hint = document.getElementById('hint');
+                        if (hint) hint.style.opacity = '0';
+                    }, 8000);
+                }
+            });
+            observer.observe(document.getElementById('loading-overlay'), {
+                attributes: true, attributeFilter: ['class']
+            });
 
-            if (model.type == "glb") {
-                variant = "glTF-Binary";
-            } else if (model.type == "gltf") {
-                variant = "glTF";
-            }
+            // Preset button bindings
+            const buttons = document.querySelectorAll('.preset-btn');
+            buttons.forEach(btn => {
+                btn.addEventListener('click', () => {
+                    buttons.forEach(b => b.classList.remove('active'));
+                    btn.classList.add('active');
+                    switch_preset(parseInt(btn.dataset.preset, 10));
+                });
+            });
+        }
 
-            const glbUrl = `${BASE_URL}${model.path}/${variant}/${model.path}.${model.type}`;
-            
-            let imgExt = "jpg";
-            if (model.path === "DamagedHelmet") imgExt = "png";
-            
-            const imgUrl = `${BASE_URL}${model.path}/screenshot/screenshot.${imgExt}`;
-
-            const link = document.createElement('a');
-            link.className = 'model-card';
-            link.href = `viewer.html?model=${encodeURIComponent(glbUrl)}`;
-            link.target = "_blank"; 
-
-            link.innerHTML = `
-                <div class="card-image-wrapper">
-                    <img src="${imgUrl}" alt="${model.name}" class="card-image" loading="lazy">
-                    <div class="play-icon"></div>
-                </div>
-                <div class="card-info">
-                    <div class="card-title">${model.name}</div>
-                    <div class="card-meta">
-                        <span class="tag">glTF 2.0</span>
-                        <span class="arrow">View Demo &rarr;</span>
-                    </div>
-                </div>
-            `;
-            container.appendChild(link);
-        });
+        run();
     </script>
 </body>
 </html>

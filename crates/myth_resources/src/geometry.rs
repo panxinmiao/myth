@@ -49,7 +49,6 @@ impl Attribute {
         Self {
             buffer: buffer_ref,
             data: Some(Arc::new(raw_data)),
-            // version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
             format,
             offset: 0,
             count: data.len() as u32,
@@ -63,6 +62,7 @@ impl Attribute {
     /// Used by the quantised geometry pipeline where vertex data is already in its
     /// final GPU-ready byte layout (e.g. `Snorm16x4`) and no further CPU-side
     /// conversion is needed.
+    #[must_use]
     pub fn new_from_owned_bytes(
         data: Vec<u8>,
         format: VertexFormat,
@@ -80,7 +80,6 @@ impl Attribute {
         Self {
             buffer: buffer_ref,
             data: Some(Arc::new(data)),
-            // version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
             format,
             offset: 0,
             count,
@@ -103,7 +102,6 @@ impl Attribute {
         Self {
             buffer: buffer_ref,
             data: Some(Arc::new(raw_data)),
-            // version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
             format,
             offset: 0,
             count: data.len() as u32,
@@ -114,6 +112,7 @@ impl Attribute {
 
     /// Creates an Interleaved attribute
     /// Multiple Attributes can share the same `BufferRef` and data (Arc)
+    #[must_use]
     pub fn new_interleaved(
         buffer: BufferRef,
         data: Option<Arc<Vec<u8>>>,
@@ -126,7 +125,6 @@ impl Attribute {
         Self {
             buffer,
             data,
-            // version: NEXT_ATTR_VERSION.fetch_add(1, Ordering::Relaxed),
             format,
             offset,
             count,

@@ -11,7 +11,7 @@ struct HttpGltfExample {
 
 impl AppHandler for HttpGltfExample {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
-        let map_path = "examples/assets/royal_esplanade_2k.hdr.jpg";
+        let map_path = "examples/assets/envs/royal_esplanade_2k.hdr.jpg";
 
         let env_texture_handle = engine
             .assets

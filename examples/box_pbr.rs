@@ -34,12 +34,12 @@ impl AppHandler for PbrBox {
             .assets
             .load_cube_texture(
                 [
-                    "examples/assets/Park2/posx.jpg",
-                    "examples/assets/Park2/negx.jpg",
-                    "examples/assets/Park2/posy.jpg",
-                    "examples/assets/Park2/negy.jpg",
-                    "examples/assets/Park2/posz.jpg",
-                    "examples/assets/Park2/negz.jpg",
+                    "examples/assets/envs/Park2/posx.jpg",
+                    "examples/assets/envs/Park2/negx.jpg",
+                    "examples/assets/envs/Park2/posy.jpg",
+                    "examples/assets/envs/Park2/negy.jpg",
+                    "examples/assets/envs/Park2/posz.jpg",
+                    "examples/assets/envs/Park2/negz.jpg",
                 ],
                 ColorSpace::Srgb,
                 true,

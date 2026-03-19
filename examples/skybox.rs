@@ -96,19 +96,19 @@ impl AppHandler for SkyboxDemo {
         // --- Load HDR environment texture (used for both IBL and equirectangular skybox) ---
         let env_texture = engine
             .assets
-            .load_hdr_texture("examples/assets/royal_esplanade_2k.hdr.jpg")
+            .load_hdr_texture("examples/assets/envs/royal_esplanade_2k.hdr.jpg")
             .expect("Failed to load HDR environment map");
 
         let cube_env_texture = engine
             .assets
             .load_cube_texture(
                 [
-                    "examples/assets/Park2/posx.jpg",
-                    "examples/assets/Park2/negx.jpg",
-                    "examples/assets/Park2/posy.jpg",
-                    "examples/assets/Park2/negy.jpg",
-                    "examples/assets/Park2/posz.jpg",
-                    "examples/assets/Park2/negz.jpg",
+                    "examples/assets/envs/Park2/posx.jpg",
+                    "examples/assets/envs/Park2/negx.jpg",
+                    "examples/assets/envs/Park2/posy.jpg",
+                    "examples/assets/envs/Park2/negy.jpg",
+                    "examples/assets/envs/Park2/posz.jpg",
+                    "examples/assets/envs/Park2/negz.jpg",
                 ],
                 ColorSpace::Srgb,
                 true,

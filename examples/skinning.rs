@@ -29,7 +29,7 @@ impl AppHandler for SkinningDemo {
         let env_texture_handle = engine
             .assets
             .load_texture(
-                "examples/assets/royal_esplanade_2k.hdr.jpg",
+                "examples/assets/envs/royal_esplanade_2k.hdr.jpg",
                 ColorSpace::Srgb,
                 false,
             )

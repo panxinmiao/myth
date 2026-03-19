@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Myth Engine Viewer</title>
+    <style>
+        :root {
+            --bg-color: #0f0f13;
+            --accent: #64ffda;
+        }
+
+        body { 
+            margin: 0; 
+            padding: 0; 
+            overflow: hidden; 
+            background-color: var(--bg-color); 
+            font-family: 'Segoe UI', sans-serif;
+        }
+
+        canvas { 
+            display: block; 
+            width: 100vw; 
+            height: 100vh; 
+            outline: none;
+        }
+        
+        /* === Loading Overlay === */
+        #loading-overlay {
+            position: absolute;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(15, 15, 19, 0.95);
+            backdrop-filter: blur(10px);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+            transition: opacity 0.8s ease-out, visibility 0.8s;
+        }
+
+        /* 隐藏状态：透明且不可点击 */
+        #loading-overlay.hidden {
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+        }
+
+        /* CSS Spinner 动画 */
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 3px solid rgba(255, 255, 255, 0.1);
+            border-radius: 50%;
+            border-top-color: var(--accent);
+            animation: spin 1s ease-in-out infinite;
+            margin-bottom: 20px;
+        }
+
+        .loading-text {
+            color: var(--accent);
+            font-size: 14px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            animation: pulse 1.5s infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+    </style>
+</head>
+<body>
+    <div id="loading-overlay">
+        <div class="spinner"></div>
+        <div class="loading-text">Loading Model...</div>
+    </div>
+
+    <canvas id="myth-canvas"></canvas>
+
+    <script type="module">
+        import init from './pkg/showcase.js';
+
+        async function run() {
+            try {
+                await init();
+                console.log("WASM Initialized. Waiting for model...");
+            } catch (e) {
+                console.error("Failed to start engine:", e);
+                const text = document.querySelector('.loading-text');
+                if(text) text.innerText = "Error: " + e;
+                const spinner = document.querySelector('.spinner');
+                if(spinner) spinner.style.borderColor = 'red';
+            }
+        }
+
+        run();
+    </script>
+</body>
+</html>

@@ -414,7 +414,7 @@ impl AppHandler for GltfViewer {
 
         let asset_server = engine.assets.clone();
         execute_future(async move {
-            let map_path = "royal_esplanade_2k.hdr.jpg";
+            let map_path = "envs/royal_esplanade_2k.hdr.jpg";
             let env_map_path = format!("{}{}", ASSET_PATH, map_path);
 
             // match asset_server.load_cube_texture_async(env_map_path, ColorSpace::Srgb, true).await {

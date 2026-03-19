@@ -286,12 +286,8 @@ impl ResourceManager {
         attr: &myth_resources::geometry::Attribute,
     ) -> EnsureResult {
         match &attr.data {
-            Some(d) => {
-                self.ensure_buffer_ref(&attr.buffer, d).1
-            },
-            None => {
-                self.ensure_buffer_ref(&attr.buffer, &[0u8]).1
-            }
+            Some(d) => self.ensure_buffer_ref(&attr.buffer, d).1,
+            None => self.ensure_buffer_ref(&attr.buffer, &[0u8]).1,
         }
     }
 
@@ -300,12 +296,8 @@ impl ResourceManager {
         indices: &myth_resources::geometry::IndexAttribute,
     ) -> EnsureResult {
         match &indices.data {
-            Some(d) => {
-                self.ensure_buffer_ref(&indices.buffer, d).1
-            },
-            None => {
-                self.ensure_buffer_ref(&indices.buffer, &[0u8]).1
-            }
+            Some(d) => self.ensure_buffer_ref(&indices.buffer, d).1,
+            None => self.ensure_buffer_ref(&indices.buffer, &[0u8]).1,
         }
     }
 
