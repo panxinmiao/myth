@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](LICENSE)
 [![WebGPU Ready](https://img.shields.io/badge/WebGPU-Ready-green.svg)](https://gpuweb.github.io/gpuweb/)
 
-![Myth Engine Hero](docs/images/hero.png)
+[![Myth Engine Hero](docs/images/hero.png)](https://panxinmiao.github.io/myth/)
 
 [**Showcase**](https://panxinmiao.github.io/myth/) | [**glTF Viewer & Inspector**](https://panxinmiao.github.io/myth/gltf_viewer/)  | [**Examples**](examples/)
 
@@ -57,7 +57,7 @@ Inspired by the ergonomic simplicity of **Three.js** and built on the modern pow
         * **HDR Bloom**: Physically-based bloom.
         * **Color Grading**: 3D LUT-based color grading.
         * **Stylization**: Adjustable contrast/saturation, film grain, chromatic aberration, and vignette effects.
-    * **Anti-Aliasing**: MXAA, FXAA, TAA.
+    * **Anti-Aliasing**: MSAA, FXAA, and Temporal Anti-Aliasing (TAA).
 
 * **Assets & Tooling**
     * **Full glTF 2.0 Support**: Comprehensive support for the glTF 2.0 specification, including PBR materials, skeletal animations, morph targets, and scene hierarchy.
@@ -295,14 +295,15 @@ cargo run --example earth --release
 # Run the glTF Viewer (Desktop)
 cargo run --example gltf_viewer --release
 
-# Run the glTF Viewer (Web/WASM)
-# gltf_viewer example also includes an embedded Inspector UI
-./scripts/build_wasm.sh gltf_viewer
-python -m http.server 8080 --directory examples\gltf_viewer\web
+# Run the Cinematic Showcase (Web/WASM)
+# Add `gltf-meshopt` feature to enable glTF mesh optimization with MeshOptimizer.
+./scripts/build_wasm.sh showcase ---features="gltf-meshopt"
+python3 -m http.server 8080 --directory examples/showcase/web
 
-# Run the Showcase example (Web/WASM)
-./scripts/build_wasm.sh showcase
-python -m http.server 8080 --directory examples\showcase\web
+# Run the glTF Viewer (Web/WASM)
+# Add `rdg_inspector` feature to enable beautiful RenderGraph visualization.
+./scripts/build_wasm.sh gltf_viewer ---features="rdg_inspector"
+python3 -m http.server 8080 --directory examples/gltf_viewer/web
 
 ```
 

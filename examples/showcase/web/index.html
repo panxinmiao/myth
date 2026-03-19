@@ -242,6 +242,126 @@
             .controls { bottom: 20px; }
             .hint { bottom: 72px; }
         }
+
+        /* ── Top Actions ────────────────────────────────────── */
+        .top-actions {
+            pointer-events: auto;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .icon-btn {
+            background: var(--glass-bg);
+            border: 1px solid var(--glass-border);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            color: var(--text-muted);
+            width: 32px; height: 32px;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: color var(--transition), border-color var(--transition);
+        }
+
+        .icon-btn:hover {
+            color: var(--text);
+            border-color: rgba(255,255,255,0.2);
+        }
+
+        /* ── Credits Modal ──────────────────────────────────── */
+        .credits-modal {
+            position: fixed;
+            inset: 0;
+            z-index: 200;
+            background: rgba(0, 0, 0, 0.4);
+            backdrop-filter: blur(8px);
+            -webkit-backdrop-filter: blur(8px);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            opacity: 0;
+            visibility: hidden;
+            transition: opacity 0.4s ease, visibility 0.4s ease;
+        }
+
+        .credits-modal.active {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .credits-content {
+            position: relative;
+            background: rgba(16, 16, 22, 0.85);
+            border: 1px solid var(--glass-border);
+            border-radius: 20px;
+            padding: 32px 40px;
+            width: 90%;
+            max-width: 420px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1);
+            transform: translateY(20px) scale(0.95);
+            transition: transform 0.4s cubic-bezier(0.25, 1, 0.5, 1);
+        }
+
+        .credits-modal.active .credits-content {
+            transform: translateY(0) scale(1);
+        }
+
+        .credits-content h3 {
+            margin-bottom: 24px;
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #fff;
+            letter-spacing: 0.5px;
+        }
+
+        .credit-item {
+            margin-bottom: 18px;
+        }
+        
+        .credit-item:last-child { margin-bottom: 0; }
+
+        .credit-label {
+            font-size: 0.75rem;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--text-muted);
+            margin-bottom: 6px;
+            font-weight: 600;
+        }
+
+        .credit-val {
+            font-size: 0.9rem;
+            color: var(--text);
+            line-height: 1.5;
+        }
+
+        .credit-val a {
+            color: var(--accent);
+            text-decoration: none;
+            transition: text-shadow 0.2s;
+        }
+
+        .credit-val a:hover {
+            text-shadow: 0 0 8px var(--accent-glow);
+            text-decoration: underline;
+        }
+
+        .close-btn {
+            position: absolute;
+            top: 20px; right: 20px;
+            background: transparent;
+            border: none;
+            color: var(--text-muted);
+            font-size: 1.5rem;
+            cursor: pointer;
+            transition: color 0.2s;
+            line-height: 1;
+        }
+
+        .close-btn:hover { color: #fff; }
     </style>
 </head>
 <body>
@@ -261,17 +381,58 @@
             <div class="brand-icon">M</div>
             <span class="brand-text">Myth Engine</span>
         </a>
-        <a class="github-link" href="https://github.com/panxinmiao/myth" target="_blank" rel="noopener">
+
+        <div class="top-actions">
+            <button class="icon-btn" id="info-btn" title="Scene Credits">
+                <svg viewBox="0 0 24 24" width="16" height="16" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="16" x2="12" y2="12"></line><line x1="12" y1="8" x2="12.01" y2="8"></line></svg>
+            </button>
+            
+            <a class="github-link" href="https://github.com/panxinmiao/myth" target="_blank" rel="noopener">
+                <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+                GitHub
+            </a>
+        </div>
+
+        <!-- <a class="github-link" href="https://github.com/panxinmiao/myth" target="_blank" rel="noopener">
             <svg viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
             GitHub
-        </a>
+        </a> -->
+    </div>
+
+    <div class="credits-modal" id="credits-modal">
+        <div class="credits-content">
+            <button class="close-btn" id="close-credits">&times;</button>
+            <h3>Scene Info & Credits</h3>
+            
+            <div class="credit-item">
+                <div class="credit-label">3D Model</div>
+                <div class="credit-val">
+                    <a href="https://sketchfab.com/3d-models/cutegirl-g1-4420eff446f047d89705091803bf3e8b" target="_blank" rel="noopener">"Cute Girl"</a> by tcube (Sketchfab)
+                </div>
+            </div>
+
+            <div class="credit-item">
+                <div class="credit-label">Asset Pipeline</div>
+                <div class="credit-val">
+                    Optimized via <a href="https://gltf-transform.dev/" target="_blank" rel="noopener">glTF-Transform</a><br>
+                    <span style="font-size: 0.75rem; color: var(--text-muted);">Meshopt Compression </span>
+                </div>
+            </div>
+
+            <div class="credit-item">
+                <div class="credit-label">Environment (HDR)</div>
+                <div class="credit-val">
+                    Sourced from <a href="https://polyhaven.com/" target="_blank" rel="noopener">Poly Haven</a>
+                </div>
+            </div>
+        </div>
     </div>
 
     <!-- Preset Controls -->
     <div class="controls" id="controls">
-        <button class="preset-btn active" data-preset="0">Daylight</button>
+        <button class="preset-btn active" data-preset="0">Cinematic</button>
         <button class="preset-btn" data-preset="1">Studio</button>
-        <button class="preset-btn" data-preset="2">Cinematic</button>
+        <button class="preset-btn" data-preset="2">Daylight</button>
     </div>
 
     <!-- Interaction Hint -->
@@ -323,9 +484,31 @@
                     switch_preset(parseInt(btn.dataset.preset, 10));
                 });
             });
+
+
+            // --- Info Modal Logic ---
+            const infoBtn = document.getElementById('info-btn');
+            const closeBtn = document.getElementById('close-credits');
+            const modal = document.getElementById('credits-modal');
+
+            infoBtn.addEventListener('click', () => {
+                modal.classList.add('active');
+            });
+
+            closeBtn.addEventListener('click', () => {
+                modal.classList.remove('active');
+            });
+
+            modal.addEventListener('click', (e) => {
+                if (e.target === modal) {
+                    modal.classList.remove('active');
+                }
+            });
         }
 
         run();
     </script>
+
+    
 </body>
 </html>

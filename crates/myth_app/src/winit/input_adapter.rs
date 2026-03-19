@@ -5,7 +5,7 @@
 use winit::event::{ElementState, MouseScrollDelta, WindowEvent};
 use winit::keyboard::{KeyCode, PhysicalKey};
 
-use myth_resources::input::{ButtonState, Input, Key, MouseButton};
+use myth_resources::input::{ButtonState, Input, Key, MouseButton, TouchPhase};
 
 /// Translates Winit's `PhysicalKey` to the engine's `Key`.
 #[must_use]
@@ -158,6 +158,17 @@ pub fn translate_element_state(state: ElementState) -> ButtonState {
     }
 }
 
+/// Translates Winit's `TouchPhase` to the engine's `TouchPhase`.
+#[must_use]
+pub fn translate_touch_phase(phase: winit::event::TouchPhase) -> TouchPhase {
+    match phase {
+        winit::event::TouchPhase::Started => TouchPhase::Started,
+        winit::event::TouchPhase::Moved => TouchPhase::Moved,
+        winit::event::TouchPhase::Ended => TouchPhase::Ended,
+        winit::event::TouchPhase::Cancelled => TouchPhase::Cancelled,
+    }
+}
+
 /// Processes a Winit window event and injects it into `Input`.
 pub fn process_window_event(input: &mut Input, event: &WindowEvent) {
     match event {
@@ -187,6 +198,16 @@ pub fn process_window_event(input: &mut Input, event: &WindowEvent) {
                 }
             };
             input.inject_scroll(dx, dy);
+        }
+
+        WindowEvent::Touch(touch) => {
+            let phase = translate_touch_phase(touch.phase);
+            input.inject_touch(
+                touch.id,
+                phase,
+                touch.location.x as f32,
+                touch.location.y as f32,
+            );
         }
 
         WindowEvent::Resized(size) => {

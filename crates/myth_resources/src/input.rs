@@ -5,7 +5,7 @@
 //! platform events into these types.
 
 use glam::Vec2;
-use std::collections::HashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Keyboard key enumeration (platform-agnostic)
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
@@ -143,18 +143,27 @@ pub enum ButtonState {
     Released,
 }
 
+/// Platform-agnostic touch phase
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum TouchPhase {
+    Started,
+    Moved,
+    Ended,
+    Cancelled,
+}
+
 /// Platform-agnostic input state container
 #[derive(Debug, Clone)]
 pub struct Input {
     // Keyboard state
-    pressed_keys: HashSet<Key>,
-    just_pressed_keys: HashSet<Key>,
-    just_released_keys: HashSet<Key>,
+    pressed_keys: FxHashSet<Key>,
+    just_pressed_keys: FxHashSet<Key>,
+    just_released_keys: FxHashSet<Key>,
 
     // Mouse button state
-    pressed_mouse: HashSet<MouseButton>,
-    just_pressed_mouse: HashSet<MouseButton>,
-    just_released_mouse: HashSet<MouseButton>,
+    pressed_mouse: FxHashSet<MouseButton>,
+    just_pressed_mouse: FxHashSet<MouseButton>,
+    just_released_mouse: FxHashSet<MouseButton>,
 
     // Mouse position and movement
     mouse_position: Vec2,
@@ -163,22 +172,26 @@ pub struct Input {
 
     // Window state
     screen_size: Vec2,
+
+    // Touch state
+    touches: FxHashMap<u64, Vec2>,
 }
 
 impl Input {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            pressed_keys: HashSet::new(),
-            just_pressed_keys: HashSet::new(),
-            just_released_keys: HashSet::new(),
-            pressed_mouse: HashSet::new(),
-            just_pressed_mouse: HashSet::new(),
-            just_released_mouse: HashSet::new(),
+            pressed_keys: FxHashSet::default(),
+            just_pressed_keys: FxHashSet::default(),
+            just_released_keys: FxHashSet::default(),
+            pressed_mouse: FxHashSet::default(),
+            just_pressed_mouse: FxHashSet::default(),
+            just_released_mouse: FxHashSet::default(),
             mouse_position: Vec2::ZERO,
             mouse_delta: Vec2::ZERO,
             scroll_delta: Vec2::ZERO,
             screen_size: Vec2::ZERO,
+            touches: FxHashMap::default(),
         }
     }
 
@@ -245,6 +258,91 @@ impl Input {
         self.screen_size = Vec2::new(width as f32, height as f32);
     }
 
+    /// Injects a touch event (for mobile platforms)
+    pub fn inject_touch(&mut self, id: u64, phase: TouchPhase, x: f32, y: f32) {
+        let current_pos = Vec2::new(x, y);
+
+        match phase {
+            TouchPhase::Started => {
+                self.touches.insert(id, current_pos);
+
+                if self.touches.len() == 1 {
+                    // single touch: simulate left mouse button down (rotate)
+                    self.mouse_position = current_pos; // 防止镜头跳跃
+                    self.inject_mouse_button(MouseButton::Left, ButtonState::Pressed);
+                } else if self.touches.len() == 2 {
+                    // two-finger touch: release left button, simulate right button down (Pan), and prepare for pinch zoom
+                    self.inject_mouse_button(MouseButton::Left, ButtonState::Released);
+                    self.inject_mouse_button(MouseButton::Right, ButtonState::Pressed);
+                    self.mouse_position = self.calculate_touch_center();
+                }
+            }
+            TouchPhase::Moved => {
+                if self.touches.len() == 2 {
+                    // two-finger move: pan + pinch zoom
+                    let old_center = self.calculate_touch_center();
+                    let old_dist = self.calculate_touch_distance();
+
+                    self.touches.insert(id, current_pos);
+
+                    let new_center = self.calculate_touch_center();
+                    let new_dist = self.calculate_touch_distance();
+
+                    // simulate pan (mouse movement)
+                    self.mouse_delta += new_center - old_center;
+                    self.mouse_position = new_center;
+
+                    // simulate zoom (mouse wheel)
+                    // multiply by 0.1 as a moderate zoom damping factor
+                    let zoom_delta = (new_dist - old_dist) * 0.1;
+                    self.scroll_delta.y += zoom_delta;
+                } else if self.touches.len() == 1 {
+                    // single touch move: rotate
+                    self.touches.insert(id, current_pos);
+                    self.mouse_delta += current_pos - self.mouse_position;
+                    self.mouse_position = current_pos;
+                } else {
+                    // more than two fingers, just record positions
+                    self.touches.insert(id, current_pos);
+                }
+            }
+            TouchPhase::Ended | TouchPhase::Cancelled => {
+                self.touches.remove(&id);
+
+                if self.touches.is_empty() {
+                    // all fingers lifted: release all buttons
+                    self.inject_mouse_button(MouseButton::Left, ButtonState::Released);
+                    self.inject_mouse_button(MouseButton::Right, ButtonState::Released);
+                } else if self.touches.len() == 1 {
+                    // from two fingers to one: return to rotate mode
+                    self.inject_mouse_button(MouseButton::Right, ButtonState::Released);
+                    self.inject_mouse_button(MouseButton::Left, ButtonState::Pressed);
+                    self.mouse_position = self.calculate_touch_center();
+                }
+            }
+        }
+    }
+
+    fn calculate_touch_center(&self) -> Vec2 {
+        if self.touches.is_empty() {
+            return Vec2::ZERO;
+        }
+        let mut sum = Vec2::ZERO;
+        for pos in self.touches.values() {
+            sum += *pos;
+        }
+        sum / (self.touches.len() as f32)
+    }
+
+    fn calculate_touch_distance(&self) -> f32 {
+        if self.touches.len() < 2 {
+            return 0.0;
+        }
+        let mut iter = self.touches.values();
+        let p1 = *iter.next().unwrap();
+        let p2 = *iter.next().unwrap();
+        p1.distance(p2)
+    }
     // ========== User API (for game/scene logic queries) ==========
 
     /// Checks whether a key is currently held down

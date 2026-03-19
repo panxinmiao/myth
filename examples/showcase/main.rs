@@ -12,7 +12,7 @@ use myth_resources::tone_mapping::AgxLook;
 use wasm_bindgen::prelude::*;
 
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::mpsc::{Receiver, Sender, channel};
 
 use myth::ToneMappingMode;
@@ -29,7 +29,7 @@ const ASSET_PATH: &str = "examples/assets/";
 const ASSET_PATH: &str = "assets/";
 
 const DEFAULT_MODEL: &str = "cute_girl.glb";
-const DEFAULT_PRESET: VisualPreset = VisualPreset::Daylight;
+const DEFAULT_PRESET: VisualPreset = VisualPreset::Cinematic;
 
 // ── Visual Preset Enum ──────────────────────────────────────────────────────
 
@@ -52,9 +52,9 @@ thread_local! {
 #[wasm_bindgen]
 pub fn switch_preset(preset_idx: u32) {
     let preset = match preset_idx {
-        0 => VisualPreset::Daylight,
+        0 => VisualPreset::Cinematic,
         1 => VisualPreset::Studio,
-        _ => VisualPreset::Cinematic,
+        _ => VisualPreset::Daylight,
     };
     PRESET_COMMAND_QUEUE.with(|q| q.borrow_mut().push(preset));
 }
@@ -138,110 +138,6 @@ struct RenderPreset {
 fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
     let mut presets = HashMap::new();
 
-    // ── Daylight: full HDR IBL skybox, warm sun key, natural look
-    presets.insert(
-        VisualPreset::Daylight,
-        RenderPreset {
-            env_intensity: 3.0,
-            ambient_light: Vec3::splat(0.1),
-            background: PresetBackground::Skybox {
-                intensity: 1.0,
-                fallback_top: Vec4::new(0.4, 0.6, 0.9, 1.0),
-                fallback_bottom: Vec4::new(0.85, 0.8, 0.7, 1.0),
-            },
-
-            key_light: LightConfig {
-                color: Vec3::new(1.0, 0.95, 0.9),
-                intensity: 2.5,
-                position: Vec3::new(1.0, 1.0, 1.0),
-            },
-            fill_light: LightConfig {
-                color: Vec3::ONE,
-                intensity: 0.0,
-                position: Vec3::ZERO,
-            },
-            rim_light: LightConfig {
-                color: Vec3::ONE,
-                intensity: 0.0,
-                position: Vec3::ZERO,
-            },
-
-            tone_mapping_mode: ToneMappingMode::Neutral,
-            exposure: 0.7,
-            contrast: 1.0,
-            saturation: 1.05,
-            vignette_intensity: 0.0,
-            vignette_smoothness: 0.5,
-            vignette_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
-            chromatic_aberration: 0.0,
-            film_grain: 0.0,
-            lut_contribution: 0.0,
-
-            bloom_enabled: true,
-            bloom_strength: 0.04,
-            bloom_radius: 0.005,
-
-            ssao_enabled: false,
-            ssao_radius: 0.5,
-            ssao_intensity: 1.0,
-
-            hdr_filename: Some("spruit_sunrise_1k.hdr"),
-            lut_filename: None,
-            hdr_handle: None,
-            lut_handle: None,
-        },
-    );
-
-    // ── Studio: no IBL, pure three-point lighting, neutral tone, strong rim
-    presets.insert(
-        VisualPreset::Studio,
-        RenderPreset {
-            env_intensity: 0.3,
-            ambient_light: Vec3::splat(0.02),
-            background: PresetBackground::Color(Vec4::new(0.03, 0.03, 0.04, 1.0)),
-
-            key_light: LightConfig {
-                color: Vec3::new(1.0, 0.85, 0.6),
-                intensity: 5.0,
-                position: Vec3::new(5.0, 5.0, 5.0),
-            },
-            fill_light: LightConfig {
-                color: Vec3::new(0.3, 0.5, 1.0),
-                intensity: 1.0,
-                position: Vec3::new(-5.0, 2.0, -2.0),
-            },
-            rim_light: LightConfig {
-                color: Vec3::ONE,
-                intensity: 0.0,
-                position: Vec3::ZERO,
-            },
-
-            tone_mapping_mode: ToneMappingMode::AgX(AgxLook::None),
-            exposure: 1.2,
-            contrast: 1.1,
-            saturation: 1.05,
-            vignette_intensity: 0.4,
-            vignette_smoothness: 0.6,
-            vignette_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
-            chromatic_aberration: 0.002,
-            film_grain: 0.03,
-            lut_contribution: 0.4,
-
-            bloom_enabled: true,
-            bloom_strength: 0.06,
-            bloom_radius: 0.005,
-
-            ssao_enabled: true,
-            ssao_radius: 0.5,
-            ssao_intensity: 1.5,
-
-            hdr_filename: Some("blouberg_sunrise_2_1k.hdr"),
-            lut_filename: Some("Rec709 Kodak 2383 D65.cube"),
-            hdr_handle: None,
-            lut_handle: None,
-        },
-    );
-
     // ── Cinematic: dark IBL, warm key / cool fill, ACES filmic, heavy bloom
     presets.insert(
         VisualPreset::Cinematic,
@@ -297,6 +193,110 @@ fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
         },
     );
 
+    // ── Studio: no IBL, pure three-point lighting, neutral tone, strong rim
+    presets.insert(
+        VisualPreset::Studio,
+        RenderPreset {
+            env_intensity: 0.3,
+            ambient_light: Vec3::splat(0.02),
+            background: PresetBackground::Color(Vec4::new(0.03, 0.03, 0.04, 1.0)),
+
+            key_light: LightConfig {
+                color: Vec3::new(1.0, 0.85, 0.6),
+                intensity: 5.0,
+                position: Vec3::new(5.0, 5.0, 5.0),
+            },
+            fill_light: LightConfig {
+                color: Vec3::new(0.3, 0.5, 1.0),
+                intensity: 1.0,
+                position: Vec3::new(-5.0, 2.0, -2.0),
+            },
+            rim_light: LightConfig {
+                color: Vec3::ONE,
+                intensity: 0.0,
+                position: Vec3::ZERO,
+            },
+
+            tone_mapping_mode: ToneMappingMode::AgX(AgxLook::None),
+            exposure: 1.2,
+            contrast: 1.1,
+            saturation: 1.05,
+            vignette_intensity: 0.4,
+            vignette_smoothness: 0.6,
+            vignette_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
+            chromatic_aberration: 0.002,
+            film_grain: 0.0,
+            lut_contribution: 0.4,
+
+            bloom_enabled: true,
+            bloom_strength: 0.06,
+            bloom_radius: 0.005,
+
+            ssao_enabled: true,
+            ssao_radius: 0.5,
+            ssao_intensity: 1.5,
+
+            hdr_filename: Some("blouberg_sunrise_2_1k.hdr"),
+            lut_filename: Some("Rec709 Kodak 2383 D65.cube"),
+            hdr_handle: None,
+            lut_handle: None,
+        },
+    );
+
+    // ── Daylight: full HDR IBL skybox, warm sun key, natural look
+    presets.insert(
+        VisualPreset::Daylight,
+        RenderPreset {
+            env_intensity: 3.0,
+            ambient_light: Vec3::splat(0.1),
+            background: PresetBackground::Skybox {
+                intensity: 1.0,
+                fallback_top: Vec4::new(0.4, 0.6, 0.9, 1.0),
+                fallback_bottom: Vec4::new(0.85, 0.8, 0.7, 1.0),
+            },
+
+            key_light: LightConfig {
+                color: Vec3::new(1.0, 0.95, 0.9),
+                intensity: 2.5,
+                position: Vec3::new(1.0, 1.0, 1.0),
+            },
+            fill_light: LightConfig {
+                color: Vec3::ONE,
+                intensity: 0.0,
+                position: Vec3::ZERO,
+            },
+            rim_light: LightConfig {
+                color: Vec3::ONE,
+                intensity: 0.0,
+                position: Vec3::ZERO,
+            },
+
+            tone_mapping_mode: ToneMappingMode::Neutral,
+            exposure: 0.7,
+            contrast: 1.0,
+            saturation: 1.05,
+            vignette_intensity: 0.0,
+            vignette_smoothness: 0.5,
+            vignette_color: Vec4::new(0.0, 0.0, 0.0, 1.0),
+            chromatic_aberration: 0.0,
+            film_grain: 0.0,
+            lut_contribution: 0.0,
+
+            bloom_enabled: true,
+            bloom_strength: 0.04,
+            bloom_radius: 0.005,
+
+            ssao_enabled: false,
+            ssao_radius: 0.5,
+            ssao_intensity: 1.0,
+
+            hdr_filename: Some("spruit_sunrise_1k.hdr"),
+            lut_filename: None,
+            hdr_handle: None,
+            lut_handle: None,
+        },
+    );
+
     presets
 }
 
@@ -305,8 +305,8 @@ fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
 /// Events sent from async asset-loading tasks back to the main thread.
 enum AssetEvent {
     ModelLoaded(SharedPrefab),
-    HdrLoaded(VisualPreset, TextureHandle),
-    LutLoaded(VisualPreset, TextureHandle),
+    HdrLoaded(&'static str, TextureHandle),
+    LutLoaded(&'static str, TextureHandle),
 }
 
 // ── Application State ───────────────────────────────────────────────────────
@@ -347,43 +347,50 @@ impl AppHandler for ShowcaseApp {
         let (tx, rx) = channel();
         let presets = build_presets();
 
+        let mut requested_hdrs = HashSet::new();
+        let mut requested_luts = HashSet::new();
+
         // Dispatch async loads for every preset's HDR and LUT in parallel.
-        for (&preset, config) in &presets {
+        for config in presets.values() {
             if let Some(hdr_file) = config.hdr_filename {
-                let path = format!("{}envs/{}", ASSET_PATH, hdr_file);
-                let tx = tx.clone();
-                let assets = engine.assets.clone();
+                if requested_hdrs.insert(hdr_file) {
+                    let path = format!("{}envs/{}", ASSET_PATH, hdr_file);
+                    let tx = tx.clone();
+                    let assets = engine.assets.clone();
 
-                execute_future(async move {
-                    let is_hdr = hdr_file.ends_with(".hdr") || hdr_file.ends_with(".exr");
-                    let res = if is_hdr {
-                        assets.load_hdr_texture_async(path).await
-                    } else {
-                        assets
-                            .load_texture_async(path, ColorSpace::Srgb, false)
-                            .await
-                    };
+                    execute_future(async move {
+                        let is_hdr = hdr_file.ends_with(".hdr") || hdr_file.ends_with(".exr");
+                        let res = if is_hdr {
+                            assets.load_hdr_texture_async(path).await
+                        } else {
+                            assets
+                                .load_texture_async(path, ColorSpace::Srgb, false)
+                                .await
+                        };
 
-                    match res {
-                        Ok(h) => {
-                            let _ = tx.send(AssetEvent::HdrLoaded(preset, h));
+                        match res {
+                            Ok(h) => {
+                                let _ = tx.send(AssetEvent::HdrLoaded(hdr_file, h));
+                            }
+                            Err(e) => log::error!("{:?} HDR load failed: {}", hdr_file, e),
                         }
-                        Err(e) => log::error!("{:?} HDR load failed: {}", preset, e),
-                    }
-                });
+                    });
+                }
             }
             if let Some(lut_file) = config.lut_filename {
-                let path = format!("{}luts/{}", ASSET_PATH, lut_file);
-                let tx = tx.clone();
-                let assets = engine.assets.clone();
-                execute_future(async move {
-                    match assets.load_lut_texture_async(path).await {
-                        Ok(h) => {
-                            let _ = tx.send(AssetEvent::LutLoaded(preset, h));
+                if requested_luts.insert(lut_file) {
+                    let path = format!("{}luts/{}", ASSET_PATH, lut_file);
+                    let tx = tx.clone();
+                    let assets = engine.assets.clone();
+                    execute_future(async move {
+                        match assets.load_lut_texture_async(path).await {
+                            Ok(h) => {
+                                let _ = tx.send(AssetEvent::LutLoaded(lut_file, h));
+                            }
+                            Err(e) => log::error!("{:?} LUT load failed: {}", lut_file, e),
                         }
-                        Err(e) => log::error!("{:?} LUT load failed: {}", preset, e),
-                    }
-                });
+                    });
+                }
             }
         }
 
@@ -458,19 +465,31 @@ impl AppHandler for ShowcaseApp {
         // 2. Process async asset events.
         while let Ok(event) = self.rx.try_recv() {
             match event {
-                AssetEvent::HdrLoaded(preset, handle) => {
-                    if let Some(p) = self.presets.get_mut(&preset) {
-                        p.hdr_handle = Some(handle);
+                AssetEvent::HdrLoaded(filename, handle) => {
+                    let mut needs_refresh = false;
+                    for (&preset_key, p) in self.presets.iter_mut() {
+                        if p.hdr_filename == Some(filename) {
+                            p.hdr_handle = Some(handle.clone());
+                            if preset_key == self.current_preset {
+                                needs_refresh = true;
+                            }
+                        }
                     }
-                    if preset == self.current_preset {
+                    if needs_refresh {
                         self.apply_preset(scene, self.current_preset);
                     }
                 }
-                AssetEvent::LutLoaded(preset, handle) => {
-                    if let Some(p) = self.presets.get_mut(&preset) {
-                        p.lut_handle = Some(handle);
+                AssetEvent::LutLoaded(filename, handle) => {
+                    let mut needs_refresh = false;
+                    for (&preset_key, p) in self.presets.iter_mut() {
+                        if p.lut_filename == Some(filename) {
+                            p.lut_handle = Some(handle.clone());
+                            if preset_key == self.current_preset {
+                                needs_refresh = true;
+                            }
+                        }
                     }
-                    if preset == self.current_preset {
+                    if needs_refresh {
                         self.apply_preset(scene, self.current_preset);
                     }
                 }
