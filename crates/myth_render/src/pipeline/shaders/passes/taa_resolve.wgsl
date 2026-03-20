@@ -22,9 +22,9 @@
 
 struct TaaParams {
     feedback_weight: f32,
+    camera_near: f32,
     _padding0: f32,
     _padding1: f32,
-    _padding2: f32,
 };
 @group(0) @binding(7) var<uniform> u_params: TaaParams;
 
@@ -121,13 +121,15 @@ fn sample_catmull_rom_5tap(tex: texture_2d<f32>, samp: sampler, uv: vec2<f32>, t
     let weight4 = w12.x * w3.y;
     let weight_sum = weight0 + weight1 + weight2 + weight3 + weight4;
 
-    var color = textureSampleLevel(tex, samp, vec2<f32>(tc12.x, tc12.y), 0.0).rgb * (w12.x * w12.y);
-    color += textureSampleLevel(tex, samp, vec2<f32>(tc0.x,  tc12.y), 0.0).rgb * (w0.x  * w12.y);
-    color += textureSampleLevel(tex, samp, vec2<f32>(tc3.x,  tc12.y), 0.0).rgb * (w3.x  * w12.y);
-    color += textureSampleLevel(tex, samp, vec2<f32>(tc12.x, tc0.y),  0.0).rgb * (w12.x * w0.y);
-    color += textureSampleLevel(tex, samp, vec2<f32>(tc12.x, tc3.y),  0.0).rgb * (w12.x * w3.y);
+    var c0 = tonemap_per_channel(textureSampleLevel(tex, samp, vec2<f32>(tc12.x, tc12.y), 0.0).rgb);
+    var c1 = tonemap_per_channel(textureSampleLevel(tex, samp, vec2<f32>(tc0.x,  tc12.y), 0.0).rgb);
+    var c2 = tonemap_per_channel(textureSampleLevel(tex, samp, vec2<f32>(tc3.x,  tc12.y), 0.0).rgb);
+    var c3 = tonemap_per_channel(textureSampleLevel(tex, samp, vec2<f32>(tc12.x, tc0.y),  0.0).rgb);
+    var c4 = tonemap_per_channel(textureSampleLevel(tex, samp, vec2<f32>(tc12.x, tc3.y),  0.0).rgb);
 
-    return max(color / weight_sum, vec3<f32>(0.0));
+    var color_tm = c0 * weight0 + c1 * weight1 + c2 * weight2 + c3 * weight3 + c4 * weight4;
+
+    return max(color_tm / weight_sum, vec3<f32>(0.0));
 }
 
 // ── Fragment Shader ─────────────────────────────────────────────────────
@@ -175,48 +177,78 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
         return vec4<f32>(textureSampleLevel(t_current_color, s_nearest, uv, 0.0).rgb, 1.0);
     }
 
+
+    let current_coord = vec2<i32>(in.position.xy);
+    let current_depth = textureLoad(t_scene_depth, current_coord, 0);
+    
+    let history_coord = vec2<i32>(history_uv * tex_dim);
+    let history_depth = textureLoad(t_history_depth, history_coord, 0);
+
+    let current_linear_z = depth_to_linear(current_depth, u_params.camera_near);
+    let history_linear_z = depth_to_linear(history_depth, u_params.camera_near);
+
+    let depth_diff = abs(current_linear_z - history_linear_z);
+    let is_disoccluded = depth_diff > (current_linear_z * DEPTH_REJECTION_TOLERANCE);
+
     // // ════════════════════════════════════════════════════════════════════
     // // 3. Sample current frame colour (center pixel)
     // // ════════════════════════════════════════════════════════════════════
 
-    let current_color_hdr = textureSampleLevel(t_current_color, s_nearest, uv, 0.0).rgb;
+    let current_color = tonemap_per_channel(textureSampleLevel(t_current_color, s_nearest, uv, 0.0).rgb);
 
     // ════════════════════════════════════════════════════════════════════
     // 4. Catmull-Rom 5-Tap history sampling (high-quality bicubic)
     // ════════════════════════════════════════════════════════════════════
 
-    let history_color_hdr = sample_catmull_rom_5tap(t_history_color, s_linear, history_uv, tex_dim);
+    // let history_color_hdr = sample_catmull_rom_5tap(t_history_color, s_linear, history_uv, tex_dim);
+    let history_color = sample_catmull_rom_5tap(t_history_color, s_linear, history_uv, tex_dim);
 
     // ════════════════════════════════════════════════════════════════════
     // 5. Reversible Tonemap → YCoCg → Variance Clipping
     // ════════════════════════════════════════════════════════════════════
 
     // Tonemap all samples into perceptual space for stable neighbourhood ops
-    let current_tm = tonemap_per_channel(current_color_hdr);
-    let history_tm = tonemap_per_channel(history_color_hdr);
+    // let current_tm = tonemap_per_channel(current_color);
 
-    let cc = rgb_to_ycocg(current_tm);
+    let cc = rgb_to_ycocg(current_color);
     var moment1 = cc;
     var moment2 = cc * cc;
 
-    // 3×3 neighbourhood statistics (mean + variance)
-    for (var y = -1; y <= 1; y++) {
-        for (var x = -1; x <= 1; x++) {
-            if (x == 0 && y == 0) { continue; }
-            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-            let s_hdr = textureSampleLevel(t_current_color, s_nearest, uv + offset, 0.0).rgb;
-            let s = rgb_to_ycocg(tonemap_per_channel(s_hdr));
-            moment1 += s;
-            moment2 += s * s;
-        }
+    var sample_count = 1.0;
+
+    // Include the center pixel in the variance stats (important for flat areas)
+    let offsets = array<vec2<f32>, 4>(
+        vec2<f32>( 0.0, -1.0), vec2<f32>(-1.0,  0.0),
+        vec2<f32>( 1.0,  0.0), vec2<f32>( 0.0,  1.0)
+    );
+
+    for (var i = 0; i < 4; i++) {
+        let offset = offsets[i] * texel_size;
+        let s_hdr = textureSampleLevel(t_current_color, s_nearest, uv + offset, 0.0).rgb;
+        let s = rgb_to_ycocg(tonemap_per_channel(s_hdr));
+        moment1 += s;
+        moment2 += s * s;
+        sample_count += 1.0;
     }
 
-    let mean = moment1 / 9.0;
-    let variance = sqrt(max(moment2 / 9.0 - mean * mean, vec3<f32>(0.0)));
+    // // 3×3 neighbourhood statistics (mean + variance)
+    // for (var y = -1; y <= 1; y++) {
+    //     for (var x = -1; x <= 1; x++) {
+    //         if (x == 0 && y == 0) { continue; }
+    //         let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+    //         let s_hdr = textureSampleLevel(t_current_color, s_nearest, uv + offset, 0.0).rgb;
+    //         let s = rgb_to_ycocg(tonemap_per_channel(s_hdr));
+    //         moment1 += s;
+    //         moment2 += s * s;
+    //     }
+    // }
+
+    let mean = moment1 / sample_count;
+    let variance = sqrt(max(moment2 / sample_count - mean * mean, vec3<f32>(0.0)));
     let aabb_extent = variance * VARIANCE_CLIP_GAMMA;
 
     // Clip history towards AABB center (soft clip, not hard clamp)
-    let history_ycocg = rgb_to_ycocg(history_tm);
+    let history_ycocg = rgb_to_ycocg(history_color);
     let clipped_ycocg = clip_towards_aabb_center(history_ycocg, mean, aabb_extent);
     let clipped_history = ycocg_to_rgb(clipped_ycocg);
 
@@ -226,11 +258,22 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     // Dynamic feedback: reduce history weight with motion speed
     let speed = length(velocity * tex_dim);
-    var weight = u_params.feedback_weight;
+    var base_weight = u_params.feedback_weight;
 
-    weight = mix(weight, 0.1, saturate(speed * 0.1));
+    base_weight = mix(base_weight, 0.1, saturate(speed * 0.1));
 
-    let resolved_tm = mix(current_tm, clipped_history, weight);
+    if (is_disoccluded) {
+        base_weight = 0.0; 
+    }
+
+    let lum_current = luminance(current_color);
+    let lum_history = luminance(clipped_history);
+
+    let lum_diff = abs(lum_current - lum_history);
+
+    let final_weight = base_weight * (1.0 / (1.0 + lum_diff * 4.0)); // 4.0 is a tunable sensitivity factor
+
+    let resolved_tm = mix(current_color, clipped_history, final_weight);
 
     // ════════════════════════════════════════════════════════════════════
     // 7. Inverse Tonemap → HDR output

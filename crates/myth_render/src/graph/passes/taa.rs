@@ -64,6 +64,7 @@ pub struct TaaFeature {
     params_buffer: Option<Tracked<wgpu::Buffer>>,
 
     last_feedback_weight: f32,
+    last_camera_near: f32,
 }
 
 impl Default for TaaFeature {
@@ -84,6 +85,7 @@ impl TaaFeature {
             bind_group_layout: None,
             params_buffer: None,
             last_feedback_weight: -1.0, // invalid default to ensure first update
+            last_camera_near: -1.0,     // invalid default to ensure first update
         }
     }
 
@@ -265,14 +267,17 @@ impl TaaFeature {
             self.params_buffer = Some(Tracked::new(buffer));
         }
 
-        if (self.last_feedback_weight - feedback_weight).abs() > f32::EPSILON {
-            let data: [f32; 4] = [feedback_weight, 0.0, 0.0, 0.0];
+        if (self.last_feedback_weight - feedback_weight).abs() > f32::EPSILON
+            || (ctx.render_camera.near - self.last_camera_near).abs() > f32::EPSILON
+        {
+            let data: [f32; 4] = [feedback_weight, ctx.render_camera.near, 0.0, 0.0];
             ctx.queue.write_buffer(
                 self.params_buffer.as_ref().unwrap(),
                 0,
                 bytemuck::cast_slice(&data),
             );
             self.last_feedback_weight = feedback_weight;
+            self.last_camera_near = ctx.render_camera.near;
         }
 
         self.ensure_history_buffers(ctx.device, size.0, size.1, depth_format);

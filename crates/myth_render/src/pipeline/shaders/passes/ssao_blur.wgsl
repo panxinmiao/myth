@@ -56,7 +56,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
             // --- Normal weight: hard-ish cutoff preserving geometric edges ---
             let normal_similarity = max(dot(center_normal, sample_normal), 0.0);
-            let normal_weight = select(0.0, normal_similarity, normal_similarity > NORMAL_THRESHOLD);
+            let normal_weight = pow(normal_similarity, 16.0);
 
             // --- Spatial weight: simple Gaussian (σ ≈ radius) ---
             let dist2 = f32(x * x + y * y);

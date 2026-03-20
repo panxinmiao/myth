@@ -280,7 +280,7 @@ pub fn generate_ssao_noise() -> Vec<[u8; 4]> {
         noise.push([
             ((xy.x * 0.5 + 0.5) * 255.0) as u8,
             ((xy.y * 0.5 + 0.5) * 255.0) as u8,
-            0,
+            127,
             255,
         ]);
     }

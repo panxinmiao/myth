@@ -7,6 +7,7 @@ use crate::graph::frame::{BakedRenderLists, RenderLists};
 use crate::graph::{ExtractedScene, RenderState};
 use crate::pipeline::{PipelineCache, ShaderManager};
 use myth_assets::AssetServer;
+use myth_scene::RenderCamera;
 use wgpu::{Device, Queue, TextureView};
 
 use super::allocator::{SubViewKey, TransientPool};
@@ -41,6 +42,7 @@ pub struct ExtractContext<'a> {
     pub extracted_scene: &'a ExtractedScene,
     pub render_state: &'a RenderState,
     pub assets: &'a AssetServer,
+    pub render_camera: &'a RenderCamera,
 }
 
 // ─── Prepare Context (Transient-Only) ─────────────────────────────────────────
