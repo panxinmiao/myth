@@ -341,7 +341,7 @@ impl Renderer {
                 render_lists: &mut state.render_lists,
                 extracted_scene: &state.render_frame.extracted_scene,
                 render_state: &state.render_frame.render_state,
-                render_camera: &camera,
+                render_camera: camera,
                 assets,
             };
 

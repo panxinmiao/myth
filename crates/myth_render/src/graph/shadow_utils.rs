@@ -146,17 +146,17 @@ pub fn build_cascade_vp(
     let temp_view = Mat4::look_at_rh(Vec3::ZERO, safe_dir, up);
 
     // Transform center to light space to find stable up vector
-    let mut center_ls = temp_view.transform_point3(center);
+    let mut center_light_space = temp_view.transform_point3(center);
 
     // Texel alignment: snap the center to the shadow map texel grid in light space to prevent shimmering
     let texel_size = diameter / shadow_map_size as f32;
-    center_ls.x = (center_ls.x / texel_size).floor() * texel_size;
-    center_ls.y = (center_ls.y / texel_size).floor() * texel_size;
+    center_light_space.x = (center_light_space.x / texel_size).floor() * texel_size;
+    center_light_space.y = (center_light_space.y / texel_size).floor() * texel_size;
 
     // Transform back to world space after snapping
-    let center_ws = temp_view.inverse().transform_point3(center_ls);
+    let center_world_space = temp_view.inverse().transform_point3(center_light_space);
 
-    let light_view = Mat4::look_at_rh(center_ws - safe_dir, center_ws, up);
+    let light_view = Mat4::look_at_rh(center_world_space - safe_dir, center_world_space, up);
 
     let z_far = radius + 50.0; // View frustum extends beyond the bounding sphere to catch casters outside the frustum
     let z_near = -radius - caster_extension; // Extend near plane towards the light to include casters between the camera and light
