@@ -309,17 +309,14 @@ impl<'a> PassNode<'a> for UiPassNode<'a> {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("egui buffer upload"),
         });
-        let user_cmd_bufs = self.pass.renderer.update_buffers(
+        self.pass.renderer.update_buffers(
             device,
             queue,
             &mut encoder,
             &self.pass.clipped_primitives,
             &self.pass.screen_descriptor,
         );
-        let mut cmd_bufs: Vec<wgpu::CommandBuffer> = Vec::with_capacity(1 + user_cmd_bufs.len());
-        cmd_bufs.push(encoder.finish());
-        cmd_bufs.extend(user_cmd_bufs);
-        queue.submit(cmd_bufs);
+        queue.submit(Some(encoder.finish()));
 
         // 4. Free textures that egui no longer needs.
         for id in &self.pass.textures_delta.free {

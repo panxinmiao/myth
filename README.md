@@ -11,7 +11,7 @@
 
 [![Myth Engine Hero](docs/images/hero.png)](https://panxinmiao.github.io/myth/)
 
-[**Showcase**](https://panxinmiao.github.io/myth/) | [**glTF Viewer & Inspector**](https://panxinmiao.github.io/myth/gltf_viewer/)  | [**Examples**](examples/)
+[**Showcase**](https://panxinmiao.github.io/myth/) | [**glTF Samples**](https://panxinmiao.github.io/myth/gltf/) | [**glTF Viewer & Inspector**](https://panxinmiao.github.io/myth/gltf_viewer/)  | [**Examples**](examples/)
 
 </div>
 
