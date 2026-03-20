@@ -444,12 +444,16 @@ define_gpu_data_struct!(
         pub prev_unjittered_view_projection: Mat4 = Mat4::IDENTITY,
 
         pub camera_position: Vec3 = Vec3::ZERO,
-        pub time: f32 = 0.0,
+        pub camera_near: f32 = 0.1,
+
         pub jitter: Vec2 = Vec2::ZERO,
         pub prev_jitter: Vec2 = Vec2::ZERO,
-        pub camera_near: f32 = 0.1,
+
         pub camera_far: f32 = 1000.0,
-        pub(crate) __padding: Vec2 = Vec2::ZERO, // Padding to make total size a multiple of 16 bytes
+        pub time: f32 = 0.0,
+        pub time_cycle_2pi: f32 = 0.0,
+        pub delta_time: f32 = 0.0,
+
     }
 );
 

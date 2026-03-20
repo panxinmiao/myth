@@ -265,7 +265,7 @@ impl<H: AppHandler> AppRunner<H> {
         let Some(scene_handle) = engine.scene_manager.active_handle() else {
             return;
         };
-        let time = engine.time();
+        let time = engine.frame_time();
         let Some(scene) = engine.scene_manager.get_scene_mut(scene_handle) else {
             return;
         };

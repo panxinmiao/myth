@@ -97,6 +97,13 @@ struct RendererState {
     pub(crate) debug_view_pass: DebugViewFeature,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FrameTime {
+    pub time: f32,
+    pub delta_time: f32,
+    pub frame_count: u64,
+}
+
 impl Renderer {
     /// Phase 1: Create configuration (no GPU resources yet).
     ///
@@ -253,7 +260,7 @@ impl Renderer {
         scene: &'a mut Scene,
         camera: &'a RenderCamera,
         assets: &'a AssetServer,
-        time: f32,
+        frame_time: FrameTime,
     ) -> Option<FrameComposer<'a>> {
         if self.size.0 == 0 || self.size.1 == 0 {
             return None;
@@ -276,7 +283,7 @@ impl Renderer {
             scene,
             camera,
             assets,
-            time,
+            frame_time,
             &mut state.render_lists,
             surface_size,
         );
@@ -334,6 +341,7 @@ impl Renderer {
                 render_lists: &mut state.render_lists,
                 extracted_scene: &state.render_frame.extracted_scene,
                 render_state: &state.render_frame.render_state,
+                render_camera: &camera,
                 assets,
             };
 
@@ -459,7 +467,7 @@ impl Renderer {
             scene,
             camera,
             assets,
-            time,
+            frame_time,
 
             graph_storage: &mut state.graph_storage,
             transient_pool: &mut state.transient_pool,

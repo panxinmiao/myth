@@ -98,7 +98,7 @@ $$ endif
 
     // 6. Film Grain
     if (u_effect.film_grain > 0.001) {
-        let seed = u_render_state.time * 100.0;
+        let seed = u_render_state.time_cycle_2pi * 100.0;
         let noise = fract(sin(dot(uv, vec2<f32>(12.9898, 78.233)) + seed) * 43758.5453);
         let grain = (noise - 0.5) * u_effect.film_grain;
         rgb = rgb + grain;

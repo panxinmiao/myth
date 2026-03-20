@@ -70,6 +70,7 @@ struct LightConfig {
     color: Vec3,
     intensity: f32,
     position: Vec3,
+    cast_shadows: bool,
 }
 
 /// How the background should be rendered for a given preset.
@@ -158,16 +159,19 @@ fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
                 color: Vec3::new(1.0, 0.85, 0.6),
                 intensity: 5.0,
                 position: Vec3::new(5.0, 5.0, 5.0),
+                cast_shadows: false,
             },
             fill_light: LightConfig {
                 color: Vec3::new(0.3, 0.5, 1.0),
                 intensity: 1.0,
                 position: Vec3::new(-5.0, 2.0, -2.0),
+                cast_shadows: false,
             },
             rim_light: LightConfig {
                 color: Vec3::ONE,
                 intensity: 0.0,
                 position: Vec3::ZERO,
+                cast_shadows: false,
             },
 
             tone_mapping_mode: ToneMappingMode::AgX(AgxLook::None),
@@ -208,16 +212,19 @@ fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
                 color: Vec3::new(1.0, 0.85, 0.6),
                 intensity: 5.0,
                 position: Vec3::new(5.0, 5.0, 5.0),
+                cast_shadows: false,
             },
             fill_light: LightConfig {
                 color: Vec3::new(0.3, 0.5, 1.0),
                 intensity: 1.0,
                 position: Vec3::new(-5.0, 2.0, -2.0),
+                cast_shadows: false,
             },
             rim_light: LightConfig {
                 color: Vec3::ONE,
                 intensity: 0.0,
                 position: Vec3::ZERO,
+                cast_shadows: false,
             },
 
             tone_mapping_mode: ToneMappingMode::AgX(AgxLook::None),
@@ -262,16 +269,19 @@ fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
                 color: Vec3::new(1.0, 0.95, 0.9),
                 intensity: 2.5,
                 position: Vec3::new(1.0, 1.0, 1.0),
+                cast_shadows: false,
             },
             fill_light: LightConfig {
                 color: Vec3::ONE,
                 intensity: 0.0,
                 position: Vec3::ZERO,
+                cast_shadows: false,
             },
             rim_light: LightConfig {
                 color: Vec3::ONE,
                 intensity: 0.0,
                 position: Vec3::ZERO,
+                cast_shadows: false,
             },
 
             tone_mapping_mode: ToneMappingMode::Neutral,
@@ -607,6 +617,7 @@ impl ShowcaseApp {
             if let Some(light) = scene.get_light_mut(handle) {
                 light.color = cfg.color;
                 light.intensity = cfg.intensity;
+                light.cast_shadows = cfg.cast_shadows;
             }
             if cfg.intensity > 0.0 {
                 if let Some(node) = scene.get_node_mut(handle) {

@@ -67,6 +67,7 @@ use crate::graph::passes::{
 };
 use crate::pipeline::PipelineCache;
 use crate::pipeline::ShaderManager;
+use crate::renderer::FrameTime;
 use myth_assets::AssetServer;
 use myth_scene::Scene;
 use myth_scene::camera::RenderCamera;
@@ -89,7 +90,7 @@ pub struct ComposerContext<'a> {
     pub scene: &'a mut Scene,
     pub camera: &'a RenderCamera,
     pub assets: &'a AssetServer,
-    pub time: f32,
+    pub frame_time: FrameTime,
 
     pub graph_storage: &'a mut GraphStorage,
     pub transient_pool: &'a mut TransientPool,

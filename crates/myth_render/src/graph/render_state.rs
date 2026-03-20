@@ -8,6 +8,8 @@ use myth_resources::buffer::CpuBuffer;
 use myth_resources::uniforms::RenderStateUniforms;
 use myth_scene::camera::RenderCamera;
 
+use crate::renderer::FrameTime;
+
 // ─── Debug View Target (compile-time gated) ─────────────────────────────────
 
 /// Semantic identifier for an intermediate render texture to visualise.
@@ -121,7 +123,7 @@ impl RenderState {
         self.uniforms.write()
     }
 
-    pub fn update(&mut self, camera: &RenderCamera, time: f32) {
+    pub fn update(&mut self, camera: &RenderCamera, frame_time: FrameTime) {
         let prev_vp = self.prev_view_projection;
         let prev_j = self.prev_jitter;
         let prev_unjittered_vp = self.prev_unjittered_vp;
@@ -138,7 +140,9 @@ impl RenderState {
         u.unjittered_view_projection = unjittered_vp;
         u.prev_unjittered_view_projection = prev_unjittered_vp;
         u.camera_position = camera.position.into();
-        u.time = time;
+        u.time = frame_time.time % 7200.0; // Wrap time to avoid precision issues in shaders
+        u.time_cycle_2pi = frame_time.time % std::f32::consts::PI * 2.0;
+        u.delta_time = frame_time.delta_time;
         u.jitter = camera.jitter;
         u.prev_jitter = prev_j;
         u.camera_near = camera.near;

@@ -31,6 +31,7 @@
 //! }
 //! ```
 
+use myth_render::renderer::FrameTime;
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use myth_assets::AssetServer;
@@ -63,8 +64,7 @@ pub struct Engine {
     pub assets: AssetServer,
     pub input: Input,
 
-    time: f32,
-    frame_count: u64,
+    frame_time: FrameTime,
 }
 
 impl Engine {
@@ -84,8 +84,7 @@ impl Engine {
             scene_manager: SceneManager::new(assets.clone()),
             assets,
             input: Input::new(),
-            time: 0.0,
-            frame_count: 0,
+            frame_time: FrameTime::default(),
         }
     }
 
@@ -120,14 +119,20 @@ impl Engine {
     #[inline]
     #[must_use]
     pub fn time(&self) -> f32 {
-        self.time
+        self.frame_time.time
+    }
+
+    #[inline]
+    #[must_use]
+    pub fn frame_time(&self) -> FrameTime {
+        self.frame_time
     }
 
     /// Returns the total number of frames rendered since startup.
     #[inline]
     #[must_use]
     pub fn frame_count(&self) -> u64 {
-        self.frame_count
+        self.frame_time.frame_count
     }
 
     /// Returns the current surface/window size in pixels as `(width, height)`.
@@ -167,8 +172,9 @@ impl Engine {
     ///
     /// * `dt` - Delta time since the last frame in seconds
     pub fn update(&mut self, dt: f32) {
-        self.time += dt;
-        self.frame_count += 1;
+        self.frame_time.time += dt;
+        self.frame_time.frame_count += 1;
+        self.frame_time.delta_time = dt;
 
         if let Some(scene) = self.scene_manager.active_scene_mut() {
             scene.update(&self.input, dt);
@@ -230,7 +236,7 @@ impl Engine {
         let Some(scene_handle) = self.scene_manager.active_handle() else {
             return false;
         };
-        let time = self.time;
+
         let Some(scene) = self.scene_manager.get_scene_mut(scene_handle) else {
             return false;
         };
@@ -241,9 +247,10 @@ impl Engine {
             return false;
         };
         let render_camera = cam.extract_render_camera();
-        if let Some(composer) = self
-            .renderer
-            .begin_frame(scene, &render_camera, &self.assets, time)
+
+        if let Some(composer) =
+            self.renderer
+                .begin_frame(scene, &render_camera, &self.assets, self.frame_time)
         {
             composer.render();
             true

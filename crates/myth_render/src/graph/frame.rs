@@ -18,6 +18,7 @@ use rustc_hash::FxHashMap;
 
 use crate::core::{BindGroupContext, RenderView, ResourceManager};
 use crate::pipeline::RenderPipelineId;
+use crate::renderer::FrameTime;
 use myth_assets::{AssetServer, GeometryHandle, MaterialHandle};
 use myth_scene::Scene;
 use myth_scene::camera::RenderCamera;
@@ -428,7 +429,7 @@ impl RenderFrame {
         scene: &mut Scene,
         camera: &RenderCamera,
         assets: &AssetServer,
-        time: f32,
+        frame_time: FrameTime,
         render_lists: &mut RenderLists,
         surface_size: (u32, u32),
     ) {
@@ -481,7 +482,7 @@ impl RenderFrame {
         );
 
         // ── 6. Global GPU resources ────────────────────────────────────
-        self.render_state.update(camera, time);
+        self.render_state.update(camera, frame_time);
         resource_manager.prepare_global(assets, scene, &self.render_state);
     }
 
