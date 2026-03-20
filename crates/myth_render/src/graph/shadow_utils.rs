@@ -127,47 +127,41 @@ pub fn build_cascade_vp(
     }
     center /= 8.0;
 
+    // Compute radius of bounding sphere around frustum corners (for stable up vector selection)
+    let mut radius = 0.0f32;
+    for c in frustum_corners {
+        radius = radius.max(c.distance(center));
+    }
+
+    radius = (radius / 16.0).ceil() * 16.0; // Round up to reduce precision issues
+
+    let diameter = radius * 2.0;
+
+    // Temp view to determine stable up vector (looking in light direction)
     let up = if safe_dir.y.abs() > 0.99 {
         Vec3::X
     } else {
         Vec3::Y
     };
-    let light_view = Mat4::look_at_rh(center - safe_dir, center, up);
+    let temp_view = Mat4::look_at_rh(Vec3::ZERO, safe_dir, up);
 
-    // Compute light-space AABB of frustum corners
-    let mut ls_min = Vec3::splat(f32::MAX);
-    let mut ls_max = Vec3::splat(f32::MIN);
-    for c in frustum_corners {
-        let ls = light_view.transform_point3(*c);
-        ls_min = ls_min.min(ls);
-        ls_max = ls_max.max(ls);
-    }
+    // Transform center to light space to find stable up vector
+    let mut center_ls = temp_view.transform_point3(center);
 
-    // Expand Z to include potential casters between camera and light.
-    // In RH light view, ls_max.z is near (towards light), ls_min.z is far.
-    let base_z_range = (ls_max.z - ls_min.z).max(1.0);
-    let near_extension = caster_extension.max(base_z_range);
-    let far_extension = base_z_range.max(50.0);
-    ls_max.z += near_extension;
-    ls_min.z -= far_extension;
+    // Texel alignment: snap the center to the shadow map texel grid in light space to prevent shimmering
+    let texel_size = diameter / shadow_map_size as f32;
+    center_ls.x = (center_ls.x / texel_size).floor() * texel_size;
+    center_ls.y = (center_ls.y / texel_size).floor() * texel_size;
 
-    // Texel alignment: snap the ortho bounds to texel grid to prevent shimmer
-    let world_units_per_texel_x = (ls_max.x - ls_min.x) / shadow_map_size as f32;
-    let world_units_per_texel_y = (ls_max.y - ls_min.y) / shadow_map_size as f32;
+    // Transform back to world space after snapping
+    let center_ws = temp_view.inverse().transform_point3(center_ls);
 
-    if world_units_per_texel_x > 0.0 {
-        ls_min.x = (ls_min.x / world_units_per_texel_x).floor() * world_units_per_texel_x;
-        ls_max.x = (ls_max.x / world_units_per_texel_x).ceil() * world_units_per_texel_x;
-    }
-    if world_units_per_texel_y > 0.0 {
-        ls_min.y = (ls_min.y / world_units_per_texel_y).floor() * world_units_per_texel_y;
-        ls_max.y = (ls_max.y / world_units_per_texel_y).ceil() * world_units_per_texel_y;
-    }
+    let light_view = Mat4::look_at_rh(center_ws - safe_dir, center_ws, up);
 
-    let proj = Mat4::orthographic_rh(
-        ls_min.x, ls_max.x, ls_min.y, ls_max.y, -ls_max.z,
-        -ls_min.z, // glam orthographic_rh: near/far are positive distances
-    );
+    let z_far = radius + 50.0; // View frustum extends beyond the bounding sphere to catch casters outside the frustum
+    let z_near = -radius - caster_extension; // Extend near plane towards the light to include casters between the camera and light
+
+    let proj = Mat4::orthographic_rh(-radius, radius, -radius, radius, z_near, z_far);
 
     proj * light_view
 }
