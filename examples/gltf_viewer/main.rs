@@ -392,7 +392,10 @@ enum LoadResult {
 #[cfg(not(target_arch = "wasm32"))]
 const ASSET_PATH: &str = "examples/assets/";
 #[cfg(target_arch = "wasm32")]
-const ASSET_PATH: &str = "assets/";
+const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {
+    Some(path) => path, // CI or user-defined path via build_wasm.sh
+    None => "assets/",  // Local default path for testing with build_wasm.sh
+};
 
 impl AppHandler for GltfViewer {
     fn init(engine: &mut Engine, window: &dyn Window) -> Self {

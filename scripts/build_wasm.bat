@@ -63,17 +63,21 @@ echo * > "%OUTPUT_PKG_DIR%\.gitignore"
 REM ==========================================
 REM 5. Sync Assets
 REM ==========================================
-echo Syncing assets...
-if exist "%SOURCE_ASSETS_DIR%" (
-    if not exist "%OUTPUT_ASSETS_DIR%" mkdir "%OUTPUT_ASSETS_DIR%"
-    xcopy "%SOURCE_ASSETS_DIR%" "%OUTPUT_ASSETS_DIR%" /E /I /Y /Q
-    
-    REM Prevent copied assets directory from being uploaded
-    echo * > "%OUTPUT_ASSETS_DIR%\.gitignore"
-    
-    echo    Done syncing assets.
+if "%SKIP_ASSETS_SYNC%"=="1" (
+    echo [INFO] Skipping assets sync ^(SKIP_ASSETS_SYNC=1^)
 ) else (
-    echo    Warning: Shared assets directory not found.
+    echo Syncing assets...
+    if exist "%SOURCE_ASSETS_DIR%" (
+        if not exist "%OUTPUT_ASSETS_DIR%" mkdir "%OUTPUT_ASSETS_DIR%"
+        xcopy "%SOURCE_ASSETS_DIR%" "%OUTPUT_ASSETS_DIR%" /E /I /Y /Q
+        
+        REM Prevent copied assets directory from being uploaded
+        echo * > "%OUTPUT_ASSETS_DIR%\.gitignore"
+        
+        echo    Done syncing assets.
+    ) else (
+        echo    Warning: Shared assets directory not found.
+    )
 )
 REM ==========================================
 

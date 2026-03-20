@@ -26,7 +26,10 @@ use myth_resources::MouseButton;
 #[cfg(not(target_arch = "wasm32"))]
 const ASSET_PATH: &str = "examples/assets/";
 #[cfg(target_arch = "wasm32")]
-const ASSET_PATH: &str = "assets/";
+const ASSET_PATH: &str = match option_env!("MYTH_ASSET_PATH") {
+    Some(path) => path, // CI or user-defined path via build_wasm.sh
+    None => "assets/",  // Local default path for testing with build_wasm.sh
+};
 
 const DEFAULT_MODEL: &str = "cute_girl.glb";
 const DEFAULT_PRESET: VisualPreset = VisualPreset::Cinematic;
@@ -446,7 +449,7 @@ impl AppHandler for ShowcaseApp {
         // 1. Kick off model loading once.
         if !self.loading_started {
             self.loading_started = true;
-            let model_name = get_model_url().unwrap_or_else(|| DEFAULT_MODEL.to_string());
+            let model_name = DEFAULT_MODEL.to_string();
             let model_path = format!("{}{}", ASSET_PATH, model_name);
             log::info!("Loading model: {}", model_path);
 
@@ -728,23 +731,6 @@ fn execute_future<F: std::future::Future<Output = ()> + Send + 'static>(f: F) {
 #[cfg(target_arch = "wasm32")]
 fn execute_future<F: std::future::Future<Output = ()> + 'static>(f: F) {
     wasm_bindgen_futures::spawn_local(f);
-}
-
-/// Reads a custom model URL from the environment.
-///
-/// - WASM: checks `?model=` query parameter.
-/// - Native: uses the first CLI argument.
-#[cfg(target_arch = "wasm32")]
-fn get_model_url() -> Option<String> {
-    let window = web_sys::window()?;
-    let search = window.location().search().ok()?;
-    let params = web_sys::UrlSearchParams::new_with_str(&search).ok()?;
-    params.get("model")
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-fn get_model_url() -> Option<String> {
-    std::env::args().nth(1)
 }
 
 // ── Entry Points ────────────────────────────────────────────────────────────

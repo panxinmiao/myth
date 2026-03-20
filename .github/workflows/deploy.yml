@@ -33,10 +33,19 @@ jobs:
           chmod +x scripts/build_wasm.sh
           
           echo "🚀 Building Showcase (Main Page)..."
+          export SKIP_ASSETS_SYNC=0
+          export MYTH_ASSET_PATH="assets/"
           ./scripts/build_wasm.sh showcase release --features gltf-meshopt
           
           echo "🚀 Building glTF Viewer (Sub Page)..."
-          ./scripts/build_wasm.sh gltf_viewer release --features gltf-meshopt
+          export SKIP_ASSETS_SYNC=1
+          export MYTH_ASSET_PATH="../assets/"
+          ./scripts/build_wasm.sh gltf_viewer release --features "gltf-meshopt, rdg_inspector"
+
+          echo "🚀 Building glTF Shower (Sub Page)..."
+          export SKIP_ASSETS_SYNC=1
+          export MYTH_ASSET_PATH="../assets/"
+          ./scripts/build_wasm.sh gltf_shower release --features gltf-meshopt
 
       - name: Organize Deployment Files
         run: |
@@ -50,8 +59,12 @@ jobs:
           # 2. Copy glTF Viewer to subdirectory
           mkdir -p dist/gltf_viewer
           cp -r examples/gltf_viewer/web/* dist/gltf_viewer/
+
+          # 3. Copy glTF shower to subdirectory
+          mkdir -p dist/gltf
+          cp -r examples/gltf_shower/web/* dist/gltf/
           
-          # 3. Clean up .gitignore files
+          # 4. Clean up .gitignore files
           # build_wasm.sh generates .gitignore in pkg and assets, which need to be removed for deployment
           find dist -name ".gitignore" -type f -delete
           

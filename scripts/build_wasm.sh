@@ -59,19 +59,23 @@ echo "*" > "$OUTPUT_PKG_DIR/.gitignore"
 # ==========================================
 # 5. Sync Assets
 # ==========================================
-echo "📂 Syncing assets..."
-rm -rf "$OUTPUT_ASSETS_DIR"
-mkdir -p "$OUTPUT_ASSETS_DIR"
+if [ "$SKIP_ASSETS_SYNC" != "1" ]; then
+    echo "📂 Syncing assets..."
+    rm -rf "$OUTPUT_ASSETS_DIR"
+    mkdir -p "$OUTPUT_ASSETS_DIR"
 
-if [ -d "$SOURCE_ASSETS_DIR" ]; then
-    cp -r "$SOURCE_ASSETS_DIR/"* "$OUTPUT_ASSETS_DIR/"
-    
-    # Prevent copied assets directory from being uploaded
-    echo "*" > "$OUTPUT_ASSETS_DIR/.gitignore"
-    
-    echo "   ✅ Copied shared assets."
+    if [ -d "$SOURCE_ASSETS_DIR" ]; then
+        cp -r "$SOURCE_ASSETS_DIR/"* "$OUTPUT_ASSETS_DIR/"
+        
+        # Prevent copied assets directory from being uploaded
+        echo "*" > "$OUTPUT_ASSETS_DIR/.gitignore"
+        
+        echo "   ✅ Copied shared assets."
+    else
+        echo "   ⚠️ Warning: Shared assets directory '$SOURCE_ASSETS_DIR' not found."
+    fi
 else
-    echo "   ⚠️ Warning: Shared assets directory '$SOURCE_ASSETS_DIR' not found."
+    echo "📂 Skipping assets sync (SKIP_ASSETS_SYNC=1)"
 fi
 # ==========================================
 
