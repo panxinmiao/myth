@@ -1,10 +1,15 @@
 [package]
 name = "myth_app"
 description = "Application framework and windowing integration for the Myth engine."
+keywords.workspace = true
+categories.workspace = true
 version.workspace = true
+rust-version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
+repository.workspace = true
+homepage.workspace = true
 
 [dependencies]
 myth_core      = { workspace = true }

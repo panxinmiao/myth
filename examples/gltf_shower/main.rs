@@ -82,7 +82,8 @@ impl AppHandler for ShowcaseApp {
         }
 
         // 4. Set up camera
-        let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.01);
+        let mut camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.01);
+        camera.aa_mode = AntiAliasingMode::MSAA_FXAA(4, FxaaSettings::default());
         let cam_node_id = scene.add_camera(camera);
 
         // Initial camera position (will be overridden by auto-focus)

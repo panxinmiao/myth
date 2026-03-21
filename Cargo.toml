@@ -20,11 +20,14 @@ members = [
 
 [workspace.package]
 version = "0.1.0"
+rust-version = "1.92"
 edition = "2024"
 authors = ["Pan Xinmiao <pan_xinmiao@163.com>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/panxinmiao/myth"
 homepage = "https://github.com/panxinmiao/myth"
+keywords = ["3d", "wgpu", "graphics", "gamedev", "engine", "rendering", "renderer", "webgpu"]
+categories = ["game-development", "graphics", "rendering::engine", "rendering::renderer"]                                                                                             
 
 # =============================================================================
 # Workspace-wide dependency versions
@@ -32,13 +35,13 @@ homepage = "https://github.com/panxinmiao/myth"
 
 [workspace.dependencies]
 # Internal crates
-myth_core      = { path = "crates/myth_core" }
-myth_resources = { path = "crates/myth_resources" }
-myth_animation = { path = "crates/myth_animation" }
-myth_scene     = { path = "crates/myth_scene" }
-myth_assets    = { path = "crates/myth_assets" }
-myth_render    = { path = "crates/myth_render" }
-myth_app       = { path = "crates/myth_app" }
+myth_core      = { path = "crates/myth_core", version = "0.1.0" }
+myth_resources = { path = "crates/myth_resources", version = "0.1.0" }
+myth_animation = { path = "crates/myth_animation", version = "0.1.0" }
+myth_scene     = { path = "crates/myth_scene", version = "0.1.0" }
+myth_assets    = { path = "crates/myth_assets", version = "0.1.0" }
+myth_render    = { path = "crates/myth_render", version = "0.1.0" }
+myth_app       = { path = "crates/myth_app", version = "0.1.0" }
 
 # Graphics and Math
 wgpu = { version = "28.0", features = ["wgsl"] }
@@ -140,9 +143,10 @@ too_many_lines = "allow"
 name = "myth-engine"
 description = "A developer-friendly, high-performance 3D rendering engine written in Rust."
 readme = "README.md"
-keywords = ["3d", "wgpu", "graphics", "gamedev", "engine", "rendering", "renderer", "webgpu"]
-categories = ["game-development", "graphics", "rendering::engine", "rendering::renderer"]
+keywords.workspace = true
+categories.workspace = true
 version.workspace = true
+rust-version.workspace = true
 edition.workspace = true
 authors.workspace = true
 license.workspace = true
