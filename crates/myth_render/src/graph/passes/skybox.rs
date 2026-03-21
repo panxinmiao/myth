@@ -23,7 +23,7 @@
 use rustc_hash::FxHashMap;
 
 use crate::core::binding::BindGroupKey;
-use crate::core::gpu::SamplerKey;
+use myth_resources::texture::TextureSampler;
 use crate::core::gpu::Tracked;
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
@@ -41,7 +41,7 @@ use myth_scene::background::{BackgroundMapping, BackgroundMode, SkyboxParamsUnif
 
 /// Sampler key for the skybox environment map: trilinear filtering with
 /// horizontal repeat (seamless panorama wrap) and vertical/depth clamp.
-const SKYBOX_SAMPLER_KEY: SamplerKey = SamplerKey {
+const SKYBOX_SAMPLER_KEY: TextureSampler = TextureSampler {
     address_mode_u: wgpu::AddressMode::Repeat,
     address_mode_v: wgpu::AddressMode::ClampToEdge,
     address_mode_w: wgpu::AddressMode::ClampToEdge,

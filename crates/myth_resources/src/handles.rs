@@ -10,10 +10,10 @@ new_key_type! {
     pub struct GeometryHandle;
     /// Handle to a material asset.
     pub struct MaterialHandle;
-    /// Handle to a texture asset.
+    /// Handle to a raw image data asset in the [`AssetStorage`].
+    pub struct ImageHandle;
+    /// Handle to a texture asset (lightweight glue combining an image with sampling config).
     pub struct TextureHandle;
-    /// Handle to a sampler configuration.
-    pub struct SamplerHandle;
     /// Opaque handle into the GPU buffer arena.
     ///
     /// Internally a SlotMap key with built-in generation checking.

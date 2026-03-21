@@ -14,6 +14,7 @@ use myth_core::{AssetError, Error, Result};
 use myth_resources::BoundingBox;
 use myth_resources::buffer::BufferRef;
 use myth_resources::geometry::{Attribute, Geometry};
+use myth_resources::image::Image;
 use myth_resources::material::AlphaMode;
 use myth_resources::texture::Texture;
 use myth_resources::{GeometryHandle, MaterialHandle, TextureHandle};
@@ -706,13 +707,17 @@ impl LoadContext<'_, '_> {
             TextureFormat::Rgba8Unorm
         };
 
-        let mut engine_tex = Texture::new_2d(
-            raw.name.as_deref(),
+        let image = Image::new(
             raw.width,
             raw.height,
-            Some(raw.image_data.clone()),
+            1,
+            wgpu::TextureDimension::D2,
             format,
+            Some(raw.image_data.clone()),
         );
+        let image_handle = self.assets.images.add(image);
+
+        let mut engine_tex = Texture::new_2d(raw.name.as_deref(), image_handle);
 
         engine_tex.sampler = raw.sampler;
         engine_tex.generate_mipmaps = raw.generate_mipmaps;
@@ -1125,13 +1130,17 @@ impl GltfLoader {
             TextureFormat::Rgba8Unorm
         };
 
-        let mut engine_tex = Texture::new_2d(
-            raw.name.as_deref(),
+        let image = Image::new(
             raw.width,
             raw.height,
-            Some(raw.image_data.clone()),
+            1,
+            wgpu::TextureDimension::D2,
             format,
+            Some(raw.image_data.clone()),
         );
+        let image_handle = self.assets.images.add(image);
+
+        let mut engine_tex = Texture::new_2d(raw.name.as_deref(), image_handle);
 
         engine_tex.sampler = raw.sampler;
         engine_tex.generate_mipmaps = raw.generate_mipmaps;
@@ -2201,21 +2210,27 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
                 roughness_data.push(255);
             }
 
-            let specular_texture = Texture::new_2d(
-                Some("sg_specular"),
+            let specular_image = Image::new(
                 width,
                 height,
-                Some(specular_data),
+                1,
+                wgpu::TextureDimension::D2,
                 TextureFormat::Rgba8UnormSrgb,
+                Some(specular_data),
             );
+            let specular_img_handle = ctx.assets.images.add(specular_image);
+            let specular_texture = Texture::new_2d(Some("sg_specular"), specular_img_handle);
 
-            let roughness_texture = Texture::new_2d(
-                Some("sg_roughness"),
+            let roughness_image = Image::new(
                 width,
                 height,
-                Some(roughness_data),
+                1,
+                wgpu::TextureDimension::D2,
                 TextureFormat::Rgba8Unorm,
+                Some(roughness_data),
             );
+            let roughness_img_handle = ctx.assets.images.add(roughness_image);
+            let roughness_texture = Texture::new_2d(Some("sg_roughness"), roughness_img_handle);
 
             let specular_handle = ctx.assets.textures.add(specular_texture);
             let roughness_handle = ctx.assets.textures.add(roughness_texture);

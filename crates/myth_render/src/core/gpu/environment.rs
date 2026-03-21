@@ -70,7 +70,8 @@ impl ResourceManager {
         if let TextureSource::Asset(handle) = &source {
             self.prepare_texture(assets, *handle);
             if let Some(tex) = assets.textures.get(*handle) {
-                current_version = tex.version();
+                current_version =
+                    assets.images.get_version(tex.image).unwrap_or(0) as u64;
             }
         }
 

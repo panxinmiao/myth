@@ -7,10 +7,11 @@ use crate::io::{AssetReaderVariant, AssetSource};
 use crate::storage::AssetStorage;
 use myth_core::{AssetError, Error, Result};
 use myth_resources::geometry::Geometry;
+use myth_resources::image::Image;
 use myth_resources::material::Material;
 use myth_resources::screen_space::SssRegistry;
-use myth_resources::texture::{Sampler, Texture};
-use myth_resources::{GeometryHandle, MaterialHandle, SamplerHandle, TextureHandle};
+use myth_resources::texture::Texture;
+use myth_resources::{GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
@@ -31,8 +32,8 @@ fn get_asset_runtime() -> &'static Runtime {
 pub struct AssetServer {
     pub geometries: Arc<AssetStorage<GeometryHandle, Geometry>>,
     pub materials: Arc<AssetStorage<MaterialHandle, Material>>,
+    pub images: Arc<AssetStorage<ImageHandle, Image>>,
     pub textures: Arc<AssetStorage<TextureHandle, Texture>>,
-    pub samplers: Arc<AssetStorage<SamplerHandle, Sampler>>,
 
     pub sss_registry: Arc<RwLock<SssRegistry>>,
 }
@@ -49,8 +50,8 @@ impl AssetServer {
         Self {
             geometries: Arc::new(AssetStorage::new()),
             materials: Arc::new(AssetStorage::new()),
+            images: Arc::new(AssetStorage::new()),
             textures: Arc::new(AssetStorage::new()),
-            samplers: Arc::new(AssetStorage::new()),
 
             sss_registry: Arc::new(RwLock::new(SssRegistry::new())),
         }
@@ -77,8 +78,11 @@ impl AssetServer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let mut texture = crate::load_texture_from_file(source.uri().to_string(), color_space)?;
-            texture.generate_mipmaps = generate_mipmaps;
+            let (image, sampler_cfg, gen_mips) = crate::load_texture_from_file(source.uri().to_string(), color_space)?;
+            let image_handle = self.images.add(image);
+            let mut texture = Texture::new_2d(None, image_handle);
+            texture.sampler = sampler_cfg;
+            texture.generate_mipmaps = gen_mips || generate_mipmaps;
             let handle = self.textures.add(texture);
             Ok(handle)
         }
@@ -100,11 +104,14 @@ impl AssetServer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let mut texture = crate::load_cube_texture_from_files(
+            let (image, sampler_cfg, gen_mips) = crate::load_cube_texture_from_files(
                 &sources.map(|s| s.uri().to_string()),
                 color_space,
             )?;
-            texture.generate_mipmaps = generate_mipmaps;
+            let image_handle = self.images.add(image);
+            let mut texture = Texture::new_cube(None, image_handle);
+            texture.sampler = sampler_cfg;
+            texture.generate_mipmaps = gen_mips || generate_mipmaps;
             let handle = self.textures.add(texture);
             Ok(handle)
         }
@@ -118,7 +125,10 @@ impl AssetServer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let texture = crate::load_hdr_texture_from_file(source.uri().to_string())?;
+            let (image, sampler_cfg, _) = crate::load_hdr_texture_from_file(source.uri().to_string())?;
+            let image_handle = self.images.add(image);
+            let mut texture = Texture::new_2d(None, image_handle);
+            texture.sampler = sampler_cfg;
             let handle = self.textures.add(texture);
             Ok(handle)
         }
@@ -147,9 +157,11 @@ impl AssetServer {
 
         let image = Self::decode_image_async(bytes, color_space, filename.to_string()).await?;
 
-        // 3. Build Texture resource
-        let mut texture = Texture::new(Some(&uri), image, wgpu::TextureViewDimension::D2);
+        // 2. Store Image in AssetStorage, get handle
+        let image_handle = self.images.add(image);
 
+        // 3. Build Texture resource
+        let mut texture = Texture::new(Some(&uri), image_handle, wgpu::TextureViewDimension::D2);
         texture.generate_mipmaps = generate_mipmaps;
 
         // 4. Store in AssetStorage
@@ -184,11 +196,11 @@ impl AssetServer {
         let images = futures::future::try_join_all(futures).await?;
 
         // Check dimension consistency
-        let width: u32 = images[0].width();
-        let height = images[0].height();
+        let width: u32 = images[0].width;
+        let height = images[0].height;
         if images
             .iter()
-            .any(|img| img.width() != width || img.height() != height)
+            .any(|img| img.width != width || img.height != height)
         {
             return Err(Error::Asset(AssetError::InvalidData(
                 "Cube map images must have same dimensions".to_string(),
@@ -197,14 +209,13 @@ impl AssetServer {
 
         let mut combined_data = Vec::with_capacity((width * height * 4 * 6) as usize);
 
-        for img in images {
-            if let Some(data) = img.data.read().unwrap().as_ref() {
+        for img in &images {
+            if let Some(data) = &img.data {
                 combined_data.extend(data);
             }
         }
 
         let combined_image = myth_resources::image::Image::new(
-            Some("CubeMap"),
             width,
             height,
             6,
@@ -216,9 +227,11 @@ impl AssetServer {
             Some(combined_data),
         );
 
+        let image_handle = self.images.add(combined_image);
+
         let mut texture = Texture::new(
             Some("CubeMap"),
-            combined_image,
+            image_handle,
             wgpu::TextureViewDimension::Cube,
         );
         texture.generate_mipmaps = generate_mipmaps;
@@ -238,9 +251,9 @@ impl AssetServer {
 
         // HDR decoding logic
         let image = Self::decode_hdr_async(bytes).await?;
+        let image_handle = self.images.add(image);
 
-        let mut texture = Texture::new(Some(&filename), image, wgpu::TextureViewDimension::D2);
-        // HDR typically does not need mipmaps, or requires special handling
+        let mut texture = Texture::new(Some(&filename), image_handle, wgpu::TextureViewDimension::D2);
         texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
         texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
         texture.sampler.mag_filter = wgpu::FilterMode::Linear;
@@ -259,7 +272,8 @@ impl AssetServer {
         generate_mipmaps: bool,
     ) -> Result<TextureHandle> {
         let image = Self::decode_image_async(bytes, color_space, name.to_string()).await?;
-        let mut texture = Texture::new(Some(name), image, wgpu::TextureViewDimension::D2);
+        let image_handle = self.images.add(image);
+        let mut texture = Texture::new(Some(name), image_handle, wgpu::TextureViewDimension::D2);
         texture.generate_mipmaps = generate_mipmaps;
         let handle = self.textures.add(texture);
         Ok(handle)
@@ -272,7 +286,8 @@ impl AssetServer {
         bytes: Vec<u8>,
     ) -> Result<TextureHandle> {
         let image = Self::decode_hdr_async(bytes).await?;
-        let mut texture = Texture::new(Some(name), image, wgpu::TextureViewDimension::D2);
+        let image_handle = self.images.add(image);
+        let mut texture = Texture::new(Some(name), image_handle, wgpu::TextureViewDimension::D2);
         texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
         texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
         texture.sampler.mag_filter = wgpu::FilterMode::Linear;
@@ -293,7 +308,10 @@ impl AssetServer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let texture = crate::load_lut_texture_from_file(source.uri().to_string())?;
+            let (image, sampler_cfg, _) = crate::load_lut_texture_from_file(source.uri().to_string())?;
+            let image_handle = self.images.add(image);
+            let mut texture = Texture::new_3d(None, image_handle);
+            texture.sampler = sampler_cfg;
             let handle = self.textures.add(texture);
             Ok(handle)
         }
@@ -309,8 +327,9 @@ impl AssetServer {
         let bytes = reader.read_bytes(&filename).await?;
 
         let image = Self::decode_cube_async(bytes).await?;
+        let image_handle = self.images.add(image);
 
-        let mut texture = Texture::new(Some(&filename), image, wgpu::TextureViewDimension::D3);
+        let mut texture = Texture::new(Some(&filename), image_handle, wgpu::TextureViewDimension::D3);
         texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
         texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
         texture.sampler.address_mode_w = wgpu::AddressMode::ClampToEdge;
@@ -328,7 +347,8 @@ impl AssetServer {
         bytes: Vec<u8>,
     ) -> Result<TextureHandle> {
         let image = Self::decode_cube_async(bytes).await?;
-        let mut texture = Texture::new(Some(name), image, wgpu::TextureViewDimension::D3);
+        let image_handle = self.images.add(image);
+        let mut texture = Texture::new(Some(name), image_handle, wgpu::TextureViewDimension::D3);
         texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
         texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
         texture.sampler.address_mode_w = wgpu::AddressMode::ClampToEdge;
@@ -382,7 +402,6 @@ impl AssetServer {
         let rgba = img.to_rgba8();
 
         Ok(myth_resources::image::Image::new(
-            Some(label),
             width,
             height,
             1,
@@ -436,7 +455,6 @@ impl AssetServer {
         }
 
         Ok(myth_resources::image::Image::new(
-            Some("HDR_Texture"),
             width,
             height,
             1,
@@ -474,7 +492,7 @@ impl AssetServer {
             )))
         })?;
 
-        // 绉婚櫎鍙兘瀛樺湪鐨?UTF-8 BOM 瀛楃 (Windows 涓嬪父瑙?
+        // Remove potential UTF-8 BOM (Windows specific)
         let text = raw_text.strip_prefix('\u{FEFF}').unwrap_or(raw_text);
 
         let mut size = 0;
@@ -482,12 +500,10 @@ impl AssetServer {
 
         for line in text.lines() {
             let line = line.trim();
-            // 璺宠繃绌鸿鍜屾敞閲?
             if line.is_empty() || line.starts_with('#') {
                 continue;
             }
 
-            // 瑙ｆ瀽 LUT 灏哄
             if line.starts_with("LUT_3D_SIZE") {
                 let parts: Vec<&str> = line.split_whitespace().collect();
                 if parts.len() == 2 {
@@ -498,7 +514,6 @@ impl AssetServer {
                 continue;
             }
 
-            // 璺宠繃甯歌鐨?.cube 鍏冩暟鎹厤缃锛岄槻姝㈣鍒?
             if line.starts_with("TITLE")
                 || line.starts_with("DOMAIN_")
                 || line.starts_with("LUT_1D_")
@@ -507,10 +522,8 @@ impl AssetServer {
                 continue;
             }
 
-            // 灏濊瘯灏嗚瑙ｆ瀽涓?3 涓诞鐐规暟 (RGB)
             let parts: Vec<&str> = line.split_whitespace().collect();
             if parts.len() == 3 {
-                // 瀹夊叏瑙ｆ瀽锛氬彧鏈夊綋杩?3 涓儴鍒嗗叏閮借兘鎴愬姛杞负 f32 鏃讹紝鎵嶅瓨鍏ユ暟鎹?
                 if let (Ok(r), Ok(g), Ok(b)) = (
                     parts[0].parse::<f32>(),
                     parts[1].parse::<f32>(),
@@ -557,10 +570,9 @@ impl AssetServer {
         }
 
         Ok(myth_resources::image::Image::new(
-            Some("LUT_3D"),
             size,
             size,
-            size, // Depth 涓?size
+            size,
             wgpu::TextureDimension::D3,
             wgpu::TextureFormat::Rgba16Float,
             Some(rgba_f16_data),

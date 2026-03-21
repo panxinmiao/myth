@@ -1,9 +1,8 @@
-use crate::image::Image;
-use crate::{SamplerHandle, TextureHandle};
+use crate::{ImageHandle, TextureHandle};
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::hash::{Hash, Hasher};
 use uuid::Uuid;
-use wgpu::{AddressMode, TextureDimension, TextureFormat, TextureViewDimension};
+use wgpu::{AddressMode, TextureViewDimension};
 
 /// Texture source specifier.
 ///
@@ -13,8 +12,8 @@ use wgpu::{AddressMode, TextureDimension, TextureFormat, TextureViewDimension};
 pub enum TextureSource {
     /// Asset from `AssetServer` (with version tracking and automatic upload)
     Asset(TextureHandle),
-    /// Pure GPU resource (e.g., Render Target), directly using its Resource ID
-    /// This ID is typically assigned by `RenderGraph` or `TexturePool`
+    /// Pure GPU resource (e.g., Render Target), directly using its Resource ID.
+    /// This ID is typically assigned by `RenderGraph` or `TexturePool`.
     Attachment(u64, TextureViewDimension),
 }
 
@@ -39,22 +38,13 @@ pub enum SamplerSource {
     /// `ResourceManager` looks up the sampler from the `TextureHandle`'s metadata.
     FromTexture(TextureHandle),
 
-    /// Explicit specification: Uses a specific Sampler Asset.
-    Asset(SamplerHandle),
-
+    /// Use the system default sampler.
     Default,
 }
 
-// Syntactic sugar: allows deriving SamplerSource directly from TextureHandle
 impl From<TextureHandle> for SamplerSource {
     fn from(handle: TextureHandle) -> Self {
         Self::FromTexture(handle)
-    }
-}
-
-impl From<SamplerHandle> for SamplerSource {
-    fn from(handle: SamplerHandle) -> Self {
-        Self::Asset(handle)
     }
 }
 
@@ -67,7 +57,17 @@ impl From<TextureSource> for SamplerSource {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+// ============================================================================
+// Sampler configuration
+// ============================================================================
+
+/// Pure-data sampler descriptor used as both a configuration value on
+/// [`Texture`] and a hash-map key in the render backend's sampler cache.
+///
+/// `PartialEq`, `Eq` and `Hash` are implemented manually so that the
+/// floating-point LOD clamp fields are compared via their bit patterns,
+/// making the type safe in hash-based collections.
+#[derive(Debug, Clone, Copy)]
 pub struct TextureSampler {
     pub address_mode_u: wgpu::AddressMode,
     pub address_mode_v: wgpu::AddressMode,
@@ -75,11 +75,16 @@ pub struct TextureSampler {
     pub mag_filter: wgpu::FilterMode,
     pub min_filter: wgpu::FilterMode,
     pub mipmap_filter: wgpu::MipmapFilterMode,
-
-    /// Advanced: comparison function (for Shadow Map PCF)
+    /// Comparison function (for Shadow Map PCF).
     pub compare: Option<wgpu::CompareFunction>,
-    /// Advanced: anisotropic filtering level (1 = disabled)
+    /// Anisotropic filtering level (1 = disabled).
     pub anisotropy_clamp: u16,
+    /// Minimum LOD clamp.
+    pub lod_min_clamp: f32,
+    /// Maximum LOD clamp.
+    pub lod_max_clamp: f32,
+    /// Border colour (only relevant with `ClampToBorder` address mode).
+    pub border_color: Option<wgpu::SamplerBorderColor>,
 }
 
 impl Default for TextureSampler {
@@ -93,72 +98,85 @@ impl Default for TextureSampler {
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             compare: None,
             anisotropy_clamp: 1,
+            lod_min_clamp: 0.0,
+            lod_max_clamp: 32.0,
+            border_color: None,
         }
     }
 }
 
-impl From<&Sampler> for TextureSampler {
-    fn from(asset: &Sampler) -> Self {
-        asset.descriptor
+impl TextureSampler {
+    /// Trilinear filtering, all-axes clamped.
+    pub const LINEAR_CLAMP: Self = Self {
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        mipmap_filter: wgpu::MipmapFilterMode::Linear,
+        lod_min_clamp: 0.0,
+        lod_max_clamp: 32.0,
+        compare: None,
+        anisotropy_clamp: 1,
+        border_color: None,
+    };
+}
+
+impl PartialEq for TextureSampler {
+    fn eq(&self, other: &Self) -> bool {
+        self.address_mode_u == other.address_mode_u
+            && self.address_mode_v == other.address_mode_v
+            && self.address_mode_w == other.address_mode_w
+            && self.mag_filter == other.mag_filter
+            && self.min_filter == other.min_filter
+            && self.mipmap_filter == other.mipmap_filter
+            && self.lod_min_clamp.to_bits() == other.lod_min_clamp.to_bits()
+            && self.lod_max_clamp.to_bits() == other.lod_max_clamp.to_bits()
+            && self.compare == other.compare
+            && self.anisotropy_clamp == other.anisotropy_clamp
+            && self.border_color == other.border_color
+    }
+}
+
+impl Eq for TextureSampler {}
+
+impl Hash for TextureSampler {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.address_mode_u.hash(state);
+        self.address_mode_v.hash(state);
+        self.address_mode_w.hash(state);
+        self.mag_filter.hash(state);
+        self.min_filter.hash(state);
+        self.mipmap_filter.hash(state);
+        self.lod_min_clamp.to_bits().hash(state);
+        self.lod_max_clamp.to_bits().hash(state);
+        self.compare.hash(state);
+        self.anisotropy_clamp.hash(state);
+        self.border_color.hash(state);
     }
 }
 
 // ============================================================================
-// Sampler Asset (standalone sampler resource)
+// Texture Asset
 // ============================================================================
 
-#[derive(Debug, Clone)]
-pub struct Sampler {
-    pub uuid: Uuid,
-
-    pub name: Option<Cow<'static, str>>,
-
-    /// Core sampling parameters
-    pub descriptor: TextureSampler,
-}
-
-impl Sampler {
-    #[must_use]
-    pub fn new(descriptor: TextureSampler) -> Self {
-        Self {
-            uuid: Uuid::new_v4(),
-            name: None,
-            descriptor,
-        }
-    }
-
-    #[must_use]
-    pub fn name(&self) -> Option<&str> {
-        self.name.as_deref()
-    }
-}
-
-// Since TextureSampler implements Default, Sampler can implement it too
-impl Default for Sampler {
-    fn default() -> Self {
-        Self::new(TextureSampler::default())
-    }
-}
-
-// ============================================================================
-// 2. Texture Asset
-// ============================================================================
-
+/// Lightweight "glue" that pairs an [`Image`](crate::image::Image) (via
+/// handle) with sampling and view configuration.
+///
+/// `Texture` is intentionally thin — the heavy pixel data lives in the
+/// [`Image`] stored separately in `AssetServer.images`. This decoupling
+/// enables multiple `Texture` assets to reference the same `Image` with
+/// different sampler or view settings, and makes the version-driven GPU
+/// upload path straightforward.
 #[derive(Debug)]
 pub struct Texture {
-    uuid: Uuid,
-
+    pub uuid: Uuid,
     pub name: Option<Cow<'static, str>>,
-
-    pub image: Image,
-
+    /// Handle into `AssetServer.images`.
+    pub image: ImageHandle,
     pub view_dimension: TextureViewDimension,
-
     pub sampler: TextureSampler,
-    //pub transform: TextureTransform,
     pub generate_mipmaps: bool,
-
-    version: AtomicU64,
 }
 
 impl Texture {
@@ -169,9 +187,13 @@ impl Texture {
         self.uuid
     }
 
-    /// Creates a Texture from an existing Image.
+    /// Creates a `Texture` referencing the given image handle.
     #[must_use]
-    pub fn new(name: Option<&str>, image: Image, view_dimension: TextureViewDimension) -> Self {
+    pub fn new(
+        name: Option<&str>,
+        image: ImageHandle,
+        view_dimension: TextureViewDimension,
+    ) -> Self {
         Self {
             uuid: Uuid::new_v4(),
             name: name.map(|s| Cow::Owned(s.to_string())),
@@ -179,147 +201,37 @@ impl Texture {
             view_dimension,
             sampler: TextureSampler::default(),
             generate_mipmaps: false,
-            version: AtomicU64::new(0),
         }
     }
 
-    /// Creates a 2D texture (automatically creates the Image).
+    /// Convenience: creates a 2D texture referencing the given image handle.
     #[must_use]
-    pub fn new_2d(
-        name: Option<&str>,
-        width: u32,
-        height: u32,
-        data: Option<Vec<u8>>,
-        format: TextureFormat,
-    ) -> Self {
-        let image = Image::new(name, width, height, 1, TextureDimension::D2, format, data);
+    pub fn new_2d(name: Option<&str>, image: ImageHandle) -> Self {
         Self::new(name, image, TextureViewDimension::D2)
     }
 
-    /// Creates a 3D texture (useful for LUTs).
+    /// Convenience: creates a 3D texture (e.g. LUT) referencing the given handle.
     #[must_use]
-    pub fn new_3d(
-        name: Option<&str>,
-        width: u32,
-        height: u32,
-        depth: u32,
-        data: Option<Vec<u8>>,
-        format: TextureFormat,
-    ) -> Self {
-        let image = Image::new(
-            name,
-            width,
-            height,
-            depth,
-            TextureDimension::D3,
-            format,
-            data,
-        );
+    pub fn new_3d(name: Option<&str>, image: ImageHandle) -> Self {
         let mut tex = Self::new(name, image, TextureViewDimension::D3);
-        // LUTs typically require ClampToEdge addressing
         tex.sampler.address_mode_u = AddressMode::ClampToEdge;
         tex.sampler.address_mode_v = AddressMode::ClampToEdge;
         tex.sampler.address_mode_w = AddressMode::ClampToEdge;
         tex
     }
 
-    /// Creates a Cube Map texture.
+    /// Convenience: creates a Cube Map texture referencing the given handle.
     #[must_use]
-    pub fn new_cube(
-        name: Option<&str>,
-        size: u32,
-        data: Option<Vec<u8>>,
-        format: TextureFormat,
-    ) -> Self {
-        let image = Image::new(
-            name,
-            size,
-            size,
-            6,                    // 6 layers
-            TextureDimension::D2, // Physical dimension is 2D
-            format,
-            data,
-        );
+    pub fn new_cube(name: Option<&str>, image: ImageHandle) -> Self {
         let mut tex = Self::new(name, image, TextureViewDimension::Cube);
-        // Cube maps default to Clamp sampling
         tex.sampler.address_mode_u = AddressMode::ClampToEdge;
         tex.sampler.address_mode_v = AddressMode::ClampToEdge;
         tex.sampler.address_mode_w = AddressMode::ClampToEdge;
         tex
     }
 
-    pub fn mip_level_count(&self) -> u32 {
-        if !self.generate_mipmaps {
-            return 1;
-        }
-        let w = self.image.width();
-        let h = self.image.height();
-        let max_dim = std::cmp::max(w, h);
-        if max_dim == 0 {
-            return 1;
-        }
-        // SAFETY: log2 of positive integer is always non-negative
-        (max_dim as f32).log2().floor() as u32 + 1
-    }
-
-    pub fn version(&self) -> u64 {
-        self.version.load(Ordering::Relaxed)
-    }
-
+    /// Returns the name as a string slice, if present.
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
-    }
-
-    /// Creates a solid color texture (1x1).
-    #[must_use]
-    pub fn create_solid_color(name: Option<&str>, color: [u8; 4]) -> Texture {
-        Self::new_2d(
-            name,
-            1,
-            1,
-            Some(color.to_vec()),
-            wgpu::TextureFormat::Rgba8UnormSrgb,
-        )
-    }
-
-    pub fn needs_update(&mut self) {
-        self.version.fetch_add(1, Ordering::Relaxed);
-    }
-
-    /// Creates a checkerboard test texture.
-    #[must_use]
-    pub fn create_checkerboard(
-        name: Option<&str>,
-        width: u32,
-        height: u32,
-        check_size: u32,
-    ) -> Self {
-        let mut data = Vec::with_capacity((width * height * 4) as usize);
-
-        let color_a = [255, 255, 255, 255]; // White
-        let color_b = [0, 0, 0, 255]; // Black (or use pink [255, 0, 255, 255] for debugging)
-
-        for y in 0..height {
-            for x in 0..width {
-                // Simple XOR logic to generate checkerboard pattern
-                let cx = x / check_size;
-                let cy = y / check_size;
-                let is_a = (cx + cy).is_multiple_of(2);
-
-                if is_a {
-                    data.extend_from_slice(&color_a);
-                } else {
-                    data.extend_from_slice(&color_b);
-                }
-            }
-        }
-
-        Self::new_2d(
-            name,
-            width,
-            height,
-            Some(data),
-            wgpu::TextureFormat::Rgba8Unorm,
-        )
     }
 }

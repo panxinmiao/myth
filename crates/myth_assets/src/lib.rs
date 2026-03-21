@@ -17,7 +17,7 @@ pub mod server;
 pub mod skeleton_asset;
 pub mod storage;
 
-pub use myth_resources::{GeometryHandle, MaterialHandle, SamplerHandle, TextureHandle};
+pub use myth_resources::{GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
 pub use server::AssetServer;
 
 pub use handle::{AssetTracker, StrongHandle, TrackedAsset, WeakHandle};
@@ -38,6 +38,8 @@ pub use io::HttpAssetReader;
 
 use image::GenericImageView;
 use myth_core::{AssetError, Error, Result};
+use myth_resources::image::Image;
+use myth_resources::texture::TextureSampler;
 use std::path::Path;
 
 pub fn load_image_from_file(path: impl AsRef<Path>) -> Result<(Vec<u8>, u32, u32)> {
@@ -59,30 +61,35 @@ pub enum ColorSpace {
     Linear,
 }
 
+/// Returns `(Image, TextureSampler, generate_mipmaps)`.
 pub fn load_texture_from_file(
     path: impl AsRef<Path>,
     color_space: ColorSpace,
-) -> Result<myth_resources::texture::Texture> {
+) -> Result<(Image, TextureSampler, bool)> {
     let (data, width, height) = load_image_from_file(&path)?;
 
-    let texture = myth_resources::texture::Texture::new_2d(
-        path.as_ref().to_str(),
+    let format = match color_space {
+        ColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+        ColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
+    };
+
+    let image = Image::new(
         width,
         height,
+        1,
+        wgpu::TextureDimension::D2,
+        format,
         Some(data),
-        match color_space {
-            ColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
-            ColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
-        },
     );
 
-    Ok(texture)
+    Ok((image, TextureSampler::default(), false))
 }
 
 /// Loads an HDR environment map in Equirectangular format.
+/// Returns `(Image, TextureSampler, generate_mipmaps)`.
 pub fn load_hdr_texture_from_file(
     path: impl AsRef<Path>,
-) -> Result<myth_resources::texture::Texture> {
+) -> Result<(Image, TextureSampler, bool)> {
     let img = image::open(&path)
         .map_err(|e| Error::Asset(AssetError::Format(format!("Image error: {e}"))))?;
 
@@ -105,8 +112,7 @@ pub fn load_hdr_texture_from_file(
         rgba_f16_data.extend_from_slice(&a.to_le_bytes());
     }
 
-    let image = myth_resources::image::Image::new(
-        path.as_ref().to_str(),
+    let image = Image::new(
         width,
         height,
         1,
@@ -115,24 +121,22 @@ pub fn load_hdr_texture_from_file(
         Some(rgba_f16_data),
     );
 
-    let mut texture = myth_resources::texture::Texture::new(
-        path.as_ref().to_str(),
-        image,
-        wgpu::TextureViewDimension::D2,
-    );
+    let sampler = TextureSampler {
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..TextureSampler::default()
+    };
 
-    texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
-    texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
-    texture.sampler.mag_filter = wgpu::FilterMode::Linear;
-    texture.sampler.min_filter = wgpu::FilterMode::Linear;
-
-    Ok(texture)
+    Ok((image, sampler, false))
 }
 
+/// Returns `(Image, TextureSampler, generate_mipmaps)`.
 pub fn load_cube_texture_from_files(
     paths: &[impl AsRef<Path>; 6],
     color_space: ColorSpace,
-) -> Result<myth_resources::texture::Texture> {
+) -> Result<(Image, TextureSampler, bool)> {
     let mut face_data = Vec::with_capacity(6);
     let mut width = 0;
     let mut height = 0;
@@ -155,38 +159,40 @@ pub fn load_cube_texture_from_files(
         combined_data.extend_from_slice(face);
     }
 
-    let texture = myth_resources::texture::Texture::new_cube(
-        None,
+    let format = match color_space {
+        ColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
+        ColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
+    };
+
+    let image = Image::new(
         width,
+        height,
+        6,
+        wgpu::TextureDimension::D2,
+        format,
         Some(combined_data),
-        match color_space {
-            ColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
-            ColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
-        },
     );
 
-    Ok(texture)
+    Ok((image, TextureSampler::default(), false))
 }
 
 /// Loads a 3D LUT texture from a .cube file.
+/// Returns `(Image, TextureSampler, generate_mipmaps)`.
 pub fn load_lut_texture_from_file(
     path: impl AsRef<Path>,
-) -> Result<myth_resources::texture::Texture> {
+) -> Result<(Image, TextureSampler, bool)> {
     let bytes = std::fs::read(&path)?;
 
     let image = server::AssetServer::decode_cube_cpu(&bytes)?;
 
-    let mut texture = myth_resources::texture::Texture::new(
-        path.as_ref().to_str(),
-        image,
-        wgpu::TextureViewDimension::D3,
-    );
+    let sampler = TextureSampler {
+        address_mode_u: wgpu::AddressMode::ClampToEdge,
+        address_mode_v: wgpu::AddressMode::ClampToEdge,
+        address_mode_w: wgpu::AddressMode::ClampToEdge,
+        mag_filter: wgpu::FilterMode::Linear,
+        min_filter: wgpu::FilterMode::Linear,
+        ..TextureSampler::default()
+    };
 
-    texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
-    texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
-    texture.sampler.address_mode_w = wgpu::AddressMode::ClampToEdge;
-    texture.sampler.mag_filter = wgpu::FilterMode::Linear;
-    texture.sampler.min_filter = wgpu::FilterMode::Linear;
-
-    Ok(texture)
+    Ok((image, sampler, false))
 }

@@ -308,9 +308,6 @@ impl ResourceManager {
                         SamplerSource::FromTexture(_handle) => {
                             // Should already be prepared during prepare_texture phase
                         }
-                        SamplerSource::Asset(handle) => {
-                            self.prepare_sampler(assets, *handle);
-                        }
                         SamplerSource::Default => {
                             // Do nothing
                         }
@@ -415,21 +412,7 @@ impl ResourceManager {
                                     &self.dummy_sampler.sampler
                                 }
                             }
-                            // Case 2: Explicit Sampler Asset
-                            SamplerSource::Asset(handle) => {
-                                // Look up GPU ID from sampler_bindings
-                                if let Some(id) = self.sampler_bindings.get(*handle) {
-                                    self.sampler_id_lookup
-                                        .get(id)
-                                        .unwrap_or(&self.dummy_sampler.sampler)
-                                } else {
-                                    // If not yet prepared, this should not happen in theory
-                                    // (assuming the prepare phase is done correctly),
-                                    // but fall back to dummy for safety
-                                    &self.dummy_sampler.sampler
-                                }
-                            }
-                            // Case 3: Default sampler (for Render Target)
+                            // Case 2: Default sampler (for Render Target)
                             SamplerSource::Default => {
                                 if matches!(
                                     layout_entries[i].ty,

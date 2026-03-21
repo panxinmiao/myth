@@ -2854,20 +2854,26 @@ impl GltfViewer {
         ui.heading(format!("🖼 {}", name));
         ui.separator();
 
+        let image_info = assets.images.get(texture.image);
+
         egui::Grid::new("texture_grid")
             .num_columns(2)
             .spacing([20.0, 4.0])
             .show(ui, |ui| {
                 ui.label("Dimensions:");
-                ui.label(format!(
-                    "{}x{}",
-                    texture.image.width(),
-                    texture.image.height()
-                ));
+                if let Some(ref img) = image_info {
+                    ui.label(format!("{}x{}", img.width, img.height));
+                } else {
+                    ui.label("N/A");
+                }
                 ui.end_row();
 
                 ui.label("Format:");
-                ui.label(format!("{:?}", texture.image.format()));
+                if let Some(ref img) = image_info {
+                    ui.label(format!("{:?}", img.description.format));
+                } else {
+                    ui.label("N/A");
+                }
                 ui.end_row();
 
                 ui.label("Mip Levels:");
@@ -2899,7 +2905,11 @@ impl GltfViewer {
         // 预览纹理
         ui.label("Preview:");
         if let Some(tex_id) = self.ui_pass.request_texture(handle) {
-            let size = egui::vec2(texture.image.width() as f32, texture.image.height() as f32);
+            let size = if let Some(ref img) = image_info {
+                egui::vec2(img.width as f32, img.height as f32)
+            } else {
+                egui::vec2(256.0, 256.0)
+            };
 
             // 自适应缩放
             let available_width = ui.available_width();

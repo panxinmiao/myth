@@ -1,71 +1,6 @@
 use crate::core::gpu::Tracked;
+use myth_resources::texture::TextureSampler;
 use std::collections::HashMap;
-
-use std::hash::{Hash, Hasher};
-
-#[derive(Debug, Clone, Copy)]
-pub struct SamplerKey {
-    pub address_mode_u: wgpu::AddressMode,
-    pub address_mode_v: wgpu::AddressMode,
-    pub address_mode_w: wgpu::AddressMode,
-    pub mag_filter: wgpu::FilterMode,
-    pub min_filter: wgpu::FilterMode,
-    pub mipmap_filter: wgpu::MipmapFilterMode,
-    pub lod_min_clamp: f32,
-    pub lod_max_clamp: f32,
-    pub compare: Option<wgpu::CompareFunction>,
-    pub anisotropy_clamp: u16,
-    pub border_color: Option<wgpu::SamplerBorderColor>,
-}
-
-impl SamplerKey {
-    pub const LINEAR_CLAMP: Self = Self {
-        address_mode_u: wgpu::AddressMode::ClampToEdge,
-        address_mode_v: wgpu::AddressMode::ClampToEdge,
-        address_mode_w: wgpu::AddressMode::ClampToEdge,
-        mag_filter: wgpu::FilterMode::Linear,
-        min_filter: wgpu::FilterMode::Linear,
-        mipmap_filter: wgpu::MipmapFilterMode::Linear,
-        lod_min_clamp: 0.0,
-        lod_max_clamp: 32.0,
-        compare: None,
-        anisotropy_clamp: 1,
-        border_color: None,
-    };
-}
-
-impl PartialEq for SamplerKey {
-    fn eq(&self, other: &Self) -> bool {
-        self.address_mode_u == other.address_mode_u
-            && self.address_mode_v == other.address_mode_v
-            && self.address_mode_w == other.address_mode_w
-            && self.mag_filter == other.mag_filter
-            && self.min_filter == other.min_filter
-            && self.mipmap_filter == other.mipmap_filter
-            && self.lod_min_clamp.to_bits() == other.lod_min_clamp.to_bits()
-            && self.lod_max_clamp.to_bits() == other.lod_max_clamp.to_bits()
-            && self.compare == other.compare
-            && self.anisotropy_clamp == other.anisotropy_clamp
-            && self.border_color == other.border_color
-    }
-}
-impl Eq for SamplerKey {}
-
-impl Hash for SamplerKey {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.address_mode_u.hash(state);
-        self.address_mode_v.hash(state);
-        self.address_mode_w.hash(state);
-        self.mag_filter.hash(state);
-        self.min_filter.hash(state);
-        self.mipmap_filter.hash(state);
-        self.lod_min_clamp.to_bits().hash(state);
-        self.lod_max_clamp.to_bits().hash(state);
-        self.compare.hash(state);
-        self.anisotropy_clamp.hash(state);
-        self.border_color.hash(state);
-    }
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(usize)]
@@ -82,7 +17,7 @@ impl CommonSampler {
 
 pub struct SamplerRegistry {
     common_samplers: [Tracked<wgpu::Sampler>; CommonSampler::COUNT],
-    custom_samplers: HashMap<SamplerKey, Tracked<wgpu::Sampler>>,
+    custom_samplers: HashMap<TextureSampler, Tracked<wgpu::Sampler>>,
 }
 
 impl SamplerRegistry {
@@ -137,7 +72,7 @@ impl SamplerRegistry {
     pub fn get_custom(
         &mut self,
         device: &wgpu::Device,
-        key: SamplerKey,
+        key: TextureSampler,
     ) -> &Tracked<wgpu::Sampler> {
         self.custom_samplers.entry(key).or_insert_with(|| {
             Tracked::new(device.create_sampler(&wgpu::SamplerDescriptor {
@@ -158,7 +93,7 @@ impl SamplerRegistry {
     }
 
     #[must_use]
-    pub fn get_custom_ref(&self, key: &SamplerKey) -> &Tracked<wgpu::Sampler> {
+    pub fn get_custom_ref(&self, key: &TextureSampler) -> &Tracked<wgpu::Sampler> {
         self.custom_samplers
             .get(key)
             .expect("Custom sampler not found — call get_custom() first to ensure creation")

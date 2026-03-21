@@ -37,7 +37,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rustc_hash::FxHashMap;
 use slotmap::SecondaryMap;
 
-use myth_assets::SamplerHandle;
+use myth_assets::{GeometryHandle, MaterialHandle, TextureHandle};
 
 pub(crate) use crate::core::gpu::buffer::GpuBuffer;
 pub use crate::core::gpu::buffer::GpuBufferHandle;
@@ -49,7 +49,6 @@ pub(crate) use crate::core::gpu::texture::{GpuImage, GpuSampler, TextureBinding,
 use crate::pipeline::vertex::VertexLayoutSignature;
 pub(crate) use myth_resources::texture::TextureSampler;
 
-use myth_assets::{GeometryHandle, MaterialHandle, TextureHandle};
 use myth_resources::buffer::{CpuBuffer, GpuData};
 use myth_resources::texture::TextureSource;
 
@@ -58,7 +57,7 @@ pub use allocator::ModelBufferAllocator;
 pub use resource_ids::{
     BindGroupFingerprint, EnsureResult, ResourceId, ResourceIdSet, hash_layout_entries,
 };
-pub use sampler_registry::{CommonSampler, SamplerKey, SamplerRegistry};
+pub use sampler_registry::{CommonSampler, SamplerRegistry};
 pub use tracked::Tracked;
 
 static NEXT_GPU_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -115,8 +114,6 @@ pub struct ResourceManager {
 
     /// Mapping from `TextureHandle` to (`ImageId`, `SamplerId`)
     pub(crate) texture_bindings: SecondaryMap<TextureHandle, TextureBinding>,
-    /// Mapping from `SamplerHandle` to `SamplerId`
-    pub(crate) sampler_bindings: SecondaryMap<SamplerHandle, u64>,
 
     /// All GPU buffers stored in a contiguous arena for O(1) handle-based access.
     pub(crate) gpu_buffers: slotmap::SlotMap<GpuBufferHandle, GpuBuffer>,
@@ -584,7 +581,6 @@ impl ResourceManager {
             gpu_geometries: SecondaryMap::new(),
             gpu_materials: SecondaryMap::new(),
             texture_bindings: SecondaryMap::new(),
-            sampler_bindings: SecondaryMap::new(),
             global_states: FxHashMap::default(),
             gpu_buffers,
             buffer_index,

@@ -14,7 +14,7 @@
 //! nature (equirect → cube, mipmap generation, PMREM prefiltering) the work
 //! is performed during the prepare phase with a dedicated command encoder.
 
-use crate::core::gpu::SamplerKey;
+use myth_resources::texture::TextureSampler;
 use crate::core::gpu::{BRDF_LUT_SIZE, CubeSourceType};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::context::{ExecuteContext, ExtractContext};
@@ -186,12 +186,12 @@ impl<'a> PassNode<'a> for BrdfLutPassNode<'a> {
 // ============================================================================
 
 /// Trilinear filtering, all-axes clamped. Used for the face blit sub-pass.
-const IBL_BLIT_SAMPLER_KEY: SamplerKey = SamplerKey::LINEAR_CLAMP;
+const IBL_BLIT_SAMPLER_KEY: TextureSampler = TextureSampler::LINEAR_CLAMP;
 
 /// Linear filtering with horizontal repeat (seamless equirectangular wrap)
 /// and vertical/depth clamp. Mipmap filtering is not needed for the single-mip
 /// equirect source.
-const IBL_EQUIRECT_SAMPLER_KEY: SamplerKey = SamplerKey {
+const IBL_EQUIRECT_SAMPLER_KEY: TextureSampler = TextureSampler {
     address_mode_u: wgpu::AddressMode::Repeat,
     address_mode_v: wgpu::AddressMode::ClampToEdge,
     address_mode_w: wgpu::AddressMode::ClampToEdge,
@@ -575,9 +575,8 @@ impl IblComputeFeature {
                 {
                     let source_view = match &source {
                         TextureSource::Asset(handle) => {
-                            let tex_asset = ctx.assets.textures.get(*handle).unwrap();
-                            let img_id = tex_asset.image.id();
-                            &ctx.resource_manager.get_image(img_id).unwrap().default_view
+                            let binding = ctx.resource_manager.get_texture_binding(*handle).unwrap();
+                            &ctx.resource_manager.get_image(binding.cpu_image_id).unwrap().default_view
                         }
                         TextureSource::Attachment(id, _) => {
                             ctx.resource_manager.internal_resources.get(id).unwrap()
@@ -642,9 +641,8 @@ impl IblComputeFeature {
                 {
                     let source_texture = match &source {
                         TextureSource::Asset(handle) => {
-                            let tex_asset = ctx.assets.textures.get(*handle).unwrap();
-                            let img_id = tex_asset.image.id();
-                            &ctx.resource_manager.get_image(img_id).unwrap().texture
+                            let binding = ctx.resource_manager.get_texture_binding(*handle).unwrap();
+                            &ctx.resource_manager.get_image(binding.cpu_image_id).unwrap().texture
                         }
                         TextureSource::Attachment(_, _) => {
                             gpu_env.needs_compute = false;
@@ -689,10 +687,9 @@ impl IblComputeFeature {
                 }),
             CubeSourceType::CubeWithMipmaps => match &source {
                 TextureSource::Asset(handle) => {
-                    let tex_asset = ctx.assets.textures.get(*handle).unwrap();
-                    let img_id = tex_asset.image.id();
+                    let binding = ctx.resource_manager.get_texture_binding(*handle).unwrap();
                     ctx.resource_manager
-                        .get_image(img_id)
+                        .get_image(binding.cpu_image_id)
                         .unwrap()
                         .texture
                         .create_view(&wgpu::TextureViewDescriptor {
