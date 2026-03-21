@@ -218,7 +218,7 @@ impl Renderer {
         Ok(())
     }
 
-    pub fn resize(&mut self, width: u32, height: u32, _scale_factor: f32) {
+    pub fn resize(&mut self, width: u32, height: u32) {
         self.size = (width, height);
         if let Some(state) = &mut self.context {
             state.wgpu_ctx.resize(width, height);

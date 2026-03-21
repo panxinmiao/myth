@@ -288,7 +288,7 @@ impl PyMythRenderer {
         // Set the initial screen size so that OrbitControls (and anything else
         // that queries Input::screen_size) works correctly from the first frame.
         // Engine::init does NOT call inject_resize, so we do it here.
-        engine.resize(width, height, 1.0);
+        engine.resize(width, height);
 
         self.engine = Some(Box::new(engine));
 
@@ -307,10 +307,10 @@ impl PyMythRenderer {
     /// Notify the renderer that the window has been resized.
     ///
     /// Call this from the host GUI library's resize callback.
-    #[pyo3(signature = (width, height, scale_factor=1.0))]
-    fn resize(&mut self, width: u32, height: u32, scale_factor: f32) -> PyResult<()> {
+    #[pyo3(signature = (width, height))]
+    fn resize(&mut self, width: u32, height: u32) -> PyResult<()> {
         let engine = self.engine_mut()?;
-        engine.resize(width, height, scale_factor);
+        engine.resize(width, height);
         Ok(())
     }
 

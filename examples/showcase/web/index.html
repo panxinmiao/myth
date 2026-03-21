@@ -75,6 +75,19 @@
             animation: pulse 2s ease-in-out infinite;
         }
 
+        #mobile-loading-tip {
+            display: none; 
+            margin-top: 0;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            text-align: center;
+            line-height: 1.6;
+            width: 85%;
+            max-width: 340px;
+            letter-spacing: 0.3px;
+            opacity: 0.75;
+        }
+
         .loader-brand {
             position: absolute;
             bottom: 40px;
@@ -234,6 +247,42 @@
 
         .hint.visible { opacity: 1; }
 
+        .mobile-toast {
+            position: fixed;
+            top: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(-20px);
+            z-index: 200;
+            background: var(--glass-bg);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            border: 1px solid var(--glass-border);
+            color: var(--text);
+            padding: 12px 24px;
+            border-radius: 16px;
+            font-size: 0.8rem;
+            font-weight: 500;
+            letter-spacing: 0.5px;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.4);
+            opacity: 0;
+            visibility: hidden;
+            pointer-events: none;
+
+            white-space: normal;
+            width: 85vw;
+            max-width: 320px; 
+            text-align: center;
+            line-height: 1.5;
+
+            transition: transform 0.5s cubic-bezier(0.25, 1, 0.5, 1), opacity 0.5s ease, visibility 0.5s;
+        }
+
+        .mobile-toast.show {
+            opacity: 1;
+            visibility: visible;
+            transform: translateX(-50%) translateY(0);
+        }
+
         /* ── Responsive ─────────────────────────────────────── */
         @media (max-width: 600px) {
             .top-bar { padding: 14px 16px; }
@@ -241,6 +290,7 @@
             .preset-btn { padding: 8px 16px; font-size: 0.75rem; }
             .controls { bottom: 20px; }
             .hint { bottom: 72px; }
+            .mobile-toast { font-size: 0.75rem; padding: 10px 16px; top: 16px; }
         }
 
         /* ── Top Actions ────────────────────────────────────── */
@@ -369,11 +419,19 @@
     <div id="loading-overlay">
         <div class="loader-ring"></div>
         <div class="loader-label">Preparing Scene</div>
+        <div id="mobile-loading-tip">
+            ⚡ Mobile performance mode enabled<br>
+            View on a PC for maximum visual quality.
+        </div>
         <div class="loader-brand">Myth Engine</div>
     </div>
 
     <!-- WebGPU Canvas -->
     <canvas id="myth-canvas"></canvas>
+
+    <div id="mobile-toast" class="mobile-toast">
+        ⚡ Performance mode enabled.<br>View on PC for highest quality.
+    </div>
 
     <!-- Top Bar -->
     <div class="top-bar" id="top-bar">
@@ -441,7 +499,14 @@
     <script type="module">
         import init, { switch_preset } from './pkg/showcase.js';
 
+        const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+
         async function run() {
+            if (isMobile) {
+                const tip = document.getElementById('mobile-loading-tip');
+                if (tip) tip.style.display = 'block';
+            }
+
             try {
                 await init();
                 console.log('[Myth] WASM initialized');
@@ -463,6 +528,17 @@
                     document.getElementById('top-bar')?.classList.add('visible');
                     document.getElementById('controls')?.classList.add('visible');
                     document.getElementById('hint')?.classList.add('visible');
+                    if (isMobile) {
+                        const toast = document.getElementById('mobile-toast');
+                        if (toast) {
+                            setTimeout(() => {
+                                toast.classList.add('show');
+                                setTimeout(() => {
+                                    toast.classList.remove('show');
+                                }, 4000);
+                            }, 800);
+                        }
+                    }
                     observer.disconnect();
                     // Auto-hide hint after a few seconds
                     setTimeout(() => {

@@ -136,26 +136,24 @@ impl RenderPath {
 /// Global configuration for renderer initialization.
 ///
 /// Consumed once during [`Renderer::init`] to set up the GPU context and
-/// allocate pipeline-level resources.  `path` and `aa_mode` can be changed
-/// at runtime via [`Renderer::set_render_path`] and
-/// [`Renderer::set_aa_mode`] respectively.
+/// allocate pipeline-level resources.  `path` can be changed
+/// at runtime via [`Renderer::set_render_path`].
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use myth::render::{RendererSettings, RenderPath, AntiAliasingMode};
+/// use myth::render::{RendererSettings, RenderPath};
 ///
-/// // High-performance gaming setup (TAA is the default)
+/// // High-performance gaming setup
 /// let game = RendererSettings {
 ///     path: RenderPath::HighFidelity,
 ///     vsync: false,
 ///     ..Default::default()
 /// };
 ///
-/// // Battery-friendly mobile setup with 4× MSAA
+/// // Battery-friendly mobile setup
 /// let mobile = RendererSettings {
 ///     path: RenderPath::BasicForward,
-///     aa_mode: AntiAliasingMode::MSAA(4),
 ///     power_preference: wgpu::PowerPreference::LowPower,
 ///     vsync: true,
 ///     ..Default::default()
@@ -223,26 +221,3 @@ impl Default for RendererSettings {
         }
     }
 }
-
-// impl RendererSettings {
-//     /// Returns the hardware MSAA sample count implied by the current AA mode.
-//     #[inline]
-//     #[must_use]
-//     pub fn msaa_sample_count(&self) -> u32 {
-//         self.aa_mode.msaa_sample_count()
-//     }
-
-//     /// Returns `true` when TAA is the active anti-aliasing mode.
-//     #[inline]
-//     #[must_use]
-//     pub fn is_taa_enabled(&self) -> bool {
-//         self.aa_mode.is_taa()
-//     }
-
-//     /// Returns `true` when FXAA is active (either standalone or combined with MSAA).
-//     #[inline]
-//     #[must_use]
-//     pub fn is_fxaa_enabled(&self) -> bool {
-//         self.aa_mode.is_fxaa()
-//     }
-// }

@@ -21,6 +21,20 @@ use myth::prelude::*;
 use myth::utils::FpsCounter;
 use myth_resources::MouseButton;
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(
+    inline_js = "export function is_mobile_device() { return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent); }"
+)]
+extern "C" {
+    fn is_mobile_device() -> bool;
+}
+
+// Native fallback for `is_mobile_device` when not running in WASM.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_mobile_device() -> bool {
+    false
+}
+
 // ── Constants ───────────────────────────────────────────────────────────────
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -129,6 +143,9 @@ struct RenderPreset {
     ssao_radius: f32,
     ssao_intensity: f32,
 
+    // —— Screen-space effects
+    ssss_enabled: bool,
+
     // ── Per-preset resources (filenames relative to envs/ or luts/)
     hdr_filename: Option<&'static str>,
     lut_filename: Option<&'static str>,
@@ -141,6 +158,8 @@ struct RenderPreset {
 /// Builds the default preset table with all rendering parameters.
 fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
     let mut presets = HashMap::new();
+
+    let is_mobile = is_mobile_device();
 
     // ── Cinematic: dark IBL, warm key / cool fill, ACES filmic, heavy bloom
     presets.insert(
@@ -185,13 +204,15 @@ fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
             film_grain: 0.03,
             lut_contribution: 1.0,
 
-            bloom_enabled: true,
+            bloom_enabled: !is_mobile,
             bloom_strength: 0.06,
             bloom_radius: 0.005,
 
-            ssao_enabled: true,
+            ssao_enabled: !is_mobile,
             ssao_radius: 0.5,
             ssao_intensity: 1.5,
+
+            ssss_enabled: true,
 
             hdr_filename: Some("blouberg_sunrise_2_1k.hdr"),
             lut_filename: Some("Rec709 Fujifilm 3513DI D65.cube"),
@@ -238,13 +259,15 @@ fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
             film_grain: 0.0,
             lut_contribution: 0.4,
 
-            bloom_enabled: true,
+            bloom_enabled: !is_mobile,
             bloom_strength: 0.06,
             bloom_radius: 0.005,
 
-            ssao_enabled: true,
+            ssao_enabled: !is_mobile,
             ssao_radius: 0.5,
             ssao_intensity: 1.5,
+
+            ssss_enabled: true,
 
             hdr_filename: Some("blouberg_sunrise_2_1k.hdr"),
             lut_filename: Some("Rec709 Kodak 2383 D65.cube"),
@@ -295,13 +318,15 @@ fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
             film_grain: 0.0,
             lut_contribution: 0.0,
 
-            bloom_enabled: true,
+            bloom_enabled: !is_mobile,
             bloom_strength: 0.04,
             bloom_radius: 0.005,
 
             ssao_enabled: false,
             ssao_radius: 0.5,
             ssao_intensity: 1.0,
+
+            ssss_enabled: true,
 
             hdr_filename: Some("spruit_sunrise_1k.hdr"),
             lut_filename: None,
@@ -417,7 +442,13 @@ impl AppHandler for ShowcaseApp {
 
         // Camera.
         let mut camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.01);
-        camera.set_aa_mode(AntiAliasingMode::MSAA_FXAA(4, FxaaSettings::default()));
+
+        if is_mobile_device() {
+            camera.set_aa_mode(AntiAliasingMode::FXAA(FxaaSettings::default()));
+        } else {
+            camera.set_aa_mode(AntiAliasingMode::MSAA_FXAA(4, FxaaSettings::default()));
+        }
+
         let cam_node_id = scene.add_camera(camera);
         scene.active_camera = Some(cam_node_id);
 
@@ -661,7 +692,7 @@ impl ShowcaseApp {
             scene.ssao.set_intensity(p.ssao_intensity);
         }
 
-        scene.screen_space.enable_sss = true;
+        scene.screen_space.enable_sss = p.ssss_enabled;
     }
 
     /// Returns `true` when the model and the default preset's critical resources

@@ -18,6 +18,20 @@ use myth::assets::SharedPrefab;
 use myth::prelude::*;
 use myth::utils::FpsCounter;
 
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen(
+    inline_js = "export function is_mobile_device() { return /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent); }"
+)]
+extern "C" {
+    fn is_mobile_device() -> bool;
+}
+
+// Native fallback for `is_mobile_device` when not running in WASM.
+#[cfg(not(target_arch = "wasm32"))]
+fn is_mobile_device() -> bool {
+    false
+}
+
 // Define asset loading events for handling asynchronous results in the update loop
 enum AssetEvent {
     ModelLoaded { prefab: SharedPrefab, url: String },
@@ -83,7 +97,11 @@ impl AppHandler for ShowcaseApp {
 
         // 4. Set up camera
         let mut camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.01);
-        camera.aa_mode = AntiAliasingMode::MSAA_FXAA(4, FxaaSettings::default());
+        if is_mobile_device() {
+            camera.aa_mode = AntiAliasingMode::FXAA(FxaaSettings::default());
+        } else {
+            camera.aa_mode = AntiAliasingMode::MSAA_FXAA(4, FxaaSettings::default());
+        }
         let cam_node_id = scene.add_camera(camera);
 
         // Initial camera position (will be overridden by auto-focus)

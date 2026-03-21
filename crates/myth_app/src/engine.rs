@@ -151,9 +151,8 @@ impl Engine {
     ///
     /// * `width` - New width in pixels
     /// * `height` - New height in pixels
-    /// * `scale_factor` - Display scale factor (for `HiDPI` support)
-    pub fn resize(&mut self, width: u32, height: u32, scale_factor: f32) {
-        self.renderer.resize(width, height, scale_factor);
+    pub fn resize(&mut self, width: u32, height: u32) {
+        self.renderer.resize(width, height);
         self.input.inject_resize(width, height);
 
         if width > 0 && height > 0 {
