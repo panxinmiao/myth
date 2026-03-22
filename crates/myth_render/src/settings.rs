@@ -1,30 +1,36 @@
 //! Renderer Settings & Render Path Configuration
 //!
-//! This module defines the rendering pipeline configuration for the engine.
+//! This module defines the rendering pipeline configuration for the engine,
+//! split into two structs with distinct lifecycles:
+//!
+//! - [`RendererInitConfig`] — **Static, init-only** parameters that determine
+//!   how the GPU device and core resources are created. Consumed once during
+//!   [`Renderer::init`] and immutable afterwards.
+//! - [`RendererSettings`] — **Dynamic, runtime-mutable** parameters that
+//!   control pipeline topology, presentation, and quality knobs. Can be
+//!   replaced at any time via [`Renderer::update_settings`].
 //!
 //! [`RenderPath`] determines the pipeline **topology** (which passes are
 //! assembled, whether HDR targets are used, etc.), while anti-aliasing is
-//! configured via [`RendererSettings::aa_mode`] using the unified
-//! [`AntiAliasingMode`] enum.  This orthogonal design allows each axis to
-//! be changed without affecting the other.
+//! configured per-camera via the unified [`AntiAliasingMode`] enum.
 //!
 //! # Quick Start
 //!
 //! ```rust,ignore
-//! use myth::render::{RendererSettings, RenderPath, AntiAliasingMode};
+//! use myth::render::{RendererInitConfig, RendererSettings, RenderPath};
 //!
-//! // Default: HighFidelity + TAA (recommended for PBR)
-//! let settings = RendererSettings::default();
+//! // Default init config (auto-detect backend, high-perf GPU)
+//! let init_config = RendererInitConfig::default();
 //!
-//! // Lightweight forward pipeline with 4× MSAA for simple scenes
+//! // Runtime settings: HighFidelity + VSync off
 //! let settings = RendererSettings {
-//!     path: RenderPath::BasicForward,
-//!     aa_mode: AntiAliasingMode::MSAA(4),
+//!     path: RenderPath::HighFidelity,
 //!     vsync: false,
 //!     ..Default::default()
 //! };
 //!
 //! App::new()
+//!     .with_init_config(init_config)
 //!     .with_settings(settings)
 //!     .run::<MyApp>()?;
 //! ```
@@ -133,50 +139,28 @@ impl RenderPath {
 // RendererSettings
 // ---------------------------------------------------------------------------
 
-/// Global configuration for renderer initialization.
+// ---------------------------------------------------------------------------
+// RendererInitConfig (static, init-only)
+// ---------------------------------------------------------------------------
+
+/// Static initialization parameters for the GPU context.
 ///
-/// Consumed once during [`Renderer::init`] to set up the GPU context and
-/// allocate pipeline-level resources.  `path` can be changed
-/// at runtime via [`Renderer::set_render_path`].
+/// Consumed once during [`Renderer::init`] to create the wgpu instance,
+/// adapter, device, and core resources. These values **cannot** be changed
+/// at runtime without destroying and rebuilding the entire GPU context.
 ///
 /// # Example
 ///
 /// ```rust,ignore
-/// use myth::render::{RendererSettings, RenderPath};
+/// use myth::render::RendererInitConfig;
 ///
-/// // High-performance gaming setup
-/// let game = RendererSettings {
-///     path: RenderPath::HighFidelity,
-///     vsync: false,
-///     ..Default::default()
-/// };
-///
-/// // Battery-friendly mobile setup
-/// let mobile = RendererSettings {
-///     path: RenderPath::BasicForward,
+/// let config = RendererInitConfig {
 ///     power_preference: wgpu::PowerPreference::LowPower,
-///     vsync: true,
 ///     ..Default::default()
 /// };
 /// ```
 #[derive(Debug, Clone)]
-pub struct RendererSettings {
-    // === Core Pipeline Configuration ===
-    /// The rendering pipeline topology.
-    ///
-    /// Determines which passes are assembled into the frame graph and which
-    /// post-processing effects are available.  See [`RenderPath`].
-    pub path: RenderPath,
-
-    /// Enable vertical synchronization (VSync).
-    ///
-    /// When `true`, the frame rate is capped to the display refresh rate,
-    /// reducing screen tearing and power consumption.
-    /// When `false`, the frame rate is uncapped, which may cause tearing
-    /// but reduces input latency.
-    pub vsync: bool,
-
-    // === GPU / Backend Configuration ===
+pub struct RendererInitConfig {
     /// Force a specific wgpu backend (Vulkan, Metal, DX12, …).
     ///
     /// `None` lets wgpu choose the best available backend for the platform.
@@ -185,7 +169,7 @@ pub struct RendererSettings {
 
     /// GPU adapter selection preference.
     ///
-    /// - `HighPerformance`: Prefer discrete / dedicated GPU
+    /// - `HighPerformance`: Prefer discrete / dedicated GPU (default)
     /// - `LowPower`: Prefer integrated GPU (better battery life)
     pub power_preference: wgpu::PowerPreference,
 
@@ -202,12 +186,72 @@ pub struct RendererSettings {
     ///
     /// Defaults to `Depth32Float` — pure 32-bit floating-point depth with
     /// maximum precision and full `COPY_SRC`/`COPY_DST` support on all
-    /// backends (including WebGPU).  Screen-space feature filtering (SSS,
-    /// SSR) uses the `Feature_ID` colour attachment instead of a hardware
-    /// stencil channel.
+    /// backends (including WebGPU).
     pub depth_format: wgpu::TextureFormat,
+}
 
-    /// Gloobal anisotropic filtering level for default textures.
+impl Default for RendererInitConfig {
+    fn default() -> Self {
+        Self {
+            backends: None,
+            power_preference: wgpu::PowerPreference::HighPerformance,
+            required_features: wgpu::Features::empty(),
+            required_limits: wgpu::Limits::default(),
+            depth_format: wgpu::TextureFormat::Depth32Float,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// RendererSettings (dynamic, runtime-mutable)
+// ---------------------------------------------------------------------------
+
+/// Runtime rendering configuration.
+///
+/// Controls pipeline topology, presentation mode, and quality knobs that
+/// can be changed at any time via [`Renderer::update_settings`]. The
+/// renderer performs an internal diff and applies only the changes that
+/// actually differ from the current state.
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use myth::render::{RendererSettings, RenderPath};
+///
+/// // High-performance gaming setup
+/// let game = RendererSettings {
+///     path: RenderPath::HighFidelity,
+///     vsync: false,
+///     ..Default::default()
+/// };
+///
+/// // Battery-friendly mobile setup
+/// let mobile = RendererSettings {
+///     path: RenderPath::BasicForward,
+///     vsync: true,
+///     ..Default::default()
+/// };
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RendererSettings {
+    /// The rendering pipeline topology.
+    ///
+    /// Determines which passes are assembled into the frame graph and which
+    /// post-processing effects are available. See [`RenderPath`].
+    pub path: RenderPath,
+
+    /// Enable vertical synchronization (VSync).
+    ///
+    /// When `true`, the frame rate is capped to the display refresh rate,
+    /// reducing screen tearing and power consumption.
+    /// When `false`, the frame rate is uncapped, which may cause tearing
+    /// but reduces input latency.
+    pub vsync: bool,
+
+    /// Global anisotropic filtering level for default texture samplers.
+    ///
+    /// Higher values produce sharper textures at oblique angles at a
+    /// modest GPU cost. Common values: 1 (disabled), 4, 8, 16.
     pub anisotropy_clamp: u16,
 }
 
@@ -216,11 +260,6 @@ impl Default for RendererSettings {
         Self {
             path: RenderPath::default(),
             vsync: true,
-            backends: None,
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            required_features: wgpu::Features::empty(),
-            required_limits: wgpu::Limits::default(),
-            depth_format: wgpu::TextureFormat::Depth32Float,
             anisotropy_clamp: 1,
         }
     }

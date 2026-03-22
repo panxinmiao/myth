@@ -27,7 +27,7 @@ use raw_window_handle::{
     RawWindowHandle, WindowHandle,
 };
 
-use myth_engine::{Engine, RendererSettings, SceneExt};
+use myth_engine::{Engine, RendererInitConfig, RendererSettings, SceneExt};
 
 use crate::{clear_engine_ptr, set_engine_ptr};
 
@@ -278,7 +278,7 @@ impl PyMythRenderer {
         let raw_window = build_raw_window(window_handle)?;
         let settings = build_settings(&self.render_path, self.vsync);
 
-        let mut engine = Engine::new(settings);
+        let mut engine = Engine::new(RendererInitConfig::default(), settings);
         pollster::block_on(engine.init(raw_window, width, height)).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "Renderer initialization failed: {e}"

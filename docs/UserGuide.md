@@ -762,9 +762,15 @@ App::new()
     })
     .run::<MyApp>()?;
 
-// Switch at runtime
+// Switch at runtime via update_settings (diff-based, atomic)
+engine.renderer.update_settings(RendererSettings {
+    path: RenderPath::BasicForward,
+    vsync: false,
+    anisotropy_clamp: 16,
+});
+
+// Or use the convenience method for just the render path
 engine.renderer.set_render_path(RenderPath::BasicForward);
-engine.renderer.set_msaa_samples(4);
 ```
 
 Post-processing is only available in `HighFidelity` mode.
@@ -828,7 +834,6 @@ scene.fxaa.set_quality(FxaaQuality::High);
 App::new()
     .with_settings(RendererSettings {
         path: RenderPath::BasicForward,
-        msaa_samples: 4,
         ..Default::default()
     })
     .run::<MyApp>()?;

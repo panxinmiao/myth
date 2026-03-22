@@ -108,7 +108,7 @@ pub mod math {
 pub mod render {
     pub use myth_render::graph::{FrameComposer, RenderState};
     pub use myth_render::renderer::Renderer;
-    pub use myth_render::settings::{RenderPath, RendererSettings};
+    pub use myth_render::settings::{RenderPath, RendererInitConfig, RendererSettings};
 
     /// Low-level GPU context access.
     pub mod core {
@@ -167,7 +167,9 @@ pub mod prelude {
     #[cfg(feature = "debug_view")]
     pub use myth_render::graph::DebugViewTarget;
     pub use myth_render::graph::FrameComposer;
-    pub use myth_render::settings::{AntiAliasingMode, RenderPath, RendererSettings};
+    pub use myth_render::settings::{
+        AntiAliasingMode, RenderPath, RendererInitConfig, RendererSettings,
+    };
 }
 
 // ============================================================================
@@ -211,7 +213,7 @@ pub use myth_animation::{
 // Renderer
 pub use myth_render::Renderer;
 pub use myth_render::graph::FrameComposer;
-pub use myth_render::settings::{RenderPath, RendererSettings};
+pub use myth_render::settings::{RenderPath, RendererInitConfig, RendererSettings};
 
 // Errors
 pub use myth_core::{AssetError, Error, PlatformError, RenderError, Result};

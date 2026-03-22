@@ -132,7 +132,7 @@ use myth::{Engine, App, AppHandler, Scene, Mesh, Camera, Light, OrbitControls};
 use myth::{Geometry, Material, PhysicalMaterial, PhongMaterial, Texture};
 use myth::{NodeHandle, GeometryHandle, MaterialHandle, TextureHandle};
 use myth::{create_box, create_sphere, create_plane, SphereOptions, PlaneOptions};
-use myth::{FrameComposer, RendererSettings, RenderPath};
+use myth::{FrameComposer, RendererInitConfig, RendererSettings, RenderPath};
 use myth::{AnimationClip, AnimationMixer, AnimationAction, LoopMode};
 use myth::{Error, Result};
 ```
@@ -148,7 +148,11 @@ The entry point for creating and running a Myth application.
 ```rust
 App::new()
     .with_title("My App")                      // Window title
-    .with_settings(RendererSettings {           // Renderer configuration
+    .with_init_config(RendererInitConfig {       // Static GPU config (optional)
+        power_preference: wgpu::PowerPreference::HighPerformance,
+        ..Default::default()
+    })
+    .with_settings(RendererSettings {           // Runtime rendering settings
         path: RenderPath::HighFidelity,
         vsync: false,
         ..Default::default()
@@ -160,7 +164,8 @@ App::new()
 |--------|-------------|
 | `App::new()` | Create a new application builder |
 | `.with_title(impl Into<String>)` | Set window title |
-| `.with_settings(RendererSettings)` | Configure renderer |
+| `.with_init_config(RendererInitConfig)` | Set static GPU/device configuration (consumed at init) |
+| `.with_settings(RendererSettings)` | Set runtime rendering settings (can be changed later) |
 | `.with_canvas_id(impl Into<String>)` | *WASM only:* Set HTML canvas element ID |
 | `.run::<H: AppHandler>()` | Start the event loop and run the application |
 
@@ -241,7 +246,10 @@ pub struct Engine {
 let engine = Engine::default();
 
 // Create with custom settings
-let engine = Engine::new(RendererSettings { vsync: false, ..Default::default() });
+let engine = Engine::new(
+    RendererInitConfig::default(),
+    RendererSettings { vsync: false, ..Default::default() },
+);
 
 // These are called automatically by App:
 engine.init(window, width, height).await?;  // Initialize GPU
@@ -1117,18 +1125,29 @@ pub struct AnimationClip {
 
 ## Rendering
 
-### RendererSettings & RenderPath
+### RendererInitConfig & RendererSettings
+
+The rendering configuration is split into two structs with distinct lifecycles:
+
+**`RendererInitConfig`** — Static, init-only parameters (consumed once at startup):
+
+```rust
+let init_config = RendererInitConfig {
+    backends: None,                                          // Auto-detect
+    power_preference: wgpu::PowerPreference::HighPerformance,
+    required_features: wgpu::Features::empty(),
+    required_limits: wgpu::Limits::default(),
+    depth_format: wgpu::TextureFormat::Depth32Float,
+};
+```
+
+**`RendererSettings`** — Runtime-mutable settings (can be hot-swapped at any time):
 
 ```rust
 let settings = RendererSettings {
-    path: RenderPath::HighFidelity,                         // Default
-    vsync: true,                                             // Default
-    clear_color: wgpu::Color::BLACK,                        // Default
-    depth_format: wgpu::TextureFormat::Depth32Float,         // Default
-    power_preference: wgpu::PowerPreference::HighPerformance,
-    backends: None,       // Auto-detect
-    required_features: wgpu::Features::empty(),
-    required_limits: wgpu::Limits::default(),
+    path: RenderPath::HighFidelity,   // Default
+    vsync: true,                       // Default
+    anisotropy_clamp: 1,               // Default (1 = disabled)
 };
 ```
 
@@ -1140,15 +1159,19 @@ let settings = RendererSettings {
 | `BasicForward` | Hardware MSAA, no post-processing | Lightweight / mobile / simple scenes |
 
 ```rust
-// Switch at runtime
+// Update multiple settings atomically via diff-based update
+engine.renderer.update_settings(RendererSettings {
+    path: RenderPath::BasicForward,
+    vsync: false,
+    anisotropy_clamp: 16,
+});
+
+// Convenience: switch only the render path
 engine.renderer.set_render_path(RenderPath::HighFidelity);
-engine.renderer.set_render_path(RenderPath::BasicForward);
-engine.renderer.set_msaa_samples(4);
 
 // Query capabilities
 path.supports_post_processing();  // true for HighFidelity
 path.requires_z_prepass();        // true for HighFidelity
-renderer.msaa_samples();          // independent of path
 ```
 
 #### Built-in Render Passes (15 total)

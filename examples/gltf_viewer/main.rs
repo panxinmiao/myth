@@ -325,8 +325,13 @@ struct GltfViewer {
     ibl_enabled: bool,
 
     light_node: NodeHandle,
-    /// HDR rendering toggle (cached from renderer)
+    /// Render path (cached from renderer settings)
     render_path: RenderPath,
+
+    /// VSync toggle (cached from renderer settings)
+    vsync: bool,
+    /// Anisotropic filtering level (cached from renderer settings)
+    anisotropy_clamp: u16,
     /// Anti-aliasing inspector cache (preserves per-technique settings)
     aa_cache: InspectorAaCache,
 
@@ -522,8 +527,10 @@ impl AppHandler for GltfViewer {
             // 渲染设置
             ibl_enabled: true,
             light_node: light_node,
-            render_path: RenderPath::default(), // Default: HighFidelity path
-            aa_cache: InspectorAaCache::default(), // Default: TAA
+            render_path: RenderPath::default(),
+            vsync: false, // examples default to vsync off
+            anisotropy_clamp: 1,
+            aa_cache: InspectorAaCache::default(),
 
             vignette_breathing: false,
 
@@ -1669,6 +1676,8 @@ impl GltfViewer {
 
                         // ===== 渲染设置 =====
                         CollapsingHeader::new("⚙ Rendering").show(ui, |ui| {
+                            let mut settings_changed = false;
+
                             // --- Render Path 选择 ---
                             let is_hf = self.render_path.supports_post_processing();
                             ui.horizontal(|ui| {
@@ -1685,16 +1694,60 @@ impl GltfViewer {
                                             && !is_hf
                                         {
                                             self.render_path = RenderPath::HighFidelity;
-                                            renderer.set_render_path(self.render_path);
+                                            settings_changed = true;
                                         }
                                         if ui.selectable_label(!is_hf, "Basic Forward").clicked()
                                             && is_hf
                                         {
                                             self.render_path = RenderPath::BasicForward;
-                                            renderer.set_render_path(self.render_path);
+                                            settings_changed = true;
                                         }
                                     });
                             });
+
+                            #[cfg(not(target_arch = "wasm32"))]
+                            // --- VSync toggle ---
+                            if ui.checkbox(&mut self.vsync, "VSync").changed() {
+                                settings_changed = true;
+                            }
+
+                            // --- Anisotropy slider ---
+                            ui.horizontal(|ui| {
+                                ui.label("Anisotropy:");
+                                let mut aniso_index = match self.anisotropy_clamp {
+                                    1 => 0,
+                                    2 => 1,
+                                    4 => 2,
+                                    8 => 3,
+                                    _ => 4,
+                                };
+                                const ANISO_VALUES: [u16; 5] = [1, 2, 4, 8, 16];
+                                const ANISO_LABELS: [&str; 5] =
+                                    ["Off (1×)", "2×", "4×", "8×", "16×"];
+                                egui::ComboBox::from_id_salt("anisotropy_selector")
+                                    .width(80.0)
+                                    .selected_text(ANISO_LABELS[aniso_index])
+                                    .show_ui(ui, |ui| {
+                                        for (i, label) in ANISO_LABELS.iter().enumerate() {
+                                            if ui
+                                                .selectable_value(&mut aniso_index, i, *label)
+                                                .changed()
+                                            {
+                                                self.anisotropy_clamp = ANISO_VALUES[aniso_index];
+                                                settings_changed = true;
+                                            }
+                                        }
+                                    });
+                            });
+
+                            // --- Apply settings if anything changed ---
+                            if settings_changed {
+                                renderer.update_settings(RendererSettings {
+                                    path: self.render_path,
+                                    vsync: self.vsync,
+                                    anisotropy_clamp: self.anisotropy_clamp,
+                                });
+                            }
 
                             ui.separator();
 

@@ -5,7 +5,7 @@
 
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
-use crate::settings::{RenderPath, RendererSettings};
+use crate::settings::{RenderPath, RendererInitConfig, RendererSettings};
 use myth_core::{Error, PlatformError, Result};
 
 /// Core wgpu context holding GPU handles.
@@ -47,6 +47,7 @@ pub struct WgpuContext {
 impl WgpuContext {
     pub async fn new<W>(
         window: W,
+        init_config: &RendererInitConfig,
         settings: &RendererSettings,
         width: u32,
         height: u32,
@@ -54,7 +55,7 @@ impl WgpuContext {
     where
         W: HasWindowHandle + HasDisplayHandle + Send + Sync + 'static,
     {
-        let instance_desc = match settings.backends {
+        let instance_desc = match init_config.backends {
             Some(backends) => wgpu::InstanceDescriptor {
                 backends,
                 ..wgpu::InstanceDescriptor::from_env_or_default()
@@ -68,7 +69,7 @@ impl WgpuContext {
 
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: settings.power_preference,
+                power_preference: init_config.power_preference,
                 compatible_surface: Some(&surface),
                 force_fallback_adapter: false,
             })
@@ -101,8 +102,8 @@ impl WgpuContext {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: settings.required_features,
-                required_limits: settings.required_limits.clone(),
+                required_features: init_config.required_features,
+                required_limits: init_config.required_limits.clone(),
                 memory_hints: wgpu::MemoryHints::Performance,
                 ..Default::default()
             })
@@ -137,7 +138,7 @@ impl WgpuContext {
             queue,
             surface,
             config,
-            depth_format: settings.depth_format,
+            depth_format: init_config.depth_format,
             surface_view_format: view_format,
             msaa_samples: 1,
             anisotropy_clamp: settings.anisotropy_clamp,
@@ -151,6 +152,24 @@ impl WgpuContext {
             self.config.width = width;
             self.config.height = height;
             self.surface.configure(&self.device, &self.config);
+        }
+    }
+
+    /// Dynamically reconfigure the surface present mode for VSync toggling.
+    ///
+    /// This is a lightweight operation — only the surface configuration is
+    /// resubmitted; no GPU resources are destroyed or recreated.
+    pub fn set_vsync(&mut self, vsync: bool) {
+        let present_mode = if vsync {
+            wgpu::PresentMode::AutoVsync
+        } else {
+            wgpu::PresentMode::AutoNoVsync
+        };
+
+        if self.config.present_mode != present_mode {
+            self.config.present_mode = present_mode;
+            self.surface.configure(&self.device, &self.config);
+            log::info!("Surface reconfigured — VSync: {vsync}");
         }
     }
 

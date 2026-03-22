@@ -16,10 +16,10 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use myth_app::{Engine, RendererSettings};
+//! use myth_app::{Engine, RendererInitConfig, RendererSettings};
 //!
 //! // Create engine with custom settings
-//! let mut engine = Engine::new(RendererSettings::default());
+//! let mut engine = Engine::new(RendererInitConfig::default(), RendererSettings::default());
 //!
 //! // Initialize GPU context with a window
 //! engine.init(window, 1280, 720).await?;
@@ -37,7 +37,7 @@ use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 use myth_assets::AssetServer;
 use myth_assets::manager::SceneManager;
 use myth_render::Renderer;
-use myth_render::settings::RendererSettings;
+use myth_render::settings::{RendererInitConfig, RendererSettings};
 use myth_resources::input::Input;
 
 /// The core engine instance that orchestrates all rendering subsystems.
@@ -68,19 +68,20 @@ pub struct Engine {
 }
 
 impl Engine {
-    /// Creates a new engine instance with the specified render settings.
+    /// Creates a new engine instance with the specified configuration.
     ///
     /// This only creates the engine configuration. GPU resources are not
     /// allocated until [`init`](Self::init) is called.
     ///
     /// # Arguments
     ///
-    /// * `settings` - Render configuration including power preference, features, etc.
+    /// * `init_config` - Static GPU initialization parameters
+    /// * `settings` - Runtime rendering settings
     #[must_use]
-    pub fn new(settings: RendererSettings) -> Self {
+    pub fn new(init_config: RendererInitConfig, settings: RendererSettings) -> Self {
         let assets = AssetServer::new();
         Self {
-            renderer: Renderer::new(settings),
+            renderer: Renderer::new(init_config, settings),
             scene_manager: SceneManager::new(assets.clone()),
             assets,
             input: Input::new(),
@@ -261,7 +262,7 @@ impl Engine {
 
 impl Default for Engine {
     fn default() -> Self {
-        Self::new(RendererSettings::default())
+        Self::new(RendererInitConfig::default(), RendererSettings::default())
     }
 }
 

@@ -26,7 +26,7 @@ use crate::core::{ResourceManager, WgpuContext};
 use crate::graph::{FrameComposer, RenderFrame};
 use crate::pipeline::PipelineCache;
 use crate::pipeline::ShaderManager;
-use crate::settings::{RenderPath, RendererSettings};
+use crate::settings::{RenderPath, RendererInitConfig, RendererSettings};
 
 /// The main renderer responsible for GPU rendering operations.
 ///
@@ -44,6 +44,7 @@ use crate::settings::{RenderPath, RendererSettings};
 /// 4. Clean up with [`Renderer::maybe_prune`]
 pub struct Renderer {
     size: (u32, u32),
+    init_config: RendererInitConfig,
     settings: RendererSettings,
     context: Option<RendererState>,
 }
@@ -108,9 +109,15 @@ impl Renderer {
     ///
     /// This only stores the render settings. GPU resources are
     /// allocated when [`init`](Self::init) is called.
+    ///
+    /// # Arguments
+    ///
+    /// * `init_config` - Static GPU/device configuration (consumed at init time)
+    /// * `settings` - Runtime rendering settings (can be changed later via [`update_settings`](Self::update_settings))
     #[must_use]
-    pub fn new(settings: RendererSettings) -> Self {
+    pub fn new(init_config: RendererInitConfig, settings: RendererSettings) -> Self {
         Self {
+            init_config,
             settings,
             context: None,
             size: (0, 0),
@@ -142,7 +149,8 @@ impl Renderer {
         self.size = (width, height);
 
         // 1. Create WGPU context
-        let wgpu_ctx = WgpuContext::new(window, &self.settings, width, height).await?;
+        let wgpu_ctx =
+            WgpuContext::new(window, &self.init_config, &self.settings, width, height).await?;
 
         // 2. Initialize resource manager
         let resource_manager = ResourceManager::new(
@@ -512,35 +520,67 @@ impl Renderer {
         &self.settings.path
     }
 
-    /// Switches the active render path at runtime.
-    ///
-    /// Changes the pipeline topology between [`RenderPath::BasicForward`]
-    /// and [`RenderPath::HighFidelity`].  The AA mode is unaffected — use
-    /// [`set_aa_mode`](Self::set_aa_mode) to change it independently.
-    /// The change takes effect on the **next frame**.
-    pub fn set_render_path(&mut self, path: RenderPath) {
-        if self.settings.path != path {
-            self.settings.path = path;
-            if let Some(state) = &mut self.context {
-                state.wgpu_ctx.render_path = path;
-                state.wgpu_ctx.pipeline_settings_version += 1;
-            }
-        }
-    }
-
-    /// Returns a reference to the current renderer settings.
+    /// Returns a reference to the current runtime renderer settings.
     #[inline]
     pub fn settings(&self) -> &RendererSettings {
         &self.settings
     }
 
-    
-    pub fn set_global_anisotropy(&mut self, anisotropy: u16) {
-        if self.settings.anisotropy_clamp != anisotropy {
-            self.settings.anisotropy_clamp = anisotropy;
-            if let Some(state) = &mut self.context {
-                state.resource_manager.sampler_registry.set_global_anisotropy(anisotropy);
+    /// Returns a reference to the init-time configuration.
+    #[inline]
+    pub fn init_config(&self) -> &RendererInitConfig {
+        &self.init_config
+    }
+
+    /// Applies new runtime settings, performing an internal diff to update
+    /// only the parts that actually changed.
+    ///
+    /// This is the **single entry point** for all runtime configuration
+    /// changes. Callers (UI panels, scripting layers, etc.) should maintain
+    /// their own [`RendererSettings`] instance, mutate it, and pass it here.
+    pub fn update_settings(&mut self, new_settings: RendererSettings) {
+        if self.settings == new_settings {
+            return;
+        }
+
+        let old = std::mem::replace(&mut self.settings, new_settings);
+
+        if let Some(state) = &mut self.context {
+            // VSync
+            if old.vsync != self.settings.vsync {
+                state.wgpu_ctx.set_vsync(self.settings.vsync);
             }
+
+            // Render path
+            if old.path != self.settings.path {
+                state.wgpu_ctx.render_path = self.settings.path;
+                state.wgpu_ctx.pipeline_settings_version += 1;
+                log::info!("RenderPath changed to {:?}", self.settings.path);
+            }
+
+            // Anisotropy
+            if old.anisotropy_clamp != self.settings.anisotropy_clamp {
+                state
+                    .resource_manager
+                    .sampler_registry
+                    .set_global_anisotropy(self.settings.anisotropy_clamp);
+                log::info!(
+                    "Anisotropy clamp changed to {}",
+                    self.settings.anisotropy_clamp
+                );
+            }
+        }
+    }
+
+    /// Switches the active render path at runtime.
+    ///
+    /// Convenience wrapper around [`update_settings`](Self::update_settings)
+    /// for changing only the render path.
+    pub fn set_render_path(&mut self, path: RenderPath) {
+        if self.settings.path != path {
+            let mut new = self.settings.clone();
+            new.path = path;
+            self.update_settings(new);
         }
     }
 

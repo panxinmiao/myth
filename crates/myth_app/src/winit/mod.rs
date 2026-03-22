@@ -30,7 +30,7 @@ use crate::app::AppHandler;
 use crate::engine::{Engine, FrameState};
 use crate::window::Window as WindowTrait;
 use myth_core::{Error, PlatformError};
-use myth_render::settings::RendererSettings;
+use myth_render::settings::{RendererInitConfig, RendererSettings};
 
 pub mod input_adapter;
 
@@ -87,6 +87,7 @@ impl WindowTrait for Window {
 /// Application builder for configuring and launching the engine.
 pub struct App {
     title: String,
+    init_config: RendererInitConfig,
     render_settings: RendererSettings,
     #[cfg(not(target_arch = "wasm32"))]
     window_size: Option<(u32, u32)>,
@@ -100,6 +101,7 @@ impl App {
     pub fn new() -> Self {
         Self {
             title: "Myth Engine".into(),
+            init_config: RendererInitConfig::default(),
             render_settings: RendererSettings::default(),
             #[cfg(not(target_arch = "wasm32"))]
             window_size: None,
@@ -114,6 +116,14 @@ impl App {
         self
     }
 
+    /// Sets the static GPU initialization configuration.
+    #[must_use]
+    pub fn with_init_config(mut self, config: RendererInitConfig) -> Self {
+        self.init_config = config;
+        self
+    }
+
+    /// Sets the runtime rendering settings.
     #[must_use]
     pub fn with_settings(mut self, settings: RendererSettings) -> Self {
         self.render_settings = settings;
@@ -154,7 +164,12 @@ impl App {
             .map_err(|e| Error::Platform(PlatformError::EventLoop(e.to_string())))?;
         event_loop.set_control_flow(ControlFlow::Poll);
 
-        let mut runner = AppRunner::<H>::new(self.title, self.render_settings, self.window_size);
+        let mut runner = AppRunner::<H>::new(
+            self.title,
+            self.init_config,
+            self.render_settings,
+            self.window_size,
+        );
         event_loop
             .run_app(&mut runner)
             .map_err(|e| Error::Platform(PlatformError::EventLoop(e.to_string())))
@@ -172,7 +187,12 @@ impl App {
             .map_err(|e| Error::Platform(PlatformError::EventLoop(e.to_string())))?;
         event_loop.set_control_flow(ControlFlow::Poll);
 
-        let runner = AppRunner::<H>::new(self.title, self.render_settings, self.canvas_id);
+        let runner = AppRunner::<H>::new(
+            self.title,
+            self.init_config,
+            self.render_settings,
+            self.canvas_id,
+        );
         event_loop.spawn_app(runner);
 
         Ok(())
@@ -192,6 +212,7 @@ impl Default for App {
 /// Internal application runner that implements winit's `ApplicationHandler`.
 struct AppRunner<H: AppHandler> {
     title: String,
+    init_config: RendererInitConfig,
     render_settings: RendererSettings,
 
     #[cfg(not(target_arch = "wasm32"))]
@@ -239,6 +260,7 @@ impl<H: AppHandler> WasmInitState<H> {
 impl<H: AppHandler> AppRunner<H> {
     fn new(
         title: String,
+        init_config: RendererInitConfig,
         render_settings: RendererSettings,
         #[cfg(not(target_arch = "wasm32"))] window_size: Option<(u32, u32)>,
         #[cfg(target_arch = "wasm32")] canvas_id: Option<String>,
@@ -246,6 +268,7 @@ impl<H: AppHandler> AppRunner<H> {
         let now = Instant::now();
         Self {
             title,
+            init_config,
             render_settings,
             #[cfg(not(target_arch = "wasm32"))]
             window_size,
@@ -349,7 +372,7 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
 
         log::info!("Initializing Renderer Backend...");
 
-        let mut engine = Engine::new(self.render_settings.clone());
+        let mut engine = Engine::new(self.init_config.clone(), self.render_settings.clone());
         let size = window.inner_size();
 
         if let Err(e) = pollster::block_on(engine.init(window.clone(), size.width, size.height)) {
@@ -416,11 +439,12 @@ impl<H: AppHandler> ApplicationHandler for AppRunner<H> {
         log::info!("Initializing WebGPU Renderer Backend...");
 
         let render_settings = self.render_settings.clone();
+        let init_config = self.init_config.clone();
         let init_state = self.init_state.clone();
         let window_clone = window.clone();
 
         wasm_bindgen_futures::spawn_local(async move {
-            let mut engine = Engine::new(render_settings);
+            let mut engine = Engine::new(init_config, render_settings);
             let size = window_clone.inner_size();
             let w = size.width.max(1);
             let h = size.height.max(1);

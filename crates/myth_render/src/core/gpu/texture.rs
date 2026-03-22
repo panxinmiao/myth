@@ -284,10 +284,7 @@ impl ResourceManager {
 
         // ── Slow path: something changed, do the full update ──
         let Some((image_arc, image_version)) = assets.images.get_entry(image_handle) else {
-            log::warn!(
-                "Image asset not found for handle: {:?}",
-                image_handle
-            );
+            log::warn!("Image asset not found for handle: {image_handle:?}");
             return;
         };
 
