@@ -144,6 +144,7 @@ impl SamplerRegistry {
         (new_index, &self.samplers[new_index])
     }
 
+    #[must_use]
     #[inline]
     pub fn get_sampler_by_index(&self, index: usize) -> Option<&wgpu::Sampler> {
         self.samplers.get(index)

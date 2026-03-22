@@ -333,12 +333,17 @@ impl<'a> ResourceBuilder<'a> {
                             writeln!(
                                 bindings_code,
                                 "@group({group_index}) @binding({idx}) var<uniform> u_{name}: {};",
-                                struct_type_name.as_deref().expect("buffer binding needs a struct name")
-                            ).unwrap();
+                                struct_type_name
+                                    .as_deref()
+                                    .expect("buffer binding needs a struct name")
+                            )
+                            .unwrap();
                         }
                         wgpu::BufferBindingType::Storage { read_only } => {
                             let access = if *read_only { "read" } else { "read_write" };
-                            let stn = struct_type_name.as_deref().expect("storage binding needs a struct name");
+                            let stn = struct_type_name
+                                .as_deref()
+                                .expect("storage binding needs a struct name");
                             writeln!(
                                 bindings_code,
                                 "@group({group_index}) @binding({idx}) var<storage, {access}> st_{name}: array<{stn}>;"
@@ -370,7 +375,11 @@ impl<'a> ResourceBuilder<'a> {
                         ) => "texture_2d_array<f32>",
                         _ => "texture_2d<f32>",
                     };
-                    writeln!(bindings_code, "@group({group_index}) @binding({idx}) var t_{name}: {type_str};").unwrap();
+                    writeln!(
+                        bindings_code,
+                        "@group({group_index}) @binding({idx}) var t_{name}: {type_str};"
+                    )
+                    .unwrap();
                     idx += 1;
 
                     // Sampler declaration (auto-paired)
@@ -378,7 +387,11 @@ impl<'a> ResourceBuilder<'a> {
                         wgpu::SamplerBindingType::Comparison => "sampler_comparison",
                         _ => "sampler",
                     };
-                    writeln!(bindings_code, "@group({group_index}) @binding({idx}) var s_{name}: {sampler_type_str};").unwrap();
+                    writeln!(
+                        bindings_code,
+                        "@group({group_index}) @binding({idx}) var s_{name}: {sampler_type_str};"
+                    )
+                    .unwrap();
                     idx += 1;
                 }
             }

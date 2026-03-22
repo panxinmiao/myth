@@ -131,8 +131,8 @@ pub struct ResourceManager {
     /// Vertex layout cache: Signature -> ID
     pub vertex_layout_cache: FxHashMap<VertexLayoutSignature, u64>,
 
-    pub(crate) dummy_image: GpuImage,
-    pub(crate) dummy_env_image: GpuImage,
+    // pub(crate) dummy_image: GpuImage,
+    // pub(crate) dummy_env_image: GpuImage,
     pub(crate) mipmap_generator: MipmapGenerator,
 
     // === Model Buffer Allocator ===
@@ -169,114 +169,6 @@ impl ResourceManager {
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn new(device: wgpu::Device, queue: wgpu::Queue, anisotropy_clamp: u16) -> Self {
-        // Create dummy 2D image
-        let dummy_image = {
-            let size = wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            };
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Dummy Image"),
-                size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &[255u8, 255, 255, 255],
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4),
-                    rows_per_image: Some(1),
-                },
-                size,
-            );
-
-            let view = texture.create_view(&wgpu::TextureViewDescriptor::default());
-
-            GpuImage {
-                id: generate_gpu_resource_id(),
-                texture,
-                default_view: view,
-                default_view_dimension: wgpu::TextureViewDimension::D2,
-                size,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                mip_level_count: 1,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                version: 0,
-                generation_id: 0,
-                mipmaps_generated: true,
-                last_used_frame: u64::MAX,
-            }
-        };
-
-        // Create dummy env image (cube map)
-        let dummy_env_image = {
-            let size = wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 6,
-            };
-            let texture = device.create_texture(&wgpu::TextureDescriptor {
-                label: Some("Dummy EnvMap Black"),
-                size,
-                mip_level_count: 1,
-                sample_count: 1,
-                dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                view_formats: &[],
-            });
-
-            // Fill with black data (1x1 pixel * 4 bytes * 6 layers = 24 bytes)
-            queue.write_texture(
-                wgpu::TexelCopyTextureInfo {
-                    texture: &texture,
-                    mip_level: 0,
-                    origin: wgpu::Origin3d::ZERO,
-                    aspect: wgpu::TextureAspect::All,
-                },
-                &[0u8; 24],
-                wgpu::TexelCopyBufferLayout {
-                    offset: 0,
-                    bytes_per_row: Some(4),
-                    rows_per_image: Some(1),
-                },
-                size,
-            );
-
-            let view = texture.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::Cube),
-                ..Default::default()
-            });
-
-            GpuImage {
-                id: generate_gpu_resource_id(),
-                texture,
-                default_view: view,
-                default_view_dimension: wgpu::TextureViewDimension::Cube,
-                size,
-                format: wgpu::TextureFormat::Rgba8Unorm,
-                mip_level_count: 1,
-                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-                version: 0,
-                generation_id: 0,
-                mipmaps_generated: true,
-                last_used_frame: u64::MAX,
-            }
-        };
-
         let mipmap_generator = MipmapGenerator::new(&device);
         let model_allocator = ModelBufferAllocator::new();
 
@@ -305,8 +197,8 @@ impl ResourceManager {
             layout_cache: FxHashMap::default(),
             vertex_layout_cache: FxHashMap::default(),
             view_cache: FxHashMap::default(),
-            dummy_image,
-            dummy_env_image,
+            // dummy_image,
+            // dummy_env_image,
             mipmap_generator,
             model_allocator,
             object_bind_group_cache: FxHashMap::default(),

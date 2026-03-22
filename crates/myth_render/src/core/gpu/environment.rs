@@ -28,7 +28,7 @@ pub enum CubeSourceType {
 #[derive(Debug)]
 pub struct GpuEnvironment {
     /// Version of the source texture when this entry was last (re)created
-    pub source_version: u64,
+    pub source_version: u32,
     /// Whether compute pass needs to (re)generate the textures
     pub needs_compute: bool,
     /// How the source needs to be processed
@@ -66,11 +66,11 @@ impl ResourceManager {
             return 0.0;
         };
 
-        let mut current_version: u64 = 0;
+        let mut current_version: u32 = 0;
         if let TextureSource::Asset(handle) = &source {
             self.prepare_texture(assets, *handle);
             if let Some(tex) = assets.textures.get(*handle) {
-                current_version = assets.images.get_version(tex.image).unwrap_or(0) as u64;
+                current_version = assets.images.get_version(tex.image).unwrap_or(0);
             }
         }
 
@@ -174,10 +174,10 @@ impl ResourceManager {
                             self.internal_resources.insert(id, view);
                             id
                         } else {
-                            self.dummy_env_image.id
+                            self.system_textures.black_cube.id()
                         }
                     } else {
-                        self.dummy_env_image.id
+                        self.system_textures.black_cube.id()
                     }
                 }
                 TextureSource::Attachment(id, _) => *id,

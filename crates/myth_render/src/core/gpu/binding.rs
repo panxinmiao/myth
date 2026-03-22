@@ -110,7 +110,7 @@ impl ResourceManager {
             TextureSource::Asset(handle) => {
                 // Special handling for Dummy Env Map
                 if *handle == TextureHandle::dummy_env_map() {
-                    return &self.dummy_env_image.default_view;
+                    return &self.system_textures.black_cube;
                 }
 
                 // Look up GPU resource corresponding to the Asset
@@ -121,13 +121,13 @@ impl ResourceManager {
                 }
 
                 // Fallback
-                &self.dummy_image.default_view
+                &self.system_textures.black_2d
             }
             TextureSource::Attachment(id, _) => {
                 // Directly look up the internal resource table
                 self.internal_resources
                     .get(id)
-                    .unwrap_or(&self.dummy_image.default_view)
+                    .unwrap_or(&self.system_textures.black_2d)
             }
         }
     }
@@ -360,15 +360,14 @@ impl ResourceManager {
                         self.get_texture_view(source)
                     } else if let BindingDesc::Texture { view_dimension, .. } = &b.desc {
                         match view_dimension {
-                            wgpu::TextureViewDimension::D2 => &self.dummy_image.default_view,
                             wgpu::TextureViewDimension::D2Array => {
-                                &*self.system_textures.depth_d2array
+                                &self.system_textures.depth_d2array
                             }
-                            wgpu::TextureViewDimension::Cube => &self.dummy_env_image.default_view,
-                            _ => &self.dummy_image.default_view,
+                            wgpu::TextureViewDimension::Cube => &self.system_textures.black_cube,
+                            _ => &self.system_textures.black_2d,
                         }
                     } else {
-                        &self.dummy_image.default_view
+                        &self.system_textures.black_2d
                     };
                     entries.push(wgpu::BindGroupEntry {
                         binding: binding_index,
@@ -377,7 +376,7 @@ impl ResourceManager {
                     binding_index += 1;
 
                     // 2. Auto-paired sampler entry
-                    let sampler = self.resolve_texture_sampler(source_opt, &b.desc);
+                    let sampler = self.resolve_texture_sampler(source_opt.as_ref(), &b.desc);
                     entries.push(wgpu::BindGroupEntry {
                         binding: binding_index,
                         resource: wgpu::BindingResource::Sampler(sampler),
@@ -404,18 +403,16 @@ impl ResourceManager {
     /// (or the shadow comparison sampler for depth/comparison bindings).
     fn resolve_texture_sampler(
         &self,
-        source: &Option<TextureSource>,
+        source: Option<&TextureSource>,
         desc: &BindingDesc,
     ) -> &wgpu::Sampler {
-        if let Some(TextureSource::Asset(handle)) = source {
-            if let Some(binding) = self.texture_bindings.get(*handle) {
-                if let Some(sampler) = self
-                    .sampler_registry
-                    .get_sampler_by_index(binding.sampler_id)
-                {
-                    return sampler;
-                }
-            }
+        if let Some(TextureSource::Asset(handle)) = source
+            && let Some(binding) = self.texture_bindings.get(*handle)
+            && let Some(sampler) = self
+                .sampler_registry
+                .get_sampler_by_index(binding.sampler_id)
+        {
+            return sampler;
         }
 
         // Fallback: comparison sampler for depth textures, default otherwise
@@ -424,7 +421,7 @@ impl ResourceManager {
             ..
         } = desc
         {
-            &*self.system_textures.shadow_compare_sampler
+            &self.system_textures.shadow_compare_sampler
         } else {
             self.sampler_registry.default_sampler().1
         }
@@ -458,13 +455,21 @@ impl ResourceManager {
                     (gpu_env.cube_view_id, gpu_env.pmrem_view_id)
                 } else {
                     log::warn!("GpuEnvironment cache miss in prepare_global");
-                    (self.dummy_env_image.id, self.dummy_env_image.id)
+                    (
+                        self.system_textures.black_cube.id(),
+                        self.system_textures.black_cube.id(),
+                    )
                 }
             } else {
-                (self.dummy_env_image.id, self.dummy_env_image.id)
+                (
+                    self.system_textures.black_cube.id(),
+                    self.system_textures.black_cube.id(),
+                )
             };
 
-        let brdf_lut_id = self.brdf_lut_view_id.unwrap_or(self.dummy_image.id);
+        let brdf_lut_id = self
+            .brdf_lut_view_id
+            .unwrap_or(self.system_textures.black_2d.id());
 
         // === Collect: gather all resource IDs ===
         let mut current_ids = super::ResourceIdSet::with_capacity(8);

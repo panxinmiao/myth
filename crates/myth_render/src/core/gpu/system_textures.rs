@@ -80,6 +80,7 @@ impl SystemTextures {
     ///
     /// This is called once during renderer initialisation.  The total GPU
     /// memory footprint is negligible (a handful of 1×1 textures).
+    #[must_use]
     pub fn new(device: &wgpu::Device, queue: &wgpu::Queue) -> Self {
         // ── Data-Semantic Textures ─────────────────────────────────────
 

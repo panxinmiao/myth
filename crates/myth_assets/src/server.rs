@@ -534,17 +534,17 @@ impl AssetServer {
             }
 
             let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() == 3 
+            if parts.len() == 3
                 && let (Ok(r), Ok(g), Ok(b)) = (
                     parts[0].parse::<f32>(),
                     parts[1].parse::<f32>(),
                     parts[2].parse::<f32>(),
-                ) {
-                    data.push(r);
-                    data.push(g);
-                    data.push(b);
-                }
-            
+                )
+            {
+                data.push(r);
+                data.push(g);
+                data.push(b);
+            }
         }
 
         if size == 0 {

@@ -72,7 +72,7 @@ pub struct GpuImage {
     pub format: wgpu::TextureFormat,
     pub mip_level_count: u32,
     pub usage: wgpu::TextureUsages,
-    pub version: u64,
+    pub version: u32,
     pub generation_id: u64,
     pub mipmaps_generated: bool,
     pub last_used_frame: u64,
@@ -164,12 +164,12 @@ impl GpuImage {
                 self.mip_level_count,
                 self.usage,
             );
-            self.version = image_version as u64;
+            self.version = image_version;
             return;
         }
 
         // Data-only update
-        if (self.version as u32) < image_version {
+        if self.version < image_version {
             Self::upload_data(
                 queue,
                 &self.texture,
@@ -179,7 +179,7 @@ impl GpuImage {
                 self.size.depth_or_array_layers,
                 self.format,
             );
-            self.version = image_version as u64;
+            self.version = image_version;
             if self.mip_level_count > 1 {
                 self.mipmaps_generated = false;
             }
@@ -257,7 +257,7 @@ impl ResourceManager {
                 required_mip_count,
                 required_usage,
             );
-            gpu_img.version = image_version as u64;
+            gpu_img.version = image_version;
             gpu_img.last_used_frame = self.frame_index;
             let new_id = gpu_img.id;
             self.gpu_images.insert(id, gpu_img);
@@ -306,18 +306,17 @@ impl ResourceManager {
         let cpu_image_id = image_uuid.as_u128() as u64;
 
         // Fast path: skip if nothing changed
-        if let Some(binding) = self.texture_bindings.get(handle) {
-            if let Some(gpu_img) = self.gpu_images.get(&cpu_image_id) {
-                let version_match = (binding.texture_version as u32) >= image_version;
-                let image_match =
-                    binding.cpu_image_id == cpu_image_id && binding.view_id == gpu_img.id;
+        if let Some(binding) = self.texture_bindings.get(handle)
+            && let Some(gpu_img) = self.gpu_images.get(&cpu_image_id)
+        {
+            let version_match = (binding.texture_version as u32) >= image_version;
+            let image_match = binding.cpu_image_id == cpu_image_id && binding.view_id == gpu_img.id;
 
-                if version_match && image_match {
-                    if let Some(gpu_img) = self.gpu_images.get_mut(&cpu_image_id) {
-                        gpu_img.last_used_frame = self.frame_index;
-                    }
-                    return;
+            if version_match && image_match {
+                if let Some(gpu_img) = self.gpu_images.get_mut(&cpu_image_id) {
+                    gpu_img.last_used_frame = self.frame_index;
                 }
+                return;
             }
         }
 

@@ -131,7 +131,7 @@ impl ResourceManager {
                         resource_ids.push(binding.view_id);
                         resource_ids.push(binding.sampler_id as u64);
                     } else {
-                        resource_ids.push(self.dummy_image.id);
+                        resource_ids.push(self.system_textures.black_cube.id());
                         resource_ids.push(self.sampler_registry.default_sampler().0 as u64);
                     }
                 }
