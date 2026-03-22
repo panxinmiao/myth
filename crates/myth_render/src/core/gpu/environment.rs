@@ -92,7 +92,7 @@ impl ResourceManager {
         let (is_2d_source, source_cube_size, source_mip_count) = match &source {
             TextureSource::Asset(handle) => {
                 if let Some(binding) = self.texture_bindings.get(*handle) {
-                    if let Some(img) = self.gpu_images.get(&binding.cpu_image_id) {
+                    if let Some(img) = self.gpu_images.get(binding.image_handle) {
                         let is_2d = img.default_view_dimension == TextureViewDimension::D2;
                         (is_2d, img.size.width, img.mip_level_count)
                     } else {
@@ -165,7 +165,7 @@ impl ResourceManager {
             match &source {
                 TextureSource::Asset(handle) => {
                     if let Some(binding) = self.texture_bindings.get(*handle) {
-                        if let Some(img) = self.gpu_images.get(&binding.cpu_image_id) {
+                        if let Some(img) = self.gpu_images.get(binding.image_handle) {
                             let view = img.texture.create_view(&wgpu::TextureViewDescriptor {
                                 dimension: Some(TextureViewDimension::Cube),
                                 ..Default::default()

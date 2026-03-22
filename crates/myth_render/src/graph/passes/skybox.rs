@@ -311,7 +311,7 @@ impl SkyboxFeature {
         match source {
             TextureSource::Asset(handle) => {
                 if let Some(binding) = resource_manager.texture_bindings.get(*handle)
-                    && let Some(img) = resource_manager.gpu_images.get(&binding.cpu_image_id)
+                    && let Some(img) = resource_manager.gpu_images.get(binding.image_handle)
                 {
                     match mapping {
                         BackgroundMapping::Cube => {

@@ -38,7 +38,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use rustc_hash::FxHashMap;
 use slotmap::SecondaryMap;
 
-use myth_assets::{GeometryHandle, MaterialHandle, TextureHandle};
+use myth_assets::{GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
 
 pub(crate) use crate::core::gpu::buffer::GpuBuffer;
 pub use crate::core::gpu::buffer::GpuBufferHandle;
@@ -46,7 +46,7 @@ pub(crate) use crate::core::gpu::environment::GpuEnvironment;
 pub(crate) use crate::core::gpu::environment::{BRDF_LUT_SIZE, CubeSourceType};
 pub(crate) use crate::core::gpu::geometry::GpuGeometry;
 pub(crate) use crate::core::gpu::material::GpuMaterial;
-pub(crate) use crate::core::gpu::texture::{GpuImage, TextureBinding, TextureViewKey};
+pub(crate) use crate::core::gpu::texture::{GpuImage, TextureBinding};
 use crate::pipeline::vertex::VertexLayoutSignature;
 
 use myth_resources::buffer::{CpuBuffer, GpuData};
@@ -111,6 +111,8 @@ pub struct ResourceManager {
 
     pub(crate) gpu_geometries: SecondaryMap<GeometryHandle, GpuGeometry>,
     pub(crate) gpu_materials: SecondaryMap<MaterialHandle, GpuMaterial>,
+    pub(crate) gpu_images: SecondaryMap<ImageHandle, GpuImage>,
+
     pub(crate) global_states: FxHashMap<u64, GpuGlobalState>,
 
     /// Mapping from `TextureHandle` to (`ImageId`, `SamplerId`)
@@ -120,11 +122,9 @@ pub struct ResourceManager {
     pub(crate) gpu_buffers: slotmap::SlotMap<GpuBufferHandle, GpuBuffer>,
     /// Reverse index: CPU-side buffer ID → SlotMap handle.
     pub(crate) buffer_index: FxHashMap<u64, GpuBufferHandle>,
-    /// All GpuImages, keyed by CPU Image ID
-    pub(crate) gpu_images: FxHashMap<u64, GpuImage>,
+
     pub(crate) sampler_registry: SamplerRegistry,
 
-    pub(crate) view_cache: FxHashMap<TextureViewKey, (wgpu::TextureView, u64)>,
     pub(crate) layout_cache:
         FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
 
@@ -188,17 +188,14 @@ impl ResourceManager {
             frame_index: 0,
             gpu_geometries: SecondaryMap::new(),
             gpu_materials: SecondaryMap::new(),
+            gpu_images: SecondaryMap::new(),
             sampler_registry,
             texture_bindings: SecondaryMap::new(),
             global_states: FxHashMap::default(),
             gpu_buffers,
             buffer_index,
-            gpu_images: FxHashMap::default(),
             layout_cache: FxHashMap::default(),
             vertex_layout_cache: FxHashMap::default(),
-            view_cache: FxHashMap::default(),
-            // dummy_image,
-            // dummy_env_image,
             mipmap_generator,
             model_allocator,
             object_bind_group_cache: FxHashMap::default(),
@@ -280,6 +277,6 @@ impl ResourceManager {
             .retain(|_, v| v.last_used_frame >= cutoff);
         // texture_bindings are cleaned up following gpu_images
         self.texture_bindings
-            .retain(|_, b| self.gpu_images.contains_key(&b.cpu_image_id));
+            .retain(|_, b| self.gpu_images.contains_key(b.image_handle));
     }
 }

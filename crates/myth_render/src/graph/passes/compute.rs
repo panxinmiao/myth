@@ -584,7 +584,7 @@ impl IblComputeFeature {
                             let binding =
                                 ctx.resource_manager.get_texture_binding(*handle).unwrap();
                             &ctx.resource_manager
-                                .get_image(binding.cpu_image_id)
+                                .get_image(binding.image_handle)
                                 .unwrap()
                                 .default_view
                         }
@@ -656,7 +656,7 @@ impl IblComputeFeature {
                             let binding =
                                 ctx.resource_manager.get_texture_binding(*handle).unwrap();
                             &ctx.resource_manager
-                                .get_image(binding.cpu_image_id)
+                                .get_image(binding.image_handle)
                                 .unwrap()
                                 .texture
                         }
@@ -709,7 +709,7 @@ impl IblComputeFeature {
                 TextureSource::Asset(handle) => {
                     let binding = ctx.resource_manager.get_texture_binding(*handle).unwrap();
                     ctx.resource_manager
-                        .get_image(binding.cpu_image_id)
+                        .get_image(binding.image_handle)
                         .unwrap()
                         .texture
                         .create_view(&wgpu::TextureViewDescriptor {

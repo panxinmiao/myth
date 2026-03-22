@@ -115,7 +115,7 @@ impl ResourceManager {
 
                 // Look up GPU resource corresponding to the Asset
                 if let Some(binding) = self.texture_bindings.get(*handle)
-                    && let Some(img) = self.gpu_images.get(&binding.cpu_image_id)
+                    && let Some(img) = self.gpu_images.get(binding.image_handle)
                 {
                     return &img.default_view;
                 }

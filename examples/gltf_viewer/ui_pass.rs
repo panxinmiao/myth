@@ -253,7 +253,7 @@ impl UiPass {
             let mut registered = false;
 
             if let Some(binding) = resource_manager.get_texture_binding(handle) {
-                if let Some(gpu_image) = resource_manager.get_image(binding.cpu_image_id) {
+                if let Some(gpu_image) = resource_manager.get_image(binding.image_handle) {
                     let id = self.renderer.register_native_texture(
                         device,
                         &gpu_image.default_view,
