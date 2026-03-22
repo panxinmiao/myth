@@ -22,7 +22,7 @@
 //!
 //! [`BasicForward`]: crate::settings::RenderPath::BasicForward
 
-use crate::core::gpu::{ScreenBindGroupInfo, Tracked};
+use crate::core::gpu::Tracked;
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
     ExecuteContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc, TextureNodeId,
@@ -33,9 +33,7 @@ use crate::graph::passes::draw::submit_draw_commands;
 
 // ─── Feature ───────────────────────────────────────────────────────────
 
-pub struct SimpleForwardFeature {
-    screen_info: Option<ScreenBindGroupInfo>,
-}
+pub struct SimpleForwardFeature;
 
 impl Default for SimpleForwardFeature {
     fn default() -> Self {
@@ -46,12 +44,7 @@ impl Default for SimpleForwardFeature {
 impl SimpleForwardFeature {
     #[must_use]
     pub fn new() -> Self {
-        Self { screen_info: None }
-    }
-
-    /// Cache screen bind group info from ResourceManager.
-    pub fn set_screen_info(&mut self, info: ScreenBindGroupInfo) {
-        self.screen_info = Some(info);
+        Self
     }
 
     pub fn add_to_graph<'a>(
@@ -63,10 +56,6 @@ impl SimpleForwardFeature {
         shadow_tex: Option<TextureNodeId>,
     ) {
         let fc = ctx.frame_config;
-        let screen_info = self
-            .screen_info
-            .as_ref()
-            .expect("SimpleForwardFeature: screen_info not set");
 
         let depth_desc = TextureDesc::new(
             fc.width,
@@ -110,7 +99,6 @@ impl SimpleForwardFeature {
                 clear_color,
                 prepared_skybox,
                 shadow_input: shadow_tex,
-                screen_info,
                 screen_bind_group: None,
             };
             (node, ())
@@ -134,31 +122,7 @@ pub struct SimpleForwardPassNode<'a> {
     pub clear_color: wgpu::Color,
     pub prepared_skybox: Option<PreparedSkyboxDraw<'a>>,
     pub shadow_input: Option<TextureNodeId>,
-    screen_info: &'a ScreenBindGroupInfo,
-    screen_bind_group: Option<&'a wgpu::BindGroup>,
-}
-
-impl<'a> SimpleForwardPassNode<'a> {
-    #[must_use]
-    pub fn new(
-        surface_out: TextureNodeId,
-        scene_depth: TextureNodeId,
-        clear_color: wgpu::Color,
-        screen_info: &'a ScreenBindGroupInfo,
-        prepared_skybox: Option<PreparedSkyboxDraw<'a>>,
-        shadow_input: Option<TextureNodeId>,
-    ) -> Self {
-        Self {
-            surface_out,
-            scene_depth,
-            clear_color,
-            prepared_skybox,
-            shadow_input,
-            msaa_view: None,
-            screen_info,
-            screen_bind_group: None,
-        }
-    }
+    screen_bind_group: Option<&'static wgpu::BindGroup>,
 }
 
 impl<'a> PassNode<'a> for SimpleForwardPassNode<'a> {
@@ -167,21 +131,22 @@ impl<'a> PassNode<'a> for SimpleForwardPassNode<'a> {
             views,
             global_bind_group_cache: cache,
             device,
+            system_textures: sys,
             ..
         } = ctx;
         let device = *device;
 
         let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {
             Some(id) => views.get_texture_view(id),
-            None => &self.screen_info.dummy_shadow_view,
+            None => &sys.depth_d2array,
         };
 
         let bg = build_screen_bind_group(
             cache,
             device,
-            self.screen_info,
-            &self.screen_info.dummy_transmission_view,
-            &self.screen_info.ssao_dummy_view,
+            sys,
+            &sys.black_hdr,
+            &sys.white_r8,
             shadow_view,
         );
         self.screen_bind_group = Some(bg);

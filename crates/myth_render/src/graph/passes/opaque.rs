@@ -27,7 +27,7 @@
 //! - `needs_specular`: Whether to output a specular MRT attachment
 
 use crate::HDR_TEXTURE_FORMAT;
-use crate::core::gpu::{ScreenBindGroupInfo, Tracked};
+use crate::core::gpu::Tracked;
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
     ExecuteContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc, TextureNodeId,
@@ -51,9 +51,7 @@ pub struct OpaqueOutputs {
 
 // ─── Feature ───────────────────────────────────────────────────────────
 
-pub struct OpaqueFeature {
-    screen_info: Option<ScreenBindGroupInfo>,
-}
+pub struct OpaqueFeature;
 
 impl Default for OpaqueFeature {
     fn default() -> Self {
@@ -64,13 +62,7 @@ impl Default for OpaqueFeature {
 impl OpaqueFeature {
     #[must_use]
     pub fn new() -> Self {
-        Self { screen_info: None }
-    }
-
-    /// Cache screen bind group info from ResourceManager.
-    /// Called once (or on resize) before add_to_graph.
-    pub fn set_screen_info(&mut self, info: ScreenBindGroupInfo) {
-        self.screen_info = Some(info);
+        Self
     }
 
     pub fn add_to_graph<'a>(
@@ -84,10 +76,6 @@ impl OpaqueFeature {
     ) -> OpaqueOutputs {
         let fc = ctx.frame_config;
         let is_msaa = fc.msaa_samples > 1;
-        let screen_info = self
-            .screen_info
-            .as_ref()
-            .expect("OpaqueFeature: screen_info not set");
 
         let hdr_desc = TextureDesc::new_2d(
             fc.width,
@@ -176,14 +164,12 @@ impl OpaqueFeature {
             let node = OpaquePassNode::new(
                 color_target,
                 depth_target,
-                // in_depth,
                 clear_color,
                 needs_specular,
                 ssao_tex,
                 shadow_tex,
                 specular_tex,
                 specular_resolved,
-                screen_info,
             );
 
             let specular_mrt = if needs_specular {
@@ -208,15 +194,15 @@ impl OpaqueFeature {
 
 /// RDG Opaque Render Pass.
 ///
-/// Draws `render_lists.opaque` to the scene color buffer. Builds a
-/// dynamic screen bind group (group 3) containing SSAO + transmission dummy
-/// textures.  When MSAA is active, the pass writes to a multi-sampled
-/// color target and optionally resolves to a single-sample HDR texture.
-pub struct OpaquePassNode<'a> {
+/// Draws `render_lists.opaque` to the scene color buffer.  Builds a
+/// dynamic screen bind group (Group 3) with SSAO, transmission, and shadow
+/// textures resolved from [`SystemTextures`] fallbacks when inactive.
+/// When MSAA is active, the pass writes to a multi-sampled color target
+/// and optionally resolves to a single-sample HDR texture.
+pub struct OpaquePassNode {
     // ─── RDG Resource Slots ────────────────────────────────────────
     pub color_target: TextureNodeId,
     pub depth_target: TextureNodeId,
-    // pub in_depth: Option<TextureNodeId>,
     pub specular_tex: TextureNodeId,
     pub specular_resolve_target: Option<TextureNodeId>,
 
@@ -225,68 +211,64 @@ pub struct OpaquePassNode<'a> {
     pub needs_specular: bool,
     pub ssao_input: Option<TextureNodeId>,
     pub shadow_input: Option<TextureNodeId>,
-    // ─── Screen Bind Group Infrastructure ──────────────────────────
-    screen_info: &'a ScreenBindGroupInfo,
+
     // ─── Internal Cache ────────────────────────────────────────────
-    screen_bind_group: Option<&'a wgpu::BindGroup>,
+    screen_bind_group: Option<&'static wgpu::BindGroup>,
 }
 
-impl<'a> OpaquePassNode<'a> {
+impl OpaquePassNode {
     #[must_use]
     pub fn new(
         color_target: TextureNodeId,
         depth_target: TextureNodeId,
-        // in_depth: Option<TextureNodeId>,
         clear_color: wgpu::Color,
         needs_specular: bool,
         ssao_input: Option<TextureNodeId>,
         shadow_input: Option<TextureNodeId>,
         specular_tex: TextureNodeId,
         specular_resolve_target: Option<TextureNodeId>,
-        screen_info: &'a ScreenBindGroupInfo,
     ) -> Self {
         Self {
             color_target,
             depth_target,
-            // in_depth,
             specular_tex,
             specular_resolve_target,
             clear_color,
             needs_specular,
             ssao_input,
             shadow_input,
-            screen_info,
             screen_bind_group: None,
         }
     }
 }
 
-impl<'a> PassNode<'a> for OpaquePassNode<'a> {
+impl<'a> PassNode<'a> for OpaquePassNode {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
         let PrepareContext {
             views,
             global_bind_group_cache: cache,
             device,
+            system_textures: sys,
             ..
         } = ctx;
         let device = *device;
 
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {
             Some(id) => views.get_texture_view(id),
-            None => &self.screen_info.ssao_dummy_view,
+            None => &sys.white_r8,
         };
 
-        let transmission_view = &self.screen_info.dummy_transmission_view;
+        let transmission_view = &sys.black_hdr;
 
         let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {
             Some(id) => views.get_texture_view(id),
-            None => &self.screen_info.dummy_shadow_view,
+            None => &sys.depth_d2array,
         };
 
         let bg = build_screen_bind_group(
             cache,
             device,
-            self.screen_info,
+            sys,
             transmission_view,
             ssao_view,
             shadow_view,

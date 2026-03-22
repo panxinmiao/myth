@@ -30,7 +30,7 @@
 //!
 //! Transparent commands are sorted back-to-front for correct alpha blending.
 
-use crate::core::gpu::{ScreenBindGroupInfo, Tracked};
+use crate::core::gpu::Tracked;
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
     ExecuteContext, PassNode, PrepareContext, RenderTargetOps, TextureNodeId,
@@ -40,9 +40,7 @@ use crate::graph::passes::draw::submit_draw_commands;
 
 // ─── Feature ───────────────────────────────────────────────────────────
 
-pub struct TransparentFeature {
-    screen_info: Option<ScreenBindGroupInfo>,
-}
+pub struct TransparentFeature;
 
 impl Default for TransparentFeature {
     fn default() -> Self {
@@ -53,12 +51,7 @@ impl Default for TransparentFeature {
 impl TransparentFeature {
     #[must_use]
     pub fn new() -> Self {
-        Self { screen_info: None }
-    }
-
-    /// Cache screen bind group info from ResourceManager.
-    pub fn set_screen_info(&mut self, info: ScreenBindGroupInfo) {
-        self.screen_info = Some(info);
+        Self
     }
 
     /// Builds the transparent pass node and inserts it into the graph.
@@ -82,10 +75,6 @@ impl TransparentFeature {
         shadow_tex: Option<TextureNodeId>,
     ) -> TextureNodeId {
         let fc = ctx.frame_config;
-        let screen_info = self
-            .screen_info
-            .as_ref()
-            .expect("TransparentFeature: screen_info not set");
 
         ctx.graph.add_pass("Transparent_Pass", |builder| {
             let color_output = builder.mutate_texture(color_target, "Scene_Color_Transparent");
@@ -121,7 +110,6 @@ impl TransparentFeature {
                 transmission_tex,
                 ssao_tex,
                 shadow_tex,
-                screen_info,
             );
 
             (node, result)
@@ -131,18 +119,17 @@ impl TransparentFeature {
 
 // ─── Pass Node ─────────────────────────────────────────────────────────
 
-pub struct TransparentPassNode<'a> {
+pub struct TransparentPassNode {
     out_color: TextureNodeId,
     depth_target: TextureNodeId,
     resolve_target: Option<TextureNodeId>,
     transmission_input: Option<TextureNodeId>,
     ssao_input: Option<TextureNodeId>,
     shadow_input: Option<TextureNodeId>,
-    screen_info: &'a ScreenBindGroupInfo,
-    screen_bind_group: Option<&'a wgpu::BindGroup>,
+    screen_bind_group: Option<&'static wgpu::BindGroup>,
 }
 
-impl<'a> TransparentPassNode<'a> {
+impl TransparentPassNode {
     #[must_use]
     fn new(
         _in_color: TextureNodeId,
@@ -152,7 +139,6 @@ impl<'a> TransparentPassNode<'a> {
         transmission_input: Option<TextureNodeId>,
         ssao_input: Option<TextureNodeId>,
         shadow_input: Option<TextureNodeId>,
-        screen_info: &'a ScreenBindGroupInfo,
     ) -> Self {
         Self {
             out_color,
@@ -161,41 +147,41 @@ impl<'a> TransparentPassNode<'a> {
             transmission_input,
             ssao_input,
             shadow_input,
-            screen_info,
             screen_bind_group: None,
         }
     }
 }
 
-impl<'a> PassNode<'a> for TransparentPassNode<'a> {
+impl<'a> PassNode<'a> for TransparentPassNode {
     fn prepare(&mut self, ctx: &mut PrepareContext<'a>) {
         let PrepareContext {
             views,
             global_bind_group_cache: cache,
             device,
+            system_textures: sys,
             ..
         } = ctx;
         let device = *device;
 
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {
             Some(id) => views.get_texture_view(id),
-            None => &self.screen_info.ssao_dummy_view,
+            None => &sys.white_r8,
         };
 
         let transmission_view: &Tracked<wgpu::TextureView> = match self.transmission_input {
             Some(id) => views.get_texture_view(id),
-            None => &self.screen_info.dummy_transmission_view,
+            None => &sys.black_hdr,
         };
 
         let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {
             Some(id) => views.get_texture_view(id),
-            None => &self.screen_info.dummy_shadow_view,
+            None => &sys.depth_d2array,
         };
 
         let bg = build_screen_bind_group(
             cache,
             device,
-            self.screen_info,
+            sys,
             transmission_view,
             ssao_view,
             shadow_view,

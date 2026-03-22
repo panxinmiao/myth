@@ -28,6 +28,7 @@ mod material;
 mod mipmap;
 mod resource_ids;
 mod sampler_registry;
+mod system_textures;
 mod texture;
 mod tracked;
 
@@ -57,6 +58,7 @@ pub use resource_ids::{
     BindGroupFingerprint, EnsureResult, ResourceId, ResourceIdSet, hash_layout_entries,
 };
 pub use sampler_registry::{CommonSampler, SamplerRegistry};
+pub use system_textures::SystemTextures;
 pub use tracked::Tracked;
 
 static NEXT_GPU_RESOURCE_ID: AtomicU64 = AtomicU64::new(1);
@@ -156,145 +158,11 @@ pub struct ResourceManager {
     /// Mapping from internal texture names to IDs, ensuring ID stability across frames
     pub(crate) internal_name_lookup: FxHashMap<String, u64>,
 
-    // ─── Screen BindGroup Infrastructure (Group 3) ────────────────
-    //
-    // Static, create-once resources used by scene draw passes to bind the
-    // "screen" descriptor set.  Group 3 contains transmission, SSAO, and
-    // shadow map textures — all RDG transient resources that are swapped
-    // to harmless dummies when their features are inactive.
-    //
-    /// BindGroupLayout for Group 3.
-    pub screen_bind_group_layout: Tracked<wgpu::BindGroupLayout>,
-
-    /// Shared linear-clamp sampler for transmission / SSAO sampling.
-    pub screen_sampler: Tracked<wgpu::Sampler>,
-
-    /// 1×1 white (R8Unorm = 255) dummy texture for SSAO-disabled fallback.
-    pub ssao_dummy_view: Tracked<wgpu::TextureView>,
-
-    /// 1×1 placeholder texture (Rgba16Float) for transmission-disabled fallback.
-    pub dummy_transmission_view: Tracked<wgpu::TextureView>,
-
-    /// 1×1 Depth32Float D2Array dummy for no-shadow-casters fallback.
-    pub dummy_shadow_view: Tracked<wgpu::TextureView>,
-
-    /// `LessEqual` comparison sampler for PCF shadow sampling.
-    pub shadow_compare_sampler: Tracked<wgpu::Sampler>,
-}
-
-/// Lightweight bundle of persistent screen bind-group resources.
-///
-/// Cloned from [`ResourceManager`] and passed to RDG PassNodes so that
-/// `build_screen_bind_group` can work without a reference to the full
-/// `ResourceManager`, keeping it out of [`RdgPrepareContext`].
-///
-/// Group 3 layout:
-///
-/// | Binding | Resource                       |
-/// |---------|--------------------------------|
-/// | 0       | Transmission texture (Float)   |
-/// | 1       | Screen sampler (Filtering)     |
-/// | 2       | SSAO texture (Float)           |
-/// | 3       | Shadow depth 2D-array          |
-/// | 4       | Shadow comparison sampler      |
-#[derive(Clone)]
-pub struct ScreenBindGroupInfo {
-    pub layout: Tracked<wgpu::BindGroupLayout>,
-    pub sampler: Tracked<wgpu::Sampler>,
-    pub ssao_dummy_view: Tracked<wgpu::TextureView>,
-    pub dummy_transmission_view: Tracked<wgpu::TextureView>,
-    /// 1×1 Depth32Float D2Array fallback for no-shadow frames.
-    pub dummy_shadow_view: Tracked<wgpu::TextureView>,
-    /// `LessEqual` comparison sampler for PCF shadow sampling.
-    pub shadow_compare_sampler: Tracked<wgpu::Sampler>,
-}
-
-impl ScreenBindGroupInfo {
-    /// Creates a `ScreenBindGroupInfo` from the given [`ResourceManager`].
-    pub fn from_resource_manager(rm: &ResourceManager) -> Self {
-        Self {
-            layout: rm.screen_bind_group_layout.clone(),
-            sampler: rm.screen_sampler.clone(),
-            ssao_dummy_view: rm.ssao_dummy_view.clone(),
-            dummy_transmission_view: rm.dummy_transmission_view.clone(),
-            dummy_shadow_view: rm.dummy_shadow_view.clone(),
-            shadow_compare_sampler: rm.shadow_compare_sampler.clone(),
-        }
-    }
-
-    /// Build the screen / transient bind group (Group 3).
+    /// Global system fallback textures and Group 3 bind-group infrastructure.
     ///
-    /// Returns `(BindGroup, composite_id)` where `composite_id` is a hash
-    /// of the resource IDs for `TrackedRenderPass` state tracking.
-    pub fn build_screen_bind_group(
-        &self,
-        device: &wgpu::Device,
-        cache: &mut crate::core::binding::GlobalBindGroupCache,
-        transmission_view: &Tracked<wgpu::TextureView>,
-        ssao_view: &Tracked<wgpu::TextureView>,
-        shadow_view: &Tracked<wgpu::TextureView>,
-    ) -> (wgpu::BindGroup, u64) {
-        use crate::core::binding::BindGroupKey;
-
-        let layout_id = self.layout.id();
-        let sampler_id = self.sampler.id();
-        let shadow_sampler_id = self.shadow_compare_sampler.id();
-
-        let key = BindGroupKey::new(layout_id)
-            .with_resource(transmission_view.id())
-            .with_resource(sampler_id)
-            .with_resource(ssao_view.id())
-            .with_resource(shadow_view.id())
-            .with_resource(shadow_sampler_id);
-
-        let bind_group_id = transmission_view
-            .id()
-            .wrapping_mul(6_364_136_223_846_793_005)
-            ^ ssao_view.id().wrapping_mul(1_442_695_040_888_963_407)
-            ^ shadow_view.id().wrapping_mul(2_862_933_555_777_941_757)
-            ^ sampler_id
-            ^ shadow_sampler_id;
-
-        let layout = &*self.layout;
-        let sampler = &*self.sampler;
-        let tv = &**transmission_view;
-        let sv = &**ssao_view;
-        let shv = &**shadow_view;
-        let shs = &*self.shadow_compare_sampler;
-
-        let bg = cache
-            .get_or_create(key, || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Screen BindGroup (Group 3)"),
-                    layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(tv),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::TextureView(sv),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 3,
-                            resource: wgpu::BindingResource::TextureView(shv),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 4,
-                            resource: wgpu::BindingResource::Sampler(shs),
-                        },
-                    ],
-                })
-            })
-            .clone();
-
-        (bg, bind_group_id)
-    }
+    /// See [`SystemTextures`] for the full list of data-semantic fallback
+    /// textures and the screen bind-group layout / samplers.
+    pub system_textures: SystemTextures,
 }
 
 impl ResourceManager {
@@ -409,40 +277,6 @@ impl ResourceManager {
             }
         };
 
-        // Shadow dummy: 1×1 Depth32Float D2Array (no-shadow fallback for Group 3)
-        let dummy_shadow_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Dummy Shadow D2Array"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Depth32Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        });
-        let dummy_shadow_view =
-            Tracked::new(dummy_shadow_tex.create_view(&wgpu::TextureViewDescriptor {
-                dimension: Some(wgpu::TextureViewDimension::D2Array),
-                ..Default::default()
-            }));
-
-        let shadow_compare_sampler =
-            Tracked::new(device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("Shadow Comparison Sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Nearest,
-                compare: Some(wgpu::CompareFunction::LessEqual),
-                ..Default::default()
-            }));
-
         let mipmap_generator = MipmapGenerator::new(&device);
         let model_allocator = ModelBufferAllocator::new();
 
@@ -452,106 +286,7 @@ impl ResourceManager {
         // Force initial allocation of the model buffer so that it has a stable GPU handle and ID from the start.
         model_allocator.flush_to_buffer(&device, &queue, &mut gpu_buffers, &mut buffer_index, 0);
 
-        // ── Screen BindGroup (Group 3) static resources ────────────────
-        let screen_bind_group_layout = Tracked::new(device.create_bind_group_layout(
-            &wgpu::BindGroupLayoutDescriptor {
-                label: Some("Screen/Transient Layout (Group 3)"),
-                entries: &[
-                    // Binding 0: Transmission texture
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 0,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // Binding 1: Screen sampler (filtering)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 1,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
-                        count: None,
-                    },
-                    // Binding 2: SSAO texture
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 2,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
-                            view_dimension: wgpu::TextureViewDimension::D2,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // Binding 3: Shadow map (Depth 2D-array, RDG transient)
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 3,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Texture {
-                            sample_type: wgpu::TextureSampleType::Depth,
-                            view_dimension: wgpu::TextureViewDimension::D2Array,
-                            multisampled: false,
-                        },
-                        count: None,
-                    },
-                    // Binding 4: Shadow comparison sampler
-                    wgpu::BindGroupLayoutEntry {
-                        binding: 4,
-                        visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
-                        count: None,
-                    },
-                ],
-            },
-        ));
-
-        let screen_sampler = Tracked::new(device.create_sampler(&wgpu::SamplerDescriptor {
-            label: Some("Screen Linear Sampler"),
-            address_mode_u: wgpu::AddressMode::ClampToEdge,
-            address_mode_v: wgpu::AddressMode::ClampToEdge,
-            mag_filter: wgpu::FilterMode::Linear,
-            min_filter: wgpu::FilterMode::Linear,
-            ..Default::default()
-        }));
-
-        // SSAO dummy: 1×1 white R8Unorm texture (AO = 1.0 = fully lit)
-        let ssao_dummy_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("SSAO White Dummy"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::R8Unorm,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
-            view_formats: &[],
-        });
-        let ssao_dummy_view =
-            Tracked::new(ssao_dummy_tex.create_view(&wgpu::TextureViewDescriptor::default()));
-
-        // Transmission dummy: 1×1 HDR placeholder (black)
-        let dummy_tx_tex = device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("Transmission Dummy Texture"),
-            size: wgpu::Extent3d {
-                width: 1,
-                height: 1,
-                depth_or_array_layers: 1,
-            },
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: wgpu::TextureFormat::Rgba16Float,
-            usage: wgpu::TextureUsages::TEXTURE_BINDING,
-            view_formats: &[],
-        });
-        let dummy_transmission_view =
-            Tracked::new(dummy_tx_tex.create_view(&wgpu::TextureViewDescriptor::default()));
+        let system_textures = SystemTextures::new(&device, &queue);
 
         let sampler_registry = SamplerRegistry::new(&device, anisotropy_clamp);
 
@@ -583,12 +318,7 @@ impl ResourceManager {
             pending_ibl_source: None,
             internal_resources: FxHashMap::default(),
             internal_name_lookup: FxHashMap::default(),
-            screen_bind_group_layout,
-            screen_sampler,
-            ssao_dummy_view,
-            dummy_transmission_view,
-            dummy_shadow_view,
-            shadow_compare_sampler,
+            system_textures,
         }
     }
 

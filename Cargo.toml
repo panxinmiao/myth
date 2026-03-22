@@ -229,3 +229,6 @@ http = ["myth_assets/http"]
 
 [lints]
 workspace = true
+
+[patch."https://github.com/panxinmiao/gltf.git"]
+gltf = { path = "../gltf" }

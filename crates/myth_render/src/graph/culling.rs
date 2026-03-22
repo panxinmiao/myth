@@ -288,7 +288,7 @@ fn prepare_main_camera_commands(
                         gpu_world.layout_id,
                         gpu_material.layout_id,
                         object_bind_group.layout_id,
-                        resource_manager.screen_bind_group_layout.id(),
+                        resource_manager.system_textures.screen_layout.id(),
                     ],
                     topology: geometry.topology,
                     cull_mode: match material.side() {
@@ -323,7 +323,7 @@ fn prepare_main_camera_commands(
                     gpu_material,
                     object_bind_group,
                     gpu_world,
-                    &resource_manager.screen_bind_group_layout,
+                    &resource_manager.system_textures.screen_layout,
                 );
 
                 pipeline_cache.insert_pipeline_fast(fast_key, id);

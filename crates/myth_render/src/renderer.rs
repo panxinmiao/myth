@@ -206,16 +206,6 @@ impl Renderer {
             debug_view_pass: DebugViewFeature::new(),
         });
 
-        // Propagate screen bind group info to features that need it.
-        if let Some(ref mut state) = self.context {
-            let screen_info = crate::core::gpu::ScreenBindGroupInfo::from_resource_manager(
-                &state.resource_manager,
-            );
-            state.opaque_pass.set_screen_info(screen_info.clone());
-            state.transparent_pass.set_screen_info(screen_info.clone());
-            state.simple_forward_pass.set_screen_info(screen_info);
-        }
-
         log::info!("Renderer Initialized");
         Ok(())
     }

@@ -2,7 +2,7 @@ use crate::core::ResourceManager;
 use crate::core::WgpuContext;
 use crate::core::binding::{BindGroupKey, GlobalBindGroupCache};
 use crate::core::gpu::MipmapGenerator;
-use crate::core::gpu::{SamplerRegistry, ScreenBindGroupInfo, Tracked};
+use crate::core::gpu::{SamplerRegistry, SystemTextures, Tracked};
 use crate::graph::frame::{BakedRenderLists, RenderLists};
 use crate::graph::{ExtractedScene, RenderState};
 use crate::pipeline::{PipelineCache, ShaderManager};
@@ -70,6 +70,8 @@ pub struct PrepareContext<'a> {
     pub sampler_registry: &'a SamplerRegistry,
     /// Mutable cache for transient bind groups with TTL eviction.
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
+    /// System fallback textures and Group 3 bind-group infrastructure.
+    pub system_textures: &'a SystemTextures,
 }
 
 pub struct ViewResolver<'a> {
@@ -180,24 +182,24 @@ impl ViewResolver<'_> {
 pub fn build_screen_bind_group<'a>(
     cache: &mut GlobalBindGroupCache,
     device: &wgpu::Device,
-    screen_info: &ScreenBindGroupInfo,
+    sys: &SystemTextures,
     transmission_view: &Tracked<wgpu::TextureView>,
     ssao_view: &Tracked<wgpu::TextureView>,
     shadow_view: &Tracked<wgpu::TextureView>,
 ) -> &'a wgpu::BindGroup {
-    let key = BindGroupKey::new(screen_info.layout.id())
+    let key = BindGroupKey::new(sys.screen_layout.id())
         .with_resource(transmission_view.id())
-        .with_resource(screen_info.sampler.id())
+        .with_resource(sys.screen_sampler.id())
         .with_resource(ssao_view.id())
         .with_resource(shadow_view.id())
-        .with_resource(screen_info.shadow_compare_sampler.id());
+        .with_resource(sys.shadow_compare_sampler.id());
 
-    let layout = &*screen_info.layout;
-    let sampler = &*screen_info.sampler;
+    let layout = &*sys.screen_layout;
+    let sampler = &*sys.screen_sampler;
     let tv = &**transmission_view;
     let sv = &**ssao_view;
     let shv = &**shadow_view;
-    let shs = &*screen_info.shadow_compare_sampler;
+    let shs = &*sys.shadow_compare_sampler;
 
     cache.get_or_create_bg(key, || {
         device.create_bind_group(&wgpu::BindGroupDescriptor {

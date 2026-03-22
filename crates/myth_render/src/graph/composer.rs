@@ -675,6 +675,7 @@ impl<'a> FrameComposer<'a> {
             queue: &self.ctx.wgpu_ctx.queue,
             sampler_registry: &self.ctx.resource_manager.sampler_registry,
             global_bind_group_cache: self.ctx.global_bind_group_cache,
+            system_textures: &self.ctx.resource_manager.system_textures,
         };
 
         for &pass_idx in &graph.storage.execution_queue {

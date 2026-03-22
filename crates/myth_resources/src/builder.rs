@@ -14,6 +14,7 @@ use crate::buffer::BufferRef;
 use crate::buffer::{CpuBuffer, GpuData};
 use crate::texture::TextureSource;
 use crate::uniforms::WgslStruct;
+use std::fmt::Write;
 use wgpu::ShaderStages;
 
 type WgslStructGenerator = fn(&str) -> String;
@@ -51,7 +52,7 @@ pub enum BindingDesc {
         sample_type: wgpu::TextureSampleType,
         view_dimension: wgpu::TextureViewDimension,
         /// Sampler binding type for the auto-paired sampler entry.
-        sampler_type: wgpu::SamplerBindingType,
+        sampler_binding_type: wgpu::SamplerBindingType,
     },
 }
 
@@ -178,7 +179,7 @@ impl<'a> ResourceBuilder<'a> {
         view_dimension: wgpu::TextureViewDimension,
         visibility: ShaderStages,
     ) {
-        let sampler_type = if matches!(sample_type, wgpu::TextureSampleType::Depth) {
+        let sampler_binding_type = if matches!(sample_type, wgpu::TextureSampleType::Depth) {
             wgpu::SamplerBindingType::Comparison
         } else {
             wgpu::SamplerBindingType::Filtering
@@ -191,7 +192,7 @@ impl<'a> ResourceBuilder<'a> {
             desc: BindingDesc::Texture {
                 sample_type,
                 view_dimension,
-                sampler_type,
+                sampler_binding_type,
             },
         });
     }
@@ -271,7 +272,7 @@ impl<'a> ResourceBuilder<'a> {
                 BindingDesc::Texture {
                     sample_type,
                     view_dimension,
-                    sampler_type,
+                    sampler_binding_type,
                 } => {
                     entries.push(wgpu::BindGroupLayoutEntry {
                         binding: idx,
@@ -287,7 +288,7 @@ impl<'a> ResourceBuilder<'a> {
                     entries.push(wgpu::BindGroupLayoutEntry {
                         binding: idx,
                         visibility: b.visibility,
-                        ty: wgpu::BindingType::Sampler(*sampler_type),
+                        ty: wgpu::BindingType::Sampler(*sampler_binding_type),
                         count: None,
                     });
                     idx += 1;
@@ -315,8 +316,7 @@ impl<'a> ResourceBuilder<'a> {
                 let sn = match generator {
                     WgslStructName::Generator(g) => {
                         let auto = format!("Struct_{name}");
-                        struct_defs.push_str(&g(&auto));
-                        struct_defs.push('\n');
+                        writeln!(struct_defs, "{}", g(&auto)).unwrap();
                         auto
                     }
                     WgslStructName::Name(n) => n.clone(),
@@ -328,30 +328,29 @@ impl<'a> ResourceBuilder<'a> {
 
             match &b.desc {
                 BindingDesc::Buffer { ty, .. } => {
-                    let decl = match ty {
+                    match ty {
                         wgpu::BufferBindingType::Uniform => {
-                            format!(
+                            writeln!(
+                                bindings_code,
                                 "@group({group_index}) @binding({idx}) var<uniform> u_{name}: {};",
-                                struct_type_name.expect("buffer binding needs a struct name")
-                            )
+                                struct_type_name.as_deref().expect("buffer binding needs a struct name")
+                            ).unwrap();
                         }
                         wgpu::BufferBindingType::Storage { read_only } => {
                             let access = if *read_only { "read" } else { "read_write" };
-                            let stn =
-                                struct_type_name.expect("storage binding needs a struct name");
-                            format!(
+                            let stn = struct_type_name.as_deref().expect("storage binding needs a struct name");
+                            writeln!(
+                                bindings_code,
                                 "@group({group_index}) @binding({idx}) var<storage, {access}> st_{name}: array<{stn}>;"
-                            )
+                            ).unwrap();
                         }
-                    };
-                    bindings_code.push_str(&decl);
-                    bindings_code.push('\n');
+                    }
                     idx += 1;
                 }
                 BindingDesc::Texture {
                     sample_type,
                     view_dimension,
-                    sampler_type,
+                    sampler_binding_type,
                 } => {
                     // Texture declaration
                     let type_str = match (view_dimension, sample_type) {
@@ -371,19 +370,15 @@ impl<'a> ResourceBuilder<'a> {
                         ) => "texture_2d_array<f32>",
                         _ => "texture_2d<f32>",
                     };
-                    bindings_code.push_str(&format!(
-                        "@group({group_index}) @binding({idx}) var t_{name}: {type_str};\n"
-                    ));
+                    writeln!(bindings_code, "@group({group_index}) @binding({idx}) var t_{name}: {type_str};").unwrap();
                     idx += 1;
 
                     // Sampler declaration (auto-paired)
-                    let sampler_type_str = match sampler_type {
+                    let sampler_type_str = match sampler_binding_type {
                         wgpu::SamplerBindingType::Comparison => "sampler_comparison",
                         _ => "sampler",
                     };
-                    bindings_code.push_str(&format!(
-                        "@group({group_index}) @binding({idx}) var s_{name}: {sampler_type_str};\n"
-                    ));
+                    writeln!(bindings_code, "@group({group_index}) @binding({idx}) var s_{name}: {sampler_type_str};").unwrap();
                     idx += 1;
                 }
             }

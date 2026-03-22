@@ -364,7 +364,7 @@ impl ResourceManager {
             view_id: gpu_image_id,
             cpu_image_id,
             sampler_id,
-            texture_version: image_version as u64,
+            texture_version: u64::from(image_version),
         };
         self.texture_bindings.insert(handle, binding);
     }

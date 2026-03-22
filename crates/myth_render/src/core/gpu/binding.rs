@@ -361,7 +361,9 @@ impl ResourceManager {
                     } else if let BindingDesc::Texture { view_dimension, .. } = &b.desc {
                         match view_dimension {
                             wgpu::TextureViewDimension::D2 => &self.dummy_image.default_view,
-                            wgpu::TextureViewDimension::D2Array => &*self.dummy_shadow_view,
+                            wgpu::TextureViewDimension::D2Array => {
+                                &*self.system_textures.depth_d2array
+                            }
                             wgpu::TextureViewDimension::Cube => &self.dummy_env_image.default_view,
                             _ => &self.dummy_image.default_view,
                         }
@@ -418,11 +420,11 @@ impl ResourceManager {
 
         // Fallback: comparison sampler for depth textures, default otherwise
         if let BindingDesc::Texture {
-            sampler_type: wgpu::SamplerBindingType::Comparison,
+            sampler_binding_type: wgpu::SamplerBindingType::Comparison,
             ..
         } = desc
         {
-            &*self.shadow_compare_sampler
+            &*self.system_textures.shadow_compare_sampler
         } else {
             self.sampler_registry.default_sampler().1
         }

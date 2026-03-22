@@ -92,7 +92,7 @@ impl Image {
         let mut data = Vec::with_capacity((width * height * 4) as usize);
         for y in 0..height {
             for x in 0..width {
-                let is_white = ((x / cell_size) + (y / cell_size)) % 2 == 0;
+                let is_white = ((x / cell_size) + (y / cell_size)).is_multiple_of(2);
                 let c = if is_white { 255u8 } else { 80u8 };
                 data.extend_from_slice(&[c, c, c, 255]);
             }

@@ -203,6 +203,7 @@ impl Texture {
     }
 
     /// Returns the name as a string slice, if present.
+    #[must_use]
     pub fn name(&self) -> Option<&str> {
         self.name.as_deref()
     }

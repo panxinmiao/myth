@@ -759,7 +759,7 @@ impl IblComputeFeature {
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::Sampler(
-                            &ctx.resource_manager.sampler_registry.default_sampler().1,
+                            ctx.resource_manager.sampler_registry.default_sampler().1,
                         ),
                     },
                     wgpu::BindGroupEntry {
