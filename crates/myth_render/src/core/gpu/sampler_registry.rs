@@ -96,6 +96,29 @@ impl SamplerRegistry {
         )
     }
 
+    /// Read-only index lookup for the fast path.
+    ///
+    /// Returns the cached sampler index if this descriptor has already been
+    /// registered, without mutating state or creating a new sampler.
+    #[must_use]
+    #[inline]
+    pub fn lookup_index(&self, key: &TextureSampler) -> Option<usize> {
+        let mut actual_key = *key;
+        actual_key.anisotropy_clamp = Some(match key.anisotropy_clamp {
+            Some(v) => v,
+            None => {
+                if key.min_filter == wgpu::FilterMode::Linear
+                    && key.mipmap_filter == wgpu::MipmapFilterMode::Linear
+                {
+                    self.global_anisotropy
+                } else {
+                    1
+                }
+            }
+        });
+        self.lookup.get(&actual_key).copied()
+    }
+
     // This method is the only way to create new samplers, ensuring all samplers are tracked and deduplicated.
     pub fn get_custom(
         &mut self,

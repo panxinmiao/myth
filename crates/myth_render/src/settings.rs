@@ -221,7 +221,7 @@ impl Default for RendererSettings {
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             depth_format: wgpu::TextureFormat::Depth32Float,
-            anisotropy_clamp: 16,
+            anisotropy_clamp: 1,
         }
     }
 }

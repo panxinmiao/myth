@@ -259,35 +259,39 @@ impl ResourceManager {
             return;
         };
 
-        // Look up Image from storage (with version)
-        let Some((image_arc, image_version)) = assets.images.get_entry(texture_asset.image) else {
+        let image_handle = texture_asset.image;
+
+        // ── Fast path: skip if nothing changed (no RwLock / Arc / hash) ──
+        if let Some(binding) = self.texture_bindings.get(handle)
+            && let Some(gpu_img) = self.gpu_images.get_mut(image_handle)
+        {
+            // Lightweight version check — single RwLock read, no Arc::clone
+            if let Some(img_ver) = assets.images.get_version(image_handle) {
+                let version_match = (binding.texture_version as u32) >= img_ver;
+                let image_match =
+                    binding.image_handle == image_handle && binding.view_id == gpu_img.id;
+                let sampler_match = self
+                    .sampler_registry
+                    .lookup_index(&texture_asset.sampler)
+                    .is_some_and(|idx| idx == binding.sampler_id);
+
+                if version_match && image_match && sampler_match {
+                    gpu_img.last_used_frame = self.frame_index;
+                    return;
+                }
+            }
+        }
+
+        // ── Slow path: something changed, do the full update ──
+        let Some((image_arc, image_version)) = assets.images.get_entry(image_handle) else {
             log::warn!(
                 "Image asset not found for handle: {:?}",
-                texture_asset.image
+                image_handle
             );
             return;
         };
 
         let sampler_id = self.get_or_create_sampler(texture_asset.sampler);
-
-        let image_handle = texture_asset.image;
-
-        // Fast path: skip if nothing changed
-        if let Some(binding) = self.texture_bindings.get(handle)
-            && let Some(gpu_img) = self.gpu_images.get(image_handle)
-        {
-            let version_match = (binding.texture_version as u32) >= image_version;
-            let image_match = binding.image_handle == image_handle && binding.view_id == gpu_img.id;
-
-            let sampler_match = binding.sampler_id == sampler_id;
-
-            if version_match && image_match && sampler_match {
-                if let Some(gpu_img) = self.gpu_images.get_mut(image_handle) {
-                    gpu_img.last_used_frame = self.frame_index;
-                }
-                return;
-            }
-        }
 
         let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
         let generated_mips = if texture_asset.generate_mipmaps {
@@ -315,7 +319,6 @@ impl ResourceManager {
             && let Some(gpu_img) = self.gpu_images.get_mut(image_handle)
             && !gpu_img.mipmaps_generated
         {
-            // let gpu_img_mut = self.gpu_images.get_mut(image_handle).unwrap();
             let mut encoder = self
                 .device
                 .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -335,57 +338,6 @@ impl ResourceManager {
         };
         self.texture_bindings.insert(handle, binding);
     }
-
-    // /// Get a `TextureView` with the specified configuration
-    // ///
-    // /// Fast path: if desc is None, return the default view directly
-    // /// Cache path: look up/create view based on `TextureViewKey`
-    // #[inline]
-    // pub fn get_texture_view_desc(
-    //     &mut self,
-    //     cpu_image_id: u64,
-    //     desc: Option<&wgpu::TextureViewDescriptor>,
-    // ) -> Option<(&wgpu::TextureView, u64)> {
-    //     let gpu_image = self.gpu_images.get(&cpu_image_id)?;
-    //     let image_id = gpu_image.id;
-
-    //     if desc.is_none() {
-    //         return Some((&gpu_image.default_view, image_id));
-    //     }
-
-    //     let desc = desc.unwrap();
-    //     let key = TextureViewKey::new(image_id, desc);
-
-    //     if !self.view_cache.contains_key(&key) {
-    //         let gpu_image = self.gpu_images.get(&cpu_image_id)?;
-    //         let view = gpu_image.texture.create_view(desc);
-    //         let view_id = generate_gpu_resource_id();
-    //         self.view_cache.insert(key, (view, view_id));
-    //     }
-
-    //     let (view, id) = self.view_cache.get(&key)?;
-    //     Some((view, *id))
-    // }
-
-    // /// Get a `TextureView` with the specified configuration (immutable version, cache-only lookup)
-    // #[inline]
-    // pub fn get_texture_view_cached(
-    //     &self,
-    //     cpu_image_id: u64,
-    //     desc: Option<&wgpu::TextureViewDescriptor>,
-    // ) -> Option<(&wgpu::TextureView, u64)> {
-    //     let gpu_image = self.gpu_images.get(&cpu_image_id)?;
-    //     let image_id = gpu_image.id;
-
-    //     if desc.is_none() {
-    //         return Some((&gpu_image.default_view, image_id));
-    //     }
-
-    //     let desc = desc.unwrap();
-    //     let key = TextureViewKey::new(image_id, desc);
-    //     let (view, id) = self.view_cache.get(&key)?;
-    //     Some((view, *id))
-    // }
 
     pub(crate) fn get_or_create_sampler(&mut self, descriptor: TextureSampler) -> usize {
         self.sampler_registry

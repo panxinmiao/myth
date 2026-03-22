@@ -248,7 +248,16 @@ impl<'a> ResourceBuilder<'a> {
     /// produces two entries (texture view + auto-paired sampler).
     #[must_use]
     pub fn generate_layout_entries(&self) -> Vec<wgpu::BindGroupLayoutEntry> {
-        let mut entries = Vec::new();
+        // Pre-allocate: buffers produce 1 entry, textures produce 2 entries
+        let capacity = self
+            .bindings
+            .iter()
+            .map(|b| match &b.desc {
+                BindingDesc::Buffer { .. } => 1,
+                BindingDesc::Texture { .. } => 2,
+            })
+            .sum();
+        let mut entries = Vec::with_capacity(capacity);
         let mut idx = 0u32;
         for b in &self.bindings {
             match &b.desc {

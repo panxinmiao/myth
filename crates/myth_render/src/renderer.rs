@@ -326,7 +326,6 @@ impl Renderer {
                 queue: &state.wgpu_ctx.queue,
                 pipeline_cache: &mut state.pipeline_cache,
                 shader_manager: &mut state.shader_manager,
-                // sampler_registry: &mut state.sampler_registry,
                 global_bind_group_cache: &mut state.global_bind_group_cache,
                 resource_manager: &mut state.resource_manager,
                 wgpu_ctx: &state.wgpu_ctx,
@@ -533,6 +532,16 @@ impl Renderer {
     #[inline]
     pub fn settings(&self) -> &RendererSettings {
         &self.settings
+    }
+
+    
+    pub fn set_global_anisotropy(&mut self, anisotropy: u16) {
+        if self.settings.anisotropy_clamp != anisotropy {
+            self.settings.anisotropy_clamp = anisotropy;
+            if let Some(state) = &mut self.context {
+                state.resource_manager.sampler_registry.set_global_anisotropy(anisotropy);
+            }
+        }
     }
 
     /// Sets the active debug view target.
