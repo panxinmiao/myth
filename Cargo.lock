@@ -1286,6 +1286,7 @@ dependencies = [
 [[package]]
 name = "gltf"
 version = "1.4.1"
+source = "git+https://github.com/panxinmiao/gltf.git#07014ad354677e7f3b0851e347f638693fb2cf90"
 dependencies = [
  "base64 0.13.1",
  "byteorder",
@@ -1298,6 +1299,7 @@ dependencies = [
 [[package]]
 name = "gltf-derive"
 version = "1.4.1"
+source = "git+https://github.com/panxinmiao/gltf.git#07014ad354677e7f3b0851e347f638693fb2cf90"
 dependencies = [
  "inflections",
  "proc-macro2",
@@ -1308,6 +1310,7 @@ dependencies = [
 [[package]]
 name = "gltf-json"
 version = "1.4.1"
+source = "git+https://github.com/panxinmiao/gltf.git#07014ad354677e7f3b0851e347f638693fb2cf90"
 dependencies = [
  "gltf-derive",
  "serde",
