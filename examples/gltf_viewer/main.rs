@@ -2783,9 +2783,9 @@ impl GltfViewer {
                     ui.end_row();
                     let builder = &mut ResourceBuilder::new();
                     m.define_bindings(builder);
-                    for (binding, name) in builder.resources.iter().zip(builder.names.iter()) {
-                        if let BindingResource::Texture(source) = binding {
-                            // ui.horizontal(|ui| {
+                    for b in builder.bindings.iter() {
+                        if let BindingResource::Texture(source) = &b.resource {
+                            let name = b.name;
                             ui.label(format!("{}:", name));
 
                             if let Some(s) = source {

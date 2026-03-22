@@ -25,7 +25,10 @@ impl AppHandler for HelloTriangle {
         );
 
         // 2. Create unlit material with a solid color texture
-        let image_handle = engine.assets.images.add(Image::solid_color([255, 0, 0, 255]));
+        let image_handle = engine
+            .assets
+            .images
+            .add(Image::solid_color([255, 0, 0, 255]));
         let texture = Texture::new_2d(Some("red_tex"), image_handle);
         let mut unlit_mat = Material::new_unlit(Vec4::new(1.0, 1.0, 1.0, 1.0));
 

@@ -497,8 +497,8 @@ impl<'a> PassNode<'a> for TaaPassNode<'a> {
             .with_resource(velocity_view.id())
             .with_resource(depth_view.id())
             .with_resource(self.history_depth_view.id())
-            .with_resource(linear_sampler.id())
-            .with_resource(nearest_sampler.id())
+            // .with_resource(CommonSampler::LinearClamp as u64)
+            // .with_resource(CommonSampler::NearestClamp as u64)
             .with_resource(self.params_buffer.id());
 
         let layout = self.layout;

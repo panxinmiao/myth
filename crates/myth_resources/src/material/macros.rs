@@ -354,18 +354,6 @@ macro_rules! impl_material_trait {
                             wgpu::TextureViewDimension::D2,
                             wgpu::ShaderStages::FRAGMENT
                         );
-
-                        paste::paste! {
-                            let sampler_source = tex_data.[<$field _sampler>]
-                                .or_else(|| Some($crate::texture::SamplerSource::FromTexture(*handle)));
-
-                            builder.add_sampler(
-                                binding_name,
-                                sampler_source,
-                                wgpu::SamplerBindingType::Filtering,
-                                wgpu::ShaderStages::FRAGMENT
-                            );
-                        }
                     }
                 )*
             }

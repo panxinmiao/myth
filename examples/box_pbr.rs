@@ -13,11 +13,10 @@ impl AppHandler for PbrBox {
         let scene = engine.scene_manager.create_active();
 
         let image_handle = engine.assets.images.add(Image::checkerboard(512, 512, 64));
-        let tex_handle =
-            engine
-                .assets
-                .textures
-                .add(Texture::new_2d(Some("checker"), image_handle));
+        let tex_handle = engine
+            .assets
+            .textures
+            .add(Texture::new_2d(Some("checker"), image_handle));
 
         // spawn with builder-style PBR material
         let cube_node_id = scene.spawn_box(

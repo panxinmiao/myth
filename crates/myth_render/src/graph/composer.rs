@@ -48,7 +48,7 @@
 //! ```
 
 use crate::core::binding::GlobalBindGroupCache;
-use crate::core::gpu::{SamplerRegistry, Tracked};
+use crate::core::gpu::Tracked;
 use crate::core::{ResourceManager, WgpuContext};
 use crate::graph::ExtractedScene;
 use crate::graph::RenderState;
@@ -94,7 +94,7 @@ pub struct ComposerContext<'a> {
 
     pub graph_storage: &'a mut GraphStorage,
     pub transient_pool: &'a mut TransientPool,
-    pub sampler_registry: &'a mut SamplerRegistry,
+    // pub sampler_registry: &'a mut SamplerRegistry,
     pub frame_arena: &'a FrameArena,
 
     // ─── RDG Features ────────────────────────────────────────────────────
@@ -673,7 +673,7 @@ impl<'a> FrameComposer<'a> {
             },
             device: &self.ctx.wgpu_ctx.device,
             queue: &self.ctx.wgpu_ctx.queue,
-            sampler_registry: self.ctx.sampler_registry,
+            sampler_registry: &self.ctx.resource_manager.sampler_registry,
             global_bind_group_cache: self.ctx.global_bind_group_cache,
         };
 

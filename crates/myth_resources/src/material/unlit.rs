@@ -6,15 +6,12 @@ use parking_lot::RwLock;
 use crate::TextureHandle;
 use crate::buffer::CpuBuffer;
 use crate::material::{AlphaMode, MaterialSettings, Side, TextureSlot};
-use crate::texture::SamplerSource;
 use crate::uniforms::UnlitUniforms;
 use crate::{impl_material_api, impl_material_trait};
 
 #[derive(Clone, Default, Debug)]
 pub struct UnlitTextureSet {
     pub map: TextureSlot,
-
-    pub map_sampler: Option<SamplerSource>,
 }
 
 #[derive(Debug)]

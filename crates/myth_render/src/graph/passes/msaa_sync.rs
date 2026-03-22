@@ -217,9 +217,8 @@ impl<'a> PassNode<'a> for MsaaSyncPassNode<'a> {
         let src_view = views.get_texture_view(self.src_hdr);
         let sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
 
-        let key = BindGroupKey::new(self.layout.id())
-            .with_resource(src_view.id())
-            .with_resource(sampler.id());
+        let key = BindGroupKey::new(self.layout.id()).with_resource(src_view.id());
+        // .with_resource(CommonSampler::LinearClamp as u64);
 
         let layout = &**self.layout;
         let bg = cache.get_or_create_bg(key, || {

@@ -34,6 +34,8 @@ pub struct WgpuContext {
 
     pub msaa_samples: u32,
 
+    pub anisotropy_clamp: u16,
+
     /// The active render path. Stored for runtime branching in the frame graph.
     pub render_path: RenderPath,
 
@@ -138,6 +140,7 @@ impl WgpuContext {
             depth_format: settings.depth_format,
             surface_view_format: view_format,
             msaa_samples: 1,
+            anisotropy_clamp: settings.anisotropy_clamp,
             render_path: settings.path,
             pipeline_settings_version: 0,
         })

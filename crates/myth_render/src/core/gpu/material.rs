@@ -129,15 +129,15 @@ impl ResourceManager {
                     self.prepare_texture(assets, *tex_handle);
                     if let Some(binding) = self.texture_bindings.get(*tex_handle) {
                         resource_ids.push(binding.view_id);
-                        resource_ids.push(binding.sampler_id);
+                        resource_ids.push(binding.sampler_id as u64);
                     } else {
                         resource_ids.push(self.dummy_image.id);
-                        resource_ids.push(self.dummy_sampler.id);
+                        resource_ids.push(self.sampler_registry.default_sampler().0 as u64);
                     }
                 }
                 TextureSource::Attachment(id, _) => {
                     resource_ids.push(*id);
-                    resource_ids.push(self.dummy_sampler.id);
+                    resource_ids.push(self.sampler_registry.default_sampler().0 as u64);
                 }
             });
 
@@ -155,10 +155,11 @@ impl ResourceManager {
         let mut builder = ResourceBuilder::new();
         material.define_bindings(&mut builder);
 
-        self.prepare_binding_resources(assets, &builder.resources);
+        self.prepare_binding_resources(assets, &builder.bindings);
 
         // Compute hash of layout entries
-        let layout_hash = hash_layout_entries(&builder.layout_entries);
+        let layout_entries = builder.generate_layout_entries();
+        let layout_hash = hash_layout_entries(&layout_entries);
 
         // Check if a new Layout is needed
         let (layout, layout_id) = if let Some(gpu_mat) = self.gpu_materials.get(handle) {
@@ -167,10 +168,10 @@ impl ResourceManager {
                 (gpu_mat.layout.clone(), gpu_mat.layout_id)
             } else {
                 // Layout changed, rebuild
-                self.get_or_create_layout(&builder.layout_entries)
+                self.get_or_create_layout(&layout_entries)
             }
         } else {
-            self.get_or_create_layout(&builder.layout_entries)
+            self.get_or_create_layout(&layout_entries)
         };
 
         let (bind_group, bg_id) = self.create_bind_group(&layout, &builder);

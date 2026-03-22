@@ -9,7 +9,7 @@
 use crate::core::gpu::generate_gpu_resource_id;
 use myth_assets::{AssetServer, TextureHandle};
 use myth_resources::image::Image;
-use myth_resources::texture::{SamplerSource, TextureSampler};
+use myth_resources::texture::TextureSampler;
 
 use super::ResourceManager;
 
@@ -22,7 +22,7 @@ pub struct TextureBinding {
     pub view_id: u64,
     /// CPU-side image ID
     pub cpu_image_id: u64,
-    pub sampler_id: u64,
+    pub sampler_id: usize,
     /// CPU-side Texture version (used to detect sampler parameter changes)
     pub texture_version: u64,
 }
@@ -76,14 +76,6 @@ pub struct GpuImage {
     pub generation_id: u64,
     pub mipmaps_generated: bool,
     pub last_used_frame: u64,
-}
-
-/// GPU-side sampler resource
-///
-/// Separated from `GpuImage` to enable global caching and reuse
-pub struct GpuSampler {
-    pub id: u64,
-    pub sampler: wgpu::Sampler,
 }
 
 impl GpuImage {
@@ -317,8 +309,8 @@ impl ResourceManager {
         if let Some(binding) = self.texture_bindings.get(handle) {
             if let Some(gpu_img) = self.gpu_images.get(&cpu_image_id) {
                 let version_match = (binding.texture_version as u32) >= image_version;
-                let image_match = binding.cpu_image_id == cpu_image_id
-                    && binding.view_id == gpu_img.id;
+                let image_match =
+                    binding.cpu_image_id == cpu_image_id && binding.view_id == gpu_img.id;
 
                 if version_match && image_match {
                     if let Some(gpu_img) = self.gpu_images.get_mut(&cpu_image_id) {
@@ -331,7 +323,8 @@ impl ResourceManager {
 
         let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
         let generated_mips = if texture_asset.generate_mipmaps {
-            image_arc.mip_level_count
+            let max_dim = std::cmp::max(image_arc.width, image_arc.height);
+            max_dim.ilog2() + 1
         } else {
             1
         };
@@ -365,7 +358,7 @@ impl ResourceManager {
             gpu_img_mut.mipmaps_generated = true;
         }
 
-        let sampler_id = self.get_or_create_sampler(texture_asset.sampler, texture_asset.name());
+        let sampler_id = self.get_or_create_sampler(texture_asset.sampler);
 
         let binding = TextureBinding {
             view_id: gpu_image_id,
@@ -374,24 +367,6 @@ impl ResourceManager {
             texture_version: image_version as u64,
         };
         self.texture_bindings.insert(handle, binding);
-    }
-
-    pub fn resolve_sampler_id(&mut self, assets: &AssetServer, source: SamplerSource) -> u64 {
-        match source {
-            SamplerSource::FromTexture(tex_handle) => {
-                if let Some(binding) = self.texture_bindings.get(tex_handle) {
-                    return binding.sampler_id;
-                }
-
-                if let Some(texture) = assets.textures.get(tex_handle) {
-                    self.get_or_create_sampler(texture.sampler, texture.name())
-                } else {
-                    self.dummy_sampler.id
-                }
-            }
-
-            SamplerSource::Default => self.dummy_sampler.id,
-        }
     }
 
     /// Get a `TextureView` with the specified configuration
@@ -445,46 +420,10 @@ impl ResourceManager {
         Some((view, *id))
     }
 
-    pub(crate) fn get_or_create_sampler(
-        &mut self,
-        descriptor: TextureSampler,
-        label: Option<&str>,
-    ) -> u64 {
-        // 1. Look up directly using descriptor
-        if let Some(gpu_sampler) = self.sampler_cache.get(&descriptor) {
-            return gpu_sampler.id;
-        }
-
-        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
-            label,
-            address_mode_u: descriptor.address_mode_u,
-            address_mode_v: descriptor.address_mode_v,
-            address_mode_w: descriptor.address_mode_w,
-            mag_filter: descriptor.mag_filter,
-            min_filter: descriptor.min_filter,
-            mipmap_filter: descriptor.mipmap_filter,
-            lod_min_clamp: descriptor.lod_min_clamp,
-            lod_max_clamp: descriptor.lod_max_clamp,
-            compare: descriptor.compare,
-            anisotropy_clamp: descriptor.anisotropy_clamp,
-            border_color: descriptor.border_color,
-        });
-
-        let id = generate_gpu_resource_id();
-        let gpu_sampler = GpuSampler {
-            id,
-            sampler: sampler.clone(),
-        };
-
-        self.sampler_cache.insert(descriptor, gpu_sampler);
-        self.sampler_id_lookup.insert(id, sampler);
-
-        id
-    }
-
-    #[inline]
-    pub fn get_sampler_by_id(&self, sampler_id: u64) -> Option<&wgpu::Sampler> {
-        self.sampler_id_lookup.get(&sampler_id)
+    pub(crate) fn get_or_create_sampler(&mut self, descriptor: TextureSampler) -> usize {
+        self.sampler_registry
+            .get_custom(&self.device, &descriptor)
+            .0
     }
 
     #[inline]

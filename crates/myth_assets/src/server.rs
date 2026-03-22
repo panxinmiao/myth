@@ -78,7 +78,8 @@ impl AssetServer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let (image, sampler_cfg, gen_mips) = crate::load_texture_from_file(source.uri().to_string(), color_space)?;
+            let (image, sampler_cfg, gen_mips) =
+                crate::load_texture_from_file(source.uri().to_string(), color_space)?;
             let image_handle = self.images.add(image);
             let mut texture = Texture::new_2d(None, image_handle);
             texture.sampler = sampler_cfg;
@@ -125,7 +126,8 @@ impl AssetServer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let (image, sampler_cfg, _) = crate::load_hdr_texture_from_file(source.uri().to_string())?;
+            let (image, sampler_cfg, _) =
+                crate::load_hdr_texture_from_file(source.uri().to_string())?;
             let image_handle = self.images.add(image);
             let mut texture = Texture::new_2d(None, image_handle);
             texture.sampler = sampler_cfg;
@@ -253,7 +255,11 @@ impl AssetServer {
         let image = Self::decode_hdr_async(bytes).await?;
         let image_handle = self.images.add(image);
 
-        let mut texture = Texture::new(Some(&filename), image_handle, wgpu::TextureViewDimension::D2);
+        let mut texture = Texture::new(
+            Some(&filename),
+            image_handle,
+            wgpu::TextureViewDimension::D2,
+        );
         texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
         texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
         texture.sampler.mag_filter = wgpu::FilterMode::Linear;
@@ -308,7 +314,8 @@ impl AssetServer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let (image, sampler_cfg, _) = crate::load_lut_texture_from_file(source.uri().to_string())?;
+            let (image, sampler_cfg, _) =
+                crate::load_lut_texture_from_file(source.uri().to_string())?;
             let image_handle = self.images.add(image);
             let mut texture = Texture::new_3d(None, image_handle);
             texture.sampler = sampler_cfg;
@@ -329,7 +336,11 @@ impl AssetServer {
         let image = Self::decode_cube_async(bytes).await?;
         let image_handle = self.images.add(image);
 
-        let mut texture = Texture::new(Some(&filename), image_handle, wgpu::TextureViewDimension::D3);
+        let mut texture = Texture::new(
+            Some(&filename),
+            image_handle,
+            wgpu::TextureViewDimension::D3,
+        );
         texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
         texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
         texture.sampler.address_mode_w = wgpu::AddressMode::ClampToEdge;

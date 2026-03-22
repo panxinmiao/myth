@@ -263,7 +263,10 @@ impl ToneMappingFeature {
             || (has_lut && lut_view_id != self.last_lut_view_id);
 
         if needs_rebuild {
-            let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
+            let sampler = ctx
+                .resource_manager
+                .sampler_registry
+                .get_common(CommonSampler::LinearClamp);
             let layout = self.current_static_layout(has_lut);
 
             let mut entries = vec![

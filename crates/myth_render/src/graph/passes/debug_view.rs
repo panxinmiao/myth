@@ -232,7 +232,10 @@ impl DebugViewFeature {
             && let Some(gpu_buf) = ctx.resource_manager.gpu_buffers.get(handle)
             && (self.static_bg.is_none() || self.last_uniforms_buffer_id != gpu_buf.id)
         {
-            let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
+            let sampler = ctx
+                .resource_manager
+                .sampler_registry
+                .get_common(CommonSampler::LinearClamp);
             let layout = self.static_layout.as_ref().unwrap();
 
             self.static_bg = Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {

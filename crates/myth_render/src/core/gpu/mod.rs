@@ -45,9 +45,8 @@ pub(crate) use crate::core::gpu::environment::GpuEnvironment;
 pub(crate) use crate::core::gpu::environment::{BRDF_LUT_SIZE, CubeSourceType};
 pub(crate) use crate::core::gpu::geometry::GpuGeometry;
 pub(crate) use crate::core::gpu::material::GpuMaterial;
-pub(crate) use crate::core::gpu::texture::{GpuImage, GpuSampler, TextureBinding, TextureViewKey};
+pub(crate) use crate::core::gpu::texture::{GpuImage, TextureBinding, TextureViewKey};
 use crate::pipeline::vertex::VertexLayoutSignature;
-pub(crate) use myth_resources::texture::TextureSampler;
 
 use myth_resources::buffer::{CpuBuffer, GpuData};
 use myth_resources::texture::TextureSource;
@@ -121,9 +120,8 @@ pub struct ResourceManager {
     pub(crate) buffer_index: FxHashMap<u64, GpuBufferHandle>,
     /// All GpuImages, keyed by CPU Image ID
     pub(crate) gpu_images: FxHashMap<u64, GpuImage>,
+    pub(crate) sampler_registry: SamplerRegistry,
 
-    pub(crate) sampler_cache: FxHashMap<TextureSampler, GpuSampler>,
-    pub(crate) sampler_id_lookup: FxHashMap<u64, wgpu::Sampler>,
     pub(crate) view_cache: FxHashMap<TextureViewKey, (wgpu::TextureView, u64)>,
     pub(crate) layout_cache:
         FxHashMap<Vec<wgpu::BindGroupLayoutEntry>, (wgpu::BindGroupLayout, u64)>,
@@ -133,7 +131,6 @@ pub struct ResourceManager {
 
     pub(crate) dummy_image: GpuImage,
     pub(crate) dummy_env_image: GpuImage,
-    pub(crate) dummy_sampler: GpuSampler,
     pub(crate) mipmap_generator: MipmapGenerator,
 
     // === Model Buffer Allocator ===
@@ -303,7 +300,7 @@ impl ScreenBindGroupInfo {
 impl ResourceManager {
     #[must_use]
     #[allow(clippy::too_many_lines)]
-    pub fn new(device: wgpu::Device, queue: wgpu::Queue) -> Self {
+    pub fn new(device: wgpu::Device, queue: wgpu::Queue, anisotropy_clamp: u16) -> Self {
         // Create dummy 2D image
         let dummy_image = {
             let size = wgpu::Extent3d {
@@ -412,20 +409,6 @@ impl ResourceManager {
             }
         };
 
-        let dummy_sampler = GpuSampler {
-            id: generate_gpu_resource_id(),
-            sampler: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("Dummy Sampler"),
-                address_mode_u: wgpu::AddressMode::ClampToEdge,
-                address_mode_v: wgpu::AddressMode::ClampToEdge,
-                address_mode_w: wgpu::AddressMode::ClampToEdge,
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                mipmap_filter: wgpu::MipmapFilterMode::Linear,
-                ..Default::default()
-            }),
-        };
-
         // Shadow dummy: 1×1 Depth32Float D2Array (no-shadow fallback for Group 3)
         let dummy_shadow_tex = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("Dummy Shadow D2Array"),
@@ -468,10 +451,6 @@ impl ResourceManager {
 
         // Force initial allocation of the model buffer so that it has a stable GPU handle and ID from the start.
         model_allocator.flush_to_buffer(&device, &queue, &mut gpu_buffers, &mut buffer_index, 0);
-
-        // Initialize sampler_id_lookup and add dummy_sampler
-        let mut sampler_id_lookup = FxHashMap::default();
-        sampler_id_lookup.insert(dummy_sampler.id, dummy_sampler.sampler.clone());
 
         // ── Screen BindGroup (Group 3) static resources ────────────────
         let screen_bind_group_layout = Tracked::new(device.create_bind_group_layout(
@@ -574,12 +553,15 @@ impl ResourceManager {
         let dummy_transmission_view =
             Tracked::new(dummy_tx_tex.create_view(&wgpu::TextureViewDescriptor::default()));
 
+        let sampler_registry = SamplerRegistry::new(&device, anisotropy_clamp);
+
         Self {
             device,
             queue,
             frame_index: 0,
             gpu_geometries: SecondaryMap::new(),
             gpu_materials: SecondaryMap::new(),
+            sampler_registry,
             texture_bindings: SecondaryMap::new(),
             global_states: FxHashMap::default(),
             gpu_buffers,
@@ -587,12 +569,9 @@ impl ResourceManager {
             gpu_images: FxHashMap::default(),
             layout_cache: FxHashMap::default(),
             vertex_layout_cache: FxHashMap::default(),
-            sampler_cache: FxHashMap::default(),
-            sampler_id_lookup,
             view_cache: FxHashMap::default(),
             dummy_image,
             dummy_env_image,
-            dummy_sampler,
             mipmap_generator,
             model_allocator,
             object_bind_group_cache: FxHashMap::default(),
@@ -680,68 +659,5 @@ impl ResourceManager {
         // texture_bindings are cleaned up following gpu_images
         self.texture_bindings
             .retain(|_, b| self.gpu_images.contains_key(&b.cpu_image_id));
-    }
-
-    // ─── Screen BindGroup (Group 3) Helpers ────────────────────────────
-
-    /// Build (or retrieve from cache) the screen bind group (group 3) for the
-    /// given transmission and SSAO texture views.
-    ///
-    /// Returns `(bind_group, bind_group_id)` suitable for `TrackedRenderPass`.
-    /// The `bind_group_id` is a composite of the resource IDs, ensuring that
-    /// `TrackedRenderPass` skips redundant `set_bind_group` calls when the
-    /// same views are reused across draw commands.
-    pub fn build_screen_bind_group(
-        &self,
-        cache: &mut crate::core::binding::GlobalBindGroupCache,
-        transmission_view: &Tracked<wgpu::TextureView>,
-        ssao_view: &Tracked<wgpu::TextureView>,
-    ) -> (wgpu::BindGroup, u64) {
-        use crate::core::binding::BindGroupKey;
-
-        let layout_id = self.screen_bind_group_layout.id();
-        let sampler_id = self.screen_sampler.id();
-
-        let key = BindGroupKey::new(layout_id)
-            .with_resource(transmission_view.id())
-            .with_resource(sampler_id)
-            .with_resource(ssao_view.id());
-
-        // Composite ID for TrackedRenderPass state tracking
-        let bind_group_id = transmission_view
-            .id()
-            .wrapping_mul(6_364_136_223_846_793_005)
-            ^ ssao_view.id().wrapping_mul(1_442_695_040_888_963_407)
-            ^ sampler_id;
-
-        let layout = &*self.screen_bind_group_layout;
-        let sampler = &*self.screen_sampler;
-        let tv = &**transmission_view;
-        let sv = &**ssao_view;
-
-        let bg = cache
-            .get_or_create(key, || {
-                self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("Screen BindGroup (Dynamic)"),
-                    layout,
-                    entries: &[
-                        wgpu::BindGroupEntry {
-                            binding: 0,
-                            resource: wgpu::BindingResource::TextureView(tv),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 1,
-                            resource: wgpu::BindingResource::Sampler(sampler),
-                        },
-                        wgpu::BindGroupEntry {
-                            binding: 2,
-                            resource: wgpu::BindingResource::TextureView(sv),
-                        },
-                    ],
-                })
-            })
-            .clone();
-
-        (bg, bind_group_id)
     }
 }

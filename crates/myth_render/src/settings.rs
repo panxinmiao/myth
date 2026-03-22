@@ -206,6 +206,9 @@ pub struct RendererSettings {
     /// SSR) uses the `Feature_ID` colour attachment instead of a hardware
     /// stencil channel.
     pub depth_format: wgpu::TextureFormat,
+
+    /// Gloobal anisotropic filtering level for default textures.
+    pub anisotropy_clamp: u16,
 }
 
 impl Default for RendererSettings {
@@ -218,6 +221,7 @@ impl Default for RendererSettings {
             required_features: wgpu::Features::empty(),
             required_limits: wgpu::Limits::default(),
             depth_format: wgpu::TextureFormat::Depth32Float,
+            anisotropy_clamp: 16,
         }
     }
 }

@@ -1,13 +1,18 @@
 //! Resource builder for collecting GPU binding descriptions.
 //!
-//! `ResourceBuilder` accumulates layout entries and binding resources that are
-//! later used by the renderer to create `wgpu::BindGroup` and
-//! `wgpu::BindGroupLayout` instances.
+//! [`ResourceBuilder`] accumulates [`Binding`] entries that describe both the
+//! CPU-side resource data and the layout metadata needed by the renderer.
+//! Each [`Binding`] combines a [`BindingResource`] with a [`BindingDesc`],
+//! shader visibility, and an optional WGSL struct name.
+//!
+//! A single texture [`Binding`] automatically expands into two GPU binding
+//! slots — one for the texture view and one for the paired sampler — so
+//! callers never need to manage sampler bindings manually.
 
 use crate::binding::BindingResource;
 use crate::buffer::BufferRef;
 use crate::buffer::{CpuBuffer, GpuData};
-use crate::texture::{SamplerSource, TextureSource};
+use crate::texture::TextureSource;
 use crate::uniforms::WgslStruct;
 use wgpu::ShaderStages;
 
@@ -21,13 +26,64 @@ pub enum WgslStructName {
     Name(String),
 }
 
-/// Collects bind group layout entries and binding resources.
+// ============================================================================
+// Binding descriptor types
+// ============================================================================
+
+/// Type-specific layout descriptor for a collected binding.
+///
+/// Each variant carries the metadata needed to generate
+/// [`wgpu::BindGroupLayoutEntry`] entries and WGSL declarations.
+pub enum BindingDesc {
+    /// Uniform or storage buffer.
+    Buffer {
+        ty: wgpu::BufferBindingType,
+        has_dynamic_offset: bool,
+        min_binding_size: Option<std::num::NonZeroU64>,
+    },
+    /// Texture with auto-paired sampler.
+    ///
+    /// A single `Texture` binding produces **two** GPU binding slots:
+    /// one for the texture view and one for the sampler. The sampler is
+    /// resolved automatically from the [`Texture`](crate::Texture) asset's
+    /// [`TextureSampler`](crate::TextureSampler) configuration.
+    Texture {
+        sample_type: wgpu::TextureSampleType,
+        view_dimension: wgpu::TextureViewDimension,
+        /// Sampler binding type for the auto-paired sampler entry.
+        sampler_type: wgpu::SamplerBindingType,
+    },
+}
+
+/// A single resource binding collected by [`ResourceBuilder`].
+///
+/// Combines CPU-side resource data ([`BindingResource`]) with layout
+/// metadata ([`BindingDesc`]) and shader stage visibility.
+pub struct Binding<'a> {
+    /// The actual resource data for bind group creation.
+    pub resource: BindingResource<'a>,
+    /// Shader stage visibility.
+    pub visibility: ShaderStages,
+    /// Binding name (used for WGSL variable naming: `t_name`, `s_name`, `u_name`).
+    pub name: &'a str,
+    /// Optional WGSL struct type for code generation.
+    pub struct_name: Option<WgslStructName>,
+    /// Type-specific layout descriptor.
+    pub desc: BindingDesc,
+}
+
+// ============================================================================
+// ResourceBuilder
+// ============================================================================
+
+/// Collects resource bindings for automatic layout and bind group generation.
+///
+/// After populating the builder via `add_*` methods, use
+/// [`generate_layout_entries`](Self::generate_layout_entries) to produce
+/// `wgpu::BindGroupLayoutEntry` arrays and
+/// [`generate_wgsl`](Self::generate_wgsl) for WGSL declarations.
 pub struct ResourceBuilder<'a> {
-    pub layout_entries: Vec<wgpu::BindGroupLayoutEntry>,
-    pub resources: Vec<BindingResource<'a>>,
-    pub names: Vec<String>,
-    pub struct_generators: Vec<Option<WgslStructName>>,
-    next_binding_index: u32,
+    pub bindings: Vec<Binding<'a>>,
 }
 
 impl Default for ResourceBuilder<'_> {
@@ -40,17 +96,13 @@ impl<'a> ResourceBuilder<'a> {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            layout_entries: Vec::new(),
-            resources: Vec::new(),
-            names: Vec::new(),
-            struct_generators: Vec::new(),
-            next_binding_index: 0,
+            bindings: Vec::new(),
         }
     }
 
     pub fn add_uniform_buffer(
         &mut self,
-        name: &str,
+        name: &'a str,
         buffer: &BufferRef,
         data: Option<&'a [u8]>,
         visibility: ShaderStages,
@@ -58,32 +110,27 @@ impl<'a> ResourceBuilder<'a> {
         min_binding_size: Option<std::num::NonZeroU64>,
         struct_name: Option<WgslStructName>,
     ) {
-        self.layout_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: self.next_binding_index,
+        self.bindings.push(Binding {
+            resource: BindingResource::Buffer {
+                buffer: buffer.clone(),
+                offset: 0,
+                size: min_binding_size.as_ref().map(|s| s.get()),
+                data,
+            },
             visibility,
-            ty: wgpu::BindingType::Buffer {
+            name,
+            struct_name,
+            desc: BindingDesc::Buffer {
                 ty: wgpu::BufferBindingType::Uniform,
                 has_dynamic_offset,
                 min_binding_size,
             },
-            count: None,
         });
-
-        self.resources.push(BindingResource::Buffer {
-            buffer: buffer.clone(),
-            offset: 0,
-            size: min_binding_size.as_ref().map(|s| s.get()),
-            data,
-        });
-
-        self.names.push(name.to_string());
-        self.struct_generators.push(struct_name);
-        self.next_binding_index += 1;
     }
 
     pub fn add_uniform<T: WgslStruct + GpuData>(
         &mut self,
-        name: &str,
+        name: &'a str,
         cpu_buffer: &'a CpuBuffer<T>,
         visibility: ShaderStages,
     ) {
@@ -100,7 +147,7 @@ impl<'a> ResourceBuilder<'a> {
 
     pub fn add_dynamic_uniform<T: WgslStruct>(
         &mut self,
-        name: &str,
+        name: &'a str,
         buffer_ref: &BufferRef,
         data: Option<&'a [u8]>,
         min_binding_size: std::num::NonZeroU64,
@@ -117,109 +164,68 @@ impl<'a> ResourceBuilder<'a> {
         );
     }
 
-    fn add_texture_internal(
-        &mut self,
-        name: &str,
-        source: Option<TextureSource>,
-        sample_type: wgpu::TextureSampleType,
-        view_dimension: wgpu::TextureViewDimension,
-        visibility: ShaderStages,
-    ) {
-        self.layout_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: self.next_binding_index,
-            visibility,
-            ty: wgpu::BindingType::Texture {
-                sample_type,
-                view_dimension,
-                multisampled: false,
-            },
-            count: None,
-        });
-
-        self.resources.push(BindingResource::Texture(source));
-        self.names.push(name.to_string());
-        self.struct_generators.push(None);
-        self.next_binding_index += 1;
-    }
-
+    /// Adds a texture binding with an auto-paired sampler.
+    ///
+    /// This produces **two** GPU binding slots: the texture view at the
+    /// current index and the sampler at the next index. The sampler
+    /// binding type is inferred from `sample_type` (depth → comparison,
+    /// otherwise → filtering).
     pub fn add_texture(
         &mut self,
-        name: &str,
+        name: &'a str,
         source: Option<impl Into<TextureSource>>,
         sample_type: wgpu::TextureSampleType,
         view_dimension: wgpu::TextureViewDimension,
         visibility: ShaderStages,
     ) {
-        self.add_texture_internal(
+        let sampler_type = if matches!(sample_type, wgpu::TextureSampleType::Depth) {
+            wgpu::SamplerBindingType::Comparison
+        } else {
+            wgpu::SamplerBindingType::Filtering
+        };
+        self.bindings.push(Binding {
+            resource: BindingResource::Texture(source.map(std::convert::Into::into)),
+            visibility,
             name,
-            source.map(std::convert::Into::into),
-            sample_type,
-            view_dimension,
-            visibility,
-        );
-    }
-
-    pub fn add_sampler(
-        &mut self,
-        name: &str,
-        source: Option<impl Into<SamplerSource>>,
-        sampler_type: wgpu::SamplerBindingType,
-        visibility: ShaderStages,
-    ) {
-        self.layout_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: self.next_binding_index,
-            visibility,
-            ty: wgpu::BindingType::Sampler(sampler_type),
-            count: None,
+            struct_name: None,
+            desc: BindingDesc::Texture {
+                sample_type,
+                view_dimension,
+                sampler_type,
+            },
         });
-
-        self.resources.push(BindingResource::Sampler(
-            source.map(std::convert::Into::into),
-        ));
-        self.names.push(name.to_string());
-        self.struct_generators.push(None);
-        self.next_binding_index += 1;
     }
 
     pub fn add_storage_buffer(
         &mut self,
-        name: &str,
+        name: &'a str,
         buffer: &BufferRef,
         data: Option<&'a [u8]>,
         read_only: bool,
         visibility: ShaderStages,
         struct_name: Option<WgslStructName>,
     ) {
-        self.layout_entries.push(wgpu::BindGroupLayoutEntry {
-            binding: self.next_binding_index,
+        self.bindings.push(Binding {
+            resource: BindingResource::Buffer {
+                buffer: buffer.clone(),
+                offset: 0,
+                size: None,
+                data,
+            },
             visibility,
-            ty: wgpu::BindingType::Buffer {
-                ty: if read_only {
-                    wgpu::BufferBindingType::Storage { read_only: true }
-                } else {
-                    wgpu::BufferBindingType::Storage { read_only: false }
-                },
+            name,
+            struct_name,
+            desc: BindingDesc::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
                 has_dynamic_offset: false,
                 min_binding_size: None,
             },
-            count: None,
         });
-
-        self.resources.push(BindingResource::Buffer {
-            buffer: buffer.clone(),
-            offset: 0,
-            size: None,
-            data,
-        });
-
-        self.names.push(name.to_string());
-        self.struct_generators.push(struct_name);
-        self.next_binding_index += 1;
     }
 
     pub fn add_storage<T: WgslStruct>(
         &mut self,
-        name: &str,
+        name: &'a str,
         buffer: &BufferRef,
         data: Option<&'a [u8]>,
         read_only: bool,
@@ -235,55 +241,119 @@ impl<'a> ResourceBuilder<'a> {
         );
     }
 
+    /// Generates [`wgpu::BindGroupLayoutEntry`] array from collected bindings.
+    ///
+    /// Each buffer binding produces one layout entry. Each texture binding
+    /// produces two entries (texture view + auto-paired sampler).
+    #[must_use]
+    pub fn generate_layout_entries(&self) -> Vec<wgpu::BindGroupLayoutEntry> {
+        let mut entries = Vec::new();
+        let mut idx = 0u32;
+        for b in &self.bindings {
+            match &b.desc {
+                BindingDesc::Buffer {
+                    ty,
+                    has_dynamic_offset,
+                    min_binding_size,
+                } => {
+                    entries.push(wgpu::BindGroupLayoutEntry {
+                        binding: idx,
+                        visibility: b.visibility,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: *ty,
+                            has_dynamic_offset: *has_dynamic_offset,
+                            min_binding_size: *min_binding_size,
+                        },
+                        count: None,
+                    });
+                    idx += 1;
+                }
+                BindingDesc::Texture {
+                    sample_type,
+                    view_dimension,
+                    sampler_type,
+                } => {
+                    entries.push(wgpu::BindGroupLayoutEntry {
+                        binding: idx,
+                        visibility: b.visibility,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: *sample_type,
+                            view_dimension: *view_dimension,
+                            multisampled: false,
+                        },
+                        count: None,
+                    });
+                    idx += 1;
+                    entries.push(wgpu::BindGroupLayoutEntry {
+                        binding: idx,
+                        visibility: b.visibility,
+                        ty: wgpu::BindingType::Sampler(*sampler_type),
+                        count: None,
+                    });
+                    idx += 1;
+                }
+            }
+        }
+        entries
+    }
+
     /// Generates WGSL binding declarations and struct definitions.
+    ///
+    /// Buffer bindings produce a single `var<uniform>` or `var<storage>`
+    /// declaration. Texture bindings produce both a `var t_` texture
+    /// declaration and a `var s_` sampler declaration.
     #[must_use]
     pub fn generate_wgsl(&self, group_index: u32) -> String {
         let mut bindings_code = String::new();
         let mut struct_defs = String::new();
+        let mut idx = 0u32;
 
-        for (i, entry) in self.layout_entries.iter().enumerate() {
-            let name = &self.names[i];
-            let binding_index = entry.binding;
+        for b in &self.bindings {
+            let name = b.name;
 
-            let struct_type_name = if let Some(generator) = &self.struct_generators[i] {
-                let stuct_name = match generator {
-                    WgslStructName::Generator(generator) => {
-                        let auto_struct_name = format!("Struct_{name}");
-                        struct_defs.push_str(&generator(&auto_struct_name));
+            let struct_type_name = if let Some(generator) = &b.struct_name {
+                let sn = match generator {
+                    WgslStructName::Generator(g) => {
+                        let auto = format!("Struct_{name}");
+                        struct_defs.push_str(&g(&auto));
                         struct_defs.push('\n');
-                        auto_struct_name
+                        auto
                     }
-                    WgslStructName::Name(name_str) => name_str.clone(),
+                    WgslStructName::Name(n) => n.clone(),
                 };
-                Some(stuct_name)
+                Some(sn)
             } else {
                 None
             };
 
-            let decl = match entry.ty {
-                wgpu::BindingType::Buffer { ty, .. } => match ty {
-                    wgpu::BufferBindingType::Uniform => {
-                        format!(
-                            "@group({}) @binding({}) var<uniform> u_{}: {};",
-                            group_index,
-                            binding_index,
-                            name,
-                            struct_type_name.expect("need a struct name")
-                        )
-                    }
-                    wgpu::BufferBindingType::Storage { read_only } => {
-                        let access = if read_only { "read" } else { "read_write" };
-                        let struct_type_name = struct_type_name.expect("need a struct name");
-                        format!(
-                            "@group({group_index}) @binding({binding_index}) var<storage, {access}> st_{name}: array<{struct_type_name}>;"
-                        )
-                    }
-                },
-                wgpu::BindingType::Texture {
+            match &b.desc {
+                BindingDesc::Buffer { ty, .. } => {
+                    let decl = match ty {
+                        wgpu::BufferBindingType::Uniform => {
+                            format!(
+                                "@group({group_index}) @binding({idx}) var<uniform> u_{name}: {};",
+                                struct_type_name.expect("buffer binding needs a struct name")
+                            )
+                        }
+                        wgpu::BufferBindingType::Storage { read_only } => {
+                            let access = if *read_only { "read" } else { "read_write" };
+                            let stn =
+                                struct_type_name.expect("storage binding needs a struct name");
+                            format!(
+                                "@group({group_index}) @binding({idx}) var<storage, {access}> st_{name}: array<{stn}>;"
+                            )
+                        }
+                    };
+                    bindings_code.push_str(&decl);
+                    bindings_code.push('\n');
+                    idx += 1;
+                }
+                BindingDesc::Texture {
                     sample_type,
                     view_dimension,
-                    ..
+                    sampler_type,
                 } => {
+                    // Texture declaration
                     let type_str = match (view_dimension, sample_type) {
                         (wgpu::TextureViewDimension::D2, wgpu::TextureSampleType::Depth) => {
                             "texture_depth_2d"
@@ -301,24 +371,22 @@ impl<'a> ResourceBuilder<'a> {
                         ) => "texture_2d_array<f32>",
                         _ => "texture_2d<f32>",
                     };
-                    format!(
-                        "@group({group_index}) @binding({binding_index}) var t_{name}: {type_str};"
-                    )
-                }
-                wgpu::BindingType::Sampler(type_) => {
-                    let type_str = match type_ {
+                    bindings_code.push_str(&format!(
+                        "@group({group_index}) @binding({idx}) var t_{name}: {type_str};\n"
+                    ));
+                    idx += 1;
+
+                    // Sampler declaration (auto-paired)
+                    let sampler_type_str = match sampler_type {
                         wgpu::SamplerBindingType::Comparison => "sampler_comparison",
                         _ => "sampler",
                     };
-                    format!(
-                        "@group({group_index}) @binding({binding_index}) var s_{name}: {type_str};"
-                    )
+                    bindings_code.push_str(&format!(
+                        "@group({group_index}) @binding({idx}) var s_{name}: {sampler_type_str};\n"
+                    ));
+                    idx += 1;
                 }
-                _ => String::new(),
-            };
-
-            bindings_code.push_str(&decl);
-            bindings_code.push('\n');
+            }
         }
         format!(
             "// --- Auto Generated Bindings (Group {group_index}) ---\n{struct_defs}\n{bindings_code}\n"

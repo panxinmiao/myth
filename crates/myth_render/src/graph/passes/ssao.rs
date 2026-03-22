@@ -528,10 +528,10 @@ impl<'a> PassNode<'a> for SsaoRawNode<'a> {
         let key = BindGroupKey::new(layout.id())
             .with_resource(depth_view.id())
             .with_resource(normal_view.id())
-            .with_resource(noise_view.id())
-            .with_resource(linear_sampler.id())
-            .with_resource(noise_sampler.id())
-            .with_resource(point_sampler.id());
+            .with_resource(noise_view.id());
+        // .with_resource(CommonSampler::LinearClamp as u64)
+        // .with_resource(CommonSampler::NearestRepeat as u64)
+        // .with_resource(CommonSampler::NearestClamp as u64);
 
         let bg = cache.get_or_create_bg(key, || {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -635,9 +635,9 @@ impl<'a> PassNode<'a> for SsaoBlurNode<'a> {
         let key = BindGroupKey::new(layout.id())
             .with_resource(raw_view.id())
             .with_resource(depth_view.id())
-            .with_resource(normal_view.id())
-            .with_resource(linear_sampler.id())
-            .with_resource(point_sampler.id());
+            .with_resource(normal_view.id());
+        // .with_resource(CommonSampler::LinearClamp as u64)
+        // .with_resource(CommonSampler::NearestClamp as u64);
 
         let bg = cache.get_or_create_bg(key, || {
             device.create_bind_group(&wgpu::BindGroupDescriptor {

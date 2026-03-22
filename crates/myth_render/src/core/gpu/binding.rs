@@ -9,7 +9,7 @@ use wgpu::ShaderStages;
 use myth_assets::{AssetServer, TextureHandle};
 use myth_resources::Mesh;
 use myth_resources::geometry::Geometry;
-use myth_resources::texture::{SamplerSource, TextureSource};
+use myth_resources::texture::TextureSource;
 use myth_resources::uniforms::DynamicModelUniforms;
 use myth_resources::uniforms::WgslStruct;
 use myth_scene::Scene;
@@ -17,6 +17,7 @@ use myth_scene::skeleton::Skeleton;
 
 use crate::core::binding::Bindings;
 use crate::graph::RenderState;
+use myth_resources::builder::{Binding, BindingDesc};
 use myth_resources::{BindingResource, ResourceBuilder, WgslStructName};
 
 use super::{
@@ -216,10 +217,10 @@ impl ResourceManager {
         }
 
         let binding_wgsl = builder.generate_wgsl(2);
-        let layout_entries = builder.layout_entries.clone();
+        let layout_entries = builder.generate_layout_entries();
 
         let (layout, layout_id) = self.get_or_create_layout(&layout_entries);
-        self.prepare_binding_resources(assets, &builder.resources);
+        self.prepare_binding_resources(assets, &builder.bindings);
         let (bind_group, bind_group_id) = self.create_bind_group(&layout, &builder);
 
         let data = BindGroupContext {
@@ -243,10 +244,10 @@ impl ResourceManager {
     pub(crate) fn prepare_binding_resources(
         &mut self,
         assets: &AssetServer,
-        resources: &[BindingResource],
+        bindings: &[Binding<'_>],
     ) {
-        for resource in resources {
-            match resource {
+        for b in bindings {
+            match &b.resource {
                 BindingResource::Buffer {
                     buffer: buffer_ref,
                     offset: _,
@@ -290,32 +291,13 @@ impl ResourceManager {
                         );
                     }
                 }
-                BindingResource::Texture(Some(source)) => {
-                    match source {
-                        // Only Asset-type textures need Prepare (upload/update)
-                        TextureSource::Asset(handle) => {
-                            self.prepare_texture(assets, *handle);
-                        }
-                        // Attachment type is GPU-internally generated, no CPU->GPU upload needed
-                        TextureSource::Attachment(_, _) => {
-                            // Do nothing
-                        }
+                BindingResource::Texture(Some(source)) => match source {
+                    TextureSource::Asset(handle) => {
+                        self.prepare_texture(assets, *handle);
                     }
-                }
-
-                BindingResource::Sampler(Some(source)) => {
-                    match source {
-                        SamplerSource::FromTexture(_handle) => {
-                            // Should already be prepared during prepare_texture phase
-                        }
-                        SamplerSource::Default => {
-                            // Do nothing
-                        }
-                    }
-                }
-                BindingResource::Texture(None)
-                | BindingResource::Sampler(None)
-                | BindingResource::_Phantom(_) => {}
+                    TextureSource::Attachment(_, _) => {}
+                },
+                BindingResource::Texture(None) | BindingResource::_Phantom(_) => {}
             }
         }
     }
@@ -348,12 +330,10 @@ impl ResourceManager {
         builder: &ResourceBuilder,
     ) -> (wgpu::BindGroup, u64) {
         let mut entries = Vec::new();
+        let mut binding_index = 0u32;
 
-        let resources = &builder.resources;
-        let layout_entries = &builder.layout_entries;
-
-        for (i, resource_data) in resources.iter().enumerate() {
-            let binding_resource = match resource_data {
+        for b in &builder.bindings {
+            match &b.resource {
                 BindingResource::Buffer {
                     buffer,
                     data: _,
@@ -364,85 +344,46 @@ impl ResourceManager {
                     let gpu_buf = self
                         .get_gpu_buffer_by_cpu_id(cpu_id)
                         .expect("Buffer should be prepared");
-                    wgpu::BindingResource::Buffer(wgpu::BufferBinding {
-                        buffer: &gpu_buf.buffer,
-                        offset: *offset,
-                        size: size.and_then(wgpu::BufferSize::new),
-                    })
+                    entries.push(wgpu::BindGroupEntry {
+                        binding: binding_index,
+                        resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
+                            buffer: &gpu_buf.buffer,
+                            offset: *offset,
+                            size: size.and_then(wgpu::BufferSize::new),
+                        }),
+                    });
+                    binding_index += 1;
                 }
                 BindingResource::Texture(source_opt) => {
+                    // 1. Texture view entry
                     let view = if let Some(source) = source_opt {
                         self.get_texture_view(source)
+                    } else if let BindingDesc::Texture { view_dimension, .. } = &b.desc {
+                        match view_dimension {
+                            wgpu::TextureViewDimension::D2 => &self.dummy_image.default_view,
+                            wgpu::TextureViewDimension::D2Array => &*self.dummy_shadow_view,
+                            wgpu::TextureViewDimension::Cube => &self.dummy_env_image.default_view,
+                            _ => &self.dummy_image.default_view,
+                        }
                     } else {
-                        match layout_entries[i].ty {
-                            wgpu::BindingType::Texture {
-                                view_dimension,
-                                sample_type: _,
-                                multisampled: _,
-                            } => {
-                                match view_dimension {
-                                    wgpu::TextureViewDimension::D2 => {
-                                        &self.dummy_image.default_view
-                                    }
-                                    wgpu::TextureViewDimension::D2Array => &*self.dummy_shadow_view,
-                                    wgpu::TextureViewDimension::Cube => {
-                                        &self.dummy_env_image.default_view
-                                    }
-                                    // Todo: support more dimensions
-                                    _ => &self.dummy_image.default_view,
-                                }
-                            }
+                        &self.dummy_image.default_view
+                    };
+                    entries.push(wgpu::BindGroupEntry {
+                        binding: binding_index,
+                        resource: wgpu::BindingResource::TextureView(view),
+                    });
+                    binding_index += 1;
 
-                            _ => unreachable!("Unexpected binding type for Texture without source"),
-                        }
-                    };
-                    wgpu::BindingResource::TextureView(view)
-                }
-                BindingResource::Sampler(source_opt) => {
-                    // From TextureBinding, get sampler_id, then quickly look up from sampler_id_lookup
-                    let sampler = if let Some(source) = source_opt {
-                        match source {
-                            // Case 1: Follow Texture Asset (default)
-                            SamplerSource::FromTexture(handle) => {
-                                if let Some(binding) = self.texture_bindings.get(*handle) {
-                                    self.sampler_id_lookup
-                                        .get(&binding.sampler_id)
-                                        .unwrap_or(&self.dummy_sampler.sampler)
-                                } else {
-                                    &self.dummy_sampler.sampler
-                                }
-                            }
-                            // Case 2: Default sampler (for Render Target)
-                            SamplerSource::Default => {
-                                if matches!(
-                                    layout_entries[i].ty,
-                                    wgpu::BindingType::Sampler(
-                                        wgpu::SamplerBindingType::Comparison
-                                    )
-                                ) {
-                                    &*self.shadow_compare_sampler
-                                } else {
-                                    &self.dummy_sampler.sampler
-                                }
-                            }
-                        }
-                    } else if matches!(
-                        layout_entries[i].ty,
-                        wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison)
-                    ) {
-                        &*self.shadow_compare_sampler
-                    } else {
-                        &self.dummy_sampler.sampler
-                    };
-                    wgpu::BindingResource::Sampler(sampler)
+                    // 2. Auto-paired sampler entry
+                    let sampler = self.resolve_texture_sampler(source_opt, &b.desc);
+                    entries.push(wgpu::BindGroupEntry {
+                        binding: binding_index,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    });
+                    binding_index += 1;
                 }
                 BindingResource::_Phantom(_) => unreachable!("_Phantom should never be used"),
-            };
-
-            entries.push(wgpu::BindGroupEntry {
-                binding: i as u32,
-                resource: binding_resource,
-            });
+            }
         }
 
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -452,6 +393,39 @@ impl ResourceManager {
         });
 
         (bind_group, generate_gpu_resource_id())
+    }
+
+    /// Resolves the `wgpu::Sampler` for a texture binding.
+    ///
+    /// For asset textures, returns the sampler cached during `prepare_texture`.
+    /// For attachments or missing textures, falls back to the dummy sampler
+    /// (or the shadow comparison sampler for depth/comparison bindings).
+    fn resolve_texture_sampler(
+        &self,
+        source: &Option<TextureSource>,
+        desc: &BindingDesc,
+    ) -> &wgpu::Sampler {
+        if let Some(TextureSource::Asset(handle)) = source {
+            if let Some(binding) = self.texture_bindings.get(*handle) {
+                if let Some(sampler) = self
+                    .sampler_registry
+                    .get_sampler_by_index(binding.sampler_id)
+                {
+                    return sampler;
+                }
+            }
+        }
+
+        // Fallback: comparison sampler for depth textures, default otherwise
+        if let BindingDesc::Texture {
+            sampler_type: wgpu::SamplerBindingType::Comparison,
+            ..
+        } = desc
+        {
+            &*self.shadow_compare_sampler
+        } else {
+            self.sampler_registry.default_sampler().1
+        }
     }
 
     // ========================================================================
@@ -533,8 +507,9 @@ impl ResourceManager {
         // Build scene bindings (environment uniforms, lights, env textures)
         self.define_global_scene_bindings(&mut builder, scene);
 
-        self.prepare_binding_resources(assets, &builder.resources);
-        let (layout, layout_id) = self.get_or_create_layout(&builder.layout_entries);
+        self.prepare_binding_resources(assets, &builder.bindings);
+        let layout_entries = builder.generate_layout_entries();
+        let (layout, layout_id) = self.get_or_create_layout(&layout_entries);
         let (bind_group, bind_group_id) = self.create_bind_group(&layout, &builder);
 
         let new_id = if let Some(existing) = self.global_states.get(&state_id) {
@@ -615,12 +590,6 @@ impl ResourceManager {
             wgpu::TextureViewDimension::Cube,
             wgpu::ShaderStages::FRAGMENT,
         );
-        builder.add_sampler(
-            "env_map",
-            Some(SamplerSource::Default),
-            wgpu::SamplerBindingType::Filtering,
-            wgpu::ShaderStages::FRAGMENT,
-        );
 
         // Resolve pmrem_map from GpuEnvironment cache
         let pmrem_source = scene
@@ -638,12 +607,6 @@ impl ResourceManager {
             wgpu::TextureViewDimension::Cube,
             wgpu::ShaderStages::FRAGMENT,
         );
-        builder.add_sampler(
-            "pmrem_map",
-            Some(SamplerSource::Default),
-            wgpu::SamplerBindingType::Filtering,
-            wgpu::ShaderStages::FRAGMENT,
-        );
 
         // Resolve brdf_lut from ResourceManager
         let brdf_lut_source = self
@@ -655,12 +618,6 @@ impl ResourceManager {
             brdf_lut_source,
             wgpu::TextureSampleType::Float { filterable: true },
             wgpu::TextureViewDimension::D2,
-            wgpu::ShaderStages::FRAGMENT,
-        );
-        builder.add_sampler(
-            "brdf_lut",
-            Some(SamplerSource::Default),
-            wgpu::SamplerBindingType::Filtering,
             wgpu::ShaderStages::FRAGMENT,
         );
     }

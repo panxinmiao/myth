@@ -34,7 +34,7 @@ pub struct ExtractContext<'a> {
     pub queue: &'a wgpu::Queue,
     pub pipeline_cache: &'a mut PipelineCache,
     pub shader_manager: &'a mut ShaderManager,
-    pub sampler_registry: &'a mut SamplerRegistry,
+    // pub sampler_registry: &'a mut SamplerRegistry,
     pub global_bind_group_cache: &'a mut GlobalBindGroupCache,
     pub resource_manager: &'a mut ResourceManager,
     pub wgpu_ctx: &'a WgpuContext,

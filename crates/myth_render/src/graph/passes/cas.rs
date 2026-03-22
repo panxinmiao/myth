@@ -245,7 +245,7 @@ impl<'a> PassNode<'a> for CasPassNode<'a> {
 
         let key = BindGroupKey::new(self.layout.id())
             .with_resource(input_view.id())
-            .with_resource(sampler.id())
+            // .with_resource(CommonSampler::NearestClamp as u64)
             .with_resource(self.params_buffer.id());
 
         let layout = self.layout;

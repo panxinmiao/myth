@@ -6,7 +6,6 @@ use parking_lot::RwLock;
 use crate::TextureHandle;
 use crate::buffer::CpuBuffer;
 use crate::material::{AlphaMode, MaterialSettings, Side, TextureSlot};
-use crate::texture::SamplerSource;
 use crate::uniforms::PhongUniforms;
 use crate::{impl_material_api, impl_material_trait};
 
@@ -16,11 +15,6 @@ pub struct PhongTextureSet {
     pub normal_map: TextureSlot,
     pub specular_map: TextureSlot,
     pub emissive_map: TextureSlot,
-
-    pub map_sampler: Option<SamplerSource>,
-    pub normal_map_sampler: Option<SamplerSource>,
-    pub specular_map_sampler: Option<SamplerSource>,
-    pub emissive_map_sampler: Option<SamplerSource>,
 }
 
 #[derive(Debug)]

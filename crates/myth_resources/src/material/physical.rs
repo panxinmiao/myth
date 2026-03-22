@@ -8,7 +8,6 @@ use crate::TextureHandle;
 use crate::buffer::CpuBuffer;
 use crate::material::{AlphaMode, MaterialSettings, Side, TextureSlot};
 use crate::screen_space::FeatureId;
-use crate::texture::SamplerSource;
 use crate::uniforms::PhysicalUniforms;
 use crate::{ShaderDefines, impl_material_api, impl_material_trait};
 
@@ -59,26 +58,6 @@ pub struct PhysicalTextureSet {
     pub anisotropy_map: TextureSlot,
     pub transmission_map: TextureSlot,
     pub thickness_map: TextureSlot,
-
-    pub map_sampler: Option<SamplerSource>,
-    pub normal_map_sampler: Option<SamplerSource>,
-    pub roughness_map_sampler: Option<SamplerSource>,
-    pub metalness_map_sampler: Option<SamplerSource>,
-    pub ao_map_sampler: Option<SamplerSource>,
-    pub emissive_map_sampler: Option<SamplerSource>,
-    pub specular_map_sampler: Option<SamplerSource>,
-    pub specular_intensity_map_sampler: Option<SamplerSource>,
-    pub clearcoat_map_sampler: Option<SamplerSource>,
-    pub clearcoat_roughness_map_sampler: Option<SamplerSource>,
-    pub clearcoat_normal_map_sampler: Option<SamplerSource>,
-    pub sheen_color_map_sampler: Option<SamplerSource>,
-    pub sheen_roughness_map_sampler: Option<SamplerSource>,
-    pub iridescence_map_sampler: Option<SamplerSource>,
-    pub iridescence_thickness_map_sampler: Option<SamplerSource>,
-    pub anisotropy_map_sampler: Option<SamplerSource>,
-
-    pub transmission_map_sampler: Option<SamplerSource>,
-    pub thickness_map_sampler: Option<SamplerSource>,
 }
 
 #[derive(Debug)]

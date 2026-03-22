@@ -5,7 +5,6 @@
 use raw_window_handle::{HasDisplayHandle, HasWindowHandle};
 
 use crate::core::binding::GlobalBindGroupCache;
-use crate::core::gpu::SamplerRegistry;
 use crate::graph::composer::ComposerContext;
 use crate::graph::core::allocator::TransientPool;
 use crate::graph::core::arena::FrameArena;
@@ -65,7 +64,7 @@ struct RendererState {
 
     // ===== RDG (Declarative Render Graph) =====
     pub(crate) graph_storage: GraphStorage,
-    pub(crate) sampler_registry: SamplerRegistry,
+    // pub(crate) sampler_registry: SamplerRegistry,
     pub(crate) transient_pool: TransientPool,
     pub(crate) frame_arena: FrameArena,
 
@@ -146,8 +145,11 @@ impl Renderer {
         let wgpu_ctx = WgpuContext::new(window, &self.settings, width, height).await?;
 
         // 2. Initialize resource manager
-        let resource_manager =
-            ResourceManager::new(wgpu_ctx.device.clone(), wgpu_ctx.queue.clone());
+        let resource_manager = ResourceManager::new(
+            wgpu_ctx.device.clone(),
+            wgpu_ctx.queue.clone(),
+            self.settings.anisotropy_clamp,
+        );
 
         // 3. Create render frame manager
         let render_frame = RenderFrame::new();
@@ -155,7 +157,7 @@ impl Renderer {
         // 5. Create global bind group cache
         let global_bind_group_cache = GlobalBindGroupCache::new();
 
-        let sampler_registry = SamplerRegistry::new(&wgpu_ctx.device);
+        // let sampler_registry = SamplerRegistry::new(&wgpu_ctx.device);
 
         // Shadow + compute passes (need device ref before wgpu_ctx moves)
         let shadow_pass = ShadowFeature::new(&wgpu_ctx.device);
@@ -175,7 +177,7 @@ impl Renderer {
 
             // RDG
             graph_storage: GraphStorage::new(),
-            sampler_registry,
+            // sampler_registry,
             transient_pool: TransientPool::new(),
             frame_arena: FrameArena::new(),
             fxaa_pass: FxaaFeature::new(),
@@ -334,7 +336,7 @@ impl Renderer {
                 queue: &state.wgpu_ctx.queue,
                 pipeline_cache: &mut state.pipeline_cache,
                 shader_manager: &mut state.shader_manager,
-                sampler_registry: &mut state.sampler_registry,
+                // sampler_registry: &mut state.sampler_registry,
                 global_bind_group_cache: &mut state.global_bind_group_cache,
                 resource_manager: &mut state.resource_manager,
                 wgpu_ctx: &state.wgpu_ctx,
@@ -471,7 +473,7 @@ impl Renderer {
 
             graph_storage: &mut state.graph_storage,
             transient_pool: &mut state.transient_pool,
-            sampler_registry: &mut state.sampler_registry,
+            // sampler_registry: &mut state.sampler_registry,
             frame_arena: &state.frame_arena,
             fxaa_pass: &mut state.fxaa_pass,
             taa_pass: &mut state.taa_pass,

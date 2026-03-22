@@ -444,7 +444,10 @@ impl BloomFeature {
         upsample_uniform: &CpuBuffer<UpsampleUniforms>,
         composite_uniform: &CpuBuffer<CompositeUniforms>,
     ) {
-        let sampler = ctx.sampler_registry.get_common(CommonSampler::LinearClamp);
+        let sampler = ctx
+            .resource_manager
+            .sampler_registry
+            .get_common(CommonSampler::LinearClamp);
         let ds_layout = self.ds_static_layout.as_ref().unwrap();
 
         // ─── Karis BGs (eternal, built once) ───────────────────────

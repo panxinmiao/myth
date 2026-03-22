@@ -9,9 +9,9 @@ impl AppHandler for TexturedBox {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         let image_handle = engine.assets.images.add(Image::checkerboard(512, 512, 64));
         let tex_handle = engine
-                .assets
-                .textures
-                .add(Texture::new_2d(Some("checker"), image_handle));
+            .assets
+            .textures
+            .add(Texture::new_2d(Some("checker"), image_handle));
 
         let scene = engine.scene_manager.create_active();
 

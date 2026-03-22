@@ -4,7 +4,7 @@
 //! The actual bind group creation is performed by the renderer.
 
 use crate::buffer::BufferRef;
-use crate::texture::{SamplerSource, TextureSource};
+use crate::texture::TextureSource;
 
 /// Describes a single resource binding for [`wgpu::BindGroup`] creation.
 #[derive(Debug, Clone)]
@@ -22,8 +22,6 @@ pub enum BindingResource<'a> {
     },
     /// A texture binding.
     Texture(Option<TextureSource>),
-    /// A sampler binding.
-    Sampler(Option<SamplerSource>),
     #[doc(hidden)]
     _Phantom(std::marker::PhantomData<&'a ()>),
 }

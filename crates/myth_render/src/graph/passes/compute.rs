@@ -14,7 +14,6 @@
 //! nature (equirect → cube, mipmap generation, PMREM prefiltering) the work
 //! is performed during the prepare phase with a dedicated command encoder.
 
-use myth_resources::texture::TextureSampler;
 use crate::core::gpu::{BRDF_LUT_SIZE, CubeSourceType};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::context::{ExecuteContext, ExtractContext};
@@ -22,6 +21,7 @@ use crate::graph::core::node::PassNode;
 use crate::pipeline::{
     ColorTargetKey, ComputePipelineId, ComputePipelineKey, FullscreenPipelineKey, RenderPipelineId,
 };
+use myth_resources::texture::TextureSampler;
 use myth_resources::texture::TextureSource;
 use wgpu::TextureViewDimension;
 
@@ -201,7 +201,7 @@ const IBL_EQUIRECT_SAMPLER_KEY: TextureSampler = TextureSampler {
     lod_min_clamp: 0.0,
     lod_max_clamp: 32.0,
     compare: None,
-    anisotropy_clamp: 1,
+    anisotropy_clamp: Some(1),
     border_color: None,
 };
 
@@ -527,10 +527,16 @@ impl IblComputeFeature {
 
         // Ensure custom samplers exist in the registry. The mutable borrows
         // are released immediately; later code uses get_custom_ref() (shared).
-        ctx.sampler_registry
-            .get_custom(ctx.device, IBL_BLIT_SAMPLER_KEY);
-        ctx.sampler_registry
-            .get_custom(ctx.device, IBL_EQUIRECT_SAMPLER_KEY);
+        let blit_sampler_id = ctx
+            .resource_manager
+            .sampler_registry
+            .get_custom(ctx.device, &IBL_BLIT_SAMPLER_KEY)
+            .0;
+        let equirect_sampler_id = ctx
+            .resource_manager
+            .sampler_registry
+            .get_custom(ctx.device, &IBL_EQUIRECT_SAMPLER_KEY)
+            .0;
 
         let pmrem_pipeline = ctx
             .pipeline_cache
@@ -575,8 +581,12 @@ impl IblComputeFeature {
                 {
                     let source_view = match &source {
                         TextureSource::Asset(handle) => {
-                            let binding = ctx.resource_manager.get_texture_binding(*handle).unwrap();
-                            &ctx.resource_manager.get_image(binding.cpu_image_id).unwrap().default_view
+                            let binding =
+                                ctx.resource_manager.get_texture_binding(*handle).unwrap();
+                            &ctx.resource_manager
+                                .get_image(binding.cpu_image_id)
+                                .unwrap()
+                                .default_view
                         }
                         TextureSource::Attachment(id, _) => {
                             ctx.resource_manager.internal_resources.get(id).unwrap()
@@ -591,8 +601,10 @@ impl IblComputeFeature {
                     });
 
                     let equirect_sampler = ctx
+                        .resource_manager
                         .sampler_registry
-                        .get_custom_ref(&IBL_EQUIRECT_SAMPLER_KEY);
+                        .get_sampler_by_index(equirect_sampler_id)
+                        .expect("Equirect sampler index must be valid");
 
                     let bind_group = ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
                         label: Some("Equirect BindGroup"),
@@ -641,8 +653,12 @@ impl IblComputeFeature {
                 {
                     let source_texture = match &source {
                         TextureSource::Asset(handle) => {
-                            let binding = ctx.resource_manager.get_texture_binding(*handle).unwrap();
-                            &ctx.resource_manager.get_image(binding.cpu_image_id).unwrap().texture
+                            let binding =
+                                ctx.resource_manager.get_texture_binding(*handle).unwrap();
+                            &ctx.resource_manager
+                                .get_image(binding.cpu_image_id)
+                                .unwrap()
+                                .texture
                         }
                         TextureSource::Attachment(_, _) => {
                             gpu_env.needs_compute = false;
@@ -653,7 +669,11 @@ impl IblComputeFeature {
                         }
                     };
 
-                    let blit_sampler = ctx.sampler_registry.get_custom_ref(&IBL_BLIT_SAMPLER_KEY);
+                    let blit_sampler = ctx
+                        .resource_manager
+                        .sampler_registry
+                        .get_sampler_by_index(blit_sampler_id)
+                        .expect("Blit sampler index must be valid");
 
                     self.blit_cube_faces(
                         ctx.device,
@@ -739,7 +759,7 @@ impl IblComputeFeature {
                     wgpu::BindGroupEntry {
                         binding: 1,
                         resource: wgpu::BindingResource::Sampler(
-                            &ctx.resource_manager.dummy_sampler.sampler,
+                            &ctx.resource_manager.sampler_registry.default_sampler().1,
                         ),
                     },
                     wgpu::BindGroupEntry {

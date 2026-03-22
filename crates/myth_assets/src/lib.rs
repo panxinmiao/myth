@@ -87,9 +87,7 @@ pub fn load_texture_from_file(
 
 /// Loads an HDR environment map in Equirectangular format.
 /// Returns `(Image, TextureSampler, generate_mipmaps)`.
-pub fn load_hdr_texture_from_file(
-    path: impl AsRef<Path>,
-) -> Result<(Image, TextureSampler, bool)> {
+pub fn load_hdr_texture_from_file(path: impl AsRef<Path>) -> Result<(Image, TextureSampler, bool)> {
     let img = image::open(&path)
         .map_err(|e| Error::Asset(AssetError::Format(format!("Image error: {e}"))))?;
 
@@ -178,9 +176,7 @@ pub fn load_cube_texture_from_files(
 
 /// Loads a 3D LUT texture from a .cube file.
 /// Returns `(Image, TextureSampler, generate_mipmaps)`.
-pub fn load_lut_texture_from_file(
-    path: impl AsRef<Path>,
-) -> Result<(Image, TextureSampler, bool)> {
+pub fn load_lut_texture_from_file(path: impl AsRef<Path>) -> Result<(Image, TextureSampler, bool)> {
     let bytes = std::fs::read(&path)?;
 
     let image = server::AssetServer::decode_cube_cpu(&bytes)?;

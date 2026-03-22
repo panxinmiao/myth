@@ -29,34 +29,6 @@ impl From<TextureHandle> for Option<TextureSource> {
     }
 }
 
-/// Sampler source strategy for texture binding.
-///
-/// Specifies which sampler to use when binding a texture.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum SamplerSource {
-    /// Automatic matching: Uses the sampler settings associated with the texture asset.
-    /// `ResourceManager` looks up the sampler from the `TextureHandle`'s metadata.
-    FromTexture(TextureHandle),
-
-    /// Use the system default sampler.
-    Default,
-}
-
-impl From<TextureHandle> for SamplerSource {
-    fn from(handle: TextureHandle) -> Self {
-        Self::FromTexture(handle)
-    }
-}
-
-impl From<TextureSource> for SamplerSource {
-    fn from(texture_source: TextureSource) -> Self {
-        match texture_source {
-            TextureSource::Asset(handle) => Self::FromTexture(handle),
-            TextureSource::Attachment(_, _) => Self::Default,
-        }
-    }
-}
-
 // ============================================================================
 // Sampler configuration
 // ============================================================================
@@ -78,7 +50,7 @@ pub struct TextureSampler {
     /// Comparison function (for Shadow Map PCF).
     pub compare: Option<wgpu::CompareFunction>,
     /// Anisotropic filtering level (1 = disabled).
-    pub anisotropy_clamp: u16,
+    pub anisotropy_clamp: Option<u16>,
     /// Minimum LOD clamp.
     pub lod_min_clamp: f32,
     /// Maximum LOD clamp.
@@ -97,7 +69,7 @@ impl Default for TextureSampler {
             min_filter: wgpu::FilterMode::Linear,
             mipmap_filter: wgpu::MipmapFilterMode::Linear,
             compare: None,
-            anisotropy_clamp: 1,
+            anisotropy_clamp: None,
             lod_min_clamp: 0.0,
             lod_max_clamp: 32.0,
             border_color: None,
@@ -117,7 +89,7 @@ impl TextureSampler {
         lod_min_clamp: 0.0,
         lod_max_clamp: 32.0,
         compare: None,
-        anisotropy_clamp: 1,
+        anisotropy_clamp: Some(1),
         border_color: None,
     };
 }

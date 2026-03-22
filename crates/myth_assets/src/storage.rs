@@ -126,10 +126,7 @@ impl<H: Key, T> AssetStorage<H, T> {
     /// \[Read\] Gets the full versioned entry for a resource.
     pub fn get_entry(&self, handle: H) -> Option<(Arc<T>, u32)> {
         let guard = self.inner.read();
-        guard
-            .map
-            .get(handle)
-            .map(|e| (e.asset.clone(), e.version))
+        guard.map.get(handle).map(|e| (e.asset.clone(), e.version))
     }
 
     /// \[Read\] Gets just the version of a resource.

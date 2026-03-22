@@ -23,7 +23,6 @@
 use rustc_hash::FxHashMap;
 
 use crate::core::binding::BindGroupKey;
-use myth_resources::texture::TextureSampler;
 use crate::core::gpu::Tracked;
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
@@ -35,6 +34,7 @@ use crate::pipeline::{
 };
 use myth_resources::buffer::CpuBuffer;
 use myth_resources::shader_defines::ShaderDefines;
+use myth_resources::texture::TextureSampler;
 use myth_resources::texture::TextureSource;
 use myth_resources::uniforms::WgslStruct;
 use myth_scene::background::{BackgroundMapping, BackgroundMode, SkyboxParamsUniforms};
@@ -51,7 +51,7 @@ const SKYBOX_SAMPLER_KEY: TextureSampler = TextureSampler {
     lod_min_clamp: 0.0,
     lod_max_clamp: 32.0,
     compare: None,
-    anisotropy_clamp: 1,
+    anisotropy_clamp: Some(1),
     border_color: None,
 };
 
@@ -366,8 +366,11 @@ impl SkyboxFeature {
         // Ensure the custom sampler is created (first frame only; subsequent
         // frames are a no-op HashMap lookup). The mutable borrow is released
         // before we resolve the texture view below.
-        ctx.sampler_registry
-            .get_custom(ctx.device, SKYBOX_SAMPLER_KEY);
+        let sampler_id = ctx
+            .resource_manager
+            .sampler_registry
+            .get_custom(ctx.device, &SKYBOX_SAMPLER_KEY)
+            .0;
 
         // Resolve texture view
         let texture_view = if let BackgroundMode::Texture {
@@ -382,7 +385,11 @@ impl SkyboxFeature {
         // Build bind group (group 1)
         let layout = self.layout_for_variant(variant);
         let layout_id = layout.id();
-        let sampler = ctx.sampler_registry.get_custom_ref(&SKYBOX_SAMPLER_KEY);
+        let sampler = ctx
+            .resource_manager
+            .sampler_registry
+            .get_sampler_by_index(sampler_id)
+            .expect("Skybox sampler index must be valid");
 
         let bind_group = if variant.needs_texture() {
             let Some(tex_view) = texture_view else {
@@ -395,7 +402,7 @@ impl SkyboxFeature {
             let key = BindGroupKey::new(layout_id)
                 .with_resource(bg_uniforms_id)
                 .with_resource(tex_view_key)
-                .with_resource(sampler.id());
+                .with_resource(sampler_id as u64);
 
             if let Some(cached) = ctx.global_bind_group_cache.get(&key) {
                 cached.clone()

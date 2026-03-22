@@ -190,9 +190,8 @@ impl<'a> PassNode<'a> for FxaaPassNode<'a> {
         let input_view = views.get_texture_view(self.input_tex);
         let sampler = sampler_registry.get_common(CommonSampler::LinearClamp);
 
-        let key = BindGroupKey::new(self.layout.id())
-            .with_resource(input_view.id())
-            .with_resource(sampler.id());
+        let key = BindGroupKey::new(self.layout.id()).with_resource(input_view.id());
+        // .with_resource(CommonSampler::LinearClamp as u64);
 
         let layout = self.layout;
         let bg = cache.get_or_create_bg(key, || {

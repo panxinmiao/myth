@@ -404,7 +404,7 @@ impl<'a> PassNode<'a> for SsssHorizontalNode<'a> {
             .with_resource(normal_view.id())
             .with_resource(depth_view.id())
             .with_resource(profiles_buffer.id())
-            .with_resource(sampler.id())
+            // .with_resource(CommonSampler::LinearClamp as u64)
             .with_resource(feature_view.id())
             .with_resource(specular_view.id());
 
@@ -517,7 +517,7 @@ impl<'a> PassNode<'a> for SsssVerticalNode<'a> {
             .with_resource(normal_view.id())
             .with_resource(depth_view.id())
             .with_resource(profiles_buffer.id())
-            .with_resource(sampler.id())
+            // .with_resource(CommonSampler::LinearClamp as u64)
             .with_resource(feature_view.id())
             .with_resource(specular_view.id());
 
