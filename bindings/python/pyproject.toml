@@ -9,7 +9,7 @@ authors = [
 ]
 version = "0.1.0"
 description = "Python bindings for Myth Engine — a high-performance 3D rendering engine built on wgpu"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 license = { text = "MIT" }
 keywords = ["3d", "rendering", "wgpu", "graphics", "engine"]
 classifiers = [
@@ -19,11 +19,11 @@ classifiers = [
     "Programming Language :: Rust",
     "Programming Language :: Python :: Implementation :: CPython",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
     "Topic :: Multimedia :: Graphics :: 3D Rendering",
 ]
 

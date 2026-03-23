@@ -297,12 +297,12 @@ cargo run --example gltf_viewer --release
 
 # Run the Cinematic Showcase (Web/WASM)
 # Add `gltf-meshopt` feature to enable glTF mesh optimization with MeshOptimizer.
-./scripts/build_wasm.sh showcase ---features="gltf-meshopt"
+./scripts/build_wasm.sh showcase --features="gltf-meshopt"
 python3 -m http.server 8080 --directory examples/showcase/web
 
 # Run the glTF Viewer (Web/WASM)
 # Add `rdg_inspector` feature to enable beautiful RenderGraph visualization.
-./scripts/build_wasm.sh gltf_viewer ---features="rdg_inspector"
+./scripts/build_wasm.sh gltf_viewer --features="rdg_inspector"
 python3 -m http.server 8080 --directory examples/gltf_viewer/web
 
 ```
