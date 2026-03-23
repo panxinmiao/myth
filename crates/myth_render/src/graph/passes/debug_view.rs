@@ -211,8 +211,8 @@ impl DebugViewFeature {
                     .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                         label: Some("DebugView Pipeline Layout"),
                         bind_group_layouts: &[
-                            self.static_layout.as_ref().unwrap(),
-                            self.transient_layout.as_ref().unwrap(),
+                            self.static_layout.as_deref(),
+                            self.transient_layout.as_deref(),
                         ],
                         immediate_size: 0,
                     });

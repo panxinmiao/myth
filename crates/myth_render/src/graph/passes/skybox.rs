@@ -266,7 +266,7 @@ impl SkyboxFeature {
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Skybox Pipeline Layout"),
-                bind_group_layouts: &[&gpu_world.layout, layout],
+                bind_group_layouts: &[Some(&gpu_world.layout), Some(layout)],
                 immediate_size: 0,
             });
 
@@ -279,8 +279,8 @@ impl SkyboxFeature {
             })],
             depth_stencil: Some(DepthStencilKey::from(wgpu::DepthStencilState {
                 format: key.depth_format,
-                depth_write_enabled: false,
-                depth_compare: wgpu::CompareFunction::GreaterEqual,
+                depth_write_enabled: Some(false),
+                depth_compare: Some(wgpu::CompareFunction::GreaterEqual),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             })),

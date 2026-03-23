@@ -513,9 +513,9 @@ fn prepare_shadow_commands(
                         .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                             label: Some("Shadow Pipeline Layout"),
                             bind_group_layouts: &[
-                                &shadow_global_layout,
-                                &gpu_material.layout,
-                                &item.object_bind_group.layout,
+                                Some(&shadow_global_layout),
+                                Some(&gpu_material.layout),
+                                Some(&item.object_bind_group.layout),
                             ],
                             immediate_size: 0,
                         });
@@ -545,8 +545,8 @@ fn prepare_shadow_commands(
                     color_targets: smallvec::smallvec![],
                     depth_stencil: DepthStencilKey::from(wgpu::DepthStencilState {
                         format: depth_format,
-                        depth_write_enabled: true,
-                        depth_compare: wgpu::CompareFunction::LessEqual,
+                        depth_write_enabled: Some(true),
+                        depth_compare: Some(wgpu::CompareFunction::LessEqual),
                         stencil: wgpu::StencilState::default(),
                         bias: wgpu::DepthBiasState {
                             constant: 2,

@@ -132,8 +132,8 @@ impl From<wgpu::DepthBiasState> for DepthBiasKey {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct DepthStencilKey {
     pub format: wgpu::TextureFormat,
-    pub depth_write_enabled: bool,
-    pub depth_compare: wgpu::CompareFunction,
+    pub depth_write_enabled: Option<bool>,
+    pub depth_compare: Option<wgpu::CompareFunction>,
     pub stencil: StencilStateKey,
     pub bias: DepthBiasKey,
 }

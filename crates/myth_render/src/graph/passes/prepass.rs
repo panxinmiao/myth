@@ -238,9 +238,9 @@ impl PrepassFeature {
                 .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Prepass Pipeline Layout"),
                     bind_group_layouts: &[
-                        &gpu_world_layout_clone,
-                        &gpu_material.layout,
-                        &cmd.object_bind_group.layout,
+                        Some(&gpu_world_layout_clone),
+                        Some(&gpu_material.layout),
+                        Some(&cmd.object_bind_group.layout),
                     ],
                     immediate_size: 0,
                 });
@@ -295,8 +295,8 @@ impl PrepassFeature {
                 color_targets,
                 depth_stencil: DepthStencilKey::from(wgpu::DepthStencilState {
                     format: depth_format,
-                    depth_write_enabled: true,
-                    depth_compare: wgpu::CompareFunction::Greater,
+                    depth_write_enabled: Some(true),
+                    depth_compare: Some(wgpu::CompareFunction::Greater),
                     stencil: wgpu::StencilState::default(),
                     bias: wgpu::DepthBiasState::default(),
                 }),

@@ -311,7 +311,11 @@ impl SsaoFeature {
 
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("SSAO Raw Pipeline Layout"),
-                bind_group_layouts: &[&gpu_world.layout, raw_layout, uniforms_layout],
+                bind_group_layouts: &[
+                    Some(&gpu_world.layout),
+                    Some(raw_layout),
+                    Some(uniforms_layout),
+                ],
                 immediate_size: 0,
             });
 
@@ -342,7 +346,7 @@ impl SsaoFeature {
 
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("SSAO Blur Pipeline Layout"),
-                bind_group_layouts: &[blur_layout],
+                bind_group_layouts: &[Some(blur_layout)],
                 immediate_size: 0,
             });
 

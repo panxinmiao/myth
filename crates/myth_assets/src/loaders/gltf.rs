@@ -251,7 +251,7 @@ fn build_logical_buffers(gltf: &gltf::Gltf, raw_buffers: &[Vec<u8>]) -> Result<V
             continue;
         };
 
-        // 鈹€鈹€ Feature not enabled: graceful degradation 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // Feature not enabled: graceful degradation with user-friendly error message
         #[cfg(not(feature = "gltf-meshopt"))]
         {
             let _ = &ext; // suppress unused-variable warning
@@ -272,7 +272,7 @@ fn build_logical_buffers(gltf: &gltf::Gltf, raw_buffers: &[Vec<u8>]) -> Result<V
             .into());
         }
 
-        // 鈹€鈹€ Feature enabled: full meshopt decompression 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+        // Feature enabled: full meshopt decompression
         #[cfg(feature = "gltf-meshopt")]
         {
             let src_buffer_idx = ext.buffer.value();

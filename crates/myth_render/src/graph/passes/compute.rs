@@ -83,7 +83,7 @@ impl BrdfLutFeature {
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("BRDF LUT Pipeline Layout"),
-                bind_group_layouts: &[&self.bind_group_layout],
+                bind_group_layouts: &[Some(&self.bind_group_layout)],
                 immediate_size: 0,
             });
 
@@ -365,7 +365,10 @@ impl IblComputeFeature {
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("IBL Pipeline Layout"),
-                bind_group_layouts: &[&self.pmrem_layout_source, &self.pmrem_layout_dest],
+                bind_group_layouts: &[
+                    Some(&self.pmrem_layout_source),
+                    Some(&self.pmrem_layout_dest),
+                ],
                 immediate_size: 0,
             });
 
@@ -388,7 +391,7 @@ impl IblComputeFeature {
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Equirect Pipeline Layout"),
-                bind_group_layouts: &[&self.equirect_layout],
+                bind_group_layouts: &[Some(&self.equirect_layout)],
                 immediate_size: 0,
             });
 
@@ -411,7 +414,7 @@ impl IblComputeFeature {
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("IBL Blit Pipeline Layout"),
-                bind_group_layouts: &[&self.blit_layout],
+                bind_group_layouts: &[Some(&self.blit_layout)],
                 immediate_size: 0,
             });
 

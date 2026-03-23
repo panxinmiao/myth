@@ -271,12 +271,12 @@ impl<'a> FrameComposer<'a> {
     /// Consumes `self`; the composer cannot be reused after render.
     pub fn render(mut self) {
         // ━━━ 1. Acquire Surface ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
         let output = match self.ctx.wgpu_ctx.surface.get_current_texture() {
-            Ok(output) => output,
-            Err(wgpu::SurfaceError::Lost) => return,
-            Err(e) => {
-                log::error!("Render error: {e:?}");
+            // todo: handle `Outdated` by reconfiguring the surface and retrying acquisition?
+            wgpu::CurrentSurfaceTexture::Success(frame)
+            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            _ => {
+                log::error!("Failed to acquire swap-chain surface");
                 return;
             }
         };

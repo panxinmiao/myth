@@ -73,7 +73,7 @@ impl MipmapGenerator {
             layout: Some(
                 &device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                     label: Some("Mipmap Pipeline Layout"),
-                    bind_group_layouts: &[&self.layout],
+                    bind_group_layouts: &[Some(&self.layout)],
                     immediate_size: 0,
                 }),
             ),

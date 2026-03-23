@@ -288,10 +288,10 @@ impl PipelineCache {
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),
             bind_group_layouts: &[
-                &gpu_world.layout,
-                &gpu_material.layout,
-                &object_bind_group.layout,
-                screen_bind_group_layout,
+                Some(&gpu_world.layout),
+                Some(&gpu_material.layout),
+                Some(&object_bind_group.layout),
+                Some(screen_bind_group_layout),
             ],
             immediate_size: 0,
         });
@@ -354,8 +354,8 @@ impl PipelineCache {
             },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: canonical_key.depth_format,
-                depth_write_enabled: canonical_key.flags.contains(PipelineFlags::DEPTH_WRITE),
-                depth_compare: canonical_key.depth_compare,
+                depth_write_enabled: Some(canonical_key.flags.contains(PipelineFlags::DEPTH_WRITE)),
+                depth_compare: Some(canonical_key.depth_compare),
                 stencil: wgpu::StencilState::default(),
                 bias: wgpu::DepthBiasState::default(),
             }),

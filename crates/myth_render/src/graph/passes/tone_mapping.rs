@@ -358,7 +358,11 @@ impl ToneMappingFeature {
         let transient_layout = self.transient_layout.as_ref().unwrap();
         let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ToneMap Pipeline Layout"),
-            bind_group_layouts: &[&gpu_world.layout, static_layout, transient_layout],
+            bind_group_layouts: &[
+                Some(&gpu_world.layout),
+                Some(static_layout),
+                Some(transient_layout),
+            ],
             immediate_size: 0,
         });
 

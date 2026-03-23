@@ -160,7 +160,7 @@ impl CasFeature {
                 ctx.device
                     .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                         label: Some("CAS Pipeline Layout"),
-                        bind_group_layouts: &[self.bind_group_layout.as_ref().unwrap()],
+                        bind_group_layouts: &[self.bind_group_layout.as_deref()],
                         immediate_size: 0,
                     });
 

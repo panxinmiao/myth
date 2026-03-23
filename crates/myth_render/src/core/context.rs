@@ -58,11 +58,12 @@ impl WgpuContext {
         let instance_desc = match init_config.backends {
             Some(backends) => wgpu::InstanceDescriptor {
                 backends,
-                ..wgpu::InstanceDescriptor::from_env_or_default()
+                ..wgpu::InstanceDescriptor::new_without_display_handle_from_env()
             },
-            None => wgpu::InstanceDescriptor::from_env_or_default(),
+            None => wgpu::InstanceDescriptor::new_without_display_handle_from_env(),
         };
-        let instance = wgpu::Instance::new(&instance_desc);
+        let instance = wgpu::Instance::new(instance_desc);
+
         let surface = instance
             .create_surface(window)
             .map_err(|e| Error::Platform(PlatformError::SurfaceConfigFailed(e.to_string())))?;

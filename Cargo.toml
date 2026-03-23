@@ -44,7 +44,7 @@ myth_render    = { path = "crates/myth_render", version = "0.1.0" }
 myth_app       = { path = "crates/myth_app", version = "0.1.0" }
 
 # Graphics and Math
-wgpu = { version = "28.0", features = ["wgsl"] }
+wgpu = { version = "29.0", features = ["wgsl"] }
 glam = { version = "0.32.1", features = ["bytemuck", "scalar-math"] }
 bumpalo = "3.20.2"
 bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
@@ -58,7 +58,7 @@ raw-window-handle = "0.6"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 image = { version = "0.25.10", default-features = false, features = ["png", "jpeg", "hdr", "exr", "webp"] }
-gltf = { git = "https://github.com/panxinmiao/gltf.git", features = [
+gltf = { version = "1.4.2", package = "myth-gltf", features = [
     "extensions", "KHR_materials_pbrSpecularGlossiness",
     "KHR_materials_specular", "KHR_materials_emissive_strength", "EXT_texture_webp",
     "KHR_materials_ior", "KHR_texture_transform", "allow_empty_animation_target_node",
@@ -114,9 +114,9 @@ criterion = { version = "0.8.2", default-features = false, features = ["html_rep
 wasm-bindgen-test = "0.3"
 
 # Egui (dev-dependencies, pinned rev)
-egui = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67" }
-egui-wgpu = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67" }
-egui-winit = { git = "https://github.com/emilk/egui.git", rev = "4a9fc7e6417b9ca838b880f2a89fd16468aece67", default-features = false }
+egui = { git = "https://github.com/emilk/egui.git", rev = "b57ae661b7f882834ff31d58fddae67598491000" }
+egui-wgpu = { git = "https://github.com/emilk/egui.git", rev = "b57ae661b7f882834ff31d58fddae67598491000" }
+egui-winit = { git = "https://github.com/emilk/egui.git", rev = "b57ae661b7f882834ff31d58fddae67598491000", default-features = false }
 
 # Shared lint configuration
 [workspace.lints.rust]
