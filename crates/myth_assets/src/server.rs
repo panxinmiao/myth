@@ -589,6 +589,14 @@ impl AssetServer {
             Some(rgba_f16_data),
         ))
     }
+
+    /// Helper method to create a simple checkerboard texture (useful for testing).
+    pub fn checkerboard(&mut self, size: u32, squares: u32) -> TextureHandle {
+        let image = Image::checkerboard(size, size, squares);
+        let image_handle = self.images.add(image);
+        let texture = Texture::new_2d(Some("Checkerboard"), image_handle);
+        self.textures.add(texture)
+    }
 }
 
 impl myth_scene::GeometryQuery for AssetServer {

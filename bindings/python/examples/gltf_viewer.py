@@ -61,7 +61,7 @@ def on_init(ctx: myth.Engine):
     fill.position = [-3, 2, -1]
 
     scene.set_environment_map(
-        ctx.load_texture(get_asset("royal_esplanade_2k.hdr.jpg"), color_space="srgb")
+        ctx.load_texture(get_asset("envs/royal_esplanade_2k.hdr.jpg"), color_space="srgb")
     )
 
     # Environment & post-processing

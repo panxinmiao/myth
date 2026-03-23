@@ -16,7 +16,7 @@ import myth
 from __asset_utils import get_asset
 
 # ── Configuration ────────────────────────────────────────────────────────────
-ENV_MAP_PATH = get_asset("royal_esplanade_2k.hdr.jpg")
+ENV_MAP_PATH = get_asset("envs/royal_esplanade_2k.hdr.jpg")
 DEFAULT_MODEL = get_asset("Michelle.glb")
 model_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
 

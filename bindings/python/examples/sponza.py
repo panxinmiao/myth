@@ -20,7 +20,7 @@ import myth
 from __asset_utils import get_asset
 
 # ── Configuration ────────────────────────────────────────────────────────────
-ENV_MAP_PATH = get_asset("royal_esplanade_2k.hdr.jpg")
+ENV_MAP_PATH = get_asset("envs/royal_esplanade_2k.hdr.jpg")
 
 # Accept model path from CLI (default: remote Sponza)
 DEFAULT_MODEL = "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/refs/heads/main/Models/Sponza/glTF/Sponza.gltf"

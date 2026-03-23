@@ -23,7 +23,7 @@ import myth
 from __asset_utils import get_asset
 
 # ── Configuration ────────────────────────────────────────────────────────────
-HDR_ENV = get_asset("blouberg_sunrise_2_1k.hdr")
+HDR_ENV = get_asset("envs/blouberg_sunrise_2_1k.hdr")
 DEFAULT_MODEL = get_asset("phoenix_bird.glb")
 model_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_MODEL
 

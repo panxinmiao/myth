@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](LICENSE)
 [![WebGPU Ready](https://img.shields.io/badge/WebGPU-Ready-green.svg)](https://gpuweb.github.io/gpuweb/)
 
-[![Myth Engine Hero](docs/images/hero.png)](https://panxinmiao.github.io/myth/)
+[![Myth Engine Hero](docs/images/hero.jpg)](https://panxinmiao.github.io/myth/)
 
 [**Showcase**](https://panxinmiao.github.io/myth/) | [**glTF Samples**](https://panxinmiao.github.io/myth/gltf/) | [**glTF Viewer & Inspector**](https://panxinmiao.github.io/myth/gltf_viewer/)  | [**Examples**](examples/)
 
@@ -25,50 +25,56 @@
 
 **Myth** is a developer-friendly, high-performance 3D rendering engine written in **Rust**. 
 
-Inspired by the ergonomic simplicity of **Three.js** and built on the modern power of **wgpu**, Myth aims to bridge the gap between low-level graphics APIs and high-level game engines. It provides a familiar object-oriented API for rapid development, backed by a **strictly declarative, SSA-based Render Graph** compiler that delivers industrial-grade performance and zero-overhead memory aliasing.
+Inspired by the ergonomic simplicity of **Three.js** and built on the modern power of **wgpu**, Myth aims to bridge the gap between low-level graphics APIs and high-level game engines.
+
+## Why Myth?
+
+wgpu is incredibly powerful — but even a simple scene requires hundreds of lines of boilerplate.  
+Bevy and Godot feel too heavy when you just want a lean rendering library.  
+
+Myth solves this with a **strict SSA-based RenderGraph** that treats rendering as a compiler problem:
+- Automatic topological sort + dead-pass elimination
+- Aggressive transient memory aliasing (zero manual barriers)
+- O(n) per-frame rebuild with zero allocations
+
+**One codebase runs everywhere**:  
+Native (Windows, macOS, Linux, iOS, Android) + WebGPU/WASM + Python bindings.
+
 
 ## Features
 
 * **Core Architecture & Platform**
+    * **True Cross-platform, One Codebase**: Native (Windows, macOS, Linux, iOS, Android) + WebGPU/WASM + Python bindings.
     * **Modern Backend**: Built on **wgpu**, fully supporting Vulkan, Metal, DX12, and WebGPU.
     * **SSA-based Render Graph**: A declarative, compiler-driven rendering architecture. You declare the topological needs, and the engine handles the rest:
         * **Automatic Synchronization**: Zero manual memory barriers or layout transitions.
         * **Aggressive Memory Aliasing**: Reuses transient high-resolution physical textures perfectly across distinct logical passes.
-        * **Dead Pass Elimination**: Automatically culls rendering workloads (e.g., bypassing shadow maps or pre-passes) if their outputs are unreferenced.
-        * **Zero-Allocation Per-Frame Rebuild**: Evaluates and compiles the entire directed acyclic graph (DAG) every single frame (extremely fast), completely avoiding the bugs and overhead of state-tracking and diffing.
-    * **Web First**: First-class support for **WASM** and WebGPU. Write once, run seamlessly in modern browsers.
+        * **Dead Pass Elimination**: Automatically culls rendering workloads.
+        * **Zero-Allocation Per-Frame Rebuild**: Evaluates and compiles the entire DAG every frame.
 
 * **Advanced Rendering & Lighting**
-    * **Physically Based Materials**: Robust PBR pipeline with advanced extensions:
-        * **Clearcoat** (car paint, varnished wood)
-        * **Iridescence** (soap bubbles, oil films)
-        * **Transmission** (glass, water)
-        * **Sheen** (cloth-like materials)
-        * **Anisotropy** (brushed metals)
-    * **Image-Based Lighting (IBL)**: Supports cubemap and equirectangular environment maps with automatic PMREM generation.
-    * **Dynamic Shadows**: Cascaded Shadow Maps (CSM) for large-scale outdoor scenes.
-    * **SSAO**: Screen Space Ambient Occlusion for enhanced depth perception and contact shadows.
-    * **SSSS**: Screen Space Subsurface Scattering for realistic skin and organic materials.
-    * **Skybox & Background**: Color, gradient, image, cubemap, and equirectangular sky rendering modes.
+    * **Physically Based Materials**: Robust PBR pipeline with Clearcoat, Iridescence, Transmission, Sheen, Anisotropy.
+    * **Image-Based Lighting (IBL)** + **Dynamic Shadows (CSM)**.
+    * **SSAO / SSSS / Skybox**.
 
 * **Post-Processing & FX**
-    * **HDR Pipeline**: Full support for HDR rendering with various tone mapping operators.
-    * **Cinematic Effects**: A rich set of physically-based post-processing nodes:
-        * **HDR Bloom**: Physically-based bloom.
-        * **Color Grading**: 3D LUT-based color grading.
-        * **Stylization**: Adjustable contrast/saturation, film grain, chromatic aberration, and vignette effects.
-    * **Anti-Aliasing**: MSAA, FXAA, and Temporal Anti-Aliasing (TAA).
+    * **HDR Pipeline** + **Bloom** + **Color Grading** + **TAA / FXAA / MSAA**.
 
 * **Assets & Tooling**
-    * **Full glTF 2.0 Support**: Comprehensive support for the glTF 2.0 specification, including PBR materials, skeletal animations, morph targets, and scene hierarchy.
-    * **Asynchronous Asset System**: Non-blocking `AssetServer` for efficient loading of textures, models, and materials.
-    * **Embedded Inspector UI**: Includes an integration with `egui`, allowing you to inspect scene nodes and tweak material parameters dynamically at runtime (try the `gltf_viewer` example).
+    * **Full glTF 2.0 Support** (PBR, animations, morph targets).
+    * **Asynchronous Asset System** + **Embedded egui Inspector**.
 
 ## Under the Hood: The Graph Compiler
 
-Myth Engine eliminates manual state management. Complex rendering features (like physically-based Bloom, SSAO, and SSSS) are flattened into independent, atomic micro-passes. The engine's graph compiler dynamically deduces dependencies and overlapping lifecycles.
+Myth uses a strict SSA-based RenderGraph, so the engine can:
 
-See: [docs/RenderGraph.md](docs/RenderGraph.md) for an in-depth explanation of the Render Graph architecture.
+* automatically schedule passes (topological order)
+* eliminate unused work (dead-pass elimination)
+* reuse memory aggressively (transient aliasing)
+
+All without manual barriers.
+
+Deep dive: [docs/RenderGraph.md](docs/RenderGraph.md)
 
 Here is an actual, auto-generated dump of Myth Engine's RenderGraph during a complex frame:
 
@@ -218,10 +224,7 @@ flowchart TD
 Experience the engine directly in your browser (Chrome/Edge 113+ required for WebGPU):
 
 - **[Showcase (Home)](https://panxinmiao.github.io/myth/)**: High-performance rendering showcase.
-- **[Launch glTF Viewer & Inspector](https://panxinmiao.github.io/myth/gltf_viewer/)**: Inspect your glTF models online.
-
-* **Drag & Drop** your own `.glb` files to view them.
-* Inspect node hierarchy and tweak PBR material parameters in real-time.
+- **[Launch glTF Viewer & Inspector](https://panxinmiao.github.io/myth/gltf_viewer/)**: Drag & drop your own .glb files.
 
 ![Web Editor Preview](docs/images/inspector.gif)
 
@@ -238,7 +241,7 @@ myth = { git = "https://github.com/panxinmiao/myth", branch = "main" }
 
 ### The "Hello World"
 
-A spinning cube with a checkerboard texture within less than 50 lines of code:
+A spinning cube with a checkerboard texture in < 50 lines:
 
 ```rust
 use myth::prelude::*;
@@ -250,19 +253,17 @@ impl AppHandler for MyApp {
         // 0. Create a Scene
         let scene = engine.scene_manager.create_active();
 
-        // 1. Create a cube mesh with a checkerboard texture using builder-style chaining
-        let texture = Texture::create_checkerboard(Some("checker"), 512, 512, 64);
-        let tex_handle = engine.assets.textures.add(texture);
+        // 1. Create a cube mesh with a checkerboard texture using builder-style
+        let tex_handle = engine.assets.checkerboard(512, 64);
         let mesh_handle = scene.spawn_box(
             1.0, 1.0, 1.0, 
-            PhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0)).with_map(tex_handle)
+            PhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0)).with_map(tex_handle),
+            &engine.assets,
         );
-        
         // 2. Setup Camera
         let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
         scene.node(&cam_node_id).set_position(0.0, 0.0, 5.0).look_at(Vec3::ZERO);
         scene.active_camera = Some(cam_node_id);
-        
         // 3. Add Light
         scene.add_light(Light::new_directional(Vec3::ONE, 5.0));
 
@@ -274,7 +275,6 @@ impl AppHandler for MyApp {
                 node.transform.rotation = node.transform.rotation * rot_y * rot_x;
             }
         });
-        
         Self {}
     }
 }
@@ -306,6 +306,10 @@ python3 -m http.server 8080 --directory examples/showcase/web
 python3 -m http.server 8080 --directory examples/gltf_viewer/web
 
 ```
+
+### Python Bindings
+Myth Engine also provides Python bindings for rapid prototyping and scientific visualization.
+See [Python Bindings](bindings/python) for installation and examples.
 
 ## License
 
