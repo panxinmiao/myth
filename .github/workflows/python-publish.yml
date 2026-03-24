@@ -36,6 +36,7 @@ jobs:
           args: --release --out dist -m bindings/python/Cargo.toml
           sccache: 'true'
           manylinux: auto
+          before-script-linux: "yum install -y perl-IPC-Cmd || dnf install -y perl-IPC-Cmd || true"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4

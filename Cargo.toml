@@ -195,7 +195,7 @@ egui      = { workspace = true }
 egui-wgpu = { workspace = true, features = ["winit"] }
 egui-winit = { workspace = true }
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
-reqwest = { workspace = true, features = ["default-tls", "stream"] }
+reqwest = { workspace = true, default-features = false }
 wgpu = { workspace = true }
 winit = { workspace = true }
 
