@@ -2991,35 +2991,26 @@ impl GltfViewer {
 // 辅助函数
 // ============================================================================
 
-/// 同步获取远程模型列表 (Native)
+/// Fetch the remote Khronos glTF model list.
 async fn fetch_remote_model_list() -> Result<Vec<ModelInfo>, String> {
-    let client = reqwest::Client::builder();
-
-    // 仅在 Native 平台设置超时
-    #[cfg(not(target_arch = "wasm32"))]
-    let client = client.timeout(std::time::Duration::from_secs(30));
-
-    let client = client
-        .build()
-        .map_err(|e| format!("Failed to create HTTP client: {}", e))?;
-
-    let response = client
-        .get(MODEL_LIST_URL)
-        .send()
+    let request = ehttp::Request::get(MODEL_LIST_URL);
+    let response = ehttp::fetch_async(request)
         .await
-        .map_err(|e| format!("HTTP request failed: {}", e))?;
+        .map_err(|e| format!("HTTP request failed: {e}"))?;
 
-    if !response.status().is_success() {
-        return Err(format!("HTTP error: {}", response.status()));
+    if !response.ok {
+        return Err(format!(
+            "HTTP error: {} {}",
+            response.status, response.status_text
+        ));
     }
 
     let text = response
         .text()
-        .await
-        .map_err(|e| format!("Failed to read response: {}", e))?;
+        .ok_or_else(|| "Response body is not valid UTF-8".to_string())?;
 
     let models: Vec<ModelInfo> =
-        serde_json::from_str(&text).map_err(|e| format!("Failed to parse JSON: {}", e))?;
+        serde_json::from_str(text).map_err(|e| format!("Failed to parse JSON: {e}"))?;
 
     Ok(models)
 }

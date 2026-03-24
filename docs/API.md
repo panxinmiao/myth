@@ -1497,7 +1497,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 | `AssetError` | `NotFound`, `Io`, `Network`, `UrlParse`, `HttpResponse`, `Format`, `InvalidData`, `Base64`, `TaskJoin` |
 | `RenderError` | `RequestDeviceFailed`, `ShaderCompile`, `Graph` |
 
-Automatic `From` conversions: `image::ImageError`, `gltf::Error`, `io::Error`, `reqwest::Error` → `Error`
+Automatic `From` conversions: `image::ImageError`, `gltf::Error`, `io::Error` → `Error`
 
 ---
 

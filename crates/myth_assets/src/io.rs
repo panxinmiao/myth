@@ -52,18 +52,24 @@ impl AssetReader for FileAssetReader {
     }
 }
 
-/// HTTP network reader.
-/// Uses reqwest's cross-platform capability (tokio on native, fetch on WASM).
+/// HTTP network asset reader.
+///
+/// Uses [`ehttp`] for lightweight cross-platform HTTP fetching (ureq on
+/// native, browser Fetch API on WASM). URL resolution is handled via the
+/// [`url`] crate.
 #[cfg(feature = "http")]
 pub struct HttpAssetReader {
-    root_url: reqwest::Url,
-    client: reqwest::Client,
+    root_url: url::Url,
 }
 
 #[cfg(feature = "http")]
 impl HttpAssetReader {
+    /// Creates a new reader rooted at the given URL.
+    ///
+    /// If `url_str` points to a file (no trailing `/`), the parent directory
+    /// is used as the root so that relative URIs resolve correctly.
     pub fn new(url_str: &str) -> Result<Self> {
-        let url = reqwest::Url::parse(url_str)
+        let url = url::Url::parse(url_str)
             .map_err(|e| Error::Asset(AssetError::Format(format!("URL parse error: {e}"))))?;
         let root_url = if url.path().ends_with('/') {
             url
@@ -76,23 +82,13 @@ impl HttpAssetReader {
             u
         };
 
-        let client = reqwest::Client::builder();
-
-        // Native-specific timeout settings, etc.
-        #[cfg(not(target_arch = "wasm32"))]
-        let client = client.timeout(std::time::Duration::from_secs(30));
-
-        Ok(Self {
-            root_url,
-            client: client
-                .build()
-                .map_err(|e| Error::Asset(AssetError::Network(e.to_string())))?,
-        })
+        Ok(Self { root_url })
     }
 
+    /// Returns the resolved root URL.
     #[inline]
     #[must_use]
-    pub fn root_url(&self) -> &reqwest::Url {
+    pub fn root_url(&self) -> &url::Url {
         &self.root_url
     }
 }
@@ -104,22 +100,16 @@ impl AssetReader for HttpAssetReader {
             .root_url
             .join(uri)
             .map_err(|e| Error::Asset(AssetError::Format(format!("URL join error: {e}"))))?;
-        let resp = self
-            .client
-            .get(url)
-            .send()
+        let request = ehttp::Request::get(url.as_str());
+        let resp = ehttp::fetch_async(request)
             .await
-            .map_err(|e| Error::Asset(AssetError::Network(e.to_string())))?;
-        if !resp.status().is_success() {
+            .map_err(|e| Error::Asset(AssetError::Network(e)))?;
+        if !resp.ok {
             return Err(Error::Asset(AssetError::HttpResponse {
-                status: resp.status().as_u16(),
+                status: resp.status,
             }));
         }
-        let bytes = resp
-            .bytes()
-            .await
-            .map_err(|e| Error::Asset(AssetError::Network(e.to_string())))?;
-        Ok(bytes.to_vec())
+        Ok(resp.bytes)
     }
 }
 
@@ -181,7 +171,7 @@ impl AssetReaderVariant {
                     )))
                 })?;
 
-                let base = reqwest::Url::parse(&href).map_err(|e| {
+                let base = url::Url::parse(&href).map_err(|e| {
                     Error::Platform(myth_core::PlatformError::Wasm(format!(
                         "Invalid base URL: {}",
                         e

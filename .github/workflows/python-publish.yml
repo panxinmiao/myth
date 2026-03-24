@@ -12,14 +12,10 @@ permissions:
 
 jobs:
   linux:
+    runs-on: ubuntu-latest
     strategy:
       matrix:
-        include:
-          - target: x86_64
-            os: ubuntu-latest
-          - target: aarch64
-            os: ubuntu-24.04-arm
-    runs-on: ${{ matrix.os }}
+        target: [x86_64, aarch64]
     steps:
       - uses: actions/checkout@v4
       
@@ -36,7 +32,6 @@ jobs:
           args: --release --out dist -m bindings/python/Cargo.toml
           sccache: 'true'
           manylinux: auto
-          before-script-linux: "yum install -y perl-IPC-Cmd || dnf install -y perl-IPC-Cmd || true"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4

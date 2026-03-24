@@ -70,7 +70,7 @@ base64 = "0.22"
 meshopt = { version = "0.6" }
 
 # Networking (HTTP)
-reqwest = { version = "0.13.2", default-features = false }
+ehttp = { version = "0.7.1", default-features = false, features = ["native-async"] }
 url = "2.5"
 
 # Utilities
@@ -195,7 +195,7 @@ egui      = { workspace = true }
 egui-wgpu = { workspace = true, features = ["winit"] }
 egui-winit = { workspace = true }
 tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
-reqwest = { workspace = true, default-features = false }
+ehttp = { workspace = true }
 wgpu = { workspace = true }
 winit = { workspace = true }
 
@@ -210,7 +210,7 @@ wasm-bindgen-futures = { workspace = true }
 console_error_panic_hook = { workspace = true }
 console_log = { workspace = true }
 tokio = { workspace = true, features = ["macros", "sync", "rt", "time"] }
-reqwest = { workspace = true }
+ehttp = { workspace = true }
 wgpu = { workspace = true, features = ["webgpu", "fragile-send-sync-non-atomic-wasm"] }
 winit = { workspace = true }
 web-sys = { workspace = true, features = ["Window", "Document", "Element", "DomTokenList", "Location", "UrlSearchParams"] }
