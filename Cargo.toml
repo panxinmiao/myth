@@ -26,8 +26,8 @@ authors = ["Pan Xinmiao <pan_xinmiao@163.com>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/panxinmiao/myth"
 homepage = "https://github.com/panxinmiao/myth"
-keywords = ["3d", "wgpu", "graphics", "gamedev", "engine", "rendering", "renderer", "webgpu"]
-categories = ["game-development", "graphics", "rendering::engine", "rendering::renderer"]                                                                                             
+keywords = ["3d", "gamedev", "wgpu", "webgpu", "graphics"]
+categories = ["game-development", "graphics", "rendering::engine"]                                                                                             
 
 # =============================================================================
 # Workspace-wide dependency versions
