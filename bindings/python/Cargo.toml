@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 pyo3 = { version = "0.28.1", features = ["extension-module", "abi3-py310"] }
 # Standalone / CI: use the git dependency instead:
 # myth_engine = { git = "https://github.com/panxinmiao/myth.git", tag = "v0.1.0", package = "myth-engine" }
-myth_engine = { path = "../../", package = "myth-engine" }
+myth_engine = { path = "../../", package = "myth-engine", default-features = false, features = ["winit", "gltf"] }
 
 slotmap = "1"
 raw-window-handle = "0.6"
