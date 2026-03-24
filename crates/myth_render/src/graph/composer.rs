@@ -273,8 +273,14 @@ impl<'a> FrameComposer<'a> {
         // ━━━ 1. Acquire Surface ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
         let output = match self.ctx.wgpu_ctx.surface.get_current_texture() {
             // todo: handle `Outdated` by reconfiguring the surface and retrying acquisition?
-            wgpu::CurrentSurfaceTexture::Success(frame)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                self.ctx
+                    .wgpu_ctx
+                    .surface
+                    .configure(&self.ctx.wgpu_ctx.device, &self.ctx.wgpu_ctx.config);
+                frame
+            }
             _ => {
                 log::error!("Failed to acquire swap-chain surface");
                 return;

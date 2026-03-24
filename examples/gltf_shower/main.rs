@@ -275,6 +275,7 @@ fn main() -> myth::Result<()> {
     App::new()
         .with_title("Myth Showcase Viewer")
         .with_settings(RendererSettings {
+            anisotropy_clamp: 4,
             ..Default::default()
         })
         .run::<ShowcaseApp>()
@@ -288,6 +289,7 @@ pub fn wasm_main() {
 
     App::new()
         .with_settings(RendererSettings {
+            anisotropy_clamp: if is_mobile_device() { 1 } else { 4 },
             ..Default::default()
         })
         .run::<ShowcaseApp>()

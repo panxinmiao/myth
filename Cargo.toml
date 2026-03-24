@@ -134,6 +134,7 @@ missing_panics_doc = "allow"
 too_many_arguments = "allow"
 doc_markdown = "allow"
 too_many_lines = "allow"
+ref_as_ptr = "allow"
 
 # =============================================================================
 # Umbrella Crate — `myth`
@@ -155,10 +156,10 @@ homepage.workspace = true
 
 exclude = [
     "examples/assets/*",
-    "examples/gltf_viewer/web/assets/*",
     "docs/images/*",
     ".github/*",
     ".gitignore",
+    ".vscode/*",
 ]
 
 [lib]

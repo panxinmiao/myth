@@ -789,6 +789,7 @@ fn main() -> myth::Result<()> {
     App::new()
         .with_title("Myth Engine — Showcase")
         .with_settings(RendererSettings {
+            anisotropy_clamp: 4,
             ..Default::default()
         })
         .run::<ShowcaseApp>()

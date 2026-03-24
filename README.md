@@ -9,7 +9,7 @@
 [![License](https://img.shields.io/badge/license-MIT%2FApache-blue.svg)](LICENSE)
 [![WebGPU Ready](https://img.shields.io/badge/WebGPU-Ready-green.svg)](https://gpuweb.github.io/gpuweb/)
 
-[![Myth Engine Hero](docs/images/hero.jpg)](https://panxinmiao.github.io/myth/)
+[![Myth Engine Hero](https://raw.githubusercontent.com/panxinmiao/myth/main/docs/images/hero.jpg)](https://panxinmiao.github.io/myth/)
 
 [**Showcase**](https://panxinmiao.github.io/myth/) | [**glTF Samples**](https://panxinmiao.github.io/myth/gltf/) | [**glTF Viewer & Inspector**](https://panxinmiao.github.io/myth/gltf_viewer/)  | [**Examples**](examples/)
 
@@ -225,17 +225,21 @@ Experience the engine directly in your browser (Chrome/Edge 113+ required for We
 
 - **[Showcase (Home)](https://panxinmiao.github.io/myth/)**: High-performance rendering showcase.
 - **[Launch glTF Viewer & Inspector](https://panxinmiao.github.io/myth/gltf_viewer/)**: Drag & drop your own .glb files.
+- **[glTF Sample Models](https://panxinmiao.github.io/myth/gltf/)**: Explore multiple official glTF assets from Khronos rendered with Myth.
 
-![Web Editor Preview](docs/images/inspector.gif)
+![Web Editor Preview](https://raw.githubusercontent.com/panxinmiao/myth/main/docs/images/inspector.gif)
 
 
 ## Quick Start
 
-Add `myth` to your `Cargo.toml`:
+Add `myth-engine` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-myth = { git = "https://github.com/panxinmiao/myth", branch = "main" }
+myth-engine = "0.1.0"
+
+# Or get the latest from GitHub
+# myth-engine = { git = "https://github.com/panxinmiao/myth", branch = "main" }
 
 ```
 
@@ -309,7 +313,7 @@ python3 -m http.server 8080 --directory examples/gltf_viewer/web
 
 ### Python Bindings
 Myth Engine also provides Python bindings for rapid prototyping and scientific visualization.
-See [Python Bindings](bindings/python) for installation and examples.
+See [Python Bindings](https://github.com/panxinmiao/myth/tree/main/bindings/python) for installation and examples.
 
 ## License
 
