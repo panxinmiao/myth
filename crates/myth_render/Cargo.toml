@@ -43,7 +43,7 @@ rust-embed = { workspace = true }
 parking_lot = { workspace = true, features = ["deadlock_detection"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wgpu = { workspace = true, features = ["webgpu"] }
+wgpu = { workspace = true, features = ["webgpu", "fragile-send-sync-non-atomic-wasm"] }
 
 [features]
 default = []

@@ -211,7 +211,7 @@ console_error_panic_hook = { workspace = true }
 console_log = { workspace = true }
 tokio = { workspace = true, features = ["macros", "sync", "rt", "time"] }
 reqwest = { workspace = true }
-wgpu = { workspace = true, features = ["webgpu"] }
+wgpu = { workspace = true, features = ["webgpu", "fragile-send-sync-non-atomic-wasm"] }
 winit = { workspace = true }
 web-sys = { workspace = true, features = ["Window", "Document", "Element", "DomTokenList", "Location", "UrlSearchParams"] }
 
