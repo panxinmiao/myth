@@ -18,6 +18,7 @@
 //!
 //! Pass the integer handle to [`MythRenderer.init_with_handle`].
 
+#[cfg(target_os = "windows")]
 use std::num::NonZero;
 
 use pyo3::prelude::*;
@@ -115,8 +116,8 @@ fn build_raw_window(window_handle: isize) -> PyResult<RawWindow> {
 fn build_raw_window(window_handle: isize) -> PyResult<RawWindow> {
     use raw_window_handle::{XlibDisplayHandle, XlibWindowHandle};
 
-    let xlib_window = window_handle as u32;
-    let wh = XlibWindowHandle::new(xlib_window);
+    let xlib_window = window_handle as u64;
+    let wh = XlibWindowHandle::new(xlib_window.into());
 
     // NULL display → wgpu will open its own X connection
     let dh = XlibDisplayHandle::new(None, 0);

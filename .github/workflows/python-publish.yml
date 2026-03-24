@@ -32,6 +32,8 @@ jobs:
           args: --release --out dist -m bindings/python/Cargo.toml
           sccache: 'true'
           manylinux: auto
+        env:
+            CFLAGS_aarch64_unknown_linux_gnu: "-march=armv8-a -D__ARM_ARCH=8"
 
       - name: Upload wheels
         uses: actions/upload-artifact@v4
