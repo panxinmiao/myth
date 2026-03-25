@@ -257,7 +257,7 @@ impl AppHandler for MyApp {
         // 0. Create a Scene
         let scene = engine.scene_manager.create_active();
 
-        // 1. Create a cube mesh with a checkerboard texture using builder-style
+        // 1. Create a cube mesh with a checkerboard texture
         let tex_handle = engine.assets.checkerboard(512, 64);
         let mesh_handle = scene.spawn_box(
             1.0, 1.0, 1.0, 

@@ -7,32 +7,42 @@
 //!
 //! ```rust,ignore
 //! use myth::prelude::*;
-//!
+
 //! struct MyApp;
-//!
+
 //! impl AppHandler for MyApp {
-//!     fn init(engine: &mut Engine, window: &dyn Window) -> Self {
-//!         let scene = engine.scene_manager.create_active();
-//!         let geometry = Geometry::new_box(1.0, 1.0, 1.0);
-//!         let material = Material::new_unlit(Vec4::new(1.0, 0.5, 0.2, 1.0));
-//!         let mesh = Mesh::new(
-//!             engine.assets.geometries.add(geometry),
-//!             engine.assets.materials.add(material),
-//!         );
-//!         scene.add_mesh(mesh);
-//!         let camera = Camera::new_perspective(60.0, 16.0/9.0, 0.1);
-//!         let cam_node = scene.add_camera(camera);
-//!         scene.active_camera = Some(cam_node);
-//!         MyApp
-//!     }
+//!    fn init(engine: &mut Engine, _: &dyn Window) -> Self {
+//!        // 0. Create a Scene
+//!        let scene = engine.scene_manager.create_active();
 //!
-//!     fn update(&mut self, engine: &mut Engine, _: &dyn Window, frame: &FrameState) {
-//!         // Update logic here
-//!     }
+//!        // 1. Create a cube mesh with a checkerboard texture
+//!        let tex_handle = engine.assets.checkerboard(512, 64);
+//!        let mesh_handle = scene.spawn_box(
+//!            1.0, 1.0, 1.0,
+//!            PhongMaterial::new(Vec4::new(1.0, 0.76, 0.33, 1.0)).with_map(tex_handle),
+//!            &engine.assets,
+//!        );
+//!        // 2. Setup Camera
+//!        let cam_node_id = scene.add_camera(Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1));
+//!        scene.node(&cam_node_id).set_position(0.0, 0.0, 5.0).look_at(Vec3::ZERO);
+//!        scene.active_camera = Some(cam_node_id);
+//!        // 3. Add Light
+//!        scene.add_light(Light::new_directional(Vec3::ONE, 5.0));
+//!
+//!        // 4. Setup update callback to rotate the cube
+//!        scene.on_update(move |scene, _input, _dt| {
+//!            if let Some(node) = scene.get_node_mut(mesh_handle) {
+//!                let rot_y = Quat::from_rotation_y(0.02);
+//!                let rot_x = Quat::from_rotation_x(0.01);
+//!                node.transform.rotation = node.transform.rotation * rot_y * rot_x;
+//!            }
+//!        });
+//!        Self {}
+//!    }
 //! }
-//!
-//! fn main() -> myth::errors::Result<()> {
-//!     App::new().with_title("My 3D App").run::<MyApp>()
+
+//! fn main() -> myth::Result<()> {
+//!     App::new().with_title("Myth-Engine Demo").run::<MyApp>()
 //! }
 //! ```
 //!
@@ -42,7 +52,7 @@
 //! |---------|---------|-------------|
 //! | `winit` | **yes** | Window management via winit |
 //! | `gltf` | **yes** | glTF 2.0 model loading |
-//! | `http` | **yes** | HTTP asset loading (native only) |
+//! | `http` | **yes** | HTTP asset loading |
 //! | `gltf-meshopt` | no | Meshopt decompression for glTF |
 //! | `debug_view` | no | Render graph debug view targets |
 //! | `rdg_inspector` | no | Render graph inspector |
