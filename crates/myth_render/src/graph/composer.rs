@@ -159,22 +159,6 @@ impl GraphBuilderContext<'_, '_> {
 /// Holds all context references needed to render a single frame and provides
 /// a fluent API for injecting custom RDG passes via hooks.
 ///
-/// # Design Notes
-///
-/// - **Single unified graph**: All rendering (scene + post + custom) flows
-///   through the RDG. No legacy graph system remains.
-/// - **Pure dataflow chain**: Every `Feature::add_to_graph` returns a
-///   [`TextureNodeId`], enabling a strict functional pipeline where each
-///   pass's output feeds the next pass's input — no side-effect writes.
-/// - **Flattened macro-nodes**: Complex multi-step effects (e.g. Bloom)
-///   are decomposed into individual RDG passes, exposing fine-grained
-///   dependencies to the compiler for optimal barrier and memory aliasing.
-/// - **Hook-based extensibility**: External code (e.g. UI) injects passes
-///   via [`add_custom_pass`](Self::add_custom_pass) closures that receive
-///   the [`GraphBlackboard`] for type-safe resource wiring.
-/// - **Lifetime safety**: Lifetime `'a` locks the mutable borrow on `Renderer`.
-/// - **Deferred Surface acquisition**: The Surface is acquired only in
-///   `.render()` to minimise hold time.
 pub struct FrameComposer<'a> {
     ctx: ComposerContext<'a>,
     frame_config: FrameConfig,

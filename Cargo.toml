@@ -19,7 +19,7 @@ members = [
 # =============================================================================
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.1"
 rust-version = "1.92"
 edition = "2024"
 authors = ["Pan Xinmiao <pan_xinmiao@163.com>"]
@@ -35,13 +35,13 @@ categories = ["game-development", "graphics", "rendering::engine"]
 
 [workspace.dependencies]
 # Internal crates
-myth_core      = { path = "crates/myth_core", version = "0.1.0" }
-myth_resources = { path = "crates/myth_resources", version = "0.1.0" }
-myth_animation = { path = "crates/myth_animation", version = "0.1.0" }
-myth_scene     = { path = "crates/myth_scene", version = "0.1.0" }
-myth_assets    = { path = "crates/myth_assets", version = "0.1.0" }
-myth_render    = { path = "crates/myth_render", version = "0.1.0" }
-myth_app       = { path = "crates/myth_app", version = "0.1.0" }
+myth_core      = { path = "crates/myth_core", version = "0.1.1" }
+myth_resources = { path = "crates/myth_resources", version = "0.1.1" }
+myth_animation = { path = "crates/myth_animation", version = "0.1.1" }
+myth_scene     = { path = "crates/myth_scene", version = "0.1.1" }
+myth_assets    = { path = "crates/myth_assets", version = "0.1.1" }
+myth_render    = { path = "crates/myth_render", version = "0.1.1" }
+myth_app       = { path = "crates/myth_app", version = "0.1.1" }
 
 # Graphics and Math
 wgpu = { version = "29.0", features = ["wgsl"] }

@@ -74,7 +74,7 @@ Myth uses a strict SSA-based RenderGraph, so the engine can:
 
 All without manual barriers.
 
-Deep dive: [docs/RenderGraph.md](docs/RenderGraph.md)
+Deep dive: [docs/RenderGraph.md](https://github.com/panxinmiao/myth/blob/main/docs/RenderGraph.md)
 
 Here is an actual, auto-generated dump of Myth Engine's RenderGraph during a complex frame:
 
@@ -236,7 +236,7 @@ Add `myth-engine` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-myth-engine = "0.1.0"
+myth-engine = "0.1.1"
 
 # Or get the latest from GitHub
 # myth-engine = { git = "https://github.com/panxinmiao/myth", branch = "main" }

@@ -169,10 +169,6 @@ pub fn update_hierarchy_batched(
 /// * `camera_components` - Component mapping from nodes to cameras
 /// * `roots` - List of root node handles
 ///
-/// # Design Notes
-///
-/// This function only borrows the necessary data structures instead of the entire Scene,
-/// thus avoiding borrow conflicts caused by "god object" patterns.
 pub fn update_hierarchy(
     nodes: &mut SlotMap<NodeHandle, Node>,
     cameras: &mut SparseSecondaryMap<NodeHandle, Camera>,

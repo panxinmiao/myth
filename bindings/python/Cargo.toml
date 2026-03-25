@@ -2,7 +2,7 @@
 
 [package]
 name = "myth-py"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 
 [lib]
@@ -12,7 +12,6 @@ crate-type = ["cdylib"]
 [dependencies]
 pyo3 = { version = "0.28.1", features = ["extension-module", "abi3-py310", "generate-import-lib"] }
 # Standalone / CI: use the git dependency instead:
-# myth_engine = { git = "https://github.com/panxinmiao/myth.git", tag = "v0.1.0", package = "myth-engine" }
 myth_engine = { path = "../../", package = "myth-engine" }
 
 slotmap = "1"

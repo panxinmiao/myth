@@ -1,4 +1,4 @@
-//! # Myth - A High-Performance WebGPU Rendering Engine
+//! # Myth - A High-Performance, WGPU-Based Rendering Engine for Rust.
 //!
 //! Myth-Engine is a modern 3D rendering engine built with Rust and wgpu.
 //! It provides a flexible, high-performance foundation for real-time graphics applications.
