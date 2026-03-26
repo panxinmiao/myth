@@ -44,7 +44,7 @@ myth_render    = { path = "crates/myth_render", version = "0.1.1" }
 myth_app       = { path = "crates/myth_app", version = "0.1.1" }
 
 # Graphics and Math
-wgpu = { version = "29.0", features = ["wgsl"] }
+wgpu = { version = "29.0.1", features = ["wgsl"] }
 glam = { version = "0.32.1", features = ["bytemuck", "scalar-math"] }
 bumpalo = "3.20.2"
 bytemuck = { version = "1.25", features = ["derive", "min_const_generics"] }
@@ -113,10 +113,10 @@ rfd = "0.17.2"
 criterion = { version = "0.8.2", default-features = false, features = ["html_reports"] }
 wasm-bindgen-test = "0.3"
 
-# Egui (dev-dependencies, pinned rev)
-egui = { git = "https://github.com/emilk/egui.git", rev = "b57ae661b7f882834ff31d58fddae67598491000" }
-egui-wgpu = { git = "https://github.com/emilk/egui.git", rev = "b57ae661b7f882834ff31d58fddae67598491000" }
-egui-winit = { git = "https://github.com/emilk/egui.git", rev = "b57ae661b7f882834ff31d58fddae67598491000", default-features = false }
+# Egui (dev-dependencies)
+egui = "0.34.0"
+egui-wgpu = "0.34.0"
+egui-winit = { version = "0.34.0", default-features = false }
 
 # Shared lint configuration
 [workspace.lints.rust]

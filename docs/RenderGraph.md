@@ -480,6 +480,7 @@ Additionally, I encapsulated several commonly used micro-passes into reusable Re
 Previously, making features like MSAA, SSSS, and Transmission coexist was extremely difficult. Properly handling the conversions between MSAA buffers and single-sample buffers was practically a nightmare, and achieving optimal performance was unlikely. Frequent memory copies and state transitions made it very hard to manually manage the lifetimes of these resources.
 
 Now, however, the whole process has become remarkably simple and elegant.
+
 ---
 
 ## 7. Looking Forward
