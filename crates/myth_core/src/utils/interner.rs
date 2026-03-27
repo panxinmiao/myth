@@ -143,6 +143,7 @@ pub fn preload_common_macros() {
         "USE_SCREEN_SPACE_FEATURES",
         "USE_SSS",
         "USE_SSR",
+        "HAS_MRT_SSSS",
         // Pipeline-related
         "ALPHA_MODE",
         "OPAQUE",

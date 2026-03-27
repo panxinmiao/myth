@@ -116,9 +116,9 @@ criterion = { version = "0.8.2", default-features = false, features = ["html_rep
 wasm-bindgen-test = "0.3"
 
 # Egui (dev-dependencies)
-egui = "0.34.0"
-egui-wgpu = "0.34.0"
-egui-winit = { version = "0.34.0", default-features = false }
+egui = "0.34.1"
+egui-wgpu = "0.34.1"
+egui-winit = { version = "0.34.1", default-features = false }
 
 # Shared lint configuration
 [workspace.lints.rust]
@@ -190,6 +190,8 @@ serde_json = { workspace = true }
 rustc-hash = { workspace = true }
 slotmap = { workspace = true }
 uuid = { workspace = true }
+bytemuck = { workspace = true }
+parking_lot = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }

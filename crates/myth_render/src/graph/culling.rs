@@ -245,8 +245,8 @@ fn prepare_main_camera_commands(
                     options.add_define("IN_TRANSPARENT_PASS", "1");
                 }
 
-                let shader_hash = options.compute_hash();
-
+                // MRT determination: inject HAS_MRT_SSSS before shader hash
+                // so different MRT configurations produce distinct shader variants.
                 let is_specular_split = match wgpu_ctx.render_path {
                     RenderPath::HighFidelity => {
                         is_opaque_item
@@ -256,6 +256,12 @@ fn prepare_main_camera_commands(
                     }
                     RenderPath::BasicForward => false,
                 };
+
+                if is_specular_split {
+                    options.add_define("HAS_MRT_SSSS", "1");
+                }
+
+                let shader_hash = options.compute_hash();
 
                 if is_specular_split {
                     flags |= PipelineFlags::SPECULAR_SPLIT;

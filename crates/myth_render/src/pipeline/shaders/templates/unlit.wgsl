@@ -1,8 +1,7 @@
 {{ vertex_input_code }} 
 {{ binding_code }}      
 {$ include 'vertex_output_def' $}
-
-
+{$ include 'fragment_output_def' $}
 
 {$ include 'morph_pars' $}
 
@@ -51,7 +50,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 
 
 @fragment
-fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+fn fs_main(in: VertexOutput) -> FragmentOutput {
     var diffuse_color = u_material.color;
     {$ if HAS_MAP $}
     let tex_color = textureSample(t_map, s_map, in.uv);
@@ -60,5 +59,5 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     {$ include 'alpha_test' $}
 
-    return diffuse_color;
+    return pack_fragment_output(diffuse_color);
 }

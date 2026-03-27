@@ -1,6 +1,7 @@
 {{ vertex_input_code }} 
 {{ binding_code }}
 {$ include 'vertex_output_def' $}
+{$ include 'fragment_output_def' $}
 
 {$ include 'morph_pars' $}
 {$ include 'light_common_pars' $}
@@ -79,13 +80,6 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     return out;
 }
 
-
-struct FragmentOutput {
-    @location(0) color: vec4<f32>,
-    $$ if USE_SSS
-    @location(1) specular: vec4<f32>,
-    $$ endif
-};
 
 @fragment
 fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -359,30 +353,25 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         opacity *= material.transmission_alpha;
     $$ endif
 
-    // 5. 最终合成：根据是否启用屏幕空间特效，选择输出格式
+    // 5. 最终合成：根据是否启用 MRT 多渲染目标，选择输出格式
     var out: FragmentOutput;
 
     $$ if HDR
-    // 结果色彩钳制，防止 HDR 过曝值导致后续特效（如 bloom）失控
     out_diffuse = clamp(out_diffuse, vec3<f32>(0.0), vec3<f32>(65000.0));
     out_specular = clamp(out_specular, vec3<f32>(0.0), vec3<f32>(65000.0));
     $$ endif
 
-    $$ if USE_SCREEN_SPACE_FEATURES
-        out.specular = vec4<f32>(total_specular, material.roughness);
+    $$ if HAS_MRT_SSSS is defined
         if (u_material.sss_id != 0u) {
-            // SSSS 材质：分离漫反射与高光
             out.color = vec4<f32>(out_diffuse, opacity);
-            out.specular = vec4<f32>(out_specular, 1.0); 
+            out.specular = vec4<f32>(out_specular, 1.0);
         } else {
-            // 普通材质：保持合并，高光纯黑
             out.color = vec4<f32>(out_diffuse + out_specular, opacity);
             out.specular = vec4<f32>(0.0, 0.0, 0.0, 0.0);
         }
     $$ else
         var out_color = out_diffuse + out_specular;
         $$ if not HDR
-            // builtin tone mapping for simple SDR output
             {$ include 'pbr_tone_mapping' $}
         $$ endif
         out.color = vec4<f32>(out_color, opacity);

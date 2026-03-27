@@ -1,6 +1,7 @@
 {{ vertex_input_code }} 
 {{ binding_code }}
 {$ include 'vertex_output_def' $}
+{$ include 'fragment_output_def' $}
 
 {$ include 'morph_pars' $}
 {$ include 'light_common_pars' $}
@@ -64,7 +65,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 }
 
 @fragment
-fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @location(0) vec4<f32> {
+fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     var normal = normalize(varyings.normal);
     $$ if FLAT_SHADING
         let u = dpdx(varyings.world_position);
@@ -160,5 +161,5 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> @lo
     $$ endif
     out_color += emissive_color;
 
-    return vec4<f32>(out_color, diffuse_color.a);
+    return pack_fragment_output(vec4<f32>(out_color, diffuse_color.a));
 }
