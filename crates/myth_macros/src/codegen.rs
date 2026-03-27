@@ -136,8 +136,7 @@ fn gen_constructor(def: &MaterialDef) -> TokenStream {
     let uniforms_label = uniforms_type
         .segments
         .last()
-        .map(|s| s.ident.to_string())
-        .unwrap_or_else(|| "MaterialUniforms".to_string());
+        .map_or_else(|| "MaterialUniforms".to_string(), |s| s.ident.to_string());
 
     let internal_inits = def.internal_fields.iter().map(|f| {
         let fname = &f.name;
@@ -374,6 +373,15 @@ fn gen_texture_accessors(def: &MaterialDef) -> TokenStream {
 
 /// Generates `flush_texture_transforms` that syncs UV matrices to the uniform buffer.
 fn gen_flush_transforms(def: &MaterialDef) -> TokenStream {
+    if def.texture_fields.is_empty() {
+        return quote! {
+            /// Flushes texture transform matrices to the uniform buffer.
+            pub fn flush_texture_transforms(&self) -> bool {
+                false
+            }
+        };
+    }
+
     let transform_checks = def.texture_fields.iter().map(|f| {
         let name = &f.name;
         let transform_field = format_ident!("{}_transform", name);
@@ -499,48 +507,75 @@ fn gen_renderable_trait(def: &MaterialDef) -> TokenStream {
     let uniforms_type = &def.uniforms_type;
     let shader = &def.shader;
 
+    let has_textures = !def.texture_fields.is_empty();
+
     // --- shader_defines: texture-based macro generation ---
-    let shader_defines_textures = def.texture_fields.iter().map(|f| {
-        let fname = &f.name;
-        let upper = fname.to_string().to_uppercase();
-        let has_key = format!("HAS_{upper}");
-        let uv_key = format!("{upper}_UV");
-        quote! {
-            if tex_data.#fname.texture.is_some() {
-                defines.set(#has_key, "1");
-                if tex_data.#fname.channel > 0 {
-                    defines.set(#uv_key, &tex_data.#fname.channel.to_string());
+    let shader_defines_texture_code = if has_textures {
+        let defines = def.texture_fields.iter().map(|f| {
+            let fname = &f.name;
+            let upper = fname.to_string().to_uppercase();
+            let has_key = format!("HAS_{upper}");
+            let uv_key = format!("{upper}_UV");
+            quote! {
+                if tex_data.#fname.texture.is_some() {
+                    defines.set(#has_key, "1");
+                    if tex_data.#fname.channel > 0 {
+                        defines.set(#uv_key, &tex_data.#fname.channel.to_string());
+                    }
                 }
             }
+        });
+
+        quote! {
+            let tex_data = self.textures.read();
+            #(#defines)*
         }
-    });
+    } else {
+        quote! {}
+    };
 
     // --- visit_textures ---
-    let visit_textures = def.texture_fields.iter().map(|f| {
-        let fname = &f.name;
-        quote! {
-            if let Some(handle) = &tex_data.#fname.texture {
-                visitor(&#cr::texture::TextureSource::Asset(*handle));
+    let visit_textures_code = if has_textures {
+        let visits = def.texture_fields.iter().map(|f| {
+            let fname = &f.name;
+            quote! {
+                if let Some(handle) = &tex_data.#fname.texture {
+                    visitor(&#cr::texture::TextureSource::Asset(*handle));
+                }
             }
+        });
+        quote! {
+            let tex_data = self.textures.read();
+            #(#visits)*
         }
-    });
+    } else {
+        quote! {}
+    };
 
     // --- define_bindings: GPU resource declarations ---
-    let define_bindings_textures = def.texture_fields.iter().map(|f| {
-        let fname = &f.name;
-        let binding_name = fname.to_string();
-        quote! {
-            if let Some(handle) = &tex_data.#fname.texture {
-                builder.add_texture(
-                    #binding_name,
-                    Some(#cr::texture::TextureSource::Asset(*handle)),
-                    wgpu::TextureSampleType::Float { filterable: true },
-                    wgpu::TextureViewDimension::D2,
-                    wgpu::ShaderStages::FRAGMENT,
-                );
+    let define_bindings_texture_code = if has_textures {
+        let bindings = def.texture_fields.iter().map(|f| {
+            let fname = &f.name;
+            let binding_name = fname.to_string();
+            quote! {
+                if let Some(handle) = &tex_data.#fname.texture {
+                    builder.add_texture(
+                        #binding_name,
+                        Some(#cr::texture::TextureSource::Asset(*handle)),
+                        wgpu::TextureSampleType::Float { filterable: true },
+                        wgpu::TextureViewDimension::D2,
+                        wgpu::ShaderStages::FRAGMENT,
+                    );
+                }
             }
+        });
+        quote! {
+            let tex_data = self.textures.read();
+            #(#bindings)*
         }
-    });
+    } else {
+        quote! {}
+    };
 
     quote! {
         impl #cr::material::RenderableMaterialTrait for #name {
@@ -568,16 +603,14 @@ fn gen_renderable_trait(def: &MaterialDef) -> TokenStream {
 
             fn shader_defines(&self) -> #cr::shader_defines::ShaderDefines {
                 let mut defines = #cr::shader_defines::ShaderDefines::new();
-                let tex_data = self.textures.read();
-                #(#shader_defines_textures)*
+                #shader_defines_texture_code
                 self.settings.read().generate_shader_defines(&mut defines);
                 self.extra_defines(&mut defines);
                 defines
             }
 
             fn visit_textures(&self, visitor: &mut dyn FnMut(&#cr::texture::TextureSource)) {
-                let tex_data = self.textures.read();
-                #(#visit_textures)*
+                #visit_textures_code
             }
 
             fn define_bindings<'a>(
@@ -589,8 +622,7 @@ fn gen_renderable_trait(def: &MaterialDef) -> TokenStream {
                     &self.uniforms,
                     wgpu::ShaderStages::FRAGMENT | wgpu::ShaderStages::VERTEX,
                 );
-                let tex_data = self.textures.read();
-                #(#define_bindings_textures)*
+                #define_bindings_texture_code
             }
         }
     }

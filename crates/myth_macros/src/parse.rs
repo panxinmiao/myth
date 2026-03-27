@@ -4,8 +4,8 @@
 //! `uniform`, `texture`, or `internal`.
 
 use syn::{
-    parse::{Parse, ParseStream},
     Attribute, DeriveInput, Expr, Field, Fields, Ident, LitStr, Path, Token, Type, Visibility,
+    parse::{Parse, ParseStream},
 };
 
 // ============================================================================
@@ -55,12 +55,11 @@ impl Parse for MaterialAttrs {
         }
 
         Ok(Self {
-            shader: shader
-                .ok_or_else(|| input.error("missing required attribute `shader`"))?,
+            shader: shader.ok_or_else(|| input.error("missing required attribute `shader`"))?,
             uniforms_type: uniforms_type
                 .ok_or_else(|| input.error("missing required attribute `uniforms`"))?,
             crate_path: crate_path
-                .unwrap_or_else(|| syn::parse_str("crate").expect("valid path")),
+                .unwrap_or_else(|| syn::parse_str("myth_resources").expect("valid path")),
         })
     }
 }
@@ -204,7 +203,7 @@ impl MaterialDef {
 // ============================================================================
 // Field Classification
 // ============================================================================
-
+#[allow(clippy::large_enum_variant)]
 enum FieldKind {
     Uniform,
     Texture,

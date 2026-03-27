@@ -5,7 +5,7 @@ use crate::TextureHandle;
 use crate::material::{AlphaMode, Side};
 use crate::uniforms::PhongUniforms;
 
-#[myth_material(shader = "templates/phong", uniforms = PhongUniforms)]
+#[myth_material(shader = "templates/phong", crate_path = "crate", uniforms = PhongUniforms)]
 pub struct PhongMaterial {
     /// Diffuse color.
     #[uniform]

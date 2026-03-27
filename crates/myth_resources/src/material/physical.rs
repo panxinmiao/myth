@@ -3,11 +3,11 @@ use glam::{Vec2, Vec3, Vec4};
 use myth_macros::myth_material;
 use parking_lot::RwLock;
 
+use crate::ShaderDefines;
 use crate::TextureHandle;
 use crate::material::{AlphaMode, Side};
 use crate::screen_space::FeatureId;
 use crate::uniforms::PhysicalUniforms;
-use crate::ShaderDefines;
 
 bitflags! {
     /// Feature flags controlling which PBR extensions are active.
@@ -39,7 +39,7 @@ impl Default for PhysicalFeatures {
     }
 }
 
-#[myth_material(shader = "templates/physical", uniforms = PhysicalUniforms)]
+#[myth_material(shader = "templates/physical", crate_path = "crate", uniforms = PhysicalUniforms)]
 pub struct PhysicalMaterial {
     /// Base color.
     #[uniform]
