@@ -3,16 +3,16 @@ use myth_macros::myth_material;
 
 use crate::TextureHandle;
 use crate::material::{AlphaMode, Side};
-use crate::uniforms::UnlitUniforms;
+use crate::uniforms::Mat3Uniform;
 
-#[myth_material(shader = "templates/unlit", crate_path = "crate", uniforms = UnlitUniforms)]
+#[myth_material(shader = "templates/unlit", crate_path = "crate")]
 pub struct UnlitMaterial {
     /// Base color.
-    #[uniform]
+    #[uniform(default = "Vec4::ONE")]
     pub color: Vec4,
 
     /// Opacity value.
-    #[uniform]
+    #[uniform(default = "1.0")]
     pub opacity: f32,
 
     /// Alpha test threshold.

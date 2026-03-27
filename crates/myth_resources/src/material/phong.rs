@@ -3,24 +3,20 @@ use myth_macros::myth_material;
 
 use crate::TextureHandle;
 use crate::material::{AlphaMode, Side};
-use crate::uniforms::PhongUniforms;
+use crate::uniforms::Mat3Uniform;
 
-#[myth_material(shader = "templates/phong", crate_path = "crate", uniforms = PhongUniforms)]
+#[myth_material(shader = "templates/phong", crate_path = "crate")]
 pub struct PhongMaterial {
     /// Diffuse color.
-    #[uniform]
+    #[uniform(default = "Vec4::ONE")]
     pub color: Vec4,
 
-    /// Alpha test threshold.
-    #[uniform]
-    pub alpha_test: f32,
-
     /// Specular color.
-    #[uniform]
+    #[uniform(default = "Vec3::splat(0.06667)")]
     pub specular: Vec3,
 
     /// Opacity value.
-    #[uniform]
+    #[uniform(default = "1.0")]
     pub opacity: f32,
 
     /// Emissive color.
@@ -28,16 +24,20 @@ pub struct PhongMaterial {
     pub emissive: Vec3,
 
     /// Emissive intensity.
-    #[uniform]
+    #[uniform(default = "1.0")]
     pub emissive_intensity: f32,
 
     /// Normal map scale.
-    #[uniform]
+    #[uniform(default = "Vec2::ONE")]
     pub normal_scale: Vec2,
 
     /// Shininess factor.
-    #[uniform]
+    #[uniform(default = "30.0")]
     pub shininess: f32,
+
+    /// Alpha test threshold.
+    #[uniform]
+    pub alpha_test: f32,
 
     /// The color map.
     #[texture]

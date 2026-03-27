@@ -12,17 +12,15 @@ use syn::{
 // Struct-level Attributes
 // ============================================================================
 
-/// Configuration parsed from `#[myth_material(shader = "...", uniforms = ...)]`.
+/// Configuration parsed from `#[myth_material(shader = "...", ...)]`.
 pub struct MaterialAttrs {
     pub shader: String,
-    pub uniforms_type: Path,
     pub crate_path: Path,
 }
 
 impl Parse for MaterialAttrs {
     fn parse(input: ParseStream) -> syn::Result<Self> {
         let mut shader = None;
-        let mut uniforms_type = None;
         let mut crate_path = None;
 
         while !input.is_empty() {
@@ -33,9 +31,6 @@ impl Parse for MaterialAttrs {
                 "shader" => {
                     let lit: LitStr = input.parse()?;
                     shader = Some(lit.value());
-                }
-                "uniforms" => {
-                    uniforms_type = Some(input.parse()?);
                 }
                 "crate_path" => {
                     let lit: LitStr = input.parse()?;
@@ -56,8 +51,6 @@ impl Parse for MaterialAttrs {
 
         Ok(Self {
             shader: shader.ok_or_else(|| input.error("missing required attribute `shader`"))?,
-            uniforms_type: uniforms_type
-                .ok_or_else(|| input.error("missing required attribute `uniforms`"))?,
             crate_path: crate_path
                 .unwrap_or_else(|| syn::parse_str("myth_resources").expect("valid path")),
         })
@@ -73,7 +66,6 @@ pub struct MaterialDef {
     pub vis: Visibility,
     pub name: Ident,
     pub shader: String,
-    pub uniforms_type: Path,
     pub crate_path: Path,
     pub uniform_fields: Vec<UniformField>,
     pub texture_fields: Vec<TextureField>,
@@ -85,6 +77,10 @@ pub struct UniformField {
     pub name: Ident,
     pub ty: Type,
     pub docs: Vec<Attribute>,
+    pub default_expr: Option<Expr>,
+    /// When `true`, the field is included in the uniform struct but
+    /// no public getter/setter is generated.
+    pub hidden: bool,
 }
 
 /// A field marked with `#[texture]` — generates a texture slot in the texture set.
@@ -146,11 +142,16 @@ impl MaterialDef {
                 .collect();
 
             match kind {
-                FieldKind::Uniform => {
+                FieldKind::Uniform {
+                    default_expr,
+                    hidden,
+                } => {
                     uniform_fields.push(UniformField {
                         name: field_name,
                         ty: field.ty.clone(),
                         docs,
+                        default_expr,
+                        hidden,
                     });
                 }
                 FieldKind::Texture => {
@@ -179,7 +180,6 @@ impl MaterialDef {
             vis,
             name,
             shader: attrs.shader,
-            uniforms_type: attrs.uniforms_type,
             crate_path: attrs.crate_path,
             uniform_fields,
             texture_fields,
@@ -194,6 +194,13 @@ impl MaterialDef {
         quote::format_ident!("{}TextureSet", base)
     }
 
+    /// Returns the uniform struct name (e.g., `UnlitMaterial` → `UnlitUniforms`).
+    pub fn uniform_struct_name(&self) -> Ident {
+        let s = self.name.to_string();
+        let base = s.strip_suffix("Material").unwrap_or(&s);
+        quote::format_ident!("{}Uniforms", base)
+    }
+
     /// Returns whether any uniform field is named `alpha_test`.
     pub fn has_alpha_test(&self) -> bool {
         self.uniform_fields.iter().any(|f| f.name == "alpha_test")
@@ -205,7 +212,10 @@ impl MaterialDef {
 // ============================================================================
 #[allow(clippy::large_enum_variant)]
 enum FieldKind {
-    Uniform,
+    Uniform {
+        default_expr: Option<Expr>,
+        hidden: bool,
+    },
     Texture,
     Internal {
         default_expr: Option<Expr>,
@@ -220,10 +230,25 @@ fn classify_field(field: &Field) -> syn::Result<FieldKind> {
     let mut is_internal = false;
     let mut default_expr = None;
     let mut clone_expr = None;
+    let mut hidden = false;
 
     for attr in &field.attrs {
         if attr.path().is_ident("uniform") {
             is_uniform = true;
+            if let syn::Meta::List(_) = &attr.meta {
+                attr.parse_nested_meta(|meta| {
+                    if meta.path.is_ident("default") {
+                        let value = meta.value()?;
+                        let lit: LitStr = value.parse()?;
+                        default_expr = Some(syn::parse_str(&lit.value())?);
+                    } else if meta.path.is_ident("hidden") {
+                        hidden = true;
+                    } else {
+                        return Err(meta.error("unknown uniform attribute"));
+                    }
+                    Ok(())
+                })?;
+            }
         } else if attr.path().is_ident("texture") {
             is_texture = true;
         } else if attr.path().is_ident("internal") {
@@ -266,7 +291,10 @@ fn classify_field(field: &Field) -> syn::Result<FieldKind> {
     }
 
     if is_uniform {
-        Ok(FieldKind::Uniform)
+        Ok(FieldKind::Uniform {
+            default_expr,
+            hidden,
+        })
     } else if is_texture {
         Ok(FieldKind::Texture)
     } else {

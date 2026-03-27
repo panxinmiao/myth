@@ -3,9 +3,9 @@ mod physical;
 mod unlit;
 use parking_lot::RwLockWriteGuard;
 
-pub use phong::PhongMaterial;
-pub use physical::{PhysicalFeatures, PhysicalMaterial};
-pub use unlit::UnlitMaterial;
+pub use phong::{PhongMaterial, PhongUniforms};
+pub use physical::{PhysicalFeatures, PhysicalMaterial, PhysicalUniforms};
+pub use unlit::{UnlitMaterial, UnlitUniforms};
 
 use std::{
     any::Any,

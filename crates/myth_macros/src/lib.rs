@@ -6,6 +6,7 @@
 //! - Concurrent-safe GPU buffer management via [`CpuBuffer`] and [`RwLock`]
 //! - Automatic version tracking for pipeline cache invalidation
 //! - Generated getter/setter methods with fast-path optimizations
+//! - Auto-generated uniform struct with std140 padding
 //! - Full [`MaterialTrait`] and [`RenderableMaterialTrait`] implementations
 //!
 //! # Example
@@ -13,14 +14,14 @@
 //! ```rust,ignore
 //! use myth_macros::myth_material;
 //!
-//! #[myth_material(shader = "templates/unlit", uniforms = UnlitUniforms)]
+//! #[myth_material(shader = "templates/unlit")]
 //! pub struct UnlitMaterial {
 //!     /// Base color.
-//!     #[uniform]
+//!     #[uniform(default = "Vec4::ONE")]
 //!     pub color: Vec4,
 //!
 //!     /// Opacity value.
-//!     #[uniform]
+//!     #[uniform(default = "1.0")]
 //!     pub opacity: f32,
 //!
 //!     /// The color map.
@@ -41,14 +42,15 @@ mod parse;
 /// | Attribute | Required | Description |
 /// |-----------|----------|-------------|
 /// | `shader = "path"` | Yes | Shader template path |
-/// | `uniforms = Type` | Yes | Uniform buffer struct type |
-/// | `crate_path = "path"` | No | Path to `myth_resources` (default: `crate`) |
+/// | `crate_path = "path"` | No | Path to `myth_resources` (default: `myth_resources`) |
 ///
 /// # Field Attributes
 ///
 /// | Attribute | Description |
 /// |-----------|-------------|
 /// | `#[uniform]` | Exposes a uniform struct field as a get/set property |
+/// | `#[uniform(default = "expr")]` | Same, with a custom default value |
+/// | `#[uniform(hidden)]` | Includes in uniform struct without generating accessors |
 /// | `#[texture]` | Declares a texture slot with automatic GPU binding |
 /// | `#[internal(...)]` | Preserves a field in the generated struct |
 ///
@@ -61,14 +63,15 @@ mod parse;
 ///
 /// The macro replaces the annotated struct with:
 ///
-/// 1. **TextureSet struct** — `{Name}TextureSet` containing all texture slots
-/// 2. **Material struct** — Rewritten with `CpuBuffer`, `RwLock`, `AtomicU64` internals
-/// 3. **Constructor** — `from_uniforms(uniforms) -> Self`
-/// 4. **Settings API** — `set_alpha_mode`, `set_side`, `set_depth_test`, `set_depth_write`
-/// 5. **Uniform accessors** — Per-field `set_xxx` / `xxx` with double-check locking
-/// 6. **Texture accessors** — Per-slot `set_xxx`, `xxx`, `configure_xxx`
-/// 7. **Clone impl** — Deep clone with atomic version snapshot
-/// 8. **Trait impls** — `MaterialTrait` + `RenderableMaterialTrait`
+/// 1. **Uniform struct** — `{Name}Uniforms` with std140 padding, `Pod`/`Zeroable`/`GpuData`/`WgslStruct`
+/// 2. **TextureSet struct** — `{Name}TextureSet` containing all texture slots
+/// 3. **Material struct** — Rewritten with `CpuBuffer`, `RwLock`, `AtomicU64` internals
+/// 4. **Constructor** — `from_uniforms(uniforms) -> Self`
+/// 5. **Settings API** — `set_alpha_mode`, `set_side`, `set_depth_test`, `set_depth_write`
+/// 6. **Uniform accessors** — Per-field `set_xxx` / `xxx` with double-check locking
+/// 7. **Texture accessors** — Per-slot `set_xxx`, `xxx`, `configure_xxx`
+/// 8. **Clone impl** — Deep clone with atomic version snapshot
+/// 9. **Trait impls** — `MaterialTrait` + `RenderableMaterialTrait`
 #[proc_macro_attribute]
 pub fn myth_material(attr: TokenStream, item: TokenStream) -> TokenStream {
     let args = syn::parse_macro_input!(attr as parse::MaterialAttrs);

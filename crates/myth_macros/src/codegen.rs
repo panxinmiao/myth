@@ -5,7 +5,7 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::DeriveInput;
+use syn::{DeriveInput, Type};
 
 use crate::parse::{MaterialAttrs, MaterialDef};
 
@@ -13,6 +13,7 @@ use crate::parse::{MaterialAttrs, MaterialDef};
 pub fn generate(attrs: MaterialAttrs, input: DeriveInput) -> syn::Result<TokenStream> {
     let def = MaterialDef::from_input(attrs, input)?;
 
+    let uniform_struct = gen_uniform_struct(&def)?;
     let texture_set = gen_texture_set(&def);
     let material_struct = gen_material_struct(&def);
     let api_impl = gen_api_impl(&def);
@@ -21,12 +22,266 @@ pub fn generate(attrs: MaterialAttrs, input: DeriveInput) -> syn::Result<TokenSt
     let renderable_trait = gen_renderable_trait(&def);
 
     Ok(quote! {
+        #uniform_struct
         #texture_set
         #material_struct
         #api_impl
         #clone_impl
         #material_trait
         #renderable_trait
+    })
+}
+
+// ============================================================================
+// Std140 Layout Engine
+// ============================================================================
+
+/// Returns (size, alignment) in bytes for a known GPU type, or `None` if unknown.
+fn type_layout(ty: &Type) -> Option<(usize, usize)> {
+    let name = type_last_segment(ty)?;
+    match name.as_str() {
+        "f32" | "u32" | "i32" => Some((4, 4)),
+        "Vec2" => Some((8, 8)),
+        "Vec3" => Some((12, 16)),
+        "Vec4" | "UVec4" => Some((16, 16)),
+        "Mat3Uniform" | "Mat3Padded" => Some((48, 16)),
+        "Mat4" => Some((64, 16)),
+        _ => None,
+    }
+}
+
+/// Extracts the last path segment name from a type (e.g., `glam::Vec4` → `"Vec4"`).
+fn type_last_segment(ty: &Type) -> Option<String> {
+    if let Type::Path(tp) = ty {
+        tp.path.segments.last().map(|s| s.ident.to_string())
+    } else {
+        None
+    }
+}
+
+/// A field in the generated uniform struct (either user-defined or auto-padding).
+struct LayoutField {
+    name: proc_macro2::Ident,
+    ty: Type,
+    is_padding: bool,
+    default_expr: Option<syn::Expr>,
+}
+
+/// Computes the std140 layout, inserting padding fields as needed.
+fn compute_layout(def: &MaterialDef) -> syn::Result<Vec<LayoutField>> {
+    let mut fields = Vec::new();
+    let mut offset: usize = 0;
+    let mut pad_idx: usize = 0;
+
+    // Helper closure to insert a padding field
+    let push_padding = |fields: &mut Vec<LayoutField>, pad_bytes: usize, pad_idx: &mut usize| {
+        let count = pad_bytes / 4;
+        let name = format_ident!("__pad{}", *pad_idx);
+        *pad_idx += 1;
+        let ty: Type = if count == 1 {
+            syn::parse_str("f32").unwrap()
+        } else {
+            syn::parse_str(&format!("[f32; {count}]")).unwrap()
+        };
+        fields.push(LayoutField {
+            name,
+            ty,
+            is_padding: true,
+            default_expr: None,
+        });
+    };
+
+    // Process user-declared uniform fields
+    for uf in &def.uniform_fields {
+        let (size, align) = type_layout(&uf.ty).ok_or_else(|| {
+            syn::Error::new(
+                uf.name.span(),
+                format!(
+                    "unsupported uniform type `{}` — supported: f32, u32, i32, Vec2, Vec3, Vec4, UVec4, Mat3Uniform, Mat4",
+                    type_last_segment(&uf.ty).unwrap_or_default()
+                ),
+            )
+        })?;
+
+        let padding = (align - (offset % align)) % align;
+        if padding > 0 {
+            push_padding(&mut fields, padding, &mut pad_idx);
+            offset += padding;
+        }
+
+        fields.push(LayoutField {
+            name: uf.name.clone(),
+            ty: uf.ty.clone(),
+            is_padding: false,
+            default_expr: uf.default_expr.clone(),
+        });
+        offset += size;
+    }
+
+    // Append texture transform fields (Mat3Uniform for each texture)
+    let mat3_uniform_ty: Type = syn::parse_str("Mat3Uniform").unwrap();
+    let (mat3_size, mat3_align) = (48, 16);
+
+    for tf in &def.texture_fields {
+        let transform_name = format_ident!("{}_transform", tf.name);
+
+        let padding = (mat3_align - (offset % mat3_align)) % mat3_align;
+        if padding > 0 {
+            push_padding(&mut fields, padding, &mut pad_idx);
+            offset += padding;
+        }
+
+        fields.push(LayoutField {
+            name: transform_name,
+            ty: mat3_uniform_ty.clone(),
+            is_padding: false,
+            default_expr: Some(syn::parse_str("Mat3Uniform::IDENTITY").unwrap()),
+        });
+        offset += mat3_size;
+    }
+
+    // Final alignment to 16 bytes
+    let final_padding = (16 - (offset % 16)) % 16;
+    if final_padding > 0 {
+        push_padding(&mut fields, final_padding, &mut pad_idx);
+    }
+
+    Ok(fields)
+}
+
+// ============================================================================
+// Uniform Struct Generation
+// ============================================================================
+
+/// Generates the uniform struct with std140 padding, plus Default, WgslType,
+/// WgslStruct, and GpuData trait implementations.
+fn gen_uniform_struct(def: &MaterialDef) -> syn::Result<TokenStream> {
+    let cr = &def.crate_path;
+    let uniforms_name = def.uniform_struct_name();
+    let uniforms_name_str = uniforms_name.to_string();
+    let layout = compute_layout(def)?;
+
+    // --- Struct fields ---
+    let struct_fields = layout.iter().map(|f| {
+        let name = &f.name;
+        let ty = &f.ty;
+        if f.is_padding {
+            quote! {
+                #[doc(hidden)]
+                pub #name: #ty,
+            }
+        } else {
+            quote! { pub #name: #ty, }
+        }
+    });
+
+    // --- Default impl ---
+    let default_fields = layout.iter().map(|f| {
+        let name = &f.name;
+        let ty = &f.ty;
+        if let Some(expr) = &f.default_expr {
+            quote! { #name: #expr, }
+        } else {
+            quote! { #name: <#ty as Default>::default(), }
+        }
+    });
+
+    // --- WgslType: collect_wgsl_defs entries (skip padding) ---
+    let wgsl_collect_fields = layout.iter().filter(|f| !f.is_padding).map(|f| {
+        let ty = &f.ty;
+        quote! {
+            <#ty as #cr::uniforms::WgslType>::collect_wgsl_defs(defs, inserted);
+        }
+    });
+
+    // --- WgslType: struct body lines (skip padding) ---
+    let wgsl_body_fields = layout.iter().filter(|f| !f.is_padding).map(|f| {
+        let name_str = f.name.to_string();
+        let ty = &f.ty;
+        quote! {
+            let _ = std::fmt::Write::write_fmt(
+                &mut code,
+                format_args!("    {}: {},\n", #name_str, <#ty as #cr::uniforms::WgslType>::wgsl_type_name()),
+            );
+        }
+    });
+
+    // --- WgslStruct: same collect + body but with struct_name parameter ---
+    let wgsl_struct_collect = layout.iter().filter(|f| !f.is_padding).map(|f| {
+        let ty = &f.ty;
+        quote! {
+            <#ty as #cr::uniforms::WgslType>::collect_wgsl_defs(&mut defs, &mut inserted);
+        }
+    });
+    let wgsl_struct_body = layout.iter().filter(|f| !f.is_padding).map(|f| {
+        let name_str = f.name.to_string();
+        let ty = &f.ty;
+        quote! {
+            let _ = std::fmt::Write::write_fmt(
+                &mut code,
+                format_args!("    {}: {},\n", #name_str, <#ty as #cr::uniforms::WgslType>::wgsl_type_name()),
+            );
+        }
+    });
+
+    Ok(quote! {
+        #[repr(C)]
+        #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+        pub struct #uniforms_name {
+            #(#struct_fields)*
+        }
+
+        impl Default for #uniforms_name {
+            fn default() -> Self {
+                Self {
+                    #(#default_fields)*
+                }
+            }
+        }
+
+        impl #cr::uniforms::WgslType for #uniforms_name {
+            fn wgsl_type_name() -> std::borrow::Cow<'static, str> {
+                #uniforms_name_str.into()
+            }
+
+            fn collect_wgsl_defs(defs: &mut Vec<String>, inserted: &mut std::collections::HashSet<String>) {
+                #(#wgsl_collect_fields)*
+
+                let my_name = #uniforms_name_str;
+                if !inserted.contains(my_name) {
+                    let mut code = format!("struct {} {{\n", my_name);
+                    #(#wgsl_body_fields)*
+                    code.push_str("};\n");
+                    defs.push(code);
+                    inserted.insert(my_name.to_string());
+                }
+            }
+        }
+
+        impl #cr::uniforms::WgslStruct for #uniforms_name {
+            fn wgsl_struct_def(struct_name: &str) -> String {
+                let mut defs = Vec::new();
+                let mut inserted = std::collections::HashSet::new();
+
+                #(#wgsl_struct_collect)*
+
+                let mut code = format!("struct {} {{\n", struct_name);
+                #(#wgsl_struct_body)*
+                code.push_str("};\n");
+                defs.push(code);
+                defs.join("\n")
+            }
+        }
+
+        impl #cr::buffer::GpuData for #uniforms_name {
+            fn as_bytes(&self) -> &[u8] {
+                bytemuck::bytes_of(self)
+            }
+
+            fn byte_size(&self) -> usize {
+                std::mem::size_of::<Self>()
+            }
+        }
     })
 }
 
@@ -65,7 +320,7 @@ fn gen_material_struct(def: &MaterialDef) -> TokenStream {
     let cr = &def.crate_path;
     let vis = &def.vis;
     let name = &def.name;
-    let uniforms_type = &def.uniforms_type;
+    let uniforms_type = def.uniform_struct_name();
     let texture_set_name = def.texture_set_name();
 
     let internal_fields = def.internal_fields.iter().map(|f| {
@@ -130,13 +385,10 @@ fn gen_api_impl(def: &MaterialDef) -> TokenStream {
 /// Generates `from_uniforms(uniforms) -> Self`.
 fn gen_constructor(def: &MaterialDef) -> TokenStream {
     let cr = &def.crate_path;
-    let uniforms_type = &def.uniforms_type;
+    let uniforms_type = def.uniform_struct_name();
     let texture_set_name = def.texture_set_name();
 
-    let uniforms_label = uniforms_type
-        .segments
-        .last()
-        .map_or_else(|| "MaterialUniforms".to_string(), |s| s.ident.to_string());
+    let uniforms_label = uniforms_type.to_string();
 
     let internal_inits = def.internal_fields.iter().map(|f| {
         let fname = &f.name;
@@ -258,9 +510,9 @@ fn gen_settings_api(def: &MaterialDef) -> TokenStream {
 /// Generates per-field getters and setters with double-check locking.
 fn gen_uniform_accessors(def: &MaterialDef) -> TokenStream {
     let cr = &def.crate_path;
-    let uniforms_type = &def.uniforms_type;
+    let uniforms_type = def.uniform_struct_name();
 
-    let accessors = def.uniform_fields.iter().map(|f| {
+    let accessors = def.uniform_fields.iter().filter(|f| !f.hidden).map(|f| {
         let name = &f.name;
         let ty = &f.ty;
         let setter_name = format_ident!("set_{}", name);
@@ -417,7 +669,7 @@ fn gen_flush_transforms(def: &MaterialDef) -> TokenStream {
 
 /// Generates `configure` and `notify_pipeline_dirty` methods.
 fn gen_utility_methods(def: &MaterialDef) -> TokenStream {
-    let uniforms_type = &def.uniforms_type;
+    let uniforms_type = def.uniform_struct_name();
 
     quote! {
         /// Provides access to uniform data through a closure (under write lock).
@@ -504,7 +756,7 @@ fn gen_material_trait(def: &MaterialDef) -> TokenStream {
 fn gen_renderable_trait(def: &MaterialDef) -> TokenStream {
     let cr = &def.crate_path;
     let name = &def.name;
-    let uniforms_type = &def.uniforms_type;
+    let uniforms_type = def.uniform_struct_name();
     let shader = &def.shader;
 
     let has_textures = !def.texture_fields.is_empty();

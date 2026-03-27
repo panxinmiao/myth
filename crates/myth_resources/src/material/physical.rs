@@ -7,7 +7,7 @@ use crate::ShaderDefines;
 use crate::TextureHandle;
 use crate::material::{AlphaMode, Side};
 use crate::screen_space::FeatureId;
-use crate::uniforms::PhysicalUniforms;
+use crate::uniforms::Mat3Uniform;
 
 bitflags! {
     /// Feature flags controlling which PBR extensions are active.
@@ -39,18 +39,22 @@ impl Default for PhysicalFeatures {
     }
 }
 
-#[myth_material(shader = "templates/physical", crate_path = "crate", uniforms = PhysicalUniforms)]
+#[myth_material(shader = "templates/physical", crate_path = "crate")]
 pub struct PhysicalMaterial {
     /// Base color.
-    #[uniform]
+    #[uniform(default = "Vec4::ONE")]
     pub color: Vec4,
 
-    /// Alpha test threshold.
+    /// Emissive color.
     #[uniform]
-    pub alpha_test: f32,
+    pub emissive: Vec3,
+
+    /// Emissive intensity.
+    #[uniform(default = "1.0")]
+    pub emissive_intensity: f32,
 
     /// Roughness factor.
-    #[uniform]
+    #[uniform(default = "1.0")]
     pub roughness: f32,
 
     /// Metalness factor.
@@ -58,35 +62,31 @@ pub struct PhysicalMaterial {
     pub metalness: f32,
 
     /// Opacity value.
-    #[uniform]
+    #[uniform(default = "1.0")]
     pub opacity: f32,
 
-    /// Emissive color.
+    /// Alpha test threshold.
     #[uniform]
-    pub emissive: Vec3,
-
-    /// Emissive intensity.
-    #[uniform]
-    pub emissive_intensity: f32,
+    pub alpha_test: f32,
 
     /// Normal map scale.
-    #[uniform]
+    #[uniform(default = "Vec2::ONE")]
     pub normal_scale: Vec2,
 
     /// AO map intensity.
-    #[uniform]
+    #[uniform(default = "1.0")]
     pub ao_map_intensity: f32,
 
     /// Index of Refraction.
-    #[uniform]
+    #[uniform(default = "1.5")]
     pub ior: f32,
 
     /// Specular color.
-    #[uniform]
+    #[uniform(default = "Vec3::ONE")]
     pub specular_color: Vec3,
 
     /// Specular intensity.
-    #[uniform]
+    #[uniform(default = "1.0")]
     pub specular_intensity: f32,
 
     /// Clearcoat factor.
@@ -97,12 +97,16 @@ pub struct PhysicalMaterial {
     #[uniform]
     pub clearcoat_roughness: f32,
 
+    /// Clearcoat normal map scale.
+    #[uniform(hidden, default = "Vec2::ONE")]
+    pub clearcoat_normal_scale: Vec2,
+
     /// The sheen tint. Default is (0, 0, 0), black.
     #[uniform]
     pub sheen_color: Vec3,
 
     /// The sheen roughness. Default is 1.0.
-    #[uniform]
+    #[uniform(default = "1.0")]
     pub sheen_roughness: f32,
 
     /// The intensity of the iridescence layer, simulating RGB color shift based on the angle between the surface and the viewer.
@@ -110,16 +114,20 @@ pub struct PhysicalMaterial {
     pub iridescence: f32,
 
     /// The strength of the iridescence RGB color shift effect, represented by an index-of-refraction. Default is 1.3.
-    #[uniform]
+    #[uniform(default = "1.3")]
     pub iridescence_ior: f32,
 
     /// The minimum thickness of the thin-film layer given in nanometers. Default is 100 nm.
-    #[uniform]
+    #[uniform(default = "100.0")]
     pub iridescence_thickness_min: f32,
 
     /// The maximum thickness of the thin-film layer given in nanometers. Default is 400 nm.
-    #[uniform]
+    #[uniform(default = "400.0")]
     pub iridescence_thickness_max: f32,
+
+    /// Anisotropy direction vector (computed from angle and intensity).
+    #[uniform(hidden)]
+    pub anisotropy_vector: Vec2,
 
     /// The transmission factor controlling the amount of light that passes through the surface.
     #[uniform]
@@ -130,16 +138,24 @@ pub struct PhysicalMaterial {
     pub thickness: f32,
 
     /// The color that light is attenuated towards as it passes through the material.
-    #[uniform]
+    #[uniform(default = "Vec3::ONE")]
     pub attenuation_color: Vec3,
 
     /// The distance that light travels through the material before it is absorbed.
-    #[uniform]
+    #[uniform(default = "-1.0f32")]
     pub attenuation_distance: f32,
 
     /// The amount of chromatic dispersion in the transmitted light.
     #[uniform]
     pub dispersion: f32,
+
+    /// Subsurface scattering feature ID.
+    #[uniform(hidden)]
+    pub sss_id: u32,
+
+    /// Screen-space reflections feature ID.
+    #[uniform(hidden)]
+    pub ssr_id: u32,
 
     /// The color map.
     #[texture]
@@ -157,13 +173,13 @@ pub struct PhysicalMaterial {
     #[texture]
     pub metalness_map: TextureSlot,
 
-    /// The AO map.
-    #[texture]
-    pub ao_map: TextureSlot,
-
     /// The emissive map.
     #[texture]
     pub emissive_map: TextureSlot,
+
+    /// The AO map.
+    #[texture]
+    pub ao_map: TextureSlot,
 
     /// The specular map.
     #[texture]
