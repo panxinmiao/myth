@@ -2022,6 +2022,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "myth_macros"
+version = "0.1.1"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
 name = "myth_render"
 version = "0.1.1"
 dependencies = [
@@ -2060,6 +2069,7 @@ dependencies = [
  "half",
  "log",
  "myth_core",
+ "myth_macros",
  "parking_lot",
  "paste",
  "rand",

@@ -13,6 +13,7 @@ homepage.workspace = true
 
 [dependencies]
 myth_core = { workspace = true }
+myth_macros = { workspace = true }
 
 wgpu = { workspace = true }
 glam = { workspace = true }

@@ -6,6 +6,7 @@
 resolver = "2"
 members = [
     "crates/myth_core",
+    "crates/myth_macros",
     "crates/myth_resources",
     "crates/myth_animation",
     "crates/myth_scene",
@@ -36,6 +37,7 @@ categories = ["game-development", "graphics", "rendering::engine"]
 [workspace.dependencies]
 # Internal crates
 myth_core      = { path = "crates/myth_core", version = "0.1.1" }
+myth_macros    = { path = "crates/myth_macros", version = "0.1.1" }
 myth_resources = { path = "crates/myth_resources", version = "0.1.1" }
 myth_animation = { path = "crates/myth_animation", version = "0.1.1" }
 myth_scene     = { path = "crates/myth_scene", version = "0.1.1" }

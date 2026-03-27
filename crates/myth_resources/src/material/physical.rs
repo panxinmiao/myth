@@ -1,17 +1,19 @@
-use std::sync::atomic::AtomicU64;
-
 use bitflags::bitflags;
 use glam::{Vec2, Vec3, Vec4};
+use myth_macros::myth_material;
 use parking_lot::RwLock;
 
 use crate::TextureHandle;
-use crate::buffer::CpuBuffer;
-use crate::material::{AlphaMode, MaterialSettings, Side, TextureSlot};
+use crate::material::{AlphaMode, Side};
 use crate::screen_space::FeatureId;
 use crate::uniforms::PhysicalUniforms;
-use crate::{ShaderDefines, impl_material_api, impl_material_trait};
+use crate::ShaderDefines;
 
 bitflags! {
+    /// Feature flags controlling which PBR extensions are active.
+    ///
+    /// Each enabled feature adds shader defines and may require
+    /// additional uniform parameters.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub struct PhysicalFeatures: u32 {
         const IBL = 1 << 0;
@@ -27,7 +29,6 @@ bitflags! {
         const SSS = 1 << 9;
         const SSR = 1 << 10;
 
-        //
         const STANDARD_PBR = Self::IBL.bits() | Self::SPECULAR.bits() | Self::IOR.bits();
     }
 }
@@ -38,67 +39,199 @@ impl Default for PhysicalFeatures {
     }
 }
 
-#[derive(Clone, Default, Debug)]
-pub struct PhysicalTextureSet {
-    pub map: TextureSlot,
-    pub normal_map: TextureSlot,
-    pub roughness_map: TextureSlot,
-    pub metalness_map: TextureSlot,
-    pub ao_map: TextureSlot,
-    pub emissive_map: TextureSlot,
-    pub specular_map: TextureSlot,
-    pub specular_intensity_map: TextureSlot,
-    pub clearcoat_map: TextureSlot,
-    pub clearcoat_roughness_map: TextureSlot,
-    pub clearcoat_normal_map: TextureSlot,
-    pub sheen_color_map: TextureSlot,
-    pub sheen_roughness_map: TextureSlot,
-    pub iridescence_map: TextureSlot,
-    pub iridescence_thickness_map: TextureSlot,
-    pub anisotropy_map: TextureSlot,
-    pub transmission_map: TextureSlot,
-    pub thickness_map: TextureSlot,
-}
-
-#[derive(Debug)]
+#[myth_material(shader = "templates/physical", uniforms = PhysicalUniforms)]
 pub struct PhysicalMaterial {
-    #[doc(hidden)]
-    pub uniforms: CpuBuffer<PhysicalUniforms>,
-    #[doc(hidden)]
-    pub settings: RwLock<MaterialSettings>,
-    #[doc(hidden)]
-    pub textures: RwLock<PhysicalTextureSet>,
+    /// Base color.
+    #[uniform]
+    pub color: Vec4,
 
+    /// Alpha test threshold.
+    #[uniform]
+    pub alpha_test: f32,
+
+    /// Roughness factor.
+    #[uniform]
+    pub roughness: f32,
+
+    /// Metalness factor.
+    #[uniform]
+    pub metalness: f32,
+
+    /// Opacity value.
+    #[uniform]
+    pub opacity: f32,
+
+    /// Emissive color.
+    #[uniform]
+    pub emissive: Vec3,
+
+    /// Emissive intensity.
+    #[uniform]
+    pub emissive_intensity: f32,
+
+    /// Normal map scale.
+    #[uniform]
+    pub normal_scale: Vec2,
+
+    /// AO map intensity.
+    #[uniform]
+    pub ao_map_intensity: f32,
+
+    /// Index of Refraction.
+    #[uniform]
+    pub ior: f32,
+
+    /// Specular color.
+    #[uniform]
+    pub specular_color: Vec3,
+
+    /// Specular intensity.
+    #[uniform]
+    pub specular_intensity: f32,
+
+    /// Clearcoat factor.
+    #[uniform]
+    pub clearcoat: f32,
+
+    /// Clearcoat roughness factor.
+    #[uniform]
+    pub clearcoat_roughness: f32,
+
+    /// The sheen tint. Default is (0, 0, 0), black.
+    #[uniform]
+    pub sheen_color: Vec3,
+
+    /// The sheen roughness. Default is 1.0.
+    #[uniform]
+    pub sheen_roughness: f32,
+
+    /// The intensity of the iridescence layer, simulating RGB color shift based on the angle between the surface and the viewer.
+    #[uniform]
+    pub iridescence: f32,
+
+    /// The strength of the iridescence RGB color shift effect, represented by an index-of-refraction. Default is 1.3.
+    #[uniform]
+    pub iridescence_ior: f32,
+
+    /// The minimum thickness of the thin-film layer given in nanometers. Default is 100 nm.
+    #[uniform]
+    pub iridescence_thickness_min: f32,
+
+    /// The maximum thickness of the thin-film layer given in nanometers. Default is 400 nm.
+    #[uniform]
+    pub iridescence_thickness_max: f32,
+
+    /// The transmission factor controlling the amount of light that passes through the surface.
+    #[uniform]
+    pub transmission: f32,
+
+    /// The thickness of the object used for subsurface absorption.
+    #[uniform]
+    pub thickness: f32,
+
+    /// The color that light is attenuated towards as it passes through the material.
+    #[uniform]
+    pub attenuation_color: Vec3,
+
+    /// The distance that light travels through the material before it is absorbed.
+    #[uniform]
+    pub attenuation_distance: f32,
+
+    /// The amount of chromatic dispersion in the transmitted light.
+    #[uniform]
+    pub dispersion: f32,
+
+    /// The color map.
+    #[texture]
+    pub map: TextureSlot,
+
+    /// The normal map.
+    #[texture]
+    pub normal_map: TextureSlot,
+
+    /// The roughness map.
+    #[texture]
+    pub roughness_map: TextureSlot,
+
+    /// The metalness map.
+    #[texture]
+    pub metalness_map: TextureSlot,
+
+    /// The AO map.
+    #[texture]
+    pub ao_map: TextureSlot,
+
+    /// The emissive map.
+    #[texture]
+    pub emissive_map: TextureSlot,
+
+    /// The specular map.
+    #[texture]
+    pub specular_map: TextureSlot,
+
+    /// The specular intensity map.
+    #[texture]
+    pub specular_intensity_map: TextureSlot,
+
+    /// The clearcoat map.
+    #[texture]
+    pub clearcoat_map: TextureSlot,
+
+    /// The clearcoat roughness map.
+    #[texture]
+    pub clearcoat_roughness_map: TextureSlot,
+
+    /// The clearcoat normal map.
+    #[texture]
+    pub clearcoat_normal_map: TextureSlot,
+
+    /// The sheen color map.
+    #[texture]
+    pub sheen_color_map: TextureSlot,
+
+    /// The sheen roughness map.
+    #[texture]
+    pub sheen_roughness_map: TextureSlot,
+
+    /// The iridescence map.
+    #[texture]
+    pub iridescence_map: TextureSlot,
+
+    /// The iridescence thickness map.
+    #[texture]
+    pub iridescence_thickness_map: TextureSlot,
+
+    /// The anisotropy map.
+    #[texture]
+    pub anisotropy_map: TextureSlot,
+
+    /// The transmission map.
+    #[texture]
+    pub transmission_map: TextureSlot,
+
+    /// The thickness map.
+    #[texture]
+    pub thickness_map: TextureSlot,
+
+    /// Material feature flags.
+    #[internal(
+        default = "parking_lot::RwLock::new(PhysicalFeatures::default())",
+        clone_with = "|s: &Self| parking_lot::RwLock::new(*s.features.read())"
+    )]
     pub(crate) features: RwLock<PhysicalFeatures>,
-
-    pub(crate) version: AtomicU64,
-    pub auto_sync_texture_to_uniforms: bool,
 }
 
 impl PhysicalMaterial {
+    /// Creates a new PBR material with the given base color.
     #[must_use]
     pub fn new(color: Vec4) -> Self {
-        let uniform_data = PhysicalUniforms {
+        Self::from_uniforms(PhysicalUniforms {
             color,
             ..Default::default()
-        };
-
-        Self {
-            uniforms: CpuBuffer::new(
-                uniform_data,
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("PhysicalUniforms"),
-            ),
-            settings: RwLock::new(MaterialSettings::default()),
-            textures: RwLock::new(PhysicalTextureSet::default()),
-            features: RwLock::new(PhysicalFeatures::default()),
-
-            version: AtomicU64::new(0),
-            auto_sync_texture_to_uniforms: false,
-        }
+        })
     }
 
-    // -- Core builder methods (chainable at construction time) --
+    // -- Core builder methods --
 
     /// Sets the base color (builder).
     #[must_use]
@@ -209,7 +342,7 @@ impl PhysicalMaterial {
         self
     }
 
-    // -- Advanced feature builders (existing) --
+    // -- Feature-based shader defines --
 
     pub(crate) fn extra_defines(&self, defines: &mut ShaderDefines) {
         let features = *self.features.read();
@@ -243,6 +376,8 @@ impl PhysicalMaterial {
         }
     }
 
+    // -- Feature toggle --
+
     fn toggle_feature(&self, feature: PhysicalFeatures, enabled: bool) {
         let mut guard = self.features.write();
         let old = *guard;
@@ -258,14 +393,19 @@ impl PhysicalMaterial {
         }
     }
 
+    /// Disables the given PBR feature.
     pub fn disable_feature(&self, feature: PhysicalFeatures) {
         self.toggle_feature(feature, false);
     }
 
+    /// Enables the given PBR feature.
     pub fn enable_feature(&self, feature: PhysicalFeatures) {
         self.toggle_feature(feature, true);
     }
 
+    // -- Advanced feature builders --
+
+    /// Enables the clearcoat layer (builder).
     #[must_use]
     pub fn with_clearcoat(self, factor: f32, roughness: f32) -> Self {
         {
@@ -273,11 +413,11 @@ impl PhysicalMaterial {
             uniforms.clearcoat = factor;
             uniforms.clearcoat_roughness = roughness;
         }
-
         self.toggle_feature(PhysicalFeatures::CLEARCOAT, true);
         self
     }
 
+    /// Enables the sheen layer (builder).
     #[must_use]
     pub fn with_sheen(self, color: Vec3, roughness: f32) -> Self {
         {
@@ -289,6 +429,7 @@ impl PhysicalMaterial {
         self
     }
 
+    /// Enables iridescence (builder).
     #[must_use]
     pub fn with_iridescence(
         self,
@@ -308,6 +449,7 @@ impl PhysicalMaterial {
         self
     }
 
+    /// Enables anisotropy (builder).
     #[must_use]
     pub fn with_anisotropy(self, anisotropy: f32, rotation: f32) -> Self {
         {
@@ -319,6 +461,7 @@ impl PhysicalMaterial {
         self
     }
 
+    /// Enables light transmission (builder).
     #[must_use]
     pub fn with_transmission(
         self,
@@ -338,6 +481,7 @@ impl PhysicalMaterial {
         self
     }
 
+    /// Enables chromatic dispersion (builder).
     #[must_use]
     pub fn with_dispersion(self, dispersion: f32) -> Self {
         {
@@ -348,6 +492,9 @@ impl PhysicalMaterial {
         self
     }
 
+    // -- Screen-space effects --
+
+    /// Sets the subsurface scattering feature ID.
     pub fn set_sss_id(&self, id: Option<FeatureId>) {
         let mut u = self.uniforms.write();
         u.sss_id = id.map_or(0, super::super::screen_space::FeatureId::to_u32);
@@ -356,11 +503,13 @@ impl PhysicalMaterial {
         self.toggle_feature(PhysicalFeatures::SSS, id.is_some());
     }
 
+    /// Returns the subsurface scattering feature ID.
     pub fn sss_id(&self) -> Option<FeatureId> {
         let u = self.uniforms.read();
         FeatureId::from_u32(u.sss_id)
     }
 
+    /// Sets the screen-space reflections feature ID.
     pub fn set_ssr_id(&self, id: Option<FeatureId>) {
         let mut u = self.uniforms.write();
         u.ssr_id = id.map_or(0, super::super::screen_space::FeatureId::to_u32);
@@ -369,109 +518,26 @@ impl PhysicalMaterial {
         self.toggle_feature(PhysicalFeatures::SSR, id.is_some());
     }
 
+    /// Returns the screen-space reflections feature ID.
     pub fn ssr_id(&self) -> Option<FeatureId> {
         let u = self.uniforms.read();
         FeatureId::from_u32(u.ssr_id)
     }
 
+    /// Enables subsurface scattering (builder).
     #[must_use]
     pub fn with_sss_id(self, id: FeatureId) -> Self {
         self.set_sss_id(Some(id));
         self
     }
 
+    /// Enables screen-space reflections (builder).
     #[must_use]
     pub fn with_ssr_id(self, id: FeatureId) -> Self {
         self.set_ssr_id(Some(id));
         self
     }
 }
-
-impl_material_api!(
-    PhysicalMaterial,
-    PhysicalUniforms,
-    uniforms: [
-        (color,               Vec4, "Base color."),
-        (alpha_test,          f32,  "Alpha test threshold."),
-        (roughness,           f32,  "Roughness factor."),
-        (metalness,           f32,  "Metalness factor."),
-        (opacity,             f32,  "Opacity value."),
-        (emissive,            Vec3, "Emissive color."),
-        (emissive_intensity,  f32,  "Emissive intensity."),
-        (normal_scale,        Vec2, "Normal map scale."),
-        (ao_map_intensity,    f32,  "AO map intensity."),
-        (ior,                 f32,  "Index of Refraction."),
-        (specular_color,      Vec3, "Specular color."),
-        (specular_intensity,  f32,  "Specular intensity."),
-
-        (clearcoat,           f32,  "Clearcoat factor."),
-        (clearcoat_roughness, f32, "Clearcoat roughness factor."),
-
-        (sheen_color,         Vec3,  "The sheen tint. Default is (0, 0, 0), black."),
-        (sheen_roughness,     f32,   "The sheen roughness. Default is 1.0."),
-
-        (iridescence,               f32,  "The intensity of the iridescence layer, simulating RGB color shift based on the angle between the surface and the viewer."),
-        (iridescence_ior,           f32,  "The strength of the iridescence RGB color shift effect, represented by an index-of-refraction. Default is 1.3."),
-        (iridescence_thickness_min, f32,  "The minimum thickness of the thin-film layer given in nanometers. Default is 100 nm."),
-        (iridescence_thickness_max, f32,  "The maximum thickness of the thin-film layer given in nanometers. Default is 400 nm."),
-
-        (transmission,            f32,  "The transmission factor controlling the amount of light that passes through the surface."),
-        (thickness,               f32,  "The thickness of the object used for subsurface absorption."),
-        (attenuation_color,       Vec3, "The color that light is attenuated towards as it passes through the material."),
-        (attenuation_distance,    f32,  "The distance that light travels through the material before it is absorbed."),
-        (dispersion,              f32,  "The amount of chromatic dispersion in the transmitted light."),
-
-    ],
-    textures: [
-        (map,                    "The color map."),
-        (normal_map,             "The normal map."),
-        (roughness_map,          "The roughness map."),
-        (metalness_map,          "The metalness map."),
-        (ao_map,                 "The AO map."),
-        (emissive_map,           "The emissive map."),
-        (specular_map,           "The specular map."),
-        (specular_intensity_map, "The specular intensity map."),
-        (clearcoat_map,          "The clearcoat map."),
-        (clearcoat_roughness_map, "The clearcoat roughness map."),
-        (clearcoat_normal_map,   "The clearcoat normal map."),
-        (sheen_color_map,        "The sheen color map."),
-        (sheen_roughness_map,    "The sheen roughness map."),
-        (iridescence_map,        "The iridescence map."),
-        (iridescence_thickness_map, "The iridescence thickness map."),
-        (anisotropy_map,         "The anisotropy map."),
-        (transmission_map,       "The transmission map."),
-        (thickness_map,          "The thickness map."),
-    ],
-    manual_clone_fields: {
-        features: |s: &Self| parking_lot::RwLock::new(*s.features.read()),
-    }
-);
-
-impl_material_trait!(
-    PhysicalMaterial,
-    "templates/physical",
-    PhysicalUniforms,
-    textures: [
-        map,
-        normal_map,
-        roughness_map,
-        metalness_map,
-        ao_map,
-        emissive_map,
-        specular_map,
-        specular_intensity_map,
-        clearcoat_map,
-        clearcoat_roughness_map,
-        clearcoat_normal_map,
-        sheen_color_map,
-        sheen_roughness_map,
-        iridescence_map,
-        iridescence_thickness_map,
-        anisotropy_map,
-        transmission_map,
-        thickness_map,
-    ]
-);
 
 impl Default for PhysicalMaterial {
     fn default() -> Self {

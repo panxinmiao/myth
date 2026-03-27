@@ -1,55 +1,70 @@
-use std::sync::atomic::AtomicU64;
-
 use glam::{Vec2, Vec3, Vec4};
-use parking_lot::RwLock;
+use myth_macros::myth_material;
 
 use crate::TextureHandle;
-use crate::buffer::CpuBuffer;
-use crate::material::{AlphaMode, MaterialSettings, Side, TextureSlot};
+use crate::material::{AlphaMode, Side};
 use crate::uniforms::PhongUniforms;
-use crate::{impl_material_api, impl_material_trait};
 
-#[derive(Clone, Default, Debug)]
-pub struct PhongTextureSet {
+#[myth_material(shader = "templates/phong", uniforms = PhongUniforms)]
+pub struct PhongMaterial {
+    /// Diffuse color.
+    #[uniform]
+    pub color: Vec4,
+
+    /// Alpha test threshold.
+    #[uniform]
+    pub alpha_test: f32,
+
+    /// Specular color.
+    #[uniform]
+    pub specular: Vec3,
+
+    /// Opacity value.
+    #[uniform]
+    pub opacity: f32,
+
+    /// Emissive color.
+    #[uniform]
+    pub emissive: Vec3,
+
+    /// Emissive intensity.
+    #[uniform]
+    pub emissive_intensity: f32,
+
+    /// Normal map scale.
+    #[uniform]
+    pub normal_scale: Vec2,
+
+    /// Shininess factor.
+    #[uniform]
+    pub shininess: f32,
+
+    /// The color map.
+    #[texture]
     pub map: TextureSlot,
+
+    /// The normal map.
+    #[texture]
     pub normal_map: TextureSlot,
+
+    /// The specular map.
+    #[texture]
     pub specular_map: TextureSlot,
+
+    /// The emissive map.
+    #[texture]
     pub emissive_map: TextureSlot,
 }
 
-#[derive(Debug)]
-pub struct PhongMaterial {
-    pub(crate) uniforms: CpuBuffer<PhongUniforms>,
-    pub(crate) settings: RwLock<MaterialSettings>,
-    pub(crate) version: AtomicU64,
-
-    pub(crate) textures: RwLock<PhongTextureSet>,
-
-    pub auto_sync_texture_to_uniforms: bool,
-}
-
 impl PhongMaterial {
+    /// Creates a new Phong material with the given diffuse color.
     #[must_use]
     pub fn new(color: Vec4) -> Self {
-        let uniform_data = PhongUniforms {
+        Self::from_uniforms(PhongUniforms {
             color,
             ..Default::default()
-        };
-
-        Self {
-            uniforms: CpuBuffer::new(
-                uniform_data,
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("PhongUniforms"),
-            ),
-            settings: RwLock::new(MaterialSettings::default()),
-            version: AtomicU64::new(0),
-            textures: RwLock::new(PhongTextureSet::default()),
-            auto_sync_texture_to_uniforms: false,
-        }
+        })
     }
-
-    // -- Builder pattern (chainable at construction time) --
 
     /// Sets the diffuse color (builder).
     #[must_use]
@@ -146,39 +161,6 @@ impl PhongMaterial {
         self
     }
 }
-
-impl_material_api!(
-    PhongMaterial,
-    PhongUniforms,
-    uniforms: [
-        (color,              Vec4, "Diffuse color."),
-        (alpha_test,         f32,  "Alpha test threshold."),
-        (specular,           Vec3, "Specular color."),
-        (opacity,            f32,  "Opacity value."),
-        (emissive,           Vec3, "Emissive color."),
-        (emissive_intensity, f32,  "Emissive intensity."),
-        (normal_scale,       Vec2, "Normal map scale."),
-        (shininess,          f32,  "Shininess factor."),
-    ],
-    textures: [
-        (map,          "The color map."),
-        (normal_map,   "The normal map."),
-        (specular_map, "The specular map."),
-        (emissive_map, "The emissive map."),
-    ]
-);
-
-impl_material_trait!(
-    PhongMaterial,
-    "templates/phong",
-    PhongUniforms,
-    textures: [
-        map,
-        normal_map,
-        specular_map,
-        emissive_map,
-    ]
-);
 
 impl Default for PhongMaterial {
     fn default() -> Self {

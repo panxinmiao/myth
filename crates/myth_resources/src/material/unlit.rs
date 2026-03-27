@@ -1,52 +1,38 @@
-use std::sync::atomic::AtomicU64;
-
 use glam::Vec4;
-use parking_lot::RwLock;
+use myth_macros::myth_material;
 
 use crate::TextureHandle;
-use crate::buffer::CpuBuffer;
-use crate::material::{AlphaMode, MaterialSettings, Side, TextureSlot};
+use crate::material::{AlphaMode, Side};
 use crate::uniforms::UnlitUniforms;
-use crate::{impl_material_api, impl_material_trait};
 
-#[derive(Clone, Default, Debug)]
-pub struct UnlitTextureSet {
+#[myth_material(shader = "templates/unlit", uniforms = UnlitUniforms)]
+pub struct UnlitMaterial {
+    /// Base color.
+    #[uniform]
+    pub color: Vec4,
+
+    /// Opacity value.
+    #[uniform]
+    pub opacity: f32,
+
+    /// Alpha test threshold.
+    #[uniform]
+    pub alpha_test: f32,
+
+    /// The color map.
+    #[texture]
     pub map: TextureSlot,
 }
 
-#[derive(Debug)]
-pub struct UnlitMaterial {
-    pub(crate) uniforms: CpuBuffer<UnlitUniforms>,
-    pub(crate) settings: RwLock<MaterialSettings>,
-    pub(crate) version: AtomicU64,
-
-    pub(crate) textures: RwLock<UnlitTextureSet>,
-
-    pub auto_sync_texture_to_uniforms: bool,
-}
-
 impl UnlitMaterial {
+    /// Creates a new unlit material with the given base color.
     #[must_use]
     pub fn new(color: Vec4) -> Self {
-        let uniform_data = UnlitUniforms {
+        Self::from_uniforms(UnlitUniforms {
             color,
             ..Default::default()
-        };
-
-        Self {
-            uniforms: CpuBuffer::new(
-                uniform_data,
-                wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-                Some("UnlitUniforms"),
-            ),
-            settings: RwLock::new(MaterialSettings::default()),
-            version: AtomicU64::new(0),
-            textures: RwLock::new(UnlitTextureSet::default()),
-            auto_sync_texture_to_uniforms: false,
-        }
+        })
     }
-
-    // -- Builder pattern (chainable at construction time) --
 
     /// Sets the base color (builder).
     #[must_use]
@@ -90,28 +76,6 @@ impl UnlitMaterial {
         self
     }
 }
-
-impl_material_api!(
-    UnlitMaterial,
-    UnlitUniforms,
-    uniforms: [
-        (color,   Vec4, "Base color."),
-        (opacity, f32,  "Opacity value."),
-        (alpha_test, f32, "Alpha test threshold."),
-    ],
-    textures: [
-        (map, "The color map."),
-    ]
-);
-
-impl_material_trait!(
-    UnlitMaterial,
-    "templates/unlit",
-    UnlitUniforms,
-    textures: [
-        map,
-    ]
-);
 
 impl Default for UnlitMaterial {
     fn default() -> Self {

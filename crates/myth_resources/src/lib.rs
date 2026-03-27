@@ -49,6 +49,9 @@ pub use material::{
 };
 pub use mesh::Mesh;
 
+// Re-export the material definition macro
+pub use myth_macros::myth_material;
+
 pub use anti_aliasing::AntiAliasingMode;
 pub use bloom::BloomSettings;
 pub use buffer::BufferRef;
