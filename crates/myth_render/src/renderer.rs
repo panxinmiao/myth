@@ -641,4 +641,35 @@ impl Renderer {
             .as_ref()
             .map(|s| s.graph_storage.dump_mermaid())
     }
+
+    // === Custom Shader Registration API ===
+
+    /// Registers a custom WGSL shader template with the given name.
+    ///
+    /// The source string is pre-processed by the minijinja template engine at
+    /// compile time, so `{% include "chunks/camera_uniforms" %}` and similar
+    /// directives are fully supported.
+    ///
+    /// # Usage
+    ///
+    /// ```rust,ignore
+    /// renderer.register_shader_template(
+    ///     "custom_unlit",
+    ///     include_str!("shaders/custom_unlit.wgsl"),
+    /// );
+    /// ```
+    ///
+    /// After registration, any material declared with
+    /// `#[myth_material(shader = "custom_unlit")]` will use this template.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the renderer has not been initialized via [`init`](Self::init).
+    pub fn register_shader_template(&mut self, name: &str, source: &str) {
+        let state = self
+            .context
+            .as_mut()
+            .expect("Renderer must be initialized before registering shader templates");
+        state.shader_manager.register_template(name, source);
+    }
 }

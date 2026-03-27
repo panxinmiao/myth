@@ -101,6 +101,22 @@ struct ShaderContext<'a> {
 pub struct ShaderGenerator;
 
 impl ShaderGenerator {
+    /// Builds a [`ShaderContext`] common to both built-in and custom paths.
+    fn build_context<'a>(
+        vertex_input_code: &'a str,
+        binding_code: &'a str,
+        options: &ShaderCompilationOptions,
+    ) -> ShaderContext<'a> {
+        let allocator = LocationAllocator::new();
+        ShaderContext {
+            defines: options.to_template_map(),
+            vertex_input_code: Some(vertex_input_code),
+            binding_code,
+            loc: Value::from_object(allocator),
+        }
+    }
+
+    /// Generates WGSL from a **built-in** template registered in the shader environment.
     #[must_use]
     pub fn generate_shader(
         vertex_input_code: &str,
@@ -109,21 +125,37 @@ impl ShaderGenerator {
         options: &ShaderCompilationOptions,
     ) -> String {
         let env = get_env();
-        let allocator = LocationAllocator::new();
-        let loc_value = Value::from_object(allocator);
-
-        let ctx = ShaderContext {
-            defines: options.to_template_map(),
-            vertex_input_code: Some(vertex_input_code),
-            binding_code,
-            loc: loc_value,
-        };
+        let ctx = Self::build_context(vertex_input_code, binding_code, options);
 
         let template = env
             .get_template(template_name)
             .expect("Shader template not found");
 
         let source = template.render(&ctx).expect("Shader render failed");
+
+        format!("// === Auto-generated Unified Shader ===\n{source}")
+    }
+
+    /// Generates WGSL from a **custom** template source string.
+    ///
+    /// The template is rendered via [`Environment::render_named_str`], which
+    /// parses `template_source` as a one-off template while still resolving
+    /// `{% include %}` directives through the global shader loader. This
+    /// allows custom shaders to reuse built-in chunks (e.g. `camera_uniforms`).
+    #[must_use]
+    pub fn generate_custom_shader(
+        vertex_input_code: &str,
+        binding_code: &str,
+        template_name: &str,
+        template_source: &str,
+        options: &ShaderCompilationOptions,
+    ) -> String {
+        let env = get_env();
+        let ctx = Self::build_context(vertex_input_code, binding_code, options);
+
+        let source = env
+            .render_named_str(template_name, template_source, &ctx)
+            .expect("Custom shader render failed");
 
         format!("// === Auto-generated Unified Shader ===\n{source}")
     }

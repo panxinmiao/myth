@@ -146,10 +146,16 @@ impl Object for LocationAllocator {
 /// shaders (materials, post-processing) and one for raw WGSL strings (compute /
 /// utility).
 ///
+/// Custom shader templates registered via [`register_template`](Self::register_template)
+/// are stored alongside the built-in environment. When a template name is
+/// resolved, custom templates take priority over built-in ones.
+///
 /// Owned by `RendererState`; references are handed out via `PrepareContext`.
 pub struct ShaderManager {
     /// xxh3-128 of final WGSL → compiled module.
     module_cache: FxHashMap<u128, wgpu::ShaderModule>,
+    /// User-registered custom shader templates (name → WGSL source).
+    custom_templates: FxHashMap<String, String>,
 }
 
 impl Default for ShaderManager {
@@ -163,13 +169,29 @@ impl ShaderManager {
     pub fn new() -> Self {
         Self {
             module_cache: FxHashMap::default(),
+            custom_templates: FxHashMap::default(),
         }
+    }
+
+    /// Registers a custom shader template source under the given name.
+    ///
+    /// Once registered, any material that references this `name` via
+    /// `#[myth_material(shader = "name")]` will use the provided WGSL
+    /// source instead of looking up a built-in template.
+    ///
+    /// The source string goes through the minijinja template engine, so
+    /// `{% include "chunks/..." %}` directives are fully supported.
+    pub fn register_template(&mut self, name: impl Into<String>, source: impl Into<String>) {
+        let name = name.into();
+        log::info!("Registered custom shader template: {name}");
+        self.custom_templates.insert(name, source.into());
     }
 
     /// Compile a shader from a **minijinja template** (or return a cached module).
     ///
-    /// Internally calls [`ShaderGenerator::generate_shader`], hashes the output,
-    /// and caches the resulting `ShaderModule`.
+    /// If a custom template was registered under `template_name`, its source is
+    /// rendered via [`ShaderGenerator::generate_custom_shader`]; otherwise the
+    /// built-in template environment is used.
     ///
     /// Returns `(module_ref, source_hash)`.
     pub fn get_or_compile_template(
@@ -180,12 +202,22 @@ impl ShaderManager {
         vertex_input_code: &str,
         binding_code: &str,
     ) -> (&wgpu::ShaderModule, u128) {
-        let source = ShaderGenerator::generate_shader(
-            vertex_input_code,
-            binding_code,
-            template_name,
-            options,
-        );
+        let source = if let Some(custom_src) = self.custom_templates.get(template_name) {
+            ShaderGenerator::generate_custom_shader(
+                vertex_input_code,
+                binding_code,
+                template_name,
+                custom_src,
+                options,
+            )
+        } else {
+            ShaderGenerator::generate_shader(
+                vertex_input_code,
+                binding_code,
+                template_name,
+                options,
+            )
+        };
 
         // if cfg!(debug_assertions) {
         //     Self::debug_print_shader(template_name, &source);
