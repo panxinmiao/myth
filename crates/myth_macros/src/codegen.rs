@@ -534,8 +534,8 @@ fn gen_uniform_accessors(def: &MaterialDef) -> TokenStream {
         ///
         /// The guard automatically marks data as dirty on drop,
         /// triggering GPU buffer synchronization.
-        pub fn uniforms_mut(&self) -> #cr::buffer::BufferGuard<'_, #uniforms_type> {
-            self.uniforms.write()
+        pub fn uniforms_mut(&self) -> #cr::buffer::CheckedBufferGuard<'_, #uniforms_type> {
+            self.uniforms.write_checked()
         }
 
         /// Returns a read guard for accessing uniform parameters.
@@ -644,6 +644,9 @@ fn gen_flush_transforms(def: &MaterialDef) -> TokenStream {
             let tex_data = self.textures.read();
             let mut uniforms = self.uniforms.write();
             #(#transform_checks)*
+            if !changed {
+                uniforms.skip_sync();
+            }
             changed
         }
     }

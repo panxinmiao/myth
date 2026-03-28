@@ -156,6 +156,35 @@ impl<T: GpuData> Drop for BufferGuard<'_, T> {
     }
 }
 
+/// Similar to `BufferGuard`, but performs a change check on drop and only updates version if data has actually changed.
+/// Only useful for small buffers (uniforms etc.) where the change check is cheaper than always incrementing version.
+pub struct CheckedBufferGuard<'a, T: GpuData + Clone + PartialEq> {
+    guard: RwLockWriteGuard<'a, CpuBufferState<T>>,
+    initial_data: T,
+}
+
+impl<T: GpuData + Clone + PartialEq> std::ops::Deref for CheckedBufferGuard<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &Self::Target {
+        &self.guard.data
+    }
+}
+
+impl<T: GpuData + Clone + PartialEq> std::ops::DerefMut for CheckedBufferGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.guard.data
+    }
+}
+
+impl<T: GpuData + Clone + PartialEq> Drop for CheckedBufferGuard<'_, T> {
+    fn drop(&mut self) {
+        if self.guard.data != self.initial_data {
+            self.guard.version = self.guard.version.wrapping_add(1);
+            self.guard.size = self.guard.data.byte_size();
+        }
+    }
+}
+
 /// Internal mutable state: only these data need lock protection
 #[derive(Debug)]
 struct CpuBufferState<T: GpuData> {
@@ -311,6 +340,19 @@ impl<T: GpuData> CpuBuffer<T> {
         BufferGuard {
             guard: self.inner.write(),
             changed: true,
+        }
+    }
+
+    /// Acquire a checked write guard that only updates version if data has actually changed
+    pub fn write_checked(&self) -> CheckedBufferGuard<'_, T>
+    where
+        T: Clone + PartialEq,
+    {
+        let guard = self.inner.write();
+        let initial_data = guard.data.clone();
+        CheckedBufferGuard {
+            guard,
+            initial_data,
         }
     }
 
