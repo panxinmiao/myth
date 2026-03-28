@@ -21,46 +21,31 @@ impl AppHandler for Earth {
         let mut mat = Material::new_phong(Vec4::new(1.0, 1.0, 1.0, 1.0));
 
         // Load textures
-        let earth_tex_handle = engine
-            .assets
-            .load_texture(
-                "examples/assets/planets/earth_atmos_4096.jpg",
-                ColorSpace::Srgb,
-                true,
-            )
-            .expect("Failed to load earth texture");
-        let specular_tex_handle = engine
-            .assets
-            .load_texture(
-                "examples/assets/planets/earth_specular_2048.jpg",
-                ColorSpace::Srgb,
-                true,
-            )
-            .expect("Failed to load specular texture");
-        let emssive_tex_handle = engine
-            .assets
-            .load_texture(
-                "examples/assets/planets/earth_lights_2048.png",
-                ColorSpace::Srgb,
-                true,
-            )
-            .expect("Failed to load emissive texture");
-        let normal_map_handle = engine
-            .assets
-            .load_texture(
-                "examples/assets/planets/earth_normal_2048.jpg",
-                ColorSpace::Linear,
-                true,
-            )
-            .expect("Failed to load normal map");
-        let clouds_tex_handle = engine
-            .assets
-            .load_texture(
-                "examples/assets/planets/earth_clouds_1024.png",
-                ColorSpace::Srgb,
-                true,
-            )
-            .expect("Failed to load clouds texture");
+        let earth_tex_handle = engine.assets.load_texture(
+            "examples/assets/planets/earth_atmos_4096.jpg",
+            ColorSpace::Srgb,
+            true,
+        );
+        let specular_tex_handle = engine.assets.load_texture(
+            "examples/assets/planets/earth_specular_2048.jpg",
+            ColorSpace::Srgb,
+            true,
+        );
+        let emssive_tex_handle = engine.assets.load_texture(
+            "examples/assets/planets/earth_lights_2048.png",
+            ColorSpace::Srgb,
+            true,
+        );
+        let normal_map_handle = engine.assets.load_texture(
+            "examples/assets/planets/earth_normal_2048.jpg",
+            ColorSpace::Linear,
+            true,
+        );
+        let clouds_tex_handle = engine.assets.load_texture(
+            "examples/assets/planets/earth_clouds_1024.png",
+            ColorSpace::Srgb,
+            true,
+        );
 
         if let Some(phong) = mat.as_phong_mut() {
             phong.set_map(Some(earth_tex_handle));

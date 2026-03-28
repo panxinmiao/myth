@@ -383,7 +383,7 @@ impl PyMythRenderer {
         let engine = self.engine_mut()?;
         engine
             .assets
-            .load_texture(path, cs, generate_mipmaps)
+            .load_texture_blocking(path, cs, generate_mipmaps)
             .map(crate::texture::PyTextureHandle::from_handle)
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
@@ -397,7 +397,7 @@ impl PyMythRenderer {
         let engine = self.engine_mut()?;
         engine
             .assets
-            .load_hdr_texture(path)
+            .load_hdr_texture_blocking(path)
             .map(crate::texture::PyTextureHandle::from_handle)
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(

@@ -12,8 +12,6 @@
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
-use std::sync::mpsc::{Receiver, Sender, channel};
-
 use myth::assets::SharedPrefab;
 use myth::prelude::*;
 use myth::utils::FpsCounter;
@@ -32,12 +30,6 @@ fn is_mobile_device() -> bool {
     false
 }
 
-// Define asset loading events for handling asynchronous results in the update loop
-enum AssetEvent {
-    ModelLoaded { prefab: SharedPrefab, url: String },
-    HdrLoaded(TextureHandle),
-}
-
 struct ShowcaseApp {
     cam_node_id: NodeHandle,
     controls: OrbitControls,
@@ -46,10 +38,6 @@ struct ShowcaseApp {
     // State flags
     loading_started: bool,
     model_loaded: bool,
-
-    // Asynchronous communication channels
-    rx: Receiver<AssetEvent>,
-    tx: Sender<AssetEvent>, // Retain sender to clone for async tasks
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -65,29 +53,18 @@ impl AppHandler for ShowcaseApp {
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
 
-        // 1. init communication channel
-        let (tx, rx) = channel();
-
-        // 2. Load default HDR environment map (async)
-        let asset_server = engine.assets.clone();
-        let hdr_tx = tx.clone();
-
+        // 1. Load HDR environment map (fire-and-forget, auto-promoted on next frame)
         let map_path = "envs/royal_esplanade_2k.hdr.jpg";
         let env_map_path = format!("{}{}", ASSET_PATH, map_path);
-
-        execute_future(async move {
-            if let Ok(handle) = asset_server
-                .load_texture_async(env_map_path, ColorSpace::Srgb, false)
-                .await
-            {
-                let _ = hdr_tx.send(AssetEvent::HdrLoaded(handle));
-            }
-        });
+        let env_handle = engine
+            .assets
+            .load_texture(env_map_path, ColorSpace::Srgb, false);
+        scene.environment.set_env_map(Some(env_handle));
 
         // Set base ambient light as fallback before HDR loads
         scene.environment.set_ambient_light(Vec3::splat(0.2));
 
-        // 3. Add directional light (auxiliary lighting)
+        // 2. Add directional light (auxiliary lighting)
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0);
         let light_node = scene.add_light(light);
         if let Some(node) = scene.get_node_mut(light_node) {
@@ -95,7 +72,7 @@ impl AppHandler for ShowcaseApp {
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
 
-        // 4. Set up camera
+        // 3. Set up camera
         let mut camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.01);
         if is_mobile_device() {
             camera.aa_mode = AntiAliasingMode::FXAA(FxaaSettings::default());
@@ -104,7 +81,6 @@ impl AppHandler for ShowcaseApp {
         }
         let cam_node_id = scene.add_camera(camera);
 
-        // Initial camera position (will be overridden by auto-focus)
         if let Some(node) = scene.get_node_mut(cam_node_id) {
             node.transform.position = Vec3::new(0.0, 0.0, 5.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
@@ -117,8 +93,6 @@ impl AppHandler for ShowcaseApp {
             fps_counter: FpsCounter::new(),
             loading_started: false,
             model_loaded: false,
-            rx,
-            tx,
         }
     }
 
@@ -127,56 +101,31 @@ impl AppHandler for ShowcaseApp {
             return;
         };
 
-        // --- 1. Start loading logic (only once) ---
+        // --- 1. Submit model load (once) ---
         if !self.loading_started {
             self.loading_started = true;
 
-            // Get URL parameter
             let url = get_model_url().unwrap_or_else(|| {
-                // Default fallback model
                 "https://raw.githubusercontent.com/KhronosGroup/glTF-Sample-Assets/main/Models/DamagedHelmet/glTF-Binary/DamagedHelmet.glb".to_string()
             });
 
             log::info!("Starting load for: {}", url);
-
-            let assets = engine.assets.clone();
-            let tx = self.tx.clone();
-
-            execute_future(async move {
-                match GltfLoader::load_async(url.clone(), assets).await {
-                    Ok(prefab) => {
-                        let _ = tx.send(AssetEvent::ModelLoaded { prefab, url: url });
-                    }
-                    Err(e) => {
-                        log::error!("Failed to load model: {}", e);
-                    }
-                }
-            });
+            engine.assets.load_gltf(url);
         }
 
-        // --- 2. Handle asynchronous events ---
-        while let Ok(event) = self.rx.try_recv() {
-            match event {
-                AssetEvent::HdrLoaded(handle) => {
-                    log::info!("HDR Environment loaded");
-                    println!("Setting HDR environment map");
-                    scene.environment.set_env_map(Some(handle));
-                    scene.environment.set_intensity(1.0);
-                }
-                AssetEvent::ModelLoaded { prefab, url } => {
-                    log::info!("Model loaded successfully: {}", url);
-                    self.instantiate_and_focus(scene, &engine.assets, &prefab);
-                    self.model_loaded = true;
+        // --- 2. Handle completed prefab loads ---
+        for loaded in engine.assets.take_loaded_prefabs() {
+            log::info!("Model loaded successfully: {}", loaded.source);
+            self.instantiate_and_focus(scene, &engine.assets, &loaded.prefab);
+            self.model_loaded = true;
 
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        use web_sys::window;
-                        if let Some(win) = window() {
-                            if let Some(doc) = win.document() {
-                                if let Some(el) = doc.get_element_by_id("loading-overlay") {
-                                    let _ = el.class_list().add_1("hidden");
-                                }
-                            }
+            #[cfg(target_arch = "wasm32")]
+            {
+                use web_sys::window;
+                if let Some(win) = window() {
+                    if let Some(doc) = win.document() {
+                        if let Some(el) = doc.get_element_by_id("loading-overlay") {
+                            let _ = el.class_list().add_1("hidden");
                         }
                     }
                 }
@@ -235,16 +184,6 @@ impl ShowcaseApp {
 }
 
 // --- Platform-related helper functions ---
-
-#[cfg(not(target_arch = "wasm32"))]
-fn execute_future<F: std::future::Future<Output = ()> + Send + 'static>(f: F) {
-    tokio::spawn(f);
-}
-
-#[cfg(target_arch = "wasm32")]
-fn execute_future<F: std::future::Future<Output = ()> + 'static>(f: F) {
-    wasm_bindgen_futures::spawn_local(f);
-}
 
 // Parse URL parameters
 #[cfg(target_arch = "wasm32")]

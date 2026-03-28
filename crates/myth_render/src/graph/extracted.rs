@@ -277,8 +277,7 @@ impl ExtractedScene {
                     continue;
                 }
 
-                let Some(geometry) = geo_guard.map.get(mesh.geometry) else {
-                    log::warn!("Node {node_handle:?} refers to missing Geometry");
+                let Some(geometry) = geo_guard.get_loaded(mesh.geometry) else {
                     continue;
                 };
 

@@ -176,11 +176,11 @@ fn prepare_main_camera_commands(
                 continue;
             };
 
-            let Some(geometry) = geo_guard.map.get(item.geometry) else {
+            let Some(geometry) = geo_guard.get_loaded(item.geometry) else {
                 warn!("Geometry {:?} missing during render prepare", item.geometry);
                 continue;
             };
-            let Some(material) = mat_guard.map.get(item.material) else {
+            let Some(material) = mat_guard.get_loaded(item.material) else {
                 warn!("Material {:?} missing during render prepare", item.material);
                 continue;
             };
@@ -456,10 +456,10 @@ fn prepare_shadow_commands(
                 continue;
             }
 
-            let Some(geometry) = geo_guard.map.get(item.geometry) else {
+            let Some(geometry) = geo_guard.get_loaded(item.geometry) else {
                 continue;
             };
-            let Some(material) = mat_guard.map.get(item.material) else {
+            let Some(material) = mat_guard.get_loaded(item.material) else {
                 continue;
             };
 

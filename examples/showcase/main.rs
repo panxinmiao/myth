@@ -12,8 +12,7 @@ use myth_resources::tone_mapping::AgxLook;
 use wasm_bindgen::prelude::*;
 
 use std::cell::RefCell;
-use std::collections::{HashMap, HashSet};
-use std::sync::mpsc::{Receiver, Sender, channel};
+use std::collections::HashMap;
 
 use myth::ToneMappingMode;
 use myth::assets::SharedPrefab;
@@ -338,15 +337,6 @@ fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
     presets
 }
 
-// ── Async Events ────────────────────────────────────────────────────────────
-
-/// Events sent from async asset-loading tasks back to the main thread.
-enum AssetEvent {
-    ModelLoaded(SharedPrefab),
-    HdrLoaded(&'static str, TextureHandle),
-    LutLoaded(&'static str, TextureHandle),
-}
-
 // ── Application State ───────────────────────────────────────────────────────
 
 struct ShowcaseApp {
@@ -370,9 +360,6 @@ struct ShowcaseApp {
     /// `true` once the model and the default preset's critical resources
     /// have all finished loading — at which point the loading overlay is hidden.
     initial_ready: bool,
-
-    rx: Receiver<AssetEvent>,
-    tx: Sender<AssetEvent>,
 }
 
 // ── AppHandler ──────────────────────────────────────────────────────────────
@@ -382,53 +369,41 @@ impl AppHandler for ShowcaseApp {
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
 
-        let (tx, rx) = channel();
-        let presets = build_presets();
+        let mut presets = build_presets();
 
-        let mut requested_hdrs = HashSet::new();
-        let mut requested_luts = HashSet::new();
+        // Fire-and-forget: load every preset's HDR and LUT in parallel.
+        // Handles are returned immediately; the render pipeline uses fallbacks
+        // until the texture data is ready.
+        let mut loaded_hdrs: HashMap<&str, TextureHandle> = HashMap::new();
+        let mut loaded_luts: HashMap<&str, TextureHandle> = HashMap::new();
 
-        // Dispatch async loads for every preset's HDR and LUT in parallel.
         for config in presets.values() {
             if let Some(hdr_file) = config.hdr_filename {
-                if requested_hdrs.insert(hdr_file) {
+                loaded_hdrs.entry(hdr_file).or_insert_with(|| {
                     let path = format!("{}envs/{}", ASSET_PATH, hdr_file);
-                    let tx = tx.clone();
-                    let assets = engine.assets.clone();
-
-                    execute_future(async move {
-                        let is_hdr = hdr_file.ends_with(".hdr") || hdr_file.ends_with(".exr");
-                        let res = if is_hdr {
-                            assets.load_hdr_texture_async(path).await
-                        } else {
-                            assets
-                                .load_texture_async(path, ColorSpace::Srgb, false)
-                                .await
-                        };
-
-                        match res {
-                            Ok(h) => {
-                                let _ = tx.send(AssetEvent::HdrLoaded(hdr_file, h));
-                            }
-                            Err(e) => log::error!("{:?} HDR load failed: {}", hdr_file, e),
-                        }
-                    });
-                }
+                    let is_hdr = hdr_file.ends_with(".hdr") || hdr_file.ends_with(".exr");
+                    if is_hdr {
+                        engine.assets.load_hdr_texture(path)
+                    } else {
+                        engine.assets.load_texture(path, ColorSpace::Srgb, false)
+                    }
+                });
             }
             if let Some(lut_file) = config.lut_filename {
-                if requested_luts.insert(lut_file) {
+                loaded_luts.entry(lut_file).or_insert_with(|| {
                     let path = format!("{}luts/{}", ASSET_PATH, lut_file);
-                    let tx = tx.clone();
-                    let assets = engine.assets.clone();
-                    execute_future(async move {
-                        match assets.load_lut_texture_async(path).await {
-                            Ok(h) => {
-                                let _ = tx.send(AssetEvent::LutLoaded(lut_file, h));
-                            }
-                            Err(e) => log::error!("{:?} LUT load failed: {}", lut_file, e),
-                        }
-                    });
-                }
+                    engine.assets.load_lut_texture(path)
+                });
+            }
+        }
+
+        // Bind handles to preset entries.
+        for config in presets.values_mut() {
+            if let Some(hdr_file) = config.hdr_filename {
+                config.hdr_handle = loaded_hdrs.get(hdr_file).copied();
+            }
+            if let Some(lut_file) = config.lut_filename {
+                config.lut_handle = loaded_luts.get(lut_file).copied();
             }
         }
 
@@ -474,8 +449,6 @@ impl AppHandler for ShowcaseApp {
             loading_started: false,
             model_loaded: false,
             initial_ready: false,
-            rx,
-            tx,
         };
 
         app.apply_preset(scene, DEFAULT_PRESET);
@@ -493,59 +466,17 @@ impl AppHandler for ShowcaseApp {
             let model_name = DEFAULT_MODEL.to_string();
             let model_path = format!("{}{}", ASSET_PATH, model_name);
             log::info!("Loading model: {}", model_path);
-
-            let assets = engine.assets.clone();
-            let tx = self.tx.clone();
-            execute_future(async move {
-                match GltfLoader::load_async(model_path, assets).await {
-                    Ok(prefab) => {
-                        let _ = tx.send(AssetEvent::ModelLoaded(prefab));
-                    }
-                    Err(e) => log::error!("Model load failed: {}", e),
-                }
-            });
+            engine.assets.load_gltf(model_path);
         }
 
-        // 2. Process async asset events.
-        while let Ok(event) = self.rx.try_recv() {
-            match event {
-                AssetEvent::HdrLoaded(filename, handle) => {
-                    let mut needs_refresh = false;
-                    for (&preset_key, p) in self.presets.iter_mut() {
-                        if p.hdr_filename == Some(filename) {
-                            p.hdr_handle = Some(handle.clone());
-                            if preset_key == self.current_preset {
-                                needs_refresh = true;
-                            }
-                        }
-                    }
-                    if needs_refresh {
-                        self.apply_preset(scene, self.current_preset);
-                    }
-                }
-                AssetEvent::LutLoaded(filename, handle) => {
-                    let mut needs_refresh = false;
-                    for (&preset_key, p) in self.presets.iter_mut() {
-                        if p.lut_filename == Some(filename) {
-                            p.lut_handle = Some(handle.clone());
-                            if preset_key == self.current_preset {
-                                needs_refresh = true;
-                            }
-                        }
-                    }
-                    if needs_refresh {
-                        self.apply_preset(scene, self.current_preset);
-                    }
-                }
-                AssetEvent::ModelLoaded(prefab) => {
-                    self.instantiate_and_focus(scene, &engine.assets, &prefab);
-                    self.model_loaded = true;
-                }
-            }
+        // 2. Process completed prefab loads.
+        for loaded in engine.assets.take_loaded_prefabs() {
+            self.instantiate_and_focus(scene, &engine.assets, &loaded.prefab);
+            self.model_loaded = true;
         }
 
         // 3. Smart loading overlay: hide only when critical-path assets are ready.
-        if !self.initial_ready && self.check_initial_ready() {
+        if !self.initial_ready && self.check_initial_ready(&engine.assets) {
             self.initial_ready = true;
             #[cfg(target_arch = "wasm32")]
             hide_loading_overlay();
@@ -697,16 +628,20 @@ impl ShowcaseApp {
 
     /// Returns `true` when the model and the default preset's critical resources
     /// have all finished loading — i.e. the initial visual is ready to display.
-    fn check_initial_ready(&self) -> bool {
+    fn check_initial_ready(&self, assets: &AssetServer) -> bool {
         if !self.model_loaded {
             return false;
         }
         if let Some(p) = self.presets.get(&DEFAULT_PRESET) {
-            if p.hdr_filename.is_some() && p.hdr_handle.is_none() {
-                return false;
+            if let Some(handle) = p.hdr_handle {
+                if !assets.textures.is_loaded(handle) {
+                    return false;
+                }
             }
-            if p.lut_filename.is_some() && p.lut_handle.is_none() {
-                return false;
+            if let Some(handle) = p.lut_handle {
+                if !assets.textures.is_loaded(handle) {
+                    return false;
+                }
             }
         }
         true
@@ -761,18 +696,6 @@ fn hide_loading_overlay() {
             }
         }
     }
-}
-
-// ── Platform Helpers ────────────────────────────────────────────────────────
-
-#[cfg(not(target_arch = "wasm32"))]
-fn execute_future<F: std::future::Future<Output = ()> + Send + 'static>(f: F) {
-    tokio::spawn(f);
-}
-
-#[cfg(target_arch = "wasm32")]
-fn execute_future<F: std::future::Future<Output = ()> + 'static>(f: F) {
-    wasm_bindgen_futures::spawn_local(f);
 }
 
 // ── Entry Points ────────────────────────────────────────────────────────────

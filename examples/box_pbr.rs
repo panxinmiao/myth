@@ -32,7 +32,7 @@ impl AppHandler for PbrBox {
         // Load environment map
         let env_texture_handle = engine
             .assets
-            .load_cube_texture(
+            .load_cube_texture_blocking(
                 [
                     "examples/assets/envs/Park2/posx.jpg",
                     "examples/assets/envs/Park2/negx.jpg",

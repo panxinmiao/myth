@@ -316,7 +316,7 @@ impl<'a> PassNode<'a> for UiPassNode<'a> {
             &self.pass.clipped_primitives,
             &self.pass.screen_descriptor,
         );
-        queue.submit(Some(encoder.finish()));
+        // queue.submit(Some(encoder.finish()));
 
         // 4. Free textures that egui no longer needs.
         for id in &self.pass.textures_delta.free {

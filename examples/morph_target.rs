@@ -16,14 +16,11 @@ impl AppHandler for MorphTargetDemo {
         scene.add_light(light);
         scene.environment.set_ambient_light(Vec3::splat(0.01));
 
-        let env_texture_handle = engine
-            .assets
-            .load_texture(
-                "examples/assets/envs/royal_esplanade_2k.hdr.jpg",
-                ColorSpace::Srgb,
-                false,
-            )
-            .expect("Failed to load environment map");
+        let env_texture_handle = engine.assets.load_texture(
+            "examples/assets/envs/royal_esplanade_2k.hdr.jpg",
+            ColorSpace::Srgb,
+            false,
+        );
 
         scene.environment.set_env_map(Some(env_texture_handle));
 

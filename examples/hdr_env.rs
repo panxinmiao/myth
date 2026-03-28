@@ -12,8 +12,7 @@ impl AppHandler for HdrEnvDemo {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
         let env_texture_handle = engine
             .assets
-            .load_hdr_texture("examples/assets/envs/blouberg_sunrise_2_1k.hdr")
-            .expect("Failed to load HDR environment map");
+            .load_hdr_texture("examples/assets/envs/blouberg_sunrise_2_1k.hdr");
 
         let scene = engine.scene_manager.create_active();
         scene.environment.set_env_map(Some(env_texture_handle));

@@ -163,10 +163,10 @@ impl PrepassFeature {
                 continue;
             }
 
-            let Some(geometry) = geo_guard.map.get(cmd.geometry_handle) else {
+            let Some(geometry) = geo_guard.get_loaded(cmd.geometry_handle) else {
                 continue;
             };
-            let Some(material) = mat_guard.map.get(cmd.material_handle) else {
+            let Some(material) = mat_guard.get_loaded(cmd.material_handle) else {
                 continue;
             };
 

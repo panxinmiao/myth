@@ -255,7 +255,7 @@ impl ResourceManager {
         }
 
         let Some(texture_asset) = assets.textures.get(handle) else {
-            log::warn!("Texture asset not found for handle: {handle:?}");
+            // Texture slot may be in Loading state — silently skip
             return;
         };
 

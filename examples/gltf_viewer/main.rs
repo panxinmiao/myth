@@ -337,8 +337,6 @@ struct GltfViewer {
 
     vignette_breathing: bool,
 
-    hdr_receiver: Option<Receiver<TextureHandle>>,
-
     show_ui: bool,
 
     // === Skybox / Background ===
@@ -418,27 +416,14 @@ impl AppHandler for GltfViewer {
 
         let scene = engine.scene_manager.create_active();
 
-        let (hdr_tx, hdr_rx) = channel();
-
-        let asset_server = engine.assets.clone();
-        execute_future(async move {
-            let map_path = "envs/royal_esplanade_2k.hdr.jpg";
-            let env_map_path = format!("{}{}", ASSET_PATH, map_path);
-
-            // match asset_server.load_cube_texture_async(env_map_path, ColorSpace::Srgb, true).await {
-            match asset_server
-                .load_texture_async(env_map_path, ColorSpace::Srgb, false)
-                .await
-            {
-                Ok(handle) => {
-                    log::info!("HDR loaded");
-                    let _ = hdr_tx.send(handle); // 发送 Handle 回主线程
-                }
-                Err(e) => log::error!("HDR load failed: {}", e),
-            }
-        });
-
-        scene.environment.set_ambient_light(Vec3::splat(0.1));
+        // Load default HDR environment map (fire-and-forget)
+        let env_handle = engine.assets.load_texture(
+            format!("{}envs/royal_esplanade_2k.hdr.jpg", ASSET_PATH),
+            ColorSpace::Srgb,
+            false,
+        );
+        scene.environment.set_env_map(Some(env_handle));
+        scene.environment.set_intensity(3.0);
 
         // 3. 添加灯光
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0);
@@ -534,8 +519,6 @@ impl AppHandler for GltfViewer {
 
             vignette_breathing: false,
 
-            hdr_receiver: Some(hdr_rx),
-
             show_ui: true,
 
             // Skybox / Background
@@ -543,7 +526,7 @@ impl AppHandler for GltfViewer {
             bg_color: [0.03, 0.03, 0.03, 1.0],
             gradient_top: [0.05, 0.05, 0.25, 1.0],
             gradient_bottom: [0.7, 0.45, 0.2, 1.0],
-            env_texture: None,
+            env_texture: Some(env_handle),
             skybox_intensity: 1.0,
             skybox_rotation: 0.0,
             skybox_file_name: None,
@@ -772,31 +755,6 @@ impl GltfViewer {
                         self.loading_state = LoadingState::Error(e);
                     }
                 }
-            }
-        }
-
-        // 处理 HDR 环境贴图加载结果
-
-        if let Some(rx) = &self.hdr_receiver
-            && let Ok(texture) = rx.try_recv()
-        {
-            log::info!("Applying HDR environment map");
-            scene.environment.set_env_map(Some(texture));
-            scene.environment.set_intensity(3.0);
-            self.env_texture = Some(texture);
-
-            // 如果当前已选择 Equirectangular 模式，自动应用到天空盒
-            if self.skybox_mode == SkyboxMode::Equirectangular {
-                Self::apply_skybox(
-                    scene,
-                    self.skybox_mode,
-                    &self.bg_color,
-                    &self.gradient_top,
-                    &self.gradient_bottom,
-                    self.env_texture,
-                    self.skybox_intensity,
-                    self.skybox_rotation,
-                );
             }
         }
 

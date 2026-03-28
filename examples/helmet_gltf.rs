@@ -13,8 +13,7 @@ impl AppHandler for HelmetGltf {
         let map_path = "examples/assets/envs/royal_esplanade_2k.hdr.jpg";
         let env_texture_handle = engine
             .assets
-            .load_texture(map_path, ColorSpace::Srgb, false)
-            .expect("Failed to load environment map");
+            .load_texture(map_path, ColorSpace::Srgb, false);
 
         let scene = engine.scene_manager.create_active();
         scene.environment.set_env_map(Some(env_texture_handle));

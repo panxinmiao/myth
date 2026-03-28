@@ -808,7 +808,7 @@ impl IblComputeFeature {
             }
         }
 
-        ctx.queue.submit(std::iter::once(encoder.finish()));
+        ctx.queue.submit(Some(encoder.finish()));
 
         gpu_env.needs_compute = false;
         ctx.resource_manager

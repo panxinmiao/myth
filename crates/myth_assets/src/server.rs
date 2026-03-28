@@ -1,16 +1,19 @@
-use parking_lot::RwLock;
+use parking_lot::{Mutex, RwLock};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc;
 use wgpu::TextureFormat;
 
 use crate::ColorSpace;
 use crate::io::{AssetReaderVariant, AssetSource};
+use crate::prefab::SharedPrefab;
 use crate::storage::AssetStorage;
 use myth_core::{AssetError, Error, Result};
 use myth_resources::geometry::Geometry;
 use myth_resources::image::Image;
 use myth_resources::material::Material;
 use myth_resources::screen_space::SssRegistry;
-use myth_resources::texture::Texture;
+use myth_resources::texture::{Texture, TextureSampler};
 use myth_resources::{GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -24,11 +27,116 @@ fn get_asset_runtime() -> &'static Runtime {
     RUNTIME.get_or_init(|| Runtime::new().expect("Failed to create asset loader runtime"))
 }
 
-// Strongly-typed handles are defined in myth_resources::handles
+// ────────────────────────────────────────────────────────────────────────────
+// Cross-platform async task spawning
+// ────────────────────────────────────────────────────────────────────────────
 
-// 2. Asset Server
+#[cfg(not(target_arch = "wasm32"))]
+fn spawn_asset_task<F>(f: F)
+where
+    F: std::future::Future<Output = ()> + Send + 'static,
+{
+    get_asset_runtime().spawn(f);
+}
 
-#[derive(Clone)] // AssetServer is now lightweight and can be cloned freely
+#[cfg(target_arch = "wasm32")]
+fn spawn_asset_task<F>(f: F)
+where
+    F: std::future::Future<Output = ()> + 'static,
+{
+    wasm_bindgen_futures::spawn_local(f);
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// Internal loading events
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Completed texture data delivered by a background task.
+struct TextureLoadResult {
+    image: Image,
+    sampler: TextureSampler,
+    view_dimension: wgpu::TextureViewDimension,
+    generate_mipmaps: bool,
+    name: Option<String>,
+}
+
+/// Completed or failed texture load event.
+struct TextureLoadEvent {
+    handle: TextureHandle,
+    result: std::result::Result<TextureLoadResult, String>,
+}
+
+/// Completed glTF prefab load event.
+struct PrefabLoadEvent {
+    id: PendingPrefab,
+    source: String,
+    result: std::result::Result<SharedPrefab, String>,
+}
+
+/// Opaque identifier for a pending glTF prefab load request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct PendingPrefab(u64);
+
+/// A successfully loaded glTF prefab, ready for instantiation.
+pub struct LoadedPrefab {
+    /// The identifier returned by [`AssetServer::load_gltf`].
+    pub id: PendingPrefab,
+    /// Source path or URL the prefab was loaded from.
+    pub source: String,
+    /// The instantiatable prefab data.
+    pub prefab: SharedPrefab,
+}
+
+/// Internal channel pair for background → main thread communication.
+struct LoadingChannel<T> {
+    tx: mpsc::Sender<T>,
+    rx: Mutex<mpsc::Receiver<T>>,
+}
+
+impl<T> LoadingChannel<T> {
+    fn new() -> Self {
+        let (tx, rx) = mpsc::channel();
+        Self {
+            tx,
+            rx: Mutex::new(rx),
+        }
+    }
+
+    fn sender(&self) -> mpsc::Sender<T> {
+        self.tx.clone()
+    }
+}
+
+/// Shared state for the internal background-loading pipeline.
+struct LoadingPipeline {
+    texture_channel: LoadingChannel<TextureLoadEvent>,
+    prefab_channel: LoadingChannel<PrefabLoadEvent>,
+    next_prefab_id: AtomicU64,
+}
+
+// ────────────────────────────────────────────────────────────────────────────
+// AssetServer
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Central asset manager for the engine.
+///
+/// `AssetServer` is lightweight and `Clone`-friendly — all inner state lives
+/// behind `Arc`. Cloning the server gives access to the same storage,
+/// channels, and default resources.
+///
+/// # Fire-and-Forget Loading
+///
+/// The primary loading API ([`load_texture`](Self::load_texture),
+/// [`load_hdr_texture`](Self::load_hdr_texture), etc.) returns a handle
+/// **immediately** and schedules the actual I/O + decode on a background
+/// task.  Call [`process_loading_events`](Self::process_loading_events)
+/// once per frame (the engine does this automatically) to promote completed
+/// loads into the storage.
+///
+/// Until the data arrives the handle's slot is `Loading`, so
+/// [`AssetStorage::get`] returns `None`. The render pipeline is designed to
+/// fall back to default placeholder textures in this case.
+#[derive(Clone)]
 pub struct AssetServer {
     pub geometries: Arc<AssetStorage<GeometryHandle, Geometry>>,
     pub materials: Arc<AssetStorage<MaterialHandle, Material>>,
@@ -36,6 +144,16 @@ pub struct AssetServer {
     pub textures: Arc<AssetStorage<TextureHandle, Texture>>,
 
     pub sss_registry: Arc<RwLock<SssRegistry>>,
+
+    /// Internal background-loading infrastructure (shared across clones).
+    loading: Arc<LoadingPipeline>,
+
+    /// 1×1 white RGBA texture, used as fallback for albedo maps.
+    pub default_white_texture: TextureHandle,
+    /// 1×1 black RGBA texture, used as fallback for emission / AO maps.
+    pub default_black_texture: TextureHandle,
+    /// 1×1 flat normal map (`[128, 128, 255, 255]`).
+    pub default_normal_texture: TextureHandle,
 }
 
 impl Default for AssetServer {
@@ -47,23 +165,225 @@ impl Default for AssetServer {
 impl AssetServer {
     #[must_use]
     pub fn new() -> Self {
+        let images = Arc::new(AssetStorage::new());
+        let textures = Arc::new(AssetStorage::new());
+
+        let white_img = images.add(Image::solid_color([255, 255, 255, 255]));
+        let default_white_texture = textures.add(Texture::new_2d(Some("default_white"), white_img));
+
+        let black_img = images.add(Image::solid_color([0, 0, 0, 255]));
+        let default_black_texture = textures.add(Texture::new_2d(Some("default_black"), black_img));
+
+        let normal_img = images.add(Image::solid_color([128, 128, 255, 255]));
+        let default_normal_texture =
+            textures.add(Texture::new_2d(Some("default_normal"), normal_img));
+
         Self {
             geometries: Arc::new(AssetStorage::new()),
             materials: Arc::new(AssetStorage::new()),
-            images: Arc::new(AssetStorage::new()),
-            textures: Arc::new(AssetStorage::new()),
+            images,
+            textures,
 
             sss_registry: Arc::new(RwLock::new(SssRegistry::new())),
+
+            loading: Arc::new(LoadingPipeline {
+                texture_channel: LoadingChannel::new(),
+                prefab_channel: LoadingChannel::new(),
+                next_prefab_id: AtomicU64::new(1),
+            }),
+
+            default_white_texture,
+            default_black_texture,
+            default_normal_texture,
         }
     }
 
     // ========================================================================
-    // Legacy / Synchronous Methods (Native Only)
+    // Fire-and-Forget Loading API (Primary)
     // ========================================================================
-    // Todo: Keep these methods for backward compatibility, but on Native we could also consider refactoring them to call block_on(async_load)
 
+    /// Loads a 2D texture, returning a handle immediately.
+    ///
+    /// The handle is valid the instant it's returned and can be bound into
+    /// materials or scene properties right away. The actual data will be
+    /// filled in asynchronously; until then the render pipeline substitutes
+    /// a default placeholder.
     pub fn load_texture(
-        &mut self,
+        &self,
+        source: impl AssetSource,
+        color_space: ColorSpace,
+        generate_mipmaps: bool,
+    ) -> TextureHandle {
+        let handle = self.textures.reserve();
+        let tx = self.loading.texture_channel.sender();
+        let uri = source.uri().to_string();
+        let filename = source
+            .filename()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        spawn_asset_task(async move {
+            let result =
+                Self::load_texture_task(&uri, &filename, color_space, generate_mipmaps).await;
+            let event = match result {
+                Ok(data) => TextureLoadEvent {
+                    handle,
+                    result: Ok(data),
+                },
+                Err(e) => TextureLoadEvent {
+                    handle,
+                    result: Err(e.to_string()),
+                },
+            };
+            let _ = tx.send(event);
+        });
+
+        handle
+    }
+
+    /// Loads an HDR environment map, returning a handle immediately.
+    pub fn load_hdr_texture(&self, source: impl AssetSource) -> TextureHandle {
+        let handle = self.textures.reserve();
+        let tx = self.loading.texture_channel.sender();
+        let uri = source.uri().to_string();
+        let filename = source
+            .filename()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        spawn_asset_task(async move {
+            let result = Self::load_hdr_texture_task(&uri, &filename).await;
+            let event = match result {
+                Ok(data) => TextureLoadEvent {
+                    handle,
+                    result: Ok(data),
+                },
+                Err(e) => TextureLoadEvent {
+                    handle,
+                    result: Err(e.to_string()),
+                },
+            };
+            let _ = tx.send(event);
+        });
+
+        handle
+    }
+
+    /// Loads a 3D LUT from a `.cube` file, returning a handle immediately.
+    pub fn load_lut_texture(&self, source: impl AssetSource) -> TextureHandle {
+        let handle = self.textures.reserve();
+        let tx = self.loading.texture_channel.sender();
+        let uri = source.uri().to_string();
+        let filename = source
+            .filename()
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        spawn_asset_task(async move {
+            let result = Self::load_lut_texture_task(&uri, &filename).await;
+            let event = match result {
+                Ok(data) => TextureLoadEvent {
+                    handle,
+                    result: Ok(data),
+                },
+                Err(e) => TextureLoadEvent {
+                    handle,
+                    result: Err(e.to_string()),
+                },
+            };
+            let _ = tx.send(event);
+        });
+
+        handle
+    }
+
+    /// Loads a glTF/GLB model, returning a [`PendingPrefab`] token.
+    ///
+    /// Poll [`take_loaded_prefabs`](Self::take_loaded_prefabs) each frame
+    /// (or rely on [`process_loading_events`](Self::process_loading_events))
+    /// to retrieve the completed [`SharedPrefab`] for scene instantiation.
+    #[cfg(feature = "gltf")]
+    pub fn load_gltf(&self, source: impl AssetSource) -> PendingPrefab {
+        let id = PendingPrefab(self.loading.next_prefab_id.fetch_add(1, Ordering::Relaxed));
+        let tx = self.loading.prefab_channel.sender();
+        let uri = source.uri().to_string();
+        let assets = self.clone();
+
+        spawn_asset_task(async move {
+            let source_str = uri.clone();
+            let result = crate::loaders::GltfLoader::load_async(uri, assets).await;
+            let event = PrefabLoadEvent {
+                id,
+                source: source_str,
+                result: result.map_err(|e| e.to_string()),
+            };
+            let _ = tx.send(event);
+        });
+
+        id
+    }
+
+    // ========================================================================
+    // Event Processing (called once per frame by Engine)
+    // ========================================================================
+
+    /// Processes all completed background texture loads, promoting `Loading`
+    /// slots to `Loaded` (or `Failed`).
+    ///
+    /// This is called automatically by [`Engine::update`] each frame.
+    /// Prefab results are **not** drained here — use
+    /// [`take_loaded_prefabs`](Self::take_loaded_prefabs) to consume them.
+    pub fn process_loading_events(&self) {
+        let rx = self.loading.texture_channel.rx.lock();
+        while let Ok(event) = rx.try_recv() {
+            match event.result {
+                Ok(data) => {
+                    let image_handle = self.images.add(data.image);
+                    let mut texture =
+                        Texture::new(data.name.as_deref(), image_handle, data.view_dimension);
+                    texture.sampler = data.sampler;
+                    texture.generate_mipmaps = data.generate_mipmaps;
+                    self.textures.insert_ready(event.handle, texture);
+                }
+                Err(ref msg) => {
+                    log::error!("Texture load failed: {msg}");
+                    self.textures.mark_failed(event.handle, msg.clone());
+                }
+            }
+        }
+    }
+
+    /// Drains the prefab completion queue, returning all glTF models that
+    /// finished loading since the last call.
+    pub fn take_loaded_prefabs(&self) -> Vec<LoadedPrefab> {
+        let mut loaded = Vec::new();
+        let rx = self.loading.prefab_channel.rx.lock();
+        while let Ok(event) = rx.try_recv() {
+            match event.result {
+                Ok(prefab) => {
+                    loaded.push(LoadedPrefab {
+                        id: event.id,
+                        source: event.source,
+                        prefab,
+                    });
+                }
+                Err(ref msg) => {
+                    log::error!("glTF load failed ({}): {msg}", event.source);
+                }
+            }
+        }
+        loaded
+    }
+
+    // ========================================================================
+    // Blocking (Synchronous) Loading — Native Only
+    // ========================================================================
+
+    /// Loads a 2D texture synchronously, blocking the calling thread.
+    ///
+    /// Prefer [`load_texture`](Self::load_texture) for non-blocking loads.
+    pub fn load_texture_blocking(
+        &self,
         source: impl AssetSource,
         color_space: ColorSpace,
         generate_mipmaps: bool,
@@ -89,8 +409,9 @@ impl AssetServer {
         }
     }
 
-    pub fn load_cube_texture(
-        &mut self,
+    /// Loads a cube map synchronously, blocking the calling thread.
+    pub fn load_cube_texture_blocking(
+        &self,
         sources: [impl AssetSource; 6],
         color_space: ColorSpace,
         generate_mipmaps: bool,
@@ -118,8 +439,8 @@ impl AssetServer {
         }
     }
 
-    /// Loads an HDR format environment map (Equirectangular format)
-    pub fn load_hdr_texture(&mut self, source: impl AssetSource) -> Result<TextureHandle> {
+    /// Loads an HDR texture synchronously, blocking the calling thread.
+    pub fn load_hdr_texture_blocking(&self, source: impl AssetSource) -> Result<TextureHandle> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             get_asset_runtime().block_on(self.load_hdr_texture_async(source))
@@ -136,8 +457,26 @@ impl AssetServer {
         }
     }
 
+    /// Loads a 3D LUT synchronously, blocking the calling thread.
+    pub fn load_lut_texture_blocking(&self, source: impl AssetSource) -> Result<TextureHandle> {
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            get_asset_runtime().block_on(self.load_lut_texture_async(source))
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let (image, sampler_cfg, _) =
+                crate::load_lut_texture_from_file(source.uri().to_string())?;
+            let image_handle = self.images.add(image);
+            let mut texture = Texture::new_3d(None, image_handle);
+            texture.sampler = sampler_cfg;
+            let handle = self.textures.add(texture);
+            Ok(handle)
+        }
+    }
+
     // ========================================================================
-    // Async Methods (Cross-Platform)
+    // Async Methods (Cross-Platform, full control)
     // ========================================================================
 
     /// Asynchronously loads a 2D texture (supports local paths or HTTP URLs).
@@ -154,19 +493,13 @@ impl AssetServer {
             .filename()
             .unwrap_or(std::borrow::Cow::Borrowed("unknown"));
 
-        // 1. IO: Read bytes
         let bytes = reader.read_bytes(&filename).await?;
-
         let image = Self::decode_image_async(bytes, color_space, filename.to_string()).await?;
-
-        // 2. Store Image in AssetStorage, get handle
         let image_handle = self.images.add(image);
 
-        // 3. Build Texture resource
         let mut texture = Texture::new(Some(&uri), image_handle, wgpu::TextureViewDimension::D2);
         texture.generate_mipmaps = generate_mipmaps;
 
-        // 4. Store in AssetStorage
         let handle = self.textures.add(texture);
         Ok(handle)
     }
@@ -178,7 +511,6 @@ impl AssetServer {
         color_space: ColorSpace,
         generate_mipmaps: bool,
     ) -> Result<TextureHandle> {
-        // Concurrently load 6 images
         let mut futures = Vec::with_capacity(6);
 
         for source in sources {
@@ -191,13 +523,12 @@ impl AssetServer {
                 let bytes = reader.read_bytes(&filename).await?;
                 let image =
                     Self::decode_image_async(bytes, color_space, filename.to_string()).await?;
-                Ok::<myth_resources::image::Image, Error>(image)
+                Ok::<Image, Error>(image)
             });
         }
 
         let images = futures::future::try_join_all(futures).await?;
 
-        // Check dimension consistency
         let width: u32 = images[0].width;
         let height = images[0].height;
         if images
@@ -210,14 +541,13 @@ impl AssetServer {
         }
 
         let mut combined_data = Vec::with_capacity((width * height * 4 * 6) as usize);
-
         for img in &images {
             if let Some(data) = &img.data {
                 combined_data.extend(data);
             }
         }
 
-        let combined_image = myth_resources::image::Image::new(
+        let combined_image = Image::new(
             width,
             height,
             6,
@@ -230,7 +560,6 @@ impl AssetServer {
         );
 
         let image_handle = self.images.add(combined_image);
-
         let mut texture = Texture::new(
             Some("CubeMap"),
             image_handle,
@@ -250,8 +579,6 @@ impl AssetServer {
             .unwrap_or(std::borrow::Cow::Borrowed("unknown"));
 
         let bytes = reader.read_bytes(&filename).await?;
-
-        // HDR decoding logic
         let image = Self::decode_hdr_async(bytes).await?;
         let image_handle = self.images.add(image);
 
@@ -269,7 +596,7 @@ impl AssetServer {
         Ok(handle)
     }
 
-    /// Loads a 2D texture from raw bytes (e.g. from a file dialog on WASM).
+    /// Loads a 2D texture from raw bytes.
     pub async fn load_texture_from_bytes_async(
         &self,
         name: &str,
@@ -285,7 +612,7 @@ impl AssetServer {
         Ok(handle)
     }
 
-    /// Loads an HDR environment map from raw bytes (e.g. from a file dialog on WASM).
+    /// Loads an HDR environment map from raw bytes.
     pub async fn load_hdr_texture_from_bytes_async(
         &self,
         name: &str,
@@ -302,29 +629,7 @@ impl AssetServer {
         Ok(handle)
     }
 
-    // ========================================================================
-    // LUT (3D Lookup Table) Loading
-    // ========================================================================
-
-    /// Loads a 3D LUT texture from a .cube file.
-    pub fn load_lut_texture(&mut self, source: impl AssetSource) -> Result<TextureHandle> {
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            get_asset_runtime().block_on(self.load_lut_texture_async(source))
-        }
-        #[cfg(target_arch = "wasm32")]
-        {
-            let (image, sampler_cfg, _) =
-                crate::load_lut_texture_from_file(source.uri().to_string())?;
-            let image_handle = self.images.add(image);
-            let mut texture = Texture::new_3d(None, image_handle);
-            texture.sampler = sampler_cfg;
-            let handle = self.textures.add(texture);
-            Ok(handle)
-        }
-    }
-
-    /// Asynchronously loads a 3D LUT from a .cube file.
+    /// Asynchronously loads a 3D LUT from a `.cube` file.
     pub async fn load_lut_texture_async(&self, source: impl AssetSource) -> Result<TextureHandle> {
         let reader = AssetReaderVariant::new(&source)?;
         let filename = source
@@ -332,7 +637,6 @@ impl AssetServer {
             .unwrap_or(std::borrow::Cow::Borrowed("unknown"));
 
         let bytes = reader.read_bytes(&filename).await?;
-
         let image = Self::decode_cube_async(bytes).await?;
         let image_handle = self.images.add(image);
 
@@ -351,7 +655,7 @@ impl AssetServer {
         Ok(handle)
     }
 
-    /// Loads a 3D LUT texture from raw bytes (e.g. from a file dialog on WASM).
+    /// Loads a 3D LUT from raw bytes.
     pub async fn load_lut_texture_from_bytes_async(
         &self,
         name: &str,
@@ -370,7 +674,83 @@ impl AssetServer {
     }
 
     // ========================================================================
-    // Internal Helpers
+    // Utility
+    // ========================================================================
+
+    /// Creates a simple checkerboard texture (useful for testing).
+    pub fn checkerboard(&self, size: u32, squares: u32) -> TextureHandle {
+        let image = Image::checkerboard(size, size, squares);
+        let image_handle = self.images.add(image);
+        let texture = Texture::new_2d(Some("Checkerboard"), image_handle);
+        self.textures.add(texture)
+    }
+
+    // ========================================================================
+    // Internal Task Implementations
+    // ========================================================================
+
+    /// Background task: read + decode a 2D texture.
+    async fn load_texture_task(
+        uri: &str,
+        filename: &str,
+        color_space: ColorSpace,
+        generate_mipmaps: bool,
+    ) -> Result<TextureLoadResult> {
+        let reader = AssetReaderVariant::new(&uri)?;
+        let bytes = reader.read_bytes(filename).await?;
+        let image = Self::decode_image_async(bytes, color_space, filename.to_string()).await?;
+        Ok(TextureLoadResult {
+            image,
+            sampler: TextureSampler::default(),
+            view_dimension: wgpu::TextureViewDimension::D2,
+            generate_mipmaps,
+            name: Some(uri.to_string()),
+        })
+    }
+
+    /// Background task: read + decode an HDR texture.
+    async fn load_hdr_texture_task(uri: &str, filename: &str) -> Result<TextureLoadResult> {
+        let reader = AssetReaderVariant::new(&uri)?;
+        let bytes = reader.read_bytes(filename).await?;
+        let image = Self::decode_hdr_async(bytes).await?;
+        Ok(TextureLoadResult {
+            image,
+            sampler: TextureSampler {
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..TextureSampler::default()
+            },
+            view_dimension: wgpu::TextureViewDimension::D2,
+            generate_mipmaps: false,
+            name: Some(filename.to_string()),
+        })
+    }
+
+    /// Background task: read + decode a .cube LUT.
+    async fn load_lut_texture_task(uri: &str, filename: &str) -> Result<TextureLoadResult> {
+        let reader = AssetReaderVariant::new(&uri)?;
+        let bytes = reader.read_bytes(filename).await?;
+        let image = Self::decode_cube_async(bytes).await?;
+        Ok(TextureLoadResult {
+            image,
+            sampler: TextureSampler {
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                ..TextureSampler::default()
+            },
+            view_dimension: wgpu::TextureViewDimension::D3,
+            generate_mipmaps: false,
+            name: Some(filename.to_string()),
+        })
+    }
+
+    // ========================================================================
+    // Internal Decode Helpers
     // ========================================================================
 
     /// Unified image decoding helper (automatically offloads to native thread pool).
@@ -588,14 +968,6 @@ impl AssetServer {
             wgpu::TextureFormat::Rgba16Float,
             Some(rgba_f16_data),
         ))
-    }
-
-    /// Helper method to create a simple checkerboard texture (useful for testing).
-    pub fn checkerboard(&mut self, size: u32, squares: u32) -> TextureHandle {
-        let image = Image::checkerboard(size, size, squares);
-        let image_handle = self.images.add(image);
-        let texture = Texture::new_2d(Some("Checkerboard"), image_handle);
-        self.textures.add(texture)
     }
 }
 

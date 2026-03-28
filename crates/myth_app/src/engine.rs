@@ -164,6 +164,7 @@ impl Engine {
     /// Updates the engine state for the current frame.
     ///
     /// This method should be called once per frame before rendering. It:
+    /// - Processes completed background asset loads
     /// - Updates the total elapsed time and frame counter
     /// - Runs scene logic and animations
     /// - Resets per-frame input state
@@ -172,6 +173,9 @@ impl Engine {
     ///
     /// * `dt` - Delta time since the last frame in seconds
     pub fn update(&mut self, dt: f32) {
+        // Promote any assets that finished loading in the background.
+        self.assets.process_loading_events();
+
         self.frame_time.time += dt;
         self.frame_time.frame_count += 1;
         self.frame_time.delta_time = dt;

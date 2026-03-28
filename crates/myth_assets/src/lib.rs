@@ -18,7 +18,7 @@ pub mod skeleton_asset;
 pub mod storage;
 
 pub use myth_resources::{GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
-pub use server::AssetServer;
+pub use server::{AssetServer, LoadedPrefab, PendingPrefab};
 
 pub use handle::{AssetTracker, StrongHandle, TrackedAsset, WeakHandle};
 pub use io::{AssetReader, AssetReaderVariant};
@@ -29,6 +29,7 @@ pub use myth_scene::GeometryQuery;
 pub use prefab::{Prefab, PrefabNode, PrefabSkeleton, SharedPrefab};
 pub use resolve::{ResolveGeometry, ResolveMaterial};
 pub use scene_ext::SceneExt;
+pub use storage::{AssetSlot, AssetStorage};
 
 #[cfg(not(target_arch = "wasm32"))]
 pub use io::FileAssetReader;

@@ -54,7 +54,7 @@ impl PyEngine {
         with_engine(|engine| {
             engine
                 .assets
-                .load_texture(path, cs, generate_mipmaps)
+                .load_texture_blocking(path, cs, generate_mipmaps)
                 .map(PyTextureHandle::from_handle)
                 .map_err(|e| {
                     pyo3::exceptions::PyRuntimeError::new_err(format!(
@@ -69,7 +69,7 @@ impl PyEngine {
         with_engine(|engine| {
             engine
                 .assets
-                .load_hdr_texture(path)
+                .load_hdr_texture_blocking(path)
                 .map(PyTextureHandle::from_handle)
                 .map_err(|e| {
                     pyo3::exceptions::PyRuntimeError::new_err(format!(

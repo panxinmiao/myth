@@ -15,8 +15,7 @@ impl AppHandler for HttpGltfExample {
 
         let env_texture_handle = engine
             .assets
-            .load_texture(map_path, ColorSpace::Srgb, false)
-            .expect("Failed to load environment map");
+            .load_texture(map_path, ColorSpace::Srgb, false);
 
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
