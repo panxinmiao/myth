@@ -45,18 +45,21 @@ pub enum AssetSlot<T> {
 impl<T> AssetSlot<T> {
     /// Returns `true` if the slot contains loaded data.
     #[inline]
+    #[must_use]
     pub fn is_loaded(&self) -> bool {
         matches!(self, Self::Loaded(_))
     }
 
     /// Returns `true` if the slot is still waiting for data.
     #[inline]
+    #[must_use]
     pub fn is_loading(&self) -> bool {
         matches!(self, Self::Loading)
     }
 
     /// Extracts a reference to the loaded entry, if available.
     #[inline]
+    #[must_use]
     pub fn as_loaded(&self) -> Option<&AssetEntry<T>> {
         match self {
             Self::Loaded(entry) => Some(entry),

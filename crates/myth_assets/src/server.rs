@@ -1,7 +1,7 @@
-use parking_lot::{Mutex, RwLock};
+use flume::{Receiver, Sender, unbounded};
+use parking_lot::RwLock;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc;
 use wgpu::TextureFormat;
 
 use crate::ColorSpace;
@@ -89,20 +89,17 @@ pub struct LoadedPrefab {
 
 /// Internal channel pair for background → main thread communication.
 struct LoadingChannel<T> {
-    tx: mpsc::Sender<T>,
-    rx: Mutex<mpsc::Receiver<T>>,
+    tx: Sender<T>,
+    rx: Receiver<T>,
 }
 
 impl<T> LoadingChannel<T> {
     fn new() -> Self {
-        let (tx, rx) = mpsc::channel();
-        Self {
-            tx,
-            rx: Mutex::new(rx),
-        }
+        let (tx, rx) = unbounded();
+        Self { tx, rx }
     }
 
-    fn sender(&self) -> mpsc::Sender<T> {
+    fn sender(&self) -> Sender<T> {
         self.tx.clone()
     }
 }
@@ -208,6 +205,7 @@ impl AssetServer {
     /// materials or scene properties right away. The actual data will be
     /// filled in asynchronously; until then the render pipeline substitutes
     /// a default placeholder.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn load_texture(
         &self,
         source: impl AssetSource,
@@ -219,8 +217,7 @@ impl AssetServer {
         let uri = source.uri().to_string();
         let filename = source
             .filename()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+            .map_or_else(|| "unknown".to_string(), |c| c.to_string());
 
         spawn_asset_task(async move {
             let result =
@@ -242,14 +239,14 @@ impl AssetServer {
     }
 
     /// Loads an HDR environment map, returning a handle immediately.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn load_hdr_texture(&self, source: impl AssetSource) -> TextureHandle {
         let handle = self.textures.reserve();
         let tx = self.loading.texture_channel.sender();
         let uri = source.uri().to_string();
         let filename = source
             .filename()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+            .map_or_else(|| "unknown".to_string(), |c| c.to_string());
 
         spawn_asset_task(async move {
             let result = Self::load_hdr_texture_task(&uri, &filename).await;
@@ -270,14 +267,14 @@ impl AssetServer {
     }
 
     /// Loads a 3D LUT from a `.cube` file, returning a handle immediately.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn load_lut_texture(&self, source: impl AssetSource) -> TextureHandle {
         let handle = self.textures.reserve();
         let tx = self.loading.texture_channel.sender();
         let uri = source.uri().to_string();
         let filename = source
             .filename()
-            .map(|c| c.to_string())
-            .unwrap_or_else(|| "unknown".to_string());
+            .map_or_else(|| "unknown".to_string(), |c| c.to_string());
 
         spawn_asset_task(async move {
             let result = Self::load_lut_texture_task(&uri, &filename).await;
@@ -303,6 +300,7 @@ impl AssetServer {
     /// (or rely on [`process_loading_events`](Self::process_loading_events))
     /// to retrieve the completed [`SharedPrefab`] for scene instantiation.
     #[cfg(feature = "gltf")]
+    #[allow(clippy::needless_pass_by_value)]
     pub fn load_gltf(&self, source: impl AssetSource) -> PendingPrefab {
         let id = PendingPrefab(self.loading.next_prefab_id.fetch_add(1, Ordering::Relaxed));
         let tx = self.loading.prefab_channel.sender();
@@ -334,8 +332,7 @@ impl AssetServer {
     /// Prefab results are **not** drained here — use
     /// [`take_loaded_prefabs`](Self::take_loaded_prefabs) to consume them.
     pub fn process_loading_events(&self) {
-        let rx = self.loading.texture_channel.rx.lock();
-        while let Ok(event) = rx.try_recv() {
+        while let Ok(event) = self.loading.texture_channel.rx.try_recv() {
             match event.result {
                 Ok(data) => {
                     let image_handle = self.images.add(data.image);
@@ -355,10 +352,10 @@ impl AssetServer {
 
     /// Drains the prefab completion queue, returning all glTF models that
     /// finished loading since the last call.
+    #[must_use]
     pub fn take_loaded_prefabs(&self) -> Vec<LoadedPrefab> {
         let mut loaded = Vec::new();
-        let rx = self.loading.prefab_channel.rx.lock();
-        while let Ok(event) = rx.try_recv() {
+        while let Ok(event) = self.loading.prefab_channel.rx.try_recv() {
             match event.result {
                 Ok(prefab) => {
                     loaded.push(LoadedPrefab {
@@ -678,6 +675,7 @@ impl AssetServer {
     // ========================================================================
 
     /// Creates a simple checkerboard texture (useful for testing).
+    #[must_use]
     pub fn checkerboard(&self, size: u32, squares: u32) -> TextureHandle {
         let image = Image::checkerboard(size, size, squares);
         let image_handle = self.images.add(image);

@@ -32,6 +32,7 @@ half = { workspace = true }
 smallvec = { workspace = true }
 bytemuck = { workspace = true }
 rustc-hash = { workspace = true }
+flume = { workspace = true }
 
 # Optional
 gltf = { workspace = true, optional = true }
