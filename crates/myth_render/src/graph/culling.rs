@@ -218,9 +218,9 @@ fn prepare_main_camera_commands(
                 let mut flags = PipelineFlags::empty();
 
                 let final_a2c_enable = match material.alpha_mode() {
-                    AlphaMode::Mask(_, a2c) => a2c,
-                    AlphaMode::Blend | AlphaMode::Opaque => false,
-                };
+                    AlphaMode::Mask => material.alpha_to_coverage(), // A2C can be enabled for Masked materials to achieve smoother edges
+                    _ => false,
+                } && sample_count > 1; // A2C only makes sense with MSAA
 
                 let mut options = ShaderCompilationOptions::from_merged(
                     &mat_defines,
@@ -238,8 +238,7 @@ fn prepare_main_camera_commands(
                     options.add_define("HDR", "1");
                 }
 
-                let is_opaque_item =
-                    material.alpha_mode() != AlphaMode::Blend && !material.use_transmission();
+                let is_opaque_item = !material.is_transparent() && !material.use_transmission();
 
                 if !is_opaque_item {
                     options.add_define("IN_TRANSPARENT_PASS", "1");
@@ -303,7 +302,7 @@ fn prepare_main_camera_commands(
                         Side::Double => None,
                     },
                     depth_compare,
-                    blend_state: if material.alpha_mode() == AlphaMode::Blend {
+                    blend_state: if material.is_transparent() {
                         Some(BlendStateKey::from(wgpu::BlendState::ALPHA_BLENDING))
                     } else {
                         None
@@ -343,7 +342,7 @@ fn prepare_main_camera_commands(
                 has_transmission = true;
             }
 
-            let is_transparent = material.alpha_mode() == AlphaMode::Blend || use_transmission;
+            let is_transparent = material.is_transparent() || use_transmission;
 
             let item_pos = Vec3A::from(item.world_matrix.w_axis.truncate());
             let distance_sq = camera_pos.distance_squared(item_pos);

@@ -200,11 +200,6 @@ impl MaterialDef {
         let base = s.strip_suffix("Material").unwrap_or(&s);
         quote::format_ident!("{}Uniforms", base)
     }
-
-    /// Returns whether any uniform field is named `alpha_test`.
-    pub fn has_alpha_test(&self) -> bool {
-        self.uniform_fields.iter().any(|f| f.name == "alpha_test")
-    }
 }
 
 // ============================================================================

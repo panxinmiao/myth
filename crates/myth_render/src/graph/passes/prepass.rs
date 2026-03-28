@@ -25,7 +25,7 @@ use crate::pipeline::{
     ColorTargetKey, DepthStencilKey, RenderPipelineId, ShaderCompilationOptions,
     SimpleGeometryPipelineKey,
 };
-use myth_resources::material::{AlphaMode, Side};
+use myth_resources::material::Side;
 
 /// Normal texture format — Rgba8Unorm ([-1,1] → [0,1] mapping).
 pub(crate) const NORMAL_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -170,7 +170,7 @@ impl PrepassFeature {
                 continue;
             };
 
-            if material.alpha_mode() == AlphaMode::Blend {
+            if material.is_transparent() {
                 continue;
             }
 

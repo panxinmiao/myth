@@ -428,16 +428,6 @@ fn gen_constructor(def: &MaterialDef) -> TokenStream {
 fn gen_settings_api(def: &MaterialDef) -> TokenStream {
     let cr = &def.crate_path;
 
-    let alpha_test_sync = if def.has_alpha_test() {
-        quote! {
-            if let #cr::material::AlphaMode::Mask(cutoff, _a2c) = mode {
-                self.uniforms.write().alpha_test = cutoff;
-            }
-        }
-    } else {
-        quote! {}
-    };
-
     quote! {
         /// Returns a RAII guard for batch-modifying material settings.
         ///
@@ -456,12 +446,8 @@ fn gen_settings_api(def: &MaterialDef) -> TokenStream {
         }
 
         /// Sets the alpha blending mode.
-        ///
-        /// When using [`AlphaMode::Mask`], the cutoff value is automatically
-        /// synced to the uniform buffer's `alpha_test` field.
         pub fn set_alpha_mode(&self, mode: #cr::material::AlphaMode) {
             self.settings_mut().alpha_mode = mode;
-            #alpha_test_sync
         }
 
         /// Returns the current alpha blending mode.

@@ -317,9 +317,11 @@ pub enum AlphaMode {
     /// Fully opaque, no transparency
     Opaque,
     /// Alpha cutoff (discard pixels below threshold)
-    Mask(f32, bool), // (cutoff value, alpha to coverage)
+    Mask,
     /// Standard alpha blending
     Blend,
+    /// Blend with alpha cutoff (discard pixels below threshold)
+    BlendMask,
 }
 
 /// Material render state settings.
@@ -330,6 +332,8 @@ pub enum AlphaMode {
 pub struct MaterialSettings {
     /// Alpha blending mode
     pub alpha_mode: AlphaMode,
+    /// Whether to enable alpha-to-coverage (MSAA only, typically derived from alpha_mode)
+    pub alpha_to_coverage: bool, // Whether to enable alpha-to-coverage (MSAA only, typically derived from alpha_mode)
     /// Whether to write to depth buffer
     pub depth_write: bool,
     /// Whether to perform depth testing
@@ -342,6 +346,7 @@ impl Default for MaterialSettings {
     fn default() -> Self {
         Self {
             alpha_mode: AlphaMode::Opaque,
+            alpha_to_coverage: false,
             depth_write: true,
             depth_test: true,
             side: Side::Front,
@@ -360,11 +365,14 @@ impl MaterialSettings {
             AlphaMode::Opaque => {
                 defines.set("ALPHA_MODE", "OPAQUE");
             }
-            AlphaMode::Mask(_cutoff, _alpha_to_coverage) => {
+            AlphaMode::Mask => {
                 defines.set("ALPHA_MODE", "MASK");
             }
             AlphaMode::Blend => {
                 defines.set("ALPHA_MODE", "BLEND");
+            }
+            AlphaMode::BlendMask => {
+                defines.set("ALPHA_MODE", "BLEND_MASK");
             }
         }
     }
@@ -691,6 +699,19 @@ impl Material {
     #[inline]
     pub fn alpha_mode(&self) -> AlphaMode {
         self.settings().alpha_mode
+    }
+
+    #[inline]
+    pub fn alpha_to_coverage(&self) -> bool {
+        self.settings().alpha_to_coverage
+    }
+
+    #[inline]
+    pub fn is_transparent(&self) -> bool {
+        matches!(
+            self.settings().alpha_mode,
+            AlphaMode::Blend | AlphaMode::BlendMask
+        )
     }
 
     #[inline]

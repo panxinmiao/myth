@@ -2768,8 +2768,9 @@ impl GltfViewer {
                         egui::ComboBox::from_id_salt("alpha_mode_combo")
                             .selected_text(match settings.alpha_mode {
                                 AlphaMode::Opaque => "Opaque",
-                                AlphaMode::Mask(..) => "Mask",
+                                AlphaMode::Mask => "Mask",
                                 AlphaMode::Blend => "Blend",
+                                AlphaMode::BlendMask => "Blend Mask",
                             })
                             .show_ui(ui, |ui| {
                                 // 切换模式时，如果是 Mask 需要保留默认阈值
@@ -2784,14 +2785,14 @@ impl GltfViewer {
                                 }
                                 if ui
                                     .selectable_label(
-                                        matches!(settings.alpha_mode, AlphaMode::Mask(..)),
+                                        matches!(settings.alpha_mode, AlphaMode::Mask),
                                         "Mask",
                                     )
                                     .clicked()
                                 {
                                     // 如果之前不是 Mask，设为默认 0.5，否则保持
-                                    if !matches!(settings.alpha_mode, AlphaMode::Mask(..)) {
-                                        settings.alpha_mode = AlphaMode::Mask(0.5, false);
+                                    if !matches!(settings.alpha_mode, AlphaMode::Mask) {
+                                        settings.alpha_mode = AlphaMode::Mask;
                                     }
                                 }
                                 if ui
@@ -2803,19 +2804,29 @@ impl GltfViewer {
                                 {
                                     settings.alpha_mode = AlphaMode::Blend;
                                 }
+                                if ui
+                                    .selectable_label(
+                                        matches!(settings.alpha_mode, AlphaMode::BlendMask),
+                                        "Blend Mask",
+                                    )
+                                    .clicked()
+                                {
+                                    if !matches!(settings.alpha_mode, AlphaMode::BlendMask) {
+                                        settings.alpha_mode = AlphaMode::BlendMask;
+                                    }
+                                }
                             });
 
-                        // 如果是 Mask 模式，额外显示阈值滑块
-                        if let AlphaMode::Mask(cutoff, a2c) = &mut settings.alpha_mode {
+                        // 如果是 Mask 或 BlendMask 模式，额外显示阈值滑块
+                        if let AlphaMode::Mask | AlphaMode::BlendMask = &mut settings.alpha_mode {
                             ui.horizontal(|ui| {
-                                // ui[1].add(egui::DragValue::new(cutoff).speed(0.01).range(0.0..=1.0).prefix(""));
                                 ui.add(
-                                    egui::DragValue::new(cutoff)
+                                    egui::DragValue::new(&mut m.uniforms_mut().alpha_test)
                                         .speed(0.01)
                                         .range(0.0..=1.0)
                                         .prefix("Cutoff: "),
                                 );
-                                ui.checkbox(a2c, "A2C");
+                                ui.checkbox(&mut settings.alpha_to_coverage, "A2C");
                             });
                         }
                         ui.end_row();

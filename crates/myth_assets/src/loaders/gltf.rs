@@ -1272,7 +1272,7 @@ impl GltfLoader {
                     gltf::material::AlphaMode::Mask => {
                         let cut_off = material.alpha_cutoff().unwrap_or(0.5);
                         uniforms.alpha_test = cut_off;
-                        AlphaMode::Mask(cut_off, false)
+                        AlphaMode::Mask
                     }
                     gltf::material::AlphaMode::Blend => {
                         settings.depth_write = false;

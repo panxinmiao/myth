@@ -1,4 +1,4 @@
-$$ if ALPHA_MODE == "MASK"
+$$ if ALPHA_MODE == "MASK" or ALPHA_MODE == "BLEND_MASK"
 
     $$ if ALPHA_TO_COVERAGE is defined
 

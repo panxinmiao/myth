@@ -149,6 +149,7 @@ pub fn preload_common_macros() {
         "OPAQUE",
         "MASK",
         "BLEND",
+        "BLEND_MASK",
         "ALPHA_TO_COVERAGE",
         "HDR",
         "IN_TRANSPARENT_PASS",

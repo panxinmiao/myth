@@ -65,7 +65,8 @@ fn parse_side(name: &str) -> myth_engine::Side {
 fn parse_alpha_mode(name: &str) -> myth_engine::AlphaMode {
     match name.to_lowercase().as_str() {
         "blend" => myth_engine::AlphaMode::Blend,
-        "mask" => myth_engine::AlphaMode::Mask(0.5, false),
+        "mask" => myth_engine::AlphaMode::Mask,
+        "blend_mask" | "blendmask" => myth_engine::AlphaMode::BlendMask,
         _ => myth_engine::AlphaMode::Opaque,
     }
 }
