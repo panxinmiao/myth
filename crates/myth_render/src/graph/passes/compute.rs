@@ -526,6 +526,19 @@ impl IblComputeFeature {
             return;
         };
 
+        let is_ready = match &source {
+            TextureSource::Asset(handle) => {
+                ctx.resource_manager.get_texture_binding(*handle).is_some()
+            }
+            TextureSource::Attachment(_, _) => true,
+        };
+
+        if !is_ready {
+            // Source texture not ready yet; put it back and try again next frame.
+            ctx.resource_manager.pending_ibl_source = Some(source);
+            return;
+        }
+
         self.ensure_pipelines(ctx);
 
         // Ensure custom samplers exist in the registry. The mutable borrows
