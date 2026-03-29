@@ -1,4 +1,4 @@
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 use slotmap::{SlotMap, new_key_type};
 
 use crate::action::AnimationAction;
@@ -55,7 +55,7 @@ pub struct AnimationMixer {
     fired_events: Vec<FiredEvent>,
     /// Node handles that were animated in the previous frame.
     /// Used for rest-pose restoration when animation influence is lost.
-    animated_last_frame: FxHashSet<NodeHandle>,
+    animated_last_frame: Vec<NodeHandle>,
 
     // Temporary buffer for blended morph weights during application phase.
     morph_buffer: crate::values::MorphWeightData,
@@ -84,7 +84,7 @@ impl AnimationMixer {
             time_scale: 1.0,
             blend_state: FrameBlendState::new(),
             fired_events: Vec::new(),
-            animated_last_frame: FxHashSet::default(),
+            animated_last_frame: Vec::new(),
             morph_buffer: crate::values::MorphWeightData::default(),
             enabled: true,
         }
@@ -254,6 +254,15 @@ impl AnimationMixer {
         for &handle in &self.active_handles {
             if let Some(action) = self.actions.get_mut(handle) {
                 let t_prev = action.time;
+
+                let mut real_time_scale = action.time_scale;
+                if action.loop_mode == crate::action::LoopMode::PingPong && action.ping_pong_reverse
+                {
+                    real_time_scale = -real_time_scale;
+                }
+
+                let is_forward = (dt * real_time_scale) >= 0.0;
+
                 action.update(dt);
                 let t_curr = action.time;
 
@@ -263,6 +272,7 @@ impl AnimationMixer {
                     t_prev,
                     t_curr,
                     clip.duration,
+                    is_forward,
                     &clip.name,
                     &mut self.fired_events,
                 );
@@ -276,37 +286,41 @@ impl AnimationMixer {
                 _ => continue,
             };
 
-            let clip = action.clip().clone();
-            let weight = action.weight;
-            let time = action.time;
-            let cursors = &mut action.track_cursors;
+            let AnimationAction {
+                clip,
+                track_cursors,
+                clip_binding,
+                time,
+                weight,
+                ..
+            } = action;
 
-            for tb in &action.clip_binding.bindings {
+            for tb in &clip_binding.bindings {
                 let track = &clip.tracks[tb.track_index];
-                let cursor = &mut cursors[tb.track_index];
+                let cursor = &mut track_cursors[tb.track_index];
                 let node_handle = self.rig.bones[tb.bone_index];
 
                 match (&track.data, tb.target) {
                     (TrackData::Vector3(t), TargetPath::Translation) => {
-                        let val = t.sample_with_cursor(time, cursor);
+                        let val = t.sample_with_cursor(*time, cursor);
                         self.blend_state
-                            .accumulate_translation(node_handle, val, weight);
+                            .accumulate_translation(node_handle, val, *weight);
                     }
                     (TrackData::Vector3(t), TargetPath::Scale) => {
-                        let val = t.sample_with_cursor(time, cursor);
-                        self.blend_state.accumulate_scale(node_handle, val, weight);
+                        let val = t.sample_with_cursor(*time, cursor);
+                        self.blend_state.accumulate_scale(node_handle, val, *weight);
                     }
                     (TrackData::Quaternion(t), TargetPath::Rotation) => {
-                        let val = t.sample_with_cursor(time, cursor);
+                        let val = t.sample_with_cursor(*time, cursor);
                         self.blend_state
-                            .accumulate_rotation(node_handle, val, weight);
+                            .accumulate_rotation(node_handle, val, *weight);
                     }
                     (TrackData::MorphWeights(t), TargetPath::Weights) => {
-                        t.sample_with_cursor_into(time, cursor, &mut self.morph_buffer);
+                        t.sample_with_cursor_into(*time, cursor, &mut self.morph_buffer);
                         self.blend_state.accumulate_morph_weights(
                             node_handle,
                             &self.morph_buffer,
-                            weight,
+                            *weight,
                         );
                     }
                     _ => {}
@@ -316,7 +330,7 @@ impl AnimationMixer {
 
         // Phase 3: Apply blended results to scene nodes using rest pose as base
         for (&node_handle, props) in self.blend_state.iter_nodes() {
-            self.animated_last_frame.insert(node_handle);
+            self.animated_last_frame.push(node_handle);
 
             let rest_transform = target.rest_transform(node_handle).unwrap_or_default();
 
@@ -410,9 +424,10 @@ pub struct ActionControl<'a> {
     handle: ActionHandle,
 }
 
+#[allow(clippy::return_self_not_must_use)]
+#[allow(clippy::must_use_candidate)]
 impl ActionControl<'_> {
     /// Starts or restarts playback from the beginning.
-    #[must_use]
     pub fn play(self) -> Self {
         if !self.mixer.active_handles.contains(&self.handle) {
             self.mixer.active_handles.push(self.handle);
@@ -426,15 +441,14 @@ impl ActionControl<'_> {
         self
     }
 
-    #[must_use]
     pub fn set_loop_mode(self, mode: crate::action::LoopMode) -> Self {
         if let Some(action) = self.mixer.actions.get_mut(self.handle) {
             action.loop_mode = mode;
+            action.ping_pong_reverse = false;
         }
         self
     }
 
-    #[must_use]
     pub fn set_time_scale(self, scale: f32) -> Self {
         if let Some(action) = self.mixer.actions.get_mut(self.handle) {
             action.time_scale = scale;
@@ -442,7 +456,6 @@ impl ActionControl<'_> {
         self
     }
 
-    #[must_use]
     pub fn set_weight(self, weight: f32) -> Self {
         if let Some(action) = self.mixer.actions.get_mut(self.handle) {
             action.weight = weight;
@@ -450,7 +463,6 @@ impl ActionControl<'_> {
         self
     }
 
-    #[must_use]
     pub fn set_time(self, time: f32) -> Self {
         if let Some(action) = self.mixer.actions.get_mut(self.handle) {
             action.time = time;
@@ -458,7 +470,6 @@ impl ActionControl<'_> {
         self
     }
 
-    #[must_use]
     pub fn resume(self) -> Self {
         if let Some(action) = self.mixer.actions.get_mut(self.handle) {
             action.paused = false;
@@ -466,7 +477,6 @@ impl ActionControl<'_> {
         self
     }
 
-    #[must_use]
     pub fn pause(self) -> Self {
         if let Some(action) = self.mixer.actions.get_mut(self.handle) {
             action.paused = true;
@@ -475,7 +485,6 @@ impl ActionControl<'_> {
     }
 
     /// Stops playback and removes the action from the active set.
-    #[must_use]
     pub fn stop(self) -> Self {
         if let Some(action) = self.mixer.actions.get_mut(self.handle) {
             action.enabled = false;
@@ -486,7 +495,6 @@ impl ActionControl<'_> {
     }
 
     /// Starts playback with a fade-in effect over the given duration.
-    #[must_use]
     pub fn fade_in(self, _duration: f32) -> Self {
         // TODO: Implement gradual weight interpolation
         self.play()

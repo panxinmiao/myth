@@ -60,32 +60,42 @@ pub(crate) fn collect_events(
     t_prev: f32,
     t_curr: f32,
     duration: f32,
+    is_forward: bool,
     clip_name: &str,
     out: &mut Vec<FiredEvent>,
 ) {
-    if events.is_empty() || duration <= 0.0 {
+    if events.is_empty() || duration <= 0.0 || (t_prev - t_curr).abs() < f32::EPSILON {
         return;
     }
 
-    if t_curr >= t_prev {
-        // Normal forward playback (no wrap)
-        for ev in events {
-            if ev.time > t_prev && ev.time <= t_curr {
-                out.push(FiredEvent {
-                    name: ev.name.clone(),
-                    clip_name: clip_name.to_string(),
-                });
+    for ev in events {
+        let fires;
+
+        if is_forward {
+            // Forward playback: trigger if we cross the event time in the forward direction
+            if t_curr >= t_prev {
+                fires = ev.time > t_prev && ev.time <= t_curr;
+            } else {
+                // Looping forward: trigger if we cross the event time either before or after the loop point
+                fires = (ev.time > t_prev && ev.time <= duration)
+                    || (ev.time >= 0.0 && ev.time <= t_curr);
+            }
+        } else {
+            if t_curr <= t_prev {
+                // Reverse playback: trigger if we cross the event time in the backward direction
+                fires = ev.time >= t_curr && ev.time < t_prev;
+            } else {
+                // Looping backward: trigger if we cross the event time either before or after the loop point
+                fires = (ev.time >= 0.0 && ev.time < t_prev)
+                    || (ev.time >= t_curr && ev.time <= duration);
             }
         }
-    } else {
-        // Loop wrap: t_prev -> duration, then 0 -> t_curr
-        for ev in events {
-            if ev.time > t_prev || ev.time <= t_curr {
-                out.push(FiredEvent {
-                    name: ev.name.clone(),
-                    clip_name: clip_name.to_string(),
-                });
-            }
+
+        if fires {
+            out.push(FiredEvent {
+                name: ev.name.clone(),
+                clip_name: clip_name.to_string(),
+            });
         }
     }
 }

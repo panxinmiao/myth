@@ -16,7 +16,7 @@ pub enum LoopMode {
 
 #[derive(Debug, Clone)]
 pub struct AnimationAction {
-    clip: Arc<AnimationClip>,
+    pub(crate) clip: Arc<AnimationClip>,
 
     pub time: f32,
     pub time_scale: f32,
@@ -29,6 +29,8 @@ pub struct AnimationAction {
     pub clip_binding: ClipBinding,
 
     pub(crate) track_cursors: Vec<KeyframeCursor>,
+
+    pub(crate) ping_pong_reverse: bool,
 }
 
 impl AnimationAction {
@@ -48,6 +50,7 @@ impl AnimationAction {
                 bindings: Vec::new(),
             },
             track_cursors: vec![KeyframeCursor::default(); track_count],
+            ping_pong_reverse: false,
         }
     }
 
@@ -60,6 +63,7 @@ impl AnimationAction {
         self.time = 0.0;
         self.paused = false;
         self.enabled = true;
+        self.ping_pong_reverse = false;
         // Reset all track cursors to initial state
         for cursor in &mut self.track_cursors {
             *cursor = KeyframeCursor::default();
@@ -106,8 +110,13 @@ impl AnimationAction {
             return;
         }
 
+        let mut current_dt = dt * self.time_scale;
+        if self.loop_mode == LoopMode::PingPong && self.ping_pong_reverse {
+            current_dt = -current_dt;
+        }
+
         // 1. Accumulate time
-        self.time += dt * self.time_scale;
+        self.time += current_dt;
 
         // 2. Handle loop mode
         match self.loop_mode {
@@ -127,21 +136,17 @@ impl AnimationAction {
                     self.time %= duration;
                 } else if self.time < 0.0 {
                     // Handle reverse playback loop
-                    self.time = duration + (self.time % duration);
+                    self.time = self.time.rem_euclid(duration);
                 }
             }
             LoopMode::PingPong => {
-                let double_duration = duration * 2.0;
-                // Normalize time into [0, 2*duration) cycle
-                let mut t = self.time % double_duration;
-                if t < 0.0 {
-                    t += double_duration;
+                if self.time >= duration {
+                    self.time = duration - (self.time - duration);
+                    self.ping_pong_reverse = true;
+                } else if self.time <= 0.0 {
+                    self.time = -self.time;
+                    self.ping_pong_reverse = false;
                 }
-                // In the second half of the cycle, reverse direction
-                if t > duration {
-                    t = double_duration - t;
-                }
-                self.time = t;
             }
         }
     }
