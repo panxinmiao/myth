@@ -1032,15 +1032,18 @@ impl AssetServer {
             }
 
             #[cfg(not(target_arch = "wasm32"))]
-            tokio::task::yield_now().await;
+            tokio::time::sleep(std::time::Duration::from_millis(2)).await;
 
             #[cfg(target_arch = "wasm32")]
             {
-                wasm_bindgen_futures::JsFuture::from(js_sys::Promise::resolve(
-                    &wasm_bindgen::JsValue::NULL,
-                ))
-                .await
-                .ok();
+                // WASM doesn't have blocking sleep, so we use a short timeout to yield to the event loop.
+                let promise = js_sys::Promise::new(&mut |resolve, _| {
+                    web_sys::window()
+                        .unwrap()
+                        .set_timeout_with_callback_and_timeout_and_arguments_0(&resolve, 5)
+                        .unwrap();
+                });
+                wasm_bindgen_futures::JsFuture::from(promise).await.ok();
             }
         }
     }

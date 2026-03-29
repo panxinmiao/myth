@@ -41,7 +41,7 @@ ehttp = { workspace = true, optional = true }
 url = { workspace = true, optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-tokio = { workspace = true, features = ["fs", "rt-multi-thread", "macros"] }
+tokio = { workspace = true, features = ["fs", "rt-multi-thread", "time", "macros"] }
 parking_lot = { workspace = true, features = ["deadlock_detection"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
