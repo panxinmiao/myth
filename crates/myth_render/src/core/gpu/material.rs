@@ -62,6 +62,14 @@ impl ResourceManager {
     /// - Resource topology change -> rebuild BindGroup (detected by `ResourceIdSet`)
     /// - Resource content change -> upload Buffer (handled automatically by `BufferRef`)
     /// - Pipeline state change -> switch Pipeline (recorded by version, used externally)
+    ///
+    /// # Lagging Synchronization
+    ///
+    /// When any dependent texture is still in `Loading` state and a valid
+    /// `BindGroup` already exists, the rebuild is **deferred** — the previous
+    /// frame's GPU state is retained so that no visual flicker occurs.
+    /// `last_verified_frame` is intentionally *not* updated, ensuring the
+    /// material is re-checked on the next frame.
     pub(crate) fn prepare_material(&mut self, assets: &AssetServer, handle: MaterialHandle) {
         let Some(material) = assets.materials.get(handle) else {
             return;
@@ -75,11 +83,16 @@ impl ResourceManager {
         }
 
         // 1. Ensure phase: ensure all resources exist with up-to-date data, collect physical resource IDs
-        let mut current_resource_ids = self.ensure_material_resources(assets, &material);
+        let (mut current_resource_ids, has_pending_textures) =
+            self.ensure_material_resources(assets, &material);
+
+        // Lagging sync: if textures are still loading and we already have a
+        // valid BindGroup, defer the update to avoid visual flickering.
+        if has_pending_textures && self.gpu_materials.contains_key(handle) {
+            return;
+        }
 
         // 2. Check phase: determine if BindGroup needs to be rebuilt
-        // Note: only IDs are checked here, not version!
-        // Even if material.version() changed (e.g. blend mode), BindGroup is not rebuilt as long as IDs are unchanged
         let needs_rebuild_bindgroup = if let Some(gpu_mat) = self.gpu_materials.get(handle) {
             let mut cached_ids = gpu_mat.resource_ids.clone();
             !current_resource_ids.matches(&mut cached_ids)
@@ -93,23 +106,27 @@ impl ResourceManager {
         }
 
         // 4. Update version number and frame counter (very fast operation)
-        // Regardless of whether BindGroup was rebuilt, gpu_mat's version must be up-to-date
-        // so PipelineCache can use this version for fast checks during rendering
         if let Some(gpu_mat) = self.gpu_materials.get_mut(handle) {
             gpu_mat.version = material.data.version();
             gpu_mat.last_used_frame = self.frame_index;
-            gpu_mat.last_verified_frame = self.frame_index;
+            // If textures are pending (first-time creation with fallbacks),
+            // do not mark as verified so we re-check next frame.
+            if !has_pending_textures {
+                gpu_mat.last_verified_frame = self.frame_index;
+            }
         }
     }
 
-    /// Ensure Material resources and return the resource ID set
+    /// Ensure Material resources and return the resource ID set.
     ///
-    /// Uses `visit_textures` to iterate over all texture resources
+    /// Returns `(resource_ids, has_pending_textures)` where
+    /// `has_pending_textures` is `true` when at least one texture dependency
+    /// is still in `Loading` state.
     fn ensure_material_resources(
         &mut self,
         assets: &AssetServer,
         material: &Material,
-    ) -> ResourceIdSet {
+    ) -> (ResourceIdSet, bool) {
         let mut uniform_result = EnsureResult::existing(0);
 
         // 2. Call with_uniform_bytes, passing a closure
@@ -121,6 +138,8 @@ impl ResourceManager {
         let mut resource_ids = ResourceIdSet::with_capacity(16);
         resource_ids.push(uniform_result.resource_id);
 
+        let mut has_pending = false;
+
         // Use visit_textures to iterate over all texture resources
         material
             .data
@@ -131,6 +150,8 @@ impl ResourceManager {
                         resource_ids.push(binding.view_id);
                         resource_ids.push(binding.sampler_id as u64);
                     } else {
+                        // Texture not yet available (Loading or invalid)
+                        has_pending = true;
                         resource_ids.push(self.system_textures.black_cube.id());
                         resource_ids.push(self.sampler_registry.default_sampler().0 as u64);
                     }
@@ -141,7 +162,7 @@ impl ResourceManager {
                 }
             });
 
-        resource_ids
+        (resource_ids, has_pending)
     }
 
     /// Rebuild Material's BindGroup (may include Layout)

@@ -40,7 +40,9 @@ pub mod uniforms;
 pub mod version_tracker;
 
 // Re-export handle types
-pub use handles::{GeometryHandle, GpuBufferHandle, ImageHandle, MaterialHandle, TextureHandle};
+pub use handles::{
+    GeometryHandle, GpuBufferHandle, ImageHandle, MaterialHandle, PrefabHandle, TextureHandle,
+};
 
 // Re-export common resource types
 pub use material::{

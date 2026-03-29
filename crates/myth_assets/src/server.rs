@@ -1,7 +1,7 @@
 use flume::{Receiver, Sender, unbounded};
 use parking_lot::RwLock;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use uuid::Uuid;
 use wgpu::TextureFormat;
 
 use crate::ColorSpace;
@@ -14,7 +14,7 @@ use myth_resources::image::Image;
 use myth_resources::material::Material;
 use myth_resources::screen_space::SssRegistry;
 use myth_resources::texture::{Texture, TextureSampler};
-use myth_resources::{GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
+use myth_resources::{GeometryHandle, ImageHandle, MaterialHandle, PrefabHandle, TextureHandle};
 
 #[cfg(not(target_arch = "wasm32"))]
 use std::sync::OnceLock;
@@ -68,23 +68,9 @@ struct TextureLoadEvent {
 
 /// Completed glTF prefab load event.
 struct PrefabLoadEvent {
-    id: PendingPrefab,
+    handle: PrefabHandle,
     source: String,
     result: std::result::Result<SharedPrefab, String>,
-}
-
-/// Opaque identifier for a pending glTF prefab load request.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct PendingPrefab(u64);
-
-/// A successfully loaded glTF prefab, ready for instantiation.
-pub struct LoadedPrefab {
-    /// The identifier returned by [`AssetServer::load_gltf`].
-    pub id: PendingPrefab,
-    /// Source path or URL the prefab was loaded from.
-    pub source: String,
-    /// The instantiatable prefab data.
-    pub prefab: SharedPrefab,
 }
 
 /// Internal channel pair for background → main thread communication.
@@ -108,12 +94,18 @@ impl<T> LoadingChannel<T> {
 struct LoadingPipeline {
     texture_channel: LoadingChannel<TextureLoadEvent>,
     prefab_channel: LoadingChannel<PrefabLoadEvent>,
-    next_prefab_id: AtomicU64,
 }
 
 // ────────────────────────────────────────────────────────────────────────────
 // AssetServer
 // ────────────────────────────────────────────────────────────────────────────
+
+// ────────────────────────────────────────────────────────────────────────────
+// UUID v5 namespace for deterministic asset deduplication
+// ────────────────────────────────────────────────────────────────────────────
+
+/// Fixed namespace UUID for asset signature hashing (DNS namespace from RFC 4122).
+const MYTH_ASSET_NAMESPACE: Uuid = uuid::uuid!("6ba7b810-9dad-11d1-80b4-00c04fd430c8");
 
 /// Central asset manager for the engine.
 ///
@@ -133,12 +125,20 @@ struct LoadingPipeline {
 /// Until the data arrives the handle's slot is `Loading`, so
 /// [`AssetStorage::get`] returns `None`. The render pipeline is designed to
 /// fall back to default placeholder textures in this case.
+///
+/// # UUID-Based Deduplication
+///
+/// Every fire-and-forget load generates a deterministic UUID v5 from the
+/// resource URI and its loading parameters (color space, mipmap, etc.).
+/// Requesting the same resource twice returns the same handle without
+/// spawning a redundant background task.
 #[derive(Clone)]
 pub struct AssetServer {
     pub geometries: Arc<AssetStorage<GeometryHandle, Geometry>>,
     pub materials: Arc<AssetStorage<MaterialHandle, Material>>,
     pub images: Arc<AssetStorage<ImageHandle, Image>>,
     pub textures: Arc<AssetStorage<TextureHandle, Texture>>,
+    pub prefabs: Arc<AssetStorage<PrefabHandle, SharedPrefab>>,
 
     pub sss_registry: Arc<RwLock<SssRegistry>>,
 
@@ -180,13 +180,13 @@ impl AssetServer {
             materials: Arc::new(AssetStorage::new()),
             images,
             textures,
+            prefabs: Arc::new(AssetStorage::new()),
 
             sss_registry: Arc::new(RwLock::new(SssRegistry::new())),
 
             loading: Arc::new(LoadingPipeline {
                 texture_channel: LoadingChannel::new(),
                 prefab_channel: LoadingChannel::new(),
-                next_prefab_id: AtomicU64::new(1),
             }),
 
             default_white_texture,
@@ -199,12 +199,22 @@ impl AssetServer {
     // Fire-and-Forget Loading API (Primary)
     // ========================================================================
 
+    /// Generates a deterministic UUID v5 from the asset type, URI, and
+    /// loading parameters to serve as a deduplication key.
+    fn generate_asset_uuid(type_tag: &str, uri: &str, params: &str) -> Uuid {
+        let signature = format!("{type_tag}|{uri}|{params}");
+        Uuid::new_v5(&MYTH_ASSET_NAMESPACE, signature.as_bytes())
+    }
+
     /// Loads a 2D texture, returning a handle immediately.
     ///
     /// The handle is valid the instant it's returned and can be bound into
     /// materials or scene properties right away. The actual data will be
     /// filled in asynchronously; until then the render pipeline substitutes
     /// a default placeholder.
+    ///
+    /// Duplicate requests for the same URI + parameters are deduplicated
+    /// via UUID — no redundant I/O or GPU memory is created.
     #[allow(clippy::needless_pass_by_value)]
     pub fn load_texture(
         &self,
@@ -212,9 +222,18 @@ impl AssetServer {
         color_space: ColorSpace,
         generate_mipmaps: bool,
     ) -> TextureHandle {
-        let handle = self.textures.reserve();
-        let tx = self.loading.texture_channel.sender();
         let uri = source.uri().to_string();
+        let uuid = Self::generate_asset_uuid(
+            "Tex2D",
+            &uri,
+            &format!("{color_space:?}|{generate_mipmaps}"),
+        );
+        let (handle, is_new) = self.textures.reserve_with_uuid(uuid);
+        if !is_new {
+            return handle;
+        }
+
+        let tx = self.loading.texture_channel.sender();
         let filename = source
             .filename()
             .map_or_else(|| "unknown".to_string(), |c| c.to_string());
@@ -239,11 +258,18 @@ impl AssetServer {
     }
 
     /// Loads an HDR environment map, returning a handle immediately.
+    ///
+    /// Deduplicated by URI.
     #[allow(clippy::needless_pass_by_value)]
     pub fn load_hdr_texture(&self, source: impl AssetSource) -> TextureHandle {
-        let handle = self.textures.reserve();
-        let tx = self.loading.texture_channel.sender();
         let uri = source.uri().to_string();
+        let uuid = Self::generate_asset_uuid("HDR", &uri, "");
+        let (handle, is_new) = self.textures.reserve_with_uuid(uuid);
+        if !is_new {
+            return handle;
+        }
+
+        let tx = self.loading.texture_channel.sender();
         let filename = source
             .filename()
             .map_or_else(|| "unknown".to_string(), |c| c.to_string());
@@ -267,11 +293,18 @@ impl AssetServer {
     }
 
     /// Loads a 3D LUT from a `.cube` file, returning a handle immediately.
+    ///
+    /// Deduplicated by URI.
     #[allow(clippy::needless_pass_by_value)]
     pub fn load_lut_texture(&self, source: impl AssetSource) -> TextureHandle {
-        let handle = self.textures.reserve();
-        let tx = self.loading.texture_channel.sender();
         let uri = source.uri().to_string();
+        let uuid = Self::generate_asset_uuid("LUT", &uri, "");
+        let (handle, is_new) = self.textures.reserve_with_uuid(uuid);
+        if !is_new {
+            return handle;
+        }
+
+        let tx = self.loading.texture_channel.sender();
         let filename = source
             .filename()
             .map_or_else(|| "unknown".to_string(), |c| c.to_string());
@@ -294,44 +327,52 @@ impl AssetServer {
         handle
     }
 
-    /// Loads a glTF/GLB model, returning a [`PendingPrefab`] token.
+    /// Loads a glTF/GLB model, returning a [`PrefabHandle`] immediately.
     ///
-    /// Poll [`take_loaded_prefabs`](Self::take_loaded_prefabs) each frame
-    /// (or rely on [`process_loading_events`](Self::process_loading_events))
-    /// to retrieve the completed [`SharedPrefab`] for scene instantiation.
+    /// The handle can be polled via [`AssetStorage::get`] on
+    /// [`prefabs`](Self::prefabs) to check when loading completes.
+    /// Completed loads are promoted automatically by
+    /// [`process_loading_events`](Self::process_loading_events).
+    ///
+    /// Deduplicated by URI — loading the same model twice returns the same
+    /// handle without spawning a redundant parsing task.
     #[cfg(feature = "gltf")]
     #[allow(clippy::needless_pass_by_value)]
-    pub fn load_gltf(&self, source: impl AssetSource) -> PendingPrefab {
-        let id = PendingPrefab(self.loading.next_prefab_id.fetch_add(1, Ordering::Relaxed));
-        let tx = self.loading.prefab_channel.sender();
+    pub fn load_gltf(&self, source: impl AssetSource) -> PrefabHandle {
         let uri = source.uri().to_string();
+        let uuid = Self::generate_asset_uuid("GLTF", &uri, "");
+        let (handle, is_new) = self.prefabs.reserve_with_uuid(uuid);
+        if !is_new {
+            return handle;
+        }
+
+        let tx = self.loading.prefab_channel.sender();
         let assets = self.clone();
 
         spawn_asset_task(async move {
             let source_str = uri.clone();
             let result = crate::loaders::GltfLoader::load_async(uri, assets).await;
             let event = PrefabLoadEvent {
-                id,
+                handle,
                 source: source_str,
                 result: result.map_err(|e| e.to_string()),
             };
             let _ = tx.send(event);
         });
 
-        id
+        handle
     }
 
     // ========================================================================
     // Event Processing (called once per frame by Engine)
     // ========================================================================
 
-    /// Processes all completed background texture loads, promoting `Loading`
-    /// slots to `Loaded` (or `Failed`).
+    /// Processes all completed background loads (textures and prefabs),
+    /// promoting `Loading` slots to `Loaded` (or `Failed`).
     ///
     /// This is called automatically by [`Engine::update`] each frame.
-    /// Prefab results are **not** drained here — use
-    /// [`take_loaded_prefabs`](Self::take_loaded_prefabs) to consume them.
     pub fn process_loading_events(&self) {
+        // Drain texture completions.
         while let Ok(event) = self.loading.texture_channel.rx.try_recv() {
             match event.result {
                 Ok(data) => {
@@ -348,28 +389,20 @@ impl AssetServer {
                 }
             }
         }
-    }
 
-    /// Drains the prefab completion queue, returning all glTF models that
-    /// finished loading since the last call.
-    #[must_use]
-    pub fn take_loaded_prefabs(&self) -> Vec<LoadedPrefab> {
-        let mut loaded = Vec::new();
+        // Drain prefab completions into unified AssetStorage.
         while let Ok(event) = self.loading.prefab_channel.rx.try_recv() {
             match event.result {
                 Ok(prefab) => {
-                    loaded.push(LoadedPrefab {
-                        id: event.id,
-                        source: event.source,
-                        prefab,
-                    });
+                    self.prefabs.insert_ready(event.handle, prefab);
+                    log::info!("Prefab loaded: {}", event.source);
                 }
                 Err(ref msg) => {
                     log::error!("glTF load failed ({}): {msg}", event.source);
+                    self.prefabs.mark_failed(event.handle, msg.clone());
                 }
             }
         }
-        loaded
     }
 
     // ========================================================================
@@ -681,6 +714,47 @@ impl AssetServer {
         let image_handle = self.images.add(image);
         let texture = Texture::new_2d(Some("Checkerboard"), image_handle);
         self.textures.add(texture)
+    }
+
+    // ========================================================================
+    // Cache Invalidation
+    // ========================================================================
+
+    /// Invalidates a cached texture so a fresh reload can be dispatched.
+    ///
+    /// Use this when the underlying file has been replaced on disk (same URI
+    /// but different content). The next call to [`load_texture`] with the
+    /// same parameters will trigger a new background I/O task.
+    pub fn invalidate_texture(&self, type_tag: &str, uri: &str, params: &str) {
+        let uuid = Self::generate_asset_uuid(type_tag, uri, params);
+        self.textures.invalidate_uuid(&uuid);
+    }
+
+    /// Convenience wrapper: invalidate and immediately re-dispatch a 2D
+    /// texture load. Returns the (same or new) handle.
+    #[allow(clippy::needless_pass_by_value)]
+    pub fn reload_texture(
+        &self,
+        source: impl AssetSource,
+        color_space: ColorSpace,
+        generate_mipmaps: bool,
+    ) -> TextureHandle {
+        let uri = source.uri().to_string();
+        let params = format!("{color_space:?}|{generate_mipmaps}");
+        self.invalidate_texture("Tex2D", &uri, &params);
+        self.load_texture(uri, color_space, generate_mipmaps)
+    }
+
+    /// Invalidates **all** UUID-cached textures, forcing a full reload on
+    /// subsequent load requests.
+    pub fn invalidate_all_textures(&self) {
+        self.textures.invalidate_all_uuids();
+    }
+
+    /// Invalidates a cached prefab so a fresh reload can be dispatched.
+    pub fn invalidate_prefab(&self, uri: &str) {
+        let uuid = Self::generate_asset_uuid("GLTF", uri, "");
+        self.prefabs.invalidate_uuid(&uuid);
     }
 
     // ========================================================================

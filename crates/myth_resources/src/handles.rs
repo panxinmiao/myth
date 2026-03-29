@@ -14,6 +14,8 @@ new_key_type! {
     pub struct ImageHandle;
     /// Handle to a texture asset (lightweight glue combining an image with sampling config).
     pub struct TextureHandle;
+    /// Handle to a loaded glTF/prefab asset in the [`AssetStorage`].
+    pub struct PrefabHandle;
     /// Opaque handle into the GPU buffer arena.
     ///
     /// Internally a SlotMap key with built-in generation checking.

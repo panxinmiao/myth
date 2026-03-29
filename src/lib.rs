@@ -159,7 +159,9 @@ pub mod prelude {
     pub use myth_assets::SceneExt;
     #[cfg(feature = "gltf")]
     pub use myth_assets::loaders::gltf::GltfLoader;
-    pub use myth_assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
+    pub use myth_assets::{
+        AssetServer, GeometryHandle, MaterialHandle, PrefabHandle, TextureHandle,
+    };
 
     // Animation
     pub use myth_animation::{

@@ -17,8 +17,10 @@ pub mod server;
 pub mod skeleton_asset;
 pub mod storage;
 
-pub use myth_resources::{GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
-pub use server::{AssetServer, LoadedPrefab, PendingPrefab};
+pub use myth_resources::{
+    GeometryHandle, ImageHandle, MaterialHandle, PrefabHandle, TextureHandle,
+};
+pub use server::AssetServer;
 
 pub use handle::{AssetTracker, StrongHandle, TrackedAsset, WeakHandle};
 pub use io::{AssetReader, AssetReaderVariant};

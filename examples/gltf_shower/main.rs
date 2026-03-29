@@ -38,6 +38,7 @@ struct ShowcaseApp {
     // State flags
     loading_started: bool,
     model_loaded: bool,
+    model_handle: Option<PrefabHandle>,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -93,6 +94,7 @@ impl AppHandler for ShowcaseApp {
             fps_counter: FpsCounter::new(),
             loading_started: false,
             model_loaded: false,
+            model_handle: None,
         }
     }
 
@@ -110,22 +112,26 @@ impl AppHandler for ShowcaseApp {
             });
 
             log::info!("Starting load for: {}", url);
-            engine.assets.load_gltf(url);
+            self.model_handle = Some(engine.assets.load_gltf(url));
         }
 
-        // --- 2. Handle completed prefab loads ---
-        for loaded in engine.assets.take_loaded_prefabs() {
-            log::info!("Model loaded successfully: {}", loaded.source);
-            self.instantiate_and_focus(scene, &engine.assets, &loaded.prefab);
-            self.model_loaded = true;
+        // --- 2. Check if the prefab has finished loading ---
+        if !self.model_loaded {
+            if let Some(handle) = self.model_handle {
+                if let Some(prefab) = engine.assets.prefabs.get(handle) {
+                    log::info!("Model loaded successfully");
+                    self.instantiate_and_focus(scene, &engine.assets, &prefab);
+                    self.model_loaded = true;
 
-            #[cfg(target_arch = "wasm32")]
-            {
-                use web_sys::window;
-                if let Some(win) = window() {
-                    if let Some(doc) = win.document() {
-                        if let Some(el) = doc.get_element_by_id("loading-overlay") {
-                            let _ = el.class_list().add_1("hidden");
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        use web_sys::window;
+                        if let Some(win) = window() {
+                            if let Some(doc) = win.document() {
+                                if let Some(el) = doc.get_element_by_id("loading-overlay") {
+                                    let _ = el.class_list().add_1("hidden");
+                                }
+                            }
                         }
                     }
                 }

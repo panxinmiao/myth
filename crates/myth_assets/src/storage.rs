@@ -152,11 +152,23 @@ impl<H: Key, T> AssetStorage<H, T> {
 
     /// Inserts a fully-loaded resource keyed by UUID for deduplication.
     ///
-    /// If an entry with the same UUID already exists, its handle is returned
-    /// without inserting a duplicate.
+    /// If an entry with the same UUID already exists **and** is in `Loading`
+    /// state (i.e. a prior async task reserved it), the slot is promoted to
+    /// `Loaded` so all holders of the handle see the data immediately.
+    /// If the slot is already `Loaded`, the existing handle is returned as-is.
     pub fn add_with_uuid(&self, uuid: Uuid, asset: impl Into<T>) -> H {
         let mut guard = self.inner.write();
         if let Some(&handle) = guard.lookup.get(&uuid) {
+            if let Some(slot) = guard.map.get_mut(handle)
+                && slot.is_loading()
+            {
+                *slot = AssetSlot::Loaded(AssetEntry {
+                    asset: Arc::new(asset.into()),
+                    version: 1,
+                });
+                self.global_version.fetch_add(1, Ordering::Relaxed);
+            }
+
             return handle;
         }
         let slot = AssetSlot::Loaded(AssetEntry {
@@ -179,6 +191,21 @@ impl<H: Key, T> AssetStorage<H, T> {
     pub fn reserve(&self) -> H {
         let mut guard = self.inner.write();
         guard.map.insert(AssetSlot::Loading)
+    }
+
+    /// Pre-allocates a handle keyed by UUID, with built-in deduplication.
+    ///
+    /// Returns `(handle, is_new)`: when `is_new` is `true` the caller must
+    /// spawn a background task to fill the slot; when `false` the resource
+    /// is already loading or loaded and no new work is needed.
+    pub fn reserve_with_uuid(&self, uuid: Uuid) -> (H, bool) {
+        let mut guard = self.inner.write();
+        if let Some(&handle) = guard.lookup.get(&uuid) {
+            return (handle, false);
+        }
+        let handle = guard.map.insert(AssetSlot::Loading);
+        guard.lookup.insert(uuid, handle);
+        (handle, true)
     }
 
     /// Fills a previously-reserved handle with loaded data.
@@ -296,5 +323,38 @@ impl<H: Key, T> AssetStorage<H, T> {
     /// individual entries without re-acquiring the lock on each lookup.
     pub fn read_lock(&self) -> RwLockReadGuard<'_, StorageInner<H, T>> {
         self.inner.read()
+    }
+
+    // ── Cache invalidation ─────────────────────────────────────────────
+
+    /// Removes the UUID association for a specific handle, resetting it to
+    /// `Loading` so a fresh background task can re-populate the slot.
+    ///
+    /// Returns `true` if the UUID was found and removed.
+    pub fn invalidate_uuid(&self, uuid: &Uuid) -> bool {
+        let mut guard = self.inner.write();
+        if let Some(handle) = guard.lookup.remove(uuid) {
+            if let Some(slot) = guard.map.get_mut(handle) {
+                *slot = AssetSlot::Loading;
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Evicts **all** UUID mappings, resetting every tracked slot to
+    /// `Loading`. Existing handles remain valid but will need to be
+    /// re-populated by fresh background tasks.
+    pub fn invalidate_all_uuids(&self) {
+        let mut guard = self.inner.write();
+        let handles: Vec<_> = guard.lookup.values().copied().collect();
+        for handle in handles {
+            if let Some(slot) = guard.map.get_mut(handle) {
+                *slot = AssetSlot::Loading;
+            }
+        }
+        guard.lookup.clear();
+        self.global_version.fetch_add(1, Ordering::Relaxed);
     }
 }

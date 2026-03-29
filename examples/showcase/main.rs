@@ -357,6 +357,7 @@ struct ShowcaseApp {
 
     loading_started: bool,
     model_loaded: bool,
+    model_handle: Option<PrefabHandle>,
     /// `true` once the model and the default preset's critical resources
     /// have all finished loading — at which point the loading overlay is hidden.
     initial_ready: bool,
@@ -448,6 +449,7 @@ impl AppHandler for ShowcaseApp {
             orbit_target: initial_target,
             loading_started: false,
             model_loaded: false,
+            model_handle: None,
             initial_ready: false,
         };
 
@@ -466,13 +468,17 @@ impl AppHandler for ShowcaseApp {
             let model_name = DEFAULT_MODEL.to_string();
             let model_path = format!("{}{}", ASSET_PATH, model_name);
             log::info!("Loading model: {}", model_path);
-            engine.assets.load_gltf(model_path);
+            self.model_handle = Some(engine.assets.load_gltf(model_path));
         }
 
-        // 2. Process completed prefab loads.
-        for loaded in engine.assets.take_loaded_prefabs() {
-            self.instantiate_and_focus(scene, &engine.assets, &loaded.prefab);
-            self.model_loaded = true;
+        // 2. Check if the prefab has finished loading.
+        if !self.model_loaded {
+            if let Some(handle) = self.model_handle {
+                if let Some(prefab) = engine.assets.prefabs.get(handle) {
+                    self.instantiate_and_focus(scene, &engine.assets, &prefab);
+                    self.model_loaded = true;
+                }
+            }
         }
 
         // 3. Smart loading overlay: hide only when critical-path assets are ready.

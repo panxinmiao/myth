@@ -67,11 +67,25 @@ impl ResourceManager {
         };
 
         let mut current_version: u32 = 0;
+        let mut source_pending = false;
         if let TextureSource::Asset(handle) = &source {
             self.prepare_texture(assets, *handle);
             if let Some(tex) = assets.textures.get(*handle) {
                 current_version = assets.images.get_version(tex.image).unwrap_or(0);
+            } else {
+                // Source texture is still Loading — retain the previous GPU
+                // state (lagging sync) to avoid visual flickering.
+                source_pending = true;
             }
+        }
+
+        // If the source texture is still loading and we already have a cached
+        // entry, return the cached value without modification.
+        if source_pending && let Some(gpu_env) = self.environment_map_cache.get(&source) {
+            return gpu_env.env_map_max_mip_level;
+
+            // No cache entry yet — fall through to create one with defaults.
+            // The compute pass will regenerate once the texture arrives.
         }
 
         // --- Check existing cache entry ---
