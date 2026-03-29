@@ -62,12 +62,17 @@ pub fn load_image_from_file(path: impl AsRef<Path>) -> Result<(Vec<u8>, u32, u32
 }
 
 /// Returns `(Image, TextureSampler, generate_mipmaps)`.
-pub fn load_texture_from_file(
-    path: impl AsRef<Path>,
-) -> Result<(Image, TextureSampler, bool)> {
+pub fn load_texture_from_file(path: impl AsRef<Path>) -> Result<(Image, TextureSampler, bool)> {
     let (data, width, height) = load_image_from_file(&path)?;
 
-    let image = Image::new(width, height, 1, ImageDimension::D2, PixelFormat::Rgba8Unorm, Some(data));
+    let image = Image::new(
+        width,
+        height,
+        1,
+        ImageDimension::D2,
+        PixelFormat::Rgba8Unorm,
+        Some(data),
+    );
 
     Ok((image, TextureSampler::default(), false))
 }

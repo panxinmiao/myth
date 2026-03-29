@@ -20,7 +20,7 @@
 use rustc_hash::FxHashMap;
 
 use crate::core::binding::BindGroupKey;
-use crate::core::gpu::{CommonSampler, Tracked};
+use crate::core::gpu::{CommonSampler, ResourceState, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
     ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureNodeId,
@@ -228,8 +228,13 @@ impl ToneMappingFeature {
 
         let (buf_handle, _) = ctx.resource_manager.ensure_buffer(uniforms);
 
+        let mut is_lut_pending = false;
+
         if has_lut && let Some(handle) = lut_handle {
-            ctx.resource_manager.prepare_texture(ctx.assets, handle);
+            let state = ctx.resource_manager.prepare_texture(ctx.assets, handle);
+            if matches!(state, ResourceState::Pending) {
+                is_lut_pending = true;
+            }
         }
 
         let gpu_buf = ctx.resource_manager.gpu_buffers.get(buf_handle);
@@ -258,6 +263,7 @@ impl ToneMappingFeature {
 
         // Check staleness — rebuild only when buffer or LUT identity changes
         let needs_rebuild = self.static_bg.is_none()
+            || !is_lut_pending
             || buf_id != self.last_uniforms_buffer_id
             || has_lut != self.static_bg_has_lut
             || (has_lut && lut_view_id != self.last_lut_view_id);

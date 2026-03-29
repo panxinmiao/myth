@@ -1206,7 +1206,8 @@ impl GltfLoader {
                 }
 
                 if let Some(info) = material.normal_texture() {
-                    let tex_handle = self.get_or_create_texture(info.texture().index(), ColorSpace::Linear)?;
+                    let tex_handle =
+                        self.get_or_create_texture(info.texture().index(), ColorSpace::Linear)?;
                     textures.normal_map.texture = Some(tex_handle);
                     textures.normal_map.channel = info.tex_coord() as u8;
                     uniforms.normal_scale = Vec2::splat(info.scale());
@@ -1236,7 +1237,8 @@ impl GltfLoader {
                 }
 
                 if let Some(info) = material.occlusion_texture() {
-                    let tex_handle = self.get_or_create_texture(info.texture().index(), ColorSpace::Linear)?;
+                    let tex_handle =
+                        self.get_or_create_texture(info.texture().index(), ColorSpace::Linear)?;
                     textures.ao_map.texture = Some(tex_handle);
                     textures.ao_map.channel = info.tex_coord() as u8;
                     uniforms.ao_map_intensity = info.strength();
@@ -1303,11 +1305,19 @@ impl GltfLoader {
                     uniforms.specular_intensity = specular.specular_factor();
 
                     if let Some(info) = specular.specular_color_texture() {
-                        self.setup_texture_map(&mut textures.specular_map, &info, ColorSpace::Srgb)?;
+                        self.setup_texture_map(
+                            &mut textures.specular_map,
+                            &info,
+                            ColorSpace::Srgb,
+                        )?;
                     }
 
                     if let Some(info) = specular.specular_texture() {
-                        self.setup_texture_map(&mut textures.specular_intensity_map, &info, ColorSpace::Linear)?;
+                        self.setup_texture_map(
+                            &mut textures.specular_intensity_map,
+                            &info,
+                            ColorSpace::Linear,
+                        )?;
                     }
                 }
             }
@@ -2175,7 +2185,8 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         }
 
         if let Some(diffuse_tex) = sg.diffuse_texture() {
-            let tex_handle = ctx.get_or_create_texture(diffuse_tex.texture().index(), ColorSpace::Srgb)?;
+            let tex_handle =
+                ctx.get_or_create_texture(diffuse_tex.texture().index(), ColorSpace::Srgb)?;
             physical_mat.textures.write().map.texture = Some(tex_handle);
         }
 

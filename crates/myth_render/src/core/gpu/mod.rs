@@ -46,7 +46,7 @@ pub(crate) use crate::core::gpu::environment::GpuEnvironment;
 pub(crate) use crate::core::gpu::environment::{BRDF_LUT_SIZE, CubeSourceType};
 pub(crate) use crate::core::gpu::geometry::GpuGeometry;
 pub(crate) use crate::core::gpu::material::GpuMaterial;
-pub(crate) use crate::core::gpu::texture::{GpuImage, TextureBinding};
+pub(crate) use crate::core::gpu::texture::{GpuImage, ResourceState, TextureBinding};
 use crate::pipeline::vertex::VertexLayoutSignature;
 
 use myth_resources::buffer::{CpuBuffer, GpuData};

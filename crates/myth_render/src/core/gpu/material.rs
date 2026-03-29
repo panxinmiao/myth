@@ -17,6 +17,7 @@
 //!    - Depth write/transparency/double-sided rendering changes -> switch Pipeline
 
 use crate::core::gpu::EnsureResult;
+use crate::core::gpu::texture::ResourceState;
 use myth_assets::{AssetServer, MaterialHandle};
 use myth_resources::material::{Material, RenderableMaterialTrait};
 
@@ -142,19 +143,14 @@ impl ResourceManager {
             .data
             .visit_textures(&mut |tex_source| match tex_source {
                 TextureSource::Asset(tex_handle) => {
-                    self.prepare_texture(assets, *tex_handle);
+                    let state = self.prepare_texture(assets, *tex_handle);
+                    if matches!(state, ResourceState::Pending) {
+                        has_pending = true;
+                    }
                     if let Some(binding) = self.texture_bindings.get(*tex_handle) {
                         resource_ids.push(binding.view_id);
                         resource_ids.push(binding.sampler_id as u64);
                     } else {
-                        // No GPU binding yet. In the decoupled architecture
-                        // the Texture config is always immediately available,
-                        // but its underlying Image may still be decoding.
-                        if let Some(tex) = assets.textures.get(*tex_handle) {
-                            if assets.images.is_loading(tex.image) {
-                                has_pending = true;
-                            }
-                        }
                         resource_ids.push(self.system_textures.black_cube.id());
                         resource_ids.push(self.sampler_registry.default_sampler().0 as u64);
                     }

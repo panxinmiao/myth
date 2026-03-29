@@ -25,6 +25,16 @@ pub struct TextureBinding {
     pub texture_version: u64,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum ResourceState {
+    /// Resource is fully loaded and GPU-ready
+    Ready,
+    /// Underlying data is still loading
+    Pending,
+    /// Resource is missing or failed to load (e.g. image decoding failed)
+    Unknown,
+}
+
 /// GPU-side image resource
 ///
 /// Contains the physical texture and default view, excluding sampler
@@ -257,16 +267,24 @@ impl ResourceManager {
     ///
     /// Version tracking ensures GPU resources are only rebuilt when the
     /// underlying data actually changes.
-    pub fn prepare_texture(&mut self, assets: &AssetServer, handle: TextureHandle) {
+    pub fn prepare_texture(
+        &mut self,
+        assets: &AssetServer,
+        handle: TextureHandle,
+    ) -> ResourceState {
         if handle == TextureHandle::dummy_env_map() {
-            return;
+            return ResourceState::Ready;
         }
 
         let Some(texture_asset) = assets.textures.get(handle) else {
-            return;
+            return ResourceState::Unknown;
         };
 
         let image_handle: ImageHandle = texture_asset.image;
+
+        if assets.images.is_loading(image_handle) {
+            return ResourceState::Pending;
+        }
 
         // ── Fast path: skip if nothing changed (no RwLock / Arc / hash) ──
         if let Some(binding) = self.texture_bindings.get(handle)
@@ -284,7 +302,7 @@ impl ResourceManager {
 
                 if version_match && image_match && sampler_match {
                     gpu_img.last_used_frame = self.frame_index;
-                    return;
+                    return ResourceState::Ready;
                 }
             }
         }
@@ -293,7 +311,7 @@ impl ResourceManager {
         let Some((image_arc, image_version)) = assets.images.get_entry(image_handle) else {
             // Image still decoding in the background — no binding is created,
             // the material system will use a fallback placeholder texture.
-            return;
+            return ResourceState::Unknown;
         };
 
         let resolved_format = texture_asset.resolve_wgpu_format(image_arc.format);
@@ -344,6 +362,8 @@ impl ResourceManager {
             texture_version: u64::from(image_version),
         };
         self.texture_bindings.insert(handle, binding);
+
+        ResourceState::Ready
     }
 
     pub(crate) fn get_or_create_sampler(&mut self, descriptor: TextureSampler) -> usize {

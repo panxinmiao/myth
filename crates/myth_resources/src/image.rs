@@ -180,7 +180,14 @@ impl Image {
     /// Creates a 1×1 RGBA8 image with the specified colour.
     #[must_use]
     pub fn solid_color(rgba: [u8; 4]) -> Self {
-        Self::new(1, 1, 1, ImageDimension::D2, PixelFormat::Rgba8Unorm, Some(rgba.to_vec()))
+        Self::new(
+            1,
+            1,
+            1,
+            ImageDimension::D2,
+            PixelFormat::Rgba8Unorm,
+            Some(rgba.to_vec()),
+        )
     }
 
     /// Creates a checkerboard pattern image.
@@ -194,6 +201,13 @@ impl Image {
                 data.extend_from_slice(&[c, c, c, 255]);
             }
         }
-        Self::new(width, height, 1, ImageDimension::D2, PixelFormat::Rgba8Unorm, Some(data))
+        Self::new(
+            width,
+            height,
+            1,
+            ImageDimension::D2,
+            PixelFormat::Rgba8Unorm,
+            Some(data),
+        )
     }
 }

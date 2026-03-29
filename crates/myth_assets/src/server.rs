@@ -221,8 +221,7 @@ impl AssetServer {
         let filename_owned = filename.to_string();
 
         spawn_asset_task(async move {
-            let result =
-                Self::load_image_task(&uri_owned, &filename_owned, pixel_format).await;
+            let result = Self::load_image_task(&uri_owned, &filename_owned, pixel_format).await;
             let event = match result {
                 Ok(image) => ImageLoadEvent {
                     handle,
@@ -404,6 +403,7 @@ impl AssetServer {
     /// The six underlying face images are combined into a single [`Image`]
     /// asset, loaded asynchronously and deduplicated by the composite URI
     /// of all six faces.
+    #[allow(clippy::needless_pass_by_value)]
     pub fn load_cube_texture(
         &self,
         sources: [impl AssetSource; 6],
@@ -816,7 +816,12 @@ impl AssetServer {
         let image_handle = self.get_or_load_image_sync(img_uuid, || {
             let (data, width, height) = crate::load_image_from_file(&uri)?;
             Ok(Image::new(
-                width, height, 1, ImageDimension::D2, PixelFormat::Rgba8Unorm, Some(data),
+                width,
+                height,
+                1,
+                ImageDimension::D2,
+                PixelFormat::Rgba8Unorm,
+                Some(data),
             ))
         })?;
 
@@ -851,7 +856,8 @@ impl AssetServer {
         let image_handle = self.get_or_load_image_sync(img_uuid, || {
             let paths: Vec<String> = sources.iter().map(|s| s.uri().to_string()).collect();
             let paths_arr: [String; 6] = paths.try_into().unwrap();
-            let (image, _, _) = crate::load_cube_texture_from_files(&paths_arr, ColorSpace::Linear)?;
+            let (image, _, _) =
+                crate::load_cube_texture_from_files(&paths_arr, ColorSpace::Linear)?;
             Ok(image)
         })?;
 
@@ -1046,10 +1052,7 @@ impl AssetServer {
     /// Unified image decoding helper (automatically offloads to native thread pool).
     ///
     /// Decodes to `PixelFormat::Rgba8Unorm` — colour-space is not baked in.
-    async fn decode_image_async(
-        bytes: Vec<u8>,
-        label: String,
-    ) -> Result<Image> {
+    async fn decode_image_async(bytes: Vec<u8>, label: String) -> Result<Image> {
         #[cfg(not(target_arch = "wasm32"))]
         {
             tokio::task::spawn_blocking(move || Self::decode_image_cpu(&bytes, &label))
@@ -1068,10 +1071,7 @@ impl AssetServer {
     ///
     /// Always produces `PixelFormat::Rgba8Unorm`; colour-space interpretation
     /// is deferred to the [`Texture`] that references this image.
-    fn decode_image_cpu(
-        bytes: &[u8],
-        label: &str,
-    ) -> Result<Image> {
+    fn decode_image_cpu(bytes: &[u8], label: &str) -> Result<Image> {
         use image::GenericImageView;
 
         let img = image::load_from_memory(bytes).map_err(|e| {

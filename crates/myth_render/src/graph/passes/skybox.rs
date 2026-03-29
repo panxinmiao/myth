@@ -23,7 +23,7 @@
 use rustc_hash::FxHashMap;
 
 use crate::core::binding::BindGroupKey;
-use crate::core::gpu::Tracked;
+use crate::core::gpu::{ResourceState, Tracked};
 use crate::graph::composer::GraphBuilderContext;
 use crate::graph::core::{
     ExecuteContext, ExtractContext, PassNode, RenderTargetOps, TextureNodeId,
@@ -360,7 +360,15 @@ impl SkyboxFeature {
             ..
         } = background_mode
         {
-            ctx.resource_manager.prepare_texture(ctx.assets, *handle);
+            let state = ctx.resource_manager.prepare_texture(ctx.assets, *handle);
+            if matches!(state, ResourceState::Pending)
+                && self.current_bind_group.is_some()
+                && self.current_pipeline.is_some()
+            {
+                // Texture is still loading, but we have a valid bind group and pipeline from the previous frame.
+                // Keep rendering the skybox with the old texture until the new one is ready, instead of stalling the GPU with an empty bind group.
+                return;
+            }
         }
 
         // Ensure the custom sampler is created (first frame only; subsequent
