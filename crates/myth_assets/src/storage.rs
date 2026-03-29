@@ -323,6 +323,15 @@ impl<H: Key, T> AssetStorage<H, T> {
         }
     }
 
+    /// Returns the error message if the handle points to a `Failed` slot.
+    pub fn get_error(&self, handle: H) -> Option<String> {
+        let guard = self.inner.read();
+        match guard.map.get(handle) {
+            Some(AssetSlot::Failed(msg)) => Some(msg.clone()),
+            _ => None,
+        }
+    }
+
     pub fn get_by_uuid(&self, uuid: &Uuid) -> Option<Arc<T>> {
         let guard = self.inner.read();
         let handle = guard.lookup.get(uuid)?;

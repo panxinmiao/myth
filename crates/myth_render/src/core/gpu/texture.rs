@@ -249,8 +249,12 @@ impl ResourceManager {
 
     /// Prepare GPU resources for a `Texture` asset.
     ///
-    /// Looks up the Image via `AssetServer::images`, builds or updates the
-    /// `GpuImage`, resolves the sampler, and records the `TextureBinding`.
+    /// Performs a **two-level query**: first retrieves the `Texture` config
+    /// (always immediately available after [`AssetServer::load_texture`]),
+    /// then checks whether the underlying `Image` has finished decoding.
+    /// If the image is not yet ready, no binding is created and the
+    /// material system falls back to a placeholder texture.
+    ///
     /// Version tracking ensures GPU resources are only rebuilt when the
     /// underlying data actually changes.
     pub fn prepare_texture(&mut self, assets: &AssetServer, handle: TextureHandle) {
@@ -259,7 +263,6 @@ impl ResourceManager {
         }
 
         let Some(texture_asset) = assets.textures.get(handle) else {
-            // Texture slot may be in Loading state — silently skip
             return;
         };
 
@@ -288,7 +291,8 @@ impl ResourceManager {
 
         // ── Slow path: something changed, do the full update ──
         let Some((image_arc, image_version)) = assets.images.get_entry(image_handle) else {
-            // Image may still be loading — silently skip (fallback texture used)
+            // Image still decoding in the background — no binding is created,
+            // the material system will use a fallback placeholder texture.
             return;
         };
 

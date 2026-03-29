@@ -398,6 +398,68 @@ impl AssetServer {
         tex_handle
     }
 
+    /// Loads a cube map texture from 6 face images, returning a handle
+    /// immediately.
+    ///
+    /// The six underlying face images are combined into a single [`Image`]
+    /// asset, loaded asynchronously and deduplicated by the composite URI
+    /// of all six faces.
+    pub fn load_cube_texture(
+        &self,
+        sources: [impl AssetSource; 6],
+        color_space: ColorSpace,
+        generate_mipmaps: bool,
+    ) -> TextureHandle {
+        let uris: Vec<String> = sources.iter().map(|s| s.uri().to_string()).collect();
+        let filenames: Vec<String> = sources
+            .iter()
+            .map(|s| {
+                s.filename()
+                    .map_or_else(|| "unknown".to_string(), |c| c.to_string())
+            })
+            .collect();
+        let combined_uri = uris.join("|");
+
+        let tex_uuid = Self::generate_asset_uuid(
+            "CubeMap",
+            &combined_uri,
+            &format!("{color_space:?}|{generate_mipmaps}"),
+        );
+        let (tex_handle, is_new) = self.textures.reserve_with_uuid(tex_uuid);
+        if !is_new {
+            return tex_handle;
+        }
+
+        let img_uuid = Self::generate_asset_uuid("Image", &combined_uri, "Cube");
+        let (image_handle, img_is_new) = self.images.reserve_with_uuid(img_uuid);
+
+        if img_is_new {
+            let tx = self.loading.image_channel.sender();
+
+            spawn_asset_task(async move {
+                let result = Self::load_cube_image_task(&uris, &filenames).await;
+                let event = match result {
+                    Ok(image) => ImageLoadEvent {
+                        handle: image_handle,
+                        result: Ok(image),
+                    },
+                    Err(e) => ImageLoadEvent {
+                        handle: image_handle,
+                        result: Err(e.to_string()),
+                    },
+                };
+                let _ = tx.send(event);
+            });
+        }
+
+        let mut texture = Texture::new_cube(Some(&combined_uri), image_handle);
+        texture.color_space = color_space;
+        texture.generate_mipmaps = generate_mipmaps;
+        self.textures.insert_ready(tex_handle, texture);
+
+        tex_handle
+    }
+
     /// Loads a glTF/GLB model, returning a [`PrefabHandle`] immediately.
     ///
     /// The handle can be polled via [`AssetStorage::get`] on
@@ -477,6 +539,9 @@ impl AssetServer {
 
     /// Loads a 2D texture synchronously, blocking the calling thread.
     ///
+    /// Delegates to the fire-and-forget entry point for full UUID
+    /// deduplication, then blocks until the underlying [`Image`] is ready.
+    ///
     /// Prefer [`load_texture`](Self::load_texture) for non-blocking loads.
     pub fn load_texture_blocking(
         &self,
@@ -494,19 +559,14 @@ impl AssetServer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let (image, sampler_cfg, gen_mips) =
-                crate::load_texture_from_file(source.uri().to_string())?;
-            let image_handle = self.images.add(image);
-            let mut texture = Texture::new_2d(None, image_handle);
-            texture.sampler = sampler_cfg;
-            texture.color_space = color_space;
-            texture.generate_mipmaps = gen_mips || generate_mipmaps;
-            let handle = self.textures.add(texture);
-            Ok(handle)
+            self.load_texture_blocking_wasm(source, color_space, generate_mipmaps)
         }
     }
 
     /// Loads a cube map synchronously, blocking the calling thread.
+    ///
+    /// Delegates to the fire-and-forget entry point for full UUID
+    /// deduplication, then blocks until the underlying [`Image`] is ready.
     pub fn load_cube_texture_blocking(
         &self,
         sources: [impl AssetSource; 6],
@@ -523,17 +583,7 @@ impl AssetServer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let (image, sampler_cfg, gen_mips) = crate::load_cube_texture_from_files(
-                &sources.map(|s| s.uri().to_string()),
-                color_space,
-            )?;
-            let image_handle = self.images.add(image);
-            let mut texture = Texture::new_cube(None, image_handle);
-            texture.sampler = sampler_cfg;
-            texture.color_space = color_space;
-            texture.generate_mipmaps = gen_mips || generate_mipmaps;
-            let handle = self.textures.add(texture);
-            Ok(handle)
+            self.load_cube_texture_blocking_wasm(sources, color_space, generate_mipmaps)
         }
     }
 
@@ -545,14 +595,7 @@ impl AssetServer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let (image, sampler_cfg, _) =
-                crate::load_hdr_texture_from_file(source.uri().to_string())?;
-            let image_handle = self.images.add(image);
-            let mut texture = Texture::new_2d(None, image_handle);
-            texture.sampler = sampler_cfg;
-            texture.color_space = ColorSpace::Linear;
-            let handle = self.textures.add(texture);
-            Ok(handle)
+            self.load_hdr_texture_blocking_wasm(source)
         }
     }
 
@@ -564,14 +607,7 @@ impl AssetServer {
         }
         #[cfg(target_arch = "wasm32")]
         {
-            let (image, sampler_cfg, _) =
-                crate::load_lut_texture_from_file(source.uri().to_string())?;
-            let image_handle = self.images.add(image);
-            let mut texture = Texture::new_3d(None, image_handle);
-            texture.sampler = sampler_cfg;
-            texture.color_space = ColorSpace::Linear;
-            let handle = self.textures.add(texture);
-            Ok(handle)
+            self.load_lut_texture_blocking_wasm(source)
         }
     }
 
@@ -579,124 +615,64 @@ impl AssetServer {
     // Async Methods (Cross-Platform, full control)
     // ========================================================================
 
-    /// Asynchronously loads a 2D texture (supports local paths or HTTP URLs).
+    /// Asynchronously loads a 2D texture and waits for the underlying
+    /// [`Image`] to finish decoding.
+    ///
+    /// Internally delegates to the fire-and-forget [`load_texture`](Self::load_texture)
+    /// and then polls until the image data is available, ensuring full
+    /// UUID-based deduplication.
     pub async fn load_texture_async(
         &self,
         source: impl AssetSource,
         color_space: ColorSpace,
         generate_mipmaps: bool,
     ) -> Result<TextureHandle> {
-        let reader = AssetReaderVariant::new(&source)?;
-
-        let uri = source.uri();
-        let filename = source
-            .filename()
-            .unwrap_or(std::borrow::Cow::Borrowed("unknown"));
-
-        let bytes = reader.read_bytes(&filename).await?;
-        let image = Self::decode_image_async(bytes, filename.to_string()).await?;
-        let image_handle = self.images.add(image);
-
-        let mut texture = Texture::new(Some(&uri), image_handle, wgpu::TextureViewDimension::D2);
-        texture.color_space = color_space;
-        texture.generate_mipmaps = generate_mipmaps;
-
-        let handle = self.textures.add(texture);
+        let handle = self.load_texture(source, color_space, generate_mipmaps);
+        let texture = self
+            .textures
+            .get(handle)
+            .expect("Texture is immediately available after load_texture");
+        self.wait_for_image(texture.image).await?;
         Ok(handle)
     }
 
-    /// Asynchronously loads a Cube Map (requires 6 images).
+    /// Asynchronously loads a cube map and waits for the underlying
+    /// combined [`Image`] to finish decoding.
+    ///
+    /// Delegates to the fire-and-forget [`load_cube_texture`](Self::load_cube_texture).
     pub async fn load_cube_texture_async(
         &self,
         sources: [impl AssetSource; 6],
         color_space: ColorSpace,
         generate_mipmaps: bool,
     ) -> Result<TextureHandle> {
-        let mut futures = Vec::with_capacity(6);
-
-        for source in sources {
-            futures.push(async move {
-                let reader = AssetReaderVariant::new(&source)?;
-                let filename = source
-                    .filename()
-                    .unwrap_or(std::borrow::Cow::Borrowed("unknown"));
-
-                let bytes = reader.read_bytes(&filename).await?;
-                let image =
-                    Self::decode_image_async(bytes, filename.to_string()).await?;
-                Ok::<Image, Error>(image)
-            });
-        }
-
-        let images = futures::future::try_join_all(futures).await?;
-
-        let width: u32 = images[0].width;
-        let height = images[0].height;
-        if images
-            .iter()
-            .any(|img| img.width != width || img.height != height)
-        {
-            return Err(Error::Asset(AssetError::InvalidData(
-                "Cube map images must have same dimensions".to_string(),
-            )));
-        }
-
-        let mut combined_data = Vec::with_capacity((width * height * 4 * 6) as usize);
-        for img in &images {
-            if let Some(data) = &img.data {
-                combined_data.extend(data);
-            }
-        }
-
-        let combined_image = Image::new(
-            width,
-            height,
-            6,
-            ImageDimension::D2,
-            PixelFormat::Rgba8Unorm,
-            Some(combined_data),
-        );
-
-        let image_handle = self.images.add(combined_image);
-        let mut texture = Texture::new(
-            Some("CubeMap"),
-            image_handle,
-            wgpu::TextureViewDimension::Cube,
-        );
-        texture.color_space = color_space;
-        texture.generate_mipmaps = generate_mipmaps;
-
-        let handle = self.textures.add(texture);
+        let handle = self.load_cube_texture(sources, color_space, generate_mipmaps);
+        let texture = self
+            .textures
+            .get(handle)
+            .expect("Texture is immediately available after load_cube_texture");
+        self.wait_for_image(texture.image).await?;
         Ok(handle)
     }
 
-    /// Asynchronously loads an HDR environment map.
+    /// Asynchronously loads an HDR environment map and waits for the
+    /// underlying [`Image`] to finish decoding.
+    ///
+    /// Delegates to the fire-and-forget [`load_hdr_texture`](Self::load_hdr_texture).
     pub async fn load_hdr_texture_async(&self, source: impl AssetSource) -> Result<TextureHandle> {
-        let reader = AssetReaderVariant::new(&source)?;
-        let filename = source
-            .filename()
-            .unwrap_or(std::borrow::Cow::Borrowed("unknown"));
-
-        let bytes = reader.read_bytes(&filename).await?;
-        let image = Self::decode_hdr_async(bytes).await?;
-        let image_handle = self.images.add(image);
-
-        let mut texture = Texture::new(
-            Some(&filename),
-            image_handle,
-            wgpu::TextureViewDimension::D2,
-        );
-        texture.color_space = ColorSpace::Linear;
-        texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
-        texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
-        texture.sampler.mag_filter = wgpu::FilterMode::Linear;
-        texture.sampler.min_filter = wgpu::FilterMode::Linear;
-
-        let handle = self.textures.add(texture);
+        let handle = self.load_hdr_texture(source);
+        let texture = self
+            .textures
+            .get(handle)
+            .expect("Texture is immediately available after load_hdr_texture");
+        self.wait_for_image(texture.image).await?;
         Ok(handle)
     }
 
     /// Loads a 2D texture from raw bytes.
+    ///
+    /// Bytes-based loads cannot be URI-deduplicated, but still honour the
+    /// decoupled Image / Texture architecture.
     pub async fn load_texture_from_bytes_async(
         &self,
         name: &str,
@@ -706,7 +682,7 @@ impl AssetServer {
     ) -> Result<TextureHandle> {
         let image = Self::decode_image_async(bytes, name.to_string()).await?;
         let image_handle = self.images.add(image);
-        let mut texture = Texture::new(Some(name), image_handle, wgpu::TextureViewDimension::D2);
+        let mut texture = Texture::new_2d(Some(name), image_handle);
         texture.color_space = color_space;
         texture.generate_mipmaps = generate_mipmaps;
         let handle = self.textures.add(texture);
@@ -721,7 +697,7 @@ impl AssetServer {
     ) -> Result<TextureHandle> {
         let image = Self::decode_hdr_async(bytes).await?;
         let image_handle = self.images.add(image);
-        let mut texture = Texture::new(Some(name), image_handle, wgpu::TextureViewDimension::D2);
+        let mut texture = Texture::new_2d(Some(name), image_handle);
         texture.color_space = ColorSpace::Linear;
         texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
         texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
@@ -731,21 +707,17 @@ impl AssetServer {
         Ok(handle)
     }
 
-    /// Asynchronously loads a 3D LUT from a `.cube` file.
+    /// Asynchronously loads a 3D LUT from a `.cube` file and waits for
+    /// the underlying [`Image`] to finish decoding.
+    ///
+    /// Delegates to the fire-and-forget [`load_lut_texture`](Self::load_lut_texture).
     pub async fn load_lut_texture_async(&self, source: impl AssetSource) -> Result<TextureHandle> {
-        let reader = AssetReaderVariant::new(&source)?;
-        let filename = source
-            .filename()
-            .unwrap_or(std::borrow::Cow::Borrowed("unknown"));
-
-        let bytes = reader.read_bytes(&filename).await?;
-        let image = Self::decode_cube_async(bytes).await?;
-        let image_handle = self.images.add(image);
-
-        let mut texture = Texture::new_3d(Some(&filename), image_handle);
-        texture.color_space = ColorSpace::Linear;
-
-        let handle = self.textures.add(texture);
+        let handle = self.load_lut_texture(source);
+        let texture = self
+            .textures
+            .get(handle)
+            .expect("Texture is immediately available after load_lut_texture");
+        self.wait_for_image(texture.image).await?;
         Ok(handle)
     }
 
@@ -818,6 +790,147 @@ impl AssetServer {
     }
 
     // ========================================================================
+    // WASM Blocking Helpers (synchronous I/O with UUID deduplication)
+    // ========================================================================
+
+    #[cfg(target_arch = "wasm32")]
+    fn load_texture_blocking_wasm(
+        &self,
+        source: impl AssetSource,
+        color_space: ColorSpace,
+        generate_mipmaps: bool,
+    ) -> Result<TextureHandle> {
+        let uri = source.uri().to_string();
+
+        let tex_uuid = Self::generate_asset_uuid(
+            "Tex2D",
+            &uri,
+            &format!("{color_space:?}|{generate_mipmaps}"),
+        );
+        let (tex_handle, tex_is_new) = self.textures.reserve_with_uuid(tex_uuid);
+        if !tex_is_new {
+            return Ok(tex_handle);
+        }
+
+        let img_uuid = Self::generate_asset_uuid("Image", &uri, "");
+        let image_handle = self.get_or_load_image_sync(img_uuid, || {
+            let (data, width, height) = crate::load_image_from_file(&uri)?;
+            Ok(Image::new(
+                width, height, 1, ImageDimension::D2, PixelFormat::Rgba8Unorm, Some(data),
+            ))
+        })?;
+
+        let mut texture = Texture::new_2d(Some(&uri), image_handle);
+        texture.color_space = color_space;
+        texture.generate_mipmaps = generate_mipmaps;
+        self.textures.insert_ready(tex_handle, texture);
+        Ok(tex_handle)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn load_cube_texture_blocking_wasm(
+        &self,
+        sources: [impl AssetSource; 6],
+        color_space: ColorSpace,
+        generate_mipmaps: bool,
+    ) -> Result<TextureHandle> {
+        let uris: Vec<String> = sources.iter().map(|s| s.uri().to_string()).collect();
+        let combined_uri = uris.join("|");
+
+        let tex_uuid = Self::generate_asset_uuid(
+            "CubeMap",
+            &combined_uri,
+            &format!("{color_space:?}|{generate_mipmaps}"),
+        );
+        let (tex_handle, tex_is_new) = self.textures.reserve_with_uuid(tex_uuid);
+        if !tex_is_new {
+            return Ok(tex_handle);
+        }
+
+        let img_uuid = Self::generate_asset_uuid("Image", &combined_uri, "Cube");
+        let image_handle = self.get_or_load_image_sync(img_uuid, || {
+            let paths: Vec<String> = sources.iter().map(|s| s.uri().to_string()).collect();
+            let paths_arr: [String; 6] = paths.try_into().unwrap();
+            let (image, _, _) = crate::load_cube_texture_from_files(&paths_arr, ColorSpace::Linear)?;
+            Ok(image)
+        })?;
+
+        let mut texture = Texture::new_cube(Some(&combined_uri), image_handle);
+        texture.color_space = color_space;
+        texture.generate_mipmaps = generate_mipmaps;
+        self.textures.insert_ready(tex_handle, texture);
+        Ok(tex_handle)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn load_hdr_texture_blocking_wasm(&self, source: impl AssetSource) -> Result<TextureHandle> {
+        let uri = source.uri().to_string();
+
+        let tex_uuid = Self::generate_asset_uuid("HDR", &uri, "");
+        let (tex_handle, tex_is_new) = self.textures.reserve_with_uuid(tex_uuid);
+        if !tex_is_new {
+            return Ok(tex_handle);
+        }
+
+        let img_uuid = Self::generate_asset_uuid("Image", &uri, "HDR");
+        let image_handle = self.get_or_load_image_sync(img_uuid, || {
+            let (image, _, _) = crate::load_hdr_texture_from_file(&uri)?;
+            Ok(image)
+        })?;
+
+        let mut texture = Texture::new_2d(Some(&uri), image_handle);
+        texture.color_space = ColorSpace::Linear;
+        texture.sampler.address_mode_u = wgpu::AddressMode::ClampToEdge;
+        texture.sampler.address_mode_v = wgpu::AddressMode::ClampToEdge;
+        texture.sampler.mag_filter = wgpu::FilterMode::Linear;
+        texture.sampler.min_filter = wgpu::FilterMode::Linear;
+        self.textures.insert_ready(tex_handle, texture);
+        Ok(tex_handle)
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    fn load_lut_texture_blocking_wasm(&self, source: impl AssetSource) -> Result<TextureHandle> {
+        let uri = source.uri().to_string();
+
+        let tex_uuid = Self::generate_asset_uuid("LUT", &uri, "");
+        let (tex_handle, tex_is_new) = self.textures.reserve_with_uuid(tex_uuid);
+        if !tex_is_new {
+            return Ok(tex_handle);
+        }
+
+        let img_uuid = Self::generate_asset_uuid("Image", &uri, "LUT");
+        let image_handle = self.get_or_load_image_sync(img_uuid, || {
+            let (image, _, _) = crate::load_lut_texture_from_file(&uri)?;
+            Ok(image)
+        })?;
+
+        let mut texture = Texture::new_3d(Some(&uri), image_handle);
+        texture.color_space = ColorSpace::Linear;
+        self.textures.insert_ready(tex_handle, texture);
+        Ok(tex_handle)
+    }
+
+    /// Helper: retrieve cached image or load and insert synchronously.
+    #[cfg(target_arch = "wasm32")]
+    fn get_or_load_image_sync(
+        &self,
+        uuid: Uuid,
+        load_fn: impl FnOnce() -> Result<Image>,
+    ) -> Result<ImageHandle> {
+        let (handle, is_new) = self.images.reserve_with_uuid(uuid);
+        if is_new {
+            match load_fn() {
+                Ok(image) => self.images.insert_ready(handle, image),
+                Err(e) => {
+                    self.images.mark_failed(handle, e.to_string());
+                    return Err(e);
+                }
+            }
+        }
+        Ok(handle)
+    }
+
+    // ========================================================================
     // Internal Task Implementations
     // ========================================================================
 
@@ -844,6 +957,86 @@ impl AssetServer {
         let reader = AssetReaderVariant::new(&uri)?;
         let bytes = reader.read_bytes(filename).await?;
         Self::decode_cube_async(bytes).await
+    }
+
+    /// Background task: read + decode 6 cube-map face images and combine
+    /// them into a single [`Image`] with `depth = 6`.
+    async fn load_cube_image_task(uris: &[String], filenames: &[String]) -> Result<Image> {
+        let mut futures = Vec::with_capacity(6);
+
+        for (uri, filename) in uris.iter().zip(filenames.iter()) {
+            let uri = uri.clone();
+            let filename = filename.clone();
+            futures.push(async move {
+                let reader = AssetReaderVariant::new(&uri)?;
+                let bytes = reader.read_bytes(&filename).await?;
+                Self::decode_image_async(bytes, filename).await
+            });
+        }
+
+        let face_images = futures::future::try_join_all(futures).await?;
+
+        let width = face_images[0].width;
+        let height = face_images[0].height;
+        if face_images
+            .iter()
+            .any(|img| img.width != width || img.height != height)
+        {
+            return Err(Error::Asset(AssetError::InvalidData(
+                "Cube map faces must have the same dimensions".to_string(),
+            )));
+        }
+
+        let mut combined_data = Vec::with_capacity((width * height * 4 * 6) as usize);
+        for img in &face_images {
+            if let Some(data) = &img.data {
+                combined_data.extend_from_slice(data);
+            }
+        }
+
+        Ok(Image::new(
+            width,
+            height,
+            6,
+            ImageDimension::D2,
+            PixelFormat::Rgba8Unorm,
+            Some(combined_data),
+        ))
+    }
+
+    // ========================================================================
+    // Async Wait Helpers
+    // ========================================================================
+
+    /// Polls the loading channel and waits until the [`Image`] behind
+    /// `handle` transitions out of the `Loading` state.
+    ///
+    /// On success the image data is available via
+    /// [`AssetStorage::get`](crate::storage::AssetStorage::get).
+    /// Returns an error if the background decode task failed.
+    async fn wait_for_image(&self, handle: ImageHandle) -> Result<()> {
+        loop {
+            self.process_loading_events();
+
+            if self.images.is_loaded(handle) {
+                return Ok(());
+            }
+            if let Some(msg) = self.images.get_error(handle) {
+                return Err(Error::Asset(AssetError::Format(msg)));
+            }
+
+            #[cfg(not(target_arch = "wasm32"))]
+            tokio::task::yield_now().await;
+
+            #[cfg(target_arch = "wasm32")]
+            {
+                wasm_bindgen_futures::JsFuture::from(js_sys::Promise::resolve(
+                    &wasm_bindgen::JsValue::NULL,
+                ))
+                .await
+                .ok();
+            }
+        }
     }
 
     // ========================================================================

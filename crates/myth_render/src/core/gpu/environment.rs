@@ -73,10 +73,10 @@ impl ResourceManager {
             if let Some(tex) = assets.textures.get(*handle) {
                 current_version = assets.images.get_version(tex.image).unwrap_or(0);
             }
-            if assets.textures.is_loading(*handle) {
-                // Source texture is still Loading — retain the previous GPU
-                // state (lagging sync) to avoid visual flickering.
-                source_pending = true;
+            if let Some(tex) = assets.textures.get(*handle) {
+                if assets.images.is_loading(tex.image) {
+                    source_pending = true;
+                }
             }
         }
 

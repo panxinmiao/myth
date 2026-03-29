@@ -147,9 +147,13 @@ impl ResourceManager {
                         resource_ids.push(binding.view_id);
                         resource_ids.push(binding.sampler_id as u64);
                     } else {
-                        // Texture not yet available (Loading or invalid)
-                        if assets.textures.is_loading(*tex_handle) {
-                            has_pending = true;
+                        // No GPU binding yet. In the decoupled architecture
+                        // the Texture config is always immediately available,
+                        // but its underlying Image may still be decoding.
+                        if let Some(tex) = assets.textures.get(*tex_handle) {
+                            if assets.images.is_loading(tex.image) {
+                                has_pending = true;
+                            }
                         }
                         resource_ids.push(self.system_textures.black_cube.id());
                         resource_ids.push(self.sampler_registry.default_sampler().0 as u64);
