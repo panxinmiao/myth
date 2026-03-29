@@ -86,19 +86,16 @@ impl ResourceManager {
         let (mut current_resource_ids, has_pending_textures) =
             self.ensure_material_resources(assets, &material);
 
-        // Lagging sync: if textures are still loading and we already have a
-        // valid BindGroup, defer the update to avoid visual flickering.
-        if has_pending_textures && self.gpu_materials.contains_key(handle) {
-            return;
-        }
-
-        // 2. Check phase: determine if BindGroup needs to be rebuilt
-        let needs_rebuild_bindgroup = if let Some(gpu_mat) = self.gpu_materials.get(handle) {
-            let mut cached_ids = gpu_mat.resource_ids.clone();
-            !current_resource_ids.matches(&mut cached_ids)
-        } else {
-            true
-        };
+        let needs_rebuild_bindgroup =
+            if has_pending_textures && self.gpu_materials.contains_key(handle) {
+                // lagging sync: if textures are still loading, do not trigger a rebuild based on resource ID mismatch
+                false
+            } else if let Some(gpu_mat) = self.gpu_materials.get(handle) {
+                let mut cached_ids = gpu_mat.resource_ids.clone();
+                !current_resource_ids.matches(&mut cached_ids)
+            } else {
+                true
+            };
 
         if needs_rebuild_bindgroup {
             // 3. Rebuild phase: rebuild BindGroup (expensive operation)
@@ -151,7 +148,9 @@ impl ResourceManager {
                         resource_ids.push(binding.sampler_id as u64);
                     } else {
                         // Texture not yet available (Loading or invalid)
-                        has_pending = true;
+                        if assets.textures.is_loading(*tex_handle) {
+                            has_pending = true;
+                        }
                         resource_ids.push(self.system_textures.black_cube.id());
                         resource_ids.push(self.sampler_registry.default_sampler().0 as u64);
                     }

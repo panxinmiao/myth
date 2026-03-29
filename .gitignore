@@ -1,8 +1,10 @@
 /target
+/target_ra
 /debug
 
 # Python bindings (bindings/python/)
 bindings/python/target/
+bindings/python/target_ra/
 bindings/python/.venv/
 bindings/python/myth/*.pyd
 bindings/python/myth/*.so

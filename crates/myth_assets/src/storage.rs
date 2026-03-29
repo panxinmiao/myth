@@ -160,8 +160,9 @@ impl<H: Key, T> AssetStorage<H, T> {
         let mut guard = self.inner.write();
         if let Some(&handle) = guard.lookup.get(&uuid) {
             if let Some(slot) = guard.map.get_mut(handle)
-                && slot.is_loading()
+                && !slot.is_loaded()
             {
+                // includes Loading and Failed states
                 *slot = AssetSlot::Loaded(AssetEntry {
                     asset: Arc::new(asset.into()),
                     version: 1,
@@ -300,6 +301,26 @@ impl<H: Key, T> AssetStorage<H, T> {
     pub fn is_loaded(&self, handle: H) -> bool {
         let guard = self.inner.read();
         matches!(guard.map.get(handle), Some(AssetSlot::Loaded(_)))
+    }
+
+    /// Returns `true` if the handle points to a `Loading` slot.
+    pub fn is_loading(&self, handle: H) -> bool {
+        let guard = self.inner.read();
+        if let Some(slot) = guard.map.get(handle) {
+            slot.is_loading()
+        } else {
+            false
+        }
+    }
+
+    /// Returns `true` if the handle points to a `Failed` slot.
+    pub fn is_failed(&self, handle: H) -> bool {
+        let guard = self.inner.read();
+        if let Some(slot) = guard.map.get(handle) {
+            matches!(slot, AssetSlot::Failed(_))
+        } else {
+            false
+        }
     }
 
     pub fn get_by_uuid(&self, uuid: &Uuid) -> Option<Arc<T>> {

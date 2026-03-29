@@ -1,7 +1,17 @@
 {
+    "files.exclude": {
+        "target_ra/**": true,
+        "target_wasm/**": true,
+        "target/**": true,
+        "bindings/python/target/**": true,
+        "bindings/python/target_ra/**": true,
+    },
+    
     // "rust-analyzer.cargo.target": "wasm32-unknown-unknown",
+    
     "rust-analyzer.cargo.allTargets": true,
     "rust-analyzer.cargo.features": "all",
+    "rust-analyzer.cargo.targetDir": "target_ra",
     "rust-analyzer.linkedProjects": [
         "Cargo.toml",
         "bindings/python/Cargo.toml"
@@ -13,7 +23,6 @@
     },
 
     "python.analysis.extraPaths": [
-        "examples",
         "bindings/python/examples"
     ]
 
