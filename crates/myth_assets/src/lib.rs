@@ -39,13 +39,16 @@ pub use io::FileAssetReader;
 #[cfg(feature = "http")]
 pub use io::HttpAssetReader;
 
-use image::GenericImageView;
 use myth_core::{AssetError, Error, Result};
-use myth_resources::image::Image;
+use myth_resources::image::{Image, ImageDimension, PixelFormat};
 use myth_resources::texture::TextureSampler;
 use std::path::Path;
 
+pub use myth_resources::ColorSpace;
+
 pub fn load_image_from_file(path: impl AsRef<Path>) -> Result<(Vec<u8>, u32, u32)> {
+    use image::GenericImageView;
+
     let img = image::open(&path)
         .map_err(|e| Error::Asset(AssetError::Format(format!("Image error: {e}"))))?;
 
@@ -58,32 +61,13 @@ pub fn load_image_from_file(path: impl AsRef<Path>) -> Result<(Vec<u8>, u32, u32
     Ok((data, width, height))
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum ColorSpace {
-    Srgb,
-    Linear,
-}
-
 /// Returns `(Image, TextureSampler, generate_mipmaps)`.
 pub fn load_texture_from_file(
     path: impl AsRef<Path>,
-    color_space: ColorSpace,
 ) -> Result<(Image, TextureSampler, bool)> {
     let (data, width, height) = load_image_from_file(&path)?;
 
-    let format = match color_space {
-        ColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
-        ColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
-    };
-
-    let image = Image::new(
-        width,
-        height,
-        1,
-        wgpu::TextureDimension::D2,
-        format,
-        Some(data),
-    );
+    let image = Image::new(width, height, 1, ImageDimension::D2, PixelFormat::Rgba8Unorm, Some(data));
 
     Ok((image, TextureSampler::default(), false))
 }
@@ -117,8 +101,8 @@ pub fn load_hdr_texture_from_file(path: impl AsRef<Path>) -> Result<(Image, Text
         width,
         height,
         1,
-        wgpu::TextureDimension::D2,
-        wgpu::TextureFormat::Rgba16Float,
+        ImageDimension::D2,
+        PixelFormat::Rgba16Float,
         Some(rgba_f16_data),
     );
 
@@ -136,7 +120,7 @@ pub fn load_hdr_texture_from_file(path: impl AsRef<Path>) -> Result<(Image, Text
 /// Returns `(Image, TextureSampler, generate_mipmaps)`.
 pub fn load_cube_texture_from_files(
     paths: &[impl AsRef<Path>; 6],
-    color_space: ColorSpace,
+    _color_space: ColorSpace,
 ) -> Result<(Image, TextureSampler, bool)> {
     let mut face_data = Vec::with_capacity(6);
     let mut width = 0;
@@ -160,17 +144,12 @@ pub fn load_cube_texture_from_files(
         combined_data.extend_from_slice(face);
     }
 
-    let format = match color_space {
-        ColorSpace::Srgb => wgpu::TextureFormat::Rgba8UnormSrgb,
-        ColorSpace::Linear => wgpu::TextureFormat::Rgba8Unorm,
-    };
-
     let image = Image::new(
         width,
         height,
         6,
-        wgpu::TextureDimension::D2,
-        format,
+        ImageDimension::D2,
+        PixelFormat::Rgba8Unorm,
         Some(combined_data),
     );
 

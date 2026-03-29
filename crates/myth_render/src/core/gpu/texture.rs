@@ -48,6 +48,7 @@ impl GpuImage {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         image: &Image,
+        resolved_format: wgpu::TextureFormat,
         view_dimension: wgpu::TextureViewDimension,
         mip_level_count: u32,
         usage: wgpu::TextureUsages,
@@ -63,8 +64,8 @@ impl GpuImage {
             size,
             mip_level_count,
             sample_count: 1,
-            dimension: image.description.dimension,
-            format: image.description.format,
+            dimension: image.dimension.to_wgpu(),
+            format: resolved_format,
             usage,
             view_formats: &[],
         });
@@ -76,12 +77,12 @@ impl GpuImage {
             image.width,
             image.height,
             image.depth,
-            image.description.format,
+            resolved_format,
         );
 
         let default_view = texture.create_view(&wgpu::TextureViewDescriptor {
             label: None,
-            format: Some(image.description.format),
+            format: Some(resolved_format),
             dimension: Some(view_dimension),
             ..Default::default()
         });
@@ -93,7 +94,7 @@ impl GpuImage {
             default_view,
             default_view_dimension: view_dimension,
             size,
-            format: image.description.format,
+            format: resolved_format,
             mip_level_count,
             usage,
             version: 0,
@@ -112,6 +113,7 @@ impl GpuImage {
         device: &wgpu::Device,
         queue: &wgpu::Queue,
         image: &Image,
+        resolved_format: wgpu::TextureFormat,
         view_dimension: wgpu::TextureViewDimension,
         image_version: u32,
     ) {
@@ -119,12 +121,13 @@ impl GpuImage {
         if self.size.width != image.width
             || self.size.height != image.height
             || self.size.depth_or_array_layers != image.depth
-            || self.format != image.description.format
+            || self.format != resolved_format
         {
             *self = Self::new(
                 device,
                 queue,
                 image,
+                resolved_format,
                 view_dimension,
                 self.mip_level_count,
                 self.usage,
@@ -195,12 +198,11 @@ impl ResourceManager {
         image: &Image,
         image_handle: ImageHandle,
         image_version: u32,
+        resolved_format: wgpu::TextureFormat,
         view_dimension: wgpu::TextureViewDimension,
         required_mip_count: u32,
         required_usage: wgpu::TextureUsages,
     ) -> u64 {
-        // let uuid = image.uuid;
-        // let id = uuid.as_u128() as u64;
         let mut needs_recreate = false;
 
         if let Some(gpu_img) = self.gpu_images.get(image_handle) {
@@ -219,6 +221,7 @@ impl ResourceManager {
                 &self.device,
                 &self.queue,
                 image,
+                resolved_format,
                 view_dimension,
                 required_mip_count,
                 required_usage,
@@ -233,6 +236,7 @@ impl ResourceManager {
                 &self.device,
                 &self.queue,
                 image,
+                resolved_format,
                 view_dimension,
                 image_version,
             );
@@ -259,7 +263,7 @@ impl ResourceManager {
             return;
         };
 
-        let image_handle = texture_asset.image;
+        let image_handle: ImageHandle = texture_asset.image;
 
         // ── Fast path: skip if nothing changed (no RwLock / Arc / hash) ──
         if let Some(binding) = self.texture_bindings.get(handle)
@@ -284,10 +288,11 @@ impl ResourceManager {
 
         // ── Slow path: something changed, do the full update ──
         let Some((image_arc, image_version)) = assets.images.get_entry(image_handle) else {
-            log::warn!("Image asset not found for handle: {image_handle:?}");
+            // Image may still be loading — silently skip (fallback texture used)
             return;
         };
 
+        let resolved_format = texture_asset.resolve_wgpu_format(image_arc.format);
         let sampler_id = self.get_or_create_sampler(texture_asset.sampler);
 
         let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST;
@@ -307,6 +312,7 @@ impl ResourceManager {
             &image_arc,
             image_handle,
             image_version,
+            resolved_format,
             texture_asset.view_dimension,
             final_mip_count,
             usage,

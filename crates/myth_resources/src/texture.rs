@@ -1,3 +1,4 @@
+use crate::image::{ColorSpace, PixelFormat};
 use crate::{ImageHandle, TextureHandle};
 use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
@@ -133,13 +134,18 @@ impl Hash for TextureSampler {
 // ============================================================================
 
 /// Lightweight "glue" that pairs an [`Image`](crate::image::Image) (via
-/// handle) with sampling and view configuration.
+/// handle) with sampling, view, and colour-space configuration.
 ///
 /// `Texture` is intentionally thin — the heavy pixel data lives in the
 /// [`Image`] stored separately in `AssetServer.images`. This decoupling
-/// enables multiple `Texture` assets to reference the same `Image` with
-/// different sampler or view settings, and makes the version-driven GPU
-/// upload path straightforward.
+/// enables multiple `Texture` assets to reference the **same** `Image`
+/// with different colour-space or sampler settings without duplicating
+/// the underlying pixel data.
+///
+/// The final `wgpu::TextureFormat` used on the GPU is derived at upload
+/// time by combining the `Image`'s physical [`PixelFormat`] with this
+/// texture's [`color_space`](Self::color_space) via
+/// [`resolve_wgpu_format`](Self::resolve_wgpu_format).
 #[derive(Debug)]
 pub struct Texture {
     pub uuid: Uuid,
@@ -149,6 +155,8 @@ pub struct Texture {
     pub view_dimension: TextureViewDimension,
     pub sampler: TextureSampler,
     pub generate_mipmaps: bool,
+    /// Colour-space intent — determines the sRGB / Linear GPU format variant.
+    pub color_space: ColorSpace,
 }
 
 impl Texture {
@@ -157,6 +165,14 @@ impl Texture {
     #[must_use]
     pub fn uuid(&self) -> Uuid {
         self.uuid
+    }
+
+    /// Resolves the final `wgpu::TextureFormat` by combining the image's
+    /// physical pixel layout with this texture's colour-space intent.
+    #[inline]
+    #[must_use]
+    pub fn resolve_wgpu_format(&self, image_format: PixelFormat) -> wgpu::TextureFormat {
+        image_format.to_wgpu(self.color_space)
     }
 
     /// Creates a `Texture` referencing the given image handle.
@@ -173,6 +189,7 @@ impl Texture {
             view_dimension,
             sampler: TextureSampler::default(),
             generate_mipmaps: false,
+            color_space: ColorSpace::Srgb,
         }
     }
 

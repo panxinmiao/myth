@@ -2892,7 +2892,7 @@ impl GltfViewer {
 
                 ui.label("Format:");
                 if let Some(ref img) = image_info {
-                    ui.label(format!("{:?}", img.description.format));
+                    ui.label(format!("{:?}", img.format));
                 } else {
                     ui.label("N/A");
                 }

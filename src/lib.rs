@@ -160,7 +160,7 @@ pub mod prelude {
     #[cfg(feature = "gltf")]
     pub use myth_assets::loaders::gltf::GltfLoader;
     pub use myth_assets::{
-        AssetServer, GeometryHandle, MaterialHandle, PrefabHandle, TextureHandle,
+        AssetServer, GeometryHandle, ImageHandle, MaterialHandle, PrefabHandle, TextureHandle,
     };
 
     // Animation
@@ -212,7 +212,7 @@ pub use myth_resources::{
 };
 
 // Assets
-pub use myth_assets::{AssetServer, GeometryHandle, MaterialHandle, TextureHandle};
+pub use myth_assets::{AssetServer, GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
 pub use myth_assets::{ColorSpace, GeometryQuery, ResolveGeometry, ResolveMaterial, SceneExt};
 
 // Animation

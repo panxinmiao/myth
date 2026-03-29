@@ -61,7 +61,8 @@ pub use fxaa::{FxaaQuality, FxaaSettings};
 pub use geometry::{
     Attribute, BoundingBox, BoundingSphere, Geometry, IndexAttribute, IndexFormat, VertexFormat,
 };
-pub use image::{Image, ImageDescriptor};
+pub use image::Image;
+pub use image::{ColorSpace, ImageDimension, PixelFormat};
 pub use input::{ButtonState, Input, Key, MouseButton};
 pub use shader_defines::ShaderDefines;
 pub use ssao::SsaoSettings;

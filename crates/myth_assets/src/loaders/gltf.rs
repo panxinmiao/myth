@@ -14,10 +14,10 @@ use myth_core::{AssetError, Error, Result};
 use myth_resources::BoundingBox;
 use myth_resources::buffer::BufferRef;
 use myth_resources::geometry::{Attribute, Geometry};
-use myth_resources::image::Image;
+use myth_resources::image::{ColorSpace, Image, ImageDimension, PixelFormat};
 use myth_resources::material::AlphaMode;
 use myth_resources::texture::Texture;
-use myth_resources::{GeometryHandle, MaterialHandle, TextureHandle};
+use myth_resources::{GeometryHandle, ImageHandle, MaterialHandle, TextureHandle};
 use myth_resources::{
     Material, PhysicalFeatures, PhysicalMaterial, TextureSampler, TextureSlot, TextureTransform,
 };
@@ -26,7 +26,7 @@ use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
-use wgpu::{BufferUsages, PrimitiveTopology, TextureFormat, VertexFormat, VertexStepMode};
+use wgpu::{BufferUsages, PrimitiveTopology, VertexFormat, VertexStepMode};
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::runtime::Runtime;
@@ -593,7 +593,7 @@ struct IntermediateTexture {
 #[derive(Hash, PartialEq, Eq, Clone)]
 struct TextureCacheKey {
     gltf_texture_index: usize,
-    is_srgb: bool,
+    color_space: ColorSpace,
 }
 
 // Helper struct for passing decoded results.
@@ -632,6 +632,7 @@ pub struct LoadContext<'a, 'b> {
     pub assets: &'a AssetServer,
     pub material_map: &'a [MaterialHandle],
     intermediate_textures: &'a [IntermediateTexture],
+    created_images: &'a mut HashMap<usize, ImageHandle>,
     created_textures: &'a mut HashMap<TextureCacheKey, TextureHandle>,
     _phantom: std::marker::PhantomData<&'b ()>,
 }
@@ -655,10 +656,11 @@ pub trait GltfExtensionParser {
         ctx: &mut LoadContext,
         tex_info: &Value,
         texture_slot: &mut TextureSlot,
-        is_srgb: bool,
+        color_space: ColorSpace,
     ) {
         if let Some(index) = tex_info.get("index").and_then(serde_json::Value::as_u64) {
-            let Some(tex_handle) = ctx.get_or_create_texture(index as usize, is_srgb).ok() else {
+            let Some(tex_handle) = ctx.get_or_create_texture(index as usize, color_space).ok()
+            else {
                 return;
             };
             texture_slot.texture = Some(tex_handle);
@@ -681,11 +683,11 @@ impl LoadContext<'_, '_> {
     pub fn get_or_create_texture(
         &mut self,
         gltf_texture_index: usize,
-        is_srgb: bool,
+        color_space: ColorSpace,
     ) -> Result<TextureHandle> {
         let key = TextureCacheKey {
             gltf_texture_index,
-            is_srgb,
+            color_space,
         };
 
         if let Some(&handle) = self.created_textures.get(&key) {
@@ -701,23 +703,25 @@ impl LoadContext<'_, '_> {
                 )))
             })?;
 
-        let format = if is_srgb {
-            TextureFormat::Rgba8UnormSrgb
+        // Image dedup: one Image per glTF texture index (format-neutral)
+        let image_handle = if let Some(&handle) = self.created_images.get(&gltf_texture_index) {
+            handle
         } else {
-            TextureFormat::Rgba8Unorm
+            let image = Image::new(
+                raw.width,
+                raw.height,
+                1,
+                ImageDimension::D2,
+                PixelFormat::Rgba8Unorm,
+                Some(raw.image_data.clone()),
+            );
+            let handle = self.assets.images.add(image);
+            self.created_images.insert(gltf_texture_index, handle);
+            handle
         };
 
-        let image = Image::new(
-            raw.width,
-            raw.height,
-            1,
-            wgpu::TextureDimension::D2,
-            format,
-            Some(raw.image_data.clone()),
-        );
-        let image_handle = self.assets.images.add(image);
-
         let mut engine_tex = Texture::new_2d(raw.name.as_deref(), image_handle);
+        engine_tex.color_space = color_space;
 
         engine_tex.sampler = raw.sampler;
         engine_tex.generate_mipmaps = raw.generate_mipmaps;
@@ -738,6 +742,7 @@ pub struct GltfLoader {
     reader: AssetReaderVariant,
 
     intermediate_textures: Vec<IntermediateTexture>,
+    created_images: HashMap<usize, ImageHandle>,
     created_textures: HashMap<TextureCacheKey, TextureHandle>,
     material_map: Vec<MaterialHandle>,
     default_material: Option<MaterialHandle>,
@@ -753,6 +758,7 @@ impl GltfLoader {
             assets,
             reader,
             intermediate_textures: Vec::new(),
+            created_images: HashMap::new(),
             created_textures: HashMap::new(),
             material_map: Vec::new(),
             extensions: HashMap::new(),
@@ -1104,11 +1110,11 @@ impl GltfLoader {
     fn get_or_create_texture(
         &mut self,
         gltf_texture_index: usize,
-        is_srgb: bool,
+        color_space: ColorSpace,
     ) -> Result<TextureHandle> {
         let key = TextureCacheKey {
             gltf_texture_index,
-            is_srgb,
+            color_space,
         };
 
         if let Some(&handle) = self.created_textures.get(&key) {
@@ -1124,23 +1130,25 @@ impl GltfLoader {
                 )))
             })?;
 
-        let format = if is_srgb {
-            TextureFormat::Rgba8UnormSrgb
+        // Image dedup: one Image per glTF texture index (format-neutral)
+        let image_handle = if let Some(&handle) = self.created_images.get(&gltf_texture_index) {
+            handle
         } else {
-            TextureFormat::Rgba8Unorm
+            let image = Image::new(
+                raw.width,
+                raw.height,
+                1,
+                ImageDimension::D2,
+                PixelFormat::Rgba8Unorm,
+                Some(raw.image_data.clone()),
+            );
+            let handle = self.assets.images.add(image);
+            self.created_images.insert(gltf_texture_index, handle);
+            handle
         };
 
-        let image = Image::new(
-            raw.width,
-            raw.height,
-            1,
-            wgpu::TextureDimension::D2,
-            format,
-            Some(raw.image_data.clone()),
-        );
-        let image_handle = self.assets.images.add(image);
-
         let mut engine_tex = Texture::new_2d(raw.name.as_deref(), image_handle);
+        engine_tex.color_space = color_space;
 
         engine_tex.sampler = raw.sampler;
         engine_tex.generate_mipmaps = raw.generate_mipmaps;
@@ -1155,9 +1163,9 @@ impl GltfLoader {
         &mut self,
         texture_slot: &mut TextureSlot,
         info: &gltf::texture::Info,
-        is_srgb: bool,
+        color_space: ColorSpace,
     ) -> Result<()> {
-        let tex_handle = self.get_or_create_texture(info.texture().index(), is_srgb)?;
+        let tex_handle = self.get_or_create_texture(info.texture().index(), color_space)?;
         texture_slot.texture = Some(tex_handle);
         texture_slot.channel = info.tex_coord() as u8;
         if let Some(transform) = info.texture_transform() {
@@ -1189,16 +1197,16 @@ impl GltfLoader {
                 uniforms.emissive = Vec3::from_array(material.emissive_factor());
 
                 if let Some(info) = pbr.base_color_texture() {
-                    self.setup_texture_map(&mut textures.map, &info, true)?;
+                    self.setup_texture_map(&mut textures.map, &info, ColorSpace::Srgb)?;
                 }
 
                 if let Some(info) = pbr.metallic_roughness_texture() {
-                    self.setup_texture_map(&mut textures.roughness_map, &info, false)?;
-                    self.setup_texture_map(&mut textures.metalness_map, &info, false)?;
+                    self.setup_texture_map(&mut textures.roughness_map, &info, ColorSpace::Linear)?;
+                    self.setup_texture_map(&mut textures.metalness_map, &info, ColorSpace::Linear)?;
                 }
 
                 if let Some(info) = material.normal_texture() {
-                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), ColorSpace::Linear)?;
                     textures.normal_map.texture = Some(tex_handle);
                     textures.normal_map.channel = info.tex_coord() as u8;
                     uniforms.normal_scale = Vec2::splat(info.scale());
@@ -1228,7 +1236,7 @@ impl GltfLoader {
                 }
 
                 if let Some(info) = material.occlusion_texture() {
-                    let tex_handle = self.get_or_create_texture(info.texture().index(), false)?;
+                    let tex_handle = self.get_or_create_texture(info.texture().index(), ColorSpace::Linear)?;
                     textures.ao_map.texture = Some(tex_handle);
                     textures.ao_map.channel = info.tex_coord() as u8;
                     uniforms.ao_map_intensity = info.strength();
@@ -1258,7 +1266,7 @@ impl GltfLoader {
                 }
 
                 if let Some(info) = material.emissive_texture() {
-                    self.setup_texture_map(&mut textures.emissive_map, &info, true)?;
+                    self.setup_texture_map(&mut textures.emissive_map, &info, ColorSpace::Srgb)?;
                 }
 
                 settings.side = if material.double_sided() {
@@ -1295,11 +1303,11 @@ impl GltfLoader {
                     uniforms.specular_intensity = specular.specular_factor();
 
                     if let Some(info) = specular.specular_color_texture() {
-                        self.setup_texture_map(&mut textures.specular_map, &info, true)?;
+                        self.setup_texture_map(&mut textures.specular_map, &info, ColorSpace::Srgb)?;
                     }
 
                     if let Some(info) = specular.specular_texture() {
-                        self.setup_texture_map(&mut textures.specular_intensity_map, &info, false)?;
+                        self.setup_texture_map(&mut textures.specular_intensity_map, &info, ColorSpace::Linear)?;
                     }
                 }
             }
@@ -1313,6 +1321,7 @@ impl GltfLoader {
                     assets: &self.assets,
                     material_map: &self.material_map,
                     intermediate_textures: &self.intermediate_textures,
+                    created_images: &mut self.created_images,
                     created_textures: &mut self.created_textures,
                     _phantom: std::marker::PhantomData,
                 };
@@ -1324,6 +1333,7 @@ impl GltfLoader {
                     assets: &self.assets,
                     material_map: &self.material_map,
                     intermediate_textures: &self.intermediate_textures,
+                    created_images: &mut self.created_images,
                     created_textures: &mut self.created_textures,
                     _phantom: std::marker::PhantomData,
                 };
@@ -2165,7 +2175,7 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
         }
 
         if let Some(diffuse_tex) = sg.diffuse_texture() {
-            let tex_handle = ctx.get_or_create_texture(diffuse_tex.texture().index(), true)?;
+            let tex_handle = ctx.get_or_create_texture(diffuse_tex.texture().index(), ColorSpace::Srgb)?;
             physical_mat.textures.write().map.texture = Some(tex_handle);
         }
 
@@ -2214,23 +2224,25 @@ impl GltfExtensionParser for KhrMaterialsPbrSpecularGlossiness {
                 width,
                 height,
                 1,
-                wgpu::TextureDimension::D2,
-                TextureFormat::Rgba8UnormSrgb,
+                ImageDimension::D2,
+                PixelFormat::Rgba8Unorm,
                 Some(specular_data),
             );
             let specular_img_handle = ctx.assets.images.add(specular_image);
-            let specular_texture = Texture::new_2d(Some("sg_specular"), specular_img_handle);
+            let mut specular_texture = Texture::new_2d(Some("sg_specular"), specular_img_handle);
+            specular_texture.color_space = ColorSpace::Srgb;
 
             let roughness_image = Image::new(
                 width,
                 height,
                 1,
-                wgpu::TextureDimension::D2,
-                TextureFormat::Rgba8Unorm,
+                ImageDimension::D2,
+                PixelFormat::Rgba8Unorm,
                 Some(roughness_data),
             );
             let roughness_img_handle = ctx.assets.images.add(roughness_image);
-            let roughness_texture = Texture::new_2d(Some("sg_roughness"), roughness_img_handle);
+            let mut roughness_texture = Texture::new_2d(Some("sg_roughness"), roughness_img_handle);
+            roughness_texture.color_space = ColorSpace::Linear;
 
             let specular_handle = ctx.assets.textures.add(specular_texture);
             let roughness_handle = ctx.assets.textures.add(roughness_texture);
@@ -2313,7 +2325,7 @@ impl GltfExtensionParser for KhrMaterialsClearcoat {
                 ctx,
                 clearcoat_tex_info,
                 &mut textures.clearcoat_map,
-                false,
+                ColorSpace::Linear,
             );
         }
 
@@ -2323,7 +2335,7 @@ impl GltfExtensionParser for KhrMaterialsClearcoat {
                 ctx,
                 clearcoat_roughness_tex_info,
                 &mut textures.clearcoat_roughness_map,
-                false,
+                ColorSpace::Linear,
             );
         }
 
@@ -2332,7 +2344,7 @@ impl GltfExtensionParser for KhrMaterialsClearcoat {
                 ctx,
                 clearcoat_normal_tex_info,
                 &mut textures.clearcoat_normal_map,
-                false,
+                ColorSpace::Linear,
             );
         }
 
@@ -2396,7 +2408,7 @@ impl GltfExtensionParser for KhrMaterialsSheen {
                 ctx,
                 sheen_color_tex_info,
                 &mut textures.sheen_color_map,
-                true,
+                ColorSpace::Srgb,
             );
         }
 
@@ -2405,7 +2417,7 @@ impl GltfExtensionParser for KhrMaterialsSheen {
                 ctx,
                 sheen_roughness_tex_info,
                 &mut textures.sheen_roughness_map,
-                false,
+                ColorSpace::Linear,
             );
         }
 
@@ -2470,7 +2482,7 @@ impl GltfExtensionParser for KhrMaterialsIridescence {
                 ctx,
                 iridescence_tex_info,
                 &mut textures.iridescence_map,
-                false,
+                ColorSpace::Linear,
             );
         }
 
@@ -2481,7 +2493,7 @@ impl GltfExtensionParser for KhrMaterialsIridescence {
                 ctx,
                 iridescence_thickness_tex_info,
                 &mut textures.iridescence_thickness_map,
-                false,
+                ColorSpace::Linear,
             );
         }
 
@@ -2535,7 +2547,7 @@ impl GltfExtensionParser for KhrMaterialsAnisotropy {
                 ctx,
                 anisotropy_tex_info,
                 &mut textures.anisotropy_map,
-                false,
+                ColorSpace::Linear,
             );
         }
 
@@ -2582,7 +2594,7 @@ impl GltfExtensionParser for KhrMaterialsTransmission {
                 ctx,
                 transmission_tex_info,
                 &mut textures.transmission_map,
-                false,
+                ColorSpace::Linear,
             );
         }
         physical_mat.enable_feature(PhysicalFeatures::TRANSMISSION);
@@ -2650,7 +2662,7 @@ impl GltfExtensionParser for KhrMaterialsVolume {
                 ctx,
                 thickness_tex_info,
                 &mut textures.thickness_map,
-                false,
+                ColorSpace::Linear,
             );
         }
 
