@@ -211,11 +211,6 @@ fn get_model_url() -> Option<String> {
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> myth::Result<()> {
     env_logger::init();
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let _enter = rt.enter();
 
     App::new()
         .with_title("Myth Showcase Viewer")

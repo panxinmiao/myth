@@ -709,11 +709,6 @@ fn hide_loading_overlay() {
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> myth::Result<()> {
     env_logger::init();
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .unwrap();
-    let _enter = rt.enter();
 
     App::new()
         .with_title("Myth Engine — Showcase")

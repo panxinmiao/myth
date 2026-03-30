@@ -212,30 +212,27 @@ impl ToneMappingFeature {
         self.ensure_layouts(ctx.device);
         self.output_format = output_format;
 
-        let has_lut = lut_handle.is_some();
-        // ─── 2. Pipeline (re)creation ──────────────────────────────
-        let cache_key = (mode, output_format, has_lut);
+        let mut has_lut = false;
 
-        if self.current_pipeline.is_none() || !self.local_cache.contains_key(&cache_key) {
-            self.current_pipeline =
-                Some(self.get_or_create_pipeline(ctx, mode, has_lut, global_state_key));
-        } else {
-            self.current_pipeline = self.local_cache.get(&cache_key).copied();
+        if let Some(handle) = lut_handle {
+            let state = ctx.resource_manager.prepare_texture(ctx.assets, handle);
+            if matches!(state, ResourceState::Pending) && self.current_pipeline.is_some() {
+                // LUT is pending but we already have a pipeline (from a previous frame)
+                // keep using it until the LUT is ready to avoid stalling the GPU.
+                return;
+            }
+
+            has_lut = true;
         }
+
+        // ─── 2. Pipeline (re)creation ──────────────────────────────
+        self.current_pipeline =
+            Some(self.get_or_create_pipeline(ctx, mode, has_lut, global_state_key));
 
         // ─── 3. Build static bind group (Group 1) ─────────────────
         // Resolve GPU buffer for uniforms
 
         let (buf_handle, _) = ctx.resource_manager.ensure_buffer(uniforms);
-
-        let mut is_lut_pending = false;
-
-        if has_lut && let Some(handle) = lut_handle {
-            let state = ctx.resource_manager.prepare_texture(ctx.assets, handle);
-            if matches!(state, ResourceState::Pending) {
-                is_lut_pending = true;
-            }
-        }
 
         let gpu_buf = ctx.resource_manager.gpu_buffers.get(buf_handle);
 
@@ -263,7 +260,6 @@ impl ToneMappingFeature {
 
         // Check staleness — rebuild only when buffer or LUT identity changes
         let needs_rebuild = self.static_bg.is_none()
-            || !is_lut_pending
             || buf_id != self.last_uniforms_buffer_id
             || has_lut != self.static_bg_has_lut
             || (has_lut && lut_view_id != self.last_lut_view_id);

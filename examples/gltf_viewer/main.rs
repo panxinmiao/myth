@@ -47,16 +47,20 @@ use ui_pass::UiPass;
 use winit::event::WindowEvent;
 use winit::keyboard::PhysicalKey;
 
+/// Global sender for the WASM JS-bridge file drop handler.
+///
+/// JavaScript calls [`receive_dropped_file`] which pushes raw bytes here.
+/// The main loop drains `wasm_drop_rx` each frame and spawns async load tasks.
 #[cfg(target_arch = "wasm32")]
 static DROP_SENDER: std::sync::LazyLock<Mutex<Option<Sender<(String, Vec<u8>)>>>> =
     std::sync::LazyLock::new(|| Mutex::new(None));
 
+/// Receives a file dropped onto the browser window from the JS bridge.
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn receive_dropped_file(name: String, data: Vec<u8>) {
     if let Ok(guard) = DROP_SENDER.lock() {
         if let Some(sender) = &*guard {
-            // 发送数据到 App 的 file_dialog_rx
             let _ = sender.send((name, data));
             log::info!("Received dropped file from JS bridge");
         }
@@ -277,18 +281,19 @@ struct GltfViewer {
     /// Model file path or name (for display)
     model_name: Option<String>,
 
-    // === File Dialog Related ===
-    /// File dialog receiver
-    #[cfg(not(target_arch = "wasm32"))]
-    file_dialog_rx: Receiver<PathBuf>,
-    #[cfg(target_arch = "wasm32")]
-    file_dialog_rx: Receiver<(String, Vec<u8>)>,
+    // === Unified Async Event Channel ===
+    /// Sender for all async events (cloned into background tasks).
+    event_tx: Sender<ViewerEvent>,
+    /// Receiver for all async events (polled each frame).
+    event_rx: Receiver<ViewerEvent>,
 
-    /// File dialog sender
-    #[cfg(not(target_arch = "wasm32"))]
-    file_dialog_tx: Sender<PathBuf>,
+    /// Handle of the model currently being loaded via fire-and-forget.
+    /// Polled each frame until the prefab is ready or fails.
+    pending_prefab: Option<(String, PrefabHandle)>,
+
+    /// WASM-only receiver for raw file bytes from the JS bridge drop handler.
     #[cfg(target_arch = "wasm32")]
-    file_dialog_tx: Sender<(String, Vec<u8>)>,
+    wasm_drop_rx: Receiver<(String, Vec<u8>)>,
 
     // === Remote Model Related ===
     /// Remote model list
@@ -297,18 +302,8 @@ struct GltfViewer {
     selected_model_index: usize,
     /// Loading state
     loading_state: LoadingState,
-    /// Async load result receiver
-    load_receiver: Option<Receiver<LoadResult>>,
-    /// Async load request sender
-    load_sender: Sender<LoadResult>,
     /// Preferred glTF variants (by priority)
     preferred_variants: Vec<&'static str>,
-
-    // === Async Prefab Loading ===
-    /// Prefab load result receiver
-    prefab_receiver: Receiver<PrefabLoadResult>,
-    /// Prefab load sender
-    prefab_sender: Sender<PrefabLoadResult>,
 
     // === Inspector Related ===
     /// Whether to show Inspector
@@ -356,18 +351,6 @@ struct GltfViewer {
     skybox_rotation: f32,
     /// Name of the loaded custom skybox file
     skybox_file_name: Option<String>,
-    /// Receiver for async skybox texture loads
-    skybox_rx: Receiver<(String, TextureHandle)>,
-    /// Sender for async skybox texture loads
-    #[allow(dead_code)]
-    skybox_tx: Sender<(String, TextureHandle)>,
-
-    // === LUT Loading ===
-    /// Receiver for async LUT texture loads
-    lut_rx: Receiver<(String, TextureHandle)>,
-    /// Sender for async LUT texture loads
-    #[allow(dead_code)]
-    lut_tx: Sender<(String, TextureHandle)>,
 
     // === SSS Profiles ===
     sss_profiles: Vec<(
@@ -381,15 +364,24 @@ struct GltfViewer {
     debug_target: myth::prelude::DebugViewTarget,
 }
 
-/// Async Prefab load result
-struct PrefabLoadResult {
-    prefab: SharedPrefab,
-    display_name: String,
-}
-
-/// Async load result
-enum LoadResult {
+/// Async events delivered from background tasks to the main loop.
+///
+/// Merges what were previously five separate channels (model-list fetch,
+/// prefab load, file dialog, skybox HDR, LUT) into a single typed channel.
+enum ViewerEvent {
+    /// Remote model list fetched.
     ModelList(Result<Vec<ModelInfo>, String>),
+    /// A model has been submitted for fire-and-forget loading via [`AssetServer::load_gltf`].
+    /// The main thread stores the handle and polls until the prefab is ready.
+    #[cfg(not(target_arch = "wasm32"))]
+    ModelLoading { name: String, handle: PrefabHandle },
+    /// A prefab was loaded from in-memory bytes (WASM file-drop / file-picker).
+    #[cfg(target_arch = "wasm32")]
+    PrefabLoaded { name: String, prefab: SharedPrefab },
+    /// An environment texture handle is ready to be applied.
+    EnvTextureReady { name: String, handle: TextureHandle },
+    /// A LUT texture handle is ready to be applied.
+    LutTextureReady { name: String, handle: TextureHandle },
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -425,7 +417,7 @@ impl AppHandler for GltfViewer {
         scene.environment.set_env_map(Some(env_handle));
         scene.environment.set_intensity(3.0);
 
-        // 3. 添加灯光
+        // 3. Add directional light
         let light = Light::new_directional(Vec3::new(1.0, 1.0, 1.0), 3.0);
 
         let light_node = scene.add_light(light);
@@ -434,7 +426,7 @@ impl AppHandler for GltfViewer {
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
 
-        // 4. 设置相机
+        // 4. Set up camera
         let mut camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
 
         camera.set_aa_mode(AntiAliasingMode::TAA_FXAA(
@@ -449,29 +441,16 @@ impl AppHandler for GltfViewer {
         }
         scene.active_camera = Some(cam_node_id);
 
-        // scene.on_update(
-        //     |scene: &mut Scene, input: &Input, dt: f32| {
-        //         let time = engine.time;
-        //         let tone_mapping =scene.tone_mapping.uniforms.write();
-        //         // 更新 vignette 呼吸效果
-        //         if self.vignette_breathing{
-        //             tone_mapping.vignette_intensity =
-        //                 0.5 + 0.5 * (time * 0.5).sin(); // 呼吸效果
-        //         }
-        //     },
-        // );
+        // 5. Create unified event channel
+        let (event_tx, event_rx) = channel();
 
-        // 5. 创建异步通道
-        let (tx, rx) = channel();
-        let (file_dialog_tx, file_dialog_rx) = channel();
-        let (prefab_tx, prefab_rx) = channel();
-        let (skybox_tx, skybox_rx) = channel();
-        let (lut_tx, lut_rx) = channel();
+        #[cfg(target_arch = "wasm32")]
+        let (wasm_drop_tx, wasm_drop_rx) = channel();
 
         #[cfg(target_arch = "wasm32")]
         {
             if let Ok(mut guard) = DROP_SENDER.lock() {
-                *guard = Some(file_dialog_tx.clone());
+                *guard = Some(wasm_drop_tx);
             }
         }
 
@@ -487,21 +466,18 @@ impl AppHandler for GltfViewer {
             current_fps: 0.0,
             model_name: None,
 
-            // === 文件对话框相关 ===
-            file_dialog_rx,
-            file_dialog_tx,
+            // Async events
+            event_tx,
+            event_rx,
+            pending_prefab: None,
+            #[cfg(target_arch = "wasm32")]
+            wasm_drop_rx,
 
-            // 远程模型
+            // Remote models
             model_list: Vec::new(),
             selected_model_index: 0,
             loading_state: LoadingState::Idle,
-            load_receiver: Some(rx),
-            load_sender: tx,
             preferred_variants: vec!["glTF-Binary", "glTF-Embedded", "glTF"],
-
-            // Prefab 异步加载
-            prefab_receiver: prefab_rx,
-            prefab_sender: prefab_tx,
 
             // Inspector
             show_inspector: false,
@@ -509,7 +485,7 @@ impl AppHandler for GltfViewer {
             inspector_materials: Vec::new(),
             inspector_textures: Vec::new(),
 
-            // 渲染设置
+            // Render settings
             ibl_enabled: true,
             light_node: light_node,
             render_path: RenderPath::default(),
@@ -530,11 +506,6 @@ impl AppHandler for GltfViewer {
             skybox_intensity: 1.0,
             skybox_rotation: 0.0,
             skybox_file_name: None,
-            skybox_rx,
-            skybox_tx,
-
-            lut_rx,
-            lut_tx,
 
             sss_profiles: Vec::new(),
 
@@ -542,7 +513,7 @@ impl AppHandler for GltfViewer {
             debug_target: Default::default(),
         };
 
-        // 6. 启动加载远程模型列表
+        // 6. Fetch remote model list in the background
         viewer.fetch_model_list();
 
         viewer
@@ -578,7 +549,7 @@ impl AppHandler for GltfViewer {
             return true;
         }
 
-        // 处理窗口大小调整
+        // Handle window resize
         if let WindowEvent::Resized(size) = event {
             let scale_factor = window.scale_factor();
             self.ui_pass.resize(size.width, size.height, scale_factor);
@@ -593,7 +564,7 @@ impl AppHandler for GltfViewer {
             return;
         };
 
-        // 0. 处理异步加载结果
+        // 0. Process async load results
         self.process_load_results(scene, &engine.assets);
 
         // 1. 更新 FPS
@@ -725,96 +696,98 @@ impl GltfViewer {
     }
 
     // ========================================================================
-    // 模型加载
+    // Model Loading
     // ========================================================================
 
-    /// 异步获取远程模型列表
+    /// Fetches the remote model list in the background.
     fn fetch_model_list(&mut self) {
         self.loading_state = LoadingState::LoadingList;
-        let tx = self.load_sender.clone();
+        let tx = self.event_tx.clone();
 
         execute_future(async move {
             let result = fetch_remote_model_list().await;
-            let _ = tx.send(LoadResult::ModelList(result));
+            let _ = tx.send(ViewerEvent::ModelList(result));
         });
     }
 
-    /// 处理异步加载结果
+    /// Processes all pending async events and polls in-flight model loads.
     fn process_load_results(&mut self, scene: &mut Scene, assets: &AssetServer) {
-        // 处理模型列表加载结果
-        if let Some(rx) = &self.load_receiver {
-            while let Ok(result) = rx.try_recv() {
-                match result {
-                    LoadResult::ModelList(Ok(list)) => {
-                        log::info!("Loaded {} models from remote", list.len());
-                        self.model_list = list;
-                        self.loading_state = LoadingState::Idle;
+        // --- Drain the unified event channel ---
+        while let Ok(event) = self.event_rx.try_recv() {
+            match event {
+                ViewerEvent::ModelList(Ok(list)) => {
+                    log::info!("Loaded {} models from remote", list.len());
+                    self.model_list = list;
+                    self.loading_state = LoadingState::Idle;
+                }
+                ViewerEvent::ModelList(Err(e)) => {
+                    log::error!("Failed to load model list: {}", e);
+                    self.loading_state = LoadingState::Error(e);
+                }
+                #[cfg(not(target_arch = "wasm32"))]
+                ViewerEvent::ModelLoading { name, handle } => {
+                    self.loading_state = LoadingState::LoadingModel(name.clone());
+                    self.pending_prefab = Some((name, handle));
+                }
+                #[cfg(target_arch = "wasm32")]
+                ViewerEvent::PrefabLoaded { name, prefab } => {
+                    self.instantiate_prefab(scene, assets, name, prefab);
+                }
+                ViewerEvent::EnvTextureReady { name, handle } => {
+                    log::info!("Environment texture ready: {}", name);
+                    self.env_texture = Some(handle);
+                    self.skybox_file_name = Some(name);
+                    scene.environment.set_env_map(Some(handle));
+                    if self.skybox_mode == SkyboxMode::Equirectangular {
+                        Self::apply_skybox(
+                            scene,
+                            self.skybox_mode,
+                            &self.bg_color,
+                            &self.gradient_top,
+                            &self.gradient_bottom,
+                            self.env_texture,
+                            self.skybox_intensity,
+                            self.skybox_rotation,
+                        );
                     }
-                    LoadResult::ModelList(Err(e)) => {
-                        log::error!("Failed to load model list: {}", e);
-                        self.loading_state = LoadingState::Error(e);
-                    }
+                }
+                ViewerEvent::LutTextureReady { name, handle } => {
+                    log::info!("LUT texture ready: {}", name);
+                    scene.tone_mapping.set_lut_texture(Some(handle));
                 }
             }
         }
 
-        // 处理 HDR/环境贴图加载结果（来自「Load HDR」按钮）
-        while let Ok((name, texture)) = self.skybox_rx.try_recv() {
-            log::info!("Loaded environment texture: {}", name);
-            self.env_texture = Some(texture);
-            self.skybox_file_name = Some(name);
-
-            // 更新 IBL 环境贴图
-            scene.environment.set_env_map(Some(texture));
-
-            // 如果当前是 Equirectangular 天空盒模式，同步更新背景
-            if self.skybox_mode == SkyboxMode::Equirectangular {
-                Self::apply_skybox(
-                    scene,
-                    self.skybox_mode,
-                    &self.bg_color,
-                    &self.gradient_top,
-                    &self.gradient_bottom,
-                    self.env_texture,
-                    self.skybox_intensity,
-                    self.skybox_rotation,
-                );
+        // --- Poll pending fire-and-forget model load ---
+        if let Some((ref name, handle)) = self.pending_prefab {
+            if let Some(prefab_arc) = assets.prefabs.get(handle) {
+                let name = name.clone();
+                let prefab = (*prefab_arc).clone();
+                self.pending_prefab = None;
+                self.instantiate_prefab(scene, assets, name, prefab);
+            } else if let Some(err) = assets.prefabs.get_error(handle) {
+                log::error!("Failed to load model '{}': {}", name, err);
+                self.loading_state = LoadingState::Error(err);
+                self.pending_prefab = None;
             }
         }
 
-        // 处理 LUT 加载结果（来自「Load LUT」按钮）
-        while let Ok((name, lut_handle)) = self.lut_rx.try_recv() {
-            log::info!("Loaded LUT texture: {}", name);
-            scene.tone_mapping.set_lut_texture(Some(lut_handle));
-        }
-
-        // 处理 Prefab 加载结果 - 实例化到场景中
-        while let Ok(result) = self.prefab_receiver.try_recv() {
-            // 实例化新模型
-            self.instantiate_prefab(scene, assets, result);
-        }
-
-        // Native: 处理文件对话框结果
-        #[cfg(not(target_arch = "wasm32"))]
-        while let Ok(path) = self.file_dialog_rx.try_recv() {
-            self.load_model(ModelSource::Local(path), assets.clone());
-        }
-
-        // WASM: 处理浏览器文件选择结果
+        // --- WASM: process raw file bytes from JS bridge drop handler ---
         #[cfg(target_arch = "wasm32")]
-        while let Ok((name, data)) = self.file_dialog_rx.try_recv() {
-            self.load_model(ModelSource::Local(name, data), assets.clone());
+        while let Ok((name, data)) = self.wasm_drop_rx.try_recv() {
+            self.load_model_from_bytes(name, data, assets);
         }
     }
 
-    /// 将加载完成的 Prefab 实例化到场景
+    /// Instantiates a loaded prefab into the scene, replacing any previous model.
     fn instantiate_prefab(
         &mut self,
         scene: &mut Scene,
         assets: &AssetServer,
-        result: PrefabLoadResult,
+        display_name: String,
+        prefab: SharedPrefab,
     ) {
-        // 清理旧模型
+        // Clear previous model
         if let Some(gltf_node) = self.gltf_node {
             scene.remove_node(gltf_node);
         }
@@ -824,14 +797,14 @@ impl GltfViewer {
         self.inspector_textures.clear();
         self.inspector_target = None;
 
-        // 实例化新模型
-        let gltf_node = scene.instantiate(&result.prefab);
+        // Instantiate new model
+        let gltf_node = scene.instantiate(&prefab);
 
         self.gltf_node = Some(gltf_node);
-        self.model_name = Some(result.display_name.clone());
+        self.model_name = Some(display_name.clone());
         self.current_animation = 0;
 
-        // 获取动画列表并自动播放
+        // Auto-play the first animation clip if available
         if let Some(mixer) = scene.animation_mixers.get_mut(gltf_node) {
             self.animations = mixer.list_animations();
             if let Some(clip_name) = self.animations.first() {
@@ -839,10 +812,10 @@ impl GltfViewer {
             }
         }
 
-        // 更新子树变换
+        // Propagate transforms through the subtree
         scene.update_subtree(gltf_node);
 
-        // 调整相机以适应模型
+        // Fit camera to the model bounding box
         if let Some(bbox) = scene.get_bbox_of_node(gltf_node, assets) {
             let center = bbox.center();
             let radius = bbox.size().length() * 0.5;
@@ -856,37 +829,25 @@ impl GltfViewer {
             }
         }
 
-        // 收集 Inspector 数据
+        // Collect Inspector data
         self.collect_inspector_targets(scene, assets, gltf_node);
 
         self.loading_state = LoadingState::Idle;
-        log::info!("Instantiated model: {}", result.display_name);
+        log::info!("Instantiated model: {}", display_name);
     }
 
-    /// 加载模型（本地或远程） - 真正的异步加载
-    fn load_model(&mut self, source: ModelSource, assets: AssetServer) {
-        let prefab_tx = self.prefab_sender.clone();
-
-        // 处理不同的加载源
+    /// Loads a model from a URL or local path using the engine's fire-and-forget API.
+    ///
+    /// For path/URL sources the [`AssetServer`] handles I/O, parsing and
+    /// deduplication internally.  The returned [`PrefabHandle`] is stored in
+    /// `pending_prefab` and polled each frame.
+    fn load_model(&mut self, source: ModelSource, assets: &AssetServer) {
         match source {
             ModelSource::Remote(url) => {
                 let display_name = url.rsplit('/').next().unwrap_or("Remote Model").to_string();
-
                 self.loading_state = LoadingState::LoadingModel(display_name.clone());
-
-                execute_future(async move {
-                    match GltfLoader::load_async(url, assets).await {
-                        Ok(prefab) => {
-                            let _ = prefab_tx.send(PrefabLoadResult {
-                                prefab,
-                                display_name,
-                            });
-                        }
-                        Err(e) => {
-                            log::error!("Failed to load model: {}", e);
-                        }
-                    }
-                });
+                let handle = assets.load_gltf(url);
+                self.pending_prefab = Some((display_name, handle));
             }
 
             #[cfg(not(target_arch = "wasm32"))]
@@ -895,48 +856,41 @@ impl GltfViewer {
                     .file_name()
                     .map(|n| n.to_string_lossy().to_string())
                     .unwrap_or_else(|| "Unknown".to_string());
-
                 self.loading_state = LoadingState::LoadingModel(display_name.clone());
-
-                let load_path = path.to_string_lossy().to_string();
-
-                execute_future(async move {
-                    match GltfLoader::load_async(load_path, assets).await {
-                        Ok(prefab) => {
-                            let _ = prefab_tx.send(PrefabLoadResult {
-                                prefab,
-                                display_name,
-                            });
-                        }
-                        Err(e) => {
-                            log::error!("Failed to load model: {}", e);
-                        }
-                    }
-                });
+                let handle = assets.load_gltf(path.to_string_lossy().to_string());
+                self.pending_prefab = Some((display_name, handle));
             }
 
             #[cfg(target_arch = "wasm32")]
             ModelSource::Local(name, data) => {
-                self.loading_state = LoadingState::LoadingModel(name.clone());
-
-                execute_future(async move {
-                    match GltfLoader::load_from_bytes(data, assets).await {
-                        Ok(prefab) => {
-                            let _ = prefab_tx.send(PrefabLoadResult {
-                                prefab,
-                                display_name: name,
-                            });
-                        }
-                        Err(e) => {
-                            log::error!("Failed to load model from bytes: {}", e);
-                        }
-                    }
-                });
+                self.load_model_from_bytes(name, data, assets);
             }
         }
     }
 
-    /// 从选中的远程模型构建 URL
+    /// Loads a model from in-memory bytes (WASM file-drop / file-picker).
+    ///
+    /// Because byte-based loading has no URI for deduplication, this path
+    /// still uses an async task with [`GltfLoader::load_from_bytes`].
+    #[cfg(target_arch = "wasm32")]
+    fn load_model_from_bytes(&mut self, name: String, data: Vec<u8>, assets: &AssetServer) {
+        self.loading_state = LoadingState::LoadingModel(name.clone());
+        let tx = self.event_tx.clone();
+        let assets = assets.clone();
+
+        execute_future(async move {
+            match GltfLoader::load_from_bytes(data, assets).await {
+                Ok(prefab) => {
+                    let _ = tx.send(ViewerEvent::PrefabLoaded { name, prefab });
+                }
+                Err(e) => {
+                    log::error!("Failed to load model from bytes: {}", e);
+                }
+            }
+        });
+    }
+
+    /// Builds a download URL for the given remote model index.
     fn build_remote_url(&self, model_index: usize) -> Option<String> {
         let model = self.model_list.get(model_index)?;
 
@@ -952,9 +906,9 @@ impl GltfViewer {
         None
     }
 
-    /// 处理全局拖拽事件 (Native & WASM)
+    /// Handles file drag-and-drop onto the viewer (Native & WASM).
     fn handle_drag_and_drop(&mut self, ctx: &egui::Context, assets: AssetServer) {
-        // 1. 检查是否有文件正在悬停 (可选：显示视觉提示)
+        // Visual hint while a file hovers over the window
         if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
             let painter = ctx.layer_painter(egui::LayerId::new(
                 egui::Order::Foreground,
@@ -984,26 +938,22 @@ impl GltfViewer {
         });
     }
 
-    /// 将 egui 的 DroppedFile 转换为 ModelSource
+    /// Processes a file dropped onto the viewer window.
     fn process_dropped_file(&mut self, file: &egui::DroppedFile, assets: AssetServer) {
-        // Native 平台：使用文件路径
         #[cfg(not(target_arch = "wasm32"))]
         if let Some(path) = &file.path {
             log::info!("File dropped (Native): {:?}", path);
-            self.load_model(ModelSource::Local(path.clone()), assets);
+            self.load_model(ModelSource::Local(path.clone()), &assets);
         }
 
-        // WASM 平台：使用文件字节数据
-        // egui 在 Web 上会自动读取数据到 file.bytes (需要 features = ["persistence"] 或默认开启)
         #[cfg(target_arch = "wasm32")]
         if let Some(bytes) = &file.bytes {
             log::info!("File dropped (WASM): {}, {} bytes", file.name, bytes.len());
             self.load_model(
                 ModelSource::Local(file.name.clone(), bytes.to_vec()),
-                assets,
+                &assets,
             );
         } else {
-            // 如果在 Native 拖拽但没拿到 path，或者 WASM 没拿到 bytes
             log::warn!(
                 "Dropped file has no data. Native path: {:?}, Bytes present: {}",
                 file.path,
@@ -1177,10 +1127,7 @@ impl GltfViewer {
                                             && let Some(url) =
                                                 self.build_remote_url(self.selected_model_index)
                                         {
-                                            self.load_model(
-                                                ModelSource::Remote(url),
-                                                assets.clone(),
-                                            );
+                                            self.load_model(ModelSource::Remote(url), assets);
                                         }
                                     });
                                 });
@@ -1213,34 +1160,63 @@ impl GltfViewer {
 
                         ui.separator();
 
-                        // ===== 本地文件加载 =====
+                        // ===== Local File Loading =====
                         CollapsingHeader::new("📁 Local File")
                             .default_open(true)
                             .show(ui, |ui| {
                                 if ui.button("Open glTF/glb File...").clicked() {
-                                    // 克隆发送端，移动到异步块中
-                                    let sender = self.file_dialog_tx.clone();
+                                    let assets_clone = assets.clone();
+                                    let tx = self.event_tx.clone();
 
-                                    // 生成异步任务
                                     execute_future(async move {
                                         let file = rfd::AsyncFileDialog::new()
                                             .add_filter("glTF", &["gltf", "glb"])
                                             .pick_file()
-                                            .await; // 这里 await 不会卡死 UI
+                                            .await;
 
                                         if let Some(file_handle) = file {
-                                            // 获取路径并发送回主线程
                                             #[cfg(not(target_arch = "wasm32"))]
                                             {
-                                                let path = file_handle.path().to_path_buf();
-                                                let _ = sender.send(path);
+                                                let path = file_handle
+                                                    .path()
+                                                    .to_string_lossy()
+                                                    .to_string();
+                                                let name = file_handle
+                                                    .path()
+                                                    .file_name()
+                                                    .map(|n| n.to_string_lossy().to_string())
+                                                    .unwrap_or_else(|| "Unknown".to_string());
+                                                let handle = assets_clone.load_gltf(path);
+                                                let _ = tx.send(ViewerEvent::ModelLoading {
+                                                    name,
+                                                    handle,
+                                                });
                                             }
 
                                             #[cfg(target_arch = "wasm32")]
                                             {
                                                 let data = file_handle.read().await;
-                                                let file_name = file_handle.file_name();
-                                                let _ = sender.send((file_name, data));
+                                                let name = file_handle.file_name();
+                                                match GltfLoader::load_from_bytes(
+                                                    data,
+                                                    assets_clone,
+                                                )
+                                                .await
+                                                {
+                                                    Ok(prefab) => {
+                                                        let _ =
+                                                            tx.send(ViewerEvent::PrefabLoaded {
+                                                                name,
+                                                                prefab,
+                                                            });
+                                                    }
+                                                    Err(e) => {
+                                                        log::error!(
+                                                            "Failed to load model from bytes: {}",
+                                                            e
+                                                        );
+                                                    }
+                                                }
                                             }
                                         }
                                     });
@@ -1420,9 +1396,9 @@ impl GltfViewer {
                                         );
                                     }
 
-                                    // --- 加载 HDR 文件按钮（始终显示，同时更新 IBL 和天空盒）---
+                                    // --- Load HDR file button (updates both IBL and skybox) ---
                                     if ui.button("📂 Load HDR...").clicked() {
-                                        let skybox_tx = self.skybox_tx.clone();
+                                        let tx = self.event_tx.clone();
                                         let assets_clone = assets.clone();
                                         execute_future(async move {
                                             let file = rfd::AsyncFileDialog::new()
@@ -1456,33 +1432,33 @@ impl GltfViewer {
                                                 let is_hdr = name.ends_with(".hdr")
                                                     || name.ends_with(".hdr.jpg");
 
-                                                // Native: load via file path
+                                                // Native: fire-and-forget via path
                                                 #[cfg(not(target_arch = "wasm32"))]
-                                                let result = {
+                                                {
                                                     let path_str = file_handle
                                                         .path()
                                                         .to_string_lossy()
                                                         .to_string();
-                                                    if is_hdr {
-                                                        assets_clone
-                                                            .load_hdr_texture_async(path_str)
-                                                            .await
+                                                    let handle = if is_hdr {
+                                                        assets_clone.load_hdr_texture(path_str)
                                                     } else {
-                                                        assets_clone
-                                                            .load_texture_async(
-                                                                path_str,
-                                                                ColorSpace::Srgb,
-                                                                true,
-                                                            )
-                                                            .await
-                                                    }
-                                                };
+                                                        assets_clone.load_texture(
+                                                            path_str,
+                                                            ColorSpace::Srgb,
+                                                            true,
+                                                        )
+                                                    };
+                                                    let _ = tx.send(ViewerEvent::EnvTextureReady {
+                                                        name,
+                                                        handle,
+                                                    });
+                                                }
 
-                                                // WASM: load via file bytes
+                                                // WASM: load from bytes (async)
                                                 #[cfg(target_arch = "wasm32")]
-                                                let result = {
+                                                {
                                                     let data = file_handle.read().await;
-                                                    if is_hdr {
+                                                    let result = if is_hdr {
                                                         assets_clone
                                                             .load_hdr_texture_from_bytes_async(
                                                                 &name, data,
@@ -1497,18 +1473,22 @@ impl GltfViewer {
                                                                 true,
                                                             )
                                                             .await
-                                                    }
-                                                };
-
-                                                match result {
-                                                    Ok(handle) => {
-                                                        let _ = skybox_tx.send((name, handle));
-                                                    }
-                                                    Err(e) => {
-                                                        log::error!(
-                                                            "Failed to load HDR texture: {}",
-                                                            e
-                                                        );
+                                                    };
+                                                    match result {
+                                                        Ok(handle) => {
+                                                            let _ = tx.send(
+                                                                ViewerEvent::EnvTextureReady {
+                                                                    name,
+                                                                    handle,
+                                                                },
+                                                            );
+                                                        }
+                                                        Err(e) => {
+                                                            log::error!(
+                                                                "Failed to load HDR texture: {}",
+                                                                e
+                                                            );
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1880,7 +1860,7 @@ impl GltfViewer {
                                         }
                                     } else {
                                         if ui.button("📂 Load LUT (.cube)...").clicked() {
-                                            let lut_tx = self.lut_tx.clone();
+                                            let tx = self.event_tx.clone();
                                             let assets_clone = assets.clone();
                                             execute_future(async move {
                                                 let file = rfd::AsyncFileDialog::new()
@@ -1908,36 +1888,46 @@ impl GltfViewer {
                                                         }
                                                     };
 
+                                                    // Native: fire-and-forget via path
                                                     #[cfg(not(target_arch = "wasm32"))]
-                                                    let result = {
+                                                    {
                                                         let path_str = file_handle
                                                             .path()
                                                             .to_string_lossy()
                                                             .to_string();
-                                                        assets_clone
-                                                            .load_lut_texture_async(path_str)
-                                                            .await
-                                                    };
+                                                        let handle =
+                                                            assets_clone.load_lut_texture(path_str);
+                                                        let _ =
+                                                            tx.send(ViewerEvent::LutTextureReady {
+                                                                name,
+                                                                handle,
+                                                            });
+                                                    }
 
+                                                    // WASM: load from bytes (async)
                                                     #[cfg(target_arch = "wasm32")]
-                                                    let result = {
+                                                    {
                                                         let data = file_handle.read().await;
-                                                        assets_clone
+                                                        match assets_clone
                                                             .load_lut_texture_from_bytes_async(
                                                                 &name, data,
                                                             )
                                                             .await
-                                                    };
-
-                                                    match result {
-                                                        Ok(handle) => {
-                                                            let _ = lut_tx.send((name, handle));
-                                                        }
-                                                        Err(e) => {
-                                                            log::error!(
-                                                                "Failed to load LUT: {}",
-                                                                e
-                                                            );
+                                                        {
+                                                            Ok(handle) => {
+                                                                let _ = tx.send(
+                                                                    ViewerEvent::LutTextureReady {
+                                                                        name,
+                                                                        handle,
+                                                                    },
+                                                                );
+                                                            }
+                                                            Err(e) => {
+                                                                log::error!(
+                                                                    "Failed to load LUT: {}",
+                                                                    e
+                                                                );
+                                                            }
                                                         }
                                                     }
                                                 }
