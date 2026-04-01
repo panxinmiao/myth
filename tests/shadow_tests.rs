@@ -137,6 +137,8 @@ fn make_render_camera(
         unjittered_projection: proj,
         jitter: Vec2::ZERO,
         aa_mode: AntiAliasingMode::None,
+        #[cfg(feature = "debug_view")]
+        debug_view: Default::default(),
     }
 }
 

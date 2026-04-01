@@ -5,6 +5,98 @@ use uuid::Uuid;
 use myth_resources::AntiAliasingMode;
 use myth_resources::BoundingBox;
 
+// ─── Debug View Types (compile-time gated) ──────────────────────────────
+
+/// Semantic identifier for the debug visualisation mode.
+///
+/// Modes 1–4 are **post-process** overlays (read transient screen-space
+/// textures).  Modes 10–12 are **material attribute** visualisations
+/// (short-circuit the PBR lighting via shader defines).
+#[cfg(feature = "debug_view")]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+#[repr(u32)]
+pub enum DebugViewMode {
+    #[default]
+    None       = 0,
+    // Post-process modes (read transient textures)
+    SSAO       = 1,
+    Normal     = 2,
+    Velocity   = 3,
+    Depth      = 4,
+    // Material attribute modes (shader override)
+    Albedo     = 10,
+    Roughness  = 11,
+    Metalness  = 12,
+}
+
+#[cfg(feature = "debug_view")]
+impl DebugViewMode {
+    /// Display label for UI combo boxes.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::None      => "Final Image",
+            Self::SSAO      => "SSAO",
+            Self::Normal    => "Scene Normal",
+            Self::Velocity  => "Velocity Buffer",
+            Self::Depth     => "Scene Depth",
+            Self::Albedo    => "Albedo (Material)",
+            Self::Roughness => "Roughness (Material)",
+            Self::Metalness => "Metalness (Material)",
+        }
+    }
+
+    /// Returns `true` for modes that use the post-process debug overlay pass.
+    #[inline]
+    #[must_use]
+    pub const fn is_post_process(self) -> bool {
+        (self as u32) >= 1 && (self as u32) <= 4
+    }
+
+    /// Returns `true` for modes that use shader-override (material attribute) visualisation.
+    #[inline]
+    #[must_use]
+    pub const fn is_material_override(self) -> bool {
+        (self as u32) >= 10
+    }
+
+    /// All available modes for UI enumeration.
+    pub const ALL: &'static [DebugViewMode] = &[
+        Self::None,
+        Self::SSAO,
+        Self::Normal,
+        Self::Velocity,
+        Self::Depth,
+        Self::Albedo,
+        Self::Roughness,
+        Self::Metalness,
+    ];
+}
+
+/// Per-camera debug visualisation settings.
+///
+/// Mounted on [`Camera`] so that each camera can independently select a
+/// debug view mode.  The renderer reads this during the extract phase and
+/// either injects a post-process overlay or activates shader defines for
+/// material attribute visualisation.
+#[cfg(feature = "debug_view")]
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DebugViewSettings {
+    pub mode: DebugViewMode,
+    /// Scale factor for amplifying small values (e.g. velocity vectors).
+    pub custom_scale: f32,
+}
+
+#[cfg(feature = "debug_view")]
+impl Default for DebugViewSettings {
+    fn default() -> Self {
+        Self {
+            mode: DebugViewMode::None,
+            custom_scale: 100.0,
+        }
+    }
+}
+
 /// Generates a value from the Halton low-discrepancy sequence.
 ///
 /// Used to produce sub-pixel jitter offsets for TAA.  The sequence
@@ -50,6 +142,10 @@ pub struct RenderCamera {
 
     /// Anti-aliasing mode (MSAA sample count, TAA feedback weight, etc.).
     pub aa_mode: AntiAliasingMode,
+
+    /// Per-camera debug view settings (compile-time gated).
+    #[cfg(feature = "debug_view")]
+    pub debug_view: DebugViewSettings,
 }
 
 #[derive(Debug, Clone)]
@@ -68,6 +164,10 @@ pub struct Camera {
     // === Anti-Aliasing ===
     /// Per-camera anti-aliasing mode carrying its own payload.
     pub aa_mode: AntiAliasingMode,
+
+    // === Debug View (compile-time gated) ===
+    #[cfg(feature = "debug_view")]
+    pub debug_view: DebugViewSettings,
 
     // === TAA temporal state ===
     frame_index: u32,
@@ -203,6 +303,8 @@ impl Camera {
             ortho_size: 10.0,
 
             aa_mode: AntiAliasingMode::default(),
+            #[cfg(feature = "debug_view")]
+            debug_view: DebugViewSettings::default(),
             frame_index: 0,
             viewport_size: Vec2::new(1.0, 1.0),
 
@@ -232,6 +334,8 @@ impl Camera {
             ortho_size,
 
             aa_mode: AntiAliasingMode::default(),
+            #[cfg(feature = "debug_view")]
+            debug_view: DebugViewSettings::default(),
             frame_index: 0,
             viewport_size: Vec2::new(1.0, 1.0),
 
@@ -376,6 +480,8 @@ impl Camera {
             near: self.near,
             far: self.far,
             aa_mode: self.aa_mode,
+            #[cfg(feature = "debug_view")]
+            debug_view: self.debug_view,
         }
     }
 

@@ -329,6 +329,14 @@ impl Renderer {
             let needs_skybox = scene.background.needs_skybox_pass();
             let bloom_enabled = scene.bloom.enabled && is_hf;
 
+            // Sync camera debug settings → RenderState before borrowing it.
+            #[cfg(feature = "debug_view")]
+            {
+                let dv = camera.debug_view;
+                state.render_frame.render_state.debug_view_mode = dv.mode;
+                state.render_frame.render_state.debug_view_scale = dv.custom_scale;
+            }
+
             let mut extract_ctx = ExtractContext {
                 device: &state.wgpu_ctx.device,
                 queue: &state.wgpu_ctx.queue,
@@ -435,13 +443,22 @@ impl Renderer {
                 // Debug View — prepare pipeline & uniforms when active
                 #[cfg(feature = "debug_view")]
                 {
+                    use crate::graph::passes::debug_view::DebugViewUniforms;
                     use crate::graph::render_state::DebugViewTarget;
-                    let target = state.render_frame.render_state.debug_view_target;
+
+                    let dv = camera.debug_view;
+                    let target = DebugViewTarget::from_mode(dv.mode);
                     if target != DebugViewTarget::None {
+                        let params = DebugViewUniforms {
+                            view_mode: target.view_mode(),
+                            custom_scale: dv.custom_scale,
+                            z_near: camera.near,
+                            z_far: if camera.far.is_infinite() { 10000.0 } else { camera.far },
+                        };
                         state.debug_view_pass.extract_and_prepare(
                             &mut extract_ctx,
                             view_format,
-                            target.view_mode(),
+                            params,
                         );
                     }
                 }
@@ -584,24 +601,26 @@ impl Renderer {
         }
     }
 
-    /// Sets the active debug view target.
+    /// Sets the active debug view mode.
     ///
     /// When set to anything other than `None`, the FrameComposer will
-    /// replace the post-process output with a fullscreen visualisation
-    /// of the selected intermediate texture (if available).
+    /// either replace the post-process output with a fullscreen
+    /// visualisation of the selected intermediate texture (post-process
+    /// modes), or inject shader defines to short-circuit PBR lighting
+    /// and output raw material attributes (material-override modes).
     #[cfg(feature = "debug_view")]
-    pub fn set_debug_view_target(&mut self, target: crate::graph::render_state::DebugViewTarget) {
+    pub fn set_debug_view_mode(&mut self, mode: myth_scene::camera::DebugViewMode) {
         if let Some(state) = &mut self.context {
-            state.render_frame.render_state.debug_view_target = target;
+            state.render_frame.render_state.debug_view_mode = mode;
         }
     }
 
-    /// Returns the current debug view target.
+    /// Returns the current debug view mode.
     #[cfg(feature = "debug_view")]
-    pub fn debug_view_target(&self) -> crate::graph::render_state::DebugViewTarget {
+    pub fn debug_view_mode(&self) -> myth_scene::camera::DebugViewMode {
         self.context
             .as_ref()
-            .map(|s| s.render_frame.render_state.debug_view_target)
+            .map(|s| s.render_frame.render_state.debug_view_mode)
             .unwrap_or_default()
     }
 

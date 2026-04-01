@@ -214,6 +214,19 @@ impl ExtractedScene {
             self.scene_defines.set("USE_SSR", "1");
             self.scene_variants.insert(SceneFeatures::USE_SSR);
         }
+
+        // Material-override debug view — inject shader defines so the PBR
+        // fragment shader short-circuits lighting and outputs raw attributes.
+        #[cfg(feature = "debug_view")]
+        {
+            use myth_scene::camera::DebugViewMode;
+            match camera.debug_view.mode {
+                DebugViewMode::Albedo    => self.scene_defines.set("DEBUG_VIEW_ALBEDO", "1"),
+                DebugViewMode::Roughness => self.scene_defines.set("DEBUG_VIEW_ROUGHNESS", "1"),
+                DebugViewMode::Metalness => self.scene_defines.set("DEBUG_VIEW_METALNESS", "1"),
+                _ => {}
+            }
+        }
     }
 
     fn extract_lights(&mut self, scene: &Scene) {

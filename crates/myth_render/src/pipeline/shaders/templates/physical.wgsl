@@ -187,6 +187,19 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
 
     {$ include 'light_physical_fragment' $}
 
+    // ── Debug View: material attribute short-circuit ──────────────────
+    // When a material-override debug mode is active, bypass all lighting
+    // and return the raw attribute value directly.
+    $$ if DEBUG_VIEW_ALBEDO is defined
+        return pack_fragment_output(vec4<f32>(diffuse_color.rgb, 1.0));
+    $$ endif
+    $$ if DEBUG_VIEW_ROUGHNESS is defined
+        return pack_fragment_output(vec4<f32>(vec3<f32>(roughness_factor), 1.0));
+    $$ endif
+    $$ if DEBUG_VIEW_METALNESS is defined
+        return pack_fragment_output(vec4<f32>(vec3<f32>(metalness_factor), 1.0));
+    $$ endif
+
     {$ include 'light_punctual_fragment' $}
 
 

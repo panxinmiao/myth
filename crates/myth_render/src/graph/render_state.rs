@@ -14,64 +14,58 @@ use crate::renderer::FrameTime;
 
 /// Semantic identifier for an intermediate render texture to visualise.
 ///
-/// This enum lives in the **state layer** — it carries no frame-specific
+/// This enum lives in the **render state layer** — it carries no frame-specific
 /// physical IDs (`TextureNodeId`).  The [`FrameComposer`] resolves it each
 /// frame into a concrete RDG resource, safely handling cases where the
 /// target texture was not produced (e.g. SSAO disabled).
+///
+/// Derived from [`DebugViewMode`](myth_scene::camera::DebugViewMode) during
+/// the extract phase.  Material-override modes (Albedo, Roughness, Metalness)
+/// do not use this target resolution — they are handled via shader defines.
 #[cfg(feature = "debug_view")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum DebugViewTarget {
-    /// No debug overlay — show the final tonemapped image.
+    #[default]
     None,
-    /// Main scene depth buffer (reverse-Z, linearised for display).
     SceneDepth,
-    /// View-space normals from the geometry prepass.
     SceneNormal,
-    /// Screen-space velocity buffer (TAA reprojection vectors).
     Velocity,
-    /// Raw SSAO term before spatial blur.
     SsaoRaw,
-    /// First mip level of the Bloom downsample chain.
-    BloomMip0,
-}
-
-#[cfg(feature = "debug_view")]
-impl Default for DebugViewTarget {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 #[cfg(feature = "debug_view")]
 impl DebugViewTarget {
-    /// Display label for the UI combo box.
-    pub const fn label(self) -> &'static str {
-        match self {
-            Self::None => "Final Image",
-            Self::SceneDepth => "Scene Depth",
-            Self::SceneNormal => "Scene Normal",
-            Self::Velocity => "Velocity Buffer",
-            Self::SsaoRaw => "SSAO Raw",
-            Self::BloomMip0 => "Bloom Mip 0",
+    /// Maps a logical [`DebugViewMode`] to the render-layer target.
+    ///
+    /// Material-override modes return `None` since they bypass the
+    /// post-process debug overlay entirely.
+    #[must_use]
+    pub fn from_mode(mode: myth_scene::camera::DebugViewMode) -> Self {
+        use myth_scene::camera::DebugViewMode;
+        match mode {
+            DebugViewMode::SSAO     => Self::SsaoRaw,
+            DebugViewMode::Normal   => Self::SceneNormal,
+            DebugViewMode::Velocity => Self::Velocity,
+            DebugViewMode::Depth    => Self::SceneDepth,
+            _                       => Self::None,
         }
     }
 
     /// WGSL `view_mode` uniform value for the debug shader.
     ///
     /// | Mode | Mapping |
-    /// |------|---------|
-    /// | 0    | RGB pass-through |
-    /// | 1    | Single-channel R → grayscale |
-    /// | 2    | Signed vector `[-1,1]` → `[0,1]` |
-    /// | 3    | Linear depth visualisation |
+    /// |------|---------|    /// | 1    | SSAO → single-channel grayscale |
+    /// | 2    | Normal → signed vector remap |
+    /// | 3    | Velocity → directional colour |
+    /// | 4    | Depth → linearised reverse-Z |
+    #[must_use]
     pub const fn view_mode(self) -> u32 {
         match self {
-            Self::None => 0,
-            Self::SceneDepth => 3,
+            Self::None        => 0,
+            Self::SsaoRaw     => 1,
             Self::SceneNormal => 2,
-            Self::Velocity => 2,
-            Self::SsaoRaw => 1,
-            Self::BloomMip0 => 0,
+            Self::Velocity    => 3,
+            Self::SceneDepth  => 4,
         }
     }
 }
@@ -87,9 +81,12 @@ pub struct RenderState {
     prev_jitter: glam::Vec2,
     /// Previous frame's jitter-free VP matrix (for velocity calculation).
     prev_unjittered_vp: glam::Mat4,
-    /// Active debug-view target (semantic intent, resolved per-frame).
+    /// Active debug-view mode (from camera settings, resolved per-frame).
     #[cfg(feature = "debug_view")]
-    pub debug_view_target: DebugViewTarget,
+    pub debug_view_mode: myth_scene::camera::DebugViewMode,
+    /// Scale factor for debug view (e.g. velocity amplification).
+    #[cfg(feature = "debug_view")]
+    pub debug_view_scale: f32,
 }
 
 impl Default for RenderState {
@@ -111,7 +108,9 @@ impl RenderState {
             prev_jitter: glam::Vec2::ZERO,
             prev_unjittered_vp: glam::Mat4::IDENTITY,
             #[cfg(feature = "debug_view")]
-            debug_view_target: DebugViewTarget::None,
+            debug_view_mode: myth_scene::camera::DebugViewMode::None,
+            #[cfg(feature = "debug_view")]
+            debug_view_scale: 100.0,
         }
     }
 

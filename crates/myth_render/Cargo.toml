@@ -48,7 +48,7 @@ wgpu = { workspace = true, features = ["webgpu", "fragile-send-sync-non-atomic-w
 [features]
 default = []
 rdg_inspector = []
-debug_view = []
+debug_view = ["myth_scene/debug_view"]
 
 [lints]
 workspace = true

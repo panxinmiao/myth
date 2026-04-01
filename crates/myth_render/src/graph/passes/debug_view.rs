@@ -49,14 +49,18 @@ use myth_resources::buffer::CpuBuffer;
 #[derive(Debug, Clone, Copy, Pod, Zeroable)]
 pub struct DebugViewUniforms {
     pub view_mode: u32,
-    pub _pad: [u32; 3],
+    pub custom_scale: f32,
+    pub z_near: f32,
+    pub z_far: f32,
 }
 
 impl Default for DebugViewUniforms {
     fn default() -> Self {
         Self {
             view_mode: 0,
-            _pad: [0; 3],
+            custom_scale: 100.0,
+            z_near: 0.1,
+            z_far: 100.0,
         }
     }
 }
@@ -172,14 +176,14 @@ impl DebugViewFeature {
         &mut self,
         ctx: &mut ExtractContext,
         output_format: wgpu::TextureFormat,
-        view_mode: u32,
+        params: DebugViewUniforms,
     ) {
         self.ensure_layouts(ctx.device);
 
         // Update the CPU-side uniform and flush to GPU.
         {
             let mut guard = self.uniforms.write();
-            guard.view_mode = view_mode;
+            *guard = params;
         }
         ctx.resource_manager.ensure_buffer(&self.uniforms);
 

@@ -229,7 +229,7 @@ default = ["winit", "gltf", "http"]
 winit = ["dep:myth_app", "myth_app?/winit"]
 gltf = ["myth_assets/gltf"]
 rdg_inspector = ["myth_render/rdg_inspector"]
-debug_view = ["myth_render/debug_view"]
+debug_view = ["myth_render/debug_view", "myth_scene/debug_view"]
 gltf-meshopt = ["gltf", "myth_assets/gltf-meshopt"]
 http = ["myth_assets/http"]
 

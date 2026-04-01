@@ -361,7 +361,7 @@ struct GltfViewer {
 
     // === Debug View (compile-time gated) ===
     #[cfg(feature = "debug_view")]
-    debug_target: myth::prelude::DebugViewTarget,
+    debug_view: myth::prelude::DebugViewSettings,
 }
 
 /// Async events delivered from background tasks to the main loop.
@@ -510,7 +510,7 @@ impl AppHandler for GltfViewer {
             sss_profiles: Vec::new(),
 
             #[cfg(feature = "debug_view")]
-            debug_target: Default::default(),
+            debug_view: myth::prelude::DebugViewSettings::default(),
         };
 
         // 6. Fetch remote model list in the background
@@ -2165,47 +2165,70 @@ impl GltfViewer {
                                 // ===== Debug View (compile-time gated) =====
                                 #[cfg(feature = "debug_view")]
                                 {
-                                    use myth::prelude::DebugViewTarget;
+                                    use myth::prelude::DebugViewMode;
                                     ui.separator();
+
+                                    let taa_on =
+                                        matches!(self.aa_cache.current, AaModeType::TAA);
+                                    let ssao_on = scene.ssao.enabled;
+
+                                    // Build available modes dynamically.
+                                    let mut modes: Vec<DebugViewMode> = vec![DebugViewMode::None];
+                                    if ssao_on {
+                                        modes.push(DebugViewMode::SSAO);
+                                    }
+                                    if ssao_on {
+                                        modes.push(DebugViewMode::Normal);
+                                    }
+                                    if taa_on {
+                                        modes.push(DebugViewMode::Velocity);
+                                    }
+                                    // Material override modes — always available.
+                                    modes.push(DebugViewMode::Albedo);
+                                    modes.push(DebugViewMode::Roughness);
+                                    modes.push(DebugViewMode::Metalness);
+
+                                    // Reset to None if current mode is unavailable.
+                                    if !modes.contains(&self.debug_view.mode) {
+                                        self.debug_view.mode = DebugViewMode::None;
+                                    }
+
                                     ui.horizontal(|ui| {
                                         ui.label("Debug View:");
-                                        let taa_on =
-                                            matches!(self.aa_cache.current, AaModeType::TAA);
-                                        let ssao_on = scene.ssao.enabled;
-                                        let bloom_on = scene.bloom.enabled;
-
-                                        // Build available targets dynamically.
-                                        let mut targets = vec![DebugViewTarget::None];
-                                        if taa_on {
-                                            targets.push(DebugViewTarget::Velocity);
-                                        }
-                                        if ssao_on {
-                                            targets.push(DebugViewTarget::SceneNormal);
-                                            targets.push(DebugViewTarget::SsaoRaw);
-                                        }
-                                        if bloom_on {
-                                            targets.push(DebugViewTarget::BloomMip0);
-                                        }
-
-                                        // Reset to None if current target is unavailable.
-                                        if !targets.contains(&self.debug_target) {
-                                            self.debug_target = DebugViewTarget::None;
-                                        }
-
                                         egui::ComboBox::from_id_salt("debug_view_selector")
-                                            .width(140.0)
-                                            .selected_text(self.debug_target.label())
+                                            .width(160.0)
+                                            .selected_text(self.debug_view.mode.label())
                                             .show_ui(ui, |ui| {
-                                                for &t in &targets {
+                                                for &m in &modes {
                                                     ui.selectable_value(
-                                                        &mut self.debug_target,
-                                                        t,
-                                                        t.label(),
+                                                        &mut self.debug_view.mode,
+                                                        m,
+                                                        m.label(),
                                                     );
                                                 }
                                             });
                                     });
-                                    renderer.set_debug_view_target(self.debug_target);
+
+                                    // Show scale slider for velocity mode.
+                                    if self.debug_view.mode == DebugViewMode::Velocity {
+                                        ui.horizontal(|ui| {
+                                            ui.label("Velocity Scale:");
+                                            ui.add(
+                                                egui::Slider::new(
+                                                    &mut self.debug_view.custom_scale,
+                                                    1.0..=500.0,
+                                                )
+                                                .logarithmic(true),
+                                            );
+                                        });
+                                    }
+
+                                    // Apply debug view settings to camera.
+                                    if let Some(cam_node) = scene.active_camera {
+                                        if let Some(cam) = scene.get_camera_mut(cam_node) {
+                                            cam.debug_view = self.debug_view;
+                                        }
+                                    }
                                 }
                             }
                         });

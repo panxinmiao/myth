@@ -357,8 +357,6 @@ impl<'a> FrameComposer<'a> {
         let mut dbg_velocity: Option<crate::graph::core::TextureNodeId> = None;
         #[cfg(feature = "debug_view")]
         let mut dbg_ssao: Option<crate::graph::core::TextureNodeId> = None;
-        #[cfg(feature = "debug_view")]
-        let mut dbg_bloom_color: Option<crate::graph::core::TextureNodeId> = None;
 
         let mut current_surface = surface_out;
 
@@ -536,15 +534,6 @@ impl<'a> FrameComposer<'a> {
                     );
                 }
 
-                #[cfg(feature = "debug_view")]
-                {
-                    dbg_bloom_color = if bloom_enabled {
-                        Some(active_color)
-                    } else {
-                        None
-                    };
-                }
-
                 // ToneMapping: HDR → LDR
                 let mut surface = if fxaa_enabled {
                     // Route through an intermediate LDR texture for FXAA input
@@ -574,24 +563,21 @@ impl<'a> FrameComposer<'a> {
             });
 
             // ── Debug View Override ────────────────────────────────────
-            // Resolve the semantic DebugViewTarget to a concrete
+            // Resolve the semantic DebugViewMode to a concrete
             // TextureNodeId, then blit it onto the surface.  Targets
             // whose producer was disabled (e.g. SSAO off) safely
             // resolve to None — no pass is injected.
+            // Material-override modes are handled separately via shader
+            // defines and do not use this post-process path.
             #[cfg(feature = "debug_view")]
             {
                 use crate::graph::render_state::DebugViewTarget;
-                let target = self.ctx.render_state.debug_view_target;
+                let target = DebugViewTarget::from_mode(self.ctx.render_state.debug_view_mode);
                 let source: Option<crate::graph::core::TextureNodeId> = match target {
-                    DebugViewTarget::None => None,
-                    // SceneDepth is Depth32Float — incompatible with float
-                    // texture sampling.  A dedicated depth-copy-to-color
-                    // pass will be added in a future iteration.
-                    DebugViewTarget::SceneDepth => None,
                     DebugViewTarget::SceneNormal => dbg_normals,
                     DebugViewTarget::Velocity => dbg_velocity,
                     DebugViewTarget::SsaoRaw => dbg_ssao,
-                    DebugViewTarget::BloomMip0 => dbg_bloom_color,
+                    DebugViewTarget::None | DebugViewTarget::SceneDepth => None,
                 };
 
                 if let Some(src) = source {

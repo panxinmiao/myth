@@ -34,6 +34,8 @@ pub trait GeometryQuery {
 // Re-exports from this crate
 pub use background::{BackgroundMapping, BackgroundMode, BackgroundSettings};
 pub use camera::{Camera, Frustum, ProjectionType, RenderCamera};
+#[cfg(feature = "debug_view")]
+pub use camera::{DebugViewMode, DebugViewSettings};
 pub use environment::Environment;
 pub use light::{DirectionalLight, Light, LightKind, PointLight, ShadowConfig, SpotLight};
 pub use node::Node;
