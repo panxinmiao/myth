@@ -321,7 +321,7 @@ impl<'a> FrameComposer<'a> {
             let target = DebugViewTarget::from_mode(self.ctx.render_state.debug_view_mode);
             (
                 target == DebugViewTarget::SceneNormal,
-                target == DebugViewTarget::Velocity
+                target == DebugViewTarget::Velocity,
             )
         };
 
@@ -331,7 +331,6 @@ impl<'a> FrameComposer<'a> {
         let taa_enabled = self.ctx.camera.aa_mode.is_taa();
         let needs_normal = ssao_enabled || needs_feature_id || dbg_needs_normal;
         let needs_velocity = taa_enabled || dbg_needs_velocity;
-
 
         // let needs_normal = ssao_enabled || needs_feature_id;
         let needs_skybox = self.ctx.scene.background.needs_skybox_pass();
@@ -398,10 +397,12 @@ impl<'a> FrameComposer<'a> {
 
             let (mut active_color, mut scene_depth) = graph_ctx.with_group("Scene", |c| {
                 // 1. Prepass
-                let prepass_out =
-                    self.ctx
-                        .prepass
-                        .add_to_graph(c, needs_normal, needs_feature_id, needs_velocity);
+                let prepass_out = self.ctx.prepass.add_to_graph(
+                    c,
+                    needs_normal,
+                    needs_feature_id,
+                    needs_velocity,
+                );
 
                 let scene_depth = prepass_out.scene_depth;
 
@@ -600,11 +601,15 @@ impl<'a> FrameComposer<'a> {
                     _ => None,
                 };
 
+                let is_depth = target == DebugViewTarget::SceneDepth;
+
                 if let Some(src) = source {
-                    current_surface =
-                        self.ctx
-                            .debug_view_pass
-                            .add_to_graph(&mut graph_ctx, src, current_surface);
+                    current_surface = self.ctx.debug_view_pass.add_to_graph(
+                        &mut graph_ctx,
+                        src,
+                        current_surface,
+                        is_depth,
+                    );
                 }
             }
         } else {

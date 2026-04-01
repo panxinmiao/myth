@@ -2169,7 +2169,6 @@ impl GltfViewer {
                                     ui.separator();
 
                                     ui.horizontal(|ui| {
-
                                         ui.label("Debug View:");
 
                                         let mut targets = vec![

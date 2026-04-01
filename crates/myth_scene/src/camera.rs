@@ -17,16 +17,16 @@ use myth_resources::BoundingBox;
 #[repr(u32)]
 pub enum DebugViewMode {
     #[default]
-    None       = 0,
+    None = 0,
     // Post-process modes (read transient textures)
-    SSAO       = 1,
-    Normal     = 2,
-    Velocity   = 3,
-    Depth      = 4,
+    SSAO = 1,
+    Normal = 2,
+    Velocity = 3,
+    Depth = 4,
     // Material attribute modes (shader override)
-    Albedo     = 10,
-    Roughness  = 11,
-    Metalness  = 12,
+    Albedo = 10,
+    Roughness = 11,
+    Metalness = 12,
 }
 
 #[cfg(feature = "debug_view")]
@@ -35,12 +35,12 @@ impl DebugViewMode {
     #[must_use]
     pub const fn label(self) -> &'static str {
         match self {
-            Self::None      => "Final Image",
-            Self::SSAO      => "SSAO",
-            Self::Normal    => "Scene Normal",
-            Self::Velocity  => "Velocity Buffer",
-            Self::Depth     => "Scene Depth",
-            Self::Albedo    => "Albedo (Material)",
+            Self::None => "Final Image",
+            Self::SSAO => "SSAO",
+            Self::Normal => "Scene Normal",
+            Self::Velocity => "Velocity Buffer",
+            Self::Depth => "Scene Depth",
+            Self::Albedo => "Albedo (Material)",
             Self::Roughness => "Roughness (Material)",
             Self::Metalness => "Metalness (Material)",
         }

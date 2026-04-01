@@ -221,7 +221,7 @@ impl ExtractedScene {
         {
             use myth_scene::camera::DebugViewMode;
             match camera.debug_view.mode {
-                DebugViewMode::Albedo    => self.scene_defines.set("DEBUG_VIEW_ALBEDO", "1"),
+                DebugViewMode::Albedo => self.scene_defines.set("DEBUG_VIEW_ALBEDO", "1"),
                 DebugViewMode::Roughness => self.scene_defines.set("DEBUG_VIEW_ROUGHNESS", "1"),
                 DebugViewMode::Metalness => self.scene_defines.set("DEBUG_VIEW_METALNESS", "1"),
                 _ => {}

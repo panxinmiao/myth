@@ -43,11 +43,11 @@ impl DebugViewTarget {
     pub fn from_mode(mode: myth_scene::camera::DebugViewMode) -> Self {
         use myth_scene::camera::DebugViewMode;
         match mode {
-            DebugViewMode::SSAO     => Self::SsaoRaw,
-            DebugViewMode::Normal   => Self::SceneNormal,
+            DebugViewMode::SSAO => Self::SsaoRaw,
+            DebugViewMode::Normal => Self::SceneNormal,
             DebugViewMode::Velocity => Self::Velocity,
-            DebugViewMode::Depth    => Self::SceneDepth,
-            _                       => Self::None,
+            DebugViewMode::Depth => Self::SceneDepth,
+            _ => Self::None,
         }
     }
 
@@ -61,11 +61,11 @@ impl DebugViewTarget {
     #[must_use]
     pub const fn view_mode(self) -> u32 {
         match self {
-            Self::None        => 0,
-            Self::SsaoRaw     => 1,
+            Self::None => 0,
+            Self::SsaoRaw => 1,
             Self::SceneNormal => 2,
-            Self::Velocity    => 3,
-            Self::SceneDepth  => 4,
+            Self::Velocity => 3,
+            Self::SceneDepth => 4,
         }
     }
 }

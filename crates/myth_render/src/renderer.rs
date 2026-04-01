@@ -326,13 +326,22 @@ impl Renderer {
             let needs_feature_id =
                 is_hf && (scene.screen_space.enable_sss || scene.screen_space.enable_ssr);
 
+            // Sync camera debug settings → RenderState before borrowing it.
+            #[cfg(feature = "debug_view")]
+            {
+                let dv = camera.debug_view;
+                state.render_frame.render_state.debug_view_mode = dv.mode;
+                state.render_frame.render_state.debug_view_scale = dv.custom_scale;
+            }
+
             #[cfg(feature = "debug_view")]
             let (dbg_needs_normal, dbg_needs_velocity) = {
                 use crate::graph::render_state::DebugViewTarget;
-                let target = DebugViewTarget::from_mode(state.render_frame.render_state.debug_view_mode);
+                let target =
+                    DebugViewTarget::from_mode(state.render_frame.render_state.debug_view_mode);
                 (
                     target == DebugViewTarget::SceneNormal,
-                    target == DebugViewTarget::Velocity
+                    target == DebugViewTarget::Velocity,
                 )
             };
 
@@ -342,18 +351,9 @@ impl Renderer {
             let needs_normal = ssao_enabled || needs_feature_id || dbg_needs_normal;
             let needs_velocity = camera.aa_mode.is_taa() || dbg_needs_velocity;
 
-
             // let needs_normal = ssao_enabled || needs_feature_id;
             let needs_skybox = scene.background.needs_skybox_pass();
             let bloom_enabled = scene.bloom.enabled && is_hf;
-
-            // Sync camera debug settings → RenderState before borrowing it.
-            #[cfg(feature = "debug_view")]
-            {
-                let dv = camera.debug_view;
-                state.render_frame.render_state.debug_view_mode = dv.mode;
-                state.render_frame.render_state.debug_view_scale = dv.custom_scale;
-            }
 
             let mut extract_ctx = ExtractContext {
                 device: &state.wgpu_ctx.device,
@@ -471,12 +471,18 @@ impl Renderer {
                             view_mode: target.view_mode(),
                             custom_scale: dv.custom_scale,
                             z_near: camera.near,
-                            z_far: if camera.far.is_infinite() { 10000.0 } else { camera.far },
+                            z_far: if camera.far.is_infinite() {
+                                10000.0
+                            } else {
+                                camera.far
+                            },
                         };
+                        let is_depth = target == DebugViewTarget::SceneDepth;
                         state.debug_view_pass.extract_and_prepare(
                             &mut extract_ctx,
                             view_format,
                             params,
+                            is_depth,
                         );
                     }
                 }

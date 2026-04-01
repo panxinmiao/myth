@@ -176,12 +176,12 @@ pub mod prelude {
     pub use myth_app::OrbitControls;
 
     // Renderer
-    #[cfg(feature = "debug_view")]
-    pub use myth_scene::{DebugViewMode, DebugViewSettings};
     pub use myth_render::graph::FrameComposer;
     pub use myth_render::settings::{
         AntiAliasingMode, RenderPath, RendererInitConfig, RendererSettings,
     };
+    #[cfg(feature = "debug_view")]
+    pub use myth_scene::{DebugViewMode, DebugViewSettings};
 }
 
 // ============================================================================

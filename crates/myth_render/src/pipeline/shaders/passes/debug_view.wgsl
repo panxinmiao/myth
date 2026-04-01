@@ -19,11 +19,20 @@ struct DebugUniforms {
 @group(0) @binding(1) var<uniform> uniforms: DebugUniforms;
 
 // Group 1 (transient): source texture — rebuilt each frame.
+$$ if IS_DEPTH
+@group(1) @binding(0) var debug_texture: texture_depth_2d;
+$$ else
 @group(1) @binding(0) var debug_texture: texture_2d<f32>;
+$$ endif
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+    $$ if IS_DEPTH
+    let depth_val = textureSampleLevel(debug_texture, debug_sampler, in.uv, 0i);
+    let tex_color = vec4<f32>(depth_val, depth_val, depth_val, 1.0);
+    $$ else
     let tex_color = textureSampleLevel(debug_texture, debug_sampler, in.uv, 0.0);
+    $$ endif
 
     switch uniforms.view_mode {
         // Mode 1: SSAO / Roughness / Metallic

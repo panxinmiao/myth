@@ -82,12 +82,14 @@ impl myth_resources::buffer::GpuData for DebugViewUniforms {
 pub struct DebugViewFeature {
     /// L1 cache key: surface format the pipeline was compiled for.
     l1_cache_format: Option<wgpu::TextureFormat>,
+    l1_cache_is_depth: Option<bool>,
     pipeline_id: Option<RenderPipelineId>,
 
     /// Group 0 (static): sampler + uniform buffer.
     static_layout: Option<Tracked<wgpu::BindGroupLayout>>,
     /// Group 1 (transient): source texture.
-    transient_layout: Option<Tracked<wgpu::BindGroupLayout>>,
+    transient_layout_color: Option<Tracked<wgpu::BindGroupLayout>>,
+    transient_layout_depth: Option<Tracked<wgpu::BindGroupLayout>>,
 
     /// Feature-owned static bind group (Group 0).
     static_bg: Option<wgpu::BindGroup>,
@@ -108,9 +110,11 @@ impl DebugViewFeature {
     pub fn new() -> Self {
         Self {
             l1_cache_format: None,
+            l1_cache_is_depth: None,
             pipeline_id: None,
             static_layout: None,
-            transient_layout: None,
+            transient_layout_color: None,
+            transient_layout_depth: None,
             static_bg: None,
             last_uniforms_buffer_id: 0,
             uniforms: CpuBuffer::new(
@@ -135,7 +139,7 @@ impl DebugViewFeature {
                     wgpu::BindGroupLayoutEntry {
                         binding: 0,
                         visibility: wgpu::ShaderStages::FRAGMENT,
-                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::NonFiltering),
                         count: None,
                     },
                     wgpu::BindGroupLayoutEntry {
@@ -153,14 +157,30 @@ impl DebugViewFeature {
         )));
 
         // Group 1 (transient): source texture
-        self.transient_layout = Some(Tracked::new(device.create_bind_group_layout(
+        self.transient_layout_color = Some(Tracked::new(device.create_bind_group_layout(
             &wgpu::BindGroupLayoutDescriptor {
-                label: Some("DebugView Transient Layout (G1)"),
+                label: Some("DebugView Transient Layout Color (G1)"),
                 entries: &[wgpu::BindGroupLayoutEntry {
                     binding: 0,
                     visibility: wgpu::ShaderStages::FRAGMENT,
                     ty: wgpu::BindingType::Texture {
-                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                }],
+            },
+        )));
+
+        self.transient_layout_depth = Some(Tracked::new(device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("DebugView Transient Layout Depth (G1)"),
+                entries: &[wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Depth,
                         view_dimension: wgpu::TextureViewDimension::D2,
                         multisampled: false,
                     },
@@ -177,6 +197,7 @@ impl DebugViewFeature {
         ctx: &mut ExtractContext,
         output_format: wgpu::TextureFormat,
         params: DebugViewUniforms,
+        is_depth: bool,
     ) {
         self.ensure_layouts(ctx.device);
 
@@ -188,8 +209,13 @@ impl DebugViewFeature {
         ctx.resource_manager.ensure_buffer(&self.uniforms);
 
         // ── Pipeline (re)creation on format change ─────────────────
-        if self.l1_cache_format != Some(output_format) {
-            let options = ShaderCompilationOptions::default();
+        if self.l1_cache_format != Some(output_format) || self.l1_cache_is_depth != Some(is_depth) {
+            let mut options = ShaderCompilationOptions::default();
+
+            if is_depth {
+                options.add_define("IS_DEPTH", "1");
+            }
+
             let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
                 ctx.device,
                 "passes/debug_view",
@@ -210,14 +236,17 @@ impl DebugViewFeature {
                 None,
             );
 
+            let transient_layout = if is_depth {
+                self.transient_layout_depth.as_deref()
+            } else {
+                self.transient_layout_color.as_deref()
+            };
+
             let pipeline_layout =
                 ctx.device
                     .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                         label: Some("DebugView Pipeline Layout"),
-                        bind_group_layouts: &[
-                            self.static_layout.as_deref(),
-                            self.transient_layout.as_deref(),
-                        ],
+                        bind_group_layouts: &[self.static_layout.as_deref(), transient_layout],
                         immediate_size: 0,
                     });
 
@@ -229,6 +258,7 @@ impl DebugViewFeature {
                 "DebugView Pipeline",
             ));
             self.l1_cache_format = Some(output_format);
+            self.l1_cache_is_depth = Some(is_depth);
         }
 
         // ── Static bind group (Group 0) — rebuild on buffer identity change
@@ -239,7 +269,7 @@ impl DebugViewFeature {
             let sampler = ctx
                 .resource_manager
                 .sampler_registry
-                .get_common(CommonSampler::LinearClamp);
+                .get_common(CommonSampler::NearestClamp);
             let layout = self.static_layout.as_ref().unwrap();
 
             self.static_bg = Some(ctx.device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -269,6 +299,7 @@ impl DebugViewFeature {
         ctx: &mut GraphBuilderContext<'a, '_>,
         source_tex: TextureNodeId,
         target_surface: TextureNodeId,
+        is_depth: bool,
     ) -> TextureNodeId {
         let pipeline_id = self.pipeline_id.expect("DebugViewFeature not prepared");
         let pipeline = ctx.pipeline_cache.get_render_pipeline(pipeline_id);
@@ -276,7 +307,11 @@ impl DebugViewFeature {
             .static_bg
             .as_ref()
             .expect("DebugViewFeature: static BG not built");
-        let transient_layout = self.transient_layout.as_ref().unwrap();
+        let transient_layout = if is_depth {
+            self.transient_layout_depth.as_ref().unwrap()
+        } else {
+            self.transient_layout_color.as_ref().unwrap()
+        };
 
         ctx.graph.add_pass("DebugView_Pass", |builder| {
             builder.read_texture(source_tex);
