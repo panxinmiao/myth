@@ -325,7 +325,25 @@ impl Renderer {
             let ssao_enabled = scene.ssao.enabled && is_hf;
             let needs_feature_id =
                 is_hf && (scene.screen_space.enable_sss || scene.screen_space.enable_ssr);
-            let needs_normal = ssao_enabled || needs_feature_id;
+
+            #[cfg(feature = "debug_view")]
+            let (dbg_needs_normal, dbg_needs_velocity) = {
+                use crate::graph::render_state::DebugViewTarget;
+                let target = DebugViewTarget::from_mode(state.render_frame.render_state.debug_view_mode);
+                (
+                    target == DebugViewTarget::SceneNormal,
+                    target == DebugViewTarget::Velocity
+                )
+            };
+
+            #[cfg(not(feature = "debug_view"))]
+            let (dbg_needs_normal, dbg_needs_velocity) = (false, false);
+
+            let needs_normal = ssao_enabled || needs_feature_id || dbg_needs_normal;
+            let needs_velocity = camera.aa_mode.is_taa() || dbg_needs_velocity;
+
+
+            // let needs_normal = ssao_enabled || needs_feature_id;
             let needs_skybox = scene.background.needs_skybox_pass();
             let bloom_enabled = scene.bloom.enabled && is_hf;
 
@@ -402,7 +420,7 @@ impl Renderer {
                     &mut extract_ctx,
                     needs_normal,
                     needs_feature_id,
-                    camera.aa_mode.is_taa(),
+                    needs_velocity,
                 );
 
                 if ssao_enabled {

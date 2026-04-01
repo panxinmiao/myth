@@ -2168,38 +2168,36 @@ impl GltfViewer {
                                     use myth::prelude::DebugViewMode;
                                     ui.separator();
 
-                                    let taa_on =
-                                        matches!(self.aa_cache.current, AaModeType::TAA);
-                                    let ssao_on = scene.ssao.enabled;
-
-                                    // Build available modes dynamically.
-                                    let mut modes: Vec<DebugViewMode> = vec![DebugViewMode::None];
-                                    if ssao_on {
-                                        modes.push(DebugViewMode::SSAO);
-                                    }
-                                    if ssao_on {
-                                        modes.push(DebugViewMode::Normal);
-                                    }
-                                    if taa_on {
-                                        modes.push(DebugViewMode::Velocity);
-                                    }
-                                    // Material override modes — always available.
-                                    modes.push(DebugViewMode::Albedo);
-                                    modes.push(DebugViewMode::Roughness);
-                                    modes.push(DebugViewMode::Metalness);
-
-                                    // Reset to None if current mode is unavailable.
-                                    if !modes.contains(&self.debug_view.mode) {
-                                        self.debug_view.mode = DebugViewMode::None;
-                                    }
-
                                     ui.horizontal(|ui| {
+
                                         ui.label("Debug View:");
+
+                                        let mut targets = vec![
+                                            DebugViewMode::None,
+                                            DebugViewMode::Albedo,
+                                            DebugViewMode::Roughness,
+                                            DebugViewMode::Metalness,
+                                        ];
+
+                                        if is_hf {
+                                            targets.push(DebugViewMode::Depth);
+                                            targets.push(DebugViewMode::Normal);
+                                            targets.push(DebugViewMode::Velocity);
+
+                                            if scene.ssao.enabled {
+                                                targets.push(DebugViewMode::SSAO);
+                                            }
+                                        }
+
+                                        if !targets.contains(&self.debug_view.mode) {
+                                            self.debug_view.mode = DebugViewMode::None;
+                                        }
+
                                         egui::ComboBox::from_id_salt("debug_view_selector")
                                             .width(160.0)
                                             .selected_text(self.debug_view.mode.label())
                                             .show_ui(ui, |ui| {
-                                                for &m in &modes {
+                                                for &m in &targets {
                                                     ui.selectable_value(
                                                         &mut self.debug_view.mode,
                                                         m,

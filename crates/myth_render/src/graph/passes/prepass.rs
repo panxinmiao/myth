@@ -338,7 +338,7 @@ impl PrepassFeature {
         ctx: &mut GraphBuilderContext<'_, '_>,
         needs_normal: bool,
         needs_feature_id: bool,
-        taa_enabled: bool,
+        needs_velocity: bool,
     ) -> PrepassOutputs {
         let fc = ctx.frame_config;
 
@@ -384,7 +384,7 @@ impl PrepassFeature {
             None
         };
 
-        let velocity_buffer = if taa_enabled {
+        let velocity_buffer = if needs_velocity {
             let desc = TextureDesc::new_2d(
                 fc.width,
                 fc.height,
@@ -403,7 +403,7 @@ impl PrepassFeature {
             velocity_buffer: velocity_buffer.unwrap_or(TextureNodeId(0)),
             needs_normal,
             needs_feature_id,
-            taa_enabled,
+            needs_velocity,
         };
         ctx.graph.add_pass("Pre_Pass", |builder| {
             builder.write_texture(scene_depth);
@@ -447,7 +447,7 @@ pub struct PrepassPassNode {
     // ─── Push Parameters ───────────────────────────────────────────
     needs_normal: bool,
     needs_feature_id: bool,
-    taa_enabled: bool,
+    needs_velocity: bool,
 }
 
 impl PassNode<'_> for PrepassPassNode {
@@ -482,7 +482,7 @@ impl PassNode<'_> for PrepassPassNode {
         {
             color_attachments.push(Some(att));
         }
-        if self.taa_enabled
+        if self.needs_velocity
             && let Some(att) = ctx.get_color_attachment(
                 self.velocity_buffer,
                 RenderTargetOps::Clear(wgpu::Color::TRANSPARENT),

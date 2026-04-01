@@ -310,11 +310,30 @@ impl<'a> FrameComposer<'a> {
         let is_msaa = msaa_samples > 1;
 
         // ── 2b. Scene Configuration ────────────────────────────────────
-
         let ssao_enabled = self.ctx.scene.ssao.enabled && is_high_fidelity;
+
         let needs_feature_id = is_high_fidelity
             && (self.ctx.scene.screen_space.enable_sss || self.ctx.scene.screen_space.enable_ssr);
-        let needs_normal = ssao_enabled || needs_feature_id;
+
+        #[cfg(feature = "debug_view")]
+        let (dbg_needs_normal, dbg_needs_velocity) = {
+            use crate::graph::render_state::DebugViewTarget;
+            let target = DebugViewTarget::from_mode(self.ctx.render_state.debug_view_mode);
+            (
+                target == DebugViewTarget::SceneNormal,
+                target == DebugViewTarget::Velocity
+            )
+        };
+
+        #[cfg(not(feature = "debug_view"))]
+        let (dbg_needs_normal, dbg_needs_velocity) = (false, false);
+
+        let taa_enabled = self.ctx.camera.aa_mode.is_taa();
+        let needs_normal = ssao_enabled || needs_feature_id || dbg_needs_normal;
+        let needs_velocity = taa_enabled || dbg_needs_velocity;
+
+
+        // let needs_normal = ssao_enabled || needs_feature_id;
         let needs_skybox = self.ctx.scene.background.needs_skybox_pass();
         let ssss_enabled = self.ctx.scene.screen_space.enable_sss;
         let has_transmission = self.ctx.render_lists.use_transmission;
@@ -367,7 +386,7 @@ impl<'a> FrameComposer<'a> {
 
             // ── Scene Rendering Group ──────────────────────────────────
 
-            let taa_enabled = self.ctx.camera.aa_mode.is_taa();
+            // let taa_enabled = self.ctx.camera.aa_mode.is_taa();
 
             let cas_enabled = if let Some(s) = self.ctx.camera.aa_mode.taa_settings() {
                 s.sharpen_intensity > 0.0
@@ -382,7 +401,7 @@ impl<'a> FrameComposer<'a> {
                 let prepass_out =
                     self.ctx
                         .prepass
-                        .add_to_graph(c, needs_normal, needs_feature_id, taa_enabled);
+                        .add_to_graph(c, needs_normal, needs_feature_id, needs_velocity);
 
                 let scene_depth = prepass_out.scene_depth;
 
@@ -577,7 +596,8 @@ impl<'a> FrameComposer<'a> {
                     DebugViewTarget::SceneNormal => dbg_normals,
                     DebugViewTarget::Velocity => dbg_velocity,
                     DebugViewTarget::SsaoRaw => dbg_ssao,
-                    DebugViewTarget::None | DebugViewTarget::SceneDepth => None,
+                    DebugViewTarget::SceneDepth => Some(scene_depth),
+                    _ => None,
                 };
 
                 if let Some(src) = source {

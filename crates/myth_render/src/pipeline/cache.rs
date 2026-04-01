@@ -24,6 +24,8 @@
 //!
 //! [`ShaderManager`]: super::shader_manager::ShaderManager
 
+#[cfg(feature = "debug_view")]
+use myth_scene::DebugViewMode;
 use rustc_hash::FxHashMap;
 use smallvec::SmallVec;
 
@@ -54,6 +56,8 @@ pub struct FastPipelineKey {
     pub scene_variants: SceneFeatures,
     pub taa_enabled: bool,
     pub pipeline_settings_version: u64,
+    #[cfg(feature = "debug_view")]
+    pub debug_view_mode: DebugViewMode,
 }
 
 /// L1 fast key for shadow depth-only pipelines.

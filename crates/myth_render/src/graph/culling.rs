@@ -206,6 +206,8 @@ fn prepare_main_camera_commands(
                 scene_variants: extracted_scene.scene_variants,
                 taa_enabled,
                 pipeline_settings_version,
+                #[cfg(feature = "debug_view")]
+                debug_view_mode: camera.debug_view.mode,
             };
 
             // ========== Hot-Path: L1 cache first ==========
