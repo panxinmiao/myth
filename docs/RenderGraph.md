@@ -1,12 +1,14 @@
 # Myth Engine Architecture: Building an SSA-Based Declarative Render Graph
 
+*(Note: The original text was written in [Chinese](RenderGraph_CN.md) and translated and polished into English by Gemini.)*
+
 ## 0. Introduction
 
-Modern graphics APIs (such as WebGPU, Vulkan, and DirectX 12) empower developers with unprecedented control over GPU resources and synchronization.
+Modern graphics APIs (like WebGPU, Vulkan, and DirectX 12) give developers unprecedented control over GPU resources and synchronization.
 
 But this control comes at a cost.
 
-Once your renderer scales beyond a handful of RenderPasses, you quickly find yourself bogged down in the quagmire of managing:
+Once your renderer scales beyond a handful of RenderPasses, you quickly find yourself bogged down in a swamp of manual state management:
 
 * Resource lifecycles
 * Memory barriers
@@ -16,9 +18,9 @@ Once your renderer scales beyond a handful of RenderPasses, you quickly find you
 
 Without a robust architectural foundation, a rendering pipeline can easily collapse into a fragile mess of state management code.
 
-During the development of **Myth Engine**, I experienced this firsthand. Every time I added a new rendering feature, it was a battle against state management; the engine's state complexity scaled exponentially.
+During the development of **Myth Engine**, I experienced this firsthand. Every new rendering feature felt like a battle against state management, and the complexity of managing state grew exponentially.
 
-While it "barely worked," I refused to settle for "good enough" and accumulate technical debt at such a fundamental level. Therefore, I refactored this subsystem multiple times, going through three rapid architectural pivots, before finally arriving at the current design: a strict, declarative RenderGraph based on **SSA (Static Single Assignment)**.
+It “kind of worked,” but I didn’t want to settle for “good enough” and accumulate technical debt at the foundation. So I refactored this subsystem many times, going through three rapid and deliberate architectural pivots, until I arrived at the current design: a strict, declarative RenderGraph based on **SSA (Static Single Assignment)**.
 
 ---
 
@@ -32,9 +34,9 @@ Inserting a new Pass meant manually rewiring entire BindGroups within the main l
 
 ### Pivot 2: The "Blackboard" Attempt (Manual Wiring)
 
-Many technical articles mention that modern renderers manage execution via a "RenderGraph." Although most only gloss over the details, this gave me significant inspiration. To quickly decouple Passes, I rapidly pivoted to a Blackboard-driven RenderGraph. This pattern is quite common in many open-source engines.
+Many technical articles mention that modern renderers manage execution via a "RenderGraph." Although most only gloss over the details, this gave me significant inspiration. To quickly decouple Passes, I rapidly pivoted to a Blackboard-driven RenderGraph. Passes communicated by reading and writing resources to a global HashMap keyed by strings.
 
-Passes communicate by reading and writing resources to a global, string-keyed HashMap. This architecture was easy to understand and implement, and it successfully decoupled the code. But as development continued, severe architectural flaws were quickly exposed:
+This architecture was simple to understand and successfully decoupled the codebase, but it quickly exposed fatal architectural flaws during development:
 
 * **VRAM Waste:** Because the system could not definitively know who the *last* consumer of a resource was, it had to conservatively extend resource lifecycles (often lasting the entire frame). Dynamically allocated resources lived far longer than necessary, completely missing opportunities to recycle transient memory. GPU memory utilization was abysmal.
 * **Implicit Data Flow:** Because Passes interacted via global blackboard keys, their true dependencies were hidden. This made it impossible to statically analyze the actual data flow or safely reorder Pass execution.
@@ -475,19 +477,9 @@ flowchart TD
 
 By doing this, we fully unlock the power of the compiler. Each Pass is an independent atomic unit. Their execution order, memory allocation, and resource aliasing can be globally optimized without worrying about hidden side effects. Meanwhile, logical subgraphs keep the developer's cognitive load perfectly manageable.
 
-Additionally, I encapsulated several commonly used micro-passes into reusable RenderNode nodes. This makes building complex scheduling logic as simple as assembling building blocks.
+I also wrapped some commonly used micro‑passes into reusable RenderNode types, making it easy to build complex scheduling logic like building blocks. For example, making MSAA, SSSS, and transmission maps coexist used to require manually handling the hellish back‑and‑forth between MSAA buffers and single‑sample buffers, and it was nearly impossible to achieve peak performance (because of frequent memory copies and state switches — you could hardly manage those resource lifetimes by hand). Now it’s simple and elegant.
 
-Previously, making features like MSAA, SSSS, and Transmission coexist was extremely difficult. Properly handling the conversions between MSAA buffers and single-sample buffers was practically a nightmare, and achieving optimal performance was unlikely. Frequent memory copies and state transitions made it very hard to manually manage the lifetimes of these resources.
-
-Now, however, the whole process has become remarkably simple and elegant.
-
----
-
-## 7. Looking Forward
-
-By enforcing strict SSA and separating logical declaration from physical execution, I believe Myth Engine's RenderGraph establishes an exceptional foundation for future feature expansion. This structural purity paves the way for effortlessly scheduling compute nodes onto asynchronous compute queues in future engine iterations.
-
-It also serves as proof that modern graphics programming doesn't have to be a desperate struggle against state management. By embracing declarative data flow, we allow the compiler to do the heavy lifting, empowering rendering engineers to focus purely on painting pixels.
+This is the true power of a declarative SSA RenderGraph: hand the complexity over to the compiler, and give creativity back to the rendering engineer.
 
 ---
 

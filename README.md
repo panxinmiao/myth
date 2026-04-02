@@ -1,3 +1,6 @@
+[中文](README_CN.md)
+
+---
 <div align="center">
 
 # Myth
@@ -16,6 +19,7 @@
 </div>
 
 ---
+
 
 > ⚠️ **Warning: Early Development Stage**
 >
@@ -224,7 +228,7 @@ flowchart TD
 Experience the engine directly in your browser (Chrome/Edge 113+ required for WebGPU):
 
 - **[Showcase (Home)](https://panxinmiao.github.io/myth/)**: High-performance rendering showcase.
-- **[Launch glTF Viewer & Inspector](https://panxinmiao.github.io/myth/gltf_viewer/)**: Drag & drop your own .glb files.
+- **[glTF Viewer & Inspector](https://panxinmiao.github.io/myth/gltf_viewer/)**: Drag & drop your own .glb files.
 - **[glTF Sample Models](https://panxinmiao.github.io/myth/gltf/)**: Explore multiple official glTF assets from Khronos rendered with Myth.
 
 ![Web Editor Preview](https://raw.githubusercontent.com/panxinmiao/myth/main/docs/images/inspector.gif)
