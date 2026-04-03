@@ -306,12 +306,12 @@ pub fn build_spot_view(
 /// Follows the WebGPU / wgpu convention where cube map textures are laid out
 /// as array layers 0–5 corresponding to +X, −X, +Y, −Y, +Z, −Z.
 const CUBE_FACE_DIRS: [(Vec3, Vec3); 6] = [
-    (Vec3::X, Vec3::Y),  // +X
-    (Vec3::NEG_X, Vec3::Y),  // −X
-    (Vec3::Y, Vec3::Z),      // +Y
-    (Vec3::NEG_Y, Vec3::NEG_Z),  // −Y
-    (Vec3::Z, Vec3::Y),  // +Z
-    (Vec3::NEG_Z, Vec3::Y),  // −Z
+    (Vec3::X, Vec3::NEG_Y),     // +X
+    (Vec3::NEG_X, Vec3::NEG_Y), // −X
+    (Vec3::Y, Vec3::Z),         // +Y
+    (Vec3::NEG_Y, Vec3::NEG_Z), // −Y
+    (Vec3::Z, Vec3::NEG_Y),     // +Z
+    (Vec3::NEG_Z, Vec3::NEG_Y), // −Z
 ];
 
 /// Builds 6 perspective VP matrices for a point light located at `position`.
@@ -323,7 +323,9 @@ const CUBE_FACE_DIRS: [(Vec3, Vec3); 6] = [
 pub fn build_point_vps(position: Vec3, range: f32) -> [Mat4; CUBE_FACES as usize] {
     let near = 0.1f32;
     let far = range.max(near + 0.01);
-    let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, near, far);
+    let mut proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, near, far);
+
+    proj.y_axis.y *= -1.0; // Flip Y for cube maps to match texture coordinate conventions
 
     let mut vps = [Mat4::IDENTITY; CUBE_FACES as usize];
     for (i, (dir, up)) in CUBE_FACE_DIRS.iter().enumerate() {

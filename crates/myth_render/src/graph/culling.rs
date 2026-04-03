@@ -534,11 +534,9 @@ fn prepare_shadow_commands(
                     .map(|l| l.as_wgpu())
                     .collect();
 
-                let cull_mode = match material.side() {
-                    Side::Front => Some(wgpu::Face::Back),
-                    Side::Back => Some(wgpu::Face::Front),
-                    Side::Double => None,
-                };
+                // For shadow pipelines, we always cull front faces to avoid self-shadowing artifacts.
+                // Todo: consider making this configurable per-material or per-item if we encounter cases where back-face shadows are desirable.
+                let cull_mode = Some(wgpu::Face::Front);
 
                 let front_face = if item.item_variant_flags & 0x1 != 0 {
                     wgpu::FrontFace::Cw
@@ -555,11 +553,8 @@ fn prepare_shadow_commands(
                         depth_write_enabled: Some(true),
                         depth_compare: Some(wgpu::CompareFunction::LessEqual),
                         stencil: wgpu::StencilState::default(),
-                        bias: wgpu::DepthBiasState {
-                            constant: 2,
-                            slope_scale: 2.0,
-                            clamp: 0.0,
-                        },
+                        // Todo: expose depth bias settings in LightShadow for finer control over shadow acne / peter-panning
+                        bias: wgpu::DepthBiasState::default(),
                     }),
                     topology: geometry.topology,
                     cull_mode,

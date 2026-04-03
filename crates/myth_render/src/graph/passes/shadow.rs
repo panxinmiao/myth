@@ -263,12 +263,11 @@ impl ShadowFeature {
             let is_point = point_light_ids.contains(&light_id);
 
             if is_point {
-                self.shadow_cube_resolution =
-                    self.shadow_cube_resolution.max(view.viewport_size.0);
+                self.shadow_cube_resolution = self.shadow_cube_resolution.max(view.viewport_size.0);
 
                 let view_layer_index = match view.target {
                     ViewTarget::ShadowLight { layer_index, .. } => layer_index,
-                    _ => 0,
+                    ViewTarget::MainCamera => 0,
                 };
 
                 let inst = ShadowLightInstance {
@@ -283,12 +282,11 @@ impl ShadowFeature {
                 self.cube_lights.push((uniform_index, inst));
                 cube_layer += 1;
             } else {
-                self.shadow_2d_resolution =
-                    self.shadow_2d_resolution.max(view.viewport_size.0);
+                self.shadow_2d_resolution = self.shadow_2d_resolution.max(view.viewport_size.0);
 
                 let view_layer_index = match view.target {
                     ViewTarget::ShadowLight { layer_index, .. } => layer_index,
-                    _ => 0,
+                    ViewTarget::MainCamera => 0,
                 };
 
                 let inst = ShadowLightInstance {
@@ -337,10 +335,7 @@ impl ShadowFeature {
     ///
     /// Returns [`ShadowOutput`] containing the [`TextureNodeId`]s so that
     /// consumer passes can wire explicit read dependencies.
-    pub fn add_to_graph<'a>(
-        &'a self,
-        ctx: &mut GraphBuilderContext<'a, '_>,
-    ) -> ShadowOutput {
+    pub fn add_to_graph<'a>(&'a self, ctx: &mut GraphBuilderContext<'a, '_>) -> ShadowOutput {
         let mut output = ShadowOutput {
             shadow_2d: None,
             shadow_cube: None,
@@ -462,7 +457,7 @@ impl<'a> PassNode<'a> for Shadow2DPassNode<'a> {
                 multiview_mask: None,
             });
 
-            let dynamic_offset = (uniform_idx as u32) * self.uniform_stride;
+            let dynamic_offset = uniform_idx * self.uniform_stride;
             pass.set_bind_group(0, self.bind_group, &[dynamic_offset]);
 
             if let Some(commands) = ctx
@@ -527,7 +522,7 @@ impl<'a> PassNode<'a> for ShadowCubePassNode<'a> {
                 multiview_mask: None,
             });
 
-            let dynamic_offset = (uniform_idx as u32) * self.uniform_stride;
+            let dynamic_offset = uniform_idx * self.uniform_stride;
             pass.set_bind_group(0, self.bind_group, &[dynamic_offset]);
 
             if let Some(commands) = ctx

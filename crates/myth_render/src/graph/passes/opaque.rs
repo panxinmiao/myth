@@ -261,6 +261,14 @@ impl<'a> PassNode<'a> for OpaquePassNode {
         } = ctx;
         let device = *device;
 
+        let d2array_key = crate::graph::core::allocator::SubViewKey {
+            dimension: Some(wgpu::TextureViewDimension::D2Array),
+            ..Default::default()
+        };
+        if let Some(id) = self.shadow_input {
+            views.get_or_create_sub_view(id, &d2array_key);
+        }
+
         // Pre-create CubeArray sub-view (mutable borrow, result dropped).
         let cube_key = crate::graph::core::allocator::SubViewKey {
             dimension: Some(wgpu::TextureViewDimension::CubeArray),
@@ -279,7 +287,7 @@ impl<'a> PassNode<'a> for OpaquePassNode {
         let transmission_view = &sys.black_hdr;
 
         let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {
-            Some(id) => views.get_texture_view(id),
+            Some(id) => views.get_sub_view(id, &d2array_key).unwrap(),
             None => &sys.depth_d2array,
         };
 

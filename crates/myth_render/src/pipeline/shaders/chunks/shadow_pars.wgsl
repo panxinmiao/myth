@@ -66,7 +66,7 @@ fn sample_point_shadow(
     }
 
     let light_to_frag = world_position - light_position;
-    // let radial_dist = length(light_to_frag);
+
     let planar_z = max(max(abs(light_to_frag.x), abs(light_to_frag.y)), abs(light_to_frag.z));
 
     if (planar_z >= light_range || planar_z <= EPSILON) {

@@ -568,7 +568,10 @@ impl RenderFrame {
                 LightKind::Point(point) => {
                     // Coarse culling: skip point lights whose bounding sphere
                     // does not intersect the main camera frustum.
-                    if !camera.frustum.intersects_sphere(light.position, point.range) {
+                    if !camera
+                        .frustum
+                        .intersects_sphere(light.position, point.range)
+                    {
                         continue;
                     }
                     let base_layer = shadow_views.len() as u32;

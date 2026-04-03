@@ -196,42 +196,34 @@ pub fn build_screen_bind_group<'a>(
         .with_resource(sys.shadow_compare_sampler.id())
         .with_resource(shadow_cube_view.id());
 
-    let layout = &*sys.screen_layout;
-    let sampler = &*sys.screen_sampler;
-    let tv = &**transmission_view;
-    let sv = &**ssao_view;
-    let shv = &**shadow_view;
-    let shs = &*sys.shadow_compare_sampler;
-    let shcv = &**shadow_cube_view;
-
     cache.get_or_create_bg(key, || {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("Screen BindGroup (Group 3)"),
-            layout,
+            layout: &sys.screen_layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(tv),
+                    resource: wgpu::BindingResource::TextureView(transmission_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: wgpu::BindingResource::Sampler(sampler),
+                    resource: wgpu::BindingResource::Sampler(&sys.screen_sampler),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: wgpu::BindingResource::TextureView(sv),
+                    resource: wgpu::BindingResource::TextureView(ssao_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 3,
-                    resource: wgpu::BindingResource::TextureView(shv),
+                    resource: wgpu::BindingResource::TextureView(shadow_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 4,
-                    resource: wgpu::BindingResource::Sampler(shs),
+                    resource: wgpu::BindingResource::TextureView(shadow_cube_view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 5,
-                    resource: wgpu::BindingResource::TextureView(shcv),
+                    resource: wgpu::BindingResource::Sampler(&sys.shadow_compare_sampler),
                 },
             ],
         })
