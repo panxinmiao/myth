@@ -11,10 +11,11 @@
 
 use glam::Vec4;
 
+use myth_macros::gpu_struct;
+
+use crate::ShaderDefines;
 use crate::TextureHandle;
-use crate::WgslType;
 use crate::buffer::{BufferGuard, BufferReadGuard, CpuBuffer};
-use crate::{ShaderDefines, define_gpu_data_struct};
 
 /// Tone mapping algorithm selection.
 ///
@@ -109,21 +110,26 @@ impl ToneMappingMode {
     }
 }
 
-define_gpu_data_struct!(
-    struct ToneMappingUniforms {
-        pub exposure: f32 = 1.0,
-        pub contrast: f32 = 1.0,
-        pub saturation: f32 = 1.0,
-        pub chromatic_aberration: f32 = 0.0,
+#[gpu_struct(crate_path = "crate")]
+pub struct ToneMappingUniforms {
+    #[default(1.0)]
+    pub exposure: f32,
+    #[default(1.0)]
+    pub contrast: f32,
+    #[default(1.0)]
+    pub saturation: f32,
+    pub chromatic_aberration: f32,
 
-        pub film_grain: f32 = 0.0,
-        pub vignette_intensity: f32 = 0.0,
-        pub vignette_smoothness: f32 = 0.5,
-        pub lut_contribution: f32 = 1.0,
+    pub film_grain: f32,
+    pub vignette_intensity: f32,
+    #[default(0.5)]
+    pub vignette_smoothness: f32,
+    #[default(1.0)]
+    pub lut_contribution: f32,
 
-        pub vignette_color: Vec4 = Vec4::new(0.0, 0.0, 0.0, 1.0),
-    }
-);
+    #[default(Vec4::new(0.0, 0.0, 0.0, 1.0))]
+    pub vignette_color: Vec4,
+}
 
 /// Tone mapping configuration.
 ///

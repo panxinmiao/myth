@@ -33,6 +33,9 @@
 use proc_macro::TokenStream;
 
 mod codegen;
+mod gpu_struct_codegen;
+mod gpu_struct_parse;
+mod layout;
 mod parse;
 
 /// Transforms a declarative material struct into a complete engine material type.
@@ -78,6 +81,69 @@ pub fn myth_material(attr: TokenStream, item: TokenStream) -> TokenStream {
     let input = syn::parse_macro_input!(item as syn::DeriveInput);
 
     match codegen::generate(args, input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+/// Transforms a GPU data struct into a fully aligned, GPU-ready type.
+///
+/// Automatically computes std140 memory layout, inserts padding fields,
+/// and generates trait implementations for GPU upload and WGSL code generation.
+///
+/// # Struct-level Attributes
+///
+/// | Attribute | Required | Description |
+/// |-----------|----------|-------------|
+/// | `dynamic_offset = true` | No | Pad to 256-byte multiple for dynamic uniform buffers |
+/// | `crate_path = "path"` | No | Path to `myth_resources` (default: `myth_resources`) |
+///
+/// # Field Attributes
+///
+/// | Attribute | Description |
+/// |-----------|-------------|
+/// | `#[default(expr)]` | Custom default value for the field |
+///
+/// Fields whose names start with `__` are included in the Rust struct and
+/// memory layout but excluded from the generated WGSL struct definition.
+///
+/// # Generated Code
+///
+/// 1. **Struct** — `#[repr(C)]` with auto-inserted padding, `Pod`/`Zeroable` derives
+/// 2. **`Default`** — Uses `#[default(...)]` values or `Default::default()`
+/// 3. **`WgslType`** — WGSL type name and nested definition collection
+/// 4. **`WgslStruct`** — Top-level WGSL struct definition generation
+/// 5. **`GpuData`** — Byte-level access for GPU buffer upload
+///
+/// # Example
+///
+/// ```rust,ignore
+/// use myth_macros::gpu_struct;
+///
+/// #[gpu_struct]
+/// pub struct EnvironmentUniforms {
+///     #[default(Vec3::ZERO)]
+///     pub ambient_light: Vec3,
+///     #[default(0)]
+///     pub num_lights: u32,
+///     #[default(1.0)]
+///     pub env_map_intensity: f32,
+///     pub env_map_rotation: f32,
+///     pub env_map_max_mip_level: f32,
+/// }
+///
+/// #[gpu_struct(dynamic_offset = true)]
+/// pub struct DynamicModelUniforms {
+///     pub world_matrix: Mat4,
+///     // Auto-padded to 256-byte boundary
+/// }
+/// ```
+#[proc_macro_attribute]
+pub fn gpu_struct(attr: TokenStream, item: TokenStream) -> TokenStream {
+    let args = syn::parse_macro_input!(attr as gpu_struct_parse::GpuStructAttrs);
+    let input = syn::parse_macro_input!(item as syn::DeriveInput);
+
+    match gpu_struct_codegen::generate(args, input) {
         Ok(tokens) => tokens.into(),
         Err(err) => err.to_compile_error().into(),
     }

@@ -5,8 +5,9 @@
 
 use proc_macro2::TokenStream;
 use quote::{format_ident, quote};
-use syn::{DeriveInput, Type};
+use syn::DeriveInput;
 
+use crate::layout::{FieldInput, LayoutField, compute_std140_layout};
 use crate::parse::{MaterialAttrs, MaterialDef};
 
 /// Main entry point: parses input and produces all generated code.
@@ -33,120 +34,33 @@ pub fn generate(attrs: MaterialAttrs, input: DeriveInput) -> syn::Result<TokenSt
 }
 
 // ============================================================================
-// Std140 Layout Engine
+// Std140 Layout (delegates to shared layout engine)
 // ============================================================================
 
-/// Returns (size, alignment) in bytes for a known GPU type, or `None` if unknown.
-fn type_layout(ty: &Type) -> Option<(usize, usize)> {
-    let name = type_last_segment(ty)?;
-    match name.as_str() {
-        "f32" | "u32" | "i32" => Some((4, 4)),
-        "Vec2" => Some((8, 8)),
-        "Vec3" => Some((12, 16)),
-        "Vec4" | "UVec4" => Some((16, 16)),
-        "Mat3Uniform" | "Mat3Padded" => Some((48, 16)),
-        "Mat4" => Some((64, 16)),
-        _ => None,
-    }
-}
-
-/// Extracts the last path segment name from a type (e.g., `glam::Vec4` → `"Vec4"`).
-fn type_last_segment(ty: &Type) -> Option<String> {
-    if let Type::Path(tp) = ty {
-        tp.path.segments.last().map(|s| s.ident.to_string())
-    } else {
-        None
-    }
-}
-
-/// A field in the generated uniform struct (either user-defined or auto-padding).
-struct LayoutField {
-    name: proc_macro2::Ident,
-    ty: Type,
-    is_padding: bool,
-    default_expr: Option<syn::Expr>,
-}
-
-/// Computes the std140 layout, inserting padding fields as needed.
+/// Computes the std140 layout for a material's uniform fields, including
+/// auto-generated texture transform fields.
 fn compute_layout(def: &MaterialDef) -> syn::Result<Vec<LayoutField>> {
-    let mut fields = Vec::new();
-    let mut offset: usize = 0;
-    let mut pad_idx: usize = 0;
-
-    // Helper closure to insert a padding field
-    let push_padding = |fields: &mut Vec<LayoutField>, pad_bytes: usize, pad_idx: &mut usize| {
-        let count = pad_bytes / 4;
-        let name = format_ident!("__pad{}", *pad_idx);
-        *pad_idx += 1;
-        let ty: Type = if count == 1 {
-            syn::parse_str("f32").unwrap()
-        } else {
-            syn::parse_str(&format!("[f32; {count}]")).unwrap()
-        };
-        fields.push(LayoutField {
-            name,
-            ty,
-            is_padding: true,
-            default_expr: None,
-        });
-    };
-
-    // Process user-declared uniform fields
-    for uf in &def.uniform_fields {
-        let (size, align) = type_layout(&uf.ty).ok_or_else(|| {
-            syn::Error::new(
-                uf.name.span(),
-                format!(
-                    "unsupported uniform type `{}` — supported: f32, u32, i32, Vec2, Vec3, Vec4, UVec4, Mat3Uniform, Mat4",
-                    type_last_segment(&uf.ty).unwrap_or_default()
-                ),
-            )
-        })?;
-
-        let padding = (align - (offset % align)) % align;
-        if padding > 0 {
-            push_padding(&mut fields, padding, &mut pad_idx);
-            offset += padding;
-        }
-
-        fields.push(LayoutField {
+    let mut inputs: Vec<FieldInput> = def
+        .uniform_fields
+        .iter()
+        .map(|uf| FieldInput {
             name: uf.name.clone(),
             ty: uf.ty.clone(),
-            is_padding: false,
             default_expr: uf.default_expr.clone(),
-        });
-        offset += size;
-    }
+        })
+        .collect();
 
     // Append texture transform fields (Mat3Uniform for each texture)
-    let mat3_uniform_ty: Type = syn::parse_str("Mat3Uniform").unwrap();
-    let (mat3_size, mat3_align) = (48, 16);
-
+    let mat3_uniform_ty: syn::Type = syn::parse_str("Mat3Uniform").unwrap();
     for tf in &def.texture_fields {
-        let transform_name = format_ident!("{}_transform", tf.name);
-
-        let padding = (mat3_align - (offset % mat3_align)) % mat3_align;
-        if padding > 0 {
-            push_padding(&mut fields, padding, &mut pad_idx);
-            offset += padding;
-        }
-
-        fields.push(LayoutField {
-            name: transform_name,
+        inputs.push(FieldInput {
+            name: format_ident!("{}_transform", tf.name),
             ty: mat3_uniform_ty.clone(),
-            is_padding: false,
             default_expr: Some(syn::parse_str("Mat3Uniform::IDENTITY").unwrap()),
         });
-        offset += mat3_size;
     }
 
-    // Final alignment to 16 bytes
-    let final_padding = (16 - (offset % 16)) % 16;
-    if final_padding > 0 {
-        push_padding(&mut fields, final_padding, &mut pad_idx);
-    }
-
-    Ok(fields)
+    compute_std140_layout(&inputs, false)
 }
 
 // ============================================================================

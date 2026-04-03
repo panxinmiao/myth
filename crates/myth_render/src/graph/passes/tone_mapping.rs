@@ -227,7 +227,7 @@ impl ToneMappingFeature {
                         return;
                     }
                 }
-                _ => {
+                ResourceState::Unknown => {
                     // ResourceState::Failed or missing texture — treat as no LUT (fallback to default pipeline if needed)
                 }
             }

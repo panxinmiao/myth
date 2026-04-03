@@ -44,19 +44,16 @@ use crate::graph::core::{
 use crate::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
 };
-use myth_resources::WgslType;
 use myth_resources::bloom::{CompositeUniforms, UpsampleUniforms};
 use myth_resources::buffer::CpuBuffer;
-use myth_resources::define_gpu_data_struct;
-use myth_resources::uniforms::{UniformArray, WgslStruct};
+use myth_resources::gpu_struct;
+use myth_resources::uniforms::WgslStruct;
 
-define_gpu_data_struct!(
-    /// Internal GPU uniform for the downsample shader (karis on/off flag).
-    struct DownsampleUniforms {
-        pub use_karis_average: u32,
-        pub(crate) __pad: UniformArray<u32, 3>,
-    }
-);
+/// Internal GPU uniform for the downsample shader (karis on/off flag).
+#[gpu_struct]
+pub struct DownsampleUniforms {
+    pub use_karis_average: u32,
+}
 
 // =============================================================================
 // BloomFeature — persistent GPU resource owner

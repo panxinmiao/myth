@@ -20,30 +20,28 @@
 
 use glam::Vec4;
 
-use myth_resources::WgslType;
 use myth_resources::buffer::CpuBuffer;
-use myth_resources::define_gpu_data_struct;
+use myth_resources::gpu_struct;
 use myth_resources::texture::TextureSource;
 
 // ============================================================================
 // GPU Uniform Struct
 // ============================================================================
 
-define_gpu_data_struct!(
-    /// Skybox per-draw parameters uploaded to the GPU.
-    ///
-    /// Camera data (view_projection_inverse, camera_position) is obtained from
-    /// the global bind group's `RenderStateUniforms`, so only skybox-specific
-    /// values live here.
-    struct SkyboxParamsUniforms {
-        pub color_top: Vec4,
-        pub color_bottom: Vec4,
-        pub rotation: f32 = 0.0,
-        pub intensity: f32 = 1.0,
-        pub(crate) __pad0: f32,
-        pub(crate) __pad1: f32,
-    }
-);
+/// Skybox per-draw parameters uploaded to the GPU.
+///
+/// Camera data (view_projection_inverse, camera_position) is obtained from
+/// the global bind group's `RenderStateUniforms`, so only skybox-specific
+/// values live here.
+#[gpu_struct]
+pub struct SkyboxParamsUniforms {
+    pub color_top: Vec4,
+    pub color_bottom: Vec4,
+    #[default(0.0)]
+    pub rotation: f32,
+    #[default(1.0)]
+    pub intensity: f32,
+}
 
 // ============================================================================
 // BackgroundMode (lightweight enum — describes *what* to draw)

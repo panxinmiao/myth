@@ -54,6 +54,9 @@ pub use mesh::Mesh;
 // Re-export the material definition macro
 pub use myth_macros::myth_material;
 
+// Re-export the GPU struct macro
+pub use myth_macros::gpu_struct;
+
 pub use anti_aliasing::AntiAliasingMode;
 pub use bloom::BloomSettings;
 pub use buffer::BufferRef;

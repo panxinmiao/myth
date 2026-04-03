@@ -26,34 +26,29 @@
 //! - [Physically Based Bloom (LearnOpenGL)](https://learnopengl.com/Guest-Articles/2022/Phys.-Based-Bloom)
 //! - *Next Generation Post Processing in Call of Duty: Advanced Warfare* (SIGGRAPH 2014)
 
-use crate::WgslType;
+use myth_macros::gpu_struct;
+
 use crate::buffer::CpuBuffer;
-use crate::define_gpu_data_struct;
-use crate::uniforms::UniformArray;
 
 // ============================================================================
 // GPU Uniform Structs
 // ============================================================================
 
-define_gpu_data_struct!(
-    /// GPU uniform data for the upsample shader.
-    ///
-    /// Controls the tent filter radius used during the upsampling phase.
-    struct UpsampleUniforms {
-        pub filter_radius: f32,
-        pub(crate) __pad: UniformArray<u32, 3>,
-    }
-);
+/// GPU uniform data for the upsample shader.
+///
+/// Controls the tent filter radius used during the upsampling phase.
+#[gpu_struct(crate_path = "crate")]
+pub struct UpsampleUniforms {
+    pub filter_radius: f32,
+}
 
-define_gpu_data_struct!(
-    /// GPU uniform data for the composite shader.
-    ///
-    /// Controls how much bloom contributes to the final image.
-    struct CompositeUniforms {
-        pub bloom_strength: f32,
-        pub(crate) __pad: UniformArray<u32, 3>,
-    }
-);
+/// GPU uniform data for the composite shader.
+///
+/// Controls how much bloom contributes to the final image.
+#[gpu_struct(crate_path = "crate")]
+pub struct CompositeUniforms {
+    pub bloom_strength: f32,
+}
 
 // ============================================================================
 // BloomSettings

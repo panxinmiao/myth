@@ -27,28 +27,26 @@
 //! 4. A cross-bilateral blur pass (depth-aware + normal-aware) that smooths
 //!    the noisy raw AO while preserving geometric edges
 
-use glam::Vec4;
+use glam::{Vec2, Vec4};
 
-use crate::WgslType;
+use myth_macros::gpu_struct;
+
 use crate::buffer::{BufferGuard, BufferReadGuard, CpuBuffer};
-use crate::define_gpu_data_struct;
 use crate::uniforms::UniformArray;
 
 // ============================================================================
 // GPU Uniform Struct
 // ============================================================================
 
-define_gpu_data_struct!(
-    struct SsaoUniforms {
-        pub samples: UniformArray<Vec4, 64>,
-        pub radius: f32,
-        pub bias: f32,
-        pub intensity: f32,
-        pub sample_count: u32,
-        pub(crate) noise_scale: glam::Vec2,
-        pub(crate) __pad: UniformArray<u32, 2>,
-    }
-);
+#[gpu_struct(crate_path = "crate")]
+pub struct SsaoUniforms {
+    pub samples: UniformArray<Vec4, 64>,
+    pub radius: f32,
+    pub bias: f32,
+    pub intensity: f32,
+    pub sample_count: u32,
+    pub(crate) noise_scale: Vec2,
+}
 
 // ============================================================================
 // SsaoSettings

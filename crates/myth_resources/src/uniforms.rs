@@ -1,5 +1,6 @@
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat3, Mat4, UVec4, Vec2, Vec3, Vec4};
+use myth_macros::gpu_struct;
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::ops::{Deref, DerefMut};
@@ -31,6 +32,8 @@ pub struct Mat3Padded {
     pub col2: Vec4,
 }
 
+/// SAFETY: Mat3Padded is a plain data structure with no padding bytes used for actual data (the w components are just padding).
+/// It is safe to treat it as a byte array for GPU upload.
 unsafe impl Zeroable for Mat3Padded {}
 unsafe impl Pod for Mat3Padded {}
 
@@ -193,6 +196,8 @@ impl WgslType for UVec4 {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct UniformArray<T: Pod, const N: usize>(pub [T; N]);
 
+/// SAFETY: UniformArray is a transparent wrapper around [T; N], and T is Pod,
+/// so it is safe to treat UniformArray<T, N> as a byte array for GPU upload.
 unsafe impl<T: Pod, const N: usize> Zeroable for UniformArray<T, N> {}
 unsafe impl<T: Pod, const N: usize> Pod for UniformArray<T, N> {}
 
@@ -247,291 +252,124 @@ pub trait WgslStruct: Pod + Zeroable {
 }
 
 // ============================================================================
-// 2. Macro Definition (Single Source of Truth)
-// ============================================================================
-#[macro_export]
-macro_rules! define_gpu_data_struct {
-    // --------------------------------------------------------
-    // Entry pattern
-    // --------------------------------------------------------
-    (
-        $(#[$meta:meta])* struct $name:ident {
-            $(
-                $(#[$field_meta:meta])*
-                $vis:vis $field_name:ident : $field_type:ty $(= $default_val:expr)?
-            ),* $(,)?
-        }
-    ) => {
-        // 1. Generate Rust Struct
-        define_gpu_data_struct!(@def_struct
-            $(#[$meta])* struct $name {
-                $( $(#[$field_meta])* $vis $field_name : $field_type ),* }
-        );
-
-        // 2. Generate Default implementation
-        define_gpu_data_struct!(@impl_default
-            $name {
-                $( $(#[$field_meta])* $field_name : $field_type $(= $default_val)? ),* }
-        );
-
-        // 3. Generate WgslType implementation (supports nested fields)
-        define_gpu_data_struct!(@impl_wgsl_type
-            $name {
-                $( $(#[$field_meta])* $field_name : $field_type ),* }
-        );
-
-        // 4. Generate UniformBlock implementation (top-level entry)
-        define_gpu_data_struct!(@impl_uniform_block
-            $name {
-                $( $(#[$field_meta])* $field_name : $field_type ),* }
-        );
-
-        // 5. Generate GpuData implementation
-        define_gpu_data_struct!(@impl_gpu_data
-            $name {
-                $( $(#[$field_meta])* $field_name : $field_type ),* }
-        );
-    };
-
-    (@def_struct $(#[$meta:meta])* struct $name:ident { $( $(#[$field_meta:meta])* $vis:vis $field_name:ident : $field_type:ty ),* }) => {
-        #[repr(C)]
-        #[derive(Clone, Copy, Debug, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
-        $(#[$meta])*
-        pub struct $name {
-            $(
-                $(#[$field_meta])*
-                $vis $field_name : $field_type,
-            )*
-        }
-    };
-
-    (@impl_default $name:ident { $( $(#[$field_meta:meta])* $vis:vis $field_name:ident : $field_type:ty $(= $default_val:expr)? ),* }) => {
-        impl Default for $name {
-            fn default() -> Self {
-                Self {
-                    $( $field_name: define_gpu_data_struct!(@val_or_default $field_type $(, $default_val)?), )*
-                }
-            }
-        }
-    };
-    (@val_or_default $type:ty, $val:expr) => { $val };
-    (@val_or_default $type:ty) => { <$type as Default>::default() };
-
-
-    // --------------------------------------------------------
-    // Rule: Generate WGSL struct definition logic (for internal and external use)
-    // --------------------------------------------------------
-    (@gen_body $name_str:expr, { $( $(#[$field_meta:meta])* $vis:vis$field_name:ident : $field_type:ty ),* }) => {{
-        use std::fmt::Write;
-        let mut code = format!("struct {} {{\n", $name_str);
-        $(
-            if !stringify!($field_name).starts_with("__") {
-                let _ = writeln!(
-                    code,
-                    "    {}: {},",
-                    stringify!($field_name),
-                    <$field_type as WgslType>::wgsl_type_name()
-                );
-            }
-        )*
-        code.push_str("};\n");
-        code
-    }};
-
-    // --------------------------------------------------------
-    // Internal rule 3: Implement WgslType (allows struct to be nested)
-    // --------------------------------------------------------
-    (@impl_wgsl_type $name:ident { $( $(#[$field_meta:meta])* $vis:vis $field_name:ident : $field_type:ty ),* }) => {
-        impl WgslType for $name {
-            fn wgsl_type_name() -> std::borrow::Cow<'static, str> {
-                stringify!($name).into()
-            }
-
-            fn collect_wgsl_defs(defs: &mut Vec<String>, inserted: &mut std::collections::HashSet<String>) {
-                // 1. Recursively collect all field definitions (dependencies first)
-                $(
-                    <$field_type as WgslType>::collect_wgsl_defs(defs, inserted);
-                )*
-
-                // 2. Generate own definition
-                let my_name = stringify!($name);
-                if !inserted.contains(my_name) {
-                    let my_def = define_gpu_data_struct!(@gen_body my_name, { $( $(#[$field_meta])* $field_name : $field_type ),* });
-                    defs.push(my_def);
-                    inserted.insert(my_name.to_string());
-                }
-            }
-        }
-    };
-
-    // --------------------------------------------------------
-    // Internal rule 4: Implement UniformBlock (top-level call)
-    // --------------------------------------------------------
-    (@impl_uniform_block $name:ident { $( $(#[$field_meta:meta])* $vis:vis $field_name:ident : $field_type:ty ),* }) => {
-        impl $crate::uniforms::WgslStruct for $name {
-            fn wgsl_struct_def(struct_name: &str) -> String {
-                let mut defs = Vec::new();
-                let mut inserted = std::collections::HashSet::new();
-
-                // 1. Collect all field dependencies (e.g. LightData)
-                $(
-                    <$field_type as WgslType>::collect_wgsl_defs(&mut defs, &mut inserted);
-                )*
-
-                // 2. Generate top-level struct (using passed struct_name, may be renamed)
-                let top_def = define_gpu_data_struct!(@gen_body struct_name, { $( $(#[$field_meta])* $field_name : $field_type ),* });
-
-                // 3. Concatenate all content
-                defs.push(top_def);
-                defs.join("\n")
-            }
-        }
-    };
-
-    // impl_gpu_data_for_pod
-    (@impl_gpu_data $name:ident { $( $(#[$field_meta:meta])* $vis:vis $field_name:ident : $field_type:ty ),* }) => {
-        impl $crate::buffer::GpuData for $name {
-            fn as_bytes(&self) -> &[u8] {
-                bytemuck::bytes_of(self)
-            }
-
-            fn byte_size(&self) -> usize {
-                std::mem::size_of::<Self>()
-            }
-        }
-    };
-
-
-
-
-}
-// ============================================================================
-// 3. GPU Data Struct Definitions (std140) (Modify here, both ends sync automatically)
+// GPU Data Struct Definitions (std140, auto-padded by #[gpu_struct])
 // ============================================================================
 
 // Material uniform structs (UnlitUniforms, PhongUniforms, PhysicalUniforms)
-// are now auto-generated by the #[myth_material] proc macro.
-// Re-export them for backward compatibility:
+// are auto-generated by the #[myth_material] proc macro.
 pub use crate::material::PhongUniforms;
 pub use crate::material::PhysicalUniforms;
 pub use crate::material::UnlitUniforms;
 
-define_gpu_data_struct!(
-    /// Dynamic Model Uniforms (updated per object, 256 bytes)
-    struct DynamicModelUniforms {
-        pub world_matrix: Mat4,          //64
-        pub world_matrix_inverse: Mat4,  //64
-        pub normal_matrix: Mat3Uniform,  //48
-        pub previous_world_matrix: Mat4, //64
-        #[doc(hidden)]
-        pub __instance_tint: Vec4, //16
-    }
-);
+/// Per-object dynamic uniforms uploaded to the GPU each draw call.
+///
+/// Uses `dynamic_offset = true` to enforce 256-byte alignment, as required
+/// by wgpu's dynamic uniform buffer binding.
+#[gpu_struct(dynamic_offset = true, crate_path = "crate")]
+pub struct DynamicModelUniforms {
+    pub world_matrix: Mat4,
+    pub world_matrix_inverse: Mat4,
+    pub normal_matrix: Mat3Uniform,
+    pub previous_world_matrix: Mat4,
+    pub instance_tint: Vec4,
+}
 
-// Static compile-time assertion: ensure struct size is a multiple of 256 bytes to satisfy wgpu's dynamic uniform buffer alignment requirements!
-const _: () = assert!(
-    std::mem::size_of::<DynamicModelUniforms>().is_multiple_of(256),
-    "CRITICAL: DynamicModelUniforms size must be a multiple of 256 bytes to satisfy wgpu's dynamic uniform offset alignment requirements! Please add padding!"
-);
+/// Global render state uniforms updated once per frame.
+///
+/// Contains camera matrices, jitter parameters, and timing data used by
+/// all rendering passes.
+#[gpu_struct(crate_path = "crate")]
+pub struct RenderStateUniforms {
+    #[default(Mat4::IDENTITY)]
+    pub view_projection: Mat4,
+    #[default(Mat4::IDENTITY)]
+    pub view_projection_inverse: Mat4,
 
-define_gpu_data_struct!(
-    /// Global Uniforms (updated per frame)
-    struct RenderStateUniforms {
-        pub view_projection: Mat4 = Mat4::IDENTITY,
-        pub view_projection_inverse: Mat4 = Mat4::IDENTITY,
+    #[default(Mat4::IDENTITY)]
+    pub projection_matrix: Mat4,
+    #[default(Mat4::IDENTITY)]
+    pub projection_inverse: Mat4,
 
-        pub projection_matrix: Mat4 = Mat4::IDENTITY,
-        pub projection_inverse: Mat4 = Mat4::IDENTITY,
+    #[default(Mat4::IDENTITY)]
+    pub view_matrix: Mat4,
 
-        pub view_matrix: Mat4 = Mat4::IDENTITY,
+    #[default(Mat4::IDENTITY)]
+    pub prev_view_projection: Mat4,
 
-        pub prev_view_projection: Mat4 = Mat4::IDENTITY,
+    #[default(Mat4::IDENTITY)]
+    pub unjittered_view_projection: Mat4,
+    #[default(Mat4::IDENTITY)]
+    pub prev_unjittered_view_projection: Mat4,
 
-        pub unjittered_view_projection: Mat4 = Mat4::IDENTITY,
-        pub prev_unjittered_view_projection: Mat4 = Mat4::IDENTITY,
+    pub camera_position: Vec3,
+    #[default(0.1)]
+    pub camera_near: f32,
 
-        pub camera_position: Vec3 = Vec3::ZERO,
-        pub camera_near: f32 = 0.1,
+    pub jitter: Vec2,
+    pub prev_jitter: Vec2,
 
-        pub jitter: Vec2 = Vec2::ZERO,
-        pub prev_jitter: Vec2 = Vec2::ZERO,
+    #[default(1000.0)]
+    pub camera_far: f32,
+    pub time: f32,
+    pub time_cycle_2pi: f32,
+    pub delta_time: f32,
+}
 
-        pub camera_far: f32 = 1000.0,
-        pub time: f32 = 0.0,
-        pub time_cycle_2pi: f32 = 0.0,
-        pub delta_time: f32 = 0.0,
+/// Environment lighting uniforms updated once per frame.
+#[gpu_struct(crate_path = "crate")]
+pub struct EnvironmentUniforms {
+    pub ambient_light: Vec3,
+    pub num_lights: u32,
 
-    }
-);
+    #[default(1.0)]
+    pub env_map_intensity: f32,
+    pub env_map_rotation: f32,
+    pub env_map_max_mip_level: f32,
+}
 
-define_gpu_data_struct!(
-    /// Global Uniforms (updated per frame)
-    struct EnvironmentUniforms {
-        pub ambient_light: Vec3 = Vec3::ZERO,
-        pub num_lights: u32 = 0,
+/// Per-light GPU data including shadow cascade parameters.
+#[gpu_struct(crate_path = "crate")]
+pub struct GpuLightStorage {
+    pub color: Vec3,
+    pub intensity: f32,
 
-        pub env_map_intensity: f32 = 1.0,
-        pub env_map_rotation: f32 = 0.0,
-        pub env_map_max_mip_level: f32 = 0.0,
-        #[doc(hidden)]
-        pub __padding: f32 = 0.0, // Padding to make total size a multiple of 16 bytes
-    }
-);
+    pub position: Vec3,
+    pub range: f32,
 
-// Unlit, Phong, Physical uniform structs have been moved to the
-// respective material modules (auto-generated by #[myth_material]).
+    pub direction: Vec3,
+    pub decay: f32,
 
-define_gpu_data_struct!(
-    struct GpuLightStorage {
-        // 16 bytes chunk 0
-        pub color: Vec3,
-        pub intensity: f32,
+    pub inner_cone_cos: f32,
+    pub outer_cone_cos: f32,
 
-        // 16 bytes chunk 1
-        pub position: Vec3,
-        pub range: f32,
+    pub light_type: u32,
+    pub shadow_layer_index: i32,
 
-        // 16 bytes chunk 2
-        pub direction: Vec3,
-        pub decay: f32,
+    pub shadow_bias: f32,
+    pub shadow_normal_bias: f32,
+    pub cascade_count: u32,
 
-        pub inner_cone_cos: f32,
-        pub outer_cone_cos: f32,
+    /// Cascade split distances (view-space depth thresholds).
+    pub cascade_splits: Vec4,
 
-        pub light_type: u32,
-        pub shadow_layer_index: i32,
+    /// Shadow VP matrices: up to 4 cascades for directional, 1 for spot.
+    pub shadow_matrices: UniformArray<Mat4, 4>,
+}
 
-        // Shadow parameters
-        pub shadow_bias: f32,
-        pub shadow_normal_bias: f32,
-        pub cascade_count: u32,
+/// Morph target animation uniforms.
+///
+/// Weights and indices are packed into Vec4/UVec4 to satisfy the uniform
+/// buffer 16-byte alignment requirement.
+#[gpu_struct(crate_path = "crate")]
+pub struct MorphUniforms {
+    pub count: u32,
+    pub vertex_count: u32,
+    pub flags: u32,
 
-        #[doc(hidden)]
-        pub __shadow_pad: f32,
-
-        // Cascade split distances (view-space depth thresholds)
-        pub cascade_splits: Vec4,
-
-        // Shadow VP matrices: up to 4 cascades for directional, 1 for spot
-        pub shadow_matrices: UniformArray<Mat4, 4>,
-    }
-);
-
-define_gpu_data_struct!(
-    struct MorphUniforms {
-        pub count: u32,
-        pub vertex_count: u32,
-        pub flags: u32,
-
-        pub(crate) __padding: u32,
-
-        // 128 morph target weights and indices, packed into Vec4 to satisfy Uniform buffer 16-byte alignment requirement
-        // weights[0] = Vec4(w0, w1, w2, w3), weights[1] = Vec4(w4, w5, w6, w7), ...
-        pub weights: UniformArray<Vec4, 32>,
-        pub prev_weights: UniformArray<Vec4, 32>,
-        pub indices: UniformArray<UVec4, 32>,
-    }
-);
+    pub weights: UniformArray<Vec4, 32>,
+    pub prev_weights: UniformArray<Vec4, 32>,
+    pub indices: UniformArray<UVec4, 32>,
+}
 
 #[cfg(test)]
 mod tests {
