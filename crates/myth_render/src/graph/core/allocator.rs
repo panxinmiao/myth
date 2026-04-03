@@ -30,6 +30,7 @@ pub struct SubViewKey {
     pub base_layer: u32,
     pub layer_count: Option<u32>,
     pub aspect: wgpu::TextureAspect,
+    pub dimension: Option<wgpu::TextureViewDimension>,
 }
 
 impl Default for SubViewKey {
@@ -40,6 +41,7 @@ impl Default for SubViewKey {
             base_layer: 0,
             layer_count: None,
             aspect: wgpu::TextureAspect::All,
+            dimension: None,
         }
     }
 }
@@ -350,7 +352,7 @@ impl TransientPool {
             let view = res.texture.create_view(&wgpu::TextureViewDescriptor {
                 label: Some("Sub-View"),
                 format: None,
-                dimension: None,
+                dimension: key.dimension,
                 usage: None,
                 aspect: key.aspect,
                 base_mip_level: key.base_mip,

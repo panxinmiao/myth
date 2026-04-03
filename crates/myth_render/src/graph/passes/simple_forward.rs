@@ -54,6 +54,7 @@ impl SimpleForwardFeature {
         clear_color: wgpu::Color,
         prepared_skybox: Option<PreparedSkyboxDraw<'a>>,
         shadow_tex: Option<TextureNodeId>,
+        shadow_cube_tex: Option<TextureNodeId>,
     ) {
         let fc = ctx.frame_config;
 
@@ -74,6 +75,9 @@ impl SimpleForwardFeature {
 
             if let Some(shadow) = shadow_tex {
                 builder.read_texture(shadow);
+            }
+            if let Some(shadow_cube) = shadow_cube_tex {
+                builder.read_texture(shadow_cube);
             }
 
             let msaa_view = if fc.msaa_samples > 1 {
@@ -99,6 +103,7 @@ impl SimpleForwardFeature {
                 clear_color,
                 prepared_skybox,
                 shadow_input: shadow_tex,
+                shadow_cube_input: shadow_cube_tex,
                 screen_bind_group: None,
             };
             (node, ())
@@ -122,6 +127,7 @@ pub struct SimpleForwardPassNode<'a> {
     pub clear_color: wgpu::Color,
     pub prepared_skybox: Option<PreparedSkyboxDraw<'a>>,
     pub shadow_input: Option<TextureNodeId>,
+    pub shadow_cube_input: Option<TextureNodeId>,
     screen_bind_group: Option<&'static wgpu::BindGroup>,
 }
 
@@ -136,9 +142,24 @@ impl<'a> PassNode<'a> for SimpleForwardPassNode<'a> {
         } = ctx;
         let device = *device;
 
+        // Pre-create CubeArray sub-view (mutable borrow, result dropped).
+        let cube_key = crate::graph::core::allocator::SubViewKey {
+            dimension: Some(wgpu::TextureViewDimension::CubeArray),
+            ..Default::default()
+        };
+        if let Some(id) = self.shadow_cube_input {
+            views.get_or_create_sub_view(id, &cube_key);
+        }
+
+        // All remaining borrows are immutable.
         let shadow_view: &Tracked<wgpu::TextureView> = match self.shadow_input {
             Some(id) => views.get_texture_view(id),
             None => &sys.depth_d2array,
+        };
+
+        let shadow_cube_view: &Tracked<wgpu::TextureView> = match self.shadow_cube_input {
+            Some(id) => views.get_sub_view(id, &cube_key).unwrap(),
+            None => &sys.depth_cube_array,
         };
 
         let bg = build_screen_bind_group(
@@ -148,6 +169,7 @@ impl<'a> PassNode<'a> for SimpleForwardPassNode<'a> {
             &sys.black_hdr,
             &sys.white_r8,
             shadow_view,
+            shadow_cube_view,
         );
         self.screen_bind_group = Some(bg);
     }

@@ -64,6 +64,9 @@ pub struct SystemTextures {
     /// 1×1 Depth32Float D2Array — shadow map fallback.
     pub depth_d2array: Tracked<wgpu::TextureView>,
 
+    /// 1×1×6 Depth32Float CubeArray — point shadow map fallback.
+    pub depth_cube_array: Tracked<wgpu::TextureView>,
+
     // ─── Screen BindGroup Infrastructure (Group 3) ─────────────────
     /// `BindGroupLayout` for Group 3 (transmission, SSAO, shadow).
     pub screen_layout: Tracked<wgpu::BindGroupLayout>,
@@ -92,6 +95,7 @@ impl SystemTextures {
         let white_r8 = create_1x1_r8(device, queue, 255, "sys_white_r8");
         let black_hdr = create_1x1_hdr(device, "sys_black_hdr");
         let depth_d2array = create_1x1_depth_d2array(device, "sys_depth_d2array");
+        let depth_cube_array = create_1x1_depth_cube_array(device, "sys_depth_cube_array");
 
         // ── Group 3 Layout ─────────────────────────────────────────────
 
@@ -141,6 +145,16 @@ impl SystemTextures {
                         ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Comparison),
                         count: None,
                     },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 5,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Depth,
+                            view_dimension: wgpu::TextureViewDimension::CubeArray,
+                            multisampled: false,
+                        },
+                        count: None,
+                    },
                 ],
             },
         ));
@@ -178,6 +192,7 @@ impl SystemTextures {
             white_r8,
             black_hdr,
             depth_d2array,
+            depth_cube_array,
             screen_layout,
             screen_sampler,
             shadow_compare_sampler,
@@ -351,6 +366,28 @@ fn create_1x1_depth_d2array(device: &wgpu::Device, label: &str) -> Tracked<wgpu:
     });
     Tracked::new(texture.create_view(&wgpu::TextureViewDescriptor {
         dimension: Some(wgpu::TextureViewDimension::D2Array),
+        ..Default::default()
+    }))
+}
+
+/// Depth32Float 1×1×6 CubeArray fallback for point-shadow-less frames.
+fn create_1x1_depth_cube_array(device: &wgpu::Device, label: &str) -> Tracked<wgpu::TextureView> {
+    let texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some(label),
+        size: wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 6,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Depth32Float,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+        view_formats: &[],
+    });
+    Tracked::new(texture.create_view(&wgpu::TextureViewDescriptor {
+        dimension: Some(wgpu::TextureViewDimension::CubeArray),
         ..Default::default()
     }))
 }

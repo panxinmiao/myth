@@ -15,10 +15,13 @@ use glam::{Mat4, Vec3};
 
 use crate::core::view::RenderView;
 use myth_scene::camera::{Frustum, RenderCamera};
-use myth_scene::light::{ShadowConfig, SpotLight};
+use myth_scene::light::{PointLight, ShadowConfig, SpotLight};
 
 /// Maximum cascade count per directional light.
 pub const MAX_CASCADES: u32 = 4;
+
+/// Number of faces on a cube map (used for point light omnidirectional shadows).
+pub const CUBE_FACES: u32 = 6;
 
 // ============================================================================
 // Cascade Split Computation
@@ -291,4 +294,85 @@ pub fn build_spot_view(
         (shadow_cfg.map_size, shadow_cfg.map_size),
         None,
     )
+}
+
+// ============================================================================
+// Point Light: Cube Face VP Matrices
+// ============================================================================
+
+/// Cube face definitions: (direction, up) pairs for the 6 standard cube map
+/// faces in the order +X, −X, +Y, −Y, +Z, −Z.
+///
+/// Follows the WebGPU / wgpu convention where cube map textures are laid out
+/// as array layers 0–5 corresponding to +X, −X, +Y, −Y, +Z, −Z.
+const CUBE_FACE_DIRS: [(Vec3, Vec3); 6] = [
+    (Vec3::X, Vec3::NEG_Y),  // +X
+    (Vec3::NEG_X, Vec3::NEG_Y),  // −X
+    (Vec3::Y, Vec3::Z),      // +Y
+    (Vec3::NEG_Y, Vec3::NEG_Z),  // −Y
+    (Vec3::Z, Vec3::NEG_Y),  // +Z
+    (Vec3::NEG_Z, Vec3::NEG_Y),  // −Z
+];
+
+/// Builds 6 perspective VP matrices for a point light located at `position`.
+///
+/// Each matrix corresponds to one cube map face (+X, −X, +Y, −Y, +Z, −Z)
+/// with a 90° FOV and aspect ratio 1.0. The near plane is fixed at 0.1
+/// and the far plane equals the light's `range`.
+#[must_use]
+pub fn build_point_vps(position: Vec3, range: f32) -> [Mat4; CUBE_FACES as usize] {
+    let near = 0.1f32;
+    let far = range.max(near + 0.01);
+    let proj = Mat4::perspective_rh(std::f32::consts::FRAC_PI_2, 1.0, near, far);
+
+    let mut vps = [Mat4::IDENTITY; CUBE_FACES as usize];
+    for (i, (dir, up)) in CUBE_FACE_DIRS.iter().enumerate() {
+        let view = Mat4::look_at_rh(position, position + *dir, *up);
+        vps[i] = proj * view;
+    }
+    vps
+}
+
+/// Builds 6 [`RenderView`]s for a point light's omnidirectional shadow.
+///
+/// Each view is a 90° FOV perspective camera aimed at one cube map face.
+/// The returned views use consecutive `layer_index` values starting at
+/// `base_layer`, suitable for addressing layers within a `CubeArray` texture.
+///
+/// # Arguments
+///
+/// - `light_id`: Unique ID of the point light.
+/// - `light_buffer_index`: Index into the GPU light storage buffer.
+/// - `position`: World-space position of the point light.
+/// - `point`: Point light parameters (range).
+/// - `shadow_cfg`: Shadow configuration (map size, bias, etc.).
+/// - `base_layer`: Starting layer index in the cube array texture.
+#[must_use]
+pub fn build_point_views(
+    light_id: u64,
+    light_buffer_index: usize,
+    position: Vec3,
+    point: &PointLight,
+    shadow_cfg: &ShadowConfig,
+    base_layer: u32,
+) -> Vec<RenderView> {
+    let vps = build_point_vps(position, point.range);
+    let face_names = ["+X", "-X", "+Y", "-Y", "+Z", "-Z"];
+
+    vps.iter()
+        .enumerate()
+        .map(|(face, vp)| {
+            let frustum = Frustum::from_matrix_standard_z(*vp);
+            RenderView::new_shadow(
+                light_id,
+                base_layer + face as u32,
+                light_buffer_index,
+                format!("PointLight_{light_id}_{}", face_names[face]),
+                *vp,
+                frustum,
+                (shadow_cfg.map_size, shadow_cfg.map_size),
+                None,
+            )
+        })
+        .collect()
 }

@@ -351,10 +351,13 @@ impl<'a> FrameComposer<'a> {
             }
         });
 
-        let shadow_tex = if self.ctx.extracted_scene.has_shadow_casters() {
+        let shadow_output = if self.ctx.extracted_scene.has_shadow_casters() {
             graph_ctx.with_group("Shadow", |c| self.ctx.shadow_pass.add_to_graph(c))
         } else {
-            None
+            crate::graph::passes::shadow::ShadowOutput {
+                shadow_2d: None,
+                shadow_cube: None,
+            }
         };
 
         // ── 2d. Wire Scene Rendering Passes (explicit data-flow) ──────
@@ -428,7 +431,8 @@ impl<'a> FrameComposer<'a> {
                     self.ctx.extracted_scene.background.clear_color(),
                     ssss_enabled,
                     ssao_output,
-                    shadow_tex,
+                    shadow_output.shadow_2d,
+                    shadow_output.shadow_cube,
                 );
 
                 let mut active_color = opaque_out.active_color;
@@ -509,7 +513,8 @@ impl<'a> FrameComposer<'a> {
                     opaque_out.active_depth,
                     transmission_tex,
                     ssao_output,
-                    shadow_tex,
+                    shadow_output.shadow_2d,
+                    shadow_output.shadow_cube,
                 );
 
                 // Capture intermediate IDs for debug view resolution.
@@ -637,7 +642,8 @@ impl<'a> FrameComposer<'a> {
                     surface_out,
                     self.ctx.extracted_scene.background.clear_color(),
                     prepared_skybox,
-                    shadow_tex,
+                    shadow_output.shadow_2d,
+                    shadow_output.shadow_cube,
                 );
             });
         }

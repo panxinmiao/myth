@@ -73,6 +73,7 @@ impl TransparentFeature {
         transmission_tex: Option<TextureNodeId>,
         ssao_tex: Option<TextureNodeId>,
         shadow_tex: Option<TextureNodeId>,
+        shadow_cube_tex: Option<TextureNodeId>,
     ) -> TextureNodeId {
         let fc = ctx.frame_config;
 
@@ -99,6 +100,9 @@ impl TransparentFeature {
             if let Some(shadow) = shadow_tex {
                 builder.read_texture(shadow);
             }
+            if let Some(shadow_cube) = shadow_cube_tex {
+                builder.read_texture(shadow_cube);
+            }
 
             let result = resolve_target.unwrap_or(color_output);
 
@@ -110,6 +114,7 @@ impl TransparentFeature {
                 transmission_tex,
                 ssao_tex,
                 shadow_tex,
+                shadow_cube_tex,
             );
 
             (node, result)
@@ -126,6 +131,7 @@ pub struct TransparentPassNode {
     transmission_input: Option<TextureNodeId>,
     ssao_input: Option<TextureNodeId>,
     shadow_input: Option<TextureNodeId>,
+    shadow_cube_input: Option<TextureNodeId>,
     screen_bind_group: Option<&'static wgpu::BindGroup>,
 }
 
@@ -139,6 +145,7 @@ impl TransparentPassNode {
         transmission_input: Option<TextureNodeId>,
         ssao_input: Option<TextureNodeId>,
         shadow_input: Option<TextureNodeId>,
+        shadow_cube_input: Option<TextureNodeId>,
     ) -> Self {
         Self {
             out_color,
@@ -147,6 +154,7 @@ impl TransparentPassNode {
             transmission_input,
             ssao_input,
             shadow_input,
+            shadow_cube_input,
             screen_bind_group: None,
         }
     }
@@ -163,6 +171,16 @@ impl<'a> PassNode<'a> for TransparentPassNode {
         } = ctx;
         let device = *device;
 
+        // Pre-create CubeArray sub-view (mutable borrow, result dropped).
+        let cube_key = crate::graph::core::allocator::SubViewKey {
+            dimension: Some(wgpu::TextureViewDimension::CubeArray),
+            ..Default::default()
+        };
+        if let Some(id) = self.shadow_cube_input {
+            views.get_or_create_sub_view(id, &cube_key);
+        }
+
+        // All remaining borrows are immutable.
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {
             Some(id) => views.get_texture_view(id),
             None => &sys.white_r8,
@@ -178,6 +196,11 @@ impl<'a> PassNode<'a> for TransparentPassNode {
             None => &sys.depth_d2array,
         };
 
+        let shadow_cube_view: &Tracked<wgpu::TextureView> = match self.shadow_cube_input {
+            Some(id) => views.get_sub_view(id, &cube_key).unwrap(),
+            None => &sys.depth_cube_array,
+        };
+
         let bg = build_screen_bind_group(
             cache,
             device,
@@ -185,6 +208,7 @@ impl<'a> PassNode<'a> for TransparentPassNode {
             transmission_view,
             ssao_view,
             shadow_view,
+            shadow_cube_view,
         );
         self.screen_bind_group = Some(bg);
     }

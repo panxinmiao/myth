@@ -11,6 +11,7 @@
 @group(3) @binding(2) var t_ssao: texture_2d<f32>;
 @group(3) @binding(3) var t_shadow_map_2d_array: texture_depth_2d_array;
 @group(3) @binding(4) var s_shadow_map_compare: sampler_comparison;
+@group(3) @binding(5) var t_shadow_map_cube_array: texture_depth_cube_array;
 
 {$ include 'shadow_pars' $}
 {$ include 'bsdf/phong' $}

@@ -73,6 +73,7 @@ impl OpaqueFeature {
         needs_specular: bool,
         ssao_tex: Option<TextureNodeId>,
         shadow_tex: Option<TextureNodeId>,
+        shadow_cube_tex: Option<TextureNodeId>,
     ) -> OpaqueOutputs {
         let fc = ctx.frame_config;
         let is_msaa = fc.msaa_samples > 1;
@@ -160,6 +161,9 @@ impl OpaqueFeature {
             if let Some(shadow) = shadow_tex {
                 builder.read_texture(shadow);
             }
+            if let Some(shadow_cube) = shadow_cube_tex {
+                builder.read_texture(shadow_cube);
+            }
 
             let node = OpaquePassNode::new(
                 color_target,
@@ -168,6 +172,7 @@ impl OpaqueFeature {
                 needs_specular,
                 ssao_tex,
                 shadow_tex,
+                shadow_cube_tex,
                 specular_tex,
                 specular_resolved,
             );
@@ -211,6 +216,7 @@ pub struct OpaquePassNode {
     pub needs_specular: bool,
     pub ssao_input: Option<TextureNodeId>,
     pub shadow_input: Option<TextureNodeId>,
+    pub shadow_cube_input: Option<TextureNodeId>,
 
     // ─── Internal Cache ────────────────────────────────────────────
     screen_bind_group: Option<&'static wgpu::BindGroup>,
@@ -225,6 +231,7 @@ impl OpaquePassNode {
         needs_specular: bool,
         ssao_input: Option<TextureNodeId>,
         shadow_input: Option<TextureNodeId>,
+        shadow_cube_input: Option<TextureNodeId>,
         specular_tex: TextureNodeId,
         specular_resolve_target: Option<TextureNodeId>,
     ) -> Self {
@@ -237,6 +244,7 @@ impl OpaquePassNode {
             needs_specular,
             ssao_input,
             shadow_input,
+            shadow_cube_input,
             screen_bind_group: None,
         }
     }
@@ -253,6 +261,16 @@ impl<'a> PassNode<'a> for OpaquePassNode {
         } = ctx;
         let device = *device;
 
+        // Pre-create CubeArray sub-view (mutable borrow, result dropped).
+        let cube_key = crate::graph::core::allocator::SubViewKey {
+            dimension: Some(wgpu::TextureViewDimension::CubeArray),
+            ..Default::default()
+        };
+        if let Some(id) = self.shadow_cube_input {
+            views.get_or_create_sub_view(id, &cube_key);
+        }
+
+        // All remaining borrows are immutable.
         let ssao_view: &Tracked<wgpu::TextureView> = match self.ssao_input {
             Some(id) => views.get_texture_view(id),
             None => &sys.white_r8,
@@ -265,6 +283,11 @@ impl<'a> PassNode<'a> for OpaquePassNode {
             None => &sys.depth_d2array,
         };
 
+        let shadow_cube_view: &Tracked<wgpu::TextureView> = match self.shadow_cube_input {
+            Some(id) => views.get_sub_view(id, &cube_key).unwrap(),
+            None => &sys.depth_cube_array,
+        };
+
         let bg = build_screen_bind_group(
             cache,
             device,
@@ -272,6 +295,7 @@ impl<'a> PassNode<'a> for OpaquePassNode {
             transmission_view,
             ssao_view,
             shadow_view,
+            shadow_cube_view,
         );
         self.screen_bind_group = Some(bg);
     }

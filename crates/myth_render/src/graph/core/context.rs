@@ -186,13 +186,15 @@ pub fn build_screen_bind_group<'a>(
     transmission_view: &Tracked<wgpu::TextureView>,
     ssao_view: &Tracked<wgpu::TextureView>,
     shadow_view: &Tracked<wgpu::TextureView>,
+    shadow_cube_view: &Tracked<wgpu::TextureView>,
 ) -> &'a wgpu::BindGroup {
     let key = BindGroupKey::new(sys.screen_layout.id())
         .with_resource(transmission_view.id())
         .with_resource(sys.screen_sampler.id())
         .with_resource(ssao_view.id())
         .with_resource(shadow_view.id())
-        .with_resource(sys.shadow_compare_sampler.id());
+        .with_resource(sys.shadow_compare_sampler.id())
+        .with_resource(shadow_cube_view.id());
 
     let layout = &*sys.screen_layout;
     let sampler = &*sys.screen_sampler;
@@ -200,6 +202,7 @@ pub fn build_screen_bind_group<'a>(
     let sv = &**ssao_view;
     let shv = &**shadow_view;
     let shs = &*sys.shadow_compare_sampler;
+    let shcv = &**shadow_cube_view;
 
     cache.get_or_create_bg(key, || {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -225,6 +228,10 @@ pub fn build_screen_bind_group<'a>(
                 wgpu::BindGroupEntry {
                     binding: 4,
                     resource: wgpu::BindingResource::Sampler(shs),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: wgpu::BindingResource::TextureView(shcv),
                 },
             ],
         })

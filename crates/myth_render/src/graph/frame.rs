@@ -160,9 +160,14 @@ pub struct BakedRenderLists<'a> {
 #[derive(Clone, Copy)]
 pub struct ShadowLightInstance {
     pub light_id: u64,
-    pub layer_index: u32,
+    /// Original layer index from the `RenderView`, used as the shadow queue key.
+    pub view_layer_index: u32,
+    /// Layer index within the target texture (2D array or cube array).
+    pub texture_layer_index: u32,
     pub light_buffer_index: usize,
     pub light_view_projection: Mat4,
+    /// `true` if this layer belongs to a point light (cube array target).
+    pub is_point: bool,
 }
 
 /// Prepared skybox draw state for inline rendering (LDR path).
@@ -490,7 +495,7 @@ impl RenderFrame {
     ///
     /// Returns a `Vec` of shadow views. Each directional light may produce
     /// multiple cascade views; spot lights produce a single view; point
-    /// lights are reserved for future cubemap shadows.
+    /// lights produce 6 cube map face views for omnidirectional shadows.
     fn build_shadow_views(
         extracted_scene: &ExtractedScene,
         camera: &RenderCamera,
@@ -560,8 +565,21 @@ impl RenderFrame {
                         base_layer,
                     ));
                 }
-                LightKind::Point(_) => {
-                    // Future: build 6 cubemap face views
+                LightKind::Point(point) => {
+                    // Coarse culling: skip point lights whose bounding sphere
+                    // does not intersect the main camera frustum.
+                    if !camera.frustum.intersects_sphere(light.position, point.range) {
+                        continue;
+                    }
+                    let base_layer = shadow_views.len() as u32;
+                    shadow_views.extend(shadow_utils::build_point_views(
+                        light.id,
+                        light_buffer_index,
+                        light.position,
+                        point,
+                        &shadow_cfg,
+                        base_layer,
+                    ));
                 }
             }
         }
@@ -582,12 +600,14 @@ impl RenderFrame {
         use crate::core::view::ViewTarget;
         use crate::graph::shadow_utils::MAX_CASCADES;
         use glam::{Mat4, Vec4};
+        use myth_scene::light::LightKind;
 
         // Reset shadow fields
         {
             let mut light_storage = scene.light_storage_buffer.write();
             for light in light_storage.iter_mut() {
                 light.shadow_layer_index = -1;
+                light.point_shadow_index = -1;
                 light.shadow_matrices.0 = [Mat4::IDENTITY; 4];
                 light.cascade_count = 0;
                 light.cascade_splits = Vec4::ZERO;
@@ -604,15 +624,18 @@ impl RenderFrame {
         // Aggregate per-light shadow metadata
         {
             let mut light_storage = scene.light_storage_buffer.write();
+            let mut point_shadow_counter = 0i32;
+            let mut d2_layer_counter = 0u32;
 
             for (light_buffer_index, light) in extracted_lights.iter().enumerate() {
                 if !light.cast_shadows {
                     continue;
                 }
                 let shadow_cfg = light.shadow.clone().unwrap_or_default();
+                let is_point = matches!(light.kind, LightKind::Point(_));
 
                 let mut base_layer = u32::MAX;
-                let mut cascade_count = 0u32;
+                let mut view_count = 0u32;
                 let mut cascade_matrices = [Mat4::IDENTITY; MAX_CASCADES as usize];
                 let mut cascade_splits_arr = [0.0f32; MAX_CASCADES as usize];
 
@@ -630,13 +653,27 @@ impl RenderFrame {
                     if layer_index < base_layer {
                         base_layer = layer_index;
                     }
-                    cascade_count += 1;
+                    view_count += 1;
                 }
 
-                if cascade_count == 0 {
+                if view_count == 0 {
                     continue;
                 }
 
+                // Point lights: store cube index, skip VP matrices (shader
+                // uses direction vector + depth comparison).
+                if is_point {
+                    if let Some(gpu_light) = light_storage.get_mut(light_buffer_index) {
+                        // point_shadow_index = sequential cube index (0, 1, 2, ...)
+                        gpu_light.point_shadow_index = point_shadow_counter;
+                        gpu_light.shadow_bias = shadow_cfg.bias;
+                        gpu_light.shadow_normal_bias = shadow_cfg.normal_bias;
+                    }
+                    point_shadow_counter += 1;
+                    continue;
+                }
+
+                // Directional / Spot: collect VP matrices
                 for view in active_views {
                     let ViewTarget::ShadowLight {
                         light_id,
@@ -658,18 +695,19 @@ impl RenderFrame {
                 }
 
                 if let Some(gpu_light) = light_storage.get_mut(light_buffer_index) {
-                    gpu_light.shadow_layer_index = base_layer.cast_signed();
+                    gpu_light.shadow_layer_index = d2_layer_counter.cast_signed();
                     gpu_light.shadow_matrices.0 = cascade_matrices;
-                    gpu_light.cascade_count = cascade_count;
+                    gpu_light.cascade_count = view_count;
                     gpu_light.cascade_splits = Vec4::new(
                         cascade_splits_arr[0],
-                        cascade_splits_arr[1.min(cascade_count as usize - 1)],
-                        cascade_splits_arr[2.min(cascade_count as usize - 1)],
-                        cascade_splits_arr[3.min(cascade_count as usize - 1)],
+                        cascade_splits_arr[1.min(view_count as usize - 1)],
+                        cascade_splits_arr[2.min(view_count as usize - 1)],
+                        cascade_splits_arr[3.min(view_count as usize - 1)],
                     );
                     gpu_light.shadow_bias = shadow_cfg.bias;
                     gpu_light.shadow_normal_bias = shadow_cfg.normal_bias;
                 }
+                d2_layer_counter += view_count;
             }
         }
 

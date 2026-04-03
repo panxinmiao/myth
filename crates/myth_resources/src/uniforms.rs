@@ -343,11 +343,14 @@ pub struct GpuLightStorage {
     pub outer_cone_cos: f32,
 
     pub light_type: u32,
+    /// Base layer index into the 2D shadow array (−1 if no 2D shadow).
     pub shadow_layer_index: i32,
 
     pub shadow_bias: f32,
     pub shadow_normal_bias: f32,
     pub cascade_count: u32,
+    /// Base cube index into the cube array shadow map (−1 if no point shadow).
+    pub point_shadow_index: i32,
 
     /// Cascade split distances (view-space depth thresholds).
     pub cascade_splits: Vec4,
