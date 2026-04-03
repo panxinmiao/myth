@@ -216,13 +216,21 @@ impl ToneMappingFeature {
 
         if let Some(handle) = lut_handle {
             let state = ctx.resource_manager.prepare_texture(ctx.assets, handle);
-            if matches!(state, ResourceState::Pending) && self.current_pipeline.is_some() {
-                // LUT is pending but we already have a pipeline (from a previous frame)
-                // keep using it until the LUT is ready to avoid stalling the GPU.
-                return;
+            match state {
+                ResourceState::Ready => {
+                    has_lut = true;
+                }
+                ResourceState::Pending => {
+                    if self.current_pipeline.is_some() {
+                        // LUT is pending but we already have a pipeline (from a previous frame)
+                        // keep using it until the LUT is ready to avoid stalling the GPU.
+                        return;
+                    }
+                }
+                _ => {
+                    // ResourceState::Failed or missing texture — treat as no LUT (fallback to default pipeline if needed)
+                }
             }
-
-            has_lut = true;
         }
 
         // ─── 2. Pipeline (re)creation ──────────────────────────────
