@@ -65,10 +65,11 @@ fn sample_point_shadow(
         return 1.0;
     }
 
-    let frag_to_light = world_position - light_position;
-    let dist = length(frag_to_light);
+    let light_to_frag = world_position - light_position;
+    // let radial_dist = length(light_to_frag);
+    let planar_z = max(max(abs(light_to_frag.x), abs(light_to_frag.y)), abs(light_to_frag.z));
 
-    if (dist >= light_range || dist <= EPSILON) {
+    if (planar_z >= light_range || planar_z <= EPSILON) {
         return 1.0;
     }
 
@@ -77,18 +78,18 @@ fn sample_point_shadow(
     // The shadow pass uses a perspective matrix that maps z ∈ [near, far]
     // to ndc.z ∈ [0, 1], so we compare against the same mapping here.
     // near is tiny (0.1) relative to range, so the approximation is fine.
+
     let near = 0.1;
-    let ref_depth = (light_range * (dist - near)) / (dist * (light_range - near));
+    let ref_depth = (light_range * (planar_z - near)) / (planar_z * (light_range - near));
     let biased_depth = saturate(ref_depth - bias);
 
     // 4-tap hardware PCF via textureSampleCompareLevel on the cube array.
     // No explicit offset is supported for cube samplers, so we rely on
     // hardware filtering (linear compare mode) for edge smoothing.
-    let direction = frag_to_light;
     return textureSampleCompareLevel(
         t_shadow_map_cube_array,
         s_shadow_map_compare,
-        direction,
+        light_to_frag,
         cube_index,
         biased_depth,
     );

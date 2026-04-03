@@ -68,29 +68,29 @@ impl AppHandler for ShadowAllLightsDemo {
             .set_position(3.0, 1.0, -1.5)
             .set_shadows(true, true);
 
-        // ── Directional light (CSM) ───────────────────────────────────
-        let mut dir_light = Light::new_directional(Vec3::ONE, 1.0);
-        dir_light.cast_shadows = true;
-        if let Some(shadow) = dir_light.shadow.as_mut() {
-            shadow.map_size = 2048;
-        }
-        let dir_node = scene.add_light(dir_light);
-        scene
-            .node(&dir_node)
-            .set_position(8.0, 12.0, 6.0)
-            .look_at(Vec3::ZERO);
+        // // ── Directional light (CSM) ───────────────────────────────────
+        // let mut dir_light = Light::new_directional(Vec3::ONE, 1.0);
+        // dir_light.cast_shadows = true;
+        // if let Some(shadow) = dir_light.shadow.as_mut() {
+        //     shadow.map_size = 2048;
+        // }
+        // let dir_node = scene.add_light(dir_light);
+        // scene
+        //     .node(&dir_node)
+        //     .set_position(8.0, 12.0, 6.0)
+        //     .look_at(Vec3::ZERO);
 
-        // ── Spot light ────────────────────────────────────────────────
-        let mut spot = Light::new_spot(Vec3::new(1.0, 0.95, 0.8), 1.0, 30.0, 0.3, 0.5);
-        spot.cast_shadows = true;
-        if let Some(shadow) = spot.shadow.as_mut() {
-            shadow.map_size = 1024;
-        }
-        let spot_node = scene.add_light(spot);
-        scene
-            .node(&spot_node)
-            .set_position(-6.0, 8.0, 4.0)
-            .look_at(Vec3::new(-3.5, 0.0, 0.0));
+        // // ── Spot light ────────────────────────────────────────────────
+        // let mut spot = Light::new_spot(Vec3::new(1.0, 0.95, 0.8), 1.0, 30.0, 0.3, 0.5);
+        // spot.cast_shadows = true;
+        // if let Some(shadow) = spot.shadow.as_mut() {
+        //     shadow.map_size = 1024;
+        // }
+        // let spot_node = scene.add_light(spot);
+        // scene
+        //     .node(&spot_node)
+        //     .set_position(-6.0, 8.0, 4.0)
+        //     .look_at(Vec3::new(-3.5, 0.0, 0.0));
 
         // ── Point light (omnidirectional cube shadow) ─────────────────
         let mut point = Light::new_point(Vec3::new(1.0, 0.8, 0.5), 1.0, 50.0);

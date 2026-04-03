@@ -306,12 +306,12 @@ pub fn build_spot_view(
 /// Follows the WebGPU / wgpu convention where cube map textures are laid out
 /// as array layers 0–5 corresponding to +X, −X, +Y, −Y, +Z, −Z.
 const CUBE_FACE_DIRS: [(Vec3, Vec3); 6] = [
-    (Vec3::X, Vec3::NEG_Y),  // +X
-    (Vec3::NEG_X, Vec3::NEG_Y),  // −X
+    (Vec3::X, Vec3::Y),  // +X
+    (Vec3::NEG_X, Vec3::Y),  // −X
     (Vec3::Y, Vec3::Z),      // +Y
     (Vec3::NEG_Y, Vec3::NEG_Z),  // −Y
-    (Vec3::Z, Vec3::NEG_Y),  // +Z
-    (Vec3::NEG_Z, Vec3::NEG_Y),  // −Z
+    (Vec3::Z, Vec3::Y),  // +Z
+    (Vec3::NEG_Z, Vec3::Y),  // −Z
 ];
 
 /// Builds 6 perspective VP matrices for a point light located at `position`.
