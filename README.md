@@ -20,10 +20,9 @@
 
 ---
 
+> 📢 Status: Beta
 
-> ⚠️ **Warning: Early Development Stage**
->
-> Myth is currently in **active alpha development**. APIs are unstable and subject to **drastic breaking changes**. 
+> Myth is now in Beta. The core architecture is stable and ready for real-world use. APIs are still evolving, and occasional breaking changes may occur.
 
 ## Introduction
 
