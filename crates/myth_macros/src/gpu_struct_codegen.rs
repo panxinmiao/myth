@@ -144,7 +144,7 @@ fn gen_wgsl_type(def: &GpuStructDef, layout: &[LayoutField]) -> TokenStream {
     let name_str = name.to_string();
 
     // Collect WGSL definitions from all non-padding user fields
-    let collect_fields = layout.iter().filter(|f| !f.is_padding).map(|f| {
+    let collect_fields = layout.iter().filter(|f| wgsl_visible(f)).map(|f| {
         let ty = &f.ty;
         quote! {
             <#ty as #cr::uniforms::WgslType>::collect_wgsl_defs(defs, inserted);
@@ -202,7 +202,7 @@ fn gen_wgsl_struct(def: &GpuStructDef, layout: &[LayoutField]) -> TokenStream {
     let name = &def.name;
 
     // Collect nested definitions from non-padding fields
-    let collect_deps = layout.iter().filter(|f| !f.is_padding).map(|f| {
+    let collect_deps = layout.iter().filter(|f| wgsl_visible(f)).map(|f| {
         let ty = &f.ty;
         quote! {
             <#ty as #cr::uniforms::WgslType>::collect_wgsl_defs(&mut defs, &mut inserted);

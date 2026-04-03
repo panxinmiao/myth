@@ -185,7 +185,7 @@ pub fn compute_std140_layout(
         if dynamic_padding > 0 {
             let count = dynamic_padding / 4;
             let name = format_ident!("__dynamic_pad");
-            let ty: Type = syn::parse_str(&format!("[f32; {count}]")).unwrap();
+            let ty: Type = syn::parse_str(&format!("[u32; {count}]")).unwrap();
             result.push(LayoutField {
                 name,
                 ty,
@@ -208,9 +208,9 @@ fn push_padding(fields: &mut Vec<LayoutField>, pad_bytes: usize, pad_idx: &mut u
     let name = format_ident!("__pad_{}", *pad_idx);
     *pad_idx += 1;
     let ty: Type = if count == 1 {
-        syn::parse_str("f32").unwrap()
+        syn::parse_str("u32").unwrap()
     } else {
-        syn::parse_str(&format!("[f32; {count}]")).unwrap()
+        syn::parse_str(&format!("[u32; {count}]")).unwrap()
     };
     fields.push(LayoutField {
         name,
