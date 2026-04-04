@@ -1,0 +1,12 @@
+# === Assets ===
+assets/** linguist-vendored
+examples/**/assets/** linguist-vendored
+
+# === 3D Models ===
+*.gltf linguist-vendored
+*.glb linguist-vendored
+*.obj linguist-vendored
+*.fbx linguist-vendored
+*.cube linguist-vendored
+*.hdr linguist-vendored
+*.ktx2 linguist-vendored
