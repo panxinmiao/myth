@@ -126,6 +126,18 @@ pub enum RenderError {
     /// Render graph error.
     #[error("Render graph error: {0}")]
     Graph(String),
+
+    /// GPU-to-CPU readback failed.
+    #[error("GPU readback failed: {0}")]
+    ReadbackFailed(String),
+
+    /// Renderer not initialized.
+    #[error("Renderer not initialized")]
+    NotInitialized,
+
+    /// No headless render target available.
+    #[error("No headless render target available")]
+    NoHeadlessTarget,
 }
 
 // ============================================================================

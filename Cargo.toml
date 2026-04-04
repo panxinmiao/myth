@@ -177,7 +177,7 @@ myth_animation = { workspace = true }
 myth_scene     = { workspace = true }
 myth_assets    = { workspace = true }
 myth_render    = { workspace = true }
-myth_app       = { workspace = true, optional = true }
+myth_app       = { workspace = true }
 
 glam = { workspace = true }
 log  = { workspace = true }
@@ -186,6 +186,8 @@ log  = { workspace = true }
 anyhow = { workspace = true }
 rfd    = { workspace = true }
 env_logger = { workspace = true }
+image = { workspace = true }
+pollster = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 rustc-hash = { workspace = true }
@@ -226,7 +228,7 @@ harness = false
 
 [features]
 default = ["winit", "gltf", "http"]
-winit = ["dep:myth_app", "myth_app?/winit"]
+winit = ["myth_app/winit"]
 gltf = ["myth_assets/gltf"]
 rdg_inspector = ["myth_render/rdg_inspector"]
 debug_view = ["myth_render/debug_view", "myth_scene/debug_view"]

@@ -148,31 +148,49 @@ impl Renderer {
 
         self.size = (width, height);
 
-        // 1. Create WGPU context
         let wgpu_ctx =
             WgpuContext::new(window, &self.init_config, &self.settings, width, height).await?;
 
-        // 2. Initialize resource manager
+        self.assemble_state(wgpu_ctx);
+        log::info!("Renderer initialized (windowed)");
+        Ok(())
+    }
+
+    /// Phase 2 (headless): Initialize GPU context without a window.
+    ///
+    /// Creates an offscreen render target of the specified dimensions. No
+    /// window surface is created, making this suitable for server-side
+    /// rendering, automated testing, and GPU readback workflows.
+    pub async fn init_headless(&mut self, width: u32, height: u32) -> Result<()> {
+        if self.context.is_some() {
+            return Ok(());
+        }
+
+        self.size = (width, height);
+
+        let wgpu_ctx =
+            WgpuContext::new_headless(&self.init_config, &self.settings, width, height).await?;
+
+        self.assemble_state(wgpu_ctx);
+        log::info!("Renderer initialized (headless {}×{})", width, height);
+        Ok(())
+    }
+
+    /// Assembles the internal renderer state from a fully initialised GPU context.
+    fn assemble_state(&mut self, wgpu_ctx: WgpuContext) {
         let resource_manager = ResourceManager::new(
             wgpu_ctx.device.clone(),
             wgpu_ctx.queue.clone(),
             self.settings.anisotropy_clamp,
         );
 
-        // 3. Create render frame manager
         let render_frame = RenderFrame::new();
-
-        // 5. Create global bind group cache
         let global_bind_group_cache = GlobalBindGroupCache::new();
 
-        // let sampler_registry = SamplerRegistry::new(&wgpu_ctx.device);
-
-        // Shadow + compute passes (need device ref before wgpu_ctx moves)
         let shadow_pass = ShadowFeature::new(&wgpu_ctx.device);
         let brdf_pass = BrdfLutFeature::new(&wgpu_ctx.device);
         let ibl_pass = IblComputeFeature::new(&wgpu_ctx.device);
 
-        // 6. Assemble state
         self.context = Some(RendererState {
             wgpu_ctx,
             resource_manager,
@@ -183,9 +201,7 @@ impl Renderer {
             render_lists: RenderLists::new(),
             global_bind_group_cache,
 
-            // RDG
             graph_storage: GraphStorage::new(),
-            // sampler_registry,
             transient_pool: TransientPool::new(),
             frame_arena: FrameArena::new(),
             fxaa_pass: FxaaFeature::new(),
@@ -195,7 +211,6 @@ impl Renderer {
             bloom_pass: BloomFeature::new(),
             ssao_pass: SsaoFeature::new(),
 
-            // RDG Scene Passes
             prepass: PrepassFeature::new(),
             opaque_pass: OpaqueFeature::new(),
             skybox_pass: SkyboxFeature::new(),
@@ -205,7 +220,6 @@ impl Renderer {
             ssss_pass: SsssFeature::new(),
             msaa_sync_pass: MsaaSyncFeature::new(),
 
-            // Shadow + Compute passes (migrated from old system)
             shadow_pass,
             brdf_pass,
             ibl_pass,
@@ -213,9 +227,6 @@ impl Renderer {
             #[cfg(feature = "debug_view")]
             debug_view_pass: DebugViewFeature::new(),
         });
-
-        log::info!("Renderer Initialized");
-        Ok(())
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -664,11 +675,14 @@ impl Renderer {
         self.context.as_ref().map(|s| &s.wgpu_ctx.queue)
     }
 
-    /// Returns the surface texture format.
+    /// Returns the surface/render-target texture format.
     ///
-    /// Useful for external plugins to configure render pipelines.
+    /// In windowed mode this is the swap-chain format; in headless mode it
+    /// is the offscreen texture format. Returns `None` before initialisation.
     pub fn surface_format(&self) -> Option<wgpu::TextureFormat> {
-        self.context.as_ref().map(|s| s.wgpu_ctx.config.format)
+        self.context
+            .as_ref()
+            .map(|s| s.wgpu_ctx.surface_view_format)
     }
 
     /// Returns a reference to the `WgpuContext`.
@@ -714,5 +728,122 @@ impl Renderer {
             .as_mut()
             .expect("Renderer must be initialized before registering shader templates");
         state.shader_manager.register_template(name, source);
+    }
+
+    /// Returns `true` if the renderer is in headless (offscreen) mode.
+    #[inline]
+    #[must_use]
+    pub fn is_headless(&self) -> bool {
+        self.context
+            .as_ref()
+            .is_some_and(|s| s.wgpu_ctx.is_headless())
+    }
+
+    /// Reads back the current headless render target contents as raw RGBA pixels.
+    ///
+    /// The returned `Vec<u8>` contains tightly-packed RGBA8 data with length
+    /// `width * height * 4`. Row ordering is top-to-bottom.
+    ///
+    /// This method submits a GPU copy command and blocks the calling thread
+    /// until the transfer completes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The renderer has not been initialised
+    /// - No headless render target exists (windowed mode)
+    /// - The GPU buffer mapping fails
+    pub fn readback_pixels(&self) -> Result<Vec<u8>> {
+        let state = self
+            .context
+            .as_ref()
+            .ok_or(myth_core::RenderError::NotInitialized)?;
+
+        let texture = state
+            .wgpu_ctx
+            .headless_texture
+            .as_ref()
+            .ok_or(myth_core::RenderError::NoHeadlessTarget)?;
+
+        let width = state.wgpu_ctx.target_width;
+        let height = state.wgpu_ctx.target_height;
+        let bytes_per_pixel: u32 = 4;
+        let unpadded_bytes_per_row = width * bytes_per_pixel;
+        let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
+        let buffer_size = u64::from(padded_bytes_per_row) * u64::from(height);
+
+        let readback_buffer = state.wgpu_ctx.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("Readback Buffer"),
+            size: buffer_size,
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+
+        let mut encoder = state
+            .wgpu_ctx
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Readback Encoder"),
+            });
+
+        encoder.copy_texture_to_buffer(
+            wgpu::TexelCopyTextureInfo {
+                texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d::ZERO,
+                aspect: wgpu::TextureAspect::All,
+            },
+            wgpu::TexelCopyBufferInfo {
+                buffer: &readback_buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(padded_bytes_per_row),
+                    rows_per_image: Some(height),
+                },
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+
+        state
+            .wgpu_ctx
+            .queue
+            .submit(std::iter::once(encoder.finish()));
+
+        // Block until the GPU finishes the copy and the buffer is mappable.
+        let buffer_slice = readback_buffer.slice(..);
+
+        // Request mapping; the callback signals completion via a channel.
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
+            tx.send(result).ok();
+        });
+        state
+            .wgpu_ctx
+            .device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|e| myth_core::RenderError::ReadbackFailed(e.to_string()))?;
+
+        rx.recv()
+            .map_err(|e| myth_core::RenderError::ReadbackFailed(e.to_string()))?
+            .map_err(|e| myth_core::RenderError::ReadbackFailed(e.to_string()))?;
+
+        // Strip per-row padding and produce a tightly-packed pixel buffer.
+        let mapped = buffer_slice.get_mapped_range();
+        let mut pixels =
+            Vec::with_capacity((width * height * bytes_per_pixel) as usize);
+        for row in 0..height {
+            let start = (row * padded_bytes_per_row) as usize;
+            let end = start + unpadded_bytes_per_row as usize;
+            pixels.extend_from_slice(&mapped[start..end]);
+        }
+        drop(mapped);
+        readback_buffer.unmap();
+
+        Ok(pixels)
     }
 }

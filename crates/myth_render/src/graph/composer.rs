@@ -241,43 +241,66 @@ impl<'a> FrameComposer<'a> {
         self
     }
 
-    /// Executes the full rendering pipeline and presents to the screen.
+    /// Executes the full rendering pipeline.
+    ///
+    /// In **windowed mode** the result is presented to the swap-chain surface.
+    /// In **headless mode** the result is written to the offscreen render target
+    /// (available for readback via [`Renderer::readback_pixels`]).
     ///
     /// # Architecture
     ///
-    /// 1. **Acquire Surface** — get the swap-chain back buffer
+    /// 1. **Acquire Render Target** — swap-chain back buffer or headless texture
     /// 2. **Build RDG** — register resources, wire passes (compute, shadow,
     ///    scene, post-processing), invoke user hooks
     /// 3. **Compile & Execute** — topological sort, allocate transients,
     ///    prepare, execute, submit
-    /// 4. **Present** — present swap-chain
+    /// 4. **Present** — present swap-chain (windowed only)
     ///
     /// Consumes `self`; the composer cannot be reused after render.
     pub fn render(mut self) {
-        // ━━━ 1. Acquire Surface ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-        let output = match self.ctx.wgpu_ctx.surface.get_current_texture() {
-            // todo: handle `Outdated` by reconfiguring the surface and retrying acquisition?
-            wgpu::CurrentSurfaceTexture::Success(frame) => frame,
-            wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
-                self.ctx
-                    .wgpu_ctx
-                    .surface
-                    .configure(&self.ctx.wgpu_ctx.device, &self.ctx.wgpu_ctx.config);
-                frame
-            }
-            _ => {
-                log::error!("Failed to acquire swap-chain surface");
-                return;
-            }
-        };
+        // ━━━ 1. Acquire Render Target ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
         let view_format = self.ctx.wgpu_ctx.surface_view_format;
-        let surface_view = output.texture.create_view(&wgpu::TextureViewDescriptor {
-            format: Some(view_format),
-            ..Default::default()
-        });
-        let width = output.texture.width();
-        let height = output.texture.height();
+
+        // Acquire either the swap-chain back buffer or the headless texture view.
+        // `surface_output` is `Some` only in windowed mode and holds the
+        // `SurfaceTexture` that must be `.present()`ed after submission.
+        let (surface_view, width, height, surface_output);
+
+        if let Some(surface) = &self.ctx.wgpu_ctx.surface {
+            let output = match surface.get_current_texture() {
+                wgpu::CurrentSurfaceTexture::Success(frame) => frame,
+                wgpu::CurrentSurfaceTexture::Suboptimal(frame) => {
+                    if let Some(config) = &self.ctx.wgpu_ctx.config {
+                        surface.configure(&self.ctx.wgpu_ctx.device, config);
+                    }
+                    frame
+                }
+                _ => {
+                    log::error!("Failed to acquire swap-chain surface");
+                    return;
+                }
+            };
+
+            surface_view = output.texture.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(view_format),
+                ..Default::default()
+            });
+            width = output.texture.width();
+            height = output.texture.height();
+            surface_output = Some(output);
+        } else if let Some(tex) = &self.ctx.wgpu_ctx.headless_texture {
+            surface_view = tex.create_view(&wgpu::TextureViewDescriptor {
+                format: Some(view_format),
+                ..Default::default()
+            });
+            width = tex.width();
+            height = tex.height();
+            surface_output = None;
+        } else {
+            log::error!("No render target available (neither surface nor headless texture)");
+            return;
+        };
 
         // ━━━ 2. Build Unified RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -750,6 +773,9 @@ impl<'a> FrameComposer<'a> {
         // ━━━ 4. Submit & Present ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
         self.ctx.wgpu_ctx.queue.submit(Some(encoder.finish()));
-        output.present();
+
+        if let Some(output) = surface_output {
+            output.present();
+        }
     }
 }

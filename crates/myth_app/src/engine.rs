@@ -116,6 +116,42 @@ impl Engine {
         Ok(())
     }
 
+    /// Initializes the GPU context in headless (offscreen) mode.
+    ///
+    /// No window or surface is created. An offscreen render target of the
+    /// specified dimensions is allocated instead, suitable for server-side
+    /// rendering, automated testing, and GPU readback.
+    ///
+    /// # Arguments
+    ///
+    /// * `width` - Render target width in pixels
+    /// * `height` - Render target height in pixels
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if GPU initialization fails.
+    pub async fn init_headless(
+        &mut self,
+        width: u32,
+        height: u32,
+    ) -> myth_core::Result<()> {
+        self.renderer.init_headless(width, height).await?;
+
+        Ok(())
+    }
+
+    /// Reads back the current headless render target as raw RGBA8 pixel data.
+    ///
+    /// Returns a tightly-packed `Vec<u8>` of length `width * height * 4`.
+    /// Row ordering is top-to-bottom.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the renderer is not initialised or not in headless mode.
+    pub fn readback_pixels(&self) -> myth_core::Result<Vec<u8>> {
+        self.renderer.readback_pixels()
+    }
+
     /// Returns the total elapsed time in seconds since the engine started.
     #[inline]
     #[must_use]
