@@ -298,7 +298,9 @@ impl ReadbackStream {
                 .poll(wgpu::PollType::wait_indefinitely())
                 .map_err(|e| ReadbackError::MapFailed(format!("device.poll failed: {e}")))?;
 
-            if let Ok(ready) = self.receiver.try_recv() {
+            let mut received_any = false;
+
+            while let Ok(ready) = self.receiver.try_recv() {
                 ready
                     .result
                     .map_err(|e| ReadbackError::MapFailed(e.to_string()))?;
@@ -310,6 +312,14 @@ impl ReadbackStream {
                     frame_index: ready.frame_index,
                 });
                 self.in_flight_frames -= 1;
+                received_any = true;
+            }
+
+            // If the GPU completed a readback but the channel is empty, something went wrong with the callback.
+            if !received_any {
+                return Err(ReadbackError::MapFailed(
+                    "Poll completed but no callbacks fired".to_string(),
+                ));
             }
         }
 
@@ -372,14 +382,12 @@ impl ReadbackStream {
                     .result
                     .map_err(|e| ReadbackError::MapFailed(e.to_string()))?;
 
-                // Recycle the caller's old buffer, then write directly into it.
-                let mut old = std::mem::take(output);
-                old.clear();
-                self.free_pool.push(old);
-
                 let mut pixels = self.alloc_pixel_buf();
                 self.extract_pixels_into(&self.buffers[ready.slot], &mut pixels);
-                *output = pixels;
+                std::mem::swap(output, &mut pixels);
+
+                self.recycle(pixels);
+
                 self.in_flight_frames -= 1;
                 Ok(Some(ready.frame_index))
             }

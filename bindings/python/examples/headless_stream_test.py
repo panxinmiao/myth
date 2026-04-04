@@ -33,6 +33,7 @@ stream = renderer.create_readback_stream(buffer_count=3)
 
 received = 0
 sent = 0
+lost = 0
 
 for i in range(TOTAL_FRAMES):
     renderer.update(1.0 / 60.0)
@@ -42,6 +43,7 @@ for i in range(TOTAL_FRAMES):
         stream.try_submit(renderer)
         sent += 1
     except Exception as e:
+        lost += 1
         print(f"Error submitting frame {i}: {e}")
 
     renderer.poll_device()
@@ -65,7 +67,7 @@ for frame in remaining:
 assert received == sent, f"expected {sent} frames, got {received}"
 
 print(
-    f"Test B passed: Total {TOTAL_FRAMES} frames , sent {sent}, received {received} "
+    f"Test B passed: Total {TOTAL_FRAMES} frames , sent {sent}, received {received}, lost {lost} "
     f"(256×256, buffer_count=3, {EXPECTED_BYTES} bytes/frame)"
 )
 
