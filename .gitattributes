@@ -1,0 +1,12 @@
+# === Assets ===
+assets/** linguist-vendored=true
+examples/**/assets/** linguist-vendored=true
+
+# === 3D Models ===
+*.gltf linguist-generated=true
+*.glb linguist-generated=true
+*.obj linguist-generated=true
+*.fbx linguist-generated=true
+*.cube linguist-generated=true
+*.hdr linguist-generated=true
+*.ktx2 linguist-generated=true
