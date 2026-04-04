@@ -24,10 +24,7 @@ fn main() {
     let scene = engine.scene_manager.create_active();
 
     // Checkerboard material
-    let image_handle = engine
-        .assets
-        .images
-        .add(Image::checkerboard(512, 512, 64));
+    let image_handle = engine.assets.images.add(Image::checkerboard(512, 512, 64));
     let tex_handle = engine
         .assets
         .textures

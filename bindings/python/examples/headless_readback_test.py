@@ -19,11 +19,11 @@ renderer.init_headless(256, 256)
 # Minimal scene
 scene = renderer.create_scene()
 cube = scene.add_mesh(myth.BoxGeometry(1, 1, 1), myth.UnlitMaterial(color=[0.2, 0.6, 1.0]))
-cam = scene.add_perspective_camera(fov=45, near=0.1)
-cam.set_position(0, 2, 5)
+cam = scene.add_camera(myth.PerspectiveCamera(fov=45, near=0.1))
+cam.position = [0, 2, 5]
 cam.look_at([0, 0, 0])
-scene.set_active_camera(cam)
-scene.add_directional_light(color=[1, 1, 1], intensity=3)
+scene.active_camera = cam
+scene.add_light(myth.DirectionalLight(color=[1, 1, 1], intensity=3))
 
 EXPECTED_BYTES = 256 * 256 * 4  # RGBA8
 

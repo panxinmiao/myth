@@ -205,6 +205,103 @@ class Renderer:
     @property
     def input(self) -> Input: ...
 
+    # ---- Headless / Readback ----
+
+    def init_headless(
+        self,
+        width: int,
+        height: int,
+        format: Optional[str] = None,
+    ) -> None:
+        """Initialize the renderer in headless (offscreen) mode.
+
+        No window is created. An offscreen render target of the specified
+        dimensions is allocated, suitable for server-side rendering and
+        GPU readback.
+
+        Args:
+            width: Render target width in pixels.
+            height: Render target height in pixels.
+            format: Pixel format — ``'rgba8'`` (default) or ``'rgba16float'``
+                / ``'rgba16'`` / ``'hdr'`` for HDR readback.
+        """
+        ...
+
+    def readback_pixels(self) -> bytes:
+        """Read back the current render target as raw bytes.
+
+        Returns tightly-packed pixel data (RGBA8 = 4 bytes/px,
+        RGBA16Float = 8 bytes/px). Row order is top-to-bottom.
+        """
+        ...
+
+    # ---- Expert Readback API ----
+
+    def create_readback_stream(self, buffer_count: int = 3) -> ReadbackStream:
+        """Create a :class:`ReadbackStream` for non-blocking readback.
+
+        Args:
+            buffer_count: Number of ring-buffer slots (default 3).
+        """
+        ...
+
+    def poll_device(self) -> None:
+        """Drive pending GPU callbacks without blocking.
+
+        Call once per frame in a readback-stream loop so that frames
+        become available via :meth:`ReadbackStream.try_recv`.
+        """
+        ...
+
+    # ---- Simple Recording API ----
+
+    def start_recording(self, buffer_count: int = 3) -> None:
+        """Begin a recording session with an internal ring-buffer stream.
+
+        Enables :meth:`render_and_record` / :meth:`try_pull_frame` /
+        :meth:`flush_recording`.
+
+        Args:
+            buffer_count: Number of ring-buffer slots (default 3).
+
+        Raises:
+            RuntimeError: If a recording session is already active.
+        """
+        ...
+
+    def render_and_record(self, dt: Optional[float] = None) -> None:
+        """Update, render, and record one frame — all in a single call.
+
+        Equivalent to ``update(dt) → render() → submit → poll_device``.
+        Pull completed frames with :meth:`try_pull_frame`.
+
+        Args:
+            dt: Delta time in seconds. ``None`` = auto from wall clock.
+
+        Raises:
+            RuntimeError: If no recording session is active.
+        """
+        ...
+
+    def try_pull_frame(self) -> Optional[dict]:
+        """Return the next completed frame, or ``None``.
+
+        The returned dict has:
+          - ``"pixels"``: ``bytes`` — tightly-packed pixel data.
+          - ``"frame_index"``: ``int`` — zero-based index.
+
+        Raises:
+            RuntimeError: If no recording session is active.
+        """
+        ...
+
+    def flush_recording(self) -> list[dict]:
+        """Block until all in-flight frames are received, then end the session.
+
+        Returns all remaining frames as a list of dicts.
+        """
+        ...
+
     # ---- Lifecycle ----
 
     def dispose(self) -> None:
@@ -213,6 +310,78 @@ class Renderer:
 
     def __enter__(self) -> Renderer: ...
     def __exit__(self, *args: object) -> bool: ...
+
+# ============================================================================
+# ReadbackStream — Expert-mode non-blocking GPU→CPU readback
+# ============================================================================
+
+class ReadbackStream:
+    """High-throughput, non-blocking GPU→CPU readback stream.
+
+    Created via :meth:`Renderer.create_readback_stream`. Use this for
+    fine-grained control over readback timing. For a simpler API, see
+    :meth:`Renderer.start_recording`.
+
+    Example::
+
+        stream = renderer.create_readback_stream(buffer_count=3)
+        for _ in range(100):
+            renderer.update()
+            renderer.render()
+            stream.submit(renderer)
+            renderer.poll_device()
+            frame = stream.try_recv()
+            if frame is not None:
+                process(frame["pixels"])
+        for frame in stream.flush(renderer):
+            process(frame["pixels"])
+    """
+
+    @property
+    def buffer_count(self) -> int:
+        """Number of ring-buffer slots."""
+        ...
+
+    @property
+    def frames_submitted(self) -> int:
+        """Total frames submitted so far."""
+        ...
+
+    @property
+    def dimensions(self) -> tuple[int, int]:
+        """Render target dimensions as ``(width, height)``."""
+        ...
+
+    def submit(self, renderer: Renderer) -> None:
+        """Submit a non-blocking copy from the headless texture.
+
+        Args:
+            renderer: The :class:`Renderer` that owns the headless texture.
+
+        Raises:
+            RuntimeError: If the ring buffer is full.
+        """
+        ...
+
+    def try_recv(self) -> Optional[dict]:
+        """Return the next ready frame as ``dict``, or ``None``.
+
+        The returned dict has:
+          - ``"pixels"``: ``bytes`` — tightly-packed pixel data.
+          - ``"frame_index"``: ``int`` — zero-based index.
+        """
+        ...
+
+    def flush(self, renderer: Renderer) -> list[dict]:
+        """Block until all in-flight frames are returned.
+
+        Args:
+            renderer: The :class:`Renderer` that owns the GPU device.
+
+        Returns:
+            List of frame dicts with ``"pixels"`` and ``"frame_index"``.
+        """
+        ...
 
 # ============================================================================
 # Engine

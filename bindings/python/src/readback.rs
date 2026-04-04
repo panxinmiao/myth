@@ -64,12 +64,15 @@ impl PyReadbackStream {
     fn submit(&mut self, renderer: &crate::renderer::PyMythRenderer) -> PyResult<()> {
         let engine = renderer.engine_ref_pub()?;
         let device = engine
+            .renderer
             .device()
             .ok_or_else(|| rt_err("renderer not initialised"))?;
         let queue = engine
+            .renderer
             .queue()
             .ok_or_else(|| rt_err("renderer not initialised"))?;
         let texture = engine
+            .renderer
             .headless_texture()
             .ok_or_else(|| rt_err("no headless texture — call init_headless() first"))?;
 
@@ -104,21 +107,22 @@ impl PyReadbackStream {
     fn flush<'py>(&self, py: Python<'py>, renderer: &crate::renderer::PyMythRenderer) -> PyResult<Bound<'py, pyo3::types::PyList>> {
         let engine = renderer.engine_ref_pub()?;
         let device = engine
+            .renderer
             .device()
             .ok_or_else(|| rt_err("renderer not initialised"))?;
 
         let result = pyo3::types::PyList::empty(py);
-        self.stream
-            .flush(device, |frame| {
-                let dict = pyo3::types::PyDict::new(py);
-                let _ = dict.set_item(
-                    "pixels",
-                    pyo3::types::PyBytes::new(py, &frame.pixels),
-                );
-                let _ = dict.set_item("frame_index", frame.frame_index);
-                let _ = result.append(dict);
-            })
+
+        let flush_result = self.stream
+            .flush(device)
             .map_err(|e| rt_err(&e.to_string()))?;
+
+        for frame in flush_result {
+            let dict = pyo3::types::PyDict::new(py);
+            dict.set_item("pixels", pyo3::types::PyBytes::new(py, &frame.pixels))?;
+            dict.set_item("frame_index", frame.frame_index)?;
+            result.append(dict)?;
+        }
 
         Ok(result)
     }

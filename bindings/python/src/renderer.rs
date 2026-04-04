@@ -237,6 +237,8 @@ pub struct PyMythRenderer {
     vsync: bool,
     start_time: std::time::Instant,
     last_frame_time: std::time::Instant,
+    /// Internal stream for the simple recording API.
+    active_stream: Option<myth_engine::render::core::ReadbackStream>,
 }
 
 #[pymethods]
@@ -257,6 +259,7 @@ impl PyMythRenderer {
             vsync,
             start_time: std::time::Instant::now(),
             last_frame_time: std::time::Instant::now(),
+            active_stream: None,
         })
     }
 
@@ -529,7 +532,7 @@ impl PyMythRenderer {
 
         let target_format = match format {
             Some("rgba16float" | "rgba16" | "hdr") => {
-                Some(myth_engine::renderer::HDR_TEXTURE_FORMAT)
+                Some(myth_engine::resources::PixelFormat::Rgba16Float)
             }
             Some("rgba8") | None => None,
             Some(other) => {
@@ -584,7 +587,7 @@ impl PyMythRenderer {
         buffer_count: usize,
     ) -> PyResult<crate::readback::PyReadbackStream> {
         let engine = self.engine_ref()?;
-        let stream = engine.create_readback_stream(buffer_count).map_err(|e| {
+        let stream = engine.renderer.create_readback_stream(buffer_count).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "failed to create readback stream: {e}"
             ))
@@ -599,8 +602,158 @@ impl PyMythRenderer {
     /// :meth:`ReadbackStream.try_recv`.
     fn poll_device(&self) -> PyResult<()> {
         let engine = self.engine_ref()?;
-        engine.poll_device();
+        engine.renderer.poll_device();
         Ok(())
+    }
+
+    // ----------------------------------------------------------------
+    // Simple Recording API
+    // ----------------------------------------------------------------
+
+    /// Begin a recording session with the given number of ring-buffer slots.
+    ///
+    /// This is the **simple mode** counterpart to
+    /// :meth:`create_readback_stream`. It creates an internal stream and
+    /// enables :meth:`render_and_record` / :meth:`try_pull_frame` /
+    /// :meth:`flush_recording`.
+    ///
+    /// Args:
+    ///     buffer_count: Number of ring-buffer slots (default 3).
+    ///
+    /// Raises:
+    ///     RuntimeError: If a recording session is already active.
+    #[pyo3(signature = (buffer_count=3))]
+    fn start_recording(&mut self, buffer_count: usize) -> PyResult<()> {
+        if self.active_stream.is_some() {
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "recording session already active — call flush_recording() first",
+            ));
+        }
+        let engine = self.engine_ref()?;
+        let stream = engine.renderer.create_readback_stream(buffer_count).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "failed to create readback stream: {e}"
+            ))
+        })?;
+        self.active_stream = Some(stream);
+        Ok(())
+    }
+
+    /// Update, render, and record one frame — all in a single call.
+    ///
+    /// Equivalent to ``update(dt) → render() → submit → poll_device``.
+    /// Pull completed frames with :meth:`try_pull_frame`.
+    ///
+    /// Args:
+    ///     dt: Delta time in seconds. If ``None``, computed from wall-clock.
+    ///
+    /// Raises:
+    ///     RuntimeError: If no recording session is active.
+    #[pyo3(signature = (dt=None))]
+    fn render_and_record(&mut self, dt: Option<f32>) -> PyResult<()> {
+        if self.active_stream.is_none() {
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "no active recording — call start_recording() first",
+            ));
+        }
+
+        // ---- update + render ----
+        let now = std::time::Instant::now();
+        let delta = dt.unwrap_or_else(|| now.duration_since(self.last_frame_time).as_secs_f32());
+        self.last_frame_time = now;
+
+        let engine = self.engine.as_deref_mut().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("Renderer not initialized")
+        })?;
+        engine.update(delta);
+        engine.render_active_scene();
+
+        // ---- submit ----
+        let device = engine.renderer.device().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("device not available")
+        })?;
+        let queue = engine.renderer.queue().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("queue not available")
+        })?;
+        let texture = engine.renderer.headless_texture().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("no headless texture")
+        })?;
+
+        self.active_stream
+            .as_mut()
+            .unwrap()
+            .submit(device, queue, texture)
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("submit failed: {e}"))
+            })?;
+
+        // ---- poll ----
+        engine.renderer.poll_device();
+
+        Ok(())
+    }
+
+    /// Return the next completed frame as ``dict``, or ``None``.
+    ///
+    /// The returned dict has:
+    ///   - ``"pixels"``: ``bytes`` — tightly-packed pixel data.
+    ///   - ``"frame_index"``: ``int`` — zero-based index.
+    ///
+    /// Raises:
+    ///     RuntimeError: If no recording session is active.
+    fn try_pull_frame<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, pyo3::types::PyDict>>> {
+        let stream = self.active_stream.as_ref().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "no active recording — call start_recording() first",
+            )
+        })?;
+        match stream.try_recv() {
+            Ok(Some(frame)) => {
+                let dict = pyo3::types::PyDict::new(py);
+                dict.set_item("pixels", pyo3::types::PyBytes::new(py, &frame.pixels))?;
+                dict.set_item("frame_index", frame.frame_index)?;
+                Ok(Some(dict))
+            }
+            Ok(None) => Ok(None),
+            Err(e) => Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                e.to_string(),
+            )),
+        }
+    }
+
+    /// Block until all in-flight frames are received, then end the session.
+    ///
+    /// Returns:
+    ///     ``list[dict]``: All remaining frames. Each dict has ``"pixels"``
+    ///     (``bytes``) and ``"frame_index"`` (``int``).
+    fn flush_recording<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+        let stream = self.active_stream.as_ref().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "no active recording — call start_recording() first",
+            )
+        })?;
+        let engine = self.engine_ref()?;
+        let device = engine.renderer.device().ok_or_else(|| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>("device not available")
+        })?;
+
+        let result = pyo3::types::PyList::empty(py);
+
+        let flush_result = stream
+            .flush(device)
+            .map_err(|e| {
+                PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("flush failed: {e}"))
+            })?;
+
+        for frame in flush_result {
+            let dict = pyo3::types::PyDict::new(py);
+            dict.set_item("pixels", pyo3::types::PyBytes::new(py, &frame.pixels))?;
+            dict.set_item("frame_index", frame.frame_index)?;
+            result.append(dict)?;
+        }
+
+        self.active_stream = None;
+        Ok(result)
     }
 
     // ----------------------------------------------------------------

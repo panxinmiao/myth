@@ -172,13 +172,13 @@ impl Renderer {
     ///
     /// * `width` — Render target width in pixels.
     /// * `height` — Render target height in pixels.
-    /// * `target_format` — Desired pixel format. Pass `None` for the default
-    ///   `Rgba8UnormSrgb`. Use `Some(Rgba16Float)` for HDR readback.
+    /// * `format` — Desired pixel format. Pass `None` for the default
+    ///   `Rgba8Unorm` (sRGB). Use `Some(Rgba16Float)` for HDR readback.
     pub async fn init_headless(
         &mut self,
         width: u32,
         height: u32,
-        target_format: Option<wgpu::TextureFormat>,
+        format: Option<myth_resources::PixelFormat>,
     ) -> Result<()> {
         if self.context.is_some() {
             return Ok(());
@@ -186,12 +186,14 @@ impl Renderer {
 
         self.size = (width, height);
 
+        let wgpu_format = format.map(|f| f.to_wgpu(myth_resources::ColorSpace::Srgb));
+
         let wgpu_ctx = WgpuContext::new_headless(
             &self.init_config,
             &self.settings,
             width,
             height,
-            target_format,
+            wgpu_format,
         )
         .await?;
 
@@ -800,13 +802,11 @@ impl Renderer {
         let height = state.wgpu_ctx.target_height;
         let format = state.wgpu_ctx.surface_view_format;
 
-        let bytes_per_pixel = format
-            .block_copy_size(None)
-            .ok_or_else(|| {
-                myth_core::RenderError::ReadbackFailed(format!(
-                    "unsupported readback format: {format:?}"
-                ))
-            })?;
+        let bytes_per_pixel = format.block_copy_size(None).ok_or_else(|| {
+            myth_core::RenderError::ReadbackFailed(format!(
+                "unsupported readback format: {format:?}"
+            ))
+        })?;
 
         let unpadded_bytes_per_row = width * bytes_per_pixel;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
@@ -815,28 +815,26 @@ impl Renderer {
 
         // Re-use the cached buffer when the required capacity matches.
         if state.cached_readback_buffer_size != buffer_size {
-            state.cached_readback_buffer = Some(
-                state
-                    .wgpu_ctx
-                    .device
-                    .create_buffer(&wgpu::BufferDescriptor {
-                        label: Some("Readback Buffer"),
-                        size: buffer_size,
-                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-                        mapped_at_creation: false,
-                    }),
-            );
+            state.cached_readback_buffer = Some(state.wgpu_ctx.device.create_buffer(
+                &wgpu::BufferDescriptor {
+                    label: Some("Readback Buffer"),
+                    size: buffer_size,
+                    usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                    mapped_at_creation: false,
+                },
+            ));
             state.cached_readback_buffer_size = buffer_size;
         }
 
         let readback_buffer = state.cached_readback_buffer.as_ref().unwrap();
 
-        let mut encoder = state
-            .wgpu_ctx
-            .device
-            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-                label: Some("Readback Encoder"),
-            });
+        let mut encoder =
+            state
+                .wgpu_ctx
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Readback Encoder"),
+                });
 
         encoder.copy_texture_to_buffer(
             wgpu::TexelCopyTextureInfo {

@@ -1986,7 +1986,6 @@ dependencies = [
  "console_error_panic_hook",
  "console_log",
  "env_logger",
- "flume",
  "getrandom 0.4.2",
  "glam",
  "log",
@@ -2002,7 +2001,6 @@ dependencies = [
  "wasm-bindgen-futures",
  "web-sys",
  "web-time",
- "wgpu",
  "winit",
 ]
 

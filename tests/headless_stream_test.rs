@@ -1,20 +1,15 @@
-//! Acceptance Test B — `ReadbackStream` (async ring buffer).
+//! Integration tests for `ReadbackStream` (async ring buffer).
 //!
 //! Renders 100 frames in headless mode using a `ReadbackStream` with
 //! `buffer_count = 3`. Frames are submitted non-blocking and collected
 //! via `try_recv`. Any remaining in-flight frames are drained with
 //! `flush` at the end. Verifies exactly 100 frames are received.
-//!
-//! ```bash
-//! cargo run --example headless_stream_test --no-default-features
-//! ```
 
 use myth::prelude::*;
 use myth::render::core::ReadbackStream;
 
-fn main() {
-    env_logger::init();
-
+#[test]
+fn headless_stream_recording() {
     let mut engine = Engine::default();
 
     let width: u32 = 256;
@@ -42,13 +37,9 @@ fn main() {
 
     // ── Create ReadbackStream ────────────────────────────────────────
     let mut stream: ReadbackStream = engine
+        .renderer
         .create_readback_stream(3)
         .expect("create_readback_stream failed");
-
-    // Clone device/queue handles (in wgpu 29 they are internally Arc-backed,
-    // so cloning is cheap and avoids borrow conflicts with engine.update()).
-    let device = engine.device().expect("device").clone();
-    let queue = engine.queue().expect("queue").clone();
 
     let total_frames: u64 = 100;
     let expected_bytes = (width * height * 4) as usize;
@@ -59,10 +50,9 @@ fn main() {
         engine.update(1.0 / 60.0);
         engine.render_active_scene();
 
-        let texture = engine.headless_texture().expect("headless texture");
-        stream
-            .submit(&device, &queue, texture)
-            .expect("submit failed");
+        engine
+            .submit_to_stream(&mut stream)
+            .expect("submit_to_stream failed");
 
         // Drive GPU callbacks.
         engine.poll_device();
@@ -80,25 +70,19 @@ fn main() {
     }
 
     // ── Flush remaining ──────────────────────────────────────────────
-    stream
-        .flush(&device, |frame| {
-            assert_eq!(
-                frame.pixels.len(),
-                expected_bytes,
-                "flush frame {}: unexpected pixel buffer size",
-                frame.frame_index
-            );
-            received += 1;
-        })
-        .expect("flush failed");
+    let frames = engine.flush_stream(&stream).expect("flush_stream failed");
+    for frame in frames {
+        assert_eq!(
+            frame.pixels.len(),
+            expected_bytes,
+            "flush frame {}: unexpected pixel buffer size",
+            frame.frame_index
+        );
+        received += 1;
+    }
 
     assert_eq!(
         received, total_frames,
         "expected {total_frames} frames, got {received}"
-    );
-
-    println!(
-        "Test B passed: {total_frames} async readback frames OK \
-         ({width}×{height}, buffer_count=3, {expected_bytes} bytes/frame)"
     );
 }

@@ -14,7 +14,7 @@ Once your renderer scales beyond a handful of RenderPasses, you quickly find you
 * Memory barriers
 * Layout transitions
 * Transient memory allocations
-* Render order constraints
+* Render order constraints                       
 
 Without a robust architectural foundation, a rendering pipeline can easily collapse into a fragile mess of state management code.
 

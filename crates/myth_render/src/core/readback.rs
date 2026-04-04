@@ -59,7 +59,10 @@ pub enum ReadbackError {
 impl std::fmt::Display for ReadbackError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Self::RingFull(n) => write!(f, "readback ring buffer is full — all {n} slots are in-flight"),
+            Self::RingFull(n) => write!(
+                f,
+                "readback ring buffer is full — all {n} slots are in-flight"
+            ),
             Self::MapFailed(msg) => write!(f, "buffer mapping failed: {msg}"),
             Self::UnsupportedFormat(fmt) => write!(f, "unsupported readback format: {fmt:?}"),
         }
@@ -232,15 +235,17 @@ impl ReadbackStream {
 
         // Request async mapping.
         let tx = self.sender.clone();
-        buffer.slice(..).map_async(wgpu::MapMode::Read, move |result| {
-            // The send can only fail if the receiver has been dropped (stream
-            // destroyed). In that case we silently discard.
-            let _ = tx.send(ReadySlot {
-                slot,
-                frame_index,
-                result,
+        buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                // The send can only fail if the receiver has been dropped (stream
+                // destroyed). In that case we silently discard.
+                let _ = tx.send(ReadySlot {
+                    slot,
+                    frame_index,
+                    result,
+                });
             });
-        });
 
         self.write_idx = (self.write_idx + 1) % self.buffers.len();
         self.next_frame_index += 1;
@@ -273,49 +278,26 @@ impl ReadbackStream {
     ///
     /// This should be called at the end of a recording session to ensure no
     /// frames are lost.
-    pub fn flush(
-        &self,
-        device: &wgpu::Device,
-        mut callback: impl FnMut(ReadbackFrame),
-    ) -> Result<(), ReadbackError> {
-        loop {
-            // First, drain anything already in the channel.
-            match self.receiver.try_recv() {
-                Ok(ready) => {
-                    ready
-                        .result
-                        .map_err(|e| ReadbackError::MapFailed(e.to_string()))?;
-                    callback(self.extract_pixels(&self.buffers[ready.slot], ready.frame_index));
-                    continue;
-                }
-                Err(flume::TryRecvError::Disconnected) => break,
-                Err(flume::TryRecvError::Empty) => {}
-            }
+    pub fn flush(&self, device: &wgpu::Device) -> Result<Vec<ReadbackFrame>, ReadbackError> {
+        let mut frames = Vec::new();
 
-            // Nothing in the channel yet — drive the GPU until a callback fires.
-            // `Poll` returns immediately after processing pending work.
-            match device.poll(wgpu::PollType::Poll) {
-                Ok(status) if status.is_queue_empty() => {
-                    // All GPU work done; drain any final messages.
-                    while let Ok(ready) = self.receiver.try_recv() {
-                        ready
-                            .result
-                            .map_err(|e| ReadbackError::MapFailed(e.to_string()))?;
-                        callback(
-                            self.extract_pixels(&self.buffers[ready.slot], ready.frame_index),
-                        );
-                    }
-                    break;
-                }
-                Ok(_) => {
-                    // There is still in-flight work. Loop back and try again.
-                }
-                Err(e) => {
-                    return Err(ReadbackError::MapFailed(format!("device.poll failed: {e}")));
-                }
-            }
+        // 1. wait for all in-flight frames to become ready.
+        device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .map_err(|e| ReadbackError::MapFailed(format!("device.poll Wait failed: {e}")))?;
+
+        // 2. drain the channel: at this point, the channel is filled with the last few ready signals
+        while let Ok(ready) = self.receiver.try_recv() {
+            // check if the async map result reported an error
+            ready
+                .result
+                .map_err(|e| ReadbackError::MapFailed(e.to_string()))?;
+
+            // extract pixels and push into the collection
+            frames.push(self.extract_pixels(&self.buffers[ready.slot], ready.frame_index));
         }
-        Ok(())
+
+        Ok(frames)
     }
 
     /// Returns the pixel format of the readback stream.

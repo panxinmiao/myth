@@ -1,21 +1,15 @@
-//! Acceptance Test A — synchronous readback.
+//! Integration tests for synchronous headless readback.
 //!
 //! Renders 10 frames in headless mode. Each frame is read back via the
 //! optimised `readback_pixels()` path (staging-buffer cache). Verifies:
 //!
 //! - Every call returns a non-empty pixel buffer of the expected size.
-//! - The cached staging buffer prevents per-frame allocation (the second
-//!   call and beyond reuse the same buffer).
-//!
-//! ```bash
-//! cargo run --example headless_readback_test --no-default-features
-//! ```
+//! - The cached staging buffer prevents per-frame allocation.
 
 use myth::prelude::*;
 
-fn main() {
-    env_logger::init();
-
+#[test]
+fn headless_sync_readback() {
     let mut engine = Engine::default();
 
     let width: u32 = 256;
@@ -59,6 +53,4 @@ fn main() {
         let any_nonzero = pixels.iter().any(|&b| b != 0);
         assert!(any_nonzero, "frame {i}: all pixels are zero");
     }
-
-    println!("Test A passed: 10 synchronous readback frames OK ({width}×{height}, {} bytes each)", expected_bytes);
 }
