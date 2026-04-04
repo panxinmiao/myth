@@ -158,7 +158,11 @@ impl Engine {
         self.renderer.readback_pixels()
     }
 
-    /// Submits the current headless frame to a `ReadbackStream` for asynchronous retrieval.
+    /// Submits the current headless frame to a [`ReadbackStream`] (non-blocking).
+    ///
+    /// Returns [`ReadbackError::RingFull`] if all ring-buffer slots are
+    /// in-flight. The caller may skip the frame or drain with
+    /// [`ReadbackStream::try_recv`] first.
     pub fn submit_to_stream(&self, stream: &mut ReadbackStream) -> myth_core::Result<()> {
         let ctx = self
             .renderer
@@ -171,7 +175,31 @@ impl Engine {
             )
         })?;
 
-        stream.submit(&ctx.device, &ctx.queue, target)?;
+        stream.try_submit(&ctx.device, &ctx.queue, target)?;
+
+        Ok(())
+    }
+
+    /// Submits the current headless frame to a [`ReadbackStream`], blocking
+    /// when the ring buffer is full.
+    ///
+    /// Completed frames are stashed internally and can be retrieved via
+    /// [`ReadbackStream::try_recv`] or [`ReadbackStream::try_recv_into`].
+    /// `max_stash_size` caps the number of unconsumed stashed frames to
+    /// prevent unbounded memory growth.
+    pub fn submit_to_stream_blocking(&self, stream: &mut ReadbackStream) -> myth_core::Result<()> {
+        let ctx = self
+            .renderer
+            .wgpu_ctx()
+            .ok_or_else(|| Error::General("Engine is not initialized yet.".into()))?;
+
+        let target = ctx.headless_texture.as_ref().ok_or_else(|| {
+            Error::General(
+                "Cannot submit to stream: Engine is not running in Headless mode.".into(),
+            )
+        })?;
+
+        stream.submit_blocking(&ctx.device, &ctx.queue, target)?;
 
         Ok(())
     }

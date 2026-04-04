@@ -907,6 +907,7 @@ impl Renderer {
     pub fn create_readback_stream(
         &self,
         buffer_count: usize,
+        max_stash_size: usize,
     ) -> Result<crate::core::ReadbackStream> {
         let state = self
             .context
@@ -927,6 +928,7 @@ impl Renderer {
             height,
             format,
             buffer_count,
+            max_stash_size,
         )?;
 
         Ok(stream)

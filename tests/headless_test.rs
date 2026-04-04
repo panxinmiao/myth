@@ -95,7 +95,7 @@ fn headless_stream_recording() {
     // ── Create ReadbackStream ────────────────────────────────────────
     let mut stream: ReadbackStream = engine
         .renderer
-        .create_readback_stream(3)
+        .create_readback_stream(3, 16)
         .expect("create_readback_stream failed");
 
     let total_frames: u64 = 100;

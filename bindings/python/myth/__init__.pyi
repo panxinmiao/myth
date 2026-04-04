@@ -237,11 +237,12 @@ class Renderer:
 
     # ---- Expert Readback API ----
 
-    def create_readback_stream(self, buffer_count: int = 3) -> ReadbackStream:
+    def create_readback_stream(self, buffer_count: int = 3, max_stash_size: int = 64) -> ReadbackStream:
         """Create a :class:`ReadbackStream` for non-blocking readback.
 
         Args:
             buffer_count: Number of ring-buffer slots (default 3).
+            max_stash_size: Maximum number of stashed frames before raising an error (default 64).
         """
         ...
 
@@ -255,7 +256,7 @@ class Renderer:
 
     # ---- Simple Recording API ----
 
-    def start_recording(self, buffer_count: int = 3) -> None:
+    def start_recording(self, buffer_count: int = 3, max_stash_size: int = 64) -> None:
         """Begin a recording session with an internal ring-buffer stream.
 
         Enables :meth:`render_and_record` / :meth:`try_pull_frame` /
@@ -263,6 +264,7 @@ class Renderer:
 
         Args:
             buffer_count: Number of ring-buffer slots (default 3).
+            max_stash_size: Maximum number of stashed frames before raising an error (default 64).
 
         Raises:
             RuntimeError: If a recording session is already active.
@@ -316,23 +318,39 @@ class Renderer:
 # ============================================================================
 
 class ReadbackStream:
-    """High-throughput, non-blocking GPU→CPU readback stream.
+    """High-throughput GPU→CPU readback stream.
 
-    Created via :meth:`Renderer.create_readback_stream`. Use this for
-    fine-grained control over readback timing. For a simpler API, see
-    :meth:`Renderer.start_recording`.
+    Created via :meth:`Renderer.create_readback_stream`. Use
+    :meth:`try_submit` for real-time streaming (frame drops OK) or
+    :meth:`submit_blocking` for offline recording (zero frame loss).
 
-    Example::
+    Example (real-time)::
 
         stream = renderer.create_readback_stream(buffer_count=3)
+        buf = bytearray(stream.frame_byte_size)
         for _ in range(100):
             renderer.update()
             renderer.render()
-            stream.submit(renderer)
+            stream.try_submit(renderer)
             renderer.poll_device()
-            frame = stream.try_recv()
-            if frame is not None:
-                process(frame["pixels"])
+            idx = stream.try_recv_into(buf)
+            if idx is not None:
+                process(idx, buf)
+        for frame in stream.flush(renderer):
+            process(frame["pixels"])
+
+    Example (offline — zero frame loss)::
+
+        stream = renderer.create_readback_stream(buffer_count=3)
+        buf = bytearray(stream.frame_byte_size)
+        for _ in range(100):
+            renderer.update()
+            renderer.render()
+            stream.submit_blocking(renderer)
+            renderer.poll_device()
+            idx = stream.try_recv_into(buf)
+            if idx is not None:
+                process(idx, buf)
         for frame in stream.flush(renderer):
             process(frame["pixels"])
     """
@@ -352,7 +370,15 @@ class ReadbackStream:
         """Render target dimensions as ``(width, height)``."""
         ...
 
-    def submit(self, renderer: Renderer) -> None:
+    @property
+    def frame_byte_size(self) -> int:
+        """Expected byte size of one tightly-packed frame.
+
+        Use this to pre-allocate a ``bytearray`` for :meth:`try_recv_into`.
+        """
+        ...
+
+    def try_submit(self, renderer: Renderer) -> None:
         """Submit a non-blocking copy from the headless texture.
 
         Args:
@@ -360,6 +386,23 @@ class ReadbackStream:
 
         Raises:
             RuntimeError: If the ring buffer is full.
+        """
+        ...
+
+    def submit_blocking(
+        self, renderer: Renderer, max_stash_size: int = 64
+    ) -> None:
+        """Submit a copy, blocking when the ring buffer is full.
+
+        The GIL is released during the blocking wait so other threads
+        can proceed. Completed frames are stashed internally.
+
+        Args:
+            renderer: The :class:`Renderer` that owns the headless texture.
+            max_stash_size: Maximum stashed frames before error (default 64).
+
+        Raises:
+            RuntimeError: If the stash exceeds *max_stash_size*.
         """
         ...
 
@@ -372,8 +415,24 @@ class ReadbackStream:
         """
         ...
 
+    def try_recv_into(self, buffer: bytearray) -> Optional[int]:
+        """Zero-allocation receive into a pre-allocated ``bytearray``.
+
+        The buffer is automatically resized to :attr:`frame_byte_size`
+        on the first successful call.
+
+        Args:
+            buffer: A writable ``bytearray``.
+
+        Returns:
+            The zero-based frame index, or ``None`` if no frame is ready.
+        """
+        ...
+
     def flush(self, renderer: Renderer) -> list[dict]:
         """Block until all in-flight frames are returned.
+
+        The GIL is released during the blocking GPU poll.
 
         Args:
             renderer: The :class:`Renderer` that owns the GPU device.

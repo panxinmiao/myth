@@ -581,13 +581,14 @@ impl PyMythRenderer {
     ///
     /// Returns:
     ///     A :class:`ReadbackStream` instance.
-    #[pyo3(signature = (buffer_count=3))]
+    #[pyo3(signature = (buffer_count=3, max_stash_size=64))]
     fn create_readback_stream(
         &self,
         buffer_count: usize,
+        max_stash_size: usize,
     ) -> PyResult<crate::readback::PyReadbackStream> {
         let engine = self.engine_ref()?;
-        let stream = engine.renderer.create_readback_stream(buffer_count).map_err(|e| {
+        let stream = engine.renderer.create_readback_stream(buffer_count, max_stash_size).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "failed to create readback stream: {e}"
             ))
@@ -622,15 +623,15 @@ impl PyMythRenderer {
     ///
     /// Raises:
     ///     RuntimeError: If a recording session is already active.
-    #[pyo3(signature = (buffer_count=3))]
-    fn start_recording(&mut self, buffer_count: usize) -> PyResult<()> {
+    #[pyo3(signature = (buffer_count=3, max_stash_size=64))]
+    fn start_recording(&mut self, buffer_count: usize, max_stash_size: usize) -> PyResult<()> {
         if self.active_stream.is_some() {
             return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                 "recording session already active — call flush_recording() first",
             ));
         }
         let engine = self.engine_ref()?;
-        let stream = engine.renderer.create_readback_stream(buffer_count).map_err(|e| {
+        let stream = engine.renderer.create_readback_stream(buffer_count, max_stash_size).map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
                 "failed to create readback stream: {e}"
             ))
@@ -682,7 +683,7 @@ impl PyMythRenderer {
         self.active_stream
             .as_mut()
             .unwrap()
-            .submit(device, queue, texture)
+            .submit_blocking(device, queue, texture)
             .map_err(|e| {
                 PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("submit failed: {e}"))
             })?;
