@@ -500,6 +500,110 @@ impl PyMythRenderer {
     }
 
     // ----------------------------------------------------------------
+    // Headless / Readback
+    // ----------------------------------------------------------------
+
+    /// Initialize the renderer in headless (offscreen) mode.
+    ///
+    /// No window or surface is created. An offscreen render target of the
+    /// specified dimensions is allocated, suitable for server-side rendering
+    /// and GPU readback.
+    ///
+    /// Args:
+    ///     width: Render target width in pixels.
+    ///     height: Render target height in pixels.
+    ///     format: Pixel format string (``"rgba8"`` or ``"rgba16float"``).
+    ///         Defaults to ``"rgba8"``.
+    #[pyo3(signature = (width, height, format=None))]
+    fn init_headless(
+        &mut self,
+        width: u32,
+        height: u32,
+        format: Option<&str>,
+    ) -> PyResult<()> {
+        if self.engine.is_some() {
+            return Err(PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
+                "Renderer already initialized",
+            ));
+        }
+
+        let target_format = match format {
+            Some("rgba16float" | "rgba16" | "hdr") => {
+                Some(myth_engine::renderer::HDR_TEXTURE_FORMAT)
+            }
+            Some("rgba8") | None => None,
+            Some(other) => {
+                return Err(PyErr::new::<pyo3::exceptions::PyValueError, _>(format!(
+                    "unsupported format: {other} (use 'rgba8' or 'rgba16float')"
+                )));
+            }
+        };
+
+        let settings = build_settings(&self.render_path, self.vsync);
+        let mut engine = Engine::new(RendererInitConfig::default(), settings);
+        pollster::block_on(engine.init_headless(width, height, target_format)).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "Headless initialization failed: {e}"
+            ))
+        })?;
+
+        self.engine = Some(Box::new(engine));
+        set_engine_ptr(self.engine.as_mut().unwrap());
+
+        let now = std::time::Instant::now();
+        self.start_time = now;
+        self.last_frame_time = now;
+
+        Ok(())
+    }
+
+    /// Read back the current render target as raw bytes.
+    ///
+    /// Returns:
+    ///     ``bytes``: Tightly-packed pixel data (RGBA8 = 4 bytes/px,
+    ///     RGBA16Float = 8 bytes/px). Row order is top-to-bottom.
+    fn readback_pixels<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyBytes>> {
+        let engine = self.engine_mut()?;
+        let pixels = engine.readback_pixels().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("readback failed: {e}"))
+        })?;
+        Ok(pyo3::types::PyBytes::new(py, &pixels))
+    }
+
+    /// Create a :class:`ReadbackStream` for non-blocking, high-throughput
+    /// GPU→CPU readback.
+    ///
+    /// Args:
+    ///     buffer_count: Number of ring-buffer slots (default 3).
+    ///
+    /// Returns:
+    ///     A :class:`ReadbackStream` instance.
+    #[pyo3(signature = (buffer_count=3))]
+    fn create_readback_stream(
+        &self,
+        buffer_count: usize,
+    ) -> PyResult<crate::readback::PyReadbackStream> {
+        let engine = self.engine_ref()?;
+        let stream = engine.create_readback_stream(buffer_count).map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!(
+                "failed to create readback stream: {e}"
+            ))
+        })?;
+        Ok(crate::readback::PyReadbackStream::new(stream))
+    }
+
+    /// Drive pending GPU callbacks without blocking.
+    ///
+    /// Call this once per frame in a readback-stream loop so that
+    /// ``map_async`` callbacks fire and frames become available via
+    /// :meth:`ReadbackStream.try_recv`.
+    fn poll_device(&self) -> PyResult<()> {
+        let engine = self.engine_ref()?;
+        engine.poll_device();
+        Ok(())
+    }
+
+    // ----------------------------------------------------------------
     // Timing
     // ----------------------------------------------------------------
 
@@ -591,6 +695,11 @@ impl PyMythRenderer {
                 "Renderer not initialized — call init_with_handle() first",
             )
         })
+    }
+
+    /// Public accessor for sibling modules (e.g. `readback`).
+    pub(crate) fn engine_ref_pub(&self) -> PyResult<&Engine> {
+        self.engine_ref()
     }
 }
 

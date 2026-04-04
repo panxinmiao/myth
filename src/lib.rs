@@ -125,6 +125,7 @@ pub mod render {
         pub use myth_render::core::ResourceManager;
         pub use myth_render::core::WgpuContext;
         pub use myth_render::core::{BindingResource, Bindings, ResourceBuilder};
+        pub use myth_render::core::{ReadbackError, ReadbackFrame, ReadbackStream};
     }
 }
 

@@ -18,7 +18,7 @@ fn main() {
     // Initialise GPU in headless mode — no window, no surface.
     let width: u32 = 800;
     let height: u32 = 600;
-    pollster::block_on(engine.init_headless(width, height)).expect("headless init failed");
+    pollster::block_on(engine.init_headless(width, height, None)).expect("headless init failed");
 
     // ── Scene setup ──────────────────────────────────────────────────
     let scene = engine.scene_manager.create_active();

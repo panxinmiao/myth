@@ -1,0 +1,66 @@
+"""
+Myth Engine — Headless ReadbackStream Test (Async Ring Buffer)
+===============================================================
+
+Acceptance Test B: Renders 100 frames using a ``ReadbackStream`` with
+``buffer_count=3``. Frames are submitted non-blocking and collected via
+``try_recv()``. Remaining in-flight frames are drained with ``flush()``.
+Asserts exactly 100 frames are received.
+
+Usage:
+    maturin develop --release
+    python examples/headless_stream_test.py
+"""
+
+import myth
+
+renderer = myth.Renderer(render_path="basic")
+renderer.init_headless(256, 256)
+
+# Minimal scene
+scene = renderer.create_scene()
+cube = scene.add_mesh(myth.BoxGeometry(1, 1, 1), myth.UnlitMaterial(color=[1.0, 0.4, 0.1]))
+cam = scene.add_perspective_camera(fov=45, near=0.1)
+cam.set_position(0, 2, 5)
+cam.look_at([0, 0, 0])
+scene.set_active_camera(cam)
+scene.add_directional_light(color=[1, 1, 1], intensity=3)
+
+TOTAL_FRAMES = 100
+EXPECTED_BYTES = 256 * 256 * 4  # RGBA8
+
+stream = renderer.create_readback_stream(buffer_count=3)
+
+received = 0
+
+for i in range(TOTAL_FRAMES):
+    renderer.update(1.0 / 60.0)
+    renderer.render()
+
+    stream.submit(renderer)
+    renderer.poll_device()
+
+    # Opportunistically pull ready frames.
+    while True:
+        frame = stream.try_recv()
+        if frame is None:
+            break
+        assert len(frame["pixels"]) == EXPECTED_BYTES, (
+            f"frame {frame['frame_index']}: unexpected size {len(frame['pixels'])}"
+        )
+        received += 1
+
+# Drain remaining in-flight frames.
+remaining = stream.flush(renderer)
+for frame in remaining:
+    assert len(frame["pixels"]) == EXPECTED_BYTES
+    received += 1
+
+assert received == TOTAL_FRAMES, f"expected {TOTAL_FRAMES} frames, got {received}"
+
+print(
+    f"Test B passed: {TOTAL_FRAMES} async readback frames OK "
+    f"(256×256, buffer_count=3, {EXPECTED_BYTES} bytes/frame)"
+)
+
+renderer.dispose()

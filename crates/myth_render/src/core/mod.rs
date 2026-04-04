@@ -5,6 +5,7 @@
 //! - [`WgpuContext`]: Core GPU context (device, queue, surface, config)
 //! - [`ResourceManager`]: GPU resource lifecycle management
 //! - [`Bindings`]: Shader resource binding trait
+//! - [`ReadbackStream`]: High-throughput async readback pipeline
 //!
 //! [`ResourceBuilder`](myth_resources::ResourceBuilder) and
 //! [`BindingResource`](myth_resources::BindingResource) are defined in
@@ -13,11 +14,13 @@
 pub mod binding;
 pub mod context;
 pub mod gpu;
+pub mod readback;
 pub mod view;
 
 pub use binding::{Bindings, GlobalBindGroupCache};
 pub use context::WgpuContext;
 pub use gpu::{BindGroupContext, ResourceManager};
+pub use readback::{ReadbackError, ReadbackFrame, ReadbackStream};
 pub use view::{RenderView, ViewTarget};
 
 // Re-export core resource types from myth_resources.

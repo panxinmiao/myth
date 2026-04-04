@@ -179,13 +179,18 @@ impl WgpuContext {
     /// with `RENDER_ATTACHMENT | COPY_SRC` usage, enabling both rendering and
     /// GPU-to-CPU readback.
     ///
-    /// The default target format is `Rgba8UnormSrgb`, which provides broad
-    /// compatibility and straightforward CPU readback.
+    /// # Arguments
+    ///
+    /// * `target_format` — Desired render target format. Pass `None` to use
+    ///   the default `Rgba8UnormSrgb`, which provides broad compatibility and
+    ///   straightforward CPU readback. Use `Rgba16Float` for HDR workflows or
+    ///   `Rgba32Float` for maximum precision.
     pub async fn new_headless(
         init_config: &RendererInitConfig,
         settings: &RendererSettings,
         width: u32,
         height: u32,
+        target_format: Option<wgpu::TextureFormat>,
     ) -> Result<Self> {
         let instance_desc = match init_config.backends {
             Some(backends) => wgpu::InstanceDescriptor {
@@ -222,7 +227,7 @@ impl WgpuContext {
                 Error::Render(myth_core::RenderError::RequestDeviceFailed(e.to_string()))
             })?;
 
-        let view_format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let view_format = target_format.unwrap_or(wgpu::TextureFormat::Rgba8UnormSrgb);
 
         let headless_texture = Self::create_headless_texture(&device, width, height, view_format);
 

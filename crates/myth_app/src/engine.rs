@@ -124,8 +124,10 @@ impl Engine {
     ///
     /// # Arguments
     ///
-    /// * `width` - Render target width in pixels
-    /// * `height` - Render target height in pixels
+    /// * `width` — Render target width in pixels.
+    /// * `height` — Render target height in pixels.
+    /// * `target_format` — Desired pixel format. Pass `None` for the default
+    ///   `Rgba8UnormSrgb`. Use `Some(Rgba16Float)` for HDR readback.
     ///
     /// # Errors
     ///
@@ -134,22 +136,63 @@ impl Engine {
         &mut self,
         width: u32,
         height: u32,
+        target_format: Option<wgpu::TextureFormat>,
     ) -> myth_core::Result<()> {
-        self.renderer.init_headless(width, height).await?;
+        self.renderer
+            .init_headless(width, height, target_format)
+            .await?;
 
         Ok(())
     }
 
-    /// Reads back the current headless render target as raw RGBA8 pixel data.
+    /// Reads back the current headless render target as raw pixel data.
     ///
-    /// Returns a tightly-packed `Vec<u8>` of length `width * height * 4`.
-    /// Row ordering is top-to-bottom.
+    /// The returned `Vec<u8>` contains tightly-packed pixel data whose byte
+    /// count per pixel matches the headless texture format. A staging buffer
+    /// is cached internally to avoid per-frame allocation.
     ///
     /// # Errors
     ///
     /// Returns an error if the renderer is not initialised or not in headless mode.
-    pub fn readback_pixels(&self) -> myth_core::Result<Vec<u8>> {
+    pub fn readback_pixels(&mut self) -> myth_core::Result<Vec<u8>> {
         self.renderer.readback_pixels()
+    }
+
+    /// Creates a [`ReadbackStream`](myth_render::core::ReadbackStream)
+    /// backed by the headless render target.
+    ///
+    /// See [`Renderer::create_readback_stream`] for details.
+    pub fn create_readback_stream(
+        &self,
+        buffer_count: usize,
+    ) -> myth_core::Result<myth_render::core::ReadbackStream> {
+        self.renderer.create_readback_stream(buffer_count)
+    }
+
+    /// Drives pending GPU callbacks without blocking.
+    ///
+    /// Call this once per frame in a readback-stream loop so that
+    /// `map_async` callbacks fire and frames become available.
+    pub fn poll_device(&self) {
+        self.renderer.poll_device();
+    }
+
+    /// Returns a reference to the headless render target texture, if present.
+    #[must_use]
+    pub fn headless_texture(&self) -> Option<&wgpu::Texture> {
+        self.renderer.headless_texture()
+    }
+
+    /// Returns a reference to the GPU device, if the renderer is initialised.
+    #[must_use]
+    pub fn device(&self) -> Option<&wgpu::Device> {
+        self.renderer.device()
+    }
+
+    /// Returns a reference to the GPU queue, if the renderer is initialised.
+    #[must_use]
+    pub fn queue(&self) -> Option<&wgpu::Queue> {
+        self.renderer.queue()
     }
 
     /// Returns the total elapsed time in seconds since the engine started.

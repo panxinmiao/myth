@@ -95,6 +95,12 @@ struct RendererState {
     // Debug view (compile-time gated)
     #[cfg(feature = "debug_view")]
     pub(crate) debug_view_pass: DebugViewFeature,
+
+    /// Cached staging buffer for synchronous `readback_pixels()`.
+    /// Re-used across calls when the required size has not changed.
+    cached_readback_buffer: Option<wgpu::Buffer>,
+    /// Size (in bytes) of the cached readback buffer.
+    cached_readback_buffer_size: u64,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -161,15 +167,33 @@ impl Renderer {
     /// Creates an offscreen render target of the specified dimensions. No
     /// window surface is created, making this suitable for server-side
     /// rendering, automated testing, and GPU readback workflows.
-    pub async fn init_headless(&mut self, width: u32, height: u32) -> Result<()> {
+    ///
+    /// # Arguments
+    ///
+    /// * `width` — Render target width in pixels.
+    /// * `height` — Render target height in pixels.
+    /// * `target_format` — Desired pixel format. Pass `None` for the default
+    ///   `Rgba8UnormSrgb`. Use `Some(Rgba16Float)` for HDR readback.
+    pub async fn init_headless(
+        &mut self,
+        width: u32,
+        height: u32,
+        target_format: Option<wgpu::TextureFormat>,
+    ) -> Result<()> {
         if self.context.is_some() {
             return Ok(());
         }
 
         self.size = (width, height);
 
-        let wgpu_ctx =
-            WgpuContext::new_headless(&self.init_config, &self.settings, width, height).await?;
+        let wgpu_ctx = WgpuContext::new_headless(
+            &self.init_config,
+            &self.settings,
+            width,
+            height,
+            target_format,
+        )
+        .await?;
 
         self.assemble_state(wgpu_ctx);
         log::info!("Renderer initialized (headless {}×{})", width, height);
@@ -226,6 +250,9 @@ impl Renderer {
 
             #[cfg(feature = "debug_view")]
             debug_view_pass: DebugViewFeature::new(),
+
+            cached_readback_buffer: None,
+            cached_readback_buffer_size: 0,
         });
     }
 
@@ -739,10 +766,14 @@ impl Renderer {
             .is_some_and(|s| s.wgpu_ctx.is_headless())
     }
 
-    /// Reads back the current headless render target contents as raw RGBA pixels.
+    /// Reads back the current headless render target as raw pixel data.
     ///
-    /// The returned `Vec<u8>` contains tightly-packed RGBA8 data with length
-    /// `width * height * 4`. Row ordering is top-to-bottom.
+    /// The returned `Vec<u8>` contains tightly-packed pixel data whose per-pixel
+    /// byte count matches the headless texture format (e.g. 4 bytes for RGBA8,
+    /// 8 bytes for RGBA16Float). Row ordering is top-to-bottom.
+    ///
+    /// A staging buffer is cached internally and re-used across calls as long
+    /// as the required size has not changed, eliminating per-frame allocation.
     ///
     /// This method submits a GPU copy command and blocks the calling thread
     /// until the transfer completes.
@@ -753,10 +784,10 @@ impl Renderer {
     /// - The renderer has not been initialised
     /// - No headless render target exists (windowed mode)
     /// - The GPU buffer mapping fails
-    pub fn readback_pixels(&self) -> Result<Vec<u8>> {
+    pub fn readback_pixels(&mut self) -> Result<Vec<u8>> {
         let state = self
             .context
-            .as_ref()
+            .as_mut()
             .ok_or(myth_core::RenderError::NotInitialized)?;
 
         let texture = state
@@ -767,18 +798,38 @@ impl Renderer {
 
         let width = state.wgpu_ctx.target_width;
         let height = state.wgpu_ctx.target_height;
-        let bytes_per_pixel: u32 = 4;
+        let format = state.wgpu_ctx.surface_view_format;
+
+        let bytes_per_pixel = format
+            .block_copy_size(None)
+            .ok_or_else(|| {
+                myth_core::RenderError::ReadbackFailed(format!(
+                    "unsupported readback format: {format:?}"
+                ))
+            })?;
+
         let unpadded_bytes_per_row = width * bytes_per_pixel;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
         let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
         let buffer_size = u64::from(padded_bytes_per_row) * u64::from(height);
 
-        let readback_buffer = state.wgpu_ctx.device.create_buffer(&wgpu::BufferDescriptor {
-            label: Some("Readback Buffer"),
-            size: buffer_size,
-            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
-            mapped_at_creation: false,
-        });
+        // Re-use the cached buffer when the required capacity matches.
+        if state.cached_readback_buffer_size != buffer_size {
+            state.cached_readback_buffer = Some(
+                state
+                    .wgpu_ctx
+                    .device
+                    .create_buffer(&wgpu::BufferDescriptor {
+                        label: Some("Readback Buffer"),
+                        size: buffer_size,
+                        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+                        mapped_at_creation: false,
+                    }),
+            );
+            state.cached_readback_buffer_size = buffer_size;
+        }
+
+        let readback_buffer = state.cached_readback_buffer.as_ref().unwrap();
 
         let mut encoder = state
             .wgpu_ctx
@@ -795,7 +846,7 @@ impl Renderer {
                 aspect: wgpu::TextureAspect::All,
             },
             wgpu::TexelCopyBufferInfo {
-                buffer: &readback_buffer,
+                buffer: readback_buffer,
                 layout: wgpu::TexelCopyBufferLayout {
                     offset: 0,
                     bytes_per_row: Some(padded_bytes_per_row),
@@ -817,7 +868,6 @@ impl Renderer {
         // Block until the GPU finishes the copy and the buffer is mappable.
         let buffer_slice = readback_buffer.slice(..);
 
-        // Request mapping; the callback signals completion via a channel.
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         buffer_slice.map_async(wgpu::MapMode::Read, move |result| {
             tx.send(result).ok();
@@ -834,8 +884,7 @@ impl Renderer {
 
         // Strip per-row padding and produce a tightly-packed pixel buffer.
         let mapped = buffer_slice.get_mapped_range();
-        let mut pixels =
-            Vec::with_capacity((width * height * bytes_per_pixel) as usize);
+        let mut pixels = Vec::with_capacity((width * height * bytes_per_pixel) as usize);
         for row in 0..height {
             let start = (row * padded_bytes_per_row) as usize;
             let end = start + unpadded_bytes_per_row as usize;
@@ -845,5 +894,62 @@ impl Renderer {
         readback_buffer.unmap();
 
         Ok(pixels)
+    }
+
+    /// Creates a [`ReadbackStream`] backed by the headless render target.
+    ///
+    /// The stream pre-allocates `buffer_count` staging buffers that rotate in
+    /// a ring, enabling fully non-blocking GPU→CPU readback suitable for
+    /// video recording and AI training-data pipelines.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the renderer is not initialised or not in headless
+    /// mode, or if the texture format does not support readback.
+    pub fn create_readback_stream(
+        &self,
+        buffer_count: usize,
+    ) -> Result<crate::core::ReadbackStream> {
+        let state = self
+            .context
+            .as_ref()
+            .ok_or(myth_core::RenderError::NotInitialized)?;
+
+        if state.wgpu_ctx.headless_texture.is_none() {
+            return Err(myth_core::RenderError::NoHeadlessTarget.into());
+        }
+
+        let width = state.wgpu_ctx.target_width;
+        let height = state.wgpu_ctx.target_height;
+        let format = state.wgpu_ctx.surface_view_format;
+
+        let stream = crate::core::ReadbackStream::new(
+            &state.wgpu_ctx.device,
+            width,
+            height,
+            format,
+            buffer_count,
+        )?;
+
+        Ok(stream)
+    }
+
+    /// Drives pending GPU callbacks without blocking.
+    ///
+    /// Call this once per frame in a readback-stream loop so that `map_async`
+    /// callbacks fire and frames become available via
+    /// [`ReadbackStream::try_recv`].
+    pub fn poll_device(&self) {
+        if let Some(state) = &self.context {
+            let _ = state.wgpu_ctx.device.poll(wgpu::PollType::Poll);
+        }
+    }
+
+    /// Returns a reference to the headless render target texture, if present.
+    #[must_use]
+    pub fn headless_texture(&self) -> Option<&wgpu::Texture> {
+        self.context
+            .as_ref()
+            .and_then(|s| s.wgpu_ctx.headless_texture.as_ref())
     }
 }

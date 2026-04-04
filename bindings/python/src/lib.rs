@@ -19,6 +19,7 @@ mod geometry;
 mod input;
 mod light;
 mod material;
+mod readback;
 mod renderer;
 mod scene;
 mod texture;
@@ -224,6 +225,9 @@ fn myth_binding(m: &Bound<'_, PyModule>) -> PyResult<()> {
 
     // Enums
     m.add_class::<renderer::PyRenderPath>()?;
+
+    // Readback
+    m.add_class::<readback::PyReadbackStream>()?;
 
     Ok(())
 }

@@ -19,11 +19,13 @@ myth_scene     = { workspace = true }
 myth_assets    = { workspace = true }
 myth_render    = { workspace = true }
 
+wgpu = { workspace = true }
 glam = { workspace = true }
 log = { workspace = true }
 raw-window-handle = { workspace = true }
 pollster = { workspace = true }
 env_logger = { workspace = true }
+flume = { workspace = true }
 
 # Optional
 winit = { workspace = true, optional = true }
