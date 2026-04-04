@@ -701,8 +701,8 @@ impl PyMythRenderer {
     ///
     /// Raises:
     ///     RuntimeError: If no recording session is active.
-    fn try_pull_frame<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, pyo3::types::PyDict>>> {
-        let stream = self.active_stream.as_ref().ok_or_else(|| {
+    fn try_pull_frame<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, pyo3::types::PyDict>>> {
+        let stream = self.active_stream.as_mut().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                 "no active recording — call start_recording() first",
             )
@@ -727,7 +727,7 @@ impl PyMythRenderer {
     ///     ``list[dict]``: All remaining frames. Each dict has ``"pixels"``
     ///     (``bytes``) and ``"frame_index"`` (``int``).
     fn flush_recording<'py>(&mut self, py: Python<'py>) -> PyResult<Bound<'py, pyo3::types::PyList>> {
-        let stream = self.active_stream.as_ref().ok_or_else(|| {
+        let mut stream = self.active_stream.take().ok_or_else(|| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(
                 "no active recording — call start_recording() first",
             )
@@ -752,7 +752,6 @@ impl PyMythRenderer {
             result.append(dict)?;
         }
 
-        self.active_stream = None;
         Ok(result)
     }
 

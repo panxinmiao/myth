@@ -70,7 +70,7 @@ fn headless_stream_recording() {
     }
 
     // ── Flush remaining ──────────────────────────────────────────────
-    let frames = engine.flush_stream(&stream).expect("flush_stream failed");
+    let frames = engine.flush_stream(&mut stream).expect("flush_stream failed");
     for frame in frames {
         assert_eq!(
             frame.pixels.len(),

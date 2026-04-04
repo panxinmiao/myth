@@ -83,7 +83,7 @@ impl PyReadbackStream {
 
     /// Return the next ready frame as ``bytes``, or ``None`` if no frame
     /// is available yet.
-    fn try_recv<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, pyo3::types::PyDict>>> {
+    fn try_recv<'py>(&mut self, py: Python<'py>) -> PyResult<Option<Bound<'py, pyo3::types::PyDict>>> {
         match self.stream.try_recv() {
             Ok(Some(frame)) => {
                 let dict = pyo3::types::PyDict::new(py);
@@ -104,7 +104,7 @@ impl PyReadbackStream {
     /// Returns:
     ///     ``list[dict]``: Each dict has ``"pixels"`` (``bytes``) and
     ///     ``"frame_index"`` (``int``).
-    fn flush<'py>(&self, py: Python<'py>, renderer: &crate::renderer::PyMythRenderer) -> PyResult<Bound<'py, pyo3::types::PyList>> {
+    fn flush<'py>(&mut self, py: Python<'py>, renderer: &crate::renderer::PyMythRenderer) -> PyResult<Bound<'py, pyo3::types::PyList>> {
         let engine = renderer.engine_ref_pub()?;
         let device = engine
             .renderer

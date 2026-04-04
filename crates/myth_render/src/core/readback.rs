@@ -95,6 +95,8 @@ pub struct ReadbackStream {
     /// Monotonically increasing frame counter (incremented on each `submit`).
     next_frame_index: u64,
 
+    in_flight_frames: usize,
+
     // Bounded channel: sender lives in `map_async` callbacks, receiver is polled
     // by the CPU via `try_recv()` / `flush()`.
     sender: flume::Sender<ReadySlot>,
@@ -107,6 +109,7 @@ pub struct ReadbackStream {
     bytes_per_pixel: u32,
     unpadded_bytes_per_row: u32,
     padded_bytes_per_row: u32,
+    
 }
 
 /// Payload sent through the channel when a buffer becomes mappable.
@@ -168,6 +171,7 @@ impl ReadbackStream {
             buffers,
             write_idx: 0,
             next_frame_index: 0,
+            in_flight_frames: 0,
             sender,
             receiver,
             width,
@@ -197,7 +201,7 @@ impl ReadbackStream {
         texture: &wgpu::Texture,
     ) -> Result<(), ReadbackError> {
         // Back-pressure: if the channel is full, all slots are in-flight.
-        if self.sender.is_full() {
+        if self.in_flight_frames >= self.buffers.len() {
             return Err(ReadbackError::RingFull(self.buffers.len()));
         }
 
@@ -249,6 +253,7 @@ impl ReadbackStream {
 
         self.write_idx = (self.write_idx + 1) % self.buffers.len();
         self.next_frame_index += 1;
+        self.in_flight_frames += 1;
 
         Ok(())
     }
@@ -258,7 +263,7 @@ impl ReadbackStream {
     ///
     /// After reading the pixel data, the underlying buffer is unmapped so that
     /// the GPU can reuse it.
-    pub fn try_recv(&self) -> Result<Option<ReadbackFrame>, ReadbackError> {
+    pub fn try_recv(&mut self) -> Result<Option<ReadbackFrame>, ReadbackError> {
         match self.receiver.try_recv() {
             Ok(ready) => {
                 ready
@@ -266,6 +271,7 @@ impl ReadbackStream {
                     .map_err(|e| ReadbackError::MapFailed(e.to_string()))?;
 
                 let frame = self.extract_pixels(&self.buffers[ready.slot], ready.frame_index);
+                self.in_flight_frames -= 1;
                 Ok(Some(frame))
             }
             Err(flume::TryRecvError::Empty) => Ok(None),
@@ -273,12 +279,19 @@ impl ReadbackStream {
         }
     }
 
+    // /// Blocks until the next frame is ready, then returns it.
+    // pub fn wait_and_pump(&mut self, device: &wgpu::Device) -> Result<(), ReadbackError> {
+    //     device.poll(wgpu::PollType::wait_indefinitely())
+    //         .map_err(|e| ReadbackError::MapFailed(format!("device.poll Wait failed: {e}")))?;
+    //     self.pump()
+    // }
+
     /// Blocks until all in-flight frames have been read back, invoking
     /// `callback` for each one in submission order.
     ///
     /// This should be called at the end of a recording session to ensure no
     /// frames are lost.
-    pub fn flush(&self, device: &wgpu::Device) -> Result<Vec<ReadbackFrame>, ReadbackError> {
+    pub fn flush(&mut self, device: &wgpu::Device) -> Result<Vec<ReadbackFrame>, ReadbackError> {
         let mut frames = Vec::new();
 
         // 1. wait for all in-flight frames to become ready.
@@ -295,6 +308,8 @@ impl ReadbackStream {
 
             // extract pixels and push into the collection
             frames.push(self.extract_pixels(&self.buffers[ready.slot], ready.frame_index));
+
+            self.in_flight_frames -= 1;
         }
 
         Ok(frames)
