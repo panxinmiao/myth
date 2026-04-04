@@ -300,7 +300,7 @@ impl<'a> FrameComposer<'a> {
         } else {
             log::error!("No render target available (neither surface nor headless texture)");
             return;
-        };
+        }
 
         // ━━━ 2. Build Unified RDG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 

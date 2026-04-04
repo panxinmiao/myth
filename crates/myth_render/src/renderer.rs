@@ -198,7 +198,7 @@ impl Renderer {
         .await?;
 
         self.assemble_state(wgpu_ctx);
-        log::info!("Renderer initialized (headless {}×{})", width, height);
+        log::info!("Renderer initialized (headless {width}×{height})");
         Ok(())
     }
 
@@ -810,7 +810,7 @@ impl Renderer {
 
         let unpadded_bytes_per_row = width * bytes_per_pixel;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
+        let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
         let buffer_size = u64::from(padded_bytes_per_row) * u64::from(height);
 
         // Re-use the cached buffer when the required capacity matches.

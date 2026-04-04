@@ -770,10 +770,10 @@ impl<'a> RenderGraph<'a> {
                 current_names
             );
 
-            println!("🌈 RDG Topology Changed! New Execution Order: {current_names:?}");
+            log::info!("🌈 RDG Topology Changed! New Execution Order: {current_names:?}");
 
             let dump = self.dump_mermaid();
-            println!("\n🌈 RDG Topology Mermaid Dump:\n{dump}");
+            log::info!("\n🌈 RDG Topology Mermaid Dump:\n{dump}");
             self.storage.prev_execution_names = current_names;
         }
     }

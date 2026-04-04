@@ -177,7 +177,10 @@ impl Engine {
     }
 
     /// Flushes a `ReadbackStream`, blocking until all in-flight frames are returned.
-    pub fn flush_stream(&self, stream: &mut ReadbackStream) -> myth_core::Result<Vec<ReadbackFrame>> {
+    pub fn flush_stream(
+        &self,
+        stream: &mut ReadbackStream,
+    ) -> myth_core::Result<Vec<ReadbackFrame>> {
         let ctx = self
             .renderer
             .wgpu_ctx()

@@ -39,6 +39,8 @@
 //! stream.flush(&device, |frame| { process(frame); })?;
 //! ```
 
+use std::collections::VecDeque;
+
 use myth_core::RenderError;
 
 /// Error returned by [`ReadbackStream`] operations.
@@ -54,6 +56,9 @@ pub enum ReadbackError {
 
     /// The texture format does not support readback.
     UnsupportedFormat(wgpu::TextureFormat),
+
+    /// The internal stashed frame buffer is full.
+    StashFull(usize),
 }
 
 impl std::fmt::Display for ReadbackError {
@@ -65,6 +70,10 @@ impl std::fmt::Display for ReadbackError {
             ),
             Self::MapFailed(msg) => write!(f, "buffer mapping failed: {msg}"),
             Self::UnsupportedFormat(fmt) => write!(f, "unsupported readback format: {fmt:?}"),
+            Self::StashFull(limit) => write!(
+                f,
+                "readback stash exceeded the limit of {limit} frames. You are submitting frames too fast without calling `try_recv()` to consume them, which risks OOM."
+            ),
         }
     }
 }
@@ -102,6 +111,8 @@ pub struct ReadbackStream {
     sender: flume::Sender<ReadySlot>,
     receiver: flume::Receiver<ReadySlot>,
 
+    stashed_frames: VecDeque<ReadbackFrame>,
+
     // Layout constants (computed once at construction).
     width: u32,
     height: u32,
@@ -109,7 +120,6 @@ pub struct ReadbackStream {
     bytes_per_pixel: u32,
     unpadded_bytes_per_row: u32,
     padded_bytes_per_row: u32,
-    
 }
 
 /// Payload sent through the channel when a buffer becomes mappable.
@@ -151,7 +161,7 @@ impl ReadbackStream {
 
         let unpadded_bytes_per_row = width * bytes_per_pixel;
         let align = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
-        let padded_bytes_per_row = (unpadded_bytes_per_row + align - 1) / align * align;
+        let padded_bytes_per_row = unpadded_bytes_per_row.div_ceil(align) * align;
         let buffer_size = u64::from(padded_bytes_per_row) * u64::from(height);
 
         let buffers: Vec<wgpu::Buffer> = (0..buffer_count)
@@ -174,6 +184,7 @@ impl ReadbackStream {
             in_flight_frames: 0,
             sender,
             receiver,
+            stashed_frames: VecDeque::new(),
             width,
             height,
             format,
@@ -200,9 +211,28 @@ impl ReadbackStream {
         queue: &wgpu::Queue,
         texture: &wgpu::Texture,
     ) -> Result<(), ReadbackError> {
+        const MAX_STASH_SIZE: usize = 16;
+        if self.stashed_frames.len() >= MAX_STASH_SIZE {
+            return Err(ReadbackError::StashFull(MAX_STASH_SIZE));
+        }
+
         // Back-pressure: if the channel is full, all slots are in-flight.
         if self.in_flight_frames >= self.buffers.len() {
-            return Err(ReadbackError::RingFull(self.buffers.len()));
+            device
+                .poll(wgpu::PollType::wait_indefinitely())
+                .map_err(|e| ReadbackError::MapFailed(format!("Wait failed: {e}")))?;
+
+            if let Ok(ready) = self.receiver.try_recv() {
+                ready
+                    .result
+                    .map_err(|e| ReadbackError::MapFailed(e.to_string()))?;
+                let frame = self.extract_pixels(&self.buffers[ready.slot], ready.frame_index);
+                self.in_flight_frames -= 1;
+                self.stashed_frames.push_back(frame);
+            } else {
+                // Should never happen: if the channel is full, at least one slot must be ready. Defensive check in case of bugs.
+                return Err(ReadbackError::RingFull(self.buffers.len()));
+            }
         }
 
         let slot = self.write_idx;
@@ -264,6 +294,11 @@ impl ReadbackStream {
     /// After reading the pixel data, the underlying buffer is unmapped so that
     /// the GPU can reuse it.
     pub fn try_recv(&mut self) -> Result<Option<ReadbackFrame>, ReadbackError> {
+        // First check the stashed frames from previous back-pressure handling.
+        if let Some(frame) = self.stashed_frames.pop_front() {
+            return Ok(Some(frame));
+        }
+
         match self.receiver.try_recv() {
             Ok(ready) => {
                 ready
@@ -274,8 +309,7 @@ impl ReadbackStream {
                 self.in_flight_frames -= 1;
                 Ok(Some(frame))
             }
-            Err(flume::TryRecvError::Empty) => Ok(None),
-            Err(flume::TryRecvError::Disconnected) => Ok(None),
+            Err(flume::TryRecvError::Empty | flume::TryRecvError::Disconnected) => Ok(None),
         }
     }
 
@@ -293,6 +327,11 @@ impl ReadbackStream {
     /// frames are lost.
     pub fn flush(&mut self, device: &wgpu::Device) -> Result<Vec<ReadbackFrame>, ReadbackError> {
         let mut frames = Vec::new();
+
+        // First, drain any stashed frames from back-pressure handling.
+        while let Some(frame) = self.stashed_frames.pop_front() {
+            frames.push(frame);
+        }
 
         // 1. wait for all in-flight frames to become ready.
         device
@@ -317,30 +356,35 @@ impl ReadbackStream {
 
     /// Returns the pixel format of the readback stream.
     #[inline]
+    #[must_use]
     pub fn format(&self) -> wgpu::TextureFormat {
         self.format
     }
 
     /// Returns the render target dimensions.
     #[inline]
+    #[must_use]
     pub fn dimensions(&self) -> (u32, u32) {
         (self.width, self.height)
     }
 
     /// Returns the number of bytes per pixel for the current format.
     #[inline]
+    #[must_use]
     pub fn bytes_per_pixel(&self) -> u32 {
         self.bytes_per_pixel
     }
 
     /// Returns the number of ring-buffer slots.
     #[inline]
+    #[must_use]
     pub fn buffer_count(&self) -> usize {
         self.buffers.len()
     }
 
     /// Returns the total number of frames submitted so far.
     #[inline]
+    #[must_use]
     pub fn frames_submitted(&self) -> u64 {
         self.next_frame_index
     }
