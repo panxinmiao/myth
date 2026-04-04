@@ -54,6 +54,9 @@ Native (Windows, macOS, Linux, iOS, Android) + WebGPU/WASM + Python bindings.
         * **Aggressive Memory Aliasing**: Reuses transient high-resolution physical textures perfectly across distinct logical passes.
         * **Dead Pass Elimination**: Automatically culls rendering workloads.
         * **Zero-Allocation Per-Frame Rebuild**: Evaluates and compiles the entire DAG every frame.
+    * **Headless & Offscreen Rendering** 
+        * **Server-Side Ready**: Fully functional without a window surface. Perfect for CI/CD, cloud rendering, and offline video generation.
+        * **High-Throughput Readback Stream**: Built-in non-blocking, asynchronous GPU-to-CPU pipeline with a ring-buffer architecture and automatic back-pressure. 
 
 * **Advanced Rendering & Lighting**
     * **Physically Based Materials**: Robust PBR pipeline with Clearcoat, Iridescence, Transmission, Sheen, Anisotropy.
