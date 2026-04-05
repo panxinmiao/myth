@@ -269,7 +269,7 @@ impl AssetServer {
         handle
     }
 
-    /// Loads a raw [`Image`] from a `.cube` LUT file, returning a handle
+    /// Loads a raw [`Image`] from a `.cube` or `.bin` file, returning a handle
     /// immediately.  Deduplicated by URI.
     fn load_lut_image(&self, uri: &str, filename: &str) -> ImageHandle {
         let uuid = Self::generate_asset_uuid("Image", uri, "LUT");
@@ -372,7 +372,7 @@ impl AssetServer {
         tex_handle
     }
 
-    /// Loads a 3D LUT from a `.cube` file, returning a handle immediately.
+    /// Loads a 3D LUT from a `.cube` or `.bin` file, returning a handle immediately.
     ///
     /// Deduplicated by URI.
     #[allow(clippy::needless_pass_by_value)]
@@ -962,7 +962,22 @@ impl AssetServer {
     async fn load_lut_image_task(uri: &str, filename: &str) -> Result<Image> {
         let reader = AssetReaderVariant::new(&uri)?;
         let bytes = reader.read_bytes(filename).await?;
-        Self::decode_cube_async(bytes).await
+
+        if std::path::Path::new(filename)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("bin"))
+        {
+            Self::decode_cube_bin_cpu(&bytes)
+        } else if std::path::Path::new(filename)
+            .extension()
+            .is_some_and(|ext| ext.eq_ignore_ascii_case("cube"))
+        {
+            Self::decode_cube_cpu(&bytes)
+        } else {
+            Err(Error::Asset(AssetError::Format(format!(
+                "Unsupported LUT file extension: {filename}",
+            ))))
+        }
     }
 
     /// Background task: read + decode 6 cube-map face images and combine
@@ -1163,6 +1178,37 @@ impl AssetServer {
         {
             Self::decode_cube_cpu(&bytes)
         }
+    }
+
+    /// CPU .cube binary file decoding logic (directly uses `PixelFormat::Rgba16Float` 3D image).
+    pub(crate) fn decode_cube_bin_cpu(bytes: &[u8]) -> Result<Image> {
+        // PixelFormat::Rgba16Float 占用 8 bytes (4 channels * 2 bytes)
+        let bytes_per_pixel = 8;
+
+        if bytes.is_empty() || !bytes.len().is_multiple_of(bytes_per_pixel) {
+            return Err(Error::Asset(AssetError::Format(
+                "Invalid baked LUT binary: Byte length is not aligned to Rgba16Float.".to_string(),
+            )));
+        }
+
+        let pixel_count = bytes.len() / bytes_per_pixel;
+        let size = (pixel_count as f64).cbrt().round() as u32;
+
+        if (size * size * size) as usize != pixel_count {
+            return Err(Error::Asset(AssetError::Format(format!(
+                "Baked LUT data length ({}) does not form a perfect cube.",
+                bytes.len()
+            ))));
+        }
+
+        Ok(Image::new(
+            size,
+            size,
+            size,
+            ImageDimension::D3,
+            PixelFormat::Rgba16Float,
+            Some(bytes.to_vec()),
+        ))
     }
 
     /// CPU .cube file decoding logic (parses text, converts to `PixelFormat::Rgba16Float` 3D image).

@@ -195,6 +195,7 @@ slotmap = { workspace = true }
 uuid = { workspace = true }
 bytemuck = { workspace = true }
 parking_lot = { workspace = true }
+half = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }
@@ -237,3 +238,7 @@ http = ["myth_assets/http"]
 
 [lints]
 workspace = true
+
+[[example]]
+name = "lut_baker"
+path = "examples/tools/lut_baker.rs"

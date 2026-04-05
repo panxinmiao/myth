@@ -214,7 +214,7 @@ fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
             ssss_enabled: true,
 
             hdr_filename: Some("blouberg_sunrise_2_1k.hdr"),
-            lut_filename: Some("Rec709 Fujifilm 3513DI D65.cube"),
+            lut_filename: Some("Rec709 Fujifilm 3513DI D65.bin"),
             hdr_handle: None,
             lut_handle: None,
         },
@@ -269,7 +269,7 @@ fn build_presets() -> HashMap<VisualPreset, RenderPreset> {
             ssss_enabled: true,
 
             hdr_filename: Some("blouberg_sunrise_2_1k.hdr"),
-            lut_filename: Some("Rec709 Kodak 2383 D65.cube"),
+            lut_filename: Some("Rec709 Kodak 2383 D65.bin"),
             hdr_handle: None,
             lut_handle: None,
         },

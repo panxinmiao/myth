@@ -12,6 +12,7 @@
 ### Added
 - Added point light shadows, completing the final piece of the basic lighting system.
 - Added a “debug_view” feature, enabling real-time inspection of material base textures (albedo, metalness, roughness) as well as in-frame buffers (depth, normal, SSAO, velocity, and more).
+- `AssetServer::load_lut_texture` now supports both `.cube` and `.bin` LUT files, with automatic format detection based on file extension.
 
 ### Changes
 - Updated egui to 0.34.1.

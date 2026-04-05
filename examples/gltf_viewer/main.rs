@@ -1859,12 +1859,12 @@ impl GltfViewer {
                                             scene.tone_mapping.set_lut_texture(None);
                                         }
                                     } else {
-                                        if ui.button("📂 Load LUT (.cube)...").clicked() {
+                                        if ui.button("📂 Load LUT...").clicked() {
                                             let tx = self.event_tx.clone();
                                             let assets_clone = assets.clone();
                                             execute_future(async move {
                                                 let file = rfd::AsyncFileDialog::new()
-                                                    .add_filter("LUT Files", &["cube"])
+                                                    .add_filter("LUT Files", &["cube", "bin"])
                                                     .pick_file()
                                                     .await;
 
