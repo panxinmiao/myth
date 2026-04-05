@@ -20,7 +20,7 @@ members = [
 # =============================================================================
 
 [workspace.package]
-version = "0.1.1"
+version = "0.2.0"
 rust-version = "1.92"
 edition = "2024"
 authors = ["Pan Xinmiao <pan_xinmiao@163.com>"]
@@ -36,14 +36,14 @@ categories = ["game-development", "graphics", "rendering::engine"]
 
 [workspace.dependencies]
 # Internal crates
-myth_core      = { path = "crates/myth_core", version = "0.1.1" }
-myth_macros    = { path = "crates/myth_macros", version = "0.1.1" }
-myth_resources = { path = "crates/myth_resources", version = "0.1.1" }
-myth_animation = { path = "crates/myth_animation", version = "0.1.1" }
-myth_scene     = { path = "crates/myth_scene", version = "0.1.1" }
-myth_assets    = { path = "crates/myth_assets", version = "0.1.1" }
-myth_render    = { path = "crates/myth_render", version = "0.1.1" }
-myth_app       = { path = "crates/myth_app", version = "0.1.1" }
+myth_core      = { path = "crates/myth_core", version = "0.2.0" }
+myth_macros    = { path = "crates/myth_macros", version = "0.2.0" }
+myth_resources = { path = "crates/myth_resources", version = "0.2.0" }
+myth_animation = { path = "crates/myth_animation", version = "0.2.0" }
+myth_scene     = { path = "crates/myth_scene", version = "0.2.0" }
+myth_assets    = { path = "crates/myth_assets", version = "0.2.0" }
+myth_render    = { path = "crates/myth_render", version = "0.2.0" }
+myth_app       = { path = "crates/myth_app", version = "0.2.0" }
 
 # Graphics and Math
 wgpu = { version = "29.0.1", features = ["wgsl"] }
@@ -94,27 +94,27 @@ bitflags = "2.11.0"
 flume = "0.12.0"
 
 # Templating
-minijinja = { version = "2.18.0", features = ["loader", "custom_syntax"] }
+minijinja = { version = "2.19.0", features = ["loader", "custom_syntax"] }
 rust-embed = "8.11.0"
 
 # WASM
-wasm-bindgen = "0.2.115"
-wasm-bindgen-futures = "0.4.65"
-web-sys = "0.3.92"
-js-sys = "0.3.92"
+wasm-bindgen = "0.2.117"
+wasm-bindgen-futures = "0.4.67"
+web-sys = "0.3.94"
+js-sys = "0.3.94"
 web-time = "1.1"
 console_error_panic_hook = "0.1.7"
 console_log = "1.0"
 getrandom = { version = "0.4.2", features = ["wasm_js"] }
 
 # Async runtime
-tokio = { version = "1.50.0", default-features = false }
+tokio = { version = "1.51.0", default-features = false }
 
 # Dev / Test / Bench
 anyhow = "1.0.102"
 rfd = "0.17.2"
 criterion = { version = "0.8.2", default-features = false, features = ["html_reports"] }
-wasm-bindgen-test = "0.3.65"
+wasm-bindgen-test = "0.3.67"
 
 # Egui (dev-dependencies)
 egui = "0.34.1"

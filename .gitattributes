@@ -10,3 +10,4 @@ examples/**/assets/** linguist-vendored=true
 *.cube linguist-generated=true
 *.hdr linguist-generated=true
 *.ktx2 linguist-generated=true
+*.cube linguist-generated=true

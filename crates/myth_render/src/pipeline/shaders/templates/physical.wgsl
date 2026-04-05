@@ -96,20 +96,15 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         surface_normal = surface_normal * face_direction;
     $$ endif
 
-    $$ if COLOR_MODE == 'normal'
-        var diffuse_color = vec4<f32>((normalize(surface_normal) * 0.5 + 0.5), 1.0);
-    $$ else
-        var diffuse_color = u_material.color;
+    var diffuse_color = u_material.color;
 
-        $$ if HAS_COLOR
-            diffuse_color *= varyings.color;
-        $$ endif
+    $$ if HAS_COLOR
+        diffuse_color *= varyings.color;
+    $$ endif
 
-        $$ if HAS_MAP
-            let tex_color = textureSample(t_map, s_map, varyings.map_uv);
-            diffuse_color *= tex_color;
-        $$ endif
-
+    $$ if HAS_MAP
+        let tex_color = textureSample(t_map, s_map, varyings.map_uv);
+        diffuse_color *= tex_color;
     $$ endif
 
     // Apply opacity
