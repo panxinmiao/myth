@@ -1,14 +1,13 @@
 use myth::{prelude::*, resources::{ImageDimension, PixelFormat}};
 
-/// Hello Triangle Example
+/// Flappy Bird Example
 ///
-struct HelloTriangle;
+struct FlappyBird;
 
-const IMAGE_DATA: &[u8] = include_bytes!("../assets/Flappy Bird Assets/Player/StyleBird1/Bird1-1.png");
+const BIRD_IMAGE_DATA: &[u8] = include_bytes!("../assets/Flappy Bird Assets/Player/StyleBird1/Bird1-1.png");
 
-impl AppHandler for HelloTriangle {
-    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
-        // 1. Create quad geometry
+fn create_bird(engine: &mut Engine) -> Mesh {
+    // 1. Create quad geometry
         let mut geometry = Geometry::new();
         geometry.set_attribute(
             "position",
@@ -28,9 +27,9 @@ impl AppHandler for HelloTriangle {
             myth::Attribute::new_planar(
                 &[
                     [0.0f32, 1.0], // top-left
-                    [1.0,    1.0], // top-right
+                    [0.25,    1.0], // top-right
                     [0.0,    0.0], // bottom-left
-                    [1.0,    0.0], // bottom-right
+                    [0.25,    0.0], // bottom-right
                 ],
                 myth::VertexFormat::Float32x2,
             ),
@@ -39,7 +38,7 @@ impl AppHandler for HelloTriangle {
         geometry.set_indices(&[0, 2, 1, 1, 2, 3]);
 
         // 2. Create unlit material with a solid color texture
-        let image = image::load_from_memory(IMAGE_DATA).expect("failed to decode PNG");
+        let image = image::load_from_memory(BIRD_IMAGE_DATA).expect("failed to decode PNG");
          // flip image since its upside down by default
         let image = image.flipv();
         let decoded = image.to_rgba8();
@@ -61,16 +60,20 @@ impl AppHandler for HelloTriangle {
         let geo_handle = engine.assets.geometries.add(geometry);
         let mat_handle = engine.assets.materials.add(unlit_mat);
 
+        Mesh::new(geo_handle, mat_handle)
+}
+
+impl AppHandler for FlappyBird {
+    fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
+
+        let bird_mesh = create_bird(engine);
         engine.scene_manager.create_active();
-        let scene = engine.scene_manager.active_scene_mut().unwrap();
-        // 4. Create Mesh and add to scene
-        let mesh = Mesh::new(geo_handle, mat_handle);
-        let mesh2 = mesh.clone();
-        scene.add_mesh(mesh);
-        let mesh2_node = scene.add_mesh(mesh2);
-        if let Some(node) = scene.get_node_mut(mesh2_node) {
+        let scene = engine.scene_manager.active_scene_mut().unwrap();        
+
+        let bird_node = scene.add_mesh(bird_mesh);
+        if let Some(node) = scene.get_node_mut(bird_node) {
             node.transform.position = Vec3::new(1.0, 1.0, 0.0);
-            node.transform.scale = Vec3::new(1.0, h as f32 / w as f32, 1.0);
+            node.transform.scale = Vec3::new(1.0, 1.0, 1.0);
         }
         // 5. Set up camera
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
@@ -89,5 +92,5 @@ impl AppHandler for HelloTriangle {
 
 fn main() -> myth::Result<()> {
     env_logger::init();
-    App::new().run::<HelloTriangle>()
+    App::new().run::<FlappyBird>()
 }
