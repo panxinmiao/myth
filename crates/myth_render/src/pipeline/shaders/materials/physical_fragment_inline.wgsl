@@ -1,6 +1,6 @@
 // ── Physical Material Assembly (Inline Include) ─────────────────────────
 //
-// Reads material uniforms and texture maps to populate a PhysicalMaterial
+// Reads material uniforms and texture maps to populate a SurfaceContext
 // struct for the PBR lighting pipeline.
 //
 // Required local variables:
@@ -18,7 +18,7 @@
 // Outputs (declared in this file):
 //   - metalness_factor: f32
 //   - roughness_factor: f32
-//   - material: PhysicalMaterial
+//   - material: SurfaceContext
 
 var metalness_factor: f32 = u_material.metalness;
 $$ if HAS_METALNESS_MAP is defined
@@ -31,7 +31,7 @@ $$ if HAS_ROUGHNESS_MAP is defined
 $$ endif
 
 
-var material: PhysicalMaterial;
+var material: SurfaceContext;
 
 material.diffuse_color = diffuse_color.rgb * ( 1.0 - metalness_factor );
 

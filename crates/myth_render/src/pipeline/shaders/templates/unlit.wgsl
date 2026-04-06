@@ -1,7 +1,7 @@
 {{ vertex_input_code }} 
 {{ binding_code }}      
-{$ include 'core/vertex_output_def' $}
-{$ include 'core/fragment_output_def' $}
+{$ include 'core/vertex_output' $}
+{$ include 'core/fragment_output' $}
 
 {$ include 'geometry/morph_pars' $}
 {$ include 'materials/alpha_test' $}
@@ -45,7 +45,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.normal = normalize(u_model.normal_matrix * local_normal);
     $$ endif
 
-    {$ include 'geometry/uv_vertex_inline' $}
+    {$ include 'geometry/uv_vertex_mixin' $}
     return out;
 }
 

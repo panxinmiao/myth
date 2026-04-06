@@ -28,16 +28,16 @@ fn BRDF_BlinnPhong(
     return F * ( G * D );
 }
 
-struct BlinnPhongMaterial {
+struct SurfaceContext {
     diffuse_color: vec3<f32>,
     specular_shininess: f32,
     specular_color: vec3<f32>,
     specular_strength: f32,
 };
 
-/// Constructs a BlinnPhongMaterial from explicit parameters.
-fn build_phong_material(diffuse: vec3<f32>, specular: vec3<f32>, shininess: f32, strength: f32) -> BlinnPhongMaterial {
-    var m: BlinnPhongMaterial;
+/// Constructs a SurfaceContext from explicit parameters.
+fn build_phong_material(diffuse: vec3<f32>, specular: vec3<f32>, shininess: f32, strength: f32) -> SurfaceContext {
+    var m: SurfaceContext;
     m.diffuse_color = diffuse;
     m.specular_color = specular;
     m.specular_shininess = shininess;
@@ -48,7 +48,7 @@ fn build_phong_material(diffuse: vec3<f32>, specular: vec3<f32>, shininess: f32,
 fn RE_Direct(
     direct_light: IncidentLight,
     geometry: GeometricContext,
-    material: BlinnPhongMaterial,
+    material: SurfaceContext,
     reflected_light: ptr<function, ReflectedLight>,
 ) {
     let dot_nl = saturate(dot(geometry.normal, direct_light.direction));
@@ -62,7 +62,7 @@ fn RE_Direct(
 fn RE_IndirectDiffuse(
     irradiance: vec3<f32>,
     geometry: GeometricContext,
-    material: BlinnPhongMaterial,
+    material: SurfaceContext,
     reflected_light: ptr<function, ReflectedLight>,
 ) {
     let indirect_diffuse = irradiance * BRDF_Lambert( material.diffuse_color );

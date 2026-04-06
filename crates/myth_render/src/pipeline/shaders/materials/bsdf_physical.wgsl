@@ -6,7 +6,7 @@
 //
 // Depends on: core/common.wgsl (RECIPROCAL_PI, EPSILON, pow2, F_Schlick, ...)
 
-struct PhysicalMaterial {
+struct SurfaceContext {
     diffuse_color: vec3<f32>,
     roughness: f32,
     specular_color: vec3<f32>,
@@ -112,7 +112,7 @@ fn BRDF_GGX_CC(light_dir: vec3<f32>, view_dir: vec3<f32>, normal: vec3<f32>, f0:
 }
 $$ endif
 
-fn BRDF_GGX(light_dir: vec3<f32>, view_dir: vec3<f32>, normal: vec3<f32>, f0: vec3<f32>, f90: f32, roughness: f32, material: PhysicalMaterial) -> vec3<f32> {
+fn BRDF_GGX(light_dir: vec3<f32>, view_dir: vec3<f32>, normal: vec3<f32>, f0: vec3<f32>, f90: f32, roughness: f32, material: SurfaceContext) -> vec3<f32> {
     let alpha = pow( roughness, 2.0 );
     let half_dir = normalize( light_dir + view_dir );
     let dot_nl = saturate( dot( normal, light_dir ) );
@@ -249,7 +249,7 @@ $$ endif
 }
 
 fn RE_IndirectSpecular(radiance: vec3<f32>, irradiance: vec3<f32>, clearcoat_radiance: vec3<f32>,
-        geometry: GeometricContext, material: PhysicalMaterial, reflected_light: ptr<function, ReflectedLight>){
+        geometry: GeometricContext, material: SurfaceContext, reflected_light: ptr<function, ReflectedLight>){
 
     $$ if USE_CLEARCOAT is defined
         clearcoat_specular_indirect += clearcoat_radiance * EnvironmentBRDF( geometry.clearcoat_normal, geometry.view_dir, material.clearcoat_f0, material.clearcoat_f90, material.clearcoat_roughness );
@@ -275,14 +275,14 @@ fn RE_IndirectSpecular(radiance: vec3<f32>, irradiance: vec3<f32>, clearcoat_rad
 
 $$ endif
 
-fn RE_IndirectDiffuse(irradiance: vec3<f32>, geometry: GeometricContext, material: PhysicalMaterial, reflected_light: ptr<function, ReflectedLight>) {
+fn RE_IndirectDiffuse(irradiance: vec3<f32>, geometry: GeometricContext, material: SurfaceContext, reflected_light: ptr<function, ReflectedLight>) {
     (*reflected_light).indirect_diffuse += irradiance * BRDF_Lambert( material.diffuse_color );
 }
 
 fn RE_Direct(
     direct_light: IncidentLight,
     geometry: GeometricContext,
-    material: PhysicalMaterial,
+    material: SurfaceContext,
     reflected_light: ptr<function, ReflectedLight>
 ) {
     let dot_nl = saturate( dot( geometry.normal, direct_light.direction ));

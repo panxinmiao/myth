@@ -92,7 +92,9 @@ fn fs_main(varyings: VertexOutput) -> FragmentOutput {
     opacity *= tex_color.a;
     $$ endif
 
-    {$ include 'materials/alpha_test' $}
+    $$ if ALPHA_MODE == "MASK" or ALPHA_MODE == "BLEND_MASK"
+    apply_alpha_test(&opacity, u_material.alpha_test);
+    $$ endif
 
     var out: FragmentOutput;
 

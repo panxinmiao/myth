@@ -1,12 +1,11 @@
 {{ vertex_input_code }} 
 {{ binding_code }}
-{$ include 'core/vertex_output_def' $}
-{$ include 'core/fragment_output_def' $}
+{$ include 'core/vertex_output' $}
+{$ include 'core/fragment_output' $}
 
 {$ include 'geometry/morph_pars' $}
 {$ include 'core/common' $}
-{$ include 'lighting/punctual_pars' $}
-{$ include 'lighting/shadow' $}
+{$ include 'lighting/punctual' $}
 {$ include 'materials/bsdf_physical' $}
 
 {$ include 'lighting/iridescence' $}
@@ -80,7 +79,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.v_bitangent = vec3<f32>(v_bitangent);
     $$ endif
 
-    {$ include 'geometry/uv_vertex_inline' $}
+    {$ include 'geometry/uv_vertex_mixin' $}
     return out;
 }
 
@@ -201,8 +200,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         return pack_fragment_output(vec4<f32>(vec3<f32>(metalness_factor), 1.0));
     $$ endif
 
-    {$ include 'lighting/punctual_inline' $}
-
+    evaluate_punctual_lights(geometry, material, &reflected_light);
 
     // Indirect Diffuse Light
     let ambient_color = u_environment.ambient_light.rgb;
