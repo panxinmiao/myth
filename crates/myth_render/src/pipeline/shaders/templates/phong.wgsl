@@ -1,11 +1,11 @@
 {{ vertex_input_code }} 
 {{ binding_code }}
-{$ include 'vertex_output_def' $}
-{$ include 'fragment_output_def' $}
+{$ include 'chunks/vertex_output_def' $}
+{$ include 'chunks/fragment_output_def' $}
 
-{$ include 'morph_pars' $}
-{$ include 'light_common_pars' $}
-{$ include 'light_punctual_pars' $}
+{$ include 'chunks/morph_pars' $}
+{$ include 'chunks/light_common_pars' $}
+{$ include 'chunks/light_punctual_pars' $}
 // ── Screen / Transient BindGroup (Group 3) ──────────────────────────
 @group(3) @binding(1) var s_screen_sampler: sampler;
 @group(3) @binding(2) var t_ssao: texture_2d<f32>;
@@ -13,8 +13,8 @@
 @group(3) @binding(4) var t_shadow_map_cube_array: texture_depth_cube_array;
 @group(3) @binding(5) var s_shadow_map_compare: sampler_comparison;
 
-{$ include 'shadow_pars' $}
-{$ include 'bsdf/phong' $}
+{$ include 'chunks/shadow_pars' $}
+{$ include 'chunks/bsdf/phong' $}
 
 
 @vertex
@@ -28,11 +28,11 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     var object_tangent = vec3<f32>(in.tangent.xyz);
     $$ endif
 
-    {$ include 'morph_vertex' $}
+    {$ include 'chunks/morph_vertex' $}
 
     var local_pos = vec4<f32>(local_position, 1.0);
 
-    {$ include 'skin_vertex' $}
+    {$ include 'chunks/skin_vertex' $}
 
     let world_pos = u_model.world_matrix * local_pos;
 
@@ -61,7 +61,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
         out.v_tangent = vec3<f32>(v_tangent);
         out.v_bitangent = vec3<f32>(v_bitangent);
     $$ endif
-    {$ include 'uv_vertex' $}
+    {$ include 'chunks/uv_vertex' $}
     return out;
 }
 
@@ -91,7 +91,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     diffuse_color.a = diffuse_color.a * u_material.opacity;
 
     // alpha test
-    {$ include 'alpha_test' $}
+    {$ include 'chunks/alpha_test' $}
 
     let view = normalize(u_render_state.camera_position - varyings.world_position);
 
@@ -122,9 +122,9 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     geometry.normal = normal;
     geometry.view_dir = view;
 
-    {$ include 'light_phong_fragment' $}
+    {$ include 'chunks/light_phong_fragment' $}
 
-    {$ include 'light_punctual_fragment' $}
+    {$ include 'chunks/light_punctual_fragment' $}
 
     // Indirect Diffuse Light
     let ambient_color = u_environment.ambient_light.rgb;

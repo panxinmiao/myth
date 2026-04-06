@@ -20,6 +20,7 @@ use crate::graph::core::context::{ExecuteContext, ExtractContext};
 use crate::graph::core::node::PassNode;
 use crate::pipeline::{
     ColorTargetKey, ComputePipelineId, ComputePipelineKey, FullscreenPipelineKey, RenderPipelineId,
+    ShaderCompilationOptions, ShaderSource,
 };
 use myth_resources::texture::TextureSampler;
 use myth_resources::texture::TextureSource;
@@ -75,9 +76,14 @@ impl BrdfLutFeature {
         }
 
         let source = include_str!("../../pipeline/shaders/program/brdf_lut.wgsl");
-        let (module, shader_hash) =
-            ctx.shader_manager
-                .get_or_compile_raw(ctx.device, "BRDF LUT Shader", source);
+        let (module, shader_hash) = ctx.shader_manager.get_or_compile(
+            ctx.device,
+            ShaderSource::Inline {
+                name: "BRDF LUT Shader",
+                source,
+            },
+            &ShaderCompilationOptions::default(),
+        );
 
         let layout = ctx
             .device
@@ -359,9 +365,14 @@ impl IblComputeFeature {
         // --- PMREM compute pipeline ---
         {
             let source = include_str!("../../pipeline/shaders/program/ibl.wgsl");
-            let (module, hash) =
-                ctx.shader_manager
-                    .get_or_compile_raw(device, "IBL Prefilter Shader", source);
+            let (module, hash) = ctx.shader_manager.get_or_compile(
+                device,
+                ShaderSource::Inline {
+                    name: "IBL Prefilter Shader",
+                    source,
+                },
+                &ShaderCompilationOptions::default(),
+            );
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("IBL Pipeline Layout"),
@@ -385,9 +396,14 @@ impl IblComputeFeature {
         // --- Equirectangular → Cube compute pipeline ---
         {
             let source = include_str!("../../pipeline/shaders/program/equirect_to_cube.wgsl");
-            let (module, hash) =
-                ctx.shader_manager
-                    .get_or_compile_raw(device, "Equirect to Cube Shader", source);
+            let (module, hash) = ctx.shader_manager.get_or_compile(
+                device,
+                ShaderSource::Inline {
+                    name: "Equirect to Cube Shader",
+                    source,
+                },
+                &ShaderCompilationOptions::default(),
+            );
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("Equirect Pipeline Layout"),
@@ -408,9 +424,14 @@ impl IblComputeFeature {
         // --- Blit render pipeline ---
         {
             let source = include_str!("../../pipeline/shaders/program/blit.wgsl");
-            let (module, hash) =
-                ctx.shader_manager
-                    .get_or_compile_raw(device, "IBL Blit Shader", source);
+            let (module, hash) = ctx.shader_manager.get_or_compile(
+                device,
+                ShaderSource::Inline {
+                    name: "IBL Blit Shader",
+                    source,
+                },
+                &ShaderCompilationOptions::default(),
+            );
 
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("IBL Blit Pipeline Layout"),

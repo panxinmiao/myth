@@ -1,4 +1,4 @@
-{$ include 'full_screen_vertex.wgsl' $}
+{$ include 'chunks/full_screen_vertex' $}
 
 {{ struct_definitions }}
 {{ binding_code }}

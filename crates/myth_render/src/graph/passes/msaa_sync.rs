@@ -37,7 +37,10 @@ use crate::graph::core::{
     ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureDesc,
     TextureNodeId,
 };
-use crate::pipeline::{ColorTargetKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId};
+use crate::pipeline::{
+    ColorTargetKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
+    ShaderCompilationOptions, ShaderSource,
+};
 use wgpu::CommandEncoder;
 
 /// L1 cache key: pipeline depends on destination MSAA sample count.
@@ -111,9 +114,14 @@ impl MsaaSyncFeature {
         let current_key = msaa_samples;
         if self.l1_cache_key != Some(current_key) {
             let blit_source = include_str!("../../pipeline/shaders/program/blit.wgsl");
-            let (shader_module, shader_hash) =
-                ctx.shader_manager
-                    .get_or_compile_raw(device, "MSAA Sync Blit Shader", blit_source);
+            let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(
+                device,
+                ShaderSource::Inline {
+                    name: "MSAA Sync Blit Shader",
+                    source: blit_source,
+                },
+                &ShaderCompilationOptions::default(),
+            );
 
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("MSAA Sync Pipeline Layout"),

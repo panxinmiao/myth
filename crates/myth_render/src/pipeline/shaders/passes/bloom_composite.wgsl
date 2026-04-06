@@ -4,7 +4,7 @@
 // with the original HDR scene color using linear interpolation.
 // Output replaces the scene color buffer for subsequent passes (e.g., tone mapping).
 
-{$ include 'full_screen_vertex.wgsl' $}
+{$ include 'chunks/full_screen_vertex' $}
 
 {{ struct_definitions }}
 

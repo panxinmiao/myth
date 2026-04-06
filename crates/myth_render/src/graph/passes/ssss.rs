@@ -47,6 +47,7 @@ use crate::graph::core::{
 };
 use crate::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
+    ShaderSource,
 };
 use myth_resources::screen_space::SssProfileData;
 use std::mem::size_of;
@@ -206,12 +207,10 @@ impl SsssFeature {
             // -- Horizontal shader (no defines) -------------------------
             let shader_defines = ShaderCompilationOptions::default();
 
-            let (hor_shader, hor_hash) = ctx.shader_manager.get_or_compile_template(
+            let (hor_shader, hor_hash) = ctx.shader_manager.get_or_compile(
                 device,
-                "passes/ssss",
+                ShaderSource::File("passes/ssss"),
                 &shader_defines,
-                "",
-                "",
             );
 
             let color_target = ColorTargetKey::from(wgpu::ColorTargetState {
@@ -240,12 +239,10 @@ impl SsssFeature {
             let mut vert_defines = ShaderCompilationOptions::default();
             vert_defines.add_define("SSSS_VERTICAL_PASS", "1");
 
-            let (vert_shader, vert_hash) = ctx.shader_manager.get_or_compile_template(
+            let (vert_shader, vert_hash) = ctx.shader_manager.get_or_compile(
                 device,
-                "passes/ssss",
+                ShaderSource::File("passes/ssss"),
                 &vert_defines,
-                "",
-                "",
             );
 
             let vert_key = FullscreenPipelineKey::fullscreen(

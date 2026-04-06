@@ -34,6 +34,7 @@ use crate::graph::frame::{RenderCommand, RenderKey, RenderLists, ShadowRenderCom
 use crate::graph::render_state::RenderState;
 use crate::pipeline::pipeline_key::PipelineFlags;
 use crate::pipeline::shader_gen::ShaderCompilationOptions;
+use crate::pipeline::shader_manager::ShaderSource;
 use crate::pipeline::{
     BlendStateKey, DepthStencilKey, FastPipelineKey, FastShadowPipelineKey, GraphicsPipelineKey,
     PipelineCache, ShaderManager, SimpleGeometryPipelineKey,
@@ -506,12 +507,13 @@ fn prepare_shadow_commands(
                     &item.object_bind_group.binding_wgsl
                 );
 
-                let (shader_module, code_hash) = shader_manager.get_or_compile_template(
+                options.inject_code("vertex_input_code", &gpu_geometry.layout_info.vertex_input_code);
+                options.inject_code("binding_code", binding_code);
+
+                let (shader_module, code_hash) = shader_manager.get_or_compile(
                     &wgpu_ctx.device,
-                    "passes/depth",
+                    ShaderSource::File("passes/depth"),
                     &options,
-                    &gpu_geometry.layout_info.vertex_input_code,
-                    &binding_code,
                 );
 
                 let layout =

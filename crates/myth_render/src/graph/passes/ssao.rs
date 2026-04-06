@@ -36,6 +36,7 @@ use crate::graph::core::{
 };
 use crate::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
+    ShaderSource,
 };
 use myth_resources::buffer::CpuBuffer;
 use myth_resources::ssao::{SsaoUniforms, generate_ssao_noise};
@@ -300,13 +301,12 @@ impl SsaoFeature {
                 "struct_definitions",
                 SsaoUniforms::wgsl_struct_def("SsaoUniforms").as_str(),
             );
+            options.inject_code("binding_code", &gpu_world.binding_wgsl);
 
-            let (module, hash) = ctx.shader_manager.get_or_compile_template(
+            let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                "passes/ssao_raw",
+                ShaderSource::File("passes/ssao_raw"),
                 &options,
-                "",
-                &gpu_world.binding_wgsl,
             );
 
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -336,12 +336,10 @@ impl SsaoFeature {
 
         // ─── Blur Pipeline ─────────────────────────────────────────
         {
-            let (module, hash) = ctx.shader_manager.get_or_compile_template(
+            let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                "passes/ssao_blur",
+                ShaderSource::File("passes/ssao_blur"),
                 &ShaderCompilationOptions::default(),
-                "",
-                "",
             );
 
             let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

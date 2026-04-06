@@ -44,4 +44,4 @@ pub use pipeline_key::{
     GraphicsPipelineKey, MultisampleKey, SimpleGeometryPipelineKey,
 };
 pub use shader_gen::ShaderCompilationOptions;
-pub use shader_manager::ShaderManager;
+pub use shader_manager::{ShaderManager, ShaderSource};

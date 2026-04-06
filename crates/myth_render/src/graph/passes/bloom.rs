@@ -43,6 +43,7 @@ use crate::graph::core::{
 };
 use crate::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
+    ShaderSource,
 };
 use myth_resources::bloom::{CompositeUniforms, UpsampleUniforms};
 use myth_resources::buffer::CpuBuffer;
@@ -333,12 +334,10 @@ impl BloomFeature {
                 immediate_size: 0,
             });
 
-            let (module, hash) = ctx.shader_manager.get_or_compile_template(
+            let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                "passes/bloom_downsample",
+                ShaderSource::File("passes/bloom_downsample"),
                 &options,
-                "",
-                "",
             );
 
             let key = FullscreenPipelineKey::fullscreen(
@@ -370,12 +369,10 @@ impl BloomFeature {
                 immediate_size: 0,
             });
 
-            let (module, hash) = ctx.shader_manager.get_or_compile_template(
+            let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                "passes/bloom_upsample",
+                ShaderSource::File("passes/bloom_upsample"),
                 &options,
-                "",
-                "",
             );
 
             let key = FullscreenPipelineKey::fullscreen(
@@ -407,12 +404,10 @@ impl BloomFeature {
                 immediate_size: 0,
             });
 
-            let (module, hash) = ctx.shader_manager.get_or_compile_template(
+            let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                "passes/bloom_composite",
+                ShaderSource::File("passes/bloom_composite"),
                 &options,
-                "",
-                "",
             );
 
             let key = FullscreenPipelineKey::fullscreen(

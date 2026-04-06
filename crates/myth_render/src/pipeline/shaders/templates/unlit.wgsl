@@ -1,9 +1,9 @@
 {{ vertex_input_code }} 
 {{ binding_code }}      
-{$ include 'vertex_output_def' $}
-{$ include 'fragment_output_def' $}
+{$ include 'chunks/vertex_output_def.wgsl' $}
+{$ include 'chunks/fragment_output_def.wgsl' $}
 
-{$ include 'morph_pars' $}
+{$ include 'chunks/morph_pars.wgsl' $}
 
 
 @vertex
@@ -16,10 +16,10 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     var local_normal = vec3<f32>(in.normal.xyz);
     $$ endif
 
-    {$ include 'morph_vertex' $}
+    {$ include 'chunks/morph_vertex.wgsl' $}
 
     var local_pos = vec4<f32>(local_position, 1.0);
-    {$ include 'skin_vertex' $}
+    {$ include 'chunks/skin_vertex.wgsl' $}
 
     let world_pos = u_model.world_matrix * local_pos;
 
@@ -44,7 +44,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.normal = normalize(u_model.normal_matrix * local_normal);
     $$ endif
 
-    {$ include 'uv_vertex' $}
+    {$ include 'chunks/uv_vertex.wgsl' $}
     return out;
 }
 
@@ -57,7 +57,7 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     diffuse_color = diffuse_color * tex_color;
     {$ endif $}
 
-    {$ include 'alpha_test' $}
+    {$ include 'chunks/alpha_test.wgsl' $}
 
     return pack_fragment_output(diffuse_color);
 }

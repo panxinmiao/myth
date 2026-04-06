@@ -1,6 +1,6 @@
 {{ vertex_input_code }}
 {{ binding_code }}
-{$ include 'morph_pars' $}
+{$ include 'chunks/morph_pars' $}
 
 struct VertexOutput {
     @builtin(position) @invariant position: vec4<f32>,
@@ -30,14 +30,14 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     var local_normal = vec3<f32>(in.normal.xyz);
     $$ endif
 
-    {$ include 'morph_vertex' $}
+    {$ include 'chunks/morph_vertex.wgsl' $}
 
     var local_pos = vec4<f32>(local_position, 1.0);
     $$ if HAS_VELOCITY_TARGET is defined
     var prev_local_pos = vec4<f32>(prev_local_position, 1.0);
     $$ endif
 
-    {$ include 'skin_vertex' $}
+    {$ include 'chunks/skin_vertex.wgsl' $}
 
     let world_pos = u_model.world_matrix * local_pos;
 
@@ -91,7 +91,7 @@ fn fs_main(varyings: VertexOutput) -> FragmentOutput {
     opacity *= tex_color.a;
     $$ endif
 
-    {$ include 'alpha_test' $}
+    {$ include 'chunks/alpha_test.wgsl' $}
 
     var out: FragmentOutput;
 
@@ -130,7 +130,7 @@ fn fs_main(varyings: VertexOutput) -> FragmentOutput {
     opacity *= tex_color.a;
     $$ endif
 
-    {$ include 'alpha_test' $}
+    {$ include 'chunks/alpha_test.wgsl' $}
 
     var out: FragmentOutput;
     let ndc_curr = varyings.curr_unjittered_clip_position.xy / varyings.curr_unjittered_clip_position.w;
@@ -150,7 +150,7 @@ fn fs_main(varyings: VertexOutput) {
     opacity *= tex_color.a;
     $$ endif
 
-    {$ include 'alpha_test' $}
+    {$ include 'chunks/alpha_test.wgsl' $}
 }
 
 $$ endif

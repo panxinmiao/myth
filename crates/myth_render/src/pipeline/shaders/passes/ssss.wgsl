@@ -1,4 +1,4 @@
-{$ include 'full_screen_vertex.wgsl' $}
+{$ include 'chunks/full_screen_vertex' $}
 
 struct SssProfileData {
     scatter_color: vec3<f32>,

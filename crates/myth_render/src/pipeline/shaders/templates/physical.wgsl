@@ -1,18 +1,18 @@
 {{ vertex_input_code }} 
 {{ binding_code }}
-{$ include 'vertex_output_def' $}
-{$ include 'fragment_output_def' $}
+{$ include 'chunks/vertex_output_def' $}
+{$ include 'chunks/fragment_output_def' $}
 
-{$ include 'morph_pars' $}
-{$ include 'light_common_pars' $}
-{$ include 'light_punctual_pars' $}
-{$ include 'shadow_pars' $}
-{$ include 'bsdf/physical' $}
+{$ include 'chunks/morph_pars' $}
+{$ include 'chunks/light_common_pars' $}
+{$ include 'chunks/light_punctual_pars' $}
+{$ include 'chunks/shadow_pars' $}
+{$ include 'chunks/bsdf/physical' $}
 
-{$ include 'iridescence' $}
+{$ include 'chunks/iridescence' $}
 
 $$ if USE_TRANSMISSION is defined
-    {$ include 'transmission' $}
+    {$ include 'chunks/transmission' $}
 $$ endif
 
 // ── Screen / Transient BindGroup (Group 3) ──────────────────────────
@@ -40,11 +40,11 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     var object_tangent = vec3<f32>(in.tangent.xyz);
     $$ endif
 
-    {$ include 'morph_vertex' $}
+    {$ include 'chunks/morph_vertex' $}
 
     var local_pos = vec4<f32>(local_position, 1.0);
 
-    {$ include 'skin_vertex' $}
+    {$ include 'chunks/skin_vertex' $}
 
     let world_pos = u_model.world_matrix * local_pos;
 
@@ -77,7 +77,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.v_bitangent = vec3<f32>(v_bitangent);
     $$ endif
 
-    {$ include 'uv_vertex' $}
+    {$ include 'chunks/uv_vertex' $}
     return out;
 }
 
@@ -111,7 +111,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     var opacity = diffuse_color.a * u_material.opacity;
 
     // alpha test
-    {$ include 'alpha_test' $}
+    {$ include 'chunks/alpha_test' $}
 
     let view = normalize(u_render_state.camera_position - varyings.world_position);  //todo orthographic camera
 
@@ -181,7 +181,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         geometry.clearcoat_normal = clearcoat_normal;
     $$ endif
 
-    {$ include 'light_physical_fragment' $}
+    {$ include 'chunks/light_physical_fragment' $}
 
     // ── Debug View: material attribute short-circuit ──────────────────
     // When a material-override debug mode is active, bypass all lighting
@@ -196,7 +196,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         return pack_fragment_output(vec4<f32>(vec3<f32>(metalness_factor), 1.0));
     $$ endif
 
-    {$ include 'light_punctual_fragment' $}
+    {$ include 'chunks/light_punctual_fragment' $}
 
 
     // Indirect Diffuse Light
@@ -381,7 +381,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     $$ else
         var out_color = out_diffuse + out_specular;
         $$ if not HDR
-            {$ include 'pbr_tone_mapping' $}
+            {$ include 'chunks/pbr_tone_mapping' $}
         $$ endif
         out.color = vec4<f32>(out_color, opacity);
     $$ endif

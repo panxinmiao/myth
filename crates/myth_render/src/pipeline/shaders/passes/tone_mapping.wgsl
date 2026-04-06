@@ -1,6 +1,6 @@
-{$ include 'full_screen_vertex.wgsl' $}
+{$ include 'chunks/full_screen_vertex' $}
 
-{$ include 'tone_mapping_pars' $}
+{$ include 'chunks/tone_mapping_pars' $}
 
 {{ struct_definitions }}
 

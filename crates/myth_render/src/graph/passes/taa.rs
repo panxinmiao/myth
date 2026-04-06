@@ -38,6 +38,7 @@ use crate::graph::core::{
 use crate::graph::passes::utils::CopyTextureNode;
 use crate::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
+    ShaderSource,
 };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -286,12 +287,10 @@ impl TaaFeature {
         if self.pipeline_id.is_none() {
             let options = ShaderCompilationOptions::default();
 
-            let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
+            let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(
                 ctx.device,
-                "passes/taa_resolve",
+                ShaderSource::File("passes/taa_resolve"),
                 &options,
-                "",
-                "",
             );
 
             let color_target = ColorTargetKey::from(wgpu::ColorTargetState {

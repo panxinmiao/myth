@@ -39,6 +39,7 @@ use crate::graph::core::{
 };
 use crate::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
+    ShaderSource,
 };
 use myth_resources::buffer::CpuBuffer;
 
@@ -216,12 +217,10 @@ impl DebugViewFeature {
                 options.add_define("IS_DEPTH", "1");
             }
 
-            let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
+            let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(
                 ctx.device,
-                "passes/debug_view",
+                ShaderSource::File("passes/debug_view"),
                 &options,
-                "",
-                "",
             );
 
             let color_target = ColorTargetKey::from(wgpu::ColorTargetState {

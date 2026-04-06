@@ -30,7 +30,7 @@ use crate::graph::core::{
 };
 use crate::pipeline::{
     ColorTargetKey, DepthStencilKey, FullscreenPipelineKey, MultisampleKey, RenderPipelineId,
-    ShaderCompilationOptions,
+    ShaderCompilationOptions, ShaderSource,
 };
 use myth_resources::buffer::CpuBuffer;
 use myth_resources::shader_defines::ShaderDefines;
@@ -247,18 +247,17 @@ impl SkyboxFeature {
         let mut defines = ShaderDefines::new();
         defines.set(key.variant.shader_define_key(), "1");
 
-        let mut options = ShaderCompilationOptions { defines };
+        let mut options = ShaderCompilationOptions { defines, ..Default::default() };
         options.add_define(
             "struct_definitions",
             SkyboxParamsUniforms::wgsl_struct_def("SkyboxParams").as_str(),
         );
+        options.inject_code("binding_code", &gpu_world.binding_wgsl);
 
-        let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
+        let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(
             ctx.device,
-            "passes/skybox",
+            ShaderSource::File("passes/skybox"),
             &options,
-            "",
-            &gpu_world.binding_wgsl,
         );
 
         let layout = self.layout_for_variant(key.variant);

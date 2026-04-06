@@ -26,6 +26,7 @@ use crate::graph::core::{
 };
 use crate::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
+    ShaderSource,
 };
 use wgpu::CommandEncoder;
 
@@ -136,12 +137,10 @@ impl CasFeature {
         if self.cached_format != Some(output_format) {
             let options = ShaderCompilationOptions::default();
 
-            let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
+            let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(
                 ctx.device,
-                "passes/cas",
+                ShaderSource::File("passes/cas"),
                 &options,
-                "",
-                "",
             );
 
             let color_target = ColorTargetKey::from(wgpu::ColorTargetState {

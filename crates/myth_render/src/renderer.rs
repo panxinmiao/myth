@@ -733,8 +733,8 @@ impl Renderer {
     /// Registers a custom WGSL shader template with the given name.
     ///
     /// The source string is pre-processed by the minijinja template engine at
-    /// compile time, so `{% include "chunks/camera_uniforms" %}` and similar
-    /// directives are fully supported.
+    /// compile time, so `{$ include "chunks/camera_uniforms.wgsl" $}` and
+    /// similar directives are fully supported.
     ///
     /// # Usage
     ///

@@ -3,12 +3,10 @@
 //! Manages WGSL shaders using the minijinja template engine and provides
 //! a centralized `ShaderModule` cache shared by all pipeline-creation paths.
 //!
-//! ## Two compilation modes
-//!
-//! | Method | Use case | Source |
-//! |--------|----------|--------|
-//! | [`ShaderManager::get_or_compile_template`] | Material / post-process shaders | minijinja template |
-//! | [`ShaderManager::get_or_compile_raw`]      | Compute / utility shaders        | raw WGSL string    |
+//! All shaders — whether loaded from built-in template files or provided as
+//! inline WGSL strings — are compiled through the unified
+//! [`ShaderManager::get_or_compile`] method, which accepts a [`ShaderSource`]
+//! discriminant to select the source kind.
 
 use minijinja::value::{Object, Value};
 use minijinja::{Environment, Error, ErrorKind, syntax::SyntaxConfig};
@@ -46,8 +44,6 @@ pub fn get_env() -> &'static Environment<'static> {
         env.set_undefined_behavior(minijinja::UndefinedBehavior::SemiStrict);
 
         env.set_loader(shader_loader);
-
-        env.set_path_join_callback(|name, _parent| format!("chunks/{name}").into());
 
         env.add_function("next_loc", next_location);
 
@@ -137,14 +133,30 @@ impl Object for LocationAllocator {
     }
 }
 
+// ─── ShaderSource ─────────────────────────────────────────────────────────────
+
+/// Identifies the origin of a shader's WGSL source.
+///
+/// * [`File`](Self::File) — a built-in template resolved through the embedded
+///   shader asset loader (e.g. `"templates/physical"` or `"passes/skybox"`).
+/// * [`Inline`](Self::Inline) — a raw WGSL string supplied at call-time, often
+///   via `include_str!()`. If a custom template with the same `name` was
+///   registered, the custom source takes priority.
+pub enum ShaderSource<'a> {
+    /// Load from a built-in template file.
+    File(&'a str),
+    /// Use an inline WGSL source string identified by `name` for labels.
+    Inline { name: &'a str, source: &'a str },
+}
+
 // ─── ShaderManager ────────────────────────────────────────────────────────────
 
 /// Centralized shader module cache.
 ///
 /// Deduplicates compiled `wgpu::ShaderModule`s by hashing the **final** WGSL
-/// source with xxh3-128. Two entry points are provided — one for template-based
-/// shaders (materials, post-processing) and one for raw WGSL strings (compute /
-/// utility).
+/// source with xxh3-128. Shaders are compiled through the single
+/// [`get_or_compile`](Self::get_or_compile) entry point, which accepts a
+/// [`ShaderSource`] to distinguish file-based templates from inline sources.
 ///
 /// Custom shader templates registered via [`register_template`](Self::register_template)
 /// are stored alongside the built-in environment. When a template name is
@@ -180,79 +192,60 @@ impl ShaderManager {
     /// source instead of looking up a built-in template.
     ///
     /// The source string goes through the minijinja template engine, so
-    /// `{% include "chunks/..." %}` directives are fully supported.
+    /// `{$ include "chunks/..." $}` directives are fully supported.
     pub fn register_template(&mut self, name: impl Into<String>, source: impl Into<String>) {
         let name = name.into();
         log::info!("Registered custom shader template: {name}");
         self.custom_templates.insert(name, source.into());
     }
 
-    /// Compile a shader from a **minijinja template** (or return a cached module).
+    /// Compile a shader (or return a cached module).
     ///
-    /// If a custom template was registered under `template_name`, its source is
-    /// rendered via [`ShaderGenerator::generate_custom_shader`]; otherwise the
-    /// built-in template environment is used.
+    /// For [`ShaderSource::File`], if a custom template was registered under
+    /// the same name, its source is rendered instead of the built-in template.
+    /// For [`ShaderSource::Inline`], the provided WGSL string is rendered as a
+    /// one-off minijinja template, enabling `{$ include $}` directives even in
+    /// inline sources.
     ///
     /// Returns `(module_ref, source_hash)`.
-    pub fn get_or_compile_template(
+    pub fn get_or_compile(
         &mut self,
         device: &wgpu::Device,
-        template_name: &str,
+        source: ShaderSource,
         options: &ShaderCompilationOptions,
-        vertex_input_code: &str,
-        binding_code: &str,
     ) -> (&wgpu::ShaderModule, u128) {
-        let source = if let Some(custom_src) = self.custom_templates.get(template_name) {
-            ShaderGenerator::generate_custom_shader(
-                vertex_input_code,
-                binding_code,
-                template_name,
-                custom_src,
-                options,
-            )
-        } else {
-            ShaderGenerator::generate_shader(
-                vertex_input_code,
-                binding_code,
-                template_name,
-                options,
-            )
+        let final_wgsl = match source {
+            ShaderSource::File(path) => {
+                if let Some(custom_src) = self.custom_templates.get(path) {
+                    ShaderGenerator::generate_custom_shader(path, custom_src, options)
+                } else {
+                    ShaderGenerator::generate_shader(path, options)
+                }
+            }
+            ShaderSource::Inline {
+                name,
+                source: inline_src,
+            } => {
+                let src = self
+                    .custom_templates
+                    .get(name)
+                    .map(String::as_str)
+                    .unwrap_or(inline_src);
+                ShaderGenerator::generate_custom_shader(name, src, options)
+            }
         };
 
-        // if cfg!(debug_assertions) {
-        //     Self::debug_print_shader(template_name, &source);
-        // }
+        let hash = xxh3_128(final_wgsl.as_bytes());
 
-        let hash = xxh3_128(source.as_bytes());
-
-        let module = self.module_cache.entry(hash).or_insert_with(|| {
-            device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(&format!("Shader Module {template_name}")),
-                source: wgpu::ShaderSource::Wgsl(source.into()),
-            })
-        });
-
-        (module, hash)
-    }
-
-    /// Compile a **raw WGSL** string (or return a cached module).
-    ///
-    /// Used by compute / utility passes that embed their WGSL via `include_str!`
-    /// rather than going through the template engine.
-    ///
-    /// Returns `(module_ref, source_hash)`.
-    pub fn get_or_compile_raw(
-        &mut self,
-        device: &wgpu::Device,
-        label: &str,
-        source: &str,
-    ) -> (&wgpu::ShaderModule, u128) {
-        let hash = xxh3_128(source.as_bytes());
+        let label = match source {
+            ShaderSource::File(path) => path,
+            ShaderSource::Inline { name, .. } => name,
+        };
 
         let module = self.module_cache.entry(hash).or_insert_with(|| {
             device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(label),
-                source: wgpu::ShaderSource::Wgsl(source.into()),
+                label: Some(&format!("Shader Module {label}")),
+                source: wgpu::ShaderSource::Wgsl(final_wgsl.into()),
             })
         });
 
@@ -264,29 +257,4 @@ impl ShaderManager {
     pub fn module_count(&self) -> usize {
         self.module_cache.len()
     }
-
-    // fn debug_print_shader(template_name: &str, source: &str) {
-    //     fn normalize_newlines(s: &str) -> String {
-    //         let mut result = String::with_capacity(s.len());
-    //         let mut last_was_newline = false;
-    //         for c in s.chars() {
-    //             if c == '\n' {
-    //                 if !last_was_newline {
-    //                     result.push('\n');
-    //                     last_was_newline = true;
-    //                 }
-    //             } else {
-    //                 result.push(c);
-    //                 last_was_newline = false;
-    //             }
-    //         }
-    //         result
-    //     }
-
-    //     println!(
-    //         "================= Generated Shader Code {} ==================\n {}",
-    //         template_name,
-    //         normalize_newlines(source)
-    //     );
-    // }
 }

@@ -13,6 +13,7 @@ use crate::graph::core::{
 };
 use crate::pipeline::{
     ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
+    ShaderSource,
 };
 use myth_resources::FxaaQuality;
 use wgpu::CommandEncoder;
@@ -93,12 +94,10 @@ impl FxaaFeature {
                 options.add_define(self.target_quality.define_key(), "1");
             }
 
-            let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile_template(
+            let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(
                 ctx.device,
-                "passes/fxaa",
+                ShaderSource::File("passes/fxaa"),
                 &options,
-                "",
-                "",
             );
 
             let color_target = ColorTargetKey::from(wgpu::ColorTargetState {

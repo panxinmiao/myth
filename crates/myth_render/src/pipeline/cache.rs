@@ -38,7 +38,7 @@ use crate::pipeline::pipeline_key::{
     SimpleGeometryPipelineKey, fx_hash_key,
 };
 use crate::pipeline::shader_gen::ShaderCompilationOptions;
-use crate::pipeline::shader_manager::ShaderManager;
+use crate::pipeline::shader_manager::{ShaderManager, ShaderSource};
 use crate::pipeline::vertex::GeneratedVertexLayout;
 use myth_assets::{GeometryHandle, MaterialHandle};
 
@@ -281,12 +281,14 @@ impl PipelineCache {
             &gpu_world.binding_wgsl, &gpu_material.binding_wgsl, &object_bind_group.binding_wgsl
         );
 
-        let (shader_module, _code_hash) = shader_manager.get_or_compile_template(
+        let mut opts = options.clone();
+        opts.inject_code("vertex_input_code", &vertex_layout.vertex_input_code);
+        opts.inject_code("binding_code", binding_code);
+
+        let (shader_module, _code_hash) = shader_manager.get_or_compile(
             device,
-            template_name,
-            options,
-            &vertex_layout.vertex_input_code,
-            &binding_code,
+            ShaderSource::File(template_name),
+            &opts,
         );
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
