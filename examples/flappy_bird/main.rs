@@ -1,4 +1,5 @@
 use myth::{prelude::*, resources::{ImageDimension, PixelFormat}};
+use myth_resources::Key;
 
 /// Flappy Bird Example
 ///
@@ -147,6 +148,14 @@ impl AppHandler for FlappyBird {
         scene.active_camera = Some(cam_node_id);
 
         Self
+    }
+
+    fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
+        // Detect spacebar press (flap)
+        if engine.input.get_key_down(Key::Space) {
+            // apply upward velocity to bird
+            println!("Flap!");
+        }
     }
 }
 
