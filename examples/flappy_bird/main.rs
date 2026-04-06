@@ -5,6 +5,7 @@ use myth::{prelude::*, resources::{ImageDimension, PixelFormat}};
 struct FlappyBird;
 
 const BIRD_IMAGE_DATA: &[u8] = include_bytes!("../assets/Flappy Bird Assets/Player/StyleBird1/Bird1-1.png");
+const PIPE_IMAGE_DATA: &[u8] = include_bytes!("../assets/Flappy Bird Assets/Tiles/Style 1/PipeStyle1.png");
 
 fn create_bird(engine: &mut Engine) -> Mesh {
     // 1. Create quad geometry
@@ -63,10 +64,68 @@ fn create_bird(engine: &mut Engine) -> Mesh {
         Mesh::new(geo_handle, mat_handle)
 }
 
+fn create_pipe(engine: &mut Engine) -> Mesh {
+    // 1. Create quad geometry
+        let mut geometry = Geometry::new();
+        geometry.set_attribute(
+            "position",
+            myth::Attribute::new_planar(
+                &[
+                    [-0.5f32,  0.5, 0.0], // top-left
+                    [ 0.5,     0.5, 0.0], // top-right
+                    [-0.5,    -0.5, 0.0], // bottom-left
+                    [ 0.5,    -0.5, 0.0], // bottom-right
+                ],
+                myth::VertexFormat::Float32x3,
+            ),
+        );
+
+        geometry.set_attribute(
+            "uv",
+            myth::Attribute::new_planar(
+                &[
+                    [0.0f32, 1.0], // top-left
+                    [0.25,    1.0], // top-right
+                    [0.0,    0.75], // bottom-left
+                    [0.25,    0.75], // bottom-right
+                ],
+                myth::VertexFormat::Float32x2,
+            ),
+        );
+
+        geometry.set_indices(&[0, 2, 1, 1, 2, 3]);
+
+        // 2. Create unlit material with a solid color texture
+        let image = image::load_from_memory(PIPE_IMAGE_DATA).expect("failed to decode PNG");
+         // flip image since its upside down by default
+        let image = image.flipv();
+        let decoded = image.to_rgba8();
+        let (w, h) = (decoded.width(), decoded.height());
+        let image_handle = engine
+            .assets
+            .images
+            .add(Image::new(w, h, 1, ImageDimension::D2, PixelFormat::Rgba8Unorm, Some(decoded.into_raw())));
+        let texture = Texture::new_2d(Some("red_tex"), image_handle);
+        let mut unlit_mat = Material::new_unlit(Vec4::new(1.0, 1.0, 1.0, 1.0));
+
+        // 3. Add resources to AssetServer
+        let tex_handle = engine.assets.textures.add(texture);
+
+        if let Some(unlit) = unlit_mat.as_unlit_mut() {
+            unlit.set_map(Some(tex_handle));
+        }
+
+        let geo_handle = engine.assets.geometries.add(geometry);
+        let mat_handle = engine.assets.materials.add(unlit_mat);
+
+        Mesh::new(geo_handle, mat_handle)
+}
+
 impl AppHandler for FlappyBird {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
 
         let bird_mesh = create_bird(engine);
+        let pipe_mesh = create_pipe(engine);
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();        
 
@@ -75,6 +134,7 @@ impl AppHandler for FlappyBird {
             node.transform.position = Vec3::new(1.0, 1.0, 0.0);
             node.transform.scale = Vec3::new(1.0, 1.0, 1.0);
         }
+        let pipe_node = scene.add_mesh(pipe_mesh);
         // 5. Set up camera
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
