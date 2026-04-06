@@ -8,7 +8,7 @@
 // - Medium: 8 iterations  (default)
 // - High:  12 iterations  (maximum quality)
 
-{$ include 'chunks/full_screen_vertex' $}
+{$ include 'core/full_screen_vertex' $}
 
 @group(0) @binding(0) var screen_texture: texture_2d<f32>;
 @group(0) @binding(1) var tex_sampler: sampler;

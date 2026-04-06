@@ -1,4 +1,4 @@
-{$ include 'chunks/full_screen_vertex' $}
+{$ include 'core/full_screen_vertex' $}
 
 // --- Group 0: Bilateral Blur Inputs ---
 @group(0) @binding(0) var t_raw_ao: texture_2d<f32>;

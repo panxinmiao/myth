@@ -8,7 +8,7 @@
 //   5. Variance Clipping    — soft AABB clamp in YCoCg space
 //   6. Luminance-weighted blend + inverse tonemap
 
-{$ include 'chunks/full_screen_vertex' $}
+{$ include 'core/full_screen_vertex' $}
 
 // ── Bindings ────────────────────────────────────────────────────────────
 

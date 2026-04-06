@@ -1,3 +1,8 @@
+// ── Common Shader Utilities ──────────────────────────────────────────────
+//
+// Math helpers, physical constants, core lighting structs, and base BRDF
+// functions shared by all material models.
+
 fn pow2( x: f32 ) -> f32 {
     return x * x;
 }
@@ -56,15 +61,11 @@ fn BRDF_Lambert(diffuse_color: vec3<f32>) -> vec3<f32> {
 }
 
 fn F_Schlick(f0: vec3<f32>, f90: f32, dot_vh: f32,) -> vec3<f32> {
-    // Optimized variant (presented by Epic at SIGGRAPH '13)
-    // https://cdn2.unrealengine.com/Resources/files/2013SiggraphPresentationsNotes-26915738.pdf
     let fresnel = exp2( ( - 5.55473 * dot_vh - 6.98316 ) * dot_vh );
     return f0 * ( 1.0 - fresnel ) + ( f90 * fresnel );
 }
 
 fn F_Schlick_f(f0: f32, f90: f32, dot_vh: f32,) -> f32 {
-    // Optimized variant (presented by Epic at SIGGRAPH '13)
-    // https://cdn2.unrealengine.com/Resources/files/2013SiggraphPresentationsNotes-26915738.pdf
     let fresnel = exp2( ( - 5.55473 * dot_vh - 6.98316 ) * dot_vh );
     return f0 * ( 1.0 - fresnel ) + ( f90 * fresnel );
 }
@@ -75,7 +76,7 @@ fn getTangentFrame( eye_pos: vec3<f32>, surf_norm: vec3<f32>, uv: vec2<f32>) -> 
     let q1 = dpdy( eye_pos.xyz );
     let st0 = dpdx( uv.xy );
     let st1 = dpdy( uv.xy );
-    let N = surf_norm; //  normalized
+    let N = surf_norm;
     let q1perp = cross( q1, N );
     let q0perp = cross( N, q0 );
     let T = q1perp * st0.x + q0perp * st1.x;
@@ -83,8 +84,6 @@ fn getTangentFrame( eye_pos: vec3<f32>, surf_norm: vec3<f32>, uv: vec2<f32>) -> 
     let det = max( dot( T, T ), dot( B, B ) );
     let scale = select(inverseSqrt(det), 0.0, det == 0.0);
 
-    // We flip the Y when we compute the tangent from screen space.
-    // See: https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/NormalTangentTest#problem-flipped-y-axis-or-flipped-green-channel
     return mat3x3f(T * scale, -B * scale, N);
 }
 

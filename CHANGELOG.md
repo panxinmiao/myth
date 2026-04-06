@@ -15,6 +15,7 @@
 - `AssetServer::load_lut_texture` now supports both `.cube` and `.bin` LUT files, with automatic format detection based on file extension.
 
 ### Changes
+- Refactored the shader management system to support loading shader source code from external files, improving development workflow.
 - Updated egui to 0.34.1.
 
 ## v0.1.1

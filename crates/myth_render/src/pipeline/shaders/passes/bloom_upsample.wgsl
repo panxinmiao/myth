@@ -4,7 +4,7 @@
 // Output is additively blended with the target mip via hardware blend state,
 // accumulating bloom contributions from coarser mip levels.
 
-{$ include 'chunks/full_screen_vertex' $}
+{$ include 'core/full_screen_vertex' $}
 
 {{ struct_definitions }}
 

@@ -1,3 +1,15 @@
+// ── Shadow Sampling Functions ────────────────────────────────────────────
+//
+// Provides PCF shadow sampling for 2D array shadow maps (directional/spot)
+// and cube array shadow maps (point lights).
+//
+// Required global resources:
+//   - t_shadow_map_2d_array: texture_depth_2d_array
+//   - t_shadow_map_cube_array: texture_depth_cube_array
+//   - s_shadow_map_compare: sampler_comparison
+//
+// Depends on: core/common.wgsl (EPSILON, pow2)
+
 $$ if HAS_SHADOWS and RECEIVE_SHADOWS
 fn sample_shadow(shadow_matrix: mat4x4<f32>, shadow_layer_index: i32, world_position: vec3<f32>, bias: f32) -> f32 {
     if (shadow_layer_index < 0) {
@@ -24,7 +36,6 @@ fn sample_shadow(shadow_matrix: mat4x4<f32>, shadow_layer_index: i32, world_posi
         return 1.0;
     }
 
-    // PCF (Percentage Closer Filtering)
     let biased_depth = saturate(shadow_depth - bias);
     var shadow_sum = 0.0;
 
@@ -49,11 +60,7 @@ fn sample_shadow(shadow_matrix: mat4x4<f32>, shadow_layer_index: i32, world_posi
     return shadow_sum / 17.0;
 }
 
-/// Sample the omnidirectional cube shadow map for point lights.
-///
-/// The hardware performs seamless cube-map filtering across face edges,
-/// so we simply provide the world-space direction from light to fragment,
-/// the cube index, and a linear-depth reference value.
+/// Samples the omnidirectional cube shadow map for point lights.
 fn sample_point_shadow(
     light_position: vec3<f32>,
     world_position: vec3<f32>,
@@ -73,19 +80,10 @@ fn sample_point_shadow(
         return 1.0;
     }
 
-    // Normalised depth: map [near..range] → [0..1] to match the depth
-    // written during the shadow pass (perspective projection with zfar = range).
-    // The shadow pass uses a perspective matrix that maps z ∈ [near, far]
-    // to ndc.z ∈ [0, 1], so we compare against the same mapping here.
-    // near is tiny (0.1) relative to range, so the approximation is fine.
-
     let near = 0.1;
     let ref_depth = (light_range * (planar_z - near)) / (planar_z * (light_range - near));
     let biased_depth = saturate(ref_depth - bias);
 
-    // 4-tap hardware PCF via textureSampleCompareLevel on the cube array.
-    // No explicit offset is supported for cube samplers, so we rely on
-    // hardware filtering (linear compare mode) for edge smoothing.
     return textureSampleCompareLevel(
         t_shadow_map_cube_array,
         s_shadow_map_compare,

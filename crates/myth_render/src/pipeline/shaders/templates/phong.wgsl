@@ -1,11 +1,11 @@
 {{ vertex_input_code }} 
 {{ binding_code }}
-{$ include 'chunks/vertex_output_def' $}
-{$ include 'chunks/fragment_output_def' $}
+{$ include 'core/vertex_output_def' $}
+{$ include 'core/fragment_output_def' $}
 
-{$ include 'chunks/morph_pars' $}
-{$ include 'chunks/light_common_pars' $}
-{$ include 'chunks/light_punctual_pars' $}
+{$ include 'geometry/morph_pars' $}
+{$ include 'core/common' $}
+{$ include 'lighting/punctual_pars' $}
 // ── Screen / Transient BindGroup (Group 3) ──────────────────────────
 @group(3) @binding(1) var s_screen_sampler: sampler;
 @group(3) @binding(2) var t_ssao: texture_2d<f32>;
@@ -13,8 +13,9 @@
 @group(3) @binding(4) var t_shadow_map_cube_array: texture_depth_cube_array;
 @group(3) @binding(5) var s_shadow_map_compare: sampler_comparison;
 
-{$ include 'chunks/shadow_pars' $}
-{$ include 'chunks/bsdf/phong' $}
+{$ include 'lighting/shadow' $}
+{$ include 'materials/bsdf_phong' $}
+{$ include 'materials/alpha_test' $}
 
 
 @vertex
@@ -28,11 +29,11 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     var object_tangent = vec3<f32>(in.tangent.xyz);
     $$ endif
 
-    {$ include 'chunks/morph_vertex' $}
+    {$ include 'geometry/morph_vertex_inline' $}
 
     var local_pos = vec4<f32>(local_position, 1.0);
 
-    {$ include 'chunks/skin_vertex' $}
+    {$ include 'geometry/skin_vertex_inline' $}
 
     let world_pos = u_model.world_matrix * local_pos;
 
@@ -61,7 +62,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
         out.v_tangent = vec3<f32>(v_tangent);
         out.v_bitangent = vec3<f32>(v_bitangent);
     $$ endif
-    {$ include 'chunks/uv_vertex' $}
+    {$ include 'geometry/uv_vertex_inline' $}
     return out;
 }
 
@@ -88,10 +89,13 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     {$ endif $}
 
     // Apply opacity
-    diffuse_color.a = diffuse_color.a * u_material.opacity;
+    var opacity = diffuse_color.a * u_material.opacity;
+    diffuse_color.a = opacity;
 
     // alpha test
-    {$ include 'chunks/alpha_test' $}
+    $$ if ALPHA_MODE == "MASK" or ALPHA_MODE == "BLEND_MASK"
+    apply_alpha_test(&opacity, u_material.alpha_test);
+    $$ endif
 
     let view = normalize(u_render_state.camera_position - varyings.world_position);
 
@@ -122,9 +126,9 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     geometry.normal = normal;
     geometry.view_dir = view;
 
-    {$ include 'chunks/light_phong_fragment' $}
+    let material = build_phong_material(diffuse_color.rgb, u_material.specular.rgb, u_material.shininess, specular_strength);
 
-    {$ include 'chunks/light_punctual_fragment' $}
+    {$ include 'lighting/punctual_inline' $}
 
     // Indirect Diffuse Light
     let ambient_color = u_environment.ambient_light.rgb;

@@ -1,3 +1,17 @@
+// ── Morph Target Application (Inline Include) ──────────────────────────
+//
+// Blends all active morph targets into local vertex attributes.
+//
+// Required local variables (caller must declare before including):
+//   - vertex_index: u32          (builtin vertex index)
+//   - local_position: vec3<f32>  (mutable, receives morph position delta)
+//   - local_normal: vec3<f32>    (mutable, when HAS_NORMAL, receives morph normal delta)
+//   - object_tangent: vec3<f32>  (mutable, when HAS_TANGENT, receives morph tangent delta)
+//   - prev_local_position: vec3<f32> (mutable, when HAS_VELOCITY_TARGET)
+//
+// Required includes (must be included before this file):
+//   - geometry/morph_pars.wgsl   (fetch_morph_position/normal/tangent)
+
 $$ if HAS_MORPH_TARGETS
     let active_count = u_morph_targets.count;
 

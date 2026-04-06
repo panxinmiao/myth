@@ -5,7 +5,7 @@
 // the mapping strategy so a single pipeline can handle depth, normals,
 // single-channel occlusion, and standard colour buffers alike.
 
-{$ include 'chunks/full_screen_vertex' $}
+{$ include 'core/full_screen_vertex' $}
 
 struct DebugUniforms {
     view_mode: u32,

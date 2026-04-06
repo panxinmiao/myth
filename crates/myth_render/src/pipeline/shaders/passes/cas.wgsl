@@ -6,7 +6,7 @@
 //
 // Reference: AMD FidelityFX CAS, GPUOpen (2019)
 
-{$ include 'chunks/full_screen_vertex' $}
+{$ include 'core/full_screen_vertex' $}
 
 // ── Bindings ────────────────────────────────────────────────────────────
 

@@ -1,6 +1,7 @@
 {{ vertex_input_code }}
 {{ binding_code }}
-{$ include 'chunks/morph_pars' $}
+{$ include 'geometry/morph_pars' $}
+{$ include 'materials/alpha_test' $}
 
 struct VertexOutput {
     @builtin(position) @invariant position: vec4<f32>,
@@ -30,14 +31,14 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     var local_normal = vec3<f32>(in.normal.xyz);
     $$ endif
 
-    {$ include 'chunks/morph_vertex.wgsl' $}
+    {$ include 'geometry/morph_vertex_inline' $}
 
     var local_pos = vec4<f32>(local_position, 1.0);
     $$ if HAS_VELOCITY_TARGET is defined
     var prev_local_pos = vec4<f32>(prev_local_position, 1.0);
     $$ endif
 
-    {$ include 'chunks/skin_vertex.wgsl' $}
+    {$ include 'geometry/skin_vertex_inline' $}
 
     let world_pos = u_model.world_matrix * local_pos;
 
@@ -91,7 +92,7 @@ fn fs_main(varyings: VertexOutput) -> FragmentOutput {
     opacity *= tex_color.a;
     $$ endif
 
-    {$ include 'chunks/alpha_test.wgsl' $}
+    {$ include 'materials/alpha_test' $}
 
     var out: FragmentOutput;
 
@@ -130,7 +131,9 @@ fn fs_main(varyings: VertexOutput) -> FragmentOutput {
     opacity *= tex_color.a;
     $$ endif
 
-    {$ include 'chunks/alpha_test.wgsl' $}
+    $$ if ALPHA_MODE == "MASK" or ALPHA_MODE == "BLEND_MASK"
+    apply_alpha_test(&opacity, u_material.alpha_test);
+    $$ endif
 
     var out: FragmentOutput;
     let ndc_curr = varyings.curr_unjittered_clip_position.xy / varyings.curr_unjittered_clip_position.w;
@@ -150,7 +153,9 @@ fn fs_main(varyings: VertexOutput) {
     opacity *= tex_color.a;
     $$ endif
 
-    {$ include 'chunks/alpha_test.wgsl' $}
+    $$ if ALPHA_MODE == "MASK" or ALPHA_MODE == "BLEND_MASK"
+    apply_alpha_test(&opacity, u_material.alpha_test);
+    $$ endif
 }
 
 $$ endif

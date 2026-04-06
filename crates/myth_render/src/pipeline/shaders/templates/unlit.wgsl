@@ -1,9 +1,10 @@
 {{ vertex_input_code }} 
 {{ binding_code }}      
-{$ include 'chunks/vertex_output_def.wgsl' $}
-{$ include 'chunks/fragment_output_def.wgsl' $}
+{$ include 'core/vertex_output_def' $}
+{$ include 'core/fragment_output_def' $}
 
-{$ include 'chunks/morph_pars.wgsl' $}
+{$ include 'geometry/morph_pars' $}
+{$ include 'materials/alpha_test' $}
 
 
 @vertex
@@ -16,10 +17,10 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     var local_normal = vec3<f32>(in.normal.xyz);
     $$ endif
 
-    {$ include 'chunks/morph_vertex.wgsl' $}
+    {$ include 'geometry/morph_vertex_inline' $}
 
     var local_pos = vec4<f32>(local_position, 1.0);
-    {$ include 'chunks/skin_vertex.wgsl' $}
+    {$ include 'geometry/skin_vertex_inline' $}
 
     let world_pos = u_model.world_matrix * local_pos;
 
@@ -44,7 +45,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.normal = normalize(u_model.normal_matrix * local_normal);
     $$ endif
 
-    {$ include 'chunks/uv_vertex.wgsl' $}
+    {$ include 'geometry/uv_vertex_inline' $}
     return out;
 }
 
@@ -57,7 +58,10 @@ fn fs_main(in: VertexOutput) -> FragmentOutput {
     diffuse_color = diffuse_color * tex_color;
     {$ endif $}
 
-    {$ include 'chunks/alpha_test.wgsl' $}
+    $$ if ALPHA_MODE == "MASK" or ALPHA_MODE == "BLEND_MASK"
+    var opacity = diffuse_color.a;
+    apply_alpha_test(&opacity, u_material.alpha_test);
+    $$ endif
 
     return pack_fragment_output(diffuse_color);
 }

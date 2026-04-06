@@ -1,3 +1,8 @@
+// ── Blinn-Phong BSDF ────────────────────────────────────────────────────
+//
+// Classic Blinn-Phong shading model with Schlick Fresnel.
+//
+// Depends on: core/common.wgsl (RECIPROCAL_PI, F_Schlick, BRDF_Lambert, IncidentLight, GeometricContext, ReflectedLight)
 
 fn G_BlinnPhong_Implicit() -> f32 {
     return 0.25;
@@ -29,6 +34,16 @@ struct BlinnPhongMaterial {
     specular_color: vec3<f32>,
     specular_strength: f32,
 };
+
+/// Constructs a BlinnPhongMaterial from explicit parameters.
+fn build_phong_material(diffuse: vec3<f32>, specular: vec3<f32>, shininess: f32, strength: f32) -> BlinnPhongMaterial {
+    var m: BlinnPhongMaterial;
+    m.diffuse_color = diffuse;
+    m.specular_color = specular;
+    m.specular_shininess = shininess;
+    m.specular_strength = strength;
+    return m;
+}
 
 fn RE_Direct(
     direct_light: IncidentLight,

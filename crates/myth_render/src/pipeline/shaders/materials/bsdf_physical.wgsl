@@ -1,3 +1,11 @@
+// ── PBR Material BSDF ───────────────────────────────────────────────────
+//
+// Cook-Torrance GGX microfacet BRDF with extensions for clearcoat,
+// iridescence, sheen, anisotropy, and transmission.
+// Also contains IBL indirect lighting functions.
+//
+// Depends on: core/common.wgsl (RECIPROCAL_PI, EPSILON, pow2, F_Schlick, ...)
+
 struct PhysicalMaterial {
     diffuse_color: vec3<f32>,
     roughness: f32,
@@ -137,20 +145,15 @@ fn BRDF_GGX(light_dir: vec3<f32>, view_dir: vec3<f32>, normal: vec3<f32>, f0: ve
 
 $$ if USE_SHEEN is defined
 
-// https://github.com/google/filament/blob/main/shaders/src/surface_brdf.fs
 fn D_Charlie( roughness: f32, dot_nh: f32 ) -> f32 {
     let alpha = pow2( roughness );
-
-    // Estevez and Kulla 2017, "Production Friendly Microfacet Sheen BRDF"
     let inv_alpha = 1.0 / alpha;
     let cos2h = dot_nh * dot_nh;
-    let sin2h = max( 1.0 - cos2h, 0.0078125 ); // 2^(-14/2), so sin2h^2 > 0 in fp16
+    let sin2h = max( 1.0 - cos2h, 0.0078125 );
     return ( 2.0 + inv_alpha ) * pow( sin2h, inv_alpha * 0.5 ) / ( 2.0 * PI );
 }
 
-// https://github.com/google/filament/blob/main/shaders/src/surface_brdf.fs
 fn V_Neubelt( dot_nv: f32, dot_nl: f32 ) -> f32 {
-    // Neubelt and Pettineo 2013, "Crafting a Next-gen Material Pipeline for The Order: 1886"
     return saturate( 1.0 / ( 4.0 * ( dot_nl + dot_nv - dot_nl * dot_nv ) ) );
 }
 
@@ -167,9 +170,6 @@ fn BRDF_Sheen(light_dir: vec3<f32>, view_dir: vec3<f32>, normal: vec3<f32>, shee
     return sheen_color * ( D * V );
 }
 
-// This is a curve-fit approximation to the "Charlie sheen" BRDF integrated over the hemisphere from
-// Estevez and Kulla 2017, "Production Friendly Microfacet Sheen BRDF". The analysis can be found
-// in the Sheen section of https://drive.google.com/file/d/1T0D1VSyR4AllqIJTQAraEIzjlb5h4FKH/view?usp=sharing
 fn IBLSheenBRDF(normal: vec3<f32>, view_dir: vec3<f32>, roughness: f32) -> f32 {
     let dot_nv = saturate( dot( normal, view_dir ) );
     let r2 = roughness * roughness;
@@ -198,7 +198,6 @@ fn EnvironmentBRDF(normal: vec3f, view_dir: vec3f, specular_color: vec3f, specul
 
 $$ if USE_IBL is defined
 
-
 fn getIBLIrradiance( normal: vec3<f32> ) -> vec3<f32> {
     let envMapColor_srgb = textureSampleLevel( t_pmrem_map, s_pmrem_map, vec3<f32>( -normal.x, normal.yz), u_environment.env_map_max_mip_level );
     return envMapColor_srgb.rgb * u_environment.env_map_intensity * PI;
@@ -212,7 +211,6 @@ fn getIBLRadiance(view_dir: vec3<f32>, normal: vec3<f32>, roughness: f32) -> vec
     return envMapColor_srgb.rgb * u_environment.env_map_intensity;
 }
 
-
 $$ if USE_ANISOTROPY is defined
 fn getIBLAnisotropyRadiance(view_dir: vec3f, normal: vec3f, roughness: f32, bitangent: vec3f, anisotropy: f32) -> vec3f {
     var bent_normal = cross( bitangent, view_dir );
@@ -222,7 +220,6 @@ fn getIBLAnisotropyRadiance(view_dir: vec3f, normal: vec3f, roughness: f32, bita
     return getIBLRadiance( view_dir, bent_normal, roughness );
 }
 $$ endif
-
 
 $$ if USE_IRIDESCENCE is defined
 fn computeMultiscatteringIridescence(normal: vec3<f32>, view_dir: vec3<f32>, specular_color: vec3<f32>,
@@ -244,7 +241,7 @@ $$ endif
     let FssEss = Fr * fab.x + specular_f90 * fab.y;
     let Ess: f32 = fab.x + fab.y;
     let Ems: f32 = 1.0 - Ess;
-    let Favg = specular_color + ( 1.0 - specular_color ) * 0.047619; // 1/21
+    let Favg = specular_color + ( 1.0 - specular_color ) * 0.047619;
     let Fms = FssEss * Favg / ( 1.0 - Ems * Favg );
 
     *single_scatter = FssEss;
@@ -276,7 +273,6 @@ fn RE_IndirectSpecular(radiance: vec3<f32>, irradiance: vec3<f32>, clearcoat_rad
     (*reflected_light).indirect_diffuse += diffuse * cosine_weighted_irradiance;
 }
 
- //end of USE_IBL
 $$ endif
 
 fn RE_IndirectDiffuse(irradiance: vec3<f32>, geometry: GeometricContext, material: PhysicalMaterial, reflected_light: ptr<function, ReflectedLight>) {

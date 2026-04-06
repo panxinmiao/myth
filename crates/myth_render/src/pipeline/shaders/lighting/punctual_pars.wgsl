@@ -1,3 +1,10 @@
+// ── Light Info Dispatch ──────────────────────────────────────────────────
+//
+// Resolves a light's type (directional / point / spot) and computes
+// incident light direction, color, and distance/spot attenuation.
+//
+// Depends on: core/common.wgsl (getDistanceAttenuation, getSpotAttenuation, IncidentLight)
+
 fn get_light_info( light: Struct_lights, geometry: GeometricContext ) -> IncidentLight {
     let light_type = light.light_type;
     var light_info: IncidentLight;

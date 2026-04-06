@@ -1,16 +1,36 @@
+// ── Physical Material Assembly (Inline Include) ─────────────────────────
+//
+// Reads material uniforms and texture maps to populate a PhysicalMaterial
+// struct for the PBR lighting pipeline.
+//
+// Required local variables:
+//   - diffuse_color: vec4<f32>     (base color after albedo map)
+//   - surface_normal: vec3<f32>    (geometric or flat-shaded normal)
+//   - normal: vec3<f32>            (perturbed normal after normal mapping)
+//   - view: vec3<f32>              (normalized view direction)
+//   - varyings: VertexOutput       (interpolated vertex data)
+//   - tbn: mat3x3<f32>            (tangent frame, when USE_ANISOTROPY)
+//
+// Required global resources:
+//   - u_material (uniform buffer with metalness, roughness, IOR, etc.)
+//   - Various texture/sampler pairs (metalness_map, roughness_map, etc.)
+//
+// Outputs (declared in this file):
+//   - metalness_factor: f32
+//   - roughness_factor: f32
+//   - material: PhysicalMaterial
+
 var metalness_factor: f32 = u_material.metalness;
 $$ if HAS_METALNESS_MAP is defined
     metalness_factor *= textureSample( t_metalness_map, s_metalness_map, varyings.metalness_map_uv ).b;
 $$ endif
 
-// Roughness
 var roughness_factor: f32 = u_material.roughness;
 $$ if HAS_ROUGHNESS_MAP is defined
     roughness_factor *= textureSample( t_roughness_map, s_roughness_map, varyings.roughness_map_uv ).g;
 $$ endif
 
 
-// Define material
 var material: PhysicalMaterial;
 
 material.diffuse_color = diffuse_color.rgb * ( 1.0 - metalness_factor );
@@ -164,7 +184,6 @@ $$ if USE_ANISOTROPY is defined
         material.anisotropy = saturate( material.anisotropy );
     }
 
-    // Roughness along the anisotropy bitangent is the material roughness, while the tangent roughness increases with anisotropy.
     material.alpha_t = mix( pow2( material.roughness ), 1.0, pow2( material.anisotropy ) );
     material.anisotropy_t = tbn[0] * anisotropy_v.x + tbn[1] * anisotropy_v.y;
     material.anisotropy_b = tbn[1] * anisotropy_v.x - tbn[0] * anisotropy_v.y;

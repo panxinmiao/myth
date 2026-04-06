@@ -1,6 +1,6 @@
-{$ include 'chunks/full_screen_vertex' $}
+{$ include 'core/full_screen_vertex' $}
 
-{$ include 'chunks/tone_mapping_pars' $}
+{$ include 'core/tone_mapping' $}
 
 {{ struct_definitions }}
 

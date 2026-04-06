@@ -22,8 +22,8 @@ use myth_resources::myth_material;
 const CUSTOM_NORMAL_SHADER: &str = r#"
 {{ vertex_input_code }}
 {{ binding_code }}
-{$ include 'chunks/vertex_output_def' $}
-{$ include 'chunks/fragment_output_def' $}
+{$ include 'core/vertex_output_def' $}
+{$ include 'core/fragment_output_def' $}
 
 @vertex
 fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexOutput {
@@ -50,7 +50,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.uv = in.uv;
     $$ endif
 
-    {$ include 'chunks/uv_vertex' $}
+    {$ include 'geometry/uv_vertex_inline' $}
     return out;
 }
 

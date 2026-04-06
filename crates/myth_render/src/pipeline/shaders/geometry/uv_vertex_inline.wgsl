@@ -1,3 +1,16 @@
+// ── UV Transform Application (Inline Include / Template) ────────────────
+//
+// Applies per-map UV transforms for all texture maps using the material's
+// transform matrices. Uses template variables (e.g. MAP_UV) to select
+// which UV channel each map reads from.
+//
+// Required local variables:
+//   - out: VertexOutput  (mutable, receives transformed UVs)
+//   - in: VertexInput    (read-only, provides raw UV channels)
+//
+// Required global resources:
+//   - u_material.*_transform: mat3x3<f32> (UV transform matrices)
+
 $$ if HAS_MAP is defined
     out.map_uv = (u_material.map_transform * vec3<f32>(in.uv{{MAP_UV or ''}}, 1.0)).xy;
 $$ endif
@@ -73,5 +86,3 @@ $$ endif
 $$ if HAS_THICKNESS_MAP is defined
     out.thickness_map_uv = (u_material.thickness_map_transform * vec3<f32>(in.uv{{THICKNESS_MAP_UV or ''}}, 1.0)).xy;
 $$ endif
-
-

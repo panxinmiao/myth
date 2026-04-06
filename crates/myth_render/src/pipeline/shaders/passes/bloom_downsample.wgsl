@@ -4,7 +4,7 @@
 // in Call of Duty: Advanced Warfare". The 13-tap sampling pattern minimizes
 // aliasing while the optional Karis average on the first mip suppresses fireflies.
 
-{$ include 'chunks/full_screen_vertex' $}
+{$ include 'core/full_screen_vertex' $}
 
 {{ struct_definitions }}
 

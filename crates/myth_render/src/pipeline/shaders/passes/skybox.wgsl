@@ -10,7 +10,7 @@
 //   SKYBOX_EQUIRECT      - Equirectangular (lat-long) 2D texture sampling
 //   SKYBOX_PLANAR        - Screen-space planar 2D texture sampling
 
-{$ include 'chunks/full_screen_vertex' $}
+{$ include 'core/full_screen_vertex' $}
 
 // Auto-generated struct definition for SkyboxParams
 {{ struct_definitions }}
