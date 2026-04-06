@@ -1,3 +1,5 @@
+use std::collections::VecDeque;
+
 use myth::{prelude::*, resources::{ImageDimension, PixelFormat}};
 use myth_resources::Key;
 
@@ -123,7 +125,7 @@ fn create_pipe(engine: &mut Engine, turn_up: bool) -> Mesh {
         Mesh::new(geo_handle, mat_handle)
 }
 
-const PIPE_SPAWN_INTERVAL: f32 = 2.0; // seconds
+const PIPE_SPAWN_INTERVAL: f32 = 1.0; // seconds
 const BIRD_SPAWN_POINT : Vec3 = Vec3::new(-1.0, 0.0, 0.0);
 struct FlappyBird {
     bird_node: NodeHandle,
@@ -187,6 +189,36 @@ impl AppHandler for FlappyBird {
                 node.transform.position = BIRD_SPAWN_POINT;
                 self.bird_velocity = Vec2::ZERO;
             }
+        }
+
+        // Move pipes leftward and check for off-screen
+        let mut to_remove = vec![];
+        for &pipe_node in &self.pipes {
+            if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(pipe_node) {
+                node.transform.position.x -= 2.0 * frame.dt;
+                // remove pipe if it goes off-screen
+                if node.transform.position.x < -3.0 {
+                    engine.scene_manager.active_scene_mut().unwrap().remove_node(pipe_node);
+                    to_remove.push(pipe_node);
+                }
+            }
+        }
+        // Remove off-screen pipes from tracking
+        self.pipes.retain(|node| !to_remove.contains(node));
+
+
+        // Spawn pipes at intervals
+        self.pipe_spawn_timer += frame.dt;
+        if self.pipe_spawn_timer >= PIPE_SPAWN_INTERVAL {
+            self.pipe_spawn_timer = 0.0;
+            let pipe_mesh = create_pipe(engine, false);
+            let pipe_node = engine.scene_manager.active_scene_mut().unwrap().add_mesh(pipe_mesh);
+            if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(pipe_node) {
+                node.transform.position = Vec3::new(2.0, -0.5, 0.0);
+                node.transform.scale = Vec3::new(0.5, 0.5, 1.0);
+            }
+            self.pipes.push(pipe_node);
+            println!("Spawned new pipe!");
         }
     }
 }
