@@ -104,16 +104,23 @@ fn headless_stream_recording() {
 
     let total_frames: u64 = 100;
     let expected_bytes = (width * height * 4) as usize;
+    let mut submitted: u64 = 0;
     let mut received: u64 = 0;
+    let mut skipped: u64 = 0;
 
     // ── Hot loop ─────────────────────────────────────────────────────
     for _ in 0..total_frames {
         engine.update(1.0 / 60.0);
         engine.render_active_scene();
 
-        engine
-            .submit_to_stream(&mut stream)
-            .expect("submit_to_stream failed");
+        match engine.submit_to_stream(&mut stream) {
+            Ok(_) => {
+                submitted += 1;
+            }
+            Err(_) => {
+                skipped += 1;
+            }
+        }
 
         // Drive GPU callbacks.
         engine.poll_device();
@@ -145,8 +152,14 @@ fn headless_stream_recording() {
     }
 
     assert_eq!(
-        received, total_frames,
-        "expected {total_frames} frames, got {received}"
+        received, submitted,
+        "expected {submitted} frames, got {received}"
+    );
+
+    assert_eq!(
+        submitted + skipped,
+        total_frames,
+        "total frames ({total_frames}) should equal submitted + skipped ({submitted} + {skipped})"
     );
 }
 

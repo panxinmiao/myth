@@ -49,13 +49,13 @@ jobs:
       # Install Linux dependencies: LLVM, Clang, and Xvfb (for headless rendering context)
       - name: Install Linux Dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y llvm clang libvulkan1 xvfb
+        run: sudo apt-get update && sudo apt-get install -y llvm clang libvulkan1 xvfb mesa-vulkan-drivers
 
       # Run tests: wrap with xvfb-run on Linux for headless environment, direct run on other platforms
       - name: Run tests
         run: |
           if [ "$RUNNER_OS" == "Linux" ]; then
-            xvfb-run auto-servernum cargo test --verbose
+            xvfb-run --auto-servernum cargo test --verbose
           else
             cargo test --verbose
           fi
