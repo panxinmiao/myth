@@ -232,7 +232,7 @@ impl PrepassFeature {
 
             let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(
                 ctx.device,
-                ShaderSource::File("passes/depth"),
+                ShaderSource::File("entry/utility/depth_prepass"),
                 &options,
             );
 

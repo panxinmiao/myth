@@ -259,7 +259,7 @@ impl SkyboxFeature {
 
         let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(
             ctx.device,
-            ShaderSource::File("passes/skybox"),
+            ShaderSource::File("entry/utility/skybox"),
             &options,
         );
 

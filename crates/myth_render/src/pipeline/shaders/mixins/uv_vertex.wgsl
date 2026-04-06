@@ -1,8 +1,11 @@
-// ── UV Transform Application (Inline Include / Template) ────────────────
+// ── UV Transform Application (Mixin) ────────────────────────────────────
 //
 // Applies per-map UV transforms for all texture maps using the material's
-// transform matrices. Uses template variables (e.g. MAP_UV) to select
+// transform matrices.  Uses template variables (e.g. MAP_UV) to select
 // which UV channel each map reads from.
+//
+// This is a template mixin because it directly assigns to struct fields
+// of the caller's `out: VertexOutput` variable.
 //
 // Required local variables:
 //   - out: VertexOutput  (mutable, receives transformed UVs)

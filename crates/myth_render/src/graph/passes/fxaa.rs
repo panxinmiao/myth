@@ -95,7 +95,7 @@ impl FxaaFeature {
 
             let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(
                 ctx.device,
-                ShaderSource::File("passes/fxaa"),
+                ShaderSource::File("entry/post_process/fxaa"),
                 &options,
             );
 

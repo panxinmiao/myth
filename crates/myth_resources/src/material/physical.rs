@@ -39,7 +39,7 @@ impl Default for PhysicalFeatures {
     }
 }
 
-#[myth_material(shader = "templates/physical", crate_path = "crate")]
+#[myth_material(shader = "entry/main/physical", crate_path = "crate")]
 pub struct PhysicalMaterial {
     /// Base color.
     #[uniform(default = "Vec4::ONE")]

@@ -515,7 +515,7 @@ fn prepare_shadow_commands(
 
                 let (shader_module, code_hash) = shader_manager.get_or_compile(
                     &wgpu_ctx.device,
-                    ShaderSource::File("passes/depth"),
+                    ShaderSource::File("entry/utility/depth_prepass"),
                     &options,
                 );
 

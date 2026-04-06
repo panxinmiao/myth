@@ -208,7 +208,7 @@ impl SsssFeature {
 
             let (hor_shader, hor_hash) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::File("passes/ssss"),
+                ShaderSource::File("entry/post_process/ssss"),
                 &shader_defines,
             );
 
@@ -240,7 +240,7 @@ impl SsssFeature {
 
             let (vert_shader, vert_hash) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::File("passes/ssss"),
+                ShaderSource::File("entry/post_process/ssss"),
                 &vert_defines,
             );
 

@@ -1,7 +1,13 @@
+// ── Depth Prepass / Shadow Pass Entry Point ─────────────────────────────
+//
+// Renders depth-only, with optional normal/velocity output for screen-
+// space effects (SSAO, TAA).  Also used as shadow pass geometry shader.
+
 {{ vertex_input_code }}
 {{ binding_code }}
-{$ include 'geometry/morph_pars' $}
-{$ include 'materials/alpha_test' $}
+{$ include 'modules/geometry/morphing' $}
+{$ include 'modules/geometry/skinning' $}
+{$ include 'core/alpha_test' $}
 
 struct VertexOutput {
     @builtin(position) @invariant position: vec4<f32>,
@@ -31,14 +37,53 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     var local_normal = vec3<f32>(in.normal.xyz);
     $$ endif
 
-    {$ include 'geometry/morph_vertex_inline' $}
+    // ── Morph Target Blending ────────────────────────────────────────
+    $$ if HAS_MORPH_TARGETS
+        let morphed = apply_morph_targets(
+            vertex_index,
+            local_position,
+            $$ if HAS_VELOCITY_TARGET is defined
+            prev_local_position,
+            $$ endif
+            $$ if HAS_MORPH_NORMALS and HAS_NORMAL and not SHADOW_PASS and (OUTPUT_NORMAL or not IS_PREPASS)
+            local_normal,
+            $$ endif
+        );
+        local_position = morphed.position;
+        $$ if HAS_VELOCITY_TARGET is defined
+        prev_local_position = morphed.prev_position;
+        $$ endif
+        $$ if HAS_MORPH_NORMALS and HAS_NORMAL and not SHADOW_PASS and (OUTPUT_NORMAL or not IS_PREPASS)
+        local_normal = morphed.normal;
+        $$ endif
+    $$ endif
 
     var local_pos = vec4<f32>(local_position, 1.0);
     $$ if HAS_VELOCITY_TARGET is defined
     var prev_local_pos = vec4<f32>(prev_local_position, 1.0);
     $$ endif
 
-    {$ include 'geometry/skin_vertex_inline' $}
+    // ── Skeletal Skinning ────────────────────────────────────────────
+    $$ if HAS_SKINNING and SUPPORT_SKINNING
+        let skinned = compute_skinned_vertex(
+            local_pos,
+            $$ if HAS_VELOCITY_TARGET is defined
+            prev_local_pos,
+            $$ endif
+            $$ if HAS_NORMAL and not SHADOW_PASS and (OUTPUT_NORMAL or not IS_PREPASS)
+            local_normal,
+            $$ endif
+            vec4<u32>(in.joints),
+            in.weights,
+        );
+        local_pos = skinned.position;
+        $$ if HAS_VELOCITY_TARGET is defined
+        prev_local_pos = skinned.prev_position;
+        $$ endif
+        $$ if HAS_NORMAL and not SHADOW_PASS and (OUTPUT_NORMAL or not IS_PREPASS)
+        local_normal = skinned.normal;
+        $$ endif
+    $$ endif
 
     let world_pos = u_model.world_matrix * local_pos;
 

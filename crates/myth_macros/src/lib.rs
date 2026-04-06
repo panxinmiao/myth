@@ -14,7 +14,7 @@
 //! ```rust,ignore
 //! use myth_macros::myth_material;
 //!
-//! #[myth_material(shader = "templates/unlit")]
+//! #[myth_material(shader = "entry/main/unlit")]
 //! pub struct UnlitMaterial {
 //!     /// Base color.
 //!     #[uniform(default = "Vec4::ONE")]

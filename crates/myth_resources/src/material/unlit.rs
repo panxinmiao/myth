@@ -5,7 +5,7 @@ use crate::TextureHandle;
 use crate::material::{AlphaMode, Side};
 use crate::uniforms::Mat3Uniform;
 
-#[myth_material(shader = "templates/unlit", crate_path = "crate")]
+#[myth_material(shader = "entry/main/unlit", crate_path = "crate")]
 pub struct UnlitMaterial {
     /// Base color.
     #[uniform(default = "Vec4::ONE")]

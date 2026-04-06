@@ -7,7 +7,7 @@
 //   - t_transmission: texture_2d<f32>   (@group(3) @binding(0))
 //   - s_screen_sampler: sampler         (@group(3) @binding(1))
 //
-// Depends on: materials/bsdf_physical.wgsl (EnvironmentBRDF)
+// Depends on: modules/bsdf/physical.wgsl (EnvironmentBRDF)
 
 $$ if USE_TRANSMISSION is defined
 

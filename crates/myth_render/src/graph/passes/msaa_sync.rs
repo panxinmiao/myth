@@ -115,7 +115,7 @@ impl MsaaSyncFeature {
         if self.l1_cache_key != Some(current_key) {
             let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(
                 ctx.device,
-                ShaderSource::File("program/blit.wgsl"),
+                ShaderSource::File("entry/utility/blit.wgsl"),
                 &ShaderCompilationOptions::default(),
             );
 

@@ -362,7 +362,7 @@ impl ToneMappingFeature {
 
         let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(
             device,
-            ShaderSource::File("passes/tone_mapping"),
+            ShaderSource::File("entry/post_process/tone_mapping"),
             &options,
         );
 

@@ -335,7 +335,7 @@ impl BloomFeature {
 
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::File("passes/bloom_downsample"),
+                ShaderSource::File("entry/post_process/bloom/downsample"),
                 &options,
             );
 
@@ -370,7 +370,7 @@ impl BloomFeature {
 
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::File("passes/bloom_upsample"),
+                ShaderSource::File("entry/post_process/bloom/upsample"),
                 &options,
             );
 
@@ -405,7 +405,7 @@ impl BloomFeature {
 
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::File("passes/bloom_composite"),
+                ShaderSource::File("entry/post_process/bloom/composite"),
                 &options,
             );
 

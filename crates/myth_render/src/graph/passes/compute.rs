@@ -77,7 +77,7 @@ impl BrdfLutFeature {
 
         let (module, shader_hash) = ctx.shader_manager.get_or_compile(
             ctx.device,
-            ShaderSource::File("program/brdf_lut"),
+            ShaderSource::File("entry/utility/brdf_lut"),
             &ShaderCompilationOptions::default(),
         );
 
@@ -362,7 +362,7 @@ impl IblComputeFeature {
         {
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 ctx.device,
-                ShaderSource::File("program/ibl"),
+                ShaderSource::File("entry/utility/ibl"),
                 &ShaderCompilationOptions::default(),
             );
 
@@ -389,7 +389,7 @@ impl IblComputeFeature {
         {
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 ctx.device,
-                ShaderSource::File("program/equirect_to_cube"),
+                ShaderSource::File("entry/utility/equirect_to_cube"),
                 &ShaderCompilationOptions::default(),
             );
 
@@ -413,7 +413,7 @@ impl IblComputeFeature {
         {
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 ctx.device,
-                ShaderSource::File("program/blit.wgsl"),
+                ShaderSource::File("entry/utility/blit.wgsl"),
                 &ShaderCompilationOptions::default(),
             );
 

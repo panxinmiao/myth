@@ -304,7 +304,7 @@ impl SsaoFeature {
 
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::File("passes/ssao_raw"),
+                ShaderSource::File("entry/post_process/ssao_raw"),
                 &options,
             );
 
@@ -337,7 +337,7 @@ impl SsaoFeature {
         {
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::File("passes/ssao_blur"),
+                ShaderSource::File("entry/post_process/ssao_blur"),
                 &ShaderCompilationOptions::default(),
             );
 

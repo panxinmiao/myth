@@ -1,21 +1,28 @@
+// ── PBR Physical Material Entry Point ────────────────────────────────────
+//
+// Forward-rendered physically-based material with Cook-Torrance GGX BRDF.
+// Supports: IBL, transmission, clearcoat, iridescence, sheen, anisotropy,
+// SSAO integration, debug view overrides, and MRT specular split (SSSS).
+
 {{ vertex_input_code }} 
 {{ binding_code }}
 {$ include 'core/vertex_output' $}
 {$ include 'core/fragment_output' $}
 
-{$ include 'geometry/morph_pars' $}
+{$ include 'modules/geometry/morphing' $}
+{$ include 'modules/geometry/skinning' $}
 {$ include 'core/common' $}
-{$ include 'lighting/punctual' $}
-{$ include 'materials/bsdf_physical' $}
+{$ include 'modules/lighting/punctual' $}
+{$ include 'modules/bsdf/physical' $}
 
-{$ include 'lighting/iridescence' $}
+{$ include 'modules/lighting/iridescence' $}
 
 $$ if USE_TRANSMISSION is defined
-    {$ include 'lighting/transmission' $}
+    {$ include 'modules/lighting/transmission' $}
 $$ endif
 
-{$ include 'materials/alpha_test' $}
-{$ include 'materials/pbr_tone_mapping' $}
+{$ include 'core/alpha_test' $}
+{$ include 'modules/bsdf/pbr_tone_mapping' $}
 
 // ── Screen / Transient BindGroup (Group 3) ──────────────────────────
 //
@@ -42,11 +49,50 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     var object_tangent = vec3<f32>(in.tangent.xyz);
     $$ endif
 
-    {$ include 'geometry/morph_vertex_inline' $}
+    // ── Morph Target Blending ────────────────────────────────────────
+    $$ if HAS_MORPH_TARGETS
+        let morphed = apply_morph_targets(
+            vertex_index,
+            local_position,
+            $$ if HAS_MORPH_NORMALS and HAS_NORMAL
+            local_normal,
+            $$ endif
+            $$ if HAS_MORPH_TANGENTS and HAS_TANGENT
+            object_tangent,
+            $$ endif
+        );
+        local_position = morphed.position;
+        $$ if HAS_MORPH_NORMALS and HAS_NORMAL
+        local_normal = morphed.normal;
+        $$ endif
+        $$ if HAS_MORPH_TANGENTS and HAS_TANGENT
+        object_tangent = morphed.tangent;
+        $$ endif
+    $$ endif
 
     var local_pos = vec4<f32>(local_position, 1.0);
 
-    {$ include 'geometry/skin_vertex_inline' $}
+    // ── Skeletal Skinning ────────────────────────────────────────────
+    $$ if HAS_SKINNING and SUPPORT_SKINNING
+        let skinned = compute_skinned_vertex(
+            local_pos,
+            $$ if HAS_NORMAL
+            local_normal,
+            $$ endif
+            $$ if HAS_TANGENT
+            object_tangent,
+            $$ endif
+            vec4<u32>(in.joints),
+            in.weights,
+        );
+        local_pos = skinned.position;
+        $$ if HAS_NORMAL
+        local_normal = skinned.normal;
+        $$ endif
+        $$ if HAS_TANGENT
+        object_tangent = skinned.tangent;
+        $$ endif
+    $$ endif
 
     let world_pos = u_model.world_matrix * local_pos;
 
@@ -79,7 +125,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
     out.v_bitangent = vec3<f32>(v_bitangent);
     $$ endif
 
-    {$ include 'geometry/uv_vertex_mixin' $}
+    {$ include 'mixins/uv_vertex' $}
     return out;
 }
 
@@ -112,12 +158,12 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     // Apply opacity
     var opacity = diffuse_color.a * u_material.opacity;
 
-    // alpha test
+    // Alpha test
     $$ if ALPHA_MODE == "MASK" or ALPHA_MODE == "BLEND_MASK"
     apply_alpha_test(&opacity, u_material.alpha_test);
     $$ endif
 
-    let view = normalize(u_render_state.camera_position - varyings.world_position);  //todo orthographic camera
+    let view = normalize(u_render_state.camera_position - varyings.world_position);
 
     $$ if HAS_NORMAL_MAP is defined or USE_ANISOTROPY is defined
         $$ if HAS_TANGENT is defined
@@ -173,7 +219,6 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         let specular_strength = 1.0;
     $$ endif
 
-    // Init the reflected light. Defines diffuse and specular, both direct and indirect
     var reflected_light: ReflectedLight = ReflectedLight(vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0), vec3<f32>(0.0));
 
     var geometry: GeometricContext;
@@ -185,11 +230,9 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         geometry.clearcoat_normal = clearcoat_normal;
     $$ endif
 
-    {$ include 'materials/physical_fragment_inline' $}
+    {$ include 'mixins/physical_material_setup' $}
 
     // ── Debug View: material attribute short-circuit ──────────────────
-    // When a material-override debug mode is active, bypass all lighting
-    // and return the raw attribute value directly.
     $$ if DEBUG_VIEW_ALBEDO is defined
         return pack_fragment_output(vec4<f32>(diffuse_color.rgb, 1.0));
     $$ endif
@@ -205,18 +248,16 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     // Indirect Diffuse Light
     let ambient_color = u_environment.ambient_light.rgb;
     var irradiance = getAmbientLightIrradiance( ambient_color );
-    // Light map (pre-baked lighting)
+
     $$ if HAS_LIGHT_MAP is defined
         let light_map_color = textureSample(t_light_map, s_light_map, varyings.light_map_uv ).rgb;
         irradiance += light_map_color * u_material.light_map_intensity;
     $$ endif
 
-    // Process irradiance
     RE_IndirectDiffuse( irradiance, geometry, material, &reflected_light );
 
     $$ if USE_IBL is defined
 
-        // Apply Y-axis rotation
         let s = sin(u_environment.env_map_rotation);
         let c = cos(u_environment.env_map_rotation);
 
@@ -246,18 +287,15 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         RE_IndirectSpecular(ibl_radiance, ibl_irradiance, clearcoat_ibl_radiance, geometry, material, &reflected_light);
     $$ endif
 
-    // Ambient occlusion
+    // ── Ambient Occlusion ────────────────────────────────────────────
 
     var ambient_occlusion = 1.0;
     $$ if HDR and USE_SSAO
-    // Sample screen-space AO
     let screen_ndc = varyings.position.xy / varyings.position.w;
-
     let screen_uv = vec2<f32>(
         screen_ndc.x * 0.5 + 0.5,
         screen_ndc.y * -0.5 + 0.5
     );
-
     ambient_occlusion = textureSampleLevel(t_ssao, s_screen_sampler, screen_uv, 0.0).r;
     $$ endif
 
@@ -286,6 +324,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
     var total_diffuse = reflected_light.direct_diffuse + reflected_light.indirect_diffuse;
     var total_specular = reflected_light.direct_specular + reflected_light.indirect_specular;
 
+    // ── Volume Transmission ──────────────────────────────────────────
     $$ if USE_TRANSMISSION is defined
         let pos = varyings.world_position;
         let v = normalize(u_render_state.camera_position - pos);
@@ -293,10 +332,8 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         let model_matrix = u_model.world_matrix;
 
         $$ if IN_TRANSPARENT_PASS
-            // IMPORTANT: use unjittered view projection for refraction to avoid temporal instability. 
             let view_projection_matrix = u_render_state.unjittered_view_projection;
         $$ else
-            // Should not happen now
             let view_projection_matrix = u_render_state.view_projection;
         $$ endif
 
@@ -310,51 +347,34 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         total_diffuse = mix( total_diffuse, transmitted.rgb, material.transmission );
     $$ endif
 
+    // ── Final Compositing ────────────────────────────────────────────
 
-    // Combine direct and indirect light
-    // var out_color = total_diffuse + total_specular;
-
-    // 1. 初始状态：分离漫反射与基础高光
     var out_diffuse = total_diffuse;
     var out_specular = total_specular;
 
-    // 2. 自发光 (Emissive)：通常视作从物体内部或表面发出的光，归入 Diffuse 以参与 SSS 模糊
+    // Emissive
     var emissive_color = u_material.emissive.rgb * u_material.emissive_intensity;
     $$ if HAS_EMISSIVE_MAP is defined
         emissive_color *= textureSample(t_emissive_map, s_emissive_map, varyings.emissive_map_uv).rgb;
     $$ endif
     out_diffuse += emissive_color;
 
-    // 3. 绒毛层 (Sheen)：纯高光附加，同时吸收底层能量
+    // Sheen energy compensation
     $$ if USE_SHEEN is defined
-        // Sheen energy compensation approximation calculation can be found at the end of
-        // https://drive.google.com/file/d/1T0D1VSyR4AllqIJTQAraEIzjlb5h4FKH/view?usp=sharing
         let sheen_energy_comp = 1.0 - 0.157 * max(material.sheen_color.r, max(material.sheen_color.g, material.sheen_color.b));
-
         out_diffuse *= sheen_energy_comp;
         out_specular *= sheen_energy_comp;
-
-        // 增加高光：绒毛反光只加到 specular 通道
         out_specular += (sheen_specular_direct + sheen_specular_indirect);
-
-        // out_color = out_color * sheen_energy_comp + (sheen_specular_direct + sheen_specular_indirect);
     $$ endif
 
-    // 4. 清漆层 (Clearcoat)：最高层的高光，吸收所有底层的能量
+    // Clearcoat energy attenuation
     $$ if USE_CLEARCOAT is defined
         let dot_nv_cc = saturate(dot(clearcoat_normal, view));
         let fcc = F_Schlick( material.clearcoat_f0, material.clearcoat_f90, dot_nv_cc );
-
         let clearcoat_attenuation = 1.0 - material.clearcoat * fcc;
-
-        // 能量衰减：同时作用于底层的所有 diffuse 和 specular
         out_diffuse *= clearcoat_attenuation;
         out_specular *= clearcoat_attenuation;
-
-        // 增加高光：清漆反光只加到 specular 通道
         out_specular += (clearcoat_specular_direct + clearcoat_specular_indirect) * material.clearcoat;
-
-       // out_color = out_color * (1.0 - material.clearcoat * fcc) + (clearcoat_specular_direct + clearcoat_specular_indirect) * material.clearcoat;
     $$ endif
 
     $$ if OPAQUE is defined
@@ -365,7 +385,7 @@ fn fs_main(varyings: VertexOutput, @builtin(front_facing) is_front: bool) -> Fra
         opacity *= material.transmission_alpha;
     $$ endif
 
-    // 5. 最终合成：根据是否启用 MRT 多渲染目标，选择输出格式
+    // Output
     var out: FragmentOutput;
 
     $$ if HDR

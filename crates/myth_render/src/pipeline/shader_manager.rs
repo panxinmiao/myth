@@ -138,7 +138,7 @@ impl Object for LocationAllocator {
 /// Identifies the origin of a shader's WGSL source.
 ///
 /// * [`File`](Self::File) — a built-in template resolved through the embedded
-///   shader asset loader (e.g. `"templates/physical"` or `"passes/skybox"`).
+///   shader asset loader (e.g. `"entry/main/physical"` or `"entry/utility/skybox"`).
 /// * [`Inline`](Self::Inline) — a raw WGSL string supplied at call-time, often
 ///   via `include_str!()`. If a custom template with the same `name` was
 ///   registered, the custom source takes priority.

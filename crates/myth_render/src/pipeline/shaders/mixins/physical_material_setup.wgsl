@@ -1,7 +1,9 @@
-// ── Physical Material Assembly (Inline Include) ─────────────────────────
+// ── Physical Material Setup (Mixin) ─────────────────────────────────────
 //
 // Reads material uniforms and texture maps to populate a SurfaceContext
-// struct for the PBR lighting pipeline.
+// struct for the PBR lighting pipeline.  This is a template mixin because
+// it declares new local variables (`metalness_factor`, `roughness_factor`,
+// `material`) that the caller's fragment shader body depends on.
 //
 // Required local variables:
 //   - diffuse_color: vec4<f32>     (base color after albedo map)

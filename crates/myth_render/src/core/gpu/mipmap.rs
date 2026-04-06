@@ -25,7 +25,7 @@ impl MipmapGenerator {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("Mipmap Blit Shader"),
             source: wgpu::ShaderSource::Wgsl(Cow::Borrowed(include_str!(
-                "../../pipeline/shaders/program/blit.wgsl"
+                "../../pipeline/shaders/entry/utility/blit.wgsl"
             ))),
         });
 
