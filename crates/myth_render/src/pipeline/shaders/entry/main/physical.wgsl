@@ -96,7 +96,7 @@ fn vs_main(in: VertexInput, @builtin(vertex_index) vertex_index: u32) -> VertexO
 
     let world_pos = u_model.world_matrix * local_pos;
 
-    $$ if IN_TRANSPARENT_PASS is defined
+    $$ if IN_TRANSPARENT_PASS
         out.position = u_render_state.unjittered_view_projection * world_pos;
     $$ else
         out.position = u_render_state.view_projection * world_pos;
