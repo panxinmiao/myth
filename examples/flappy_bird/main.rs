@@ -3,7 +3,6 @@ use myth_resources::Key;
 
 /// Flappy Bird Example
 ///
-struct FlappyBird;
 
 const BIRD_IMAGE_DATA: &[u8] = include_bytes!("../assets/Flappy Bird Assets/Player/StyleBird1/Bird1-1.png");
 const PIPE_IMAGE_DATA: &[u8] = include_bytes!("../assets/Flappy Bird Assets/Tiles/Style 1/PipeStyle1.png");
@@ -122,6 +121,13 @@ fn create_pipe(engine: &mut Engine) -> Mesh {
         Mesh::new(geo_handle, mat_handle)
 }
 
+const PIPE_SPAWN_INTERVAL: f32 = 2.0; // seconds
+struct FlappyBird {
+    bird_node: NodeHandle,
+    bird_velocity: Vec2,
+    pipes: Vec<NodeHandle>,
+    pipe_spawn_timer: f32,
+}
 impl AppHandler for FlappyBird {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
 
@@ -133,7 +139,7 @@ impl AppHandler for FlappyBird {
         let bird_node = scene.add_mesh(bird_mesh);
         if let Some(node) = scene.get_node_mut(bird_node) {
             node.transform.position = Vec3::new(1.0, 1.0, 0.0);
-            node.transform.scale = Vec3::new(1.0, 1.0, 1.0);
+            node.transform.scale = Vec3::new(0.1, 0.1, 0.1);
         }
         let pipe_node = scene.add_mesh(pipe_mesh);
         // 5. Set up camera
@@ -147,14 +153,28 @@ impl AppHandler for FlappyBird {
 
         scene.active_camera = Some(cam_node_id);
 
-        Self
+        Self {
+            bird_node,
+            bird_velocity: Vec2::ZERO,
+            pipes: vec![pipe_node],
+            pipe_spawn_timer: 0.0,
+        }
+
     }
 
     fn update(&mut self, engine: &mut Engine, window: &dyn Window, frame: &FrameState) {
+        // Apply gravity
+        self.bird_velocity.y -= 9.8 * frame.dt;
+
         // Detect spacebar press (flap)
         if engine.input.get_key_down(Key::Space) {
             // apply upward velocity to bird
-            println!("Flap!");
+            self.bird_velocity.y = 10.0;
+        }
+
+        // Update bird position
+        if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(self.bird_node) {
+            node.transform.position.y += self.bird_velocity.y * frame.dt;
         }
     }
 }
