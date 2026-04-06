@@ -142,6 +142,7 @@ impl Object for LocationAllocator {
 /// * [`Inline`](Self::Inline) — a raw WGSL string supplied at call-time, often
 ///   via `include_str!()`. If a custom template with the same `name` was
 ///   registered, the custom source takes priority.
+#[derive(Debug, Clone, Hash, PartialEq, Eq, Copy)]
 pub enum ShaderSource<'a> {
     /// Load from a built-in template file.
     File(&'a str),
@@ -229,8 +230,7 @@ impl ShaderManager {
                 let src = self
                     .custom_templates
                     .get(name)
-                    .map(String::as_str)
-                    .unwrap_or(inline_src);
+                    .map_or(inline_src, String::as_str);
                 ShaderGenerator::generate_custom_shader(name, src, options)
             }
         };

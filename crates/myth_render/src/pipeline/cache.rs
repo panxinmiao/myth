@@ -285,11 +285,8 @@ impl PipelineCache {
         opts.inject_code("vertex_input_code", &vertex_layout.vertex_input_code);
         opts.inject_code("binding_code", binding_code);
 
-        let (shader_module, _code_hash) = shader_manager.get_or_compile(
-            device,
-            ShaderSource::File(template_name),
-            &opts,
-        );
+        let (shader_module, _code_hash) =
+            shader_manager.get_or_compile(device, ShaderSource::File(template_name), &opts);
 
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("Render Pipeline Layout"),

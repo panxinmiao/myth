@@ -25,8 +25,7 @@ use crate::graph::core::{
     TextureNodeId,
 };
 use crate::pipeline::{
-    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
-    ShaderSource,
+    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions, ShaderSource,
 };
 use wgpu::CommandEncoder;
 

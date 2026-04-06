@@ -75,13 +75,9 @@ impl BrdfLutFeature {
             return;
         }
 
-        let source = include_str!("../../pipeline/shaders/program/brdf_lut.wgsl");
         let (module, shader_hash) = ctx.shader_manager.get_or_compile(
             ctx.device,
-            ShaderSource::Inline {
-                name: "BRDF LUT Shader",
-                source,
-            },
+            ShaderSource::File("program/brdf_lut"),
             &ShaderCompilationOptions::default(),
         );
 
@@ -364,13 +360,9 @@ impl IblComputeFeature {
 
         // --- PMREM compute pipeline ---
         {
-            let source = include_str!("../../pipeline/shaders/program/ibl.wgsl");
             let (module, hash) = ctx.shader_manager.get_or_compile(
-                device,
-                ShaderSource::Inline {
-                    name: "IBL Prefilter Shader",
-                    source,
-                },
+                ctx.device,
+                ShaderSource::File("program/ibl"),
                 &ShaderCompilationOptions::default(),
             );
 
@@ -395,13 +387,9 @@ impl IblComputeFeature {
 
         // --- Equirectangular → Cube compute pipeline ---
         {
-            let source = include_str!("../../pipeline/shaders/program/equirect_to_cube.wgsl");
             let (module, hash) = ctx.shader_manager.get_or_compile(
-                device,
-                ShaderSource::Inline {
-                    name: "Equirect to Cube Shader",
-                    source,
-                },
+                ctx.device,
+                ShaderSource::File("program/equirect_to_cube"),
                 &ShaderCompilationOptions::default(),
             );
 
@@ -423,13 +411,9 @@ impl IblComputeFeature {
 
         // --- Blit render pipeline ---
         {
-            let source = include_str!("../../pipeline/shaders/program/blit.wgsl");
             let (module, hash) = ctx.shader_manager.get_or_compile(
-                device,
-                ShaderSource::Inline {
-                    name: "IBL Blit Shader",
-                    source,
-                },
+                ctx.device,
+                ShaderSource::File("program/blit.wgsl"),
                 &ShaderCompilationOptions::default(),
             );
 

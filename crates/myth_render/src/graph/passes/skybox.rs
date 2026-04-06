@@ -247,7 +247,10 @@ impl SkyboxFeature {
         let mut defines = ShaderDefines::new();
         defines.set(key.variant.shader_define_key(), "1");
 
-        let mut options = ShaderCompilationOptions { defines, ..Default::default() };
+        let mut options = ShaderCompilationOptions {
+            defines,
+            ..Default::default()
+        };
         options.add_define(
             "struct_definitions",
             SkyboxParamsUniforms::wgsl_struct_def("SkyboxParams").as_str(),

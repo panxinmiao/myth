@@ -22,8 +22,8 @@ use crate::graph::core::{
 };
 use crate::graph::passes::draw::submit_draw_commands;
 use crate::pipeline::{
-    ColorTargetKey, DepthStencilKey, RenderPipelineId, ShaderCompilationOptions,
-    ShaderSource, SimpleGeometryPipelineKey,
+    ColorTargetKey, DepthStencilKey, RenderPipelineId, ShaderCompilationOptions, ShaderSource,
+    SimpleGeometryPipelineKey,
 };
 use myth_resources::material::Side;
 
@@ -224,7 +224,10 @@ impl PrepassFeature {
                 &cmd.object_bind_group.binding_wgsl
             );
 
-            options.inject_code("vertex_input_code", &gpu_geometry.layout_info.vertex_input_code);
+            options.inject_code(
+                "vertex_input_code",
+                &gpu_geometry.layout_info.vertex_input_code,
+            );
             options.inject_code("binding_code", binding_code);
 
             let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(

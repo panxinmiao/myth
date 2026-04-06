@@ -126,7 +126,7 @@ pub struct ShaderGenerator;
 
 impl ShaderGenerator {
     /// Builds a [`ShaderContext`] from the compilation options.
-    fn build_context<'a>(options: &'a ShaderCompilationOptions) -> ShaderContext<'a> {
+    fn build_context(options: &ShaderCompilationOptions) -> ShaderContext<'_> {
         let allocator = LocationAllocator::new();
         ShaderContext {
             defines: options.to_template_map(),
@@ -137,10 +137,7 @@ impl ShaderGenerator {
 
     /// Generates WGSL from a **built-in** template registered in the shader environment.
     #[must_use]
-    pub fn generate_shader(
-        template_name: &str,
-        options: &ShaderCompilationOptions,
-    ) -> String {
+    pub fn generate_shader(template_name: &str, options: &ShaderCompilationOptions) -> String {
         let env = get_env();
         let ctx = Self::build_context(options);
 

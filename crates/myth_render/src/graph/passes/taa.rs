@@ -37,8 +37,7 @@ use crate::graph::core::{
 };
 use crate::graph::passes::utils::CopyTextureNode;
 use crate::pipeline::{
-    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
-    ShaderSource,
+    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions, ShaderSource,
 };
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

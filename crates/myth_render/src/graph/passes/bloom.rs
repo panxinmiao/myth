@@ -42,8 +42,7 @@ use crate::graph::core::{
     TextureNodeId,
 };
 use crate::pipeline::{
-    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
-    ShaderSource,
+    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions, ShaderSource,
 };
 use myth_resources::bloom::{CompositeUniforms, UpsampleUniforms};
 use myth_resources::buffer::CpuBuffer;

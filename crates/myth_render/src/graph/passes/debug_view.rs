@@ -38,8 +38,7 @@ use crate::graph::core::{
     ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureNodeId,
 };
 use crate::pipeline::{
-    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
-    ShaderSource,
+    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions, ShaderSource,
 };
 use myth_resources::buffer::CpuBuffer;
 

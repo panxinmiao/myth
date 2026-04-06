@@ -113,13 +113,9 @@ impl MsaaSyncFeature {
         // ── 2. L1 Cache: recompile pipeline when sample count changes ──
         let current_key = msaa_samples;
         if self.l1_cache_key != Some(current_key) {
-            let blit_source = include_str!("../../pipeline/shaders/program/blit.wgsl");
             let (shader_module, shader_hash) = ctx.shader_manager.get_or_compile(
-                device,
-                ShaderSource::Inline {
-                    name: "MSAA Sync Blit Shader",
-                    source: blit_source,
-                },
+                ctx.device,
+                ShaderSource::File("program/blit.wgsl"),
                 &ShaderCompilationOptions::default(),
             );
 

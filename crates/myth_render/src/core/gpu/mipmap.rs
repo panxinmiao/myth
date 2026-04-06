@@ -6,6 +6,12 @@ use std::borrow::Cow;
 
 use rustc_hash::FxHashMap;
 
+// todo: 目前我们的 MipmapGenerator 作为一个由ResourceManager管理的游离的“工具类”，自己管理管线和着色器，直接在 pass 中调用。
+// 这种设计虽然简单，但无法充分的复用管线和着色器资源。
+// 需要将其交由RenderGraph管理，作为一个可插拔的PassNode。
+// 核心思想：延迟生成 (Deferred Generation) Mipmap。
+// 让 ResourceManager 变得纯粹，它只负责分配显存、上传 Mip 0 的数据。遇到需要 Mipmap 的贴图时，它不立刻执行生成，而是将其加入一个待处理队列。
+// RenderGraph 在构建阶段检查这个队列，如果有待生成 Mipmap 的贴图，就在图中插入一个 MipmapPassNode，统一生成 Mipmap。
 pub struct MipmapGenerator {
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,

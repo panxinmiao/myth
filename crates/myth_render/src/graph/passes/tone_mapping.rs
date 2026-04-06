@@ -26,8 +26,7 @@ use crate::graph::core::{
     ExecuteContext, ExtractContext, PassNode, PrepareContext, RenderTargetOps, TextureNodeId,
 };
 use crate::pipeline::{
-    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions,
-    ShaderSource,
+    ColorTargetKey, FullscreenPipelineKey, RenderPipelineId, ShaderCompilationOptions, ShaderSource,
 };
 use myth_assets::TextureHandle;
 use myth_resources::ShaderDefines;
@@ -351,7 +350,10 @@ impl ToneMappingFeature {
             .get_global_state(global_state_key.0, global_state_key.1)
             .expect("ToneMap: GpuGlobalState must exist");
 
-        let mut options = ShaderCompilationOptions { defines, ..Default::default() };
+        let mut options = ShaderCompilationOptions {
+            defines,
+            ..Default::default()
+        };
         options.add_define(
             "struct_definitions",
             ToneMappingUniforms::wgsl_struct_def("Uniforms").as_str(),

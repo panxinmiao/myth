@@ -507,7 +507,10 @@ fn prepare_shadow_commands(
                     &item.object_bind_group.binding_wgsl
                 );
 
-                options.inject_code("vertex_input_code", &gpu_geometry.layout_info.vertex_input_code);
+                options.inject_code(
+                    "vertex_input_code",
+                    &gpu_geometry.layout_info.vertex_input_code,
+                );
                 options.inject_code("binding_code", binding_code);
 
                 let (shader_module, code_hash) = shader_manager.get_or_compile(
