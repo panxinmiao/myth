@@ -10,3 +10,8 @@ examples/**/assets/** linguist-vendored=true
 *.cube binary linguist-vendored=true
 *.hdr binary linguist-vendored=true
 *.ktx2 binary linguist-vendored=true
+
+# === 2D Images ===
+*.png binary linguist-vendored=true
+*.jpg binary linguist-vendored=true
+*.jpeg binary linguist-vendored=true
