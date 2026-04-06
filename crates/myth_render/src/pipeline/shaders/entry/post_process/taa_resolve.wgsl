@@ -178,17 +178,6 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     }
 
 
-    let current_coord = vec2<i32>(in.position.xy);
-    let current_depth = textureLoad(t_scene_depth, current_coord, 0);
-    
-    let history_coord = vec2<i32>(history_uv * tex_dim);
-    let history_depth = textureLoad(t_history_depth, history_coord, 0);
-
-    let current_linear_z = depth_to_linear(current_depth, u_params.camera_near);
-    let history_linear_z = depth_to_linear(history_depth, u_params.camera_near);
-
-    let depth_diff = abs(current_linear_z - history_linear_z);
-    let is_disoccluded = depth_diff > (current_linear_z * DEPTH_REJECTION_TOLERANCE);
 
     // // ════════════════════════════════════════════════════════════════════
     // // 3. Sample current frame colour (center pixel)
@@ -207,44 +196,24 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     // 5. Reversible Tonemap → YCoCg → Variance Clipping
     // ════════════════════════════════════════════════════════════════════
 
-    // Tonemap all samples into perceptual space for stable neighbourhood ops
-    // let current_tm = tonemap_per_channel(current_color);
-
+    // // 3×3 neighbourhood statistics (mean + variance)
     let cc = rgb_to_ycocg(current_color);
     var moment1 = cc;
     var moment2 = cc * cc;
 
-    var sample_count = 1.0;
-
-    // Include the center pixel in the variance stats (important for flat areas)
-    let offsets = array<vec2<f32>, 4>(
-        vec2<f32>( 0.0, -1.0), vec2<f32>(-1.0,  0.0),
-        vec2<f32>( 1.0,  0.0), vec2<f32>( 0.0,  1.0)
-    );
-
-    for (var i = 0; i < 4; i++) {
-        let offset = offsets[i] * texel_size;
-        let s_hdr = textureSampleLevel(t_current_color, s_nearest, uv + offset, 0.0).rgb;
-        let s = rgb_to_ycocg(tonemap_per_channel(s_hdr));
-        moment1 += s;
-        moment2 += s * s;
-        sample_count += 1.0;
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            if (x == 0 && y == 0) { continue; }
+            let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
+            let s_hdr = textureSampleLevel(t_current_color, s_nearest, uv + offset, 0.0).rgb;
+            let s = rgb_to_ycocg(tonemap_per_channel(s_hdr));
+            moment1 += s;
+            moment2 += s * s;
+        }
     }
 
-    // // 3×3 neighbourhood statistics (mean + variance)
-    // for (var y = -1; y <= 1; y++) {
-    //     for (var x = -1; x <= 1; x++) {
-    //         if (x == 0 && y == 0) { continue; }
-    //         let offset = vec2<f32>(f32(x), f32(y)) * texel_size;
-    //         let s_hdr = textureSampleLevel(t_current_color, s_nearest, uv + offset, 0.0).rgb;
-    //         let s = rgb_to_ycocg(tonemap_per_channel(s_hdr));
-    //         moment1 += s;
-    //         moment2 += s * s;
-    //     }
-    // }
-
-    let mean = moment1 / sample_count;
-    let variance = sqrt(max(moment2 / sample_count - mean * mean, vec3<f32>(0.0)));
+    let mean = moment1 / 9.0;
+    let variance = sqrt(max(moment2 / 9.0 - mean * mean, vec3<f32>(0.0)));
     let aabb_extent = variance * VARIANCE_CLIP_GAMMA;
 
     // Clip history towards AABB center (soft clip, not hard clamp)
@@ -262,18 +231,7 @@ fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
 
     base_weight = mix(base_weight, 0.1, saturate(speed * 0.1));
 
-    if (is_disoccluded) {
-        base_weight = 0.0; 
-    }
-
-    let lum_current = luminance(current_color);
-    let lum_history = luminance(clipped_history);
-
-    let lum_diff = abs(lum_current - lum_history);
-
-    let final_weight = base_weight * (1.0 / (1.0 + lum_diff * 4.0)); // 4.0 is a tunable sensitivity factor
-
-    let resolved_tm = mix(current_color, clipped_history, final_weight);
+    let resolved_tm = mix(current_color, clipped_history, base_weight);
 
     // ════════════════════════════════════════════════════════════════════
     // 7. Inverse Tonemap → HDR output

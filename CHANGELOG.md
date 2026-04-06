@@ -8,6 +8,7 @@
 - **Headless Rendering Mode**: Added support for offscreen rendering without a window surface (`Renderer.init_headless`). Ideal for server-side rendering, CI/CD testing, and offline video/image generation.
   - **Synchronous GPU Readback**: Introduced `Renderer.readback_pixels()` for simple, one-shot synchronous GPU-to-CPU pixel data extraction.
   - **High-Throughput Asynchronous Readback Stream**: Implemented `ReadbackStream`, a non-blocking ring-buffer pipeline for continuous frame readback. Designed for extreme performance in video recording and AI training data generation without stalling the GPU pipeline.
+- Refactored the shader management and templating system. Shader code is now organized based on functional semantics and responsibility boundaries. The API entry point for creating shader programs has been consolidated and unified, and support has been added for loading custom shaders from external files.
 
 ### Added
 - Added point light shadows, completing the final piece of the basic lighting system.
@@ -15,8 +16,10 @@
 - `AssetServer::load_lut_texture` now supports both `.cube` and `.bin` LUT files, with automatic format detection based on file extension.
 
 ### Changes
-- Refactored the shader management system to support loading shader source code from external files, improving development workflow.
-- Updated egui to 0.34.1.
+- Updated a number of crates to latest versions.
+
+### Fixed
+- Fixed an issue that caused edge jittering of objects in TAA.
 
 ## v0.1.1
 
