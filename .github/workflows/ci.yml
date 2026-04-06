@@ -1,8 +1,6 @@
 name: CI
 
 on:
-  # push:
-  #   branches: [ "main" ]
   pull_request:
     branches: [ "main" ]
   workflow_dispatch:
@@ -11,42 +9,77 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: Check & Test
+  # 1. Linting and documentation checks
+  lint:
+    name: Lint & Doc
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       
-      # Install Rust Toolchain
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: wasm32-unknown-unknown
         
-      # Cache dependencies to speed up build
       - name: Cache dependencies
         uses: Swatinem/rust-cache@v2
 
-      # Install LLVM Toolchain
-      - name: Install LLVM Toolchain
-        run: sudo apt-get update && sudo apt-get install -y llvm clang
-
-      # 1. Check if code compiles
-      - name: Check
-        run: cargo check --verbose
-
-      # 2. Run tests
-      - name: Run tests
-        run: cargo test --verbose
-        
-      # 3. Run Clippy linter
       - name: Clippy
         run: cargo clippy -- -D warnings
         
-      # 4. Check if documentation can be generated
       - name: Doc Check
         run: cargo doc --no-deps
 
-      # 5. Check WASM with Meshopt Feature
+  # 2. Run tests across multiple platforms
+  test-matrix:
+    name: Test on ${{ matrix.os }}
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # Install Linux dependencies: LLVM, Clang, and Xvfb (for headless rendering context)
+      - name: Install Linux Dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y llvm clang libvulkan1 xvfb
+
+      # Run tests: wrap with xvfb-run on Linux for headless environment, direct run on other platforms
+      - name: Run tests
+        run: |
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            xvfb-run auto-servernum cargo test --verbose
+          else
+            cargo test --verbose
+          fi
+        shell: bash
+
+  # 3. WASM Environment Check
+  check-wasm:
+    name: Check WASM
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust (with wasm32 target)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+          
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@v2
+
+      # Install LLVM toolchain specifically for the WASM target
+      - name: Install LLVM Toolchain
+        run: sudo apt-get update && sudo apt-get install -y llvm clang
+
       - name: Check WASM with Meshopt Feature
         run: cargo check --target wasm32-unknown-unknown --features gltf-meshopt
