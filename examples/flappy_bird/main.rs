@@ -66,7 +66,7 @@ fn create_bird(engine: &mut Engine) -> Mesh {
         Mesh::new(geo_handle, mat_handle)
 }
 
-fn create_pipe(engine: &mut Engine, turn_up: bool) -> Mesh {
+fn create_pipe(engine: &mut Engine) -> Mesh {
     // 1. Create quad geometry
         let mut geometry = Geometry::new();
         geometry.set_attribute(
@@ -99,10 +99,6 @@ fn create_pipe(engine: &mut Engine, turn_up: bool) -> Mesh {
 
         // 2. Create unlit material with a solid color texture
         let mut image = image::load_from_memory(PIPE_IMAGE_DATA).expect("failed to decode PNG");
-        if turn_up {
-            // flip image since its upside down by default
-            image = image.flipv();
-        }
         let decoded = image.to_rgba8();
         let (w, h) = (decoded.width(), decoded.height());
         let image_handle = engine
@@ -130,6 +126,7 @@ const BIRD_SPAWN_POINT : Vec3 = Vec3::new(-1.0, 0.0, 0.0);
 struct FlappyBird {
     bird_node: NodeHandle,
     bird_velocity: Vec2,
+    pipe_mesh : Mesh,
     pipes: Vec<NodeHandle>,
     pipe_spawn_timer: f32,
 }
@@ -137,7 +134,7 @@ impl AppHandler for FlappyBird {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
 
         let bird_mesh = create_bird(engine);
-        let pipe_mesh = create_pipe(engine, true);
+        let pipe_mesh = create_pipe(engine);
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();        
 
@@ -145,11 +142,6 @@ impl AppHandler for FlappyBird {
         if let Some(node) = scene.get_node_mut(bird_node) {
             node.transform.position = BIRD_SPAWN_POINT;
             node.transform.scale = Vec3::new(0.1, 0.1, 0.1);
-        }
-        let pipe_node = scene.add_mesh(pipe_mesh);
-        if let Some(node) = scene.get_node_mut(pipe_node) {
-            node.transform.position = Vec3::new(2.0, -0.5, 0.0);
-            node.transform.scale = Vec3::new(0.5, 0.5, 1.0);
         }
         // 5. Set up camera
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
@@ -165,8 +157,9 @@ impl AppHandler for FlappyBird {
         Self {
             bird_node,
             bird_velocity: Vec2::ZERO,
-            pipes: vec![pipe_node],
-            pipe_spawn_timer: 0.0,
+            pipe_mesh,
+            pipes: vec![],
+            pipe_spawn_timer: PIPE_SPAWN_INTERVAL, // spawn first pipe immediately
         }
 
     }
@@ -211,13 +204,20 @@ impl AppHandler for FlappyBird {
         self.pipe_spawn_timer += frame.dt;
         if self.pipe_spawn_timer >= PIPE_SPAWN_INTERVAL {
             self.pipe_spawn_timer = 0.0;
-            let pipe_mesh = create_pipe(engine, false);
-            let pipe_node = engine.scene_manager.active_scene_mut().unwrap().add_mesh(pipe_mesh);
-            if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(pipe_node) {
+            let top_pipe_mesh = self.pipe_mesh.clone();
+            let top_pipe_node = engine.scene_manager.active_scene_mut().unwrap().add_mesh(top_pipe_mesh);
+            if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(top_pipe_node) {
                 node.transform.position = Vec3::new(2.0, -0.5, 0.0);
                 node.transform.scale = Vec3::new(0.5, 0.5, 1.0);
             }
-            self.pipes.push(pipe_node);
+            self.pipes.push(top_pipe_node);
+            let bottom_pipe_mesh = self.pipe_mesh.clone();
+            let bottom_pipe_node = engine.scene_manager.active_scene_mut().unwrap().add_mesh(bottom_pipe_mesh);
+            if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(bottom_pipe_node) {
+                node.transform.position = Vec3::new(2.0, 0.5, 0.0);
+                node.transform.scale = Vec3::new(0.5, -0.5, 1.0);
+            }
+            self.pipes.push(bottom_pipe_node);
             println!("Spawned new pipe!");
         }
     }
