@@ -98,7 +98,7 @@ fn create_pipe(engine: &mut Engine) -> Mesh {
         geometry.set_indices(&[0, 2, 1, 1, 2, 3]);
 
         // 2. Create unlit material with a solid color texture
-        let mut image = image::load_from_memory(PIPE_IMAGE_DATA).expect("failed to decode PNG");
+        let image = image::load_from_memory(PIPE_IMAGE_DATA).expect("failed to decode PNG");
         let decoded = image.to_rgba8();
         let (w, h) = (decoded.width(), decoded.height());
         let image_handle = engine
@@ -111,8 +111,10 @@ fn create_pipe(engine: &mut Engine) -> Mesh {
         // 3. Add resources to AssetServer
         let tex_handle = engine.assets.textures.add(texture);
 
+        // Set face culling to double-sided since pipes can be seen from both sides (flip texture vertically for bottom pipe)
         if let Some(unlit) = unlit_mat.as_unlit_mut() {
             unlit.set_map(Some(tex_handle));
+            unlit.set_side(myth::resources::Side::Double);
         }
 
         let geo_handle = engine.assets.geometries.add(geometry);
@@ -121,15 +123,27 @@ fn create_pipe(engine: &mut Engine) -> Mesh {
         Mesh::new(geo_handle, mat_handle)
 }
 
+#[derive(PartialEq, Clone)]
+struct PipeDuo {
+    top_pipe: NodeHandle,
+    bottom_pipe: NodeHandle,
+    width: f32,
+    gap_y: f32,
+    x_position: f32,
+}
+
 const PIPE_SPAWN_INTERVAL: f32 = 1.0; // seconds
 const BIRD_SPAWN_POINT : Vec3 = Vec3::new(-1.0, 0.0, 0.0);
+const PIPE_GAP: f32 = 1.0;
+const PIPE_STARTING_X_POSITION: f32 = 2.0;
 struct FlappyBird {
     bird_node: NodeHandle,
     bird_velocity: Vec2,
     pipe_mesh : Mesh,
-    pipes: Vec<NodeHandle>,
+    pipes: Vec<PipeDuo>,
     pipe_spawn_timer: f32,
 }
+
 impl AppHandler for FlappyBird {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
 
@@ -186,18 +200,22 @@ impl AppHandler for FlappyBird {
 
         // Move pipes leftward and check for off-screen
         let mut to_remove = vec![];
-        for &pipe_node in &self.pipes {
-            if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(pipe_node) {
-                node.transform.position.x -= 2.0 * frame.dt;
-                // remove pipe if it goes off-screen
-                if node.transform.position.x < -3.0 {
-                    engine.scene_manager.active_scene_mut().unwrap().remove_node(pipe_node);
-                    to_remove.push(pipe_node);
-                }
+        for pipe_duo in &mut self.pipes {
+            pipe_duo.x_position -= 2.0 * frame.dt;
+            if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(pipe_duo.top_pipe) {
+                node.transform.position.x = pipe_duo.x_position;
+            }
+            if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(pipe_duo.bottom_pipe) {
+                node.transform.position.x = pipe_duo.x_position;
+            }
+            if pipe_duo.x_position < -3.0 {
+                    engine.scene_manager.active_scene_mut().unwrap().remove_node(pipe_duo.top_pipe);
+                    engine.scene_manager.active_scene_mut().unwrap().remove_node(pipe_duo.bottom_pipe);
+                    to_remove.push(pipe_duo.clone());
             }
         }
         // Remove off-screen pipes from tracking
-        self.pipes.retain(|node| !to_remove.contains(node));
+        self.pipes.retain(|duo| !to_remove.contains(duo));
 
 
         // Spawn pipes at intervals
@@ -207,17 +225,22 @@ impl AppHandler for FlappyBird {
             let top_pipe_mesh = self.pipe_mesh.clone();
             let top_pipe_node = engine.scene_manager.active_scene_mut().unwrap().add_mesh(top_pipe_mesh);
             if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(top_pipe_node) {
-                node.transform.position = Vec3::new(2.0, -0.5, 0.0);
+                node.transform.position = Vec3::new(PIPE_STARTING_X_POSITION, -0.5, 0.0);
                 node.transform.scale = Vec3::new(0.5, 0.5, 1.0);
             }
-            self.pipes.push(top_pipe_node);
             let bottom_pipe_mesh = self.pipe_mesh.clone();
             let bottom_pipe_node = engine.scene_manager.active_scene_mut().unwrap().add_mesh(bottom_pipe_mesh);
             if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(bottom_pipe_node) {
-                node.transform.position = Vec3::new(2.0, 0.5, 0.0);
+                node.transform.position = Vec3::new(PIPE_STARTING_X_POSITION, 0.5, 0.0);
                 node.transform.scale = Vec3::new(0.5, -0.5, 1.0);
             }
-            self.pipes.push(bottom_pipe_node);
+            self.pipes.push(PipeDuo {
+                top_pipe: top_pipe_node,
+                bottom_pipe: bottom_pipe_node,
+                x_position: PIPE_STARTING_X_POSITION,
+                width: 0.5,
+                gap_y: -0.5,
+            });
             println!("Spawned new pipe!");
         }
     }
