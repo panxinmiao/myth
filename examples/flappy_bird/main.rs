@@ -134,8 +134,12 @@ struct PipeDuo {
 
 const PIPE_SPAWN_INTERVAL: f32 = 1.0; // seconds
 const BIRD_SPAWN_POINT : Vec3 = Vec3::new(-1.0, 0.0, 0.0);
-const PIPE_GAP: f32 = 1.0;
+const BIRD_SCALE: f32 = 0.1;
+const PIPE_GAP: f32 = 0.5;
+const PIPE_SCALE_X: f32 = 0.5;
+const PIPE_SCALE_Y: f32 = 0.5;
 const PIPE_STARTING_X_POSITION: f32 = 2.0;
+const PIPE_GAP_CENTER: f32 = 0.0; // y-center of the gap between pipes
 struct FlappyBird {
     bird_node: NodeHandle,
     bird_velocity: Vec2,
@@ -189,13 +193,20 @@ impl AppHandler for FlappyBird {
         }
 
         // Update bird position
+        let mut bird_pos = BIRD_SPAWN_POINT;
         if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(self.bird_node) {
             node.transform.position.y += self.bird_velocity.y * frame.dt;
+            bird_pos = node.transform.position;
             if node.transform.position.y < -1.9 || node.transform.position.y > 1.9 {
-                println!("Game Over!");
-                node.transform.position = BIRD_SPAWN_POINT;
-                self.bird_velocity = Vec2::ZERO;
+                self.game_over(engine);
+                return;
             }
+        }
+
+        // Check collision with pipes
+        if self.collide_with_pipes(bird_pos) {
+            self.game_over(engine);
+            return;
         }
 
         // Move pipes leftward and check for off-screen
@@ -217,32 +228,79 @@ impl AppHandler for FlappyBird {
         // Remove off-screen pipes from tracking
         self.pipes.retain(|duo| !to_remove.contains(duo));
 
-
+        
         // Spawn pipes at intervals
         self.pipe_spawn_timer += frame.dt;
         if self.pipe_spawn_timer >= PIPE_SPAWN_INTERVAL {
             self.pipe_spawn_timer = 0.0;
+            let gap_y = PIPE_GAP_CENTER;
+            let top_y = gap_y - PIPE_GAP * 0.5 - PIPE_SCALE_Y * 0.5;
+            let bottom_y = gap_y + PIPE_GAP * 0.5 + PIPE_SCALE_Y * 0.5;
+
             let top_pipe_mesh = self.pipe_mesh.clone();
             let top_pipe_node = engine.scene_manager.active_scene_mut().unwrap().add_mesh(top_pipe_mesh);
             if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(top_pipe_node) {
-                node.transform.position = Vec3::new(PIPE_STARTING_X_POSITION, -0.5, 0.0);
-                node.transform.scale = Vec3::new(0.5, 0.5, 1.0);
+                node.transform.position = Vec3::new(PIPE_STARTING_X_POSITION, top_y, 0.0);
+                node.transform.scale = Vec3::new(PIPE_SCALE_X, PIPE_SCALE_Y, 1.0);
             }
             let bottom_pipe_mesh = self.pipe_mesh.clone();
             let bottom_pipe_node = engine.scene_manager.active_scene_mut().unwrap().add_mesh(bottom_pipe_mesh);
             if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(bottom_pipe_node) {
-                node.transform.position = Vec3::new(PIPE_STARTING_X_POSITION, 0.5, 0.0);
-                node.transform.scale = Vec3::new(0.5, -0.5, 1.0);
+                node.transform.position = Vec3::new(PIPE_STARTING_X_POSITION, bottom_y, 0.0);
+                node.transform.scale = Vec3::new(PIPE_SCALE_X, -PIPE_SCALE_Y, 1.0);
             }
             self.pipes.push(PipeDuo {
                 top_pipe: top_pipe_node,
                 bottom_pipe: bottom_pipe_node,
                 x_position: PIPE_STARTING_X_POSITION,
-                width: 0.5,
-                gap_y: -0.5,
+                width: PIPE_SCALE_X,
+                gap_y,
             });
             println!("Spawned new pipe!");
         }
+    }
+}
+
+impl FlappyBird {
+    fn collide_with_pipes(&self, bird_pos: Vec3) -> bool{
+        // Collision detection: bird vs pipes (AABB)
+        let bird_half_w = BIRD_SCALE * 0.5;
+        let bird_half_h = BIRD_SCALE * 0.5;
+        let pipe_half_w = PIPE_SCALE_X * 0.5;
+        let pipe_half_h = PIPE_SCALE_Y * 0.5;
+        for pipe_duo in &self.pipes {
+            // Top pipe
+            let top_y = pipe_duo.gap_y - PIPE_GAP * 0.5 - pipe_half_h;
+            if (bird_pos.x - pipe_duo.x_position).abs() < bird_half_w + pipe_half_w
+                && (bird_pos.y - top_y).abs() < bird_half_h + pipe_half_h
+            {
+                return true;
+            }
+            // Bottom pipe
+            let bottom_y = pipe_duo.gap_y + PIPE_GAP * 0.5 + pipe_half_h;
+            if (bird_pos.x - pipe_duo.x_position).abs() < bird_half_w + pipe_half_w
+                && (bird_pos.y - bottom_y).abs() < bird_half_h + pipe_half_h
+            {
+                return true;
+            }
+        }
+        false
+    }
+
+    fn game_over(&mut self, engine: &mut Engine) {
+        println!("Game Over!");
+        // Reset bird
+        if let Some(node) = engine.scene_manager.active_scene_mut().unwrap().get_node_mut(self.bird_node) {
+            node.transform.position = BIRD_SPAWN_POINT;
+        }
+        self.bird_velocity = Vec2::ZERO;
+        // Remove all pipes from scene
+        for pipe_duo in &self.pipes {
+            engine.scene_manager.active_scene_mut().unwrap().remove_node(pipe_duo.top_pipe);
+            engine.scene_manager.active_scene_mut().unwrap().remove_node(pipe_duo.bottom_pipe);
+        }
+        self.pipes.clear();
+        self.pipe_spawn_timer = 0.0;
     }
 }
 
