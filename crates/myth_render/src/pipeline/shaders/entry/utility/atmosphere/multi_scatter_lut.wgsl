@@ -14,7 +14,7 @@
 //
 // Dispatch: (32/8, 32/8, 1) = (4, 4, 1) workgroups
 
-{% include "atmosphere_common.wgsl" %}
+{$ include "entry/utility/atmosphere/atmosphere_common" $}
 
 @group(0) @binding(1)
 var transmittance_tex: texture_2d<f32>;

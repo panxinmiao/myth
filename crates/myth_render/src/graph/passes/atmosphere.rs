@@ -524,20 +524,13 @@ impl AtmosphereFeature {
         }
 
         let device = ctx.device;
-        let common = include_str!("../../pipeline/shaders/entry/utility/atmosphere_common.wgsl");
         let opts = ShaderCompilationOptions::default();
 
         // Transmittance pipeline
         {
-            let body =
-                include_str!("../../pipeline/shaders/entry/utility/transmittance_lut.wgsl");
-            let source = format!("{common}\n{body}");
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::Inline {
-                    name: "Atmo Transmittance",
-                    source: &source,
-                },
+                ShaderSource::File("entry/utility/atmosphere/transmittance_lut"),
                 &opts,
             );
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -556,15 +549,9 @@ impl AtmosphereFeature {
 
         // Multi-scatter pipeline
         {
-            let body =
-                include_str!("../../pipeline/shaders/entry/utility/multi_scatter_lut.wgsl");
-            let source = format!("{common}\n{body}");
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::Inline {
-                    name: "Atmo Multi-Scatter",
-                    source: &source,
-                },
+                ShaderSource::File("entry/utility/atmosphere/multi_scatter_lut"),
                 &opts,
             );
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -583,14 +570,9 @@ impl AtmosphereFeature {
 
         // Sky-view pipeline
         {
-            let body = include_str!("../../pipeline/shaders/entry/utility/sky_view_lut.wgsl");
-            let source = format!("{common}\n{body}");
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::Inline {
-                    name: "Atmo Sky-View",
-                    source: &source,
-                },
+                ShaderSource::File("entry/utility/atmosphere/sky_view_lut"),
                 &opts,
             );
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -609,13 +591,9 @@ impl AtmosphereFeature {
 
         // Sky-to-cube pipeline
         {
-            let source = include_str!("../../pipeline/shaders/entry/utility/sky_to_cube.wgsl");
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::Inline {
-                    name: "Atmo Sky-to-Cube",
-                    source,
-                },
+                ShaderSource::File("entry/utility/atmosphere/sky_to_cube"),
                 &opts,
             );
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
@@ -634,13 +612,9 @@ impl AtmosphereFeature {
 
         // PMREM prefilter pipeline (reuses ibl.wgsl)
         {
-            let source = include_str!("../../pipeline/shaders/entry/utility/ibl.wgsl");
             let (module, hash) = ctx.shader_manager.get_or_compile(
                 device,
-                ShaderSource::Inline {
-                    name: "Atmo PMREM",
-                    source,
-                },
+                ShaderSource::File("entry/utility/ibl.wgsl"),
                 &opts,
             );
             let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {

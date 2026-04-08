@@ -16,6 +16,8 @@
 //
 // Dispatch: (256/8, 64/8, 1) = (32, 8, 1) workgroups
 
+{$ include "entry/utility/atmosphere/atmosphere_common" $}
+
 @group(0) @binding(1)
 var dest: texture_storage_2d<rgba16float, write>;
 

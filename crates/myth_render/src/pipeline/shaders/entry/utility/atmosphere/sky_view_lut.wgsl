@@ -15,6 +15,8 @@
 //
 // Dispatch: (192/8, 108/8, 1) = (24, 14, 1) workgroups
 
+{$ include "entry/utility/atmosphere/atmosphere_common" $}
+
 @group(0) @binding(1)
 var transmittance_tex: texture_2d<f32>;
 

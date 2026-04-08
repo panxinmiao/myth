@@ -43,6 +43,19 @@ pub fn get_env() -> &'static Environment<'static> {
         env.set_lstrip_blocks(true);
         env.set_undefined_behavior(minijinja::UndefinedBehavior::SemiStrict);
 
+        // env.set_path_join_callback(|name, parent| {
+        //     let mut rv = parent.split('/').collect::<Vec<_>>();
+        //     rv.pop();
+        //     name.split('/').for_each(|segment| match segment {
+        //         "." => {}
+        //         ".." => { rv.pop(); }
+        //         _ => { rv.push(segment); }
+        //     });
+        //     let s = rv.join("/").into();
+        //     println!("Resolving include: {name} (parent: {parent}) -> {s}");
+        //     s
+        // });
+
         env.set_loader(shader_loader);
 
         env.add_function("next_loc", next_location);
