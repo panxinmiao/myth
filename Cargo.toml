@@ -196,6 +196,7 @@ uuid = { workspace = true }
 bytemuck = { workspace = true }
 parking_lot = { workspace = true }
 half = { workspace = true }
+rand = { workspace = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }

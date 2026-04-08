@@ -5,6 +5,7 @@ use myth::{
     resources::{ImageDimension, PixelFormat},
 };
 use myth_resources::Key;
+use rand::{Rng, rngs::StdRng};
 
 /// Flappy Bird Example
 ///
@@ -97,8 +98,8 @@ fn create_pipe_cap(engine: &mut Engine) -> Mesh {
             &[
                 [0.0f32, 1.0], // top-left
                 [0.25, 1.0],   // top-right
-                [0.0, 0.875],   // bottom-left
-                [0.25, 0.875],  // bottom-right
+                [0.0, 0.875],  // bottom-left
+                [0.25, 0.875], // bottom-right
             ],
             myth::VertexFormat::Float32x2,
         ),
@@ -158,8 +159,8 @@ fn create_pipe(engine: &mut Engine) -> Mesh {
             &[
                 [0.0f32, 0.875], // top-left
                 [0.25, 0.875],   // top-right
-                [0.0, 0.75],   // bottom-left
-                [0.25, 0.75],  // bottom-right
+                [0.0, 0.75],     // bottom-left
+                [0.25, 0.75],    // bottom-right
             ],
             myth::VertexFormat::Float32x2,
         ),
@@ -208,7 +209,7 @@ struct PipeDuo {
 
 const PIPE_SPAWN_INTERVAL: f32 = 1.0; // seconds
 const BIRD_SPAWN_POINT: Vec3 = Vec3::new(-1.0, 0.0, 0.0);
-const BIRD_SCALE: f32 = 0.1;
+const BIRD_SCALE: f32 = 0.25;
 const PIPE_GAP: f32 = 0.5;
 const PIPE_SCALE_X: f32 = 0.5;
 const PIPE_SCALE_Y: f32 = 0.5;
@@ -234,14 +235,14 @@ impl AppHandler for FlappyBird {
         let bird_node = scene.add_mesh(bird_mesh);
         if let Some(node) = scene.get_node_mut(bird_node) {
             node.transform.position = BIRD_SPAWN_POINT;
-            node.transform.scale = Vec3::new(0.1, 0.1, 0.1);
+            node.transform.scale = Vec3::new(BIRD_SCALE, BIRD_SCALE, 1.0);
         }
         // 5. Set up camera
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
         let cam_node_id = scene.add_camera(camera);
 
         if let Some(node) = scene.get_node_mut(cam_node_id) {
-            node.transform.position = Vec3::new(0.0, 0.0, 3.0);
+            node.transform.position = Vec3::new(0.0, 0.0, 10.0);
             node.transform.look_at(Vec3::ZERO, Vec3::Y);
         }
 
@@ -265,6 +266,17 @@ impl AppHandler for FlappyBird {
         if engine.input.get_key_down(Key::Space) {
             // apply upward velocity to bird
             self.bird_velocity.y = 4.0;
+            println!(
+                "Flap! Position: {:?}",
+                engine
+                    .scene_manager
+                    .active_scene()
+                    .unwrap()
+                    .get_node(self.bird_node)
+                    .unwrap()
+                    .transform
+                    .position
+            );
         }
 
         // Update bird position
@@ -277,7 +289,7 @@ impl AppHandler for FlappyBird {
         {
             node.transform.position.y += self.bird_velocity.y * frame.dt;
             bird_pos = node.transform.position;
-            if node.transform.position.y < -1.9 || node.transform.position.y > 1.9 {
+            if node.transform.position.y < -2.0 || node.transform.position.y > 2.0 {
                 self.game_over(engine);
                 return;
             }
@@ -339,8 +351,34 @@ impl AppHandler for FlappyBird {
         if self.pipe_spawn_timer >= PIPE_SPAWN_INTERVAL {
             self.pipe_spawn_timer = 0.0;
             let gap_y = PIPE_GAP_CENTER;
-            let top_y = gap_y - PIPE_GAP * 0.5 - PIPE_SCALE_Y * 0.5;
-            let bottom_y = gap_y + PIPE_GAP * 0.5 + PIPE_SCALE_Y * 0.5;
+            let mut rng = rand::rng();
+            let top_pipe_amount = rng.next_u32() % 3;
+            let bottom_pipe_amount = rng.next_u32() % 3;
+
+            let mut top_pipe_nodes = vec![];
+
+            let mut top_pipe_height = -2.;
+
+            for i in 0..top_pipe_amount {
+                let top_pipe_mesh = self.pipe_mesh.clone();
+                let top_pipe_node = engine
+                    .scene_manager
+                    .active_scene_mut()
+                    .unwrap()
+                    .add_mesh(top_pipe_mesh);
+                if let Some(node) = engine
+                    .scene_manager
+                    .active_scene_mut()
+                    .unwrap()
+                    .get_node_mut(top_pipe_node)
+                {
+                    node.transform.position =
+                        Vec3::new(PIPE_STARTING_X_POSITION, top_pipe_height, 0.0);
+                    node.transform.scale = Vec3::new(PIPE_SCALE_X, PIPE_SCALE_Y, 1.0);
+                }
+                top_pipe_nodes.push(top_pipe_node);
+                top_pipe_height += PIPE_SCALE_Y;
+            }
 
             let top_pipe_cap_mesh = self.pipe_cap_mesh.clone();
             let top_pipe_cap_node = engine
@@ -354,24 +392,34 @@ impl AppHandler for FlappyBird {
                 .unwrap()
                 .get_node_mut(top_pipe_cap_node)
             {
-                node.transform.position = Vec3::new(PIPE_STARTING_X_POSITION, top_y, 0.0);
+                node.transform.position = Vec3::new(PIPE_STARTING_X_POSITION, top_pipe_height, 0.0);
                 node.transform.scale = Vec3::new(PIPE_SCALE_X, PIPE_SCALE_Y, 1.0);
             }
 
-            let top_pipe_mesh = self.pipe_mesh.clone();
-            let top_pipe_node = engine
-                .scene_manager
-                .active_scene_mut()
-                .unwrap()
-                .add_mesh(top_pipe_mesh);
-            if let Some(node) = engine
-                .scene_manager
-                .active_scene_mut()
-                .unwrap()
-                .get_node_mut(top_pipe_node)
-            {
-                node.transform.position = Vec3::new(PIPE_STARTING_X_POSITION, top_y - PIPE_SCALE_Y, 0.0);
-                node.transform.scale = Vec3::new(PIPE_SCALE_X, PIPE_SCALE_Y, 1.0);
+            top_pipe_nodes.push(top_pipe_cap_node);
+
+            let mut bottom_pipe_nodes = vec![];
+            let mut bottom_pipe_height = 2.;
+
+            for i in 0..bottom_pipe_amount {
+                let bottom_pipe_mesh = self.pipe_mesh.clone();
+                let bottom_pipe_node = engine
+                    .scene_manager
+                    .active_scene_mut()
+                    .unwrap()
+                    .add_mesh(bottom_pipe_mesh);
+                if let Some(node) = engine
+                    .scene_manager
+                    .active_scene_mut()
+                    .unwrap()
+                    .get_node_mut(bottom_pipe_node)
+                {
+                    node.transform.position =
+                        Vec3::new(PIPE_STARTING_X_POSITION, bottom_pipe_height, 0.0);
+                    node.transform.scale = Vec3::new(PIPE_SCALE_X, -PIPE_SCALE_Y, 1.0);
+                }
+                bottom_pipe_nodes.push(bottom_pipe_node);
+                bottom_pipe_height -= PIPE_SCALE_Y;
             }
 
             let bottom_pipe_cap_mesh = self.pipe_cap_mesh.clone();
@@ -386,26 +434,16 @@ impl AppHandler for FlappyBird {
                 .unwrap()
                 .get_node_mut(bottom_pipe_cap_node)
             {
-                node.transform.position = Vec3::new(PIPE_STARTING_X_POSITION, bottom_y, 0.0);
-                node.transform.scale = Vec3::new(PIPE_SCALE_X, -PIPE_SCALE_Y, 1.0);
-            }
-            let bottom_pipe_mesh = self.pipe_mesh.clone();
-            let bottom_pipe_node = engine
-                .scene_manager
-                .active_scene_mut()
-                .unwrap()
-                .add_mesh(bottom_pipe_mesh);
-            if let Some(node) = engine
-                .scene_manager                .active_scene_mut()
-                .unwrap().get_node_mut(bottom_pipe_node)
-            {
-                node.transform.position = Vec3::new(PIPE_STARTING_X_POSITION, bottom_y + PIPE_SCALE_Y, 0.0);
+                node.transform.position =
+                    Vec3::new(PIPE_STARTING_X_POSITION, bottom_pipe_height, 0.0);
                 node.transform.scale = Vec3::new(PIPE_SCALE_X, -PIPE_SCALE_Y, 1.0);
             }
 
+            bottom_pipe_nodes.push(bottom_pipe_cap_node);
+
             self.pipes.push(PipeDuo {
-                top_pipe: vec![top_pipe_cap_node, top_pipe_node],
-                bottom_pipe: vec![bottom_pipe_cap_node, bottom_pipe_node],
+                top_pipe: top_pipe_nodes,
+                bottom_pipe: bottom_pipe_nodes,
                 x_position: PIPE_STARTING_X_POSITION,
                 width: PIPE_SCALE_X,
                 gap_y,
@@ -418,6 +456,7 @@ impl AppHandler for FlappyBird {
 impl FlappyBird {
     fn collide_with_pipes(&self, bird_pos: Vec3) -> bool {
         // Collision detection: bird vs pipes (AABB)
+        /*
         let bird_half_w = BIRD_SCALE * 0.5;
         let bird_half_h = BIRD_SCALE * 0.5;
         let pipe_half_w = PIPE_SCALE_X * 0.5;
@@ -438,6 +477,7 @@ impl FlappyBird {
                 return true;
             }
         }
+        */
         false
     }
 
