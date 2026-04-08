@@ -13,13 +13,15 @@ use crate::graph::frame::RenderLists;
 #[cfg(feature = "debug_view")]
 use crate::graph::passes::DebugViewFeature;
 use crate::graph::passes::{
-    BloomFeature, BrdfLutFeature, CasFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature,
-    OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature,
-    SsssFeature, TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+    AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, FxaaFeature, IblComputeFeature,
+    MsaaSyncFeature, OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature,
+    SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature,
+    TransmissionCopyFeature, TransparentFeature,
 };
 use myth_assets::AssetServer;
 use myth_core::Result;
 use myth_scene::Scene;
+use myth_scene::background::BackgroundMode;
 use myth_scene::camera::RenderCamera;
 
 use crate::core::{ResourceManager, WgpuContext};
@@ -91,6 +93,7 @@ struct RendererState {
     pub(crate) shadow_pass: ShadowFeature,
     pub(crate) brdf_pass: BrdfLutFeature,
     pub(crate) ibl_pass: IblComputeFeature,
+    pub(crate) atmosphere_pass: AtmosphereFeature,
 
     // Debug view (compile-time gated)
     #[cfg(feature = "debug_view")]
@@ -249,6 +252,7 @@ impl Renderer {
             shadow_pass,
             brdf_pass,
             ibl_pass,
+            atmosphere_pass: AtmosphereFeature::new(),
 
             #[cfg(feature = "debug_view")]
             debug_view_pass: DebugViewFeature::new(),
@@ -317,6 +321,14 @@ impl Renderer {
         state.global_bind_group_cache.begin_frame();
 
         // ── Phase 1: Extract scene, build shadow views, prepare global ──
+        // If procedural sky has baked its cubemap, wire the environment
+        // source so resolve_gpu_environment picks up our PMREM cache entry.
+        if matches!(scene.background.mode, BackgroundMode::Procedural(_))
+            && state.atmosphere_pass.ready
+        {
+            scene.environment.source_env_map = Some(state.atmosphere_pass.env_source());
+        }
+
         let surface_size = state.wgpu_ctx.size();
         state.render_frame.extract_and_prepare(
             &mut state.resource_manager,
@@ -414,6 +426,13 @@ impl Renderer {
             state.brdf_pass.extract_and_prepare(&mut extract_ctx);
             state.ibl_pass.extract_and_prepare(&mut extract_ctx);
             state.shadow_pass.extract_and_prepare(&mut extract_ctx);
+
+            // Procedural atmosphere (LUT + cubemap + PMREM compute)
+            if let BackgroundMode::Procedural(ref params) = scene.background.mode {
+                state
+                    .atmosphere_pass
+                    .extract_and_prepare(&mut extract_ctx, params);
+            }
 
             // Skybox (both pipelines)
             if needs_skybox {
@@ -572,6 +591,7 @@ impl Renderer {
             shadow_pass: &mut state.shadow_pass,
             brdf_pass: &mut state.brdf_pass,
             ibl_pass: &mut state.ibl_pass,
+            atmosphere_pass: &mut state.atmosphere_pass,
 
             #[cfg(feature = "debug_view")]
             debug_view_pass: &mut state.debug_view_pass,

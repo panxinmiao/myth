@@ -1,3 +1,4 @@
+pub mod atmosphere;
 pub mod bloom;
 pub mod cas;
 pub mod compute;
@@ -19,6 +20,7 @@ pub mod transmission_copy;
 pub mod transparent;
 pub mod utils;
 
+pub use atmosphere::AtmosphereFeature;
 pub use bloom::BloomFeature;
 pub use cas::CasFeature;
 pub use compute::{BrdfLutFeature, IblComputeFeature};

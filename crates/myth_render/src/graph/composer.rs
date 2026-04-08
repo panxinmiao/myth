@@ -61,9 +61,10 @@ use crate::graph::core::{
 use crate::graph::frame::{PreparedSkyboxDraw, RenderLists};
 use crate::graph::passes::utils::add_msaa_resolve_pass;
 use crate::graph::passes::{
-    BloomFeature, BrdfLutFeature, CasFeature, FxaaFeature, IblComputeFeature, MsaaSyncFeature,
-    OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature, SkyboxFeature, SsaoFeature,
-    SsssFeature, TaaFeature, ToneMappingFeature, TransmissionCopyFeature, TransparentFeature,
+    AtmosphereFeature, BloomFeature, BrdfLutFeature, CasFeature, FxaaFeature, IblComputeFeature,
+    MsaaSyncFeature, OpaqueFeature, PrepassFeature, ShadowFeature, SimpleForwardFeature,
+    SkyboxFeature, SsaoFeature, SsssFeature, TaaFeature, ToneMappingFeature,
+    TransmissionCopyFeature, TransparentFeature,
 };
 use crate::pipeline::PipelineCache;
 use crate::pipeline::ShaderManager;
@@ -119,6 +120,7 @@ pub struct ComposerContext<'a> {
     pub shadow_pass: &'a mut ShadowFeature,
     pub brdf_pass: &'a mut BrdfLutFeature,
     pub ibl_pass: &'a mut IblComputeFeature,
+    pub atmosphere_pass: &'a mut AtmosphereFeature,
 
     // Debug view (compile-time gated)
     #[cfg(feature = "debug_view")]

@@ -6,19 +6,20 @@
 //! # Architecture
 //!
 //! [`BackgroundMode`] is the lightweight enum that describes *what* to draw
-//! (solid color, gradient, or texture). [`BackgroundSettings`] wraps the mode
-//! together with a `CpuBuffer<SkyboxParamsUniforms>` whose version is
-//! automatically bumped only when setter methods actually change a value.
-//! The render pass calls `ensure_buffer_id()` in its `prepare()` step and
-//! never writes to the buffer — GPU sync happens only when needed.
+//! (solid color, gradient, texture, or procedural sky). [`BackgroundSettings`]
+//! wraps the mode together with a `CpuBuffer<SkyboxParamsUniforms>` whose
+//! version is automatically bumped only when setter methods actually change a
+//! value. The render pass calls `ensure_buffer_id()` in its `prepare()` step
+//! and never writes to the buffer — GPU sync happens only when needed.
 //!
 //! # Supported Modes
 //!
 //! - [`BackgroundMode::Color`]: Solid color clear (most efficient - uses hardware clear)
 //! - [`BackgroundMode::Gradient`]: Vertical gradient (top → bottom)
 //! - [`BackgroundMode::Texture`]: Texture-based background (cubemap, equirectangular, planar)
+//! - [`BackgroundMode::Procedural`]: Physically-based atmosphere (Hillaire 2020)
 
-use glam::Vec4;
+use glam::{Vec3, Vec4};
 
 use myth_resources::buffer::CpuBuffer;
 use myth_resources::gpu_struct;
@@ -41,6 +42,201 @@ pub struct SkyboxParamsUniforms {
     pub rotation: f32,
     #[default(1.0)]
     pub intensity: f32,
+}
+
+// ============================================================================
+// Procedural Sky Parameters (Hillaire 2020 Atmosphere)
+// ============================================================================
+
+/// Physical atmosphere parameters for the Hillaire 2020 sky model.
+///
+/// Controls the procedural sky rendering and dynamic IBL bake pipeline.
+/// When any parameter changes, the atmosphere LUTs and IBL cubemap are
+/// regenerated automatically.
+///
+/// # Default
+///
+/// The default values produce a visually appealing "golden hour" sky:
+/// sun at ~15° elevation with warm tones, suitable as an out-of-the-box
+/// lighting environment for PBR models.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProceduralSkyParams {
+    /// Normalized sun direction vector (world space, pointing toward the sun).
+    pub sun_direction: Vec3,
+
+    /// Sun disk angular diameter in degrees (Earth's sun ≈ 0.53°).
+    pub sun_disk_size: f32,
+
+    /// Sun luminous intensity multiplier.
+    pub sun_intensity: f32,
+
+    /// Rayleigh scattering coefficients at sea level (per meter).
+    ///
+    /// Controls the blue sky color. Earth default: `(5.802e-6, 13.558e-6, 33.1e-6)`.
+    pub rayleigh_scattering: Vec3,
+
+    /// Rayleigh scale height in meters.
+    ///
+    /// Controls how quickly Rayleigh scattering diminishes with altitude.
+    /// Earth default: `8000.0`.
+    pub rayleigh_scale_height: f32,
+
+    /// Mie scattering coefficient at sea level (scalar, per meter).
+    ///
+    /// Controls haze and sun halo intensity. Earth default: `3.996e-6`.
+    pub mie_scattering: f32,
+
+    /// Mie absorption coefficient at sea level (scalar, per meter).
+    ///
+    /// Earth default: `4.4e-6`.
+    pub mie_absorption: f32,
+
+    /// Mie scale height in meters.
+    ///
+    /// Controls haze distribution with altitude. Earth default: `1200.0`.
+    pub mie_scale_height: f32,
+
+    /// Mie phase function anisotropy factor (Henyey-Greenstein g parameter).
+    ///
+    /// Range `[-1, 1]`. Higher values produce a brighter, tighter sun halo.
+    /// Earth default: `0.8`.
+    pub mie_anisotropy: f32,
+
+    /// Ozone absorption coefficients (per meter).
+    ///
+    /// Earth default: `(0.65e-6, 1.881e-6, 0.085e-6)`.
+    pub ozone_absorption: Vec3,
+
+    /// Planet radius in meters. Earth default: `6_360_000.0`.
+    pub planet_radius: f32,
+
+    /// Atmosphere radius in meters (ground to top of atmosphere).
+    /// Earth default: `6_460_000.0`.
+    pub atmosphere_radius: f32,
+
+    /// Exposure multiplier applied to the final sky color.
+    pub exposure: f32,
+
+    /// Internal version counter, incremented on every mutation.
+    version: u64,
+}
+
+impl Default for ProceduralSkyParams {
+    fn default() -> Self {
+        Self::golden_hour()
+    }
+}
+
+impl ProceduralSkyParams {
+    /// A visually appealing "golden hour" preset with the sun at ~15° elevation.
+    #[must_use]
+    pub fn golden_hour() -> Self {
+        let sun_elevation = 15.0_f32.to_radians();
+        Self {
+            sun_direction: Vec3::new(0.0, sun_elevation.sin(), -sun_elevation.cos()).normalize(),
+            sun_disk_size: 0.53,
+            sun_intensity: 20.0,
+            rayleigh_scattering: Vec3::new(5.802e-6, 13.558e-6, 33.1e-6),
+            rayleigh_scale_height: 8000.0,
+            mie_scattering: 3.996e-6,
+            mie_absorption: 4.4e-6,
+            mie_scale_height: 1200.0,
+            mie_anisotropy: 0.8,
+            ozone_absorption: Vec3::new(0.65e-6, 1.881e-6, 0.085e-6),
+            planet_radius: 6_360_000.0,
+            atmosphere_radius: 6_460_000.0,
+            exposure: 10.0,
+            version: 0,
+        }
+    }
+
+    /// Bright midday preset with the sun near zenith.
+    #[must_use]
+    pub fn midday() -> Self {
+        let sun_elevation = 70.0_f32.to_radians();
+        Self {
+            sun_direction: Vec3::new(0.0, sun_elevation.sin(), -sun_elevation.cos()).normalize(),
+            sun_intensity: 20.0,
+            exposure: 10.0,
+            ..Self::golden_hour()
+        }
+    }
+
+    /// Sunset preset with the sun at 3° elevation.
+    #[must_use]
+    pub fn sunset() -> Self {
+        let sun_elevation = 3.0_f32.to_radians();
+        Self {
+            sun_direction: Vec3::new(0.3, sun_elevation.sin(), -sun_elevation.cos()).normalize(),
+            sun_intensity: 20.0,
+            exposure: 12.0,
+            ..Self::golden_hour()
+        }
+    }
+
+    /// Returns the internal version counter.
+    #[inline]
+    #[must_use]
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// Sets the sun direction and increments the version.
+    pub fn set_sun_direction(&mut self, dir: Vec3) {
+        let dir = dir.normalize();
+        if self.sun_direction != dir {
+            self.sun_direction = dir;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Sets the sun intensity and increments the version.
+    pub fn set_sun_intensity(&mut self, intensity: f32) {
+        if self.sun_intensity != intensity {
+            self.sun_intensity = intensity;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Sets the exposure multiplier and increments the version.
+    pub fn set_exposure(&mut self, exposure: f32) {
+        if self.exposure != exposure {
+            self.exposure = exposure;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Sets the Rayleigh scattering coefficients and increments the version.
+    pub fn set_rayleigh_scattering(&mut self, coeffs: Vec3) {
+        if self.rayleigh_scattering != coeffs {
+            self.rayleigh_scattering = coeffs;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Sets the Mie scattering coefficient and increments the version.
+    pub fn set_mie_scattering(&mut self, coeff: f32) {
+        if self.mie_scattering != coeff {
+            self.mie_scattering = coeff;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Sets the Mie phase function anisotropy and increments the version.
+    pub fn set_mie_anisotropy(&mut self, g: f32) {
+        if self.mie_anisotropy != g {
+            self.mie_anisotropy = g.clamp(-1.0, 1.0);
+            self.version = self.version.wrapping_add(1);
+        }
+    }
+
+    /// Sets the sun disk angular size in degrees and increments the version.
+    pub fn set_sun_disk_size(&mut self, degrees: f32) {
+        if self.sun_disk_size != degrees {
+            self.sun_disk_size = degrees;
+            self.version = self.version.wrapping_add(1);
+        }
+    }
 }
 
 // ============================================================================
@@ -90,6 +286,13 @@ pub enum BackgroundMode {
         /// Texture mapping method
         mapping: BackgroundMapping,
     },
+
+    /// Physically-based procedural sky (Hillaire 2020 atmosphere model).
+    ///
+    /// Renders a photorealistic sky computed from atmospheric scattering
+    /// parameters. Automatically generates IBL environment lighting for
+    /// PBR rendering. No external texture assets required.
+    Procedural(ProceduralSkyParams),
 }
 
 /// Texture mapping method for background rendering.
@@ -182,6 +385,20 @@ impl BackgroundMode {
         }
     }
 
+    /// Creates a procedural sky background with default golden-hour parameters.
+    #[inline]
+    #[must_use]
+    pub fn procedural() -> Self {
+        Self::Procedural(ProceduralSkyParams::default())
+    }
+
+    /// Creates a procedural sky background with custom atmosphere parameters.
+    #[inline]
+    #[must_use]
+    pub fn procedural_with(params: ProceduralSkyParams) -> Self {
+        Self::Procedural(params)
+    }
+
     /// Returns the clear color for the RenderPass.
     ///
     /// - `Color` mode: returns the specified color (hardware clear).
@@ -195,9 +412,11 @@ impl BackgroundMode {
                 b: f64::from(c.z),
                 a: f64::from(c.w),
             },
-            // For gradient/texture modes, clear to black.
+            // For gradient/texture/procedural modes, clear to black.
             // The SkyboxPass will fill uncovered pixels.
-            Self::Gradient { .. } | Self::Texture { .. } => wgpu::Color::BLACK,
+            Self::Gradient { .. } | Self::Texture { .. } | Self::Procedural(_) => {
+                wgpu::Color::BLACK
+            }
         }
     }
 
@@ -325,6 +544,30 @@ impl BackgroundSettings {
         self.mode.needs_skybox_pass()
     }
 
+    /// Returns a mutable reference to the procedural sky parameters,
+    /// or `None` if the current mode is not `Procedural`.
+    #[inline]
+    #[must_use]
+    pub fn procedural_sky_params_mut(&mut self) -> Option<&mut ProceduralSkyParams> {
+        if let BackgroundMode::Procedural(params) = &mut self.mode {
+            Some(params)
+        } else {
+            None
+        }
+    }
+
+    /// Returns a reference to the procedural sky parameters,
+    /// or `None` if the current mode is not `Procedural`.
+    #[inline]
+    #[must_use]
+    pub fn procedural_sky_params(&self) -> Option<&ProceduralSkyParams> {
+        if let BackgroundMode::Procedural(params) = &self.mode {
+            Some(params)
+        } else {
+            None
+        }
+    }
+
     // === Internal ===
 
     /// Derives uniform values from the current `BackgroundMode` and writes
@@ -353,6 +596,12 @@ impl BackgroundSettings {
                 p.color_bottom = Vec4::ZERO;
                 p.rotation = *rotation;
                 p.intensity = *intensity;
+            }
+            BackgroundMode::Procedural(params) => {
+                p.color_top = Vec4::ZERO;
+                p.color_bottom = Vec4::ZERO;
+                p.rotation = 0.0;
+                p.intensity = params.exposure;
             }
         }
     }

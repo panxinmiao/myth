@@ -32,7 +32,7 @@ pub trait GeometryQuery {
 }
 
 // Re-exports from this crate
-pub use background::{BackgroundMapping, BackgroundMode, BackgroundSettings};
+pub use background::{BackgroundMapping, BackgroundMode, BackgroundSettings, ProceduralSkyParams};
 pub use camera::{Camera, Frustum, ProjectionType, RenderCamera};
 #[cfg(feature = "debug_view")]
 pub use camera::{DebugViewMode, DebugViewSettings};

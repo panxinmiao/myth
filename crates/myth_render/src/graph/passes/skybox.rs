@@ -83,6 +83,7 @@ impl SkyboxVariant {
                 BackgroundMapping::Equirectangular => Some(Self::Equirectangular),
                 BackgroundMapping::Planar => Some(Self::Planar),
             },
+            BackgroundMode::Procedural(_) => Some(Self::Cube),
         }
     }
 
@@ -383,13 +384,23 @@ impl SkyboxFeature {
             .0;
 
         // Resolve texture view
-        let texture_view = if let BackgroundMode::Texture {
-            source, mapping, ..
-        } = background_mode
-        {
-            Self::resolve_texture_view(ctx.resource_manager, source, *mapping)
-        } else {
-            None
+        let texture_view = match background_mode {
+            BackgroundMode::Texture {
+                source, mapping, ..
+            } => Self::resolve_texture_view(ctx.resource_manager, source, *mapping),
+            BackgroundMode::Procedural(_) => {
+                // Use the baked cubemap registered by AtmosphereFeature.
+                // The renderer sets source_env_map = Attachment(cube_view_id, Cube)
+                // before Phase 1, so extracted_scene has the correct value.
+                if let Some(TextureSource::Attachment(id, _)) =
+                    ctx.extracted_scene.envvironment.source_env_map
+                {
+                    ctx.resource_manager.internal_resources.get(&id)
+                } else {
+                    None
+                }
+            }
+            _ => None,
         };
 
         // Build bind group (group 1)
