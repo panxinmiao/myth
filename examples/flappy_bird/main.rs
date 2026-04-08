@@ -296,7 +296,8 @@ impl AppHandler for FlappyBird {
         }
 
         // Check collision with pipes
-        if self.collide_with_pipes(bird_pos) {
+        let scene = engine.scene_manager.active_scene().unwrap();
+        if self.collide_with_pipes(scene) {
             self.game_over(engine);
             return;
         }
@@ -344,7 +345,14 @@ impl AppHandler for FlappyBird {
             }
         }
         // Remove off-screen pipes from tracking
-        self.pipes.retain(|duo| !to_remove.contains(duo));
+        self.pipes.retain(|duo| {
+            if !to_remove.contains(duo) {
+                true
+            } else {
+                println!("Removed off-screen pipe!");
+                false
+            }
+        });
 
         // Spawn pipes at intervals
         self.pipe_spawn_timer += frame.dt;
@@ -454,30 +462,33 @@ impl AppHandler for FlappyBird {
 }
 
 impl FlappyBird {
-    fn collide_with_pipes(&self, bird_pos: Vec3) -> bool {
+    fn collide_with_pipes(&self, scene: &Scene) -> bool {
         // Collision detection: bird vs pipes (AABB)
-        /*
         let bird_half_w = BIRD_SCALE * 0.5;
         let bird_half_h = BIRD_SCALE * 0.5;
         let pipe_half_w = PIPE_SCALE_X * 0.5;
         let pipe_half_h = PIPE_SCALE_Y * 0.5;
+        let bird_pos = scene.get_node(self.bird_node).unwrap().transform.position;
         for pipe_duo in &self.pipes {
             // Top pipe
-            let top_y = pipe_duo.gap_y - PIPE_GAP * 0.5 - pipe_half_h;
-            if (bird_pos.x - pipe_duo.x_position).abs() < bird_half_w + pipe_half_w
-                && (bird_pos.y - top_y).abs() < bird_half_h + pipe_half_h
-            {
-                return true;
+            for top in &pipe_duo.top_pipe {
+                let top_y = scene.get_node(*top).unwrap().transform.position.y;
+                if (bird_pos.x - pipe_duo.x_position).abs() < bird_half_w + pipe_half_w
+                    && (bird_pos.y - top_y).abs() < bird_half_h + pipe_half_h
+                {
+                    return true;
+                }
             }
             // Bottom pipe
-            let bottom_y = pipe_duo.gap_y + PIPE_GAP * 0.5 + pipe_half_h;
-            if (bird_pos.x - pipe_duo.x_position).abs() < bird_half_w + pipe_half_w
-                && (bird_pos.y - bottom_y).abs() < bird_half_h + pipe_half_h
-            {
-                return true;
+            for bottom in &pipe_duo.bottom_pipe {
+                let bottom_y = scene.get_node(*bottom).unwrap().transform.position.y;
+                if (bird_pos.x - pipe_duo.x_position).abs() < bird_half_w + pipe_half_w
+                    && (bird_pos.y - bottom_y).abs() < bird_half_h + pipe_half_h
+                {
+                    return true;
+                }
             }
         }
-        */
         false
     }
 
