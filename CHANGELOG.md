@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+### Fixed
+- Fixed an issue of UnlitMaterial UV transform not taking effect
+
 ## v0.2.0
 
 Released 2026-04-07
