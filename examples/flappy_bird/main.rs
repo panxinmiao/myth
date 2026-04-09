@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use myth::{
     prelude::*,
     resources::{ImageDimension, PixelFormat},
+    TextureTransform,
 };
 use myth_resources::Key;
 use rand::{Rng, rngs::StdRng};
@@ -15,41 +16,9 @@ const BIRD_IMAGE_DATA: &[u8] =
 const PIPE_IMAGE_DATA: &[u8] =
     include_bytes!("../assets/Flappy Bird Assets/Tiles/Style 1/PipeStyle1.png");
 
-fn create_bird(engine: &mut Engine) -> Mesh {
-    // 1. Create quad geometry
-    let mut geometry = Geometry::new();
-    geometry.set_attribute(
-        "position",
-        myth::Attribute::new_planar(
-            &[
-                [-0.5f32, 0.5, 0.0], // top-left
-                [0.5, 0.5, 0.0],     // top-right
-                [-0.5, -0.5, 0.0],   // bottom-left
-                [0.5, -0.5, 0.0],    // bottom-right
-            ],
-            myth::VertexFormat::Float32x3,
-        ),
-    );
-
-    geometry.set_attribute(
-        "uv",
-        myth::Attribute::new_planar(
-            &[
-                [0.0f32, 1.0], // top-left
-                [0.25, 1.0],   // top-right
-                [0.0, 0.0],    // bottom-left
-                [0.25, 0.0],   // bottom-right
-            ],
-            myth::VertexFormat::Float32x2,
-        ),
-    );
-
-    geometry.set_indices(&[0, 2, 1, 1, 2, 3]);
-
-    // 2. Create unlit material with a solid color texture
-    let image = image::load_from_memory(BIRD_IMAGE_DATA).expect("failed to decode PNG");
-    // flip image since its upside down by default
-    let image = image.flipv();
+fn load_texture(engine: &mut Engine, data: &[u8], flip_v: bool) -> TextureHandle {
+    let image = image::load_from_memory(data).expect("failed to decode PNG");
+    let image = if flip_v { image.flipv() } else { image };
     let decoded = image.to_rgba8();
     let (w, h) = (decoded.width(), decoded.height());
     let image_handle = engine.assets.images.add(Image::new(
@@ -60,142 +29,49 @@ fn create_bird(engine: &mut Engine) -> Mesh {
         PixelFormat::Rgba8Unorm,
         Some(decoded.into_raw()),
     ));
-    let texture = Texture::new_2d(Some("red_tex"), image_handle);
-    let mut unlit_mat = Material::new_unlit(Vec4::new(1.0, 1.0, 1.0, 1.0));
-
-    // 3. Add resources to AssetServer
-    let tex_handle = engine.assets.textures.add(texture);
-
-    if let Some(unlit) = unlit_mat.as_unlit_mut() {
-        unlit.set_map(Some(tex_handle));
-    }
-
-    let geo_handle = engine.assets.geometries.add(geometry);
-    let mat_handle = engine.assets.materials.add(unlit_mat);
-
-    Mesh::new(geo_handle, mat_handle)
+    let texture = Texture::new_2d(None, image_handle);
+    engine.assets.textures.add(texture)
 }
 
-fn create_pipe_cap(engine: &mut Engine) -> Mesh {
-    // 1. Create quad geometry
-    let mut geometry = Geometry::new();
-    geometry.set_attribute(
-        "position",
-        myth::Attribute::new_planar(
-            &[
-                [-0.5f32, 0.5, 0.0], // top-left
-                [0.5, 0.5, 0.0],     // top-right
-                [-0.5, -0.5, 0.0],   // bottom-left
-                [0.5, -0.5, 0.0],    // bottom-right
-            ],
-            myth::VertexFormat::Float32x3,
-        ),
-    );
-
-    geometry.set_attribute(
-        "uv",
-        myth::Attribute::new_planar(
-            &[
-                [0.0f32, 1.0], // top-left
-                [0.25, 1.0],   // top-right
-                [0.0, 0.875],  // bottom-left
-                [0.25, 0.875], // bottom-right
-            ],
-            myth::VertexFormat::Float32x2,
-        ),
-    );
-
-    geometry.set_indices(&[0, 2, 1, 1, 2, 3]);
-
-    // 2. Create unlit material with a solid color texture
-    let image = image::load_from_memory(PIPE_IMAGE_DATA).expect("failed to decode PNG");
-    let decoded = image.to_rgba8();
-    let (w, h) = (decoded.width(), decoded.height());
-    let image_handle = engine.assets.images.add(Image::new(
-        w,
-        h,
-        1,
-        ImageDimension::D2,
-        PixelFormat::Rgba8Unorm,
-        Some(decoded.into_raw()),
-    ));
-    let texture = Texture::new_2d(Some("red_tex"), image_handle);
-    let mut unlit_mat = Material::new_unlit(Vec4::new(1.0, 1.0, 1.0, 1.0));
-
-    // 3. Add resources to AssetServer
-    let tex_handle = engine.assets.textures.add(texture);
-
-    // Set face culling to double-sided since pipes can be seen from both sides (flip texture vertically for bottom pipe)
-    if let Some(unlit) = unlit_mat.as_unlit_mut() {
-        unlit.set_map(Some(tex_handle));
-        unlit.set_side(myth::resources::Side::Double);
-    }
-
-    let geo_handle = engine.assets.geometries.add(geometry);
-    let mat_handle = engine.assets.materials.add(unlit_mat);
-
-    Mesh::new(geo_handle, mat_handle)
+fn create_bird_material(engine: &mut Engine) -> UnlitMaterial {
+    let tex_handle = load_texture(engine, BIRD_IMAGE_DATA, true);
+    let mat = UnlitMaterial::new(Vec4::ONE)
+        .with_map(tex_handle);
+    mat.set_map_transform(TextureTransform {
+        scale: Vec2::new(0.25, 1.0),
+        offset: Vec2::ZERO,
+        rotation: 0.0,
+    });
+    mat.flush_texture_transforms();
+    mat
 }
 
-fn create_pipe(engine: &mut Engine) -> Mesh {
-    // 1. Create quad geometry
-    let mut geometry = Geometry::new();
-    geometry.set_attribute(
-        "position",
-        myth::Attribute::new_planar(
-            &[
-                [-0.5f32, 0.5, 0.0], // top-left
-                [0.5, 0.5, 0.0],     // top-right
-                [-0.5, -0.5, 0.0],   // bottom-left
-                [0.5, -0.5, 0.0],    // bottom-right
-            ],
-            myth::VertexFormat::Float32x3,
-        ),
-    );
+fn create_pipe_cap_material(engine: &mut Engine) -> UnlitMaterial {
+    let tex_handle = load_texture(engine, PIPE_IMAGE_DATA, false);
+    let mat = UnlitMaterial::new(Vec4::ONE)
+        .with_map(tex_handle)
+        .with_side(Side::Double);
+    mat.set_map_transform(TextureTransform {
+        scale: Vec2::new(0.25, 0.125),
+        offset: Vec2::new(0.0, 0.875),
+        rotation: 0.0,
+    });
+    mat.flush_texture_transforms();
+    mat
+}
 
-    geometry.set_attribute(
-        "uv",
-        myth::Attribute::new_planar(
-            &[
-                [0.0f32, 0.875], // top-left
-                [0.25, 0.875],   // top-right
-                [0.0, 0.75],     // bottom-left
-                [0.25, 0.75],    // bottom-right
-            ],
-            myth::VertexFormat::Float32x2,
-        ),
-    );
-
-    geometry.set_indices(&[0, 2, 1, 1, 2, 3]);
-
-    // 2. Create unlit material with a solid color texture
-    let image = image::load_from_memory(PIPE_IMAGE_DATA).expect("failed to decode PNG");
-    let decoded = image.to_rgba8();
-    let (w, h) = (decoded.width(), decoded.height());
-    let image_handle = engine.assets.images.add(Image::new(
-        w,
-        h,
-        1,
-        ImageDimension::D2,
-        PixelFormat::Rgba8Unorm,
-        Some(decoded.into_raw()),
-    ));
-    let texture = Texture::new_2d(Some("red_tex"), image_handle);
-    let mut unlit_mat = Material::new_unlit(Vec4::new(1.0, 1.0, 1.0, 1.0));
-
-    // 3. Add resources to AssetServer
-    let tex_handle = engine.assets.textures.add(texture);
-
-    // Set face culling to double-sided since pipes can be seen from both sides (flip texture vertically for bottom pipe)
-    if let Some(unlit) = unlit_mat.as_unlit_mut() {
-        unlit.set_map(Some(tex_handle));
-        unlit.set_side(myth::resources::Side::Double);
-    }
-
-    let geo_handle = engine.assets.geometries.add(geometry);
-    let mat_handle = engine.assets.materials.add(unlit_mat);
-
-    Mesh::new(geo_handle, mat_handle)
+fn create_pipe_material(engine: &mut Engine) -> UnlitMaterial {
+    let tex_handle = load_texture(engine, PIPE_IMAGE_DATA, false);
+    let mat = UnlitMaterial::new(Vec4::ONE)
+        .with_map(tex_handle)
+        .with_side(Side::Double);
+    mat.set_map_transform(TextureTransform {
+        scale: Vec2::new(0.25, 0.125),
+        offset: Vec2::new(0.0, 0.75),
+        rotation: 0.0,
+    });
+    mat.flush_texture_transforms();
+    mat
 }
 
 #[derive(PartialEq, Clone)]
@@ -218,21 +94,21 @@ const PIPE_GAP_CENTER: f32 = 0.0; // y-center of the gap between pipes
 struct FlappyBird {
     bird_node: NodeHandle,
     bird_velocity: Vec2,
-    pipe_cap_mesh: Mesh,
-    pipe_mesh: Mesh,
+    pipe_cap_mat: MaterialHandle,
+    pipe_mat: MaterialHandle,
     pipes: Vec<PipeDuo>,
     pipe_spawn_timer: f32,
 }
 
 impl AppHandler for FlappyBird {
     fn init(engine: &mut Engine, _window: &dyn Window) -> Self {
-        let bird_mesh = create_bird(engine);
-        let pipe_mesh = create_pipe(engine);
-        let pipe_cap_mesh = create_pipe_cap(engine);
+        let bird_mat = create_bird_material(engine);
+        let pipe_mat = create_pipe_material(engine);
+        let pipe_cap_mat = create_pipe_cap_material(engine);
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
 
-        let bird_node = scene.add_mesh(bird_mesh);
+        let bird_node = scene.spawn_plane(1.0, 1.0, bird_mat, &engine.assets);
         if let Some(node) = scene.get_node_mut(bird_node) {
             node.transform.position = BIRD_SPAWN_POINT;
             node.transform.scale = Vec3::new(BIRD_SCALE, BIRD_SCALE, 1.0);
@@ -248,11 +124,14 @@ impl AppHandler for FlappyBird {
 
         scene.active_camera = Some(cam_node_id);
 
+        let pipe_mat = engine.assets.materials.add(Material::from(pipe_mat));
+        let pipe_cap_mat = engine.assets.materials.add(Material::from(pipe_cap_mat));
+
         Self {
             bird_node,
             bird_velocity: Vec2::ZERO,
-            pipe_cap_mesh,
-            pipe_mesh,
+            pipe_cap_mat,
+            pipe_mat,
             pipes: vec![],
             pipe_spawn_timer: PIPE_SPAWN_INTERVAL, // spawn first pipe immediately
         }
@@ -368,12 +247,11 @@ impl AppHandler for FlappyBird {
             let mut top_pipe_height = -2.;
 
             for i in 0..top_pipe_amount {
-                let top_pipe_mesh = self.pipe_mesh.clone();
                 let top_pipe_node = engine
                     .scene_manager
                     .active_scene_mut()
                     .unwrap()
-                    .add_mesh(top_pipe_mesh);
+                    .spawn_plane(1.0, 1.0, self.pipe_mat, &engine.assets);
                 if let Some(node) = engine
                     .scene_manager
                     .active_scene_mut()
@@ -388,12 +266,11 @@ impl AppHandler for FlappyBird {
                 top_pipe_height += PIPE_SCALE_Y;
             }
 
-            let top_pipe_cap_mesh = self.pipe_cap_mesh.clone();
             let top_pipe_cap_node = engine
                 .scene_manager
                 .active_scene_mut()
                 .unwrap()
-                .add_mesh(top_pipe_cap_mesh);
+                .spawn_plane(1.0, 1.0, self.pipe_cap_mat, &engine.assets);
             if let Some(node) = engine
                 .scene_manager
                 .active_scene_mut()
@@ -410,12 +287,11 @@ impl AppHandler for FlappyBird {
             let mut bottom_pipe_height = 2.;
 
             for i in 0..bottom_pipe_amount {
-                let bottom_pipe_mesh = self.pipe_mesh.clone();
                 let bottom_pipe_node = engine
                     .scene_manager
                     .active_scene_mut()
                     .unwrap()
-                    .add_mesh(bottom_pipe_mesh);
+                    .spawn_plane(1.0, 1.0, self.pipe_mat, &engine.assets);
                 if let Some(node) = engine
                     .scene_manager
                     .active_scene_mut()
@@ -430,12 +306,11 @@ impl AppHandler for FlappyBird {
                 bottom_pipe_height -= PIPE_SCALE_Y;
             }
 
-            let bottom_pipe_cap_mesh = self.pipe_cap_mesh.clone();
             let bottom_pipe_cap_node = engine
                 .scene_manager
                 .active_scene_mut()
                 .unwrap()
-                .add_mesh(bottom_pipe_cap_mesh);
+                .spawn_plane(1.0, 1.0, self.pipe_cap_mat, &engine.assets);
             if let Some(node) = engine
                 .scene_manager
                 .active_scene_mut()
