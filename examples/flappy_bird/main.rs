@@ -1,10 +1,9 @@
 use std::collections::VecDeque;
 
 use myth::{
+    ResolveMaterial, TextureTransform,
     prelude::*,
     resources::{ImageDimension, PixelFormat},
-    TextureTransform,
-    ResolveMaterial
 };
 use myth_resources::Key;
 use rand::{Rng, rngs::StdRng};
@@ -36,8 +35,7 @@ fn load_texture(engine: &mut Engine, data: &[u8], flip_v: bool) -> TextureHandle
 
 fn create_bird_material(engine: &mut Engine) -> UnlitMaterial {
     let tex_handle = load_texture(engine, BIRD_IMAGE_DATA, true);
-    let mat = UnlitMaterial::new(Vec4::ONE)
-        .with_map(tex_handle);
+    let mat = UnlitMaterial::new(Vec4::ONE).with_map(tex_handle);
     mat.set_map_transform(TextureTransform {
         scale: Vec2::new(0.25, 1.0),
         offset: Vec2::ZERO,
@@ -177,18 +175,18 @@ impl AppHandler for FlappyBird {
         // Animate bird (simple up/down flap)
         self.bird_anim_timer += frame.dt;
         if let Some(scene) = engine.scene_manager.active_scene_mut() {
-                let mat_transform = TextureTransform {
-                    scale: Vec2::new(0.25, 1.0),
-                    offset: Vec2::new(0.25 * (self.bird_anim_timer % 4.0).floor(), 0.0),
-                    rotation: 0.0,
-                };
-                let bird_material = scene.get_mesh(self.bird_node).unwrap().material;
-                if let Some(mat) = engine.assets.materials.get(bird_material) {
-                    if let Some(unlit) = mat.as_unlit() {
-                        unlit.set_map_transform(mat_transform);
-                        unlit.flush_texture_transforms();
-                    }
+            let mat_transform = TextureTransform {
+                scale: Vec2::new(0.25, 1.0),
+                offset: Vec2::new(0.25 * (self.bird_anim_timer % 4.0).floor(), 0.0),
+                rotation: 0.0,
+            };
+            let bird_material = scene.get_mesh(self.bird_node).unwrap().material;
+            if let Some(mat) = engine.assets.materials.get(bird_material) {
+                if let Some(unlit) = mat.as_unlit() {
+                    unlit.set_map_transform(mat_transform);
+                    unlit.flush_texture_transforms();
                 }
+            }
         }
 
         // Check collision with pipes
