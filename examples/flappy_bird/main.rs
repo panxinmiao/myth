@@ -4,6 +4,7 @@ use myth::{
     prelude::*,
     resources::{ImageDimension, PixelFormat},
     TextureTransform,
+    ResolveMaterial
 };
 use myth_resources::Key;
 use rand::{Rng, rngs::StdRng};
@@ -124,8 +125,8 @@ impl AppHandler for FlappyBird {
 
         scene.active_camera = Some(cam_node_id);
 
-        let pipe_mat = engine.assets.materials.add(Material::from(pipe_mat));
-        let pipe_cap_mat = engine.assets.materials.add(Material::from(pipe_cap_mat));
+        let pipe_mat = pipe_mat.resolve(&engine.assets);
+        let pipe_cap_mat = pipe_cap_mat.resolve(&engine.assets);
 
         Self {
             bird_node,
@@ -159,7 +160,6 @@ impl AppHandler for FlappyBird {
         }
 
         // Update bird position
-        let mut bird_pos = BIRD_SPAWN_POINT;
         if let Some(node) = engine
             .scene_manager
             .active_scene_mut()
@@ -167,7 +167,6 @@ impl AppHandler for FlappyBird {
             .get_node_mut(self.bird_node)
         {
             node.transform.position.y += self.bird_velocity.y * frame.dt;
-            bird_pos = node.transform.position;
             if node.transform.position.y < -2.0 || node.transform.position.y > 2.0 {
                 self.game_over(engine);
                 return;
