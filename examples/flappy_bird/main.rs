@@ -174,10 +174,14 @@ impl AppHandler for FlappyBird {
 
         // Animate bird (simple up/down flap)
         self.bird_anim_timer += frame.dt;
+        let bird_anim_speed = 10.0; // how fast the bird flaps
         if let Some(scene) = engine.scene_manager.active_scene_mut() {
             let mat_transform = TextureTransform {
                 scale: Vec2::new(0.25, 1.0),
-                offset: Vec2::new(0.25 * (self.bird_anim_timer % 4.0).floor(), 0.0),
+                offset: Vec2::new(
+                    0.25 * (self.bird_anim_timer * bird_anim_speed % 4.0).floor(),
+                    0.0,
+                ),
                 rotation: 0.0,
             };
             let bird_material = scene.get_mesh(self.bird_node).unwrap().material;
