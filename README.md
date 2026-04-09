@@ -242,7 +242,7 @@ Add `myth-engine` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-myth-engine = "0.1.1"
+myth-engine = "0.2.0"
 
 # Or get the latest from GitHub
 # myth-engine = { git = "https://github.com/panxinmiao/myth", branch = "main" }

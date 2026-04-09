@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fixed
+- Fixed an issue of UnlitMaterial UV transform not taking effect
+
+## v0.2.0
+
+Released 2026-04-07
+
 ### Major Changes
 - Add a dedicated `myth_macros` crate for generating Material and GPU data structures. The previous complex declarative macros have been removed, making the creation of Materials and GPU data structs simpler and more ergonomic, with a more user-friendly API.
 - Refactored the asynchronous asset loading system, introducing a “fire-and-forget” style, ergonomic API. All asynchronous loading logic is now fully handled internally by the engine.
@@ -34,11 +41,38 @@ Released 2021-03-26
 
 Released 2026-03-25
 
-#### Added
-- First release of `Myth Engine`.
+### First release of `Myth Engine`.
+
+Myth is a developer-friendly, high-performance 3D rendering engine written in Rust.
+
+Inspired by the ergonomic simplicity of Three.js and built on the modern power of wgpu, Myth aims to bridge the gap between low-level graphics APIs and high-level game engines.
+
+### Features
+
+* **Core Architecture & Platform**
+    * **True Cross-platform, One Codebase**: Native (Windows, macOS, Linux, iOS, Android) + WebGPU/WASM + Python bindings.
+    * **Modern Backend**: Built on **wgpu**, fully supporting Vulkan, Metal, DX12, and WebGPU.
+    * **SSA-based Render Graph**: A declarative, compiler-driven rendering architecture. You declare the topological needs, and the engine handles the rest:
+        * **Automatic Synchronization**: Zero manual memory barriers or layout transitions.
+        * **Aggressive Memory Aliasing**: Reuses transient high-resolution physical textures perfectly across distinct logical passes.
+        * **Dead Pass Elimination**: Automatically culls rendering workloads.
+        * **Zero-Allocation Per-Frame Rebuild**: Evaluates and compiles the entire DAG every frame.
+
+* **Advanced Rendering & Lighting**
+    * **Physically Based Materials**: Robust PBR pipeline with Clearcoat, Iridescence, Transmission, Sheen, Anisotropy.
+    * **Image-Based Lighting (IBL)** + **Dynamic Shadows (CSM)**.
+    * **SSAO / SSSS / Skybox**.
+
+* **Post-Processing & FX**
+    * **HDR Pipeline** + **Bloom** + **Color Grading** + **TAA / FXAA / MSAA**.
+
+* **Assets & Tooling**
+    * **Full glTF 2.0 Support** (PBR, animations, morph targets).
+    * **Asynchronous Asset System** + **Embedded egui Inspector**.
 
 ## Diffs
 
-- [Unreleased](https://github.com/panxinmiao/myth/compare/0.1.1...HEAD)
+- [Unreleased](https://github.com/panxinmiao/myth/compare/0.2.0...HEAD)
+- [v0.2.0](https://github.com/panxinmiao/myth/compare/0.1.1...0.2.0)
 - [v0.1.1](https://github.com/panxinmiao/myth/compare/0.1.0...0.1.1)
 - [v0.1.0](https://github.com/panxinmiao/myth/compare/0.0.1...0.1.0)
