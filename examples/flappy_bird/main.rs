@@ -86,7 +86,7 @@ struct PipeDuo {
 
 const PIPE_SPAWN_INTERVAL: f32 = 1.0; // seconds
 const BIRD_SPAWN_POINT: Vec3 = Vec3::new(-1.0, 0.0, 0.0);
-const BIRD_SCALE: f32 = 0.25;
+const BIRD_SCALE: f32 = 0.3;
 const PIPE_GAP: f32 = 0.5;
 const PIPE_SCALE_X: f32 = 0.5;
 const PIPE_SCALE_Y: f32 = 0.5;
@@ -99,6 +99,7 @@ struct FlappyBird {
     pipe_mat: MaterialHandle,
     pipes: Vec<PipeDuo>,
     pipe_spawn_timer: f32,
+    bird_anim_timer: f32,
 }
 
 impl AppHandler for FlappyBird {
@@ -109,10 +110,9 @@ impl AppHandler for FlappyBird {
         engine.scene_manager.create_active();
         let scene = engine.scene_manager.active_scene_mut().unwrap();
 
-        let bird_node = scene.spawn_plane(1.0, 1.0, bird_mat, &engine.assets);
+        let bird_node = scene.spawn_plane(BIRD_SCALE, BIRD_SCALE, bird_mat, &engine.assets);
         if let Some(node) = scene.get_node_mut(bird_node) {
             node.transform.position = BIRD_SPAWN_POINT;
-            node.transform.scale = Vec3::new(BIRD_SCALE, BIRD_SCALE, 1.0);
         }
         // 5. Set up camera
         let camera = Camera::new_perspective(45.0, 1280.0 / 720.0, 0.1);
@@ -135,6 +135,7 @@ impl AppHandler for FlappyBird {
             pipe_mat,
             pipes: vec![],
             pipe_spawn_timer: PIPE_SPAWN_INTERVAL, // spawn first pipe immediately
+            bird_anim_timer: 0.0,
         }
     }
 
@@ -171,6 +172,23 @@ impl AppHandler for FlappyBird {
                 self.game_over(engine);
                 return;
             }
+        }
+
+        // Animate bird (simple up/down flap)
+        self.bird_anim_timer += frame.dt;
+        if let Some(scene) = engine.scene_manager.active_scene_mut() {
+                let mat_transform = TextureTransform {
+                    scale: Vec2::new(0.25, 1.0),
+                    offset: Vec2::new(0.25 * (self.bird_anim_timer % 4.0).floor(), 0.0),
+                    rotation: 0.0,
+                };
+                let bird_material = scene.get_mesh(self.bird_node).unwrap().material;
+                if let Some(mat) = engine.assets.materials.get(bird_material) {
+                    if let Some(unlit) = mat.as_unlit() {
+                        unlit.set_map_transform(mat_transform);
+                        unlit.flush_texture_transforms();
+                    }
+                }
         }
 
         // Check collision with pipes
